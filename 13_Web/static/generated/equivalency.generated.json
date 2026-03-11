@@ -1,0 +1,1122 @@
+{
+  "catalog_version": "2025-v2.5",
+  "generated_at": "2026-01-08T19:55:39.780Z",
+  "rows": [
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "AI CONTAINERS",
+      "capability_id": "ai_and_machine_learning.ai_containers",
+      "used_for": "Provides ai containers capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Deep Learning"
+        ],
+        "azure": [
+          "GPU support"
+        ],
+        "gcp": [
+          "Deep Learning"
+        ],
+        "oci": [
+          "Data Science Container"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "AI-POWERED ASSISTANT",
+      "capability_id": "ai_and_machine_learning.ai_powered_assistant",
+      "used_for": "Provides ai-powered assistant capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon Q"
+        ],
+        "azure": [
+          "Azure OpenAI"
+        ],
+        "gcp": [
+          "Gemini for Google"
+        ],
+        "oci": [
+          "OCI Generative AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "HUMAN",
+      "capability_id": "ai_and_machine_learning.human",
+      "used_for": "Provides human capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure AI"
+        ],
+        "gcp": [],
+        "oci": [
+          "OCI AI Services"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "REVIEW/MODERATION",
+      "capability_id": "ai_and_machine_learning.review_moderation",
+      "used_for": "Provides review/moderation capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Augmented AI"
+        ],
+        "azure": [
+          "Content Safety"
+        ],
+        "gcp": [],
+        "oci": [
+          "(Vision",
+          "Text",
+          "Language)"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "CHATBOT BUILDER",
+      "capability_id": "ai_and_machine_learning.chatbot_builder",
+      "used_for": "Provides chatbot builder capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon Lex"
+        ],
+        "azure": [
+          "Azure Bot"
+        ],
+        "gcp": [
+          "Dialogflow"
+        ],
+        "oci": [
+          "Oracle Digital Assistant"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "DATA LABELING",
+      "capability_id": "ai_and_machine_learning.data_labeling",
+      "used_for": "Provides data labeling capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "SageMaker"
+        ],
+        "azure": [
+          "Azure ML Data"
+        ],
+        "gcp": [
+          "Vertex AI Data"
+        ],
+        "oci": [
+          "OCI Data Labeling"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "DOCUMENT EXTRACTION",
+      "capability_id": "ai_and_machine_learning.document_extraction",
+      "used_for": "Provides document extraction capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon Textract"
+        ],
+        "azure": [
+          "Azure"
+        ],
+        "gcp": [
+          "Document AI"
+        ],
+        "oci": [
+          "OCI Document"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "GENERATIVE AI",
+      "capability_id": "ai_and_machine_learning.generative_ai",
+      "used_for": "Provides generative ai capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon Bedrock"
+        ],
+        "azure": [
+          "Azure OpenAI"
+        ],
+        "gcp": [
+          "Vertex AI"
+        ],
+        "oci": [
+          "OCI Generative AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "IMAGE RECOGNITION",
+      "capability_id": "ai_and_machine_learning.image_recognition",
+      "used_for": "Provides image recognition capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure AI Vision"
+        ],
+        "gcp": [
+          "Vision AI"
+        ],
+        "oci": [
+          "OCI Vision AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "INFERENCE ACCELERATION",
+      "capability_id": "ai_and_machine_learning.inference_acceleration",
+      "used_for": "Provides inference acceleration capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "AWS Inferentia"
+        ],
+        "azure": [
+          "GPU support"
+        ],
+        "gcp": [
+          "Cloud TPU",
+          "Edge TPU"
+        ],
+        "oci": [
+          "OCI AI GPU Instances"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "LANGUAGE TRANSLATION",
+      "capability_id": "ai_and_machine_learning.language_translation",
+      "used_for": "Provides language translation capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure"
+        ],
+        "gcp": [
+          "Translation AI"
+        ],
+        "oci": [
+          "OCI Language Service"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "ML/AI CHIPS",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "used_for": "Provides ml/ai chips capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Inferentia"
+        ],
+        "azure": [
+          "Maia 100"
+        ],
+        "gcp": [
+          "Cloud TPU",
+          "Trillium"
+        ],
+        "oci": [
+          "NVIDIA A100",
+          "H100 GP"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "MANAGED ML PLATFORM",
+      "capability_id": "ai_and_machine_learning.managed_ml_platform",
+      "used_for": "Provides managed ml platform capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure Machine"
+        ],
+        "gcp": [
+          "Vertex AI"
+        ],
+        "oci": [
+          "OCI Data Science"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "NOTEBOOKS",
+      "capability_id": "ai_and_machine_learning.notebooks",
+      "used_for": "Provides notebooks capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "EMR Notebooks"
+        ],
+        "azure": [
+          "Azure"
+        ],
+        "gcp": [
+          "Vertex AI Workbench"
+        ],
+        "oci": [
+          "OCI Data Science"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "ONLINE FRAUD DETECTION",
+      "capability_id": "ai_and_machine_learning.online_fraud_detection",
+      "used_for": "Provides online fraud detection capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon Fraud"
+        ],
+        "azure": [
+          "Azure Anomaly"
+        ],
+        "gcp": [
+          "reCAPTCHA"
+        ],
+        "oci": [
+          "OCI Anomaly Detection"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "PRECONFIGURED ML VMS",
+      "capability_id": "ai_and_machine_learning.preconfigured_ml_vms",
+      "used_for": "Provides preconfigured ml vms capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Deep Learning"
+        ],
+        "azure": [
+          "Data Science"
+        ],
+        "gcp": [
+          "Deep Learning VM"
+        ],
+        "oci": [
+          "OCI Marketplace ML"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "RECOMMENDATION",
+      "capability_id": "ai_and_machine_learning.recommendation",
+      "used_for": "Provides recommendation capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure AI"
+        ],
+        "gcp": [
+          "Recommendations AI"
+        ],
+        "oci": [
+          "OCI AI Recommendatio"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "ENGINE",
+      "capability_id": "ai_and_machine_learning.engine",
+      "used_for": "Provides engine capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Personalize"
+        ],
+        "azure": [
+          "Personalizer"
+        ],
+        "gcp": [],
+        "oci": [
+          "System"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "SPEECH",
+      "capability_id": "ai_and_machine_learning.speech",
+      "used_for": "Provides speech capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure Speech"
+        ],
+        "gcp": [
+          "Speech-to-Text &"
+        ],
+        "oci": [
+          "OCI Speech AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "RECOGNITION/SYNTHESIS",
+      "capability_id": "ai_and_machine_learning.recognition_synthesis",
+      "used_for": "Provides recognition/synthesis capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Transcribe",
+          "Polly"
+        ],
+        "azure": [],
+        "gcp": [
+          "Text-to-Speech API"
+        ],
+        "oci": []
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "TEXT ANALYSIS",
+      "capability_id": "ai_and_machine_learning.text_analysis",
+      "used_for": "Provides text analysis capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure AI"
+        ],
+        "gcp": [
+          "Natural Language API"
+        ],
+        "oci": [
+          "OCI Text AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "TIME-SERIES FORECASTING",
+      "capability_id": "ai_and_machine_learning.time_series_forecasting",
+      "used_for": "Provides time-series forecasting capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure AutoML"
+        ],
+        "gcp": [
+          "TimesFM",
+          "Vertex AI"
+        ],
+        "oci": [
+          "OCI Forecasting AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "VIDEO ANALYSIS",
+      "capability_id": "ai_and_machine_learning.video_analysis",
+      "used_for": "Provides video analysis capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Rekognition"
+        ],
+        "azure": [
+          "Azure Video"
+        ],
+        "gcp": [
+          "Video Intelligence API"
+        ],
+        "oci": [
+          "OCI Vision AI"
+        ]
+      }
+    },
+    {
+      "domain": "AI and Machine Learning",
+      "capability_name": "VISUAL INSPECTION",
+      "capability_id": "ai_and_machine_learning.visual_inspection",
+      "used_for": "Provides visual inspection capability in the AI and Machine Learning domain.",
+      "providers": {
+        "aws": [
+          "Lookout for"
+        ],
+        "azure": [
+          "Azure Custom"
+        ],
+        "gcp": [
+          "Visual Inspection AI"
+        ],
+        "oci": [
+          "OCI Vision Custom"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "BIG DATA PROCESSING",
+      "capability_id": "analytics.big_data_processing",
+      "used_for": "Provides big data processing capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon EMR",
+          "AWS"
+        ],
+        "azure": [
+          "Azure HDIn sight",
+          "Data"
+        ],
+        "gcp": [
+          "Dataproc"
+        ],
+        "oci": [
+          "Oracle Big Dat"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "BUSINESS ANALYTICS",
+      "capability_id": "analytics.business_analytics",
+      "used_for": "Provides business analytics capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon QuickSight"
+        ],
+        "azure": [
+          "Power BI",
+          "A zure"
+        ],
+        "gcp": [
+          "Looker"
+        ],
+        "oci": [
+          "Oracle Analyti"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "DATA",
+      "capability_id": "analytics.data",
+      "used_for": "Provides data capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "AWS Data Exchange"
+        ],
+        "azure": [
+          "Azure Data Share"
+        ],
+        "gcp": [
+          "Analytics Hub"
+        ],
+        "oci": [
+          "Oracle Data"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "EXPLORATION/CATALOG",
+      "capability_id": "analytics.exploration_catalog",
+      "used_for": "Provides exploration/catalog capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "AWS Glue Data"
+        ],
+        "azure": [
+          "Azure Data Catalog"
+        ],
+        "gcp": [
+          "Catalog"
+        ],
+        "oci": []
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "DATA LAKE CREATION",
+      "capability_id": "analytics.data_lake_creation",
+      "used_for": "Provides data lake creation capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "AWS Lake Formation"
+        ],
+        "azure": [
+          "Azure Data Lake"
+        ],
+        "gcp": [
+          "Cloud Storage"
+        ],
+        "oci": [
+          "Oracle Lakeho"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "SHARING/EXCHANGE",
+      "capability_id": "analytics.sharing_exchange",
+      "used_for": "Provides sharing/exchange capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Lake Formation"
+        ],
+        "azure": [],
+        "gcp": [
+          "Datashare"
+        ],
+        "oci": [
+          "Integration",
+          "O"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "DATA STREAMING",
+      "capability_id": "analytics.data_streaming",
+      "used_for": "Provides data streaming capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon Kinesis",
+          "Data"
+        ],
+        "azure": [
+          "Azure Strea m"
+        ],
+        "gcp": [
+          "Dataflow"
+        ],
+        "oci": [
+          "Oracle Cloud"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "DATA WAREHOUSING",
+      "capability_id": "analytics.data_warehousing",
+      "used_for": "Provides data warehousing capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon Redshift"
+        ],
+        "azure": [
+          "Azure Syna pse"
+        ],
+        "gcp": [
+          "BigQuery"
+        ],
+        "oci": [
+          "Oracle Auton"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "DATA WRANGLING",
+      "capability_id": "analytics.data_wrangling",
+      "used_for": "Provides data wrangling capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "AWS Glue DataBrew"
+        ],
+        "azure": [
+          "Azure Data Factory"
+        ],
+        "gcp": [
+          "Dataprep by"
+        ],
+        "oci": [
+          "Oracle Data In"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "ETL",
+      "capability_id": "analytics.etl",
+      "used_for": "Provides etl capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "AWS Glue",
+          "AWS Data"
+        ],
+        "azure": [
+          "Azure Data Factory"
+        ],
+        "gcp": [
+          "Dataflow",
+          "Cloud"
+        ],
+        "oci": [
+          "Oracle Data In"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "HOSTED HADOOP/SPARK",
+      "capability_id": "analytics.hosted_hadoop_spark",
+      "used_for": "Provides hosted hadoop/spark capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon EMR"
+        ],
+        "azure": [
+          "Azure HDIn sight"
+        ],
+        "gcp": [
+          "Dataproc"
+        ],
+        "oci": [
+          "Oracle Big Dat"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "MANAGED KAFKA",
+      "capability_id": "analytics.managed_kafka",
+      "used_for": "Provides managed kafka capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon MSK"
+        ],
+        "azure": [
+          "Azure Event Hubs for"
+        ],
+        "gcp": [
+          "Confluent Cloud"
+        ],
+        "oci": [
+          "OCI Streaming"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "MANAGED SEARCH",
+      "capability_id": "analytics.managed_search",
+      "used_for": "Provides managed search capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon"
+        ],
+        "azure": [
+          "Azure Cogn itive"
+        ],
+        "gcp": [
+          "Cloud Search"
+        ],
+        "oci": [
+          "Oracle OpenS"
+        ]
+      }
+    },
+    {
+      "domain": "Analytics",
+      "capability_name": "QUERY SERVICE",
+      "capability_id": "analytics.query_service",
+      "used_for": "Provides query service capability in the Analytics domain.",
+      "providers": {
+        "aws": [
+          "Amazon Athena"
+        ],
+        "azure": [
+          "Synapse An alytics"
+        ],
+        "gcp": [
+          "BigQuery SQL"
+        ],
+        "oci": [
+          "Oracle Auton"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "AUDIT AND COMPLIANCE",
+      "capability_id": "security.audit_and_compliance",
+      "used_for": "Provides audit and compliance capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Artifact"
+        ],
+        "azure": [
+          "Microsoft Service"
+        ],
+        "gcp": [
+          "Assured"
+        ],
+        "oci": [
+          "Oracle Risk"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "CENTRALIZED SECURITY",
+      "capability_id": "security.centralized_security",
+      "used_for": "Provides centralized security capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Security"
+        ],
+        "azure": [
+          "Microsoft Defender"
+        ],
+        "gcp": [
+          "Security"
+        ],
+        "oci": [
+          "Oracle Cloud"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "MGMT",
+      "capability_id": "security.mgmt",
+      "used_for": "Provides mgmt capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "Hub"
+        ],
+        "azure": [
+          "for Cloud"
+        ],
+        "gcp": [
+          "Command Center"
+        ],
+        "oci": []
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "CERTIFICATE MANAGEMENT",
+      "capability_id": "security.certificate_management",
+      "used_for": "Provides certificate management capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Certificate"
+        ],
+        "azure": [
+          "Azure App Service"
+        ],
+        "gcp": [
+          "Certificate"
+        ],
+        "oci": [
+          "Oracle Certific"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "CONFIDENTIAL COMPUTING",
+      "capability_id": "security.confidential_computing",
+      "used_for": "Provides confidential computing capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Nitro"
+        ],
+        "azure": [
+          "Azure Confidential"
+        ],
+        "gcp": [
+          "Confidential"
+        ],
+        "oci": [
+          "Not Publicly A"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "CONTAINER SECURITY",
+      "capability_id": "security.container_security",
+      "used_for": "Provides container security capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "Amazon ECR"
+        ],
+        "azure": [
+          "Microsoft Defender"
+        ],
+        "gcp": [
+          "Binary"
+        ],
+        "oci": [
+          "Oracle Contai"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "DATA",
+      "capability_id": "security.data",
+      "used_for": "Provides data capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "Amazon Macie"
+        ],
+        "azure": [
+          "Azure Information"
+        ],
+        "gcp": [
+          "DLP API",
+          "Data"
+        ],
+        "oci": [
+          "Oracle Data S"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "DISCOVERY/CLASSIFICATION",
+      "capability_id": "security.discovery_classification",
+      "used_for": "Provides discovery/classification capability in the Security domain.",
+      "providers": {
+        "aws": [],
+        "azure": [
+          "Protection",
+          "Data"
+        ],
+        "gcp": [
+          "Catalog"
+        ],
+        "oci": []
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "DDOS PROTECTION",
+      "capability_id": "security.ddos_protection",
+      "used_for": "Provides ddos protection capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Shield"
+        ],
+        "azure": [
+          "Azure DDoS"
+        ],
+        "gcp": [
+          "Google Cloud"
+        ],
+        "oci": [
+          "Oracle Web"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "IDENTITY & ACCESS MGMT",
+      "capability_id": "security.identity_access_mgmt",
+      "used_for": "Provides identity & access mgmt capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS IAM"
+        ],
+        "azure": [
+          "Azure AD",
+          "Microsoft"
+        ],
+        "gcp": [
+          "Identity Platform"
+        ],
+        "oci": [
+          "Oracle Identit"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "(IAM)",
+      "capability_id": "security.iam",
+      "used_for": "Provides (iam) capability in the Security domain.",
+      "providers": {
+        "aws": [],
+        "azure": [
+          "Entra"
+        ],
+        "gcp": [
+          "IAM"
+        ],
+        "oci": [
+          "Access Manag"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "CERTIFICATE/KEY",
+      "capability_id": "security.certificate_key",
+      "used_for": "Provides certificate/key capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS KMS"
+        ],
+        "azure": [
+          "Azure Key Vault"
+        ],
+        "gcp": [
+          "Cloud KMS",
+          "Cloud"
+        ],
+        "oci": [
+          "Oracle Cloud"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "MANAGEMENT",
+      "capability_id": "security.management",
+      "used_for": "Provides management capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "CloudHSM"
+        ],
+        "azure": [
+          "Azure Dedicated"
+        ],
+        "gcp": [
+          "HSM"
+        ],
+        "oci": [
+          "Infrastructure"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "MICROSOFT AD SUPPORT",
+      "capability_id": "security.microsoft_ad_support",
+      "used_for": "Provides microsoft ad support capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Directory"
+        ],
+        "azure": [
+          "Microsoft Entra"
+        ],
+        "gcp": [
+          "Managed AD"
+        ],
+        "oci": [
+          "Oracle Manag"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "REGULATED CLOUD ZONES",
+      "capability_id": "security.regulated_cloud_zones",
+      "used_for": "Provides regulated cloud zones capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS GovCloud"
+        ],
+        "azure": [
+          "Azure Government"
+        ],
+        "gcp": [
+          "Assured"
+        ],
+        "oci": [
+          "Oracle Govern"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "RESOURCE ACCESS POLICIES",
+      "capability_id": "security.resource_access_policies",
+      "used_for": "Provides resource access policies capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Resource"
+        ],
+        "azure": [
+          "Azure Resource"
+        ],
+        "gcp": [
+          "Resource Manager"
+        ],
+        "oci": [
+          "OCI Compart"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "SECRETS MANAGEMENT",
+      "capability_id": "security.secrets_management",
+      "used_for": "Provides secrets management capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Secrets"
+        ],
+        "azure": [
+          "Azure Key Vault"
+        ],
+        "gcp": [
+          "Secret Manager"
+        ],
+        "oci": [
+          "Oracle Secrets"
+        ]
+      }
+    },
+    {
+      "domain": "Security",
+      "capability_name": "CONTEXT-BASED ACCESS",
+      "capability_id": "security.context_based_access",
+      "used_for": "Provides context-based access capability in the Security domain.",
+      "providers": {
+        "aws": [
+          "AWS Verified"
+        ],
+        "azure": [
+          "Microsoft Entra"
+        ],
+        "gcp": [
+          "Identity-Aware"
+        ],
+        "oci": [
+          "Oracle IAM Co"
+        ]
+      }
+    }
+  ]
+}

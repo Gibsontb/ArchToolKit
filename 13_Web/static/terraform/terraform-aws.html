@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Azure Terraform Map · Architect's Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1a2735, #050608 60%);
+      color: #f5f5f5;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+    .card {
+      width: 100%;
+      max-width: 1100px;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 16px;
+      padding: 1.25rem 1.5rem 1.5rem;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.25rem;
+    }
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+    h1.page-title {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 600;
+      outline: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+    .page-title-hint {
+      font-size: 0.75rem;
+      color: #9ca3af;
+    }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      justify-content: flex-end;
+    }
+    .btn-chip {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.35rem 0.95rem;
+      font-size: 0.78rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.05s ease;
+      white-space: nowrap;
+    }
+    .btn-chip:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+    .workspace {
+      flex: 1;
+      margin-top: 0.25rem;
+      border-radius: 0.9rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      padding: 0;
+      font-size: 0.9rem;
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      min-height: 480px;
+      box-sizing: border-box;
+      background: radial-gradient(circle at top left, rgba(37,99,235,0.14), transparent 55%);
+      overflow: hidden;
+    }
+    .footer-note {
+      margin-top: 0.5rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+    .tf-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    .tf-nav {
+      width: 230px;
+      min-width: 200px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.35);
+      padding: 1rem;
+      box-sizing: border-box;
+      backdrop-filter: blur(18px);
+      background: linear-gradient(180deg, rgba(15,23,42,0.7), rgba(15,23,42,0.35));
+      overflow-y: auto;
+    }
+    .tf-nav h2 {
+      margin: 0 0 0.4rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .tf-nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .tf-nav-section-label {
+      margin-top: 0.7rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+    .tf-nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.83rem;
+    }
+    .tf-nav li {
+      margin: 0;
+    }
+    .tf-nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.22rem 0.4rem;
+      border-radius: 999px;
+      transition: background 0.12s ease, color 0.12s ease, transform 0.04s ease;
+    }
+    .tf-nav a:hover {
+      background: rgba(37, 99, 235, 0.25);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+    .tf-content {
+      flex: 1;
+      padding: 1rem 1.25rem 1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+    .tf-section {
+      margin-bottom: 1.6rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
+    }
+    .tf-section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0.2rem;
+      padding-bottom: 0.2rem;
+    }
+    .tf-section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      margin-bottom: 0.25rem;
+    }
+    .tf-section-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    .tf-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96,165,250,0.7);
+      color: #bfdbfe;
+      background: rgba(15,23,42,0.9);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .tf-tagline {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      margin: 0.35rem 0 0.5rem;
+    }
+    .tf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 0.45rem;
+      border-radius: 0.6rem;
+      overflow: hidden;
+    }
+    .tf-table thead {
+      background: rgba(15,23,42, 0.9);
+    }
+    .tf-table th,
+    .tf-table td {
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      padding: 0.35rem 0.45rem;
+      text-align: left;
+    }
+    .tf-table th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+    .tf-table td {
+      color: #d1d5db;
+    }
+    .tf-code {
+      margin-top: 0.4rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      background: #020617;
+      border-radius: 0.6rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      overflow-x: auto;
+      line-height: 1.35;
+    }
+    .tf-code code {
+      white-space: pre;
+    }
+    .tf-list {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+    }
+    .tf-list li {
+      margin-bottom: 0.12rem;
+    }
+    details.tf-details {
+      border-radius: 0.7rem;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15,23,42,0.82);
+      padding: 0.5rem 0.75rem 0.6rem;
+      font-size: 0.83rem;
+      margin-top: 0.55rem;
+    }
+    details.tf-details > summary {
+      cursor: pointer;
+      list-style: none;
+      outline: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    details.tf-details > summary::-webkit-details-marker {
+      display: none;
+    }
+    .tf-summary-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .tf-summary-label {
+      font-weight: 500;
+    }
+    .tf-summary-meta {
+      font-size: 0.7rem;
+      color: #9ca3af;
+    }
+    .tf-details-body {
+      margin-top: 0.55rem;
+      border-top: 1px dashed rgba(55, 65, 81, 0.9);
+      padding-top: 0.45rem;
+      display: grid;
+      gap: 0.4rem;
+    }
+    .tf-note {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      margin-top: 0.4rem;
+    }
+    @media (max-width: 900px) {
+      .tf-layout {
+        flex-direction: column;
+      }
+      .tf-nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+      }
+    }
+    @media (max-width: 700px) {
+      .shell {
+        padding: 1.25rem;
+      }
+      .card {
+        padding: 1rem 1rem 1.25rem;
+      }
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .footer-note {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <header>
+        <div class="title-block">
+          <h1 class="page-title" contenteditable="true" spellcheck="false">Azure Terraform Map · Architect's Toolkit</h1>
+          <div class="page-title-hint">Rename to match a specific subscription, hub-spoke, or project.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn-chip" type="button" onclick="window.location.href='../terraform.html'">
+            ← Terraform Encyclopedia
+          </button>
+          <button class="btn-chip" type="button" onclick="window.location.href='../index.html'">
+            ⌂ Main menu
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="tf-layout">
+          <nav class="tf-nav">
+            <h2>Azure Map</h2>
+            <p>Subscriptions, VNets, hub-spoke, policies – mapped to <code>azurerm_*</code>.</p>
+
+            <div class="tf-nav-section-label">Domains</div>
+            <ul>
+              <li><a href="#az-overview">1. Azure Terraform Overview</a></li>
+              <li><a href="#az-networking">2. Networking & Hub-Spoke</a></li>
+              <li><a href="#az-compute">3. Compute & AKS</a></li>
+              <li><a href="#az-identity">4. Identity & RBAC</a></li>
+              <li><a href="#az-storage">5. Storage & Data</a></li>
+              <li><a href="#az-security">6. Security, Policy, Monitoring</a></li>
+              <li><a href="#az-patterns">7. CCoE Patterns</a></li>
+            </ul>
+          </nav>
+
+          <main class="tf-content">
+            <section id="az-overview" class="tf-section">
+              <div class="tf-section-header">
+                <h2>1. Azure Terraform Overview</h2>
+                <span class="tf-badge">Azure</span>
+              </div>
+              <p class="tf-tagline">
+                Terraform + <code>azurerm</code> provider: subscriptions, resource groups, VNets, and policies as code.
+              </p>
+              <ul class="tf-list">
+                <li><strong>Provider:</strong> <code>azurerm</code> with <code>features {}</code> block.</li>
+                <li><strong>State:</strong> typically in an Azure Storage Account backend.</li>
+                <li><strong>Isolation:</strong> subscriptions, management groups, and VNets.</li>
+              </ul>
+              <div class="tf-code">
+                <code>terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~&gt; 4.0"
+    }
+  }
+
+  backend "azurerm" {
+    resource_group_name  = "tfstate-rg"
+    storage_account_name = "tfstatecentral"
+    container_name       = "state"
+    key                  = "azure/global.tfstate"
+  }
+}
+
+provider "azurerm" {
+  features {}
+}</code>
+              </div>
+            </section>
+
+            <section id="az-networking" class="tf-section">
+              <div class="tf-section-header">
+                <h2>2. Networking & Hub-Spoke</h2>
+                <span class="tf-badge">VNet</span>
+              </div>
+              <p class="tf-tagline">
+                Hub-spoke is the dominant Azure pattern. Terraform options: map-based subnet definitions,
+                <code>for_each</code>, and modules for connectivity.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Concept</th>
+                    <th>Service</th>
+                    <th>Resources</th>
+                    <th>Language Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Hub VNet</td>
+                    <td>Virtual Network, Azure Firewall</td>
+                    <td><code>azurerm_virtual_network</code>, <code>azurerm_firewall</code>, <code>azurerm_route_table</code></td>
+                    <td><code>locals</code> for address spaces, structured inputs for firewall.</td>
+                  </tr>
+                  <tr>
+                    <td>Spoke VNets</td>
+                    <td>Spoke VNet per app/team</td>
+                    <td><code>azurerm_virtual_network</code>, <code>azurerm_subnet</code></td>
+                    <td><code>for_each</code> across spoke definitions; <code>cidrsubnet</code> inside modules.</td>
+                  </tr>
+                  <tr>
+                    <td>Peering</td>
+                    <td>Hub-spoke links</td>
+                    <td><code>azurerm_virtual_network_peering</code></td>
+                    <td>Use <code>for_each</code> on allowed peerings map.</td>
+                  </tr>
+                  <tr>
+                    <td>Network Security</td>
+                    <td>NSG</td>
+                    <td><code>azurerm_network_security_group</code>, <code>azurerm_network_security_rule</code></td>
+                    <td><code>for_each</code> for rules; <code>object</code> vars for policy templates.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: Hub-Spoke Terraform</span>
+                    <span class="tf-summary-meta">VNets + peering with for_each.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>locals {
+  hub_vnet = {
+    name          = "hub"
+    address_space = ["10.0.0.0/16"]
+  }
+
+  spokes = {
+    "court-a" = { cidr = "10.1.0.0/16" }
+    "court-b" = { cidr = "10.2.0.0/16" }
+  }
+}
+
+resource "azurerm_virtual_network" "hub" {
+  name                = local.hub_vnet.name
+  resource_group_name = var.network_rg
+  location            = var.location
+  address_space       = local.hub_vnet.address_space
+}
+
+resource "azurerm_virtual_network" "spoke" {
+  for_each            = local.spokes
+  name                = each.key
+  resource_group_name = var.network_rg
+  location            = var.location
+  address_space       = [each.value.cidr]
+}
+
+resource "azurerm_virtual_network_peering" "hub_to_spoke" {
+  for_each                  = local.spokes
+  name                      = "hub-to-${each.key}"
+  resource_group_name       = var.network_rg
+  virtual_network_name      = azurerm_virtual_network.hub.name
+  remote_virtual_network_id = azurerm_virtual_network.spoke[each.key].id
+  allow_forwarded_traffic   = true
+}</code>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section id="az-compute" class="tf-section">
+              <div class="tf-section-header">
+                <h2>3. Compute & AKS</h2>
+                <span class="tf-badge">VM / AKS</span>
+              </div>
+              <p class="tf-tagline">
+                Terraform options for Azure compute revolve around image references, managed identity,
+                and attaching to VNets/subnets correctly.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>VMs:</strong> <code>azurerm_linux_virtual_machine</code>, <code>azurerm_windows_virtual_machine</code>.</li>
+                <li><strong>AKS:</strong> <code>azurerm_kubernetes_cluster</code> (often via modules).</li>
+              </ul>
+
+              <div class="tf-code">
+                <code>resource "azurerm_linux_virtual_machine" "vm" {
+  name                = "${var.environment}-vm01"
+  resource_group_name = var.compute_rg
+  location            = var.location
+  size                = "Standard_B2s"
+  admin_username      = "azureuser"
+
+  network_interface_ids = [azurerm_network_interface.vm.id]
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Premium_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-focal"
+    sku       = "20_04-lts"
+    version   = "latest"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+}</code>
+              </div>
+            </section>
+
+            <section id="az-identity" class="tf-section">
+              <div class="tf-section-header">
+                <h2>4. Identity & RBAC</h2>
+                <span class="tf-badge">Azure AD</span>
+              </div>
+              <p class="tf-tagline">
+                Terraform + <code>azuread</code> + <code>azurerm</code> gives you users, groups, and role assignments
+                as code. Options: <code>for_each</code> on RBAC maps, object variables for personas.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>Directory:</strong> <code>azuread_user</code>, <code>azuread_group</code>.</li>
+                <li><strong>RBAC:</strong> <code>azurerm_role_definition</code>, <code>azurerm_role_assignment</code>.</li>
+                <li><strong>Managed identity:</strong> <code>azurerm_user_assigned_identity</code>.</li>
+              </ul>
+            </section>
+
+            <section id="az-storage" class="tf-section">
+              <div class="tf-section-header">
+                <h2>5. Storage & Data</h2>
+                <span class="tf-badge">Storage / DB</span>
+              </div>
+              <p class="tf-tagline">
+                Storage accounts, containers, and databases get their own module, fed by standard
+                objects that encode redundancy, encryption, and network rules.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Service</th>
+                    <th>Resources</th>
+                    <th>Key Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Storage Account</td>
+                    <td><code>azurerm_storage_account</code>, <code>azurerm_storage_container</code></td>
+                    <td>account tier, replication, public access, network rules, min TLS, encryption.</td>
+                  </tr>
+                  <tr>
+                    <td>SQL / PaaS DB</td>
+                    <td><code>azurerm_mssql_server</code>, <code>azurerm_mssql_database</code></td>
+                    <td>AD auth, firewall rules, backup + retention.</td>
+                  </tr>
+                  <tr>
+                    <td>Cosmos DB</td>
+                    <td><code>azurerm_cosmosdb_account</code></td>
+                    <td>consistency, replication regions, backup.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section id="az-security" class="tf-section">
+              <div class="tf-section-header">
+                <h2>6. Security, Policy & Monitoring</h2>
+                <span class="tf-badge">Guardrails</span>
+              </div>
+              <p class="tf-tagline">
+                Azure Policy and Monitor are where you enforce your CCoE decisions. Terraform options:
+                policy definitions as JSON, assignments via <code>for_each</code>, diagnostic settings modules.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>Key Vault:</strong> <code>azurerm_key_vault</code>, secrets, access policies.</li>
+                <li><strong>Policy:</strong> <code>azurerm_policy_definition</code>, <code>azurerm_policy_assignment</code>.</li>
+                <li><strong>Monitor:</strong> <code>azurerm_monitor_diagnostic_setting</code>, <code>azurerm_log_analytics_workspace</code>.</li>
+              </ul>
+            </section>
+
+            <section id="az-patterns" class="tf-section">
+              <div class="tf-section-header">
+                <h2>7. CCoE Patterns for Azure</h2>
+                <span class="tf-badge">Patterns</span>
+              </div>
+              <p class="tf-tagline">
+                Per-subscription blueprints tied back into your main CCoE catalogue.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Pattern</th>
+                    <th>Scope</th>
+                    <th>Terraform Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Landing Zone – Subscription</td>
+                    <td>Management group + subscription</td>
+                    <td>Modules for policy assignment, diagnostics, baseline VNets; <code>for_each</code> over subscriptions.</td>
+                  </tr>
+                  <tr>
+                    <td>Hub-Spoke Court Network</td>
+                    <td>Network RG + multiple spokes</td>
+                    <td>Hub-spoke modules, <code>for_each</code> on spokes, <code>cidrsubnet</code> for addresses.</td>
+                  </tr>
+                  <tr>
+                    <td>Secure Data Enclave</td>
+                    <td>Storage + Key Vault</td>
+                    <td>Storage + KV module, objects for classification & retention.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <div class="footer-note">
+        Azure Terraform map for the Architect's Toolkit.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

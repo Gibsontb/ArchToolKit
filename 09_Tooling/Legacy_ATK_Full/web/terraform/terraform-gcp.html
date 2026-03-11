@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GCP Terraform Map · Architect's Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1a2735, #050608 60%);
+      color: #f5f5f5;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+    .card {
+      width: 100%;
+      max-width: 1100px;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 16px;
+      padding: 1.25rem 1.5rem 1.5rem;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.25rem;
+    }
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+    h1.page-title {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 600;
+      outline: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+    .page-title-hint {
+      font-size: 0.75rem;
+      color: #9ca3af;
+    }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      justify-content: flex-end;
+    }
+    .btn-chip {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.35rem 0.95rem;
+      font-size: 0.78rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.05s ease;
+      white-space: nowrap;
+    }
+    .btn-chip:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+    .workspace {
+      flex: 1;
+      margin-top: 0.25rem;
+      border-radius: 0.9rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      padding: 0;
+      font-size: 0.9rem;
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      min-height: 480px;
+      box-sizing: border-box;
+      background: radial-gradient(circle at top left, rgba(37,99,235,0.14), transparent 55%);
+      overflow: hidden;
+    }
+    .footer-note {
+      margin-top: 0.5rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+    .tf-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    .tf-nav {
+      width: 230px;
+      min-width: 200px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.35);
+      padding: 1rem;
+      box-sizing: border-box;
+      backdrop-filter: blur(18px);
+      background: linear-gradient(180deg, rgba(15,23,42,0.7), rgba(15,23,42,0.35));
+      overflow-y: auto;
+    }
+    .tf-nav h2 {
+      margin: 0 0 0.4rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .tf-nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    .tf-nav-section-label {
+      margin-top: 0.7rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+    .tf-nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.83rem;
+    }
+    .tf-nav li {
+      margin: 0;
+    }
+    .tf-nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.22rem 0.4rem;
+      border-radius: 999px;
+      transition: background 0.12s ease, color 0.12s ease, transform 0.04s ease;
+    }
+    .tf-nav a:hover {
+      background: rgba(37, 99, 235, 0.25);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+    .tf-content {
+      flex: 1;
+      padding: 1rem 1.25rem 1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+    .tf-section {
+      margin-bottom: 1.6rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
+    }
+    .tf-section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0.2rem;
+      padding-bottom: 0.2rem;
+    }
+    .tf-section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      margin-bottom: 0.25rem;
+    }
+    .tf-section-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    .tf-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96,165,250,0.7);
+      color: #bfdbfe;
+      background: rgba(15,23,42,0.9);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .tf-tagline {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      margin: 0.35rem 0 0.5rem;
+    }
+    .tf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 0.45rem;
+      border-radius: 0.6rem;
+      overflow: hidden;
+    }
+    .tf-table thead {
+      background: rgba(15,23,42, 0.9);
+    }
+    .tf-table th,
+    .tf-table td {
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      padding: 0.35rem 0.45rem;
+      text-align: left;
+    }
+    .tf-table th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+    .tf-table td {
+      color: #d1d5db;
+    }
+    .tf-code {
+      margin-top: 0.4rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      background: #020617;
+      border-radius: 0.6rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      overflow-x: auto;
+      line-height: 1.35;
+    }
+    .tf-code code {
+      white-space: pre;
+    }
+    .tf-list {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+    }
+    .tf-list li {
+      margin-bottom: 0.12rem;
+    }
+    details.tf-details {
+      border-radius: 0.7rem;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15,23,42,0.82);
+      padding: 0.5rem 0.75rem 0.6rem;
+      font-size: 0.83rem;
+      margin-top: 0.55rem;
+    }
+    details.tf-details > summary {
+      cursor: pointer;
+      list-style: none;
+      outline: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    details.tf-details > summary::-webkit-details-marker {
+      display: none;
+    }
+    .tf-summary-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .tf-summary-label {
+      font-weight: 500;
+    }
+    .tf-summary-meta {
+      font-size: 0.7rem;
+      color: #9ca3af;
+    }
+    .tf-details-body {
+      margin-top: 0.55rem;
+      border-top: 1px dashed rgba(55, 65, 81, 0.9);
+      padding-top: 0.45rem;
+      display: grid;
+      gap: 0.4rem;
+    }
+    .tf-note {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      margin-top: 0.4rem;
+    }
+    @media (max-width: 900px) {
+      .tf-layout {
+        flex-direction: column;
+      }
+      .tf-nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+      }
+    }
+    @media (max-width: 700px) {
+      .shell {
+        padding: 1.25rem;
+      }
+      .card {
+        padding: 1rem 1rem 1.25rem;
+      }
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .footer-note {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <header>
+        <div class="title-block">
+          <h1 class="page-title" contenteditable="true" spellcheck="false">GCP Terraform Map · Architect's Toolkit</h1>
+          <div class="page-title-hint">Rename for specific projects, folders, or orgs if useful.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn-chip" type="button" onclick="window.location.href='../terraform.html'">
+            ← Terraform Encyclopedia
+          </button>
+          <button class="btn-chip" type="button" onclick="window.location.href='../index.html'">
+            ⌂ Main menu
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="tf-layout">
+          <nav class="tf-nav">
+            <h2>GCP Map</h2>
+            <p>Projects, VPCs, GKE, IAM, and logging as <code>google_*</code> resources.</p>
+
+            <div class="tf-nav-section-label">Domains</div>
+            <ul>
+              <li><a href="#gcp-overview">1. GCP Terraform Overview</a></li>
+              <li><a href="#gcp-networking">2. Networking</a></li>
+              <li><a href="#gcp-compute">3. Compute & GKE</a></li>
+              <li><a href="#gcp-iam">4. IAM & Folders</a></li>
+              <li><a href="#gcp-storage">5. Storage & Data</a></li>
+              <li><a href="#gcp-security">6. Security & Logging</a></li>
+              <li><a href="#gcp-patterns">7. CCoE Patterns</a></li>
+            </ul>
+          </nav>
+
+          <main class="tf-content">
+            <section id="gcp-overview" class="tf-section">
+              <div class="tf-section-header">
+                <h2>1. GCP Terraform Overview</h2>
+                <span class="tf-badge">GCP</span>
+              </div>
+              <p class="tf-tagline">
+                Terraform + <code>google</code> provider: org → folders → projects, with VPCs and services
+                enabled per project.
+              </p>
+              <ul class="tf-list">
+                <li><strong>Provider:</strong> <code>google</code>, optionally <code>google-beta</code>.</li>
+                <li><strong>State:</strong> usually in a GCS bucket.</li>
+                <li><strong>Isolation:</strong> projects per environment or per court/tenant.</li>
+              </ul>
+
+              <div class="tf-code">
+                <code>terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~&gt; 5.0"
+    }
+  }
+
+  backend "gcs" {
+    bucket = "tfstate-central"
+    prefix = "gcp/global"
+  }
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}</code>
+              </div>
+            </section>
+
+            <section id="gcp-networking" class="tf-section">
+              <div class="tf-section-header">
+                <h2>2. Networking</h2>
+                <span class="tf-badge">VPC</span>
+              </div>
+              <p class="tf-tagline">
+                GCP networking is project-based: VPC per project or shared VPC. Terraform options:
+                <code>for_each</code> across regions, object variables for subnet definitions.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Concept</th>
+                    <th>Service</th>
+                    <th>Resources</th>
+                    <th>Language Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>VPC</td>
+                    <td>Virtual Private Cloud</td>
+                    <td><code>google_compute_network</code></td>
+                    <td>Boolean for auto_subnetworks, naming via <code>format</code>.</td>
+                  </tr>
+                  <tr>
+                    <td>Subnets</td>
+                    <td>Regional subnets</td>
+                    <td><code>google_compute_subnetwork</code></td>
+                    <td><code>for_each</code> on subnet map, <code>cidrsubnet</code> for addresses.</td>
+                  </tr>
+                  <tr>
+                    <td>Hybrid connectivity</td>
+                    <td>Cloud Router + Cloud NAT</td>
+                    <td><code>google_compute_router</code>, <code>google_compute_router_nat</code></td>
+                    <td>Objects for NAT configuration, <code>for_each</code> for multiple NATs.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="tf-code">
+                <code>locals {
+  subnets = {
+    "gke-primary" = {
+      region = "us-central1"
+      cidr   = "10.0.0.0/20"
+    }
+    "app-backend" = {
+      region = "us-central1"
+      cidr   = "10.0.16.0/20"
+    }
+  }
+}
+
+resource "google_compute_network" "vpc" {
+  name                    = "${var.environment}-vpc"
+  auto_create_subnetworks = false
+}
+
+resource "google_compute_subnetwork" "subnet" {
+  for_each      = local.subnets
+  name          = each.key
+  ip_cidr_range = each.value.cidr
+  region        = each.value.region
+  network       = google_compute_network.vpc.id
+}</code>
+              </div>
+            </section>
+
+            <section id="gcp-compute" class="tf-section">
+              <div class="tf-section-header">
+                <h2>3. Compute & GKE</h2>
+                <span class="tf-badge">GCE / GKE</span>
+              </div>
+              <p class="tf-tagline">
+                Instances, managed instance groups (MIGs), and GKE clusters. Terraform options:
+                templates, <code>for_each</code> over groups, object configs for node pools.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>Instances:</strong> <code>google_compute_instance</code>.</li>
+                <li><strong>MIGs:</strong> <code>google_compute_instance_template</code>, <code>google_compute_region_instance_group_manager</code>.</li>
+                <li><strong>GKE:</strong> <code>google_container_cluster</code>, <code>google_container_node_pool</code>.</li>
+              </ul>
+            </section>
+
+            <section id="gcp-iam" class="tf-section">
+              <div class="tf-section-header">
+                <h2>4. IAM & Folder Structure</h2>
+                <span class="tf-badge">IAM</span>
+              </div>
+              <p class="tf-tagline">
+                IAM policies in GCP are list-based bindings: Terraform maps these as <code>google_project_iam_*</code>
+                and <code>google_folder_iam_*</code> resources, usually driven by maps and loops.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Scope</th>
+                    <th>Resource</th>
+                    <th>Use</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Project</td>
+                    <td><code>google_project_iam_binding</code>, <code>google_project_iam_member</code></td>
+                    <td>Assign roles to groups / service accounts.</td>
+                  </tr>
+                  <tr>
+                    <td>Folder</td>
+                    <td><code>google_folder_iam_member</code></td>
+                    <td>Higher-level policy for a group of projects.</td>
+                  </tr>
+                  <tr>
+                    <td>Org</td>
+                    <td><code>google_organization_iam_member</code></td>
+                    <td>Org-wide SRE, audit, security roles.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section id="gcp-storage" class="tf-section">
+              <div class="tf-section-header">
+                <h2>5. Storage & Data</h2>
+                <span class="tf-badge">GCS / DB / BigQuery</span>
+              </div>
+              <p class="tf-tagline">
+                GCS, Cloud SQL, and BigQuery store your data; Terraform options define redundancy,
+                encryption, and access control via IAM.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>GCS:</strong> <code>google_storage_bucket</code>, IAM members.</li>
+                <li><strong>Cloud SQL:</strong> <code>google_sql_database_instance</code>, <code>google_sql_user</code>.</li>
+                <li><strong>BigQuery:</strong> <code>google_bigquery_dataset</code>, <code>google_bigquery_table</code>.</li>
+              </ul>
+            </section>
+
+            <section id="gcp-security" class="tf-section">
+              <div class="tf-section-header">
+                <h2>6. Security & Logging</h2>
+                <span class="tf-badge">Guardrails</span>
+              </div>
+              <p class="tf-tagline">
+                Org-wide logging and security posture via log sinks, KMS, and monitoring alerts.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>KMS:</strong> <code>google_kms_key_ring</code>, <code>google_kms_crypto_key</code>.</li>
+                <li><strong>Logging:</strong> <code>google_logging_project_sink</code>, <code>google_logging_organization_sink</code>.</li>
+                <li><strong>Monitoring:</strong> <code>google_monitoring_alert_policy</code>, <code>google_monitoring_notification_channel</code>.</li>
+              </ul>
+            </section>
+
+            <section id="gcp-patterns" class="tf-section">
+              <div class="tf-section-header">
+                <h2>7. CCoE Patterns for GCP</h2>
+                <span class="tf-badge">Patterns</span>
+              </div>
+              <p class="tf-tagline">
+                Typical patterns you’ll cross-link from your main CCoE decision logic.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Pattern</th>
+                    <th>Scope</th>
+                    <th>Terraform Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Org / Folder Bootstrap</td>
+                    <td>Org + folders</td>
+                    <td>Org/folder modules, <code>for_each</code> over folders, IAM bindings per folder.</td>
+                  </tr>
+                  <tr>
+                    <td>Secure Court Project</td>
+                    <td>One project per tenant</td>
+                    <td>Project module, VPC module, logging sink module; object inputs for court metadata.</td>
+                  </tr>
+                  <tr>
+                    <td>Data Lake + Analytics</td>
+                    <td>Project / folder</td>
+                    <td>GCS + BigQuery modules, IAM policies for analysts, retention configs.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <div class="footer-note">
+        GCP Terraform map for the Architect's Toolkit.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

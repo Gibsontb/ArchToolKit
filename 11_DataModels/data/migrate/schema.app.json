@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ATK Migration App",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner": {
+      "type": "string"
+    },
+    "criticality": {
+      "type": "string"
+    },
+    "rtoHours": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "rpoHours": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "primaryStack": {
+      "type": "string"
+    },
+    "osRuntime": {
+      "type": "string"
+    },
+    "database": {
+      "type": "string"
+    },
+    "vendor": {
+      "type": "string"
+    },
+    "identity": {
+      "type": "string"
+    },
+    "integrationCount": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "dataSizeGb": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "compliance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dataSovereigntyRequired": {
+      "type": "boolean"
+    },
+    "architecturePattern": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "flags": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "ratings": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

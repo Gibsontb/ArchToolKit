@@ -1,0 +1,4 @@
+name,owner,criticality,rtoHours,rpoHours,workloadType,enterpriseStandardCloud,primaryStack,osRuntime,database,vendor,integrationCount,dataSizeGb,identity,compliance,dataSovereigntyRequired,notes
+Case Management System,Courts IT,Mission Critical,4,1,General LOB App,azure,.NET (Core/Modern),Windows Server 2022,SQL Server,Microsoft,22,1200,Active Directory (AD),cjis;fedramp_moderate,true,Core case system with many integrations
+Public Website,Digital Team,High,24,4,Public Web,aws,Node.js,Ubuntu 22.04,PostgreSQL,Custom Built,8,50,OIDC,,false,Static + API backend
+Legacy HR,HR IT,Medium,48,24,General LOB App,,PowerBuilder,Windows Server 2012,Oracle,Other Vendor,5,200,LDAP,sox,false,End-of-life in 12 months

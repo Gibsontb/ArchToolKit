@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "generated_time": "2026-01-13T14:41:31.487Z",
+    "version": "dc-enrich/0.1.0",
+    "export_name": "manual"
+  },
+  "inputs": {
+    "target": {
+      "cloud": "aws",
+      "region": "us-east-1",
+      "naming_prefix": "manual"
+    },
+    "policy": {}
+  },
+  "network": {
+    "vpcs": [
+      {
+        "name": "atk-primary",
+        "cidr": null,
+        "subnets": [
+          {
+            "name": "VLAN100-App",
+            "cidr": null,
+            "role": "private",
+            "source_segment_id": "seg-001",
+            "vlan_id": 100
+          }
+        ]
+      }
+    ]
+  },
+  "compute": {
+    "workloads": [
+      {
+        "name": "app01",
+        "source_vm_id": "vm-001",
+        "sizing": {
+          "vcpus": 4,
+          "ram_gb": 16
+        },
+        "recommendation": {
+          "aws": {
+            "instance": "m7i.xlarge",
+            "family": "m7i",
+            "notes": []
+          }
+        },
+        "networks": [
+          "seg-001"
+        ],
+        "datastores": [
+          "ds-01"
+        ],
+        "utilization": {
+          "cpu_avg_pct": null,
+          "cpu_max_pct": null,
+          "ram_avg_pct": null,
+          "ram_active_gb": null
+        }
+      }
+    ]
+  },
+  "explain": {
+    "warnings": [
+      "Missing CIDR for segment 'VLAN100-App' (seg-001). Set overrides.network_overrides.segment_map.seg-001.cidr"
+    ]
+  }
+}

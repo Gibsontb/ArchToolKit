@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Migration Portfolio Dashboard · CDK Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#050816;
+      --card:#0b1020;
+      --card2:#0f1730;
+      --muted:#9ca3af;
+      --text:#e5e7eb;
+      --accent:#6366f1;
+      --good:#22c55e;
+      --warn:#f59e0b;
+      --danger:#ef4444;
+      --border:rgba(255,255,255,0.12);
+      --shadow:0 12px 40px rgba(0,0,0,0.35);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+    body{
+      margin:0;
+      background: radial-gradient(1200px 700px at 10% 10%, rgba(99,102,241,0.18), transparent 55%),
+                  radial-gradient(900px 600px at 90% 10%, rgba(34,197,94,0.12), transparent 55%),
+                  radial-gradient(900px 700px at 50% 90%, rgba(245,158,11,0.10), transparent 60%),
+                  var(--bg);
+      color: var(--text);
+      min-height:100vh;
+    }
+    a{ color:inherit; text-decoration:none; }
+    .wrap{ max-width: 1400px; margin: 0 auto; padding: 22px; }
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:14px; padding:14px 16px; border:1px solid var(--border);
+      background: rgba(11,16,32,0.75); backdrop-filter: blur(10px);
+      border-radius: 16px; box-shadow: var(--shadow);
+      flex-wrap:wrap;
+    }
+    .brand{ display:flex; flex-direction:column; gap:2px; min-width: 280px; }
+    .brand h1{ margin:0; font-size: 18px; letter-spacing: 0.3px; }
+    .brand p{ margin:0; color: var(--muted); font-size: 12px; }
+    .actions{ display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+    .btn{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:9px 12px; border-radius: 12px;
+      border:1px solid var(--border);
+      background: rgba(15,23,48,0.85);
+      font-weight: 700; font-size: 12px;
+      cursor:pointer;
+    }
+    .btn:hover{ border-color: rgba(99,102,241,0.55); }
+    .btn.primary{ background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.45); }
+    .btn.good{ background: rgba(34,197,94,0.18); border-color: rgba(34,197,94,0.45); }
+    .btn.warn{ background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.45); }
+    .grid{
+      display:grid; grid-template-columns: 0.9fr 1.1fr; gap: 16px;
+      margin-top: 16px;
+    }
+    @media (max-width: 1050px){ .grid{ grid-template-columns: 1fr; } }
+    .card{
+      border:1px solid var(--border);
+      background: rgba(11,16,32,0.72);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card .hd{
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(15,23,48,0.55);
+      display:flex; align-items:center; justify-content:space-between; gap: 10px;
+    }
+    .card .hd h2{ margin:0; font-size: 14px; letter-spacing: 0.2px; }
+    .card .bd{ padding: 14px 16px; }
+    .kpis{
+      display:grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+    }
+    @media (max-width: 1050px){ .kpis{ grid-template-columns: repeat(2, 1fr); } }
+    .kpi{
+      border:1px solid rgba(255,255,255,0.12);
+      background: rgba(15,23,48,0.55);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .kpi .v{ font-size: 18px; font-weight: 900; }
+    .kpi .k{ font-size: 12px; color: var(--muted); margin-top: 4px; }
+    label{ display:block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input, select, textarea{
+      width: 100%;
+      padding: 10px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(5,8,22,0.60);
+      color: var(--text);
+      outline: none;
+      box-sizing: border-box;
+    }
+    textarea{ min-height: 120px; resize: vertical; }
+    .row{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 1050px){ .row{ grid-template-columns: 1fr; } }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding: 6px 10px; border-radius:999px;
+      font-size:12px; border:1px solid var(--border);
+      background: rgba(15,23,48,0.75);
+    }
+    .small{ font-size: 12px; color: var(--muted); }
+    .divider{ height:1px; background: rgba(255,255,255,0.10); margin: 12px 0; }
+    table{
+      width:100%;
+      border-collapse: separate;
+      border-spacing: 0 8px;
+      font-size: 12px;
+    }
+    th{
+      text-align:left;
+      color: var(--muted);
+      font-weight: 800;
+      padding: 6px 10px;
+    }
+    td{
+      padding: 10px 10px;
+      background: rgba(5,8,22,0.55);
+      border-top: 1px solid rgba(255,255,255,0.10);
+      border-bottom: 1px solid rgba(255,255,255,0.10);
+    }
+    tr td:first-child{
+      border-left: 1px solid rgba(255,255,255,0.10);
+      border-top-left-radius: 12px;
+      border-bottom-left-radius: 12px;
+    }
+    tr td:last-child{
+      border-right: 1px solid rgba(255,255,255,0.10);
+      border-top-right-radius: 12px;
+      border-bottom-right-radius: 12px;
+    }
+    .tag{
+      display:inline-flex; align-items:center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(99,102,241,0.12);
+      font-weight: 900;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .tag.good{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.25); }
+    .tag.warn{ background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.25); }
+    .tag.danger{ background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.25); }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .controls{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    @media (max-width: 1050px){ .controls{ grid-template-columns: 1fr; } }
+    .hint{ padding: 10px; border-radius: 12px; border:1px solid rgba(255,255,255,0.10); background: rgba(15,23,48,0.45); }
+    .dangerbox{ border-color: rgba(239,68,68,0.30); background: rgba(239,68,68,0.10); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1>Migration Portfolio Dashboard</h1>
+        <p>Load exported app JSON records and/or import an inventory CSV → wave plan + routing + risk.</p>
+      </div>
+      <div class="actions">
+        <a class="btn" href="index.html">← Toolkit Home</a>
+        <a class="btn primary" href="application-migration.html">Run Single App Evaluation ↗</a>
+        <button class="btn good" id="btnExportCsv">Export Portfolio CSV</button>
+        <button class="btn warn" id="btnExportJson">Export Portfolio JSON</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="hd">
+          <h2>Load / Import</h2>
+          <div class="pill"><strong>Inputs</strong> <span class="small">client-side only</span></div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div>
+              <label>Load App Records (JSON exported from Application Migration page)</label>
+              <input id="jsonFiles" type="file" accept=".json,application/json" multiple />
+              <div class="small">Select multiple <span class="mono">app-migration-*.json</span> files.</div>
+            </div>
+            <div>
+              <label>Import Inventory (CSV)</label>
+              <input id="csvFile" type="file" accept=".csv,text/csv" />
+              <div class="small">If you only have an inventory, import CSV and the dashboard will create draft backlog entries.</div>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="controls">
+            <div>
+              <label>Wave Planning Mode</label>
+              <select id="waveMode">
+                <option value="default" selected>Default (risk + readiness)</option>
+                <option value="fast">Fast Exit (favor Rehost/Replatform early)</option>
+                <option value="modernize">Modernize First (favor Refactor)</option>
+              </select>
+            </div>
+            <div>
+              <label>Filter: Target Cloud</label>
+              <select id="fCloud">
+                <option value="" selected>(all)</option>
+                <option>AWS</option>
+                <option>AZURE</option>
+                <option>GCP</option>
+                <option>OCI</option>
+              </select>
+            </div>
+            <div>
+              <label>Filter: Course of Action</label>
+              <select id="fRoute">
+                <option value="" selected>(all)</option>
+                <option>Rehost</option>
+                <option>Replatform</option>
+                <option>Refactor</option>
+                <option>Repurchase</option>
+                <option>Retain</option>
+                <option>Retire</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="row">
+            <div class="hint">
+              <div class="pill"><strong>CSV template</strong> <span class="small">copy/paste</span></div>
+              <div class="small mono" style="margin-top:8px;">
+name,owner,criticality,rtoHours,rpoHours,workloadType,enterpriseStandardCloud,primaryStack,osRuntime,database,vendor,integrationCount,dataSizeGb,identity,compliance,dataSovereigntyRequired,notes
+              </div>
+              <div class="small" style="margin-top:8px;">
+                <strong>compliance</strong> should be semicolon-separated (e.g., <span class="mono">cjis;fedramp</span>).<br/>
+                <strong>criticality</strong> values: Low, Medium, High, Mission Critical.
+              </div>
+            </div>
+            <div class="hint dangerbox">
+              <div class="pill"><strong>Wave outputs</strong> <span class="small">how to use</span></div>
+              <div class="small" style="margin-top:8px;">
+                Wave planning is a triage tool. For each app, validate assumptions with discovery (dependencies, data flows, licensing, compliance).<br/>
+                Use the exported portfolio CSV/JSON to build your execution backlog and governance artifacts.
+              </div>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+          <button class="btn primary" id="btnRecalc">Recalculate Waves</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <h2>Portfolio KPIs</h2>
+          <div class="pill"><strong>Summary</strong></div>
+        </div>
+        <div class="bd">
+          <div class="kpis">
+            <div class="kpi"><div class="v" id="kTotal">0</div><div class="k">Apps Loaded</div></div>
+            <div class="kpi"><div class="v" id="kWave0">0</div><div class="k">Wave 0 (Foundations)</div></div>
+            <div class="kpi"><div class="v" id="kWave1">0</div><div class="k">Wave 1 (Low risk)</div></div>
+            <div class="kpi"><div class="v" id="kWave2">0</div><div class="k">Wave 2 (Medium)</div></div>
+            <div class="kpi"><div class="v" id="kWave3">0</div><div class="k">Wave 3 (High / Modernize)</div></div>
+            <div class="kpi"><div class="v" id="kBlocked">0</div><div class="k">Blocked (Retain/Policy)</div></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="pill"><strong>Wave Guide</strong> <span class="small">default mode</span></div>
+          <div class="small" style="margin-top:8px;">
+            <span class="tag good">Wave 1</span> low risk + high readiness (quick wins).<br/>
+            <span class="tag warn">Wave 2</span> medium risk + moderate readiness (core migrations).<br/>
+            <span class="tag danger">Wave 3</span> high risk or heavy refactor (modernization / long tail).<br/>
+            <span class="tag">Wave 0</span> prerequisites: landing zone, identity, logging, network, tools, governance.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="hd">
+        <h2>Portfolio Table</h2>
+        <div class="pill"><strong>Filterable</strong> <span class="small">sort via export</span></div>
+      </div>
+      <div class="bd">
+        <table>
+          <thead>
+            <tr>
+              <th>Wave</th>
+              <th>Application</th>
+              <th>Route</th>
+              <th>Cloud</th>
+              <th>Readiness</th>
+              <th>Risk</th>
+              <th>Criticality</th>
+              <th>RTO/RPO</th>
+              <th>Integrations</th>
+              <th>Compliance</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div class="small">Tip: export CSV to sort/group in Excel and build your execution plan.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provider catalogs + engine (for scoring drafts from CSV when needed) -->
+  <script src="cloud-decision-logic-kit/data/aws-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/azure-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/gcp-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/oci-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/app-migration-engine.js"></script>
+
+  <script>
+    (function(){
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+
+      let records = []; // normalized portfolio records
+
+      function download(filename, content, mime){
+        const blob = new Blob([content], { type: mime || "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = filename;
+        document.body.appendChild(a);
+        a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+      }
+
+      function parseCsv(text){
+        // Simple CSV parser (supports quoted values, commas inside quotes)
+        const rows = [];
+        let i = 0, field = "", row = [], inQuotes = false;
+        while (i < text.length){
+          const c = text[i];
+          if (c === '"'){
+            if (inQuotes && text[i+1] === '"'){ field += '"'; i += 2; continue; }
+            inQuotes = !inQuotes; i++; continue;
+          }
+          if (!inQuotes && (c === "," || c === "\n" || c === "\r")){
+            if (c === "\r" && text[i+1] === "\n") i++;
+            row.push(field); field = "";
+            if (c === "\n" || c === "\r"){
+              // finalize row if not empty
+              if (row.length > 1 || row[0].trim() !== "") rows.push(row);
+              row = [];
+            }
+            i++; continue;
+          }
+          field += c; i++;
+        }
+        row.push(field);
+        if (row.length > 1 || row[0].trim() !== "") rows.push(row);
+        if (!rows.length) return [];
+        const header = rows[0].map(h => (h||"").trim());
+        const out = [];
+        for (let r=1; r<rows.length; r++){
+          const obj = {};
+          for (let c=0; c<header.length; c++){
+            obj[header[c]] = (rows[r][c] ?? "").trim();
+          }
+          out.push(obj);
+        }
+        return out;
+      }
+
+      function riskBadge(app){
+        let points = 0;
+        const crit = (app.criticality || "").trim();
+        if (crit === "Mission Critical") points += 3;
+        else if (crit === "High") points += 2;
+        else if (crit === "Medium") points += 1;
+
+        const rto = Number(app.rtoHours || 0);
+        const rpo = Number(app.rpoHours || 0);
+        if (rto <= 4) points += 2;
+        else if (rto <= 24) points += 1;
+        if (rpo <= 1) points += 2;
+        else if (rpo <= 4) points += 1;
+
+        const ic = Number(app.integrationCount || 0);
+        if (ic >= 20) points += 2;
+        else if (ic >= 10) points += 1;
+
+        const cmpRaw = (app.compliance || []);
+        const cmpNorm = (window.CDK && window.CDK.appMigration && window.CDK.appMigration.normalizeCompliance)
+          ? window.CDK.appMigration.normalizeCompliance(cmpRaw)
+          : (Array.isArray(cmpRaw) ? cmpRaw : String(cmpRaw||"").split(";"));
+        const cmp = cmpNorm.map(x => String(x).toLowerCase());
+        if (cmp.includes("fedramp") || cmp.includes("itars") || cmp.includes("cjis")) points += 2;
+        else if (cmp.length) points += 1;
+
+        if (points >= 8) return { label: "High", cls: "danger" };
+        if (points >= 5) return { label: "Medium", cls: "warn" };
+        return { label: "Low", cls: "good" };
+      }
+
+      function wavePlan(app, route, readiness, risk, mode){
+        // Wave 0 is foundational (not app-specific); we still show 0 only for blocked apps that need prerequisites
+        if (route === "Retain") return { wave: "Blocked", rationale: "Policy/constraint blocks migration now." };
+        if (route === "Retire" || route === "Repurchase") return { wave: "Wave 1", rationale: "Quick outcome (retire/replace) reduces footprint early." };
+
+        const riskScore = (risk.label === "High") ? 3 : (risk.label === "Medium" ? 2 : 1);
+
+        // Mode adjustments
+        if (mode === "fast"){
+          if (route === "Rehost" && riskScore <= 2) return { wave: "Wave 1", rationale: "Fast exit: rehost early for quick DC reduction." };
+          if (route === "Replatform" && riskScore <= 2) return { wave: "Wave 1", rationale: "Fast exit: replatform early when manageable." };
+        }
+        if (mode === "modernize"){
+          if (route === "Refactor" && riskScore <= 2 && readiness >= 70) return { wave: "Wave 1", rationale: "Modernize first: high readiness refactors early." };
+        }
+
+        // Default
+        if (riskScore === 1 && readiness >= 55) return { wave: "Wave 1", rationale: "Low risk + moderate/high readiness." };
+        if (riskScore <= 2 && readiness >= 40) return { wave: "Wave 2", rationale: "Core migration band." };
+        return { wave: "Wave 3", rationale: "High risk and/or heavy modernization." };
+      }
+
+      function normalizeFromRecord(rec){
+        // rec matches CDK.appMigration.buildRecord()
+        const app = rec.application || {};
+        const res = rec.results || {};
+        const route = res.route || (res.courseOfAction && res.courseOfAction.route) || "—";
+        const cloud = (res.targetCloud && res.targetCloud.cloud) || "—";
+        const readiness = Number(res.readinessScore ?? app.readinessScore ?? 0);
+        const complianceRaw = Array.isArray(app.compliance) ? app.compliance : (String(app.compliance||"").split(";").map(s=>s.trim()).filter(Boolean));
+        const compliance = (window.CDK && window.CDK.appMigration && window.CDK.appMigration.normalizeCompliance)
+          ? window.CDK.appMigration.normalizeCompliance(complianceRaw)
+          : complianceRaw;
+        const risk = riskBadge({ ...app, compliance });
+
+        return {
+          source: "json",
+          application: { ...app, compliance },
+          route,
+          cloud,
+          readiness,
+          risk
+        };
+      }
+
+      function draftFromCsvRow(row){
+        // Create a minimal app model; compute score using engine with default ratings if none
+        const app = {
+          name: row.name || "",
+          owner: row.owner || "",
+          criticality: row.criticality || "Medium",
+          rtoHours: Number(row.rtoHours || 24),
+          rpoHours: Number(row.rpoHours || 4),
+          workloadType: row.workloadType || "General LOB App",
+          enterpriseStandardCloud: (row.enterpriseStandardCloud || "").toLowerCase(),
+          primaryStack: row.primaryStack || "",
+          osRuntime: row.osRuntime || "",
+          database: row.database || "",
+          vendor: row.vendor || "",
+          integrationCount: Number(row.integrationCount || 0),
+          dataSizeGb: Number(row.dataSizeGb || 0),
+          identity: row.identity || "",
+          compliance: String(row.compliance||"").split(";").map(s=>s.trim()).filter(Boolean),
+          dataSovereigntyRequired: String(row.dataSovereigntyRequired||"").toLowerCase() === "true",
+          notes: row.notes || "",
+          flags: {
+            isObsolete: false,
+            noLongerUsed: false,
+            vendorSaaSAvailable: false,
+            mustStayOnPrem: false,
+            hardwareBound: false,
+            mainframeBound: false
+          },
+          // Default ratings: "unknown" => 3s; user can run real evaluation later
+          ratings: { cloudCompatibility: 3, technicalDebt: 3, vendorLockRisk: 3, complianceComplexity: 3, architectureModularity: 3, refactorEffort: 3 }
+        };
+
+        const score = (window.CDK && window.CDK.appMigration) ? window.CDK.appMigration.computeReadinessScore(app.ratings) : 50;
+        app.readinessScore = score;
+        const classification = (window.CDK && window.CDK.appMigration) ? window.CDK.appMigration.classifyCourse(app) : { route: "Rehost", rationale: "Draft" };
+        const cloud = (window.CDK && window.CDK.appMigration) ? window.CDK.appMigration.targetCloud(app) : { cloud: "AWS", rationale: "Draft" };
+
+        const route = classification.route;
+        const risk = riskBadge(app);
+
+        return {
+          source: "csv",
+          application: app,
+          route,
+          cloud: cloud.cloud,
+          readiness: score,
+          risk,
+          draft: true
+        };
+      }
+
+      function applyFilters(list){
+        const cloud = $("fCloud").value;
+        const route = $("fRoute").value;
+        return list.filter(r => {
+          if (cloud && r.cloud !== cloud) return false;
+          if (route && r.route !== route) return false;
+          return true;
+        });
+      }
+
+      function render(){
+        const mode = $("waveMode").value;
+        const filtered = applyFilters(records);
+
+        const tbody = $("tbody");
+        tbody.innerHTML = "";
+
+        // KPI counts use full dataset
+        const counts = { total: records.length, wave0: 0, wave1: 0, wave2: 0, wave3: 0, blocked: 0 };
+        for (const r of records){
+          const wp = wavePlan(r.application, r.route, r.readiness, r.risk, mode);
+          if (wp.wave === "Wave 0") counts.wave0++;
+          else if (wp.wave === "Wave 1") counts.wave1++;
+          else if (wp.wave === "Wave 2") counts.wave2++;
+          else if (wp.wave === "Wave 3") counts.wave3++;
+          else if (wp.wave === "Blocked") counts.blocked++;
+        }
+        $("kTotal").textContent = String(counts.total);
+        $("kWave0").textContent = String(counts.wave0);
+        $("kWave1").textContent = String(counts.wave1);
+        $("kWave2").textContent = String(counts.wave2);
+        $("kWave3").textContent = String(counts.wave3);
+        $("kBlocked").textContent = String(counts.blocked);
+
+        for (const r of filtered){
+          const app = r.application;
+          const wp = wavePlan(app, r.route, r.readiness, r.risk, mode);
+
+          const tr = document.createElement("tr");
+
+          function td(inner){ const x = document.createElement("td"); x.innerHTML = inner; return x; }
+
+          const waveTagCls = wp.wave === "Wave 1" ? "good" : (wp.wave === "Wave 2" ? "warn" : (wp.wave === "Wave 3" ? "danger" : ""));
+          const riskCls = r.risk.cls;
+          const compliance = (app.compliance || []).join(";");
+
+          tr.appendChild(td(`<span class="tag ${waveTagCls}">${wp.wave}</span>`));
+          tr.appendChild(td(`<div style="font-weight:900">${(app.name||"—")}${r.draft ? " <span class='tag'>DRAFT</span>" : ""}</div><div class="small">${(app.owner||"")}</div>`));
+          tr.appendChild(td(`<span class="tag">${r.route}</span>`));
+          tr.appendChild(td(`<span class="tag">${r.cloud}</span>`));
+          tr.appendChild(td(`<span class="tag">${String(r.readiness)}</span>`));
+          tr.appendChild(td(`<span class="tag ${riskCls}">${r.risk.label}</span>`));
+          tr.appendChild(td(`${app.criticality || "—"}`));
+          tr.appendChild(td(`${Number(app.rtoHours||0)}/${Number(app.rpoHours||0)}h`));
+          tr.appendChild(td(`${Number(app.integrationCount||0)}`));
+          tr.appendChild(td(`<span class="mono">${compliance || ""}</span>`));
+
+          tbody.appendChild(tr);
+        }
+      }
+
+      async function loadJsonFiles(files){
+        const list = [];
+        for (const f of files){
+          const text = await f.text();
+          try{
+            const obj = JSON.parse(text);
+            list.push(normalizeFromRecord(obj));
+          }catch(e){
+            // ignore bad file
+          }
+        }
+        records = records.concat(list);
+        render();
+      }
+
+      async function loadCsv(file){
+        const text = await file.text();
+        const rows = parseCsv(text);
+        const list = rows.map(draftFromCsvRow);
+        records = records.concat(list);
+        render();
+      }
+
+      function exportPortfolioJson(){
+        const mode = $("waveMode").value;
+        const out = records.map(r => {
+          const wp = wavePlan(r.application, r.route, r.readiness, r.risk, mode);
+          return {
+            wave: wp.wave,
+            waveRationale: wp.rationale,
+            source: r.source,
+            draft: !!r.draft,
+            route: r.route,
+            cloud: r.cloud,
+            readiness: r.readiness,
+            risk: r.risk.label,
+            application: r.application
+          };
+        });
+        download("migration-portfolio.json", JSON.stringify({ generatedAt: new Date().toISOString(), items: out }, null, 2), "application/json");
+      }
+
+      function exportPortfolioCsv(){
+        const mode = $("waveMode").value;
+        const header = [
+          "wave","route","cloud","readiness","risk","name","owner","criticality","rtoHours","rpoHours","integrationCount","dataSizeGb","primaryStack","osRuntime","database","vendor","identity","compliance","dataSovereigntyRequired","notes","source","draft"
+        ];
+        const lines = [header.join(",")];
+
+        function esc(v){
+          const s = String(v ?? "");
+          if (/[,"\n\r]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+          return s;
+        }
+
+        for (const r of records){
+          const app = r.application;
+          const wp = wavePlan(app, r.route, r.readiness, r.risk, mode);
+          const row = [
+            wp.wave, r.route, r.cloud, r.readiness, r.risk.label,
+            app.name, app.owner, app.criticality, app.rtoHours, app.rpoHours,
+            app.integrationCount, app.dataSizeGb,
+            app.primaryStack, app.osRuntime, app.database, app.vendor,
+            app.identity, (app.compliance||[]).join(";"),
+            app.dataSovereigntyRequired ? "true" : "false",
+            app.notes, r.source, r.draft ? "true" : "false"
+          ].map(esc);
+          lines.push(row.join(","));
+        }
+        download("migration-portfolio.csv", lines.join("\n"), "text/csv");
+      }
+
+      $("jsonFiles").addEventListener("change", async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        await loadJsonFiles(files);
+        e.target.value = "";
+      });
+
+      $("csvFile").addEventListener("change", async (e) => {
+        const file = (e.target.files || [])[0];
+        if (!file) return;
+        await loadCsv(file);
+        e.target.value = "";
+      });
+
+      $("btnRecalc").addEventListener("click", render);
+      $("fCloud").addEventListener("change", render);
+      $("fRoute").addEventListener("change", render);
+      $("waveMode").addEventListener("change", render);
+
+      $("btnExportJson").addEventListener("click", exportPortfolioJson);
+      $("btnExportCsv").addEventListener("click", exportPortfolioCsv);
+
+      // initial render
+      render();
+    })();
+  </script>
+</body>
+</html>

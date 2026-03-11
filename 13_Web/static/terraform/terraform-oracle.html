@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Oracle Cloud Terraform Map · Architect's Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1a2735, #050608 60%);
+      color: #f5f5f5;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1100px;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 16px;
+      padding: 1.25rem 1.5rem 1.5rem;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+
+    h1.page-title {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 600;
+      outline: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+
+    .page-title-hint {
+      font-size: 0.75rem;
+      color: #9ca3af;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      justify-content: flex-end;
+    }
+
+    .btn-chip {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.35rem 0.95rem;
+      font-size: 0.78rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.05s ease;
+      white-space: nowrap;
+    }
+
+    .btn-chip:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .workspace {
+      flex: 1;
+      margin-top: 0.25rem;
+      border-radius: 0.9rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      padding: 0;
+      font-size: 0.9rem;
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      min-height: 480px;
+      box-sizing: border-box;
+      background: radial-gradient(circle at top left, rgba(37,99,235,0.14), transparent 55%);
+      overflow: hidden;
+    }
+
+    .footer-note {
+      margin-top: 0.5rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+
+    .tf-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .tf-nav {
+      width: 230px;
+      min-width: 200px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.35);
+      padding: 1rem;
+      box-sizing: border-box;
+      backdrop-filter: blur(18px);
+      background: linear-gradient(180deg, rgba(15,23,42,0.7), rgba(15,23,42,0.35));
+      overflow-y: auto;
+    }
+
+    .tf-nav h2 {
+      margin: 0 0 0.4rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .tf-nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+
+    .tf-nav-section-label {
+      margin-top: 0.7rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .tf-nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.83rem;
+    }
+
+    .tf-nav li {
+      margin: 0;
+    }
+
+    .tf-nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.22rem 0.4rem;
+      border-radius: 999px;
+      transition: background 0.12s ease, color 0.12s ease, transform 0.04s ease;
+    }
+
+    .tf-nav a:hover {
+      background: rgba(37, 99, 235, 0.25);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+
+    .tf-content {
+      flex: 1;
+      padding: 1rem 1.25rem 1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    .tf-section {
+      margin-bottom: 1.6rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
+    }
+
+    .tf-section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0.2rem;
+      padding-bottom: 0.2rem;
+    }
+
+    .tf-section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .tf-section-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+
+    .tf-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96,165,250,0.7);
+      color: #bfdbfe;
+      background: rgba(15,23,42,0.9);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .tf-tagline {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      margin: 0.35rem 0 0.5rem;
+    }
+
+    .tf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 0.45rem;
+      border-radius: 0.6rem;
+      overflow: hidden;
+    }
+
+    .tf-table thead {
+      background: rgba(15,23,42, 0.9);
+    }
+
+    .tf-table th,
+    .tf-table td {
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      padding: 0.35rem 0.45rem;
+      text-align: left;
+    }
+
+    .tf-table th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .tf-table td {
+      color: #d1d5db;
+    }
+
+    .tf-code {
+      margin-top: 0.4rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      background: #020617;
+      border-radius: 0.6rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      overflow-x: auto;
+      line-height: 1.35;
+    }
+
+    .tf-code code {
+      white-space: pre;
+    }
+
+    .tf-list {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+    }
+
+    .tf-list li {
+      margin-bottom: 0.12rem;
+    }
+
+    details.tf-details {
+      border-radius: 0.7rem;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15,23,42,0.82);
+      padding: 0.5rem 0.75rem 0.6rem;
+      font-size: 0.83rem;
+      margin-top: 0.55rem;
+    }
+
+    details.tf-details > summary {
+      cursor: pointer;
+      list-style: none;
+      outline: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    details.tf-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .tf-summary-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .tf-summary-label {
+      font-weight: 500;
+    }
+
+    .tf-summary-meta {
+      font-size: 0.7rem;
+      color: #9ca3af;
+    }
+
+    .tf-details-body {
+      margin-top: 0.55rem;
+      border-top: 1px dashed rgba(55, 65, 81, 0.9);
+      padding-top: 0.45rem;
+      display: grid;
+      gap: 0.4rem;
+    }
+
+    .tf-note {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      margin-top: 0.4rem;
+    }
+
+    @media (max-width: 900px) {
+      .tf-layout {
+        flex-direction: column;
+      }
+      .tf-nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+      }
+    }
+
+    @media (max-width: 700px) {
+      .shell {
+        padding: 1.25rem;
+      }
+      .card {
+        padding: 1rem 1rem 1.25rem;
+      }
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .footer-note {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <header>
+        <div class="title-block">
+          <h1 class="page-title" contenteditable="true" spellcheck="false">Oracle Cloud Terraform Map · Architect's Toolkit</h1>
+          <div class="page-title-hint">Rename to match a specific tenancy or domain if needed.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn-chip" type="button" onclick="window.location.href='../terraform.html'">
+            ← Terraform Encyclopedia
+          </button>
+          <button class="btn-chip" type="button" onclick="window.location.href='../index.html'">
+            ⌂ Main menu
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="tf-layout">
+          <nav class="tf-nav">
+            <h2>Oracle Cloud Map</h2>
+            <p>Tenancy, compartments, VCNs, compute, IAM – mapped to <code>oci_*</code>.</p>
+
+            <div class="tf-nav-section-label">Domains</div>
+            <ul>
+              <li><a href="#oci-overview">1. OCI Terraform Overview</a></li>
+              <li><a href="#oci-identity">2. Tenancy & Compartments</a></li>
+              <li><a href="#oci-networking">3. Networking & Connectivity</a></li>
+              <li><a href="#oci-compute">4. Compute & Pools</a></li>
+              <li><a href="#oci-storage">5. Storage & Backup</a></li>
+              <li><a href="#oci-database">6. Databases</a></li>
+              <li><a href="#oci-security">7. Security & Observability</a></li>
+              <li><a href="#oci-patterns">8. CCoE Patterns</a></li>
+            </ul>
+          </nav>
+
+          <main class="tf-content">
+            <section id="oci-overview" class="tf-section">
+              <div class="tf-section-header">
+                <h2>1. OCI Terraform Overview</h2>
+                <span class="tf-badge">OCI</span>
+              </div>
+              <p class="tf-tagline">
+                Terraform + <code>oci</code> provider = tenancy layout, compartments, VCNs, workloads, and
+                guardrails defined as code.
+              </p>
+              <ul class="tf-list">
+                <li><strong>Provider:</strong> <code>oci</code> with config profile or env vars.</li>
+                <li><strong>Key concept:</strong> <em>compartments</em> as isolation boundaries, <em>VCNs</em> as network boundaries.</li>
+                <li><strong>State:</strong> typically remote (S3/GCS/remote) or local file when labbing.</li>
+              </ul>
+              <div class="tf-code">
+                <code>terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~&gt; 6.0"
+    }
+  }
+}
+
+provider "oci" {
+  # Uses default profile from ~/.oci/config or env variables
+  region = var.region
+}</code>
+              </div>
+            </section>
+
+            <section id="oci-identity" class="tf-section">
+              <div class="tf-section-header">
+                <h2>2. Tenancy & Compartments</h2>
+                <span class="tf-badge">Identity</span>
+              </div>
+              <p class="tf-tagline">
+                In OCI, compartments are the primary unit of isolation. Terraform options are mostly about
+                building the right tree with <code>for_each</code> and enforcing naming and tags.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Concept</th>
+                    <th>Service</th>
+                    <th>Resources</th>
+                    <th>Language Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Tenancy root</td>
+                    <td>Tenancy</td>
+                    <td><code>data "oci_identity_tenancy"</code></td>
+                    <td>Use as root for compartment tree; queried as data source.</td>
+                  </tr>
+                  <tr>
+                    <td>Compartments</td>
+                    <td>Identity</td>
+                    <td><code>oci_identity_compartment</code></td>
+                    <td><code>for_each</code> across a map describing your standard layout (security, shared, apps, etc.).</td>
+                  </tr>
+                  <tr>
+                    <td>Groups & Policies</td>
+                    <td>Identity</td>
+                    <td><code>oci_identity_group</code>, <code>oci_identity_user</code>, <code>oci_identity_policy</code></td>
+                    <td>Policy statements as strings; build from <code>templatefile</code> or local lists.</td>
+                  </tr>
+                  <tr>
+                    <td>Dynamic Groups</td>
+                    <td>Identity</td>
+                    <td><code>oci_identity_dynamic_group</code></td>
+                    <td>Condition strings derived from tags; use <code>format</code> and <code>join</code>.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: Compartment Layout with for_each</span>
+                    <span class="tf-summary-meta">Court / environment-friendly.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>data "oci_identity_tenancy" "root" {
+  tenancy_id = var.tenancy_ocid
+}
+
+locals {
+  compartments = {
+    "security" = {
+      description = "Central security & audit"
+      parent_ocid = data.oci_identity_tenancy.root.id
+    }
+    "shared-services" = {
+      description = "Shared court services"
+      parent_ocid = data.oci_identity_tenancy.root.id
+    }
+    "court-a" = {
+      description = "Court A workloads"
+      parent_ocid = data.oci_identity_tenancy.root.id
+    }
+  }
+}
+
+resource "oci_identity_compartment" "comp" {
+  for_each                = local.compartments
+  compartment_id          = each.value.parent_ocid
+  description             = each.value.description
+  name                    = each.key
+  enable_delete           = false
+  freeform_tags           = var.common_tags
+}</code>
+                  </div>
+                  <p class="tf-note">
+                    This is the main “option surface”: <code>locals</code> + <code>for_each</code> + object vars to describe
+                    your whole compartment model once.
+                  </p>
+                </div>
+              </details>
+            </section>
+
+            <section id="oci-networking" class="tf-section">
+              <div class="tf-section-header">
+                <h2>3. Networking & Connectivity</h2>
+                <span class="tf-badge">VCN</span>
+              </div>
+              <p class="tf-tagline">
+                VCNs, subnets, DRGs, local peering, and FastConnect – Terraform stitches these together
+                using modules and <code>cidr*</code> helpers.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Concept</th>
+                    <th>Service</th>
+                    <th>Resources</th>
+                    <th>Language Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>VCN</td>
+                    <td>Networking</td>
+                    <td><code>oci_core_vcn</code></td>
+                    <td>Take CIDR and DNS label via variables; typically wrapped in VCN module.</td>
+                  </tr>
+                  <tr>
+                    <td>Subnets</td>
+                    <td>Networking</td>
+                    <td><code>oci_core_subnet</code></td>
+                    <td><code>for_each</code> on a subnet map; <code>cidrsubnet</code> to carve from VCN CIDR.</td>
+                  </tr>
+                  <tr>
+                    <td>Routing</td>
+                    <td>Route Tables, Gateways</td>
+                    <td><code>oci_core_route_table</code>, <code>oci_core_internet_gateway</code>, <code>oci_core_nat_gateway</code>, <code>oci_core_service_gateway</code></td>
+                    <td>Use modules for “public”, “private”, “service” route tables with standard rules.</td>
+                  </tr>
+                  <tr>
+                    <td>Security</td>
+                    <td>Security Lists, NSGs</td>
+                    <td><code>oci_core_security_list</code>, <code>oci_core_network_security_group</code>, <code>oci_core_network_security_group_security_rule</code></td>
+                    <td>Rules built via <code>for_each</code> from a rules map; reuse objects across environments.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section id="oci-compute" class="tf-section">
+              <div class="tf-section-header">
+                <h2>4. Compute & Pools</h2>
+                <span class="tf-badge">Compute</span>
+              </div>
+              <p class="tf-tagline">
+                Instances, instance configs, and pools are the main building blocks. Terraform options
+                are about standardized shapes, images, and placement rules.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>Instances:</strong> <code>oci_core_instance</code>.</li>
+                <li><strong>Instance configs & pools:</strong> <code>oci_core_instance_configuration</code>, <code>oci_core_instance_pool</code>.</li>
+                <li><strong>Placement:</strong> AD/FD placement configs as variables.</li>
+              </ul>
+
+              <div class="tf-code">
+                <code>variable "app_shape" {
+  type        = string
+  description = "OCI compute shape for the app instances"
+  default     = "VM.Standard.E4.Flex"
+}
+
+resource "oci_core_instance" "app" {
+  availability_domain = var.ad
+  compartment_id      = var.compartment_ocid
+  display_name        = "${var.environment}-app01"
+  shape               = var.app_shape
+
+  create_vnic_details {
+    subnet_id = var.app_subnet_id
+  }
+
+  source_details {
+    source_type = "image"
+    source_id   = var.app_image_ocid
+  }
+
+  metadata = {
+    user_data = base64encode(templatefile("${path.module}/cloud_init.tpl", {
+      env = var.environment
+    }))
+  }
+}</code>
+              </div>
+            </section>
+
+            <section id="oci-storage" class="tf-section">
+              <div class="tf-section-header">
+                <h2>5. Storage & Backup</h2>
+                <span class="tf-badge">Storage</span>
+              </div>
+              <p class="tf-tagline">
+                Object Storage, block volumes, and file storage give you evidence buckets, logs,
+                and durable block storage for VMs and DBs.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Service</th>
+                    <th>Resources</th>
+                    <th>Key Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Object Storage</td>
+                    <td><code>oci_objectstorage_bucket</code></td>
+                    <td>Storage tier, encryption, retention, event notifications.</td>
+                  </tr>
+                  <tr>
+                    <td>Block Volumes</td>
+                    <td><code>oci_core_volume</code>, <code>oci_core_volume_attachment</code></td>
+                    <td>Size, performance, backup policy assignments.</td>
+                  </tr>
+                  <tr>
+                    <td>File Storage</td>
+                    <td><code>oci_file_storage_file_system</code>, <code>oci_file_storage_mount_target</code></td>
+                    <td>Subnet, export options; often encapsulated in “shared storage” module.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section id="oci-database" class="tf-section">
+              <div class="tf-section-header">
+                <h2>6. Databases</h2>
+                <span class="tf-badge">DB</span>
+              </div>
+              <p class="tf-tagline">
+                Autonomous Database and DB Systems for OLTP/OLAP workloads; Terraform options capture
+                sizing, licensing, and network placement.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>Autonomous DB:</strong> <code>oci_database_autonomous_database</code>.</li>
+                <li><strong>DB Systems:</strong> <code>oci_database_db_system</code>, <code>oci_database_db_home</code>.</li>
+              </ul>
+            </section>
+
+            <section id="oci-security" class="tf-section">
+              <div class="tf-section-header">
+                <h2>7. Security & Observability</h2>
+                <span class="tf-badge">Guardrails</span>
+              </div>
+              <p class="tf-tagline">
+                Vault, KMS keys, logging, and events implement your baseline security posture.
+              </p>
+
+              <ul class="tf-list">
+                <li><strong>Vault & Keys:</strong> <code>oci_kms_vault</code>, <code>oci_kms_key</code>.</li>
+                <li><strong>Logging:</strong> <code>oci_logging_log</code>, <code>oci_logging_log_group</code>, <code>oci_logging_log_saved_search</code>.</li>
+                <li><strong>Events:</strong> <code>oci_events_rule</code>, <code>oci_events_filter</code>.</li>
+              </ul>
+
+              <p class="tf-note">
+                As with other clouds, you usually build one “security baseline” module that turns
+                these on for each tenancy/compartment according to CCoE policy.
+              </p>
+            </section>
+
+            <section id="oci-patterns" class="tf-section">
+              <div class="tf-section-header">
+                <h2>8. CCoE Patterns for Oracle Cloud</h2>
+                <span class="tf-badge">Patterns</span>
+              </div>
+              <p class="tf-tagline">
+                Typical OCI-focused patterns you can cross-link from your main Terraform Encyclopedia
+                and CCoE decision logic.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Pattern</th>
+                    <th>Scope</th>
+                    <th>Terraform Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Court Landing Zone in OCI</td>
+                    <td>Tenancy + compartments + VCN</td>
+                    <td>Compartment module (<code>for_each</code> over courts), VCN module per court with <code>cidrsubnet</code>-driven subnets.</td>
+                  </tr>
+                  <tr>
+                    <td>Evidence Storage Enclave (OCI)</td>
+                    <td>Compartments + Object Storage</td>
+                    <td>“Evidence bucket” module: <code>oci_objectstorage_bucket</code> with encryption, retention, event rules, <code>prevent_destroy</code>.</td>
+                  </tr>
+                  <tr>
+                    <td>Hybrid Court Connectivity</td>
+                    <td>On-prem ↔ OCI</td>
+                    <td>VCN + DRG + IPsec/FastConnect modules, network security defined with <code>for_each</code> over rule sets.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <div class="footer-note">
+        Oracle Cloud Terraform map for the Architect's Toolkit.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "type": "powercli-csvset",
+    "importedAt": "2025-12-22T00:00:00-05:00",
+    "files": []
+  },
+  "datacenter": {
+    "name": "",
+    "location": "",
+    "timezone": "America/New_York"
+  },
+  "vcenter": {
+    "name": "",
+    "version": "",
+    "build": ""
+  },
+  "clusters": [],
+  "hosts": [],
+  "datastores": [],
+  "networks": [],
+  "vms": [],
+  "applications": [],
+  "dependencies": []
+}

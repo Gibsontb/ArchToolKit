@@ -1,0 +1,2 @@
+wave,route,targetCloud,readinessScore,risk,name,owner,criticality,rtoHours,rpoHours,integrationCount,dataSizeGb,primaryStack,osRuntime,database,vendor,identity,compliance,dataSovereigntyRequired,notes
+Wave 3,Replatform,AZURE,50,High,Case Management System,Courts IT,Mission Critical,4,1,22,1200,.NET (Core/Modern),Windows Server 2022,SQL Server,Microsoft,Active Directory (AD),cjis;fedramp_moderate;commercial,true,Core case system with many integrations

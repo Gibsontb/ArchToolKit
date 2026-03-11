@@ -1,0 +1,39 @@
+{
+  "migration": {
+    "wave_mode": "default"
+  },
+  "portfolio": [
+    {
+      "name": "Case Management System",
+      "owner": "Courts IT",
+      "criticality": "Mission Critical",
+      "rtoHours": 4,
+      "rpoHours": 1,
+      "primaryStack": ".NET",
+      "osRuntime": "Windows Server 2019",
+      "database": "SQL Server",
+      "vendor": "Microsoft",
+      "identity": "Active Directory (AD)",
+      "integrationCount": 22,
+      "dataSizeGb": 1200,
+      "compliance": [
+        "cjis",
+        "fedramp_moderate"
+      ],
+      "dataSovereigntyRequired": true,
+      "architecturePattern": "Monolith",
+      "notes": "Example portfolio item",
+      "flags": {
+        "mustStayOnPrem": false
+      },
+      "ratings": {
+        "cloudCompatibility": 3,
+        "technicalDebt": 3,
+        "vendorLockRisk": 3,
+        "complianceComplexity": 4,
+        "architectureModularity": 2,
+        "refactorEffort": 4
+      }
+    }
+  ]
+}

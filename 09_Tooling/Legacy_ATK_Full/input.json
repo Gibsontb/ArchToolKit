@@ -1,0 +1,52 @@
+{
+  "cloud": "aws",
+  "data_classification": [
+    "CJIS"
+  ],
+  "internet_exposed": true,
+  "rto_minutes": 30,
+  "migration": {
+    "wave_mode": "default"
+  },
+  "portfolio": [
+    {
+      "name": "Case Management System",
+      "owner": "Courts IT",
+      "criticality": "Mission Critical",
+      "rtoHours": 4,
+      "rpoHours": 1,
+      "workloadType": "General LOB App",
+      "enterpriseStandardCloud": "azure",
+      "primaryStack": ".NET (Core/Modern)",
+      "osRuntime": "Windows Server 2022",
+      "database": "SQL Server",
+      "vendor": "Microsoft",
+      "integrationCount": 22,
+      "dataSizeGb": 1200,
+      "identity": "Active Directory (AD)",
+      "compliance": [
+        "cjis",
+        "fedramp_moderate"
+      ],
+      "dataSovereigntyRequired": true,
+      "architecturePattern": "Monolith",
+      "notes": "Core case system with many integrations",
+      "flags": {
+        "isObsolete": false,
+        "noLongerUsed": false,
+        "vendorSaaSAvailable": false,
+        "mustStayOnPrem": false,
+        "hardwareBound": false,
+        "mainframeBound": false
+      },
+      "ratings": {
+        "cloudCompatibility": 3,
+        "technicalDebt": 3,
+        "vendorLockRisk": 3,
+        "complianceComplexity": 4,
+        "architectureModularity": 2,
+        "refactorEffort": 4
+      }
+    }
+  ]
+}

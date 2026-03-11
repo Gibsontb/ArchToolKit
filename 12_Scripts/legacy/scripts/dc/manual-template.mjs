@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import { die, toRel, writeJson, parseArgsPositional } from "./_util.mjs";
+
+const args = parseArgsPositional(process.argv, "Usage: npm run dc:manual-template -- data/imports/manual/dc-import.manual.json");
+const outPath = path.resolve(process.cwd(), args[0]);
+
+if (fs.existsSync(outPath)) {
+  die(`Refusing to overwrite existing file:\n${toRel(outPath)}\nMove it or delete it, then re-run.`);
+}
+
+const template = {
+  meta: {
+    source: "manual-entry",
+    export_time: new Date().toISOString(),
+    notes: "Manual datacenter entry template (fill in hosts, vms, segments, datastores).",
+    export_name: "manual"
+  },
+  compute: {
+    clusters: [{ cluster_id: "cl-01", name: "MainCluster", ha_enabled: null, drs_enabled: null }],
+    hosts: [{
+      host_id: "esx-01",
+      name: "esx01",
+      cluster_id: "cl-01",
+      cpu_sockets: 2,
+      cpu_cores: 32,
+      cpu_model: null,
+      ram_gb: 512,
+      esxi_version: null,
+      power_state: null,
+      nics: [
+        { name: "vmnic0", speed_mbps: 10000, connected: true },
+        { name: "vmnic1", speed_mbps: 10000, connected: true }
+      ]
+    }],
+    vms: [{
+      vm_id: "vm-001",
+      name: "app01",
+      power_state: "poweredOn",
+      guest_os: null,
+      vcpus: 4,
+      ram_gb: 16,
+      cluster_id: "cl-01",
+      host_id: "esx-01",
+      datastores: ["ds-01"],
+      networks: ["seg-001"],
+      nics: [{ nic_id: "nic-1", segment_id: "seg-001", mac: null, connected: true }],
+      disks: [{ disk_id: "d1", size_gb: 200, thin_provisioned: true, datastore: "ds-01" }],
+      utilization: { cpu_avg_pct: null, cpu_max_pct: null, ram_avg_pct: null, ram_active_gb: null },
+      tags: {}
+    }]
+  },
+  network: {
+    segments: [{
+      segment_id: "seg-001",
+      name: "VLAN100-App",
+      vlan_id: 100,
+      switch_name: null,
+      mtu: 1500,
+      cidr: null,
+      gateway: null,
+      zone: "private"
+    }]
+  },
+  storage: {
+    datastores: [{
+      datastore_id: "ds-01",
+      name: "Datastore01",
+      type: "vmfs",
+      capacity_gb: 10000,
+      used_gb: 6500,
+      tier: null,
+      storage_policy: null
+    }]
+  }
+};
+
+writeJson(outPath, template);
+console.log("✅ Wrote manual template:", toRel(outPath));

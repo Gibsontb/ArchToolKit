@@ -1,0 +1,58 @@
+{
+  "generatedAt": "2026-02-12T22:03:08.587Z",
+  "items": [
+    {
+      "application": {
+        "name": "Case Management System",
+        "owner": "Courts IT",
+        "criticality": "Mission Critical",
+        "rtoHours": 4,
+        "rpoHours": 1,
+        "workloadType": "General LOB App",
+        "enterpriseStandardCloud": "azure",
+        "primaryStack": ".NET (Core/Modern)",
+        "osRuntime": "Windows Server 2022",
+        "database": "SQL Server",
+        "vendor": "Microsoft",
+        "integrationCount": 22,
+        "dataSizeGb": 1200,
+        "identity": "Active Directory (AD)",
+        "compliance": [
+          "cjis",
+          "fedramp_moderate",
+          "commercial"
+        ],
+        "dataSovereigntyRequired": true,
+        "architecturePattern": "Monolith",
+        "notes": "Core case system with many integrations",
+        "flags": {
+          "isObsolete": false,
+          "noLongerUsed": false,
+          "vendorSaaSAvailable": false,
+          "mustStayOnPrem": false,
+          "hardwareBound": false,
+          "mainframeBound": false
+        },
+        "ratings": {
+          "cloudCompatibility": 3,
+          "technicalDebt": 3,
+          "vendorLockRisk": 3,
+          "complianceComplexity": 4,
+          "architectureModularity": 2,
+          "refactorEffort": 4
+        },
+        "readinessScore": 50
+      },
+      "results": {
+        "readinessScore": 50,
+        "route": "Replatform",
+        "routeRationale": "Moderate readiness; prefer platform improvements over pure rehost.",
+        "targetCloud": "AZURE",
+        "cloudRationale": "Enterprise standard cloud preference.",
+        "risk": "High",
+        "wave": "Wave 3",
+        "waveRationale": "High risk and/or heavy modernization."
+      }
+    }
+  ]
+}

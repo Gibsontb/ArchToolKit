@@ -1,0 +1,41 @@
+{
+  "services": [
+    {
+      "serviceId": "objectstorage",
+      "name": "Object Storage",
+      "aliases": [
+        "Object Storage"
+      ]
+    },
+    {
+      "serviceId": "compute",
+      "name": "Compute",
+      "aliases": [
+        "Compute"
+      ]
+    },
+    {
+      "serviceId": "identity",
+      "name": "Identity",
+      "aliases": [
+        "IAM",
+        "Identity and Access Management"
+      ]
+    },
+    {
+      "serviceId": "monitoring",
+      "name": "Monitoring",
+      "aliases": [
+        "Monitoring"
+      ]
+    },
+    {
+      "serviceId": "vault",
+      "name": "Vault",
+      "aliases": [
+        "Key Management",
+        "Secrets"
+      ]
+    }
+  ]
+}

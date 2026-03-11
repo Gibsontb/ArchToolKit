@@ -1,0 +1,4482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ansible Playbook Generator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #050810;
+      --panel: #0f172a;
+      --panel-alt: #020617;
+      --border: #1f2937;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56,189,248,0.12);
+      --text: #e5e7eb;
+      --text-muted: #9ca3af;
+      --danger: #f97373;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 6px;
+      --shadow-soft: 0 18px 45px rgba(15,23,42,0.9);
+      --shadow-subtle: 0 10px 30px rgba(15,23,42,0.55);
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      background: radial-gradient(circle at top, #020617 0, #020617 180px, #020617 200px, #000 500px);
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .app {
+      max-width: 1440px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-end;
+      padding: 14px 18px;
+      background: linear-gradient(135deg, #020617 0, #020617 40%, #020617 65%, #020617 100%);
+      border-radius: 18px;
+      border: 1px solid rgba(148,163,184,0.24);
+      box-shadow: var(--shadow-soft);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .app-header::before {
+      content: "";
+      position: absolute;
+      inset: -120px;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(56,189,248,0.32) 0, transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(129,140,248,0.26) 0, transparent 50%);
+      mix-blend-mode: screen;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    .app-header-main {
+      position: relative;
+      z-index: 1;
+    }
+
+    .app-title {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pill {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.6);
+      color: var(--text-muted);
+      background: rgba(15,23,42,0.7);
+    }
+
+    .app-subtitle {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--text-muted);
+      max-width: 640px;
+    }
+
+    .app-header-controls {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .format-toggle {
+      display: inline-flex;
+      padding: 3px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid rgba(148,163,184,0.35);
+    }
+
+    .format-toggle button {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .format-toggle button.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .format-toggle button span.icon {
+      font-size: 13px;
+    }
+
+    .hint-chip {
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      opacity: 0.9;
+    }
+
+    .hint-chip .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 10px rgba(56,189,248,0.9);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(260px, 380px) minmax(360px, 1fr);
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    @media (max-width: 1080px) {
+      .grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 840px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: radial-gradient(circle at top left, rgba(15,23,42,0.95) 0, #020617 60%, #020617 100%);
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(15,23,42,0.95);
+      box-shadow: var(--shadow-subtle);
+      padding: 12px 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top, rgba(15,23,42,0.9) 0, transparent 55%);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    .panel-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #9ca3af;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.55);
+      color: var(--text-muted);
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .field-label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: #d1d5db;
+    }
+
+    .field .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    select,
+    input[type="text"],
+    input[type="number"] {
+      background: rgba(15,23,42,0.9);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(31,41,55,0.95);
+      padding: 6px 8px;
+      font-size: 12px;
+      color: var(--text);
+      outline: none;
+      width: 100%;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    select:focus,
+    input[type="text"]:focus,
+    input[type="number"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(56,189,248,0.45);
+    }
+
+    .input-inline {
+      display: flex;
+      gap: 6px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .tiny-pill {
+      font-size: 10px;
+      padding: 2px 5px;
+      border-radius: 999px;
+      border: 1px solid rgba(55,65,81,0.9);
+      color: var(--text-muted);
+      background: rgba(15,23,42,0.9);
+    }
+
+    .button-row {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    button {
+      font-family: inherit;
+    }
+
+    .btn {
+      border-radius: 999px;
+      font-size: 12px;
+      padding: 6px 10px;
+      border: 1px solid rgba(31,41,55,0.95);
+      background: rgba(15,23,42,0.95);
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+    }
+
+    .btn-primary {
+      border-color: rgba(56,189,248,0.85);
+      background: radial-gradient(circle at top, rgba(56,189,248,0.35) 0, rgba(8,47,73,0.9) 60%, #020617 100%);
+      color: #e0f2fe;
+    }
+
+    .btn:hover {
+      transform: translateY(-0.5px);
+      border-color: rgba(148,163,184,0.9);
+    }
+
+    .btn-primary:hover {
+      border-color: rgba(56,189,248,1);
+      box-shadow: 0 0 18px rgba(56,189,248,0.55);
+    }
+
+    .btn-ghost {
+      border-style: dashed;
+      border-color: rgba(55,65,81,0.9);
+      color: var(--text-muted);
+    }
+
+    .btn-sm {
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+
+    
+/* Main menu return button */
+.btn-mainmenu{
+  border-color: rgba(148,163,184,.28);
+  background: rgba(2,6,23,.18);
+  color: rgba(226,232,240,.78);
+  font-weight: 650;
+}
+.btn-mainmenu:hover{
+  border-color: rgba(56,189,248,.38);
+  color: rgba(226,232,240,.92);
+}
+.btn-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .btn-icon span {
+      font-size: 14px;
+    }
+
+    .code-panel {
+      background: linear-gradient(145deg, #020617 0, #020617 40%, #020617 100%);
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(15,23,42,0.95);
+      box-shadow: var(--shadow-soft);
+      padding: 10px 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .code-panel::before {
+      content: "";
+      position: absolute;
+      inset: -150px;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(56,189,248,0.18) 0, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(129,140,248,0.18) 0, transparent 50%);
+      opacity: 0.9;
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .code-panel-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      gap: 8px;
+    }
+
+    .code-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .code-header-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #9ca3af;
+    }
+
+    .code-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .code-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 10px 10px;
+      border-radius: var(--radius-md);
+      background: rgba(15,23,42,0.96);
+      border: 1px solid rgba(31,41,55,0.95);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #e5e7eb;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre;
+    }
+
+    .command-bar {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: var(--radius-md);
+      background: rgba(15,23,42,0.9);
+      border: 1px dashed rgba(55,65,81,0.9);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .command-text {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #9ca3af;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .status-line {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(74,222,128,0.95);
+      box-shadow: 0 0 10px rgba(74,222,128,0.75);
+    }
+
+    .status-dot.error {
+      background: var(--danger);
+      box-shadow: 0 0 10px rgba(248,113,113,0.85);
+    }
+
+    .error-text {
+      color: var(--danger);
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <div class="app-header-main">
+      <div class="app-title">
+        <span>ANSIBLE PLAYBOOK GENERATOR</span>
+        <span class="pill">Multi-Cloud · Scripts · Playbooks</span>
+      </div>
+      <p class="app-subtitle">
+        Pick platform → service / blueprint → inputs. The generator builds a ready-to-run Ansible playbook and can emit YAML or JSON.
+        Platforms include AWS, Azure, Google Cloud, Oracle, VMware, plus generic Linux/Windows config.
+      </p>
+    </div>
+    <div class="app-header-controls">
+      
+      <button type="button" class="btn btn-sm btn-mainmenu" onclick="window.location.href='index.html'">← Main menu</button>
+<div class="format-toggle" id="formatToggle">
+        <button type="button" data-format="yaml" class="active">
+          <span class="icon">🧾</span> YAML
+        </button>
+        <button type="button" data-format="json">
+          <span class="icon">{}</span> JSON
+        </button>
+      </div>
+      <div class="format-toggle" id="outputKindToggle">
+        <button type="button" data-output-kind="playbook" class="active">
+          <span class="icon">📘</span> Playbook
+        </button>
+        <button type="button" data-output-kind="vars">
+          <span class="icon">🔧</span> Vars only
+        </button>
+      </div>
+      <div class="hint-chip">
+        <span class="dot"></span>
+        <span>All templates are data-driven; extend in <code>SCENARIO_DEFS</code>. Use “Vars only” to export just the variables for the first play.</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- PLATFORM / SERVICE PICKER -->
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="panel-header">
+          <div class="panel-title">Platform &amp; Service / Blueprint</div>
+          <div class="badge">Step 1</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="platformSelect">Target Platform / Provider</label>
+            <span class="hint">Cloud or on-prem target</span>
+          </div>
+          <select id="platformSelect">
+            <!-- populated by JS -->
+          </select>
+          <div class="pill-row">
+            <span class="tiny-pill">AWS</span>
+            <span class="tiny-pill">Azure</span>
+            <span class="tiny-pill">Google Cloud</span>
+            <span class="tiny-pill">Oracle Cloud</span>
+            <span class="tiny-pill">VMware vSphere</span>
+            <span class="tiny-pill">Linux</span>
+            <span class="tiny-pill">Windows</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="scenarioSelect">Service / Blueprint</label>
+            <span class="hint">What are we trying to do?</span>
+          </div>
+          <select id="scenarioSelect">
+            <!-- populated by JS -->
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="hostsInput">Inventory hosts pattern</label>
+            <span class="hint">From your <code>inventory.yml</code></span>
+          </div>
+          <input id="hostsInput" type="text" value="all" />
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="filenameInput">Suggested playbook filename</label>
+            <span class="hint">Used in CLI hint</span>
+          </div>
+          <input id="filenameInput" type="text" value="playbook_generated.yml" />
+        </div>
+
+        <div class="button-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="resetButton">Reset</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PARAMETER FORM -->
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="panel-header">
+          <div class="panel-title">Parameters &amp; Options</div>
+          <div class="badge">Step 2</div>
+        </div>
+
+        <div id="paramsArea">
+          <!-- dynamic inputs rendered here -->
+        </div>
+
+        <div class="button-row">
+          <button type="button" class="btn btn-primary" id="generateButton">
+            <span>⚙️</span>
+            <span>Generate Playbook</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- GENERATED CODE -->
+    <section class="code-panel">
+      <div class="code-panel-inner">
+        <div class="code-header">
+          <div class="code-header-left">
+            <div class="code-header-title">Generated Ansible Code</div>
+            <div class="code-meta" id="codeMeta">
+              Waiting for input…
+            </div>
+          </div>
+          <div class="code-actions">
+            <button type="button" class="btn btn-sm" id="downloadButton">
+              ⬇️ Download
+            </button>
+            <button type="button" class="btn btn-icon" id="copyButton" title="Copy to clipboard">
+              <span>📋</span>
+            </button>
+          </div>
+        </div>
+
+        <pre id="outputPre"># Select a platform & service / blueprint, adjust parameters, then click “Generate Playbook”.</pre>
+
+        <div class="command-bar">
+          <div class="command-text" id="commandHint">
+            ansible-playbook -i inventory.yml playbook_generated.yml
+          </div>
+          <button type="button" class="btn btn-sm btn-ghost" id="copyCommandButton">
+            Copy command
+          </button>
+        </div>
+
+        <div class="status-line" id="statusLine">
+          <span class="status-dot"></span>
+          <span>Idle — no errors.</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+   // -----------------------
+  // Helper option lists for dropdowns
+  // -----------------------
+
+  // AWS commercial + GovCloud (DoD IL5+)
+  // GovCloud region names are us-gov-east-1 and us-gov-west-1. :contentReference[oaicite:0]{index=0}
+  const AWS_REGIONS = [
+    // Core commercial US
+    "us-east-1",      // N. Virginia
+    "us-east-2",      // Ohio
+    "us-west-1",      // N. California
+    "us-west-2",      // Oregon,
+
+    // Popular non-US (kept from original)
+    "eu-central-1",   // Frankfurt
+    "eu-west-1",      // Ireland
+    "eu-west-2",      // London
+    "ap-southeast-1", // Singapore
+    "ap-southeast-2", // Sydney
+    "ap-northeast-1", // Tokyo
+
+    // AWS GovCloud (US) — DoD IL5-capable sovereign regions
+    // (separate partitions, ARNs use aws-us-gov). :contentReference[oaicite:1]{index=1}
+    "us-gov-east-1",  // AWS GovCloud (US-East)
+    "us-gov-west-1"   // AWS GovCloud (US-West)
+  ];
+
+  // Azure commercial + US Government + DoD + Secret (IL5 / IL6)
+  // IL5 PAs cover US Gov Arizona, Texas, Virginia and US DoD Central/East. :contentReference[oaicite:2]{index=2}
+  // Secret / IL6 regions are exposed as US Sec East / West / West Central. :contentReference[oaicite:3]{index=3}
+  const AZURE_LOCATIONS = [
+    // Core commercial
+    "eastus",
+    "eastus2",
+    "westus",
+    "westeurope",
+    "northeurope",
+    "uksouth",
+    "centralus",
+
+    // Azure US Government (FedRAMP High, DoD IL4/IL5)
+    "usgovvirginia",
+    "usgovtexas",
+    "usgovarizona",
+
+    // Azure Government DoD (IL5)
+    "usdodcentral",
+    "usdodeast",
+
+    // Azure Government Secret / National Security (IL6-focused)
+    // Note: exposed region codes; service availability varies by product.
+    "usseceast",
+    "ussecwest",
+    "ussecwestcentral"
+  ];
+
+  // GCP zones (commercial + IL5 via Assured Workloads US-only boundary)
+  // IL5 in GCP is implemented via an Assured Workloads IL5 control package
+  // that constrains you to US regions, not separate "gov" region names. :contentReference[oaicite:4]{index=4}
+  const GCP_ZONES = [
+    // US core
+    "us-central1-a",
+    "us-central1-b",
+    "us-central1-c",
+    "us-central1-f",
+
+    "us-east1-b",
+    "us-east1-c",
+    "us-east1-d",
+
+    "us-west1-a",
+    "us-west1-b",
+    "us-west1-c",
+
+    "us-west2-a",
+    "us-west2-b",
+    "us-west2-c",
+
+    // A couple of non-US kept for parity with original sample
+    "europe-west1-b",
+    "europe-west1-c"
+  ];
+
+  const BOOL_OPTIONS = [
+    { value: "true", label: "true" },
+    { value: "false", label: "false" }
+  ];
+
+
+  // -----------------------
+  // Data model: platforms & services / blueprints
+  // -----------------------
+  const SCENARIO_DEFS = {
+     aws: {
+      label: "Amazon Web Services (AWS)",
+      scenarios: {
+        ec2_instance: {
+          label: "Provision EC2 instance",
+          description: "Create an EC2 instance with a basic security group.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Target region"
+            },
+            { id: "instance_name", label: "Instance Name tag", type: "text", default: "web-01", hint: "Name tag" },
+            {
+              id: "instance_type",
+              label: "Instance type",
+              control: "select",
+              options: ["t3.micro", "t3.small", "t3.medium", "t3a.micro", "t3a.small", "t3a.medium"]
+                .map(v => ({ value: v, label: v })),
+              default: "t3.small",
+              hint: "Size"
+            },
+            { id: "ami_id", label: "AMI ID", type: "text", default: "ami-xxxxxxxx", hint: "AMI ID" },
+            { id: "key_name", label: "SSH key name", type: "text", default: "default", hint: "Key pair name" },
+            { id: "vpc_subnet_id", label: "Subnet ID", type: "text", default: "subnet-xxxx", hint: "VPC subnet" },
+            { id: "security_group_name", label: "Security group name", type: "text", default: "sg-web", hint: "SG name" },
+            { id: "allowed_http_cidr", label: "HTTP allowed CIDR", type: "text", default: "0.0.0.0/0", hint: "Lock this down in prod" }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Provision EC2 instance",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                instance_name: vals.instance_name,
+                instance_type: vals.instance_type,
+                ami_id: vals.ami_id,
+                key_name: vals.key_name,
+                vpc_subnet_id: vals.vpc_subnet_id,
+                security_group_name: vals.security_group_name,
+                allowed_http_cidr: vals.allowed_http_cidr
+              },
+              tasks: [
+                {
+                  name: "Ensure security group exists",
+                  "amazon.aws.ec2_security_group": {
+                    name: "{{ security_group_name }}",
+                    description: "Web security group",
+                    region: "{{ aws_region }}",
+                    rules: [
+                      { proto: "tcp", from_port: 22, to_port: 22, cidr_ip: "0.0.0.0/0" },
+                      { proto: "tcp", from_port: 80, to_port: 80, cidr_ip: "{{ allowed_http_cidr }}" }
+                    ]
+                  }
+                },
+                {
+                  name: "Launch EC2 instance",
+                  "amazon.aws.ec2_instance": {
+                    name: "{{ instance_name }}",
+                    region: "{{ aws_region }}",
+                    image_id: "{{ ami_id }}",
+                    instance_type: "{{ instance_type }}",
+                    key_name: "{{ key_name }}",
+                    vpc_subnet_id: "{{ vpc_subnet_id }}",
+                    security_group: "{{ security_group_name }}",
+                    wait: true
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        s3_bucket: {
+          label: "Create S3 bucket",
+          description: "Create S3 bucket with versioning and encryption.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Bucket region"
+            },
+            { id: "bucket_name", label: "Bucket name", type: "text", default: "court-archive-bucket", hint: "Globally unique" },
+            {
+              id: "enable_versioning",
+              label: "Enable versioning",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "true / false"
+            },
+            {
+              id: "sse_algorithm",
+              label: "SSE algorithm",
+              control: "select",
+              options: [
+                { value: "AES256", label: "AES256" },
+                { value: "aws:kms", label: "aws:kms" }
+              ],
+              default: "AES256",
+              hint: "Encryption"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create S3 bucket",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                bucket_name: vals.bucket_name,
+                enable_versioning: vals.enable_versioning === "true",
+                sse_algorithm: vals.sse_algorithm
+              },
+              tasks: [
+                {
+                  name: "Create bucket",
+                  "amazon.aws.s3_bucket": {
+                    name: "{{ bucket_name }}",
+                    state: "present",
+                    region: "{{ aws_region }}"
+                  }
+                },
+                {
+                  name: "Configure versioning",
+                  "amazon.aws.s3_bucket": {
+                    name: "{{ bucket_name }}",
+                    region: "{{ aws_region }}",
+                    versioning: { Status: "{{ 'Enabled' if enable_versioning else 'Suspended' }}" }
+                  }
+                },
+                {
+                  name: "Configure default encryption",
+                  "amazon.aws.s3_bucket": {
+                    name: "{{ bucket_name }}",
+                    region: "{{ aws_region }}",
+                    encryption_configuration: {
+                      Rules: [
+                        {
+                          ApplyServerSideEncryptionByDefault: {
+                            SSEAlgorithm: "{{ sse_algorithm }}"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        vpc_baseline: {
+          label: "Create VPC + subnets",
+          description: "Baseline VPC with public/private subnets and an Internet Gateway.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "vpc_cidr", label: "VPC CIDR", type: "text", default: "10.0.0.0/16", hint: "CIDR block" },
+            { id: "public_cidr", label: "Public subnet CIDR", type: "text", default: "10.0.1.0/24", hint: "Public subnet" },
+            { id: "private_cidr", label: "Private subnet CIDR", type: "text", default: "10.0.2.0/24", hint: "Private subnet" },
+            { id: "name_prefix", label: "Name prefix", type: "text", default: "court-vpc", hint: "Tag prefix" }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create baseline VPC",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                vpc_cidr: vals.vpc_cidr,
+                public_cidr: vals.public_cidr,
+                private_cidr: vals.private_cidr,
+                name_prefix: vals.name_prefix
+              },
+              tasks: [
+                {
+                  name: "Create VPC",
+                  "amazon.aws.ec2_vpc_net": {
+                    name: "{{ name_prefix }}",
+                    cidr_block: "{{ vpc_cidr }}",
+                    region: "{{ aws_region }}",
+                    tags: { Name: "{{ name_prefix }}" }
+                  },
+                  register: "vpc"
+                },
+                {
+                  name: "Create Internet Gateway",
+                  "amazon.aws.ec2_vpc_igw": {
+                    vpc_id: "{{ vpc.vpc.id }}",
+                    region: "{{ aws_region }}",
+                    state: "present",
+                    tags: { Name: "{{ name_prefix }}-igw" }
+                  },
+                  register: "igw"
+                },
+                {
+                  name: "Create public subnet",
+                  "amazon.aws.ec2_vpc_subnet": {
+                    vpc_id: "{{ vpc.vpc.id }}",
+                    cidr: "{{ public_cidr }}",
+                    az: "{{ aws_region }}a",
+                    map_public: true,
+                    region: "{{ aws_region }}",
+                    tags: { Name: "{{ name_prefix }}-public" }
+                  },
+                  register: "public_subnet"
+                },
+                {
+                  name: "Create private subnet",
+                  "amazon.aws.ec2_vpc_subnet": {
+                    vpc_id: "{{ vpc.vpc.id }}",
+                    cidr: "{{ private_cidr }}",
+                    az: "{{ aws_region }}b",
+                    region: "{{ aws_region }}",
+                    tags: { Name: "{{ name_prefix }}-private" }
+                  },
+                  register: "private_subnet"
+                },
+                {
+                  name: "Create public route table",
+                  "amazon.aws.ec2_vpc_route_table": {
+                    vpc_id: "{{ vpc.vpc.id }}",
+                    region: "{{ aws_region }}",
+                    tags: { Name: "{{ name_prefix }}-public-rt" },
+                    subnets: ["{{ public_subnet.subnet.id }}"],
+                    routes: [
+                      { dest: "0.0.0.0/0", gateway_id: "{{ igw.gateway_id }}" }
+                    ]
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        // ------------------------
+        // NEW AWS BLUEPRINTS
+        // ------------------------
+
+        rds_instance: {
+          label: "RDS – Database instance",
+          description: "Create an RDS instance for a relational database.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "db_identifier", label: "DB identifier", type: "text", default: "court-rds-01", hint: "Instance ID" },
+            {
+              id: "engine",
+              label: "Engine",
+              control: "select",
+              options: [
+                { value: "mysql", label: "MySQL" },
+                { value: "postgres", label: "PostgreSQL" },
+                { value: "oracle-ee", label: "Oracle EE" }
+              ],
+              default: "postgres",
+              hint: "DB engine"
+            },
+            { id: "engine_version", label: "Engine version", type: "text", default: "15", hint: "e.g. 15, 8.0.36" },
+            {
+              id: "instance_class",
+              label: "Instance class",
+              control: "select",
+              options: [
+                "db.t3.micro",
+                "db.t3.small",
+                "db.t3.medium",
+                "db.m5.large"
+              ].map(v => ({ value: v, label: v })),
+              default: "db.t3.small",
+              hint: "Size"
+            },
+            { id: "allocated_storage", label: "Storage (GB)", type: "number", default: 20, hint: "Initial storage" },
+            { id: "master_username", label: "Master username", type: "text", default: "dbadmin", hint: "Admin user" },
+            { id: "master_password", label: "Master password", type: "text", default: "ChangeMe123!", hint: "Use a secret in real life" },
+            {
+              id: "publicly_accessible",
+              label: "Publicly accessible",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "true / false"
+            },
+            {
+              id: "multi_az",
+              label: "Multi-AZ",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "Enable Multi-AZ"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Provision RDS instance",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                db_identifier: vals.db_identifier,
+                engine: vals.engine,
+                engine_version: vals.engine_version,
+                instance_class: vals.instance_class,
+                allocated_storage: Number(vals.allocated_storage),
+                master_username: vals.master_username,
+                master_password: vals.master_password,
+                publicly_accessible: vals.publicly_accessible === "true",
+                multi_az: vals.multi_az === "true"
+              },
+              tasks: [
+                {
+                  name: "Create RDS instance",
+                  "amazon.aws.rds_instance": {
+                    region: "{{ aws_region }}",
+                    db_instance_identifier: "{{ db_identifier }}",
+                    engine: "{{ engine }}",
+                    engine_version: "{{ engine_version }}",
+                    db_instance_class: "{{ instance_class }}",
+                    allocated_storage: "{{ allocated_storage }}",
+                    master_username: "{{ master_username }}",
+                    master_user_password: "{{ master_password }}",
+                    multi_az: "{{ multi_az }}",
+                    publicly_accessible: "{{ publicly_accessible }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        dynamodb_table: {
+          label: "DynamoDB – Table",
+          description: "Create a DynamoDB table with a simple key schema.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "table_name", label: "Table name", type: "text", default: "CourtSessions", hint: "DynamoDB table name" },
+            { id: "hash_key_name", label: "Partition key name", type: "text", default: "CaseId", hint: "Hash key" },
+            {
+              id: "billing_mode",
+              label: "Billing mode",
+              control: "select",
+              options: [
+                { value: "PAY_PER_REQUEST", label: "On-demand" },
+                { value: "PROVISIONED", label: "Provisioned" }
+              ],
+              default: "PAY_PER_REQUEST",
+              hint: "Capacity mode"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create DynamoDB table",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                table_name: vals.table_name,
+                hash_key_name: vals.hash_key_name,
+                billing_mode: vals.billing_mode
+              },
+              tasks: [
+                {
+                  name: "Ensure DynamoDB table exists",
+                  "amazon.aws.dynamodb_table": {
+                    name: "{{ table_name }}",
+                    region: "{{ aws_region }}",
+                    hash_key_name: "{{ hash_key_name }}",
+                    hash_key_type: "S",
+                    billing_mode: "{{ billing_mode }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        sns_topic: {
+          label: "SNS – Topic + subscription",
+          description: "Create an SNS topic and subscribe an email endpoint.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "topic_name", label: "Topic name", type: "text", default: "court-notifications", hint: "Topic name" },
+            { id: "subscription_email", label: "Subscriber email", type: "text", default: "alerts@example.org", hint: "Email endpoint" }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create SNS topic and subscription",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                topic_name: vals.topic_name,
+                subscription_email: vals.subscription_email
+              },
+              tasks: [
+                {
+                  name: "Create SNS topic",
+                  "amazon.aws.sns_topic": {
+                    name: "{{ topic_name }}",
+                    region: "{{ aws_region }}"
+                  },
+                  register: "topic"
+                },
+                {
+                  name: "Subscribe email",
+                  "amazon.aws.sns_subscription": {
+                    topic_arn: "{{ topic.topic_arn }}",
+                    protocol: "email",
+                    endpoint: "{{ subscription_email }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        sqs_queue: {
+          label: "SQS – Queue",
+          description: "Create an SQS queue for asynchronous workloads.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "queue_name", label: "Queue name", type: "text", default: "court-jobs-queue", hint: "Queue name" },
+            {
+              id: "visibility_timeout",
+              label: "Visibility timeout (sec)",
+              type: "number",
+              default: 30,
+              hint: "Default visibility timeout"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create SQS queue",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                queue_name: vals.queue_name,
+                visibility_timeout: Number(vals.visibility_timeout)
+              },
+              tasks: [
+                {
+                  name: "Ensure SQS queue exists",
+                  "amazon.aws.sqs_queue": {
+                    name: "{{ queue_name }}",
+                    region: "{{ aws_region }}",
+                    visibility_timeout: "{{ visibility_timeout }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        kms_key: {
+          label: "KMS – Customer managed key",
+          description: "Create a KMS CMK for encrypting court workloads.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "key_alias", label: "Key alias", type: "text", default: "alias/court-data-key", hint: "Alias name" },
+            { id: "description", label: "Key description", type: "text", default: "Court data encryption key", hint: "Description" }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create KMS key",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                key_alias: vals.key_alias,
+                description: vals.description
+              },
+              tasks: [
+                {
+                  name: "Create CMK",
+                  "amazon.aws.kms_key": {
+                    state: "present",
+                    alias: "{{ key_alias }}",
+                    description: "{{ description }}",
+                    region: "{{ aws_region }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        cloudwatch_alarm: {
+          label: "CloudWatch – CPU alarm",
+          description: "Create a CPUUtilization alarm for an EC2 instance.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region"
+            },
+            { id: "alarm_name", label: "Alarm name", type: "text", default: "HighCPU", hint: "Alarm name" },
+            { id: "instance_id", label: "Instance ID", type: "text", default: "i-xxxxxxxx", hint: "Target EC2 instance" },
+            {
+              id: "threshold",
+              label: "Threshold (%)",
+              type: "number",
+              default: 80,
+              hint: "CPU threshold"
+            },
+            {
+              id: "evaluation_periods",
+              label: "Evaluation periods",
+              type: "number",
+              default: 3,
+              hint: "Number of periods"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create CloudWatch CPU alarm",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                alarm_name: vals.alarm_name,
+                instance_id: vals.instance_id,
+                threshold: Number(vals.threshold),
+                evaluation_periods: Number(vals.evaluation_periods)
+              },
+              tasks: [
+                {
+                  name: "Ensure CPU alarm exists",
+                  "amazon.aws.cloudwatch_metric_alarm": {
+                    name: "{{ alarm_name }}",
+                    region: "{{ aws_region }}",
+                    state: "present",
+                    metric: "CPUUtilization",
+                    namespace: "AWS/EC2",
+                    statistic: "Average",
+                    comparison: ">=",
+                    threshold: "{{ threshold }}",
+                    period: 300,
+                    evaluation_periods: "{{ evaluation_periods }}",
+                    dimensions: {
+                      InstanceId: "{{ instance_id }}"
+                    }
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        cloudtrail_trail: {
+          label: "CloudTrail – Organization trail",
+          description: "Create or ensure a CloudTrail trail for auditing API calls.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "Home region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Trail home region"
+            },
+            { id: "trail_name", label: "Trail name", type: "text", default: "org-audit-trail", hint: "CloudTrail name" },
+            { id: "s3_bucket_name", label: "S3 bucket for logs", type: "text", default: "court-cloudtrail-logs", hint: "Bucket must exist or be created" },
+            {
+              id: "is_multi_region",
+              label: "Multi-region",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "Record in all regions"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Configure CloudTrail trail",
+              hosts,
+              become: false,
+              gather_facts: false,
+              vars: {
+                aws_region: vals.aws_region,
+                trail_name: vals.trail_name,
+                s3_bucket_name: vals.s3_bucket_name,
+                is_multi_region: vals.is_multi_region === "true"
+              },
+              tasks: [
+                {
+                  name: "Ensure CloudTrail trail exists",
+                  "amazon.aws.cloudtrail": {
+                    name: "{{ trail_name }}",
+                    region: "{{ aws_region }}",
+                    s3_bucket_name: "{{ s3_bucket_name }}",
+                    is_multi_region_trail: "{{ is_multi_region }}"
+                  }
+                }
+              ]
+            }
+          ])
+        }
+      }
+    },
+
+    azure: {
+      label: "Microsoft Azure",
+      scenarios: {
+        vm_linux: {
+          label: "Compute – Linux VM",
+          description: "Create a Linux VM, NIC and basic network resources.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-ansible-demo", hint: "Existing or to create" },
+            { id: "vm_name", label: "VM name", type: "text", default: "vm-linux-01", hint: "Name of the VM" },
+            { id: "vm_size", label: "VM size", type: "text", default: "Standard_B2s", hint: "e.g. Standard_B2s" },
+            { id: "admin_username", label: "Admin username", type: "text", default: "azureuser", hint: "SSH user" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Provision Azure Linux VM",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  vm_name: vals.vm_name,
+                  vm_size: vals.vm_size,
+                  admin_username: vals.admin_username
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Ensure virtual network exists",
+                    "azure.azcollection.azure_rm_virtualnetwork": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ resource_group }}-vnet",
+                      address_prefixes: ["10.10.0.0/16"]
+                    }
+                  },
+                  {
+                    name: "Ensure subnet exists",
+                    "azure.azcollection.azure_rm_subnet": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ resource_group }}-subnet",
+                      address_prefix: "10.10.1.0/24",
+                      virtual_network: "{{ resource_group }}-vnet"
+                    }
+                  },
+                  {
+                    name: "Create public IP",
+                    "azure.azcollection.azure_rm_publicipaddress": {
+                      resource_group: "{{ resource_group }}",
+                      allocation_method: "Static",
+                      name: "{{ vm_name }}-pip"
+                    }
+                  },
+                  {
+                    name: "Create NIC",
+                    "azure.azcollection.azure_rm_networkinterface": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vm_name }}-nic",
+                      virtual_network: "{{ resource_group }}-vnet",
+                      subnet: "{{ resource_group }}-subnet",
+                      public_ip_name: "{{ vm_name }}-pip"
+                    }
+                  },
+                  {
+                    name: "Provision Azure VM",
+                    "azure.azcollection.azure_rm_virtualmachine": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vm_name }}",
+                      vm_size: "{{ vm_size }}",
+                      admin_username: "{{ admin_username }}",
+                      network_interfaces: ["{{ vm_name }}-nic"],
+                      image: {
+                        offer: "0001-com-ubuntu-server-focal",
+                        publisher: "Canonical",
+                        sku: "20_04-lts",
+                        version: "latest"
+                      }
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        vm_windows: {
+          label: "Compute – Windows VM",
+          description: "Create a Windows VM in Azure with basic network resources.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-win-servers", hint: "Existing or to create" },
+            { id: "vm_name", label: "VM name", type: "text", default: "vm-win-01", hint: "Name of the VM" },
+            { id: "vm_size", label: "VM size", type: "text", default: "Standard_B2ms", hint: "e.g. Standard_B2ms" },
+            { id: "admin_username", label: "Admin username", type: "text", default: "azureadmin", hint: "Local admin user" },
+            { id: "admin_password", label: "Admin password", type: "text", default: "CHANGE_ME!", hint: "Use secret in real life" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Provision Azure Windows VM",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  vm_name: vals.vm_name,
+                  vm_size: vals.vm_size,
+                  admin_username: vals.admin_username,
+                  admin_password: vals.admin_password
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Ensure virtual network exists",
+                    "azure.azcollection.azure_rm_virtualnetwork": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ resource_group }}-vnet",
+                      address_prefixes: ["10.20.0.0/16"]
+                    }
+                  },
+                  {
+                    name: "Ensure subnet exists",
+                    "azure.azcollection.azure_rm_subnet": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ resource_group }}-subnet",
+                      address_prefix: "10.20.1.0/24",
+                      virtual_network: "{{ resource_group }}-vnet"
+                    }
+                  },
+                  {
+                    name: "Create public IP",
+                    "azure.azcollection.azure_rm_publicipaddress": {
+                      resource_group: "{{ resource_group }}",
+                      allocation_method: "Static",
+                      name: "{{ vm_name }}-pip"
+                    }
+                  },
+                  {
+                    name: "Create NIC",
+                    "azure.azcollection.azure_rm_networkinterface": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vm_name }}-nic",
+                      virtual_network: "{{ resource_group }}-vnet",
+                      subnet: "{{ resource_group }}-subnet",
+                      public_ip_name: "{{ vm_name }}-pip"
+                    }
+                  },
+                  {
+                    name: "Provision Azure Windows VM",
+                    "azure.azcollection.azure_rm_virtualmachine": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vm_name }}",
+                      vm_size: "{{ vm_size }}",
+                      admin_username: "{{ admin_username }}",
+                      admin_password: "{{ admin_password }}",
+                      os_type: "Windows",
+                      network_interfaces: ["{{ vm_name }}-nic"],
+                      image: {
+                        offer: "WindowsServer",
+                        publisher: "MicrosoftWindowsServer",
+                        sku: "2019-Datacenter",
+                        version: "latest"
+                      }
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        vnet_baseline: {
+          label: "Network – VNet + subnets",
+          description: "Create a VNet with public/private subnets.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-network", hint: "Resource group" },
+            { id: "vnet_name", label: "VNet name", type: "text", default: "court-vnet", hint: "Virtual network name" },
+            { id: "address_prefix", label: "VNet address prefix", type: "text", default: "10.30.0.0/16", hint: "CIDR" },
+            { id: "public_subnet_prefix", label: "Public subnet prefix", type: "text", default: "10.30.1.0/24", hint: "CIDR" },
+            { id: "private_subnet_prefix", label: "Private subnet prefix", type: "text", default: "10.30.2.0/24", hint: "CIDR" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Azure VNet and subnets",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  vnet_name: vals.vnet_name,
+                  address_prefix: vals.address_prefix,
+                  public_subnet_prefix: vals.public_subnet_prefix,
+                  private_subnet_prefix: vals.private_subnet_prefix
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create VNet",
+                    "azure.azcollection.azure_rm_virtualnetwork": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vnet_name }}",
+                      address_prefixes: ["{{ address_prefix }}"]
+                    }
+                  },
+                  {
+                    name: "Create public subnet",
+                    "azure.azcollection.azure_rm_subnet": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vnet_name }}-public",
+                      address_prefix: "{{ public_subnet_prefix }}",
+                      virtual_network: "{{ vnet_name }}"
+                    }
+                  },
+                  {
+                    name: "Create private subnet",
+                    "azure.azcollection.azure_rm_subnet": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vnet_name }}-private",
+                      address_prefix: "{{ private_subnet_prefix }}",
+                      virtual_network: "{{ vnet_name }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        storage_account: {
+          label: "Storage – Account & container",
+          description: "Create a Storage Account and a Blob container.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-storage", hint: "Resource group" },
+            { id: "account_name", label: "Storage account name", type: "text", default: "courtarchive001", hint: "Globally unique" },
+            { id: "container_name", label: "Container name", type: "text", default: "documents", hint: "Blob container" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Storage account and container",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  account_name: vals.account_name,
+                  container_name: vals.container_name
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create storage account",
+                    "azure.azcollection.azure_rm_storageaccount": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ account_name }}",
+                      location: "{{ azure_location }}",
+                      account_type: "Standard_LRS"
+                    }
+                  },
+                  {
+                    name: "Create blob container",
+                    "azure.azcollection.azure_rm_storageblob": {
+                      resource_group: "{{ resource_group }}",
+                      storage_account_name: "{{ account_name }}",
+                      container: "{{ container_name }}",
+                      type: "container"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        sql_db: {
+          label: "SQL – Server & database",
+          description: "Create an Azure SQL logical server and a database.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-sql", hint: "Resource group name" },
+            { id: "sql_server_name", label: "SQL server name", type: "text", default: "court-sql-srv", hint: "Globally unique DNS name" },
+            { id: "admin_username", label: "Admin login", type: "text", default: "sqladmin", hint: "SQL admin login" },
+            { id: "admin_password", label: "Admin password", type: "text", default: "CHANGE_ME!", hint: "Use secret in production" },
+            { id: "db_name", label: "Database name", type: "text", default: "court", hint: "DB name" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Azure SQL server & DB",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  sql_server_name: vals.sql_server_name,
+                  admin_username: vals.admin_username,
+                  admin_password: vals.admin_password,
+                  db_name: vals.db_name
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create SQL logical server",
+                    "azure.azcollection.azure_rm_sqlserver": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ sql_server_name }}",
+                      location: "{{ azure_location }}",
+                      admin_username: "{{ admin_username }}",
+                      admin_password: "{{ admin_password }}"
+                    }
+                  },
+                  {
+                    name: "Create SQL database",
+                    "azure.azcollection.azure_rm_sqldatabase": {
+                      resource_group: "{{ resource_group }}",
+                      server_name: "{{ sql_server_name }}",
+                      name: "{{ db_name }}",
+                      edition: "Standard",
+                      requested_service_objective_name: "S0"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        app_service: {
+          label: "App Service – Web App",
+          description: "Create an App Service plan and a Linux Web App.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-apps", hint: "Resource group" },
+            { id: "plan_name", label: "App Service plan name", type: "text", default: "court-plan", hint: "Plan name" },
+            { id: "sku", label: "SKU", type: "text", default: "B1", hint: "e.g. F1, B1, P1v3" },
+            { id: "webapp_name", label: "Web app name", type: "text", default: "court-webapp", hint: "Unique webapp name" },
+            { id: "runtime_stack", label: "Runtime stack", type: "text", default: "DOTNETCORE|6.0", hint: "Linux runtime (e.g. DOTNETCORE|6.0)" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Azure App Service Web App",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  plan_name: vals.plan_name,
+                  sku: vals.sku,
+                  webapp_name: vals.webapp_name,
+                  runtime_stack: vals.runtime_stack
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create App Service plan",
+                    "azure.azcollection.azure_rm_appserviceplan": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ plan_name }}",
+                      location: "{{ azure_location }}",
+                      sku: "{{ sku }}",
+                      is_linux: true
+                    }
+                  },
+                  {
+                    name: "Create Web App",
+                    "azure.azcollection.azure_rm_webapp": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ webapp_name }}",
+                      plan: "{{ plan_name }}",
+                      location: "{{ azure_location }}",
+                      linux_fx_version: "{{ runtime_stack }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        aks_cluster: {
+          label: "AKS – Kubernetes cluster",
+          description: "Create a basic AKS cluster.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-aks", hint: "Resource group" },
+            { id: "aks_name", label: "AKS cluster name", type: "text", default: "court-aks", hint: "Cluster name" },
+            {
+              id: "node_count",
+              label: "Node count",
+              type: "number",
+              default: 3,
+              hint: "Number of nodes"
+            },
+            { id: "node_vm_size", label: "Node VM size", type: "text", default: "Standard_DS2_v2", hint: "VM size" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create AKS cluster",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  aks_name: vals.aks_name,
+                  node_count: Number(vals.node_count),
+                  node_vm_size: vals.node_vm_size
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create AKS cluster",
+                    "azure.azcollection.azure_rm_aks": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ aks_name }}",
+                      location: "{{ azure_location }}",
+                      dns_prefix: "{{ aks_name }}",
+                      kubernetes_version: "",
+                      agent_pool_profiles: [
+                        {
+                          name: "nodepool1",
+                          count: "{{ node_count }}",
+                          vm_size: "{{ node_vm_size }}",
+                          os_type: "Linux"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        log_analytics: {
+          label: "Monitor – Log Analytics workspace",
+          description: "Create a Log Analytics workspace for monitoring.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-monitor", hint: "Resource group" },
+            { id: "workspace_name", label: "Workspace name", type: "text", default: "court-laworkspace", hint: "Log Analytics workspace" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Log Analytics workspace",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  workspace_name: vals.workspace_name
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create Log Analytics workspace",
+                    "azure.azcollection.azure_rm_loganalyticsworkspace": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ workspace_name }}",
+                      location: "{{ azure_location }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        key_vault: {
+          label: "Security – Key Vault",
+          description: "Create a Key Vault and a sample secret.",
+          inputs: [
+            {
+              id: "azure_location",
+              label: "Azure location",
+              control: "select",
+              options: AZURE_LOCATIONS.map(l => ({ value: l, label: l })),
+              default: "eastus",
+              hint: "Region"
+            },
+            { id: "resource_group", label: "Resource group", type: "text", default: "rg-secrets", hint: "Resource group" },
+            { id: "vault_name", label: "Key Vault name", type: "text", default: "court-kv", hint: "Vault name (globally unique DNS)" },
+            { id: "secret_name", label: "Secret name", type: "text", default: "db-password", hint: "Secret name" },
+            { id: "secret_value", label: "Secret value", type: "text", default: "ChangeMe!", hint: "Use a secure value / vault" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Key Vault & secret",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  azure_location: vals.azure_location,
+                  resource_group: vals.resource_group,
+                  vault_name: vals.vault_name,
+                  secret_name: vals.secret_name,
+                  secret_value: vals.secret_value
+                },
+                tasks: [
+                  {
+                    name: "Ensure resource group exists",
+                    "azure.azcollection.azure_rm_resourcegroup": {
+                      name: "{{ resource_group }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create Key Vault",
+                    "azure.azcollection.azure_rm_keyvault": {
+                      resource_group: "{{ resource_group }}",
+                      name: "{{ vault_name }}",
+                      location: "{{ azure_location }}"
+                    }
+                  },
+                  {
+                    name: "Create secret",
+                    "azure.azcollection.azure_keyvaultsecret": {
+                      vault_uri: "https://{{ vault_name }}.vault.azure.net",
+                      secret_name: "{{ secret_name }}",
+                      secret_value: "{{ secret_value }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        }
+      }
+    },
+ gcp: {
+      label: "Google Cloud Platform",
+      scenarios: {
+        gce_instance: {
+          label: "Compute – VM instance",
+          description: "Create a GCE instance in a given project and zone.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            {
+              id: "zone",
+              label: "Zone",
+              control: "select",
+              options: GCP_ZONES.map(z => ({ value: z, label: z })),
+              default: "us-central1-a",
+              hint: "Compute zone"
+            },
+            { id: "instance_name", label: "Instance name", type: "text", default: "gce-ansible-01", hint: "VM name" },
+            { id: "machine_type", label: "Machine type", type: "text", default: "e2-medium", hint: "e2-medium, n2-standard-2, etc." },
+            { id: "image_family", label: "Image family", type: "text", default: "debian-11", hint: "debian-11, ubuntu-2004-lts, etc." },
+            { id: "image_project", label: "Image project", type: "text", default: "debian-cloud", hint: "debian-cloud, ubuntu-os-cloud, etc." }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Provision GCE instance",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  gcp_zone: vals.zone,
+                  instance_name: vals.instance_name,
+                  machine_type: vals.machine_type,
+                  image_family: vals.image_family,
+                  image_project: vals.image_project
+                },
+                tasks: [
+                  {
+                    name: "Create GCE instance",
+                    "google.cloud.gcp_compute_instance": {
+                      name: "{{ instance_name }}",
+                      project: "{{ gcp_project }}",
+                      zone: "{{ gcp_zone }}",
+                      machine_type: "{{ machine_type }}",
+                      disks: [
+                        {
+                          auto_delete: true,
+                          boot: true,
+                          initialize_params: {
+                            source_image: "projects/{{ image_project }}/global/images/family/{{ image_family }}"
+                          }
+                        }
+                      ],
+                      network_interfaces: [
+                        {
+                          network: "default",
+                          access_configs: [{ name: "External NAT", type: "ONE_TO_ONE_NAT" }]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        vpc_network: {
+          label: "Network – VPC + subnet + firewall",
+          description: "Create a custom VPC network, subnet, and basic firewall rules.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "network_name", label: "VPC network name", type: "text", default: "court-vpc", hint: "Custom VPC" },
+            { id: "subnet_name", label: "Subnet name", type: "text", default: "court-subnet", hint: "Subnet" },
+            { id: "subnet_cidr", label: "Subnet CIDR", type: "text", default: "10.40.0.0/24", hint: "CIDR block" },
+            { id: "region", label: "Subnet region", type: "text", default: "us-central1", hint: "Region, e.g. us-central1" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create GCP VPC and subnet",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  network_name: vals.network_name,
+                  subnet_name: vals.subnet_name,
+                  subnet_cidr: vals.subnet_cidr,
+                  region: vals.region
+                },
+                tasks: [
+                  {
+                    name: "Create custom VPC network",
+                    "google.cloud.gcp_compute_network": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ network_name }}",
+                      auto_create_subnetworks: false
+                    }
+                  },
+                  {
+                    name: "Create subnet",
+                    "google.cloud.gcp_compute_subnetwork": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ subnet_name }}",
+                      region: "{{ region }}",
+                      network: "{{ network_name }}",
+                      ip_cidr_range: "{{ subnet_cidr }}"
+                    }
+                  },
+                  {
+                    name: "Allow SSH ingress",
+                    "google.cloud.gcp_compute_firewall": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ network_name }}-allow-ssh",
+                      network: "{{ network_name }}",
+                      allowed: [{ IPProtocol: "tcp", ports: ["22"] }],
+                      source_ranges: ["0.0.0.0/0"]
+                    }
+                  },
+                  {
+                    name: "Allow HTTP ingress",
+                    "google.cloud.gcp_compute_firewall": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ network_name }}-allow-http",
+                      network: "{{ network_name }}",
+                      allowed: [{ IPProtocol: "tcp", ports: ["80"] }],
+                      source_ranges: ["0.0.0.0/0"]
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        gcs_bucket: {
+          label: "Storage – GCS bucket",
+          description: "Create a Google Cloud Storage bucket.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "bucket_name", label: "Bucket name", type: "text", default: "court-archive-gcs", hint: "Globally unique" },
+            { id: "location", label: "Location", type: "text", default: "US", hint: "US, EU, regional code, etc." }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create GCS bucket",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  bucket_name: vals.bucket_name,
+                  bucket_location: vals.location
+                },
+                tasks: [
+                  {
+                    name: "Create bucket",
+                    "google.cloud.gcp_storage_bucket": {
+                      name: "{{ bucket_name }}",
+                      project: "{{ gcp_project }}",
+                      location: "{{ bucket_location }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        pubsub_topic: {
+          label: "Pub/Sub – Topic & subscription",
+          description: "Create a Pub/Sub topic and a pull subscription.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "topic_name", label: "Topic name", type: "text", default: "court-events", hint: "Topic ID" },
+            { id: "subscription_name", label: "Subscription name", type: "text", default: "court-events-sub", hint: "Subscription ID" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Pub/Sub topic and subscription",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  topic_name: vals.topic_name,
+                  subscription_name: vals.subscription_name
+                },
+                tasks: [
+                  {
+                    name: "Ensure topic exists",
+                    "google.cloud.gcp_pubsub_topic": {
+                      name: "{{ topic_name }}",
+                      project: "{{ gcp_project }}"
+                    },
+                    register: "topic"
+                  },
+                  {
+                    name: "Ensure pull subscription exists",
+                    "google.cloud.gcp_pubsub_subscription": {
+                      name: "{{ subscription_name }}",
+                      topic: "{{ topic_name }}",
+                      project: "{{ gcp_project }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        cloud_sql_instance: {
+          label: "Cloud SQL – Instance & DB",
+          description: "Create a Cloud SQL instance and a database (PostgreSQL/MySQL).",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            {
+              id: "db_tier",
+              label: "Tier",
+              type: "text",
+              default: "db-custom-1-3840",
+              hint: "db-custom-*-* or db-f1-micro, etc."
+            },
+            {
+              id: "db_version",
+              label: "Database version",
+              control: "select",
+              options: [
+                { value: "POSTGRES_15", label: "PostgreSQL 15" },
+                { value: "POSTGRES_14", label: "PostgreSQL 14" },
+                { value: "MYSQL_8_0", label: "MySQL 8.0" }
+              ],
+              default: "POSTGRES_15",
+              hint: "Engine & version"
+            },
+            { id: "instance_name", label: "Instance name", type: "text", default: "court-sql-01", hint: "Cloud SQL instance ID" },
+            { id: "db_name", label: "Database name", type: "text", default: "court", hint: "Initial database" },
+            { id: "root_password", label: "Root password", type: "text", default: "ChangeMe123!", hint: "Use secret manager in real life" },
+            { id: "region", label: "Region", type: "text", default: "us-central1", hint: "Region (e.g. us-central1)" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Cloud SQL instance and database",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  db_tier: vals.db_tier,
+                  db_version: vals.db_version,
+                  sql_instance_name: vals.instance_name,
+                  db_name: vals.db_name,
+                  root_password: vals.root_password,
+                  region: vals.region
+                },
+                tasks: [
+                  {
+                    name: "Create Cloud SQL instance",
+                    "google.cloud.gcp_sql_instance": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ sql_instance_name }}",
+                      region: "{{ region }}",
+                      database_version: "{{ db_version }}",
+                      settings: {
+                        tier: "{{ db_tier }}"
+                      },
+                      root_password: "{{ root_password }}"
+                    }
+                  },
+                  {
+                    name: "Create database",
+                    "google.cloud.gcp_sql_database": {
+                      project: "{{ gcp_project }}",
+                      instance: "{{ sql_instance_name }}",
+                      name: "{{ db_name }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        gke_cluster: {
+          label: "GKE – Kubernetes cluster",
+          description: "Create a basic GKE cluster with a single node pool.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "cluster_name", label: "Cluster name", type: "text", default: "court-gke", hint: "Cluster ID" },
+            { id: "location", label: "Location (zone or region)", type: "text", default: "us-central1-a", hint: "e.g. us-central1-a or us-central1" },
+            { id: "node_count", label: "Node count", type: "number", default: 3, hint: "Number of nodes" },
+            { id: "node_machine_type", label: "Node machine type", type: "text", default: "e2-standard-4", hint: "e2-standard-4, n2-standard-4, etc." }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create GKE cluster",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  cluster_name: vals.cluster_name,
+                  location: vals.location,
+                  node_count: Number(vals.node_count),
+                  node_machine_type: vals.node_machine_type
+                },
+                tasks: [
+                  {
+                    name: "Create GKE cluster",
+                    "google.cloud.gcp_container_cluster": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ cluster_name }}",
+                      location: "{{ location }}",
+                      initial_node_count: "{{ node_count }}",
+                      node_config: {
+                        machine_type: "{{ node_machine_type }}"
+                      }
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        service_account: {
+          label: "IAM – Service account + key",
+          description: "Create a service account and a key (JSON) for automation.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "sa_name", label: "Service account name (ID)", type: "text", default: "court-automation", hint: "Service account ID" },
+            { id: "sa_display_name", label: "Display name", type: "text", default: "Court Automation SA", hint: "Friendly name" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create GCP service account and key",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  sa_name: vals.sa_name,
+                  sa_display_name: vals.sa_display_name
+                },
+                tasks: [
+                  {
+                    name: "Create service account",
+                    "google.cloud.gcp_iam_service_account": {
+                      project: "{{ gcp_project }}",
+                      name: "projects/{{ gcp_project }}/serviceAccounts/{{ sa_name }}@{{ gcp_project }}.iam.gserviceaccount.com",
+                      account_id: "{{ sa_name }}",
+                      display_name: "{{ sa_display_name }}"
+                    }
+                  },
+                  {
+                    name: "Create service account key",
+                    "google.cloud.gcp_iam_service_account_key": {
+                      project: "{{ gcp_project }}",
+                      service_account: "{{ sa_name }}@{{ gcp_project }}.iam.gserviceaccount.com",
+                      private_key_type: "TYPE_GOOGLE_CREDENTIALS_FILE"
+                    },
+                    register: "sa_key"
+                  },
+                  {
+                    name: "Write key to file (local hint)",
+                    "ansible.builtin.debug": {
+                      msg: "SA key JSON: {{ sa_key.privateKeyData | default('stored by module output') }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        cloud_function: {
+          label: "Cloud Functions – HTTP function",
+          description: "Create a simple HTTP Cloud Function (1st gen style).",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "location", label: "Location", type: "text", default: "us-central1", hint: "Function region" },
+            { id: "function_name", label: "Function name", type: "text", default: "court-function", hint: "Function ID" },
+            { id: "entry_point", label: "Entry point", type: "text", default: "hello_http", hint: "Handler name" },
+            { id: "runtime", label: "Runtime", type: "text", default: "python310", hint: "e.g. python310, nodejs20" },
+            { id: "source_archive_bucket", label: "Source bucket", type: "text", default: "cf-source-bucket", hint: "GCS bucket containing source" },
+            { id: "source_archive_object", label: "Source object", type: "text", default: "court-function.zip", hint: "Zip object" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Cloud Function",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  location: vals.location,
+                  function_name: vals.function_name,
+                  entry_point: vals.entry_point,
+                  runtime: vals.runtime,
+                  source_archive_bucket: vals.source_archive_bucket,
+                  source_archive_object: vals.source_archive_object
+                },
+                tasks: [
+                  {
+                    name: "Deploy HTTP Cloud Function",
+                    "google.cloud.gcp_cloudfunctions_function": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ function_name }}",
+                      location: "{{ location }}",
+                      entry_point: "{{ entry_point }}",
+                      runtime: "{{ runtime }}",
+                      https_trigger: {},
+                      source_archive_bucket: "{{ source_archive_bucket }}",
+                      source_archive_object: "{{ source_archive_object }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        cloud_run_service: {
+          label: "Cloud Run – Service",
+          description: "Create a Cloud Run service from a container image.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "my-gcp-project", hint: "GCP project ID" },
+            { id: "service_name", label: "Service name", type: "text", default: "court-api", hint: "Cloud Run service" },
+            { id: "location", label: "Location (region)", type: "text", default: "us-central1", hint: "e.g. us-central1" },
+            { id: "image", label: "Container image", type: "text", default: "gcr.io/my-gcp-project/court-api:latest", hint: "Container image URI" },
+            {
+              id: "allow_unauth",
+              label: "Allow unauthenticated",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "Public HTTP or IAM-only"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Deploy Cloud Run service",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  gcp_project: vals.project_id,
+                  service_name: vals.service_name,
+                  location: vals.location,
+                  image: vals.image,
+                  allow_unauth: vals.allow_unauth === "true"
+                },
+                tasks: [
+                  {
+                    name: "Create Cloud Run service",
+                    "google.cloud.gcp_run_service": {
+                      project: "{{ gcp_project }}",
+                      name: "{{ service_name }}",
+                      location: "{{ location }}",
+                      template: {
+                        spec: {
+                          containers: [
+                            {
+                              image: "{{ image }}"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    name: "Configure IAM for public access (optional hint)",
+                    "ansible.builtin.debug": {
+                      msg: "To allow unauthenticated access, add IAM binding for allUsers on the service if allow_unauth is true."
+                    },
+                    when: "allow_unauth"
+                  }
+                ]
+              }
+            ];
+          }
+        }
+      }
+    },
+
+ oci: {
+      label: "Oracle Cloud Infrastructure (OCI)",
+      scenarios: {
+        compute_instance: {
+          label: "Compute – VM instance",
+          description: "Create an OCI compute instance in a given compartment and subnet.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
+            { id: "availability_domain", label: "Availability Domain", type: "text", default: "Uocm:US-ASHBURN-AD-1", hint: "Full AD name" },
+            { id: "subnet_ocid", label: "Subnet OCID", type: "text", default: "ocid1.subnet.oc1..xxxxx", hint: "Target subnet" },
+            { id: "display_name", label: "Instance display name", type: "text", default: "oci-ansible-01", hint: "Human-friendly name" },
+            { id: "shape", label: "Shape", type: "text", default: "VM.Standard.E4.Flex", hint: "e.g. VM.Standard.E4.Flex" },
+            { id: "ocpus", label: "OCPUs", type: "number", default: 1, hint: "vCPU count" },
+            { id: "memory_in_gbs", label: "Memory (GB)", type: "number", default: 16, hint: "RAM in GB" },
+            { id: "image_ocid", label: "Image OCID", type: "text", default: "ocid1.image.oc1..xxxxx", hint: "OS image" },
+            {
+              id: "assign_public_ip",
+              label: "Assign public IP",
+              control: "select",
+              options: [
+                { value: "true", label: "true" },
+                { value: "false", label: "false" }
+              ],
+              default: "true",
+              hint: "true / false"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Provision OCI compute instance",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  availability_domain: vals.availability_domain,
+                  subnet_ocid: vals.subnet_ocid,
+                  display_name: vals.display_name,
+                  shape: vals.shape,
+                  ocpus: Number(vals.ocpus),
+                  memory_in_gbs: Number(vals.memory_in_gbs),
+                  image_ocid: vals.image_ocid,
+                  assign_public_ip: vals.assign_public_ip === "true"
+                },
+                tasks: [
+                  {
+                    name: "Create compute instance",
+                    "oracle.oci.oci_compute_instance": {
+                      availability_domain: "{{ availability_domain }}",
+                      compartment_id: "{{ compartment_ocid }}",
+                      display_name: "{{ display_name }}",
+                      shape: "{{ shape }}",
+                      shape_config: {
+                        ocpus: "{{ ocpus }}",
+                        memory_in_gbs: "{{ memory_in_gbs }}"
+                      },
+                      create_vnic_details: {
+                        subnet_id: "{{ subnet_ocid }}",
+                        assign_public_ip: "{{ assign_public_ip }}"
+                      },
+                      source_details: {
+                        source_type: "image",
+                        image_id: "{{ image_ocid }}"
+                      }
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        object_bucket: {
+          label: "Object Storage – Bucket",
+          description: "Create an OCI Object Storage bucket.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
+            { id: "namespace", label: "Object storage namespace", type: "text", default: "mytenancy", hint: "From OCI console" },
+            { id: "bucket_name", label: "Bucket name", type: "text", default: "court-archive-oci", hint: "Bucket name" },
+            {
+              id: "storage_tier",
+              label: "Storage tier",
+              control: "select",
+              options: [
+                { value: "Standard", label: "Standard" },
+                { value: "Archive", label: "Archive" }
+              ],
+              default: "Standard",
+              hint: "Tier"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create OCI object storage bucket",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  namespace: vals.namespace,
+                  bucket_name: vals.bucket_name,
+                  storage_tier: vals.storage_tier
+                },
+                tasks: [
+                  {
+                    name: "Ensure bucket exists",
+                    "oracle.oci.oci_object_storage_bucket": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      namespace_name: "{{ namespace }}",
+                      name: "{{ bucket_name }}",
+                      storage_tier: "{{ storage_tier }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        vcn_baseline: {
+          label: "Network – VCN + subnets + IGW",
+          description: "Create a VCN, public/private subnets, Internet Gateway and route table.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
+            { id: "vcn_cidr", label: "VCN CIDR", type: "text", default: "10.50.0.0/16", hint: "VCN CIDR block" },
+            { id: "vcn_display_name", label: "VCN display name", type: "text", default: "court-vcn", hint: "VCN name" },
+            { id: "public_subnet_cidr", label: "Public subnet CIDR", type: "text", default: "10.50.1.0/24", hint: "Public subnet" },
+            { id: "private_subnet_cidr", label: "Private subnet CIDR", type: "text", default: "10.50.2.0/24", hint: "Private subnet" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create OCI VCN baseline",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  vcn_cidr: vals.vcn_cidr,
+                  vcn_display_name: vals.vcn_display_name,
+                  public_subnet_cidr: vals.public_subnet_cidr,
+                  private_subnet_cidr: vals.private_subnet_cidr
+                },
+                tasks: [
+                  {
+                    name: "Create VCN",
+                    "oracle.oci.oci_core_vcn": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      cidr_block: "{{ vcn_cidr }}",
+                      display_name: "{{ vcn_display_name }}"
+                    },
+                    register: "vcn"
+                  },
+                  {
+                    name: "Create Internet Gateway",
+                    "oracle.oci.oci_core_internet_gateway": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      vcn_id: "{{ vcn.data.id }}",
+                      display_name: "{{ vcn_display_name }}-igw",
+                      is_enabled: true
+                    },
+                    register: "igw"
+                  },
+                  {
+                    name: "Create public subnet",
+                    "oracle.oci.oci_core_subnet": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      vcn_id: "{{ vcn.data.id }}",
+                      cidr_block: "{{ public_subnet_cidr }}",
+                      display_name: "{{ vcn_display_name }}-public",
+                      prohibit_public_ip_on_vnic: false
+                    },
+                    register: "public_subnet"
+                  },
+                  {
+                    name: "Create private subnet",
+                    "oracle.oci.oci_core_subnet": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      vcn_id: "{{ vcn.data.id }}",
+                      cidr_block: "{{ private_subnet_cidr }}",
+                      display_name: "{{ vcn_display_name }}-private",
+                      prohibit_public_ip_on_vnic: true
+                    },
+                    register: "private_subnet"
+                  },
+                  {
+                    name: "Create route table for public subnet",
+                    "oracle.oci.oci_core_route_table": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      vcn_id: "{{ vcn.data.id }}",
+                      display_name: "{{ vcn_display_name }}-public-rt",
+                      route_rules: [
+                        {
+                          cidr_block: "0.0.0.0/0",
+                          network_entity_id: "{{ igw.data.id }}"
+                        }
+                      ]
+                    },
+                    register: "public_rt"
+                  },
+                  {
+                    name: "Associate route table with public subnet",
+                    "oracle.oci.oci_core_subnet": {
+                      subnet_id: "{{ public_subnet.data.id }}",
+                      route_table_id: "{{ public_rt.data.id }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        load_balancer: {
+          label: "Load Balancer – Public HTTP",
+          description: "Create a public load balancer with a simple HTTP listener and backend set.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
+            { id: "subnet1_ocid", label: "Subnet 1 OCID", type: "text", default: "ocid1.subnet.oc1..subnet1", hint: "Subnet for LB" },
+            { id: "subnet2_ocid", label: "Subnet 2 OCID", type: "text", default: "ocid1.subnet.oc1..subnet2", hint: "Second subnet (HA)" },
+            { id: "lb_display_name", label: "LB display name", type: "text", default: "court-lb", hint: "Load balancer name" },
+            { id: "backend_ip", label: "Backend IP (comma-separated)", type: "text", default: "10.50.1.10,10.50.1.11", hint: "Backend server IPs" },
+            {
+              id: "port",
+              label: "Listener port",
+              type: "number",
+              default: 80,
+              hint: "HTTP port"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create OCI Load Balancer",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  subnet1_ocid: vals.subnet1_ocid,
+                  subnet2_ocid: vals.subnet2_ocid,
+                  lb_display_name: vals.lb_display_name,
+                  backend_ip_list: vals.backend_ip.split(",").map(s => s.trim()),
+                  port: Number(vals.port)
+                },
+                tasks: [
+                  {
+                    name: "Create public load balancer",
+                    "oracle.oci.oci_load_balancer_load_balancer": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      display_name: "{{ lb_display_name }}",
+                      shape_name: "flexible",
+                      subnet_ids: [
+                        "{{ subnet1_ocid }}",
+                        "{{ subnet2_ocid }}"
+                      ],
+                      is_private: false
+                    },
+                    register: "lb"
+                  },
+                  {
+                    name: "Create backend set",
+                    "oracle.oci.oci_load_balancer_backendset": {
+                      load_balancer_id: "{{ lb.data.id }}",
+                      name: "backendset1",
+                      policy: "ROUND_ROBIN",
+                      health_checker: {
+                        protocol: "HTTP",
+                        url_path: "/",
+                        port: "{{ port }}"
+                      }
+                    }
+                  },
+                  {
+                    name: "Register backends",
+                    "oracle.oci.oci_load_balancer_backend": {
+                      load_balancer_id: "{{ lb.data.id }}",
+                      backendset_name: "backendset1",
+                      ip_address: "{{ item }}",
+                      port: "{{ port }}"
+                    },
+                    loop: "{{ backend_ip_list }}"
+                  },
+                  {
+                    name: "Create HTTP listener",
+                    "oracle.oci.oci_load_balancer_listener": {
+                      load_balancer_id: "{{ lb.data.id }}",
+                      name: "http-listener",
+                      protocol: "HTTP",
+                      port: "{{ port }}",
+                      default_backendset_name: "backendset1"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        autonomous_database: {
+          label: "Database – Autonomous DB",
+          description: "Create an Autonomous Transaction Processing database.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
+            { id: "db_name", label: "Database name", type: "text", default: "COURTATP", hint: "DB name" },
+            { id: "display_name", label: "Display name", type: "text", default: "court-atp-db", hint: "Friendly name" },
+            {
+              id: "db_workload",
+              label: "Workload type",
+              control: "select",
+              options: [
+                { value: "OLTP", label: "Autonomous Transaction Processing (OLTP)" },
+                { value: "DW", label: "Autonomous Data Warehouse (DW)" }
+              ],
+              default: "OLTP",
+              hint: "Type"
+            },
+            { id: "cpu_core_count", label: "CPU cores", type: "number", default: 2, hint: "Number of OCPUs" },
+            { id: "data_storage_size_in_tbs", label: "Storage (TB)", type: "number", default: 1, hint: "Data storage in TB" },
+            { id: "admin_password", label: "ADMIN password", type: "text", default: "ChangeMe123!", hint: "Use a secret in real life" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Autonomous Database",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  db_name: vals.db_name,
+                  display_name: vals.display_name,
+                  db_workload: vals.db_workload,
+                  cpu_core_count: Number(vals.cpu_core_count),
+                  data_storage_size_in_tbs: Number(vals.data_storage_size_in_tbs),
+                  admin_password: vals.admin_password
+                },
+                tasks: [
+                  {
+                    name: "Create ATP/ADW database",
+                    "oracle.oci.oci_database_autonomous_database": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      db_name: "{{ db_name }}",
+                      display_name: "{{ display_name }}",
+                      db_workload: "{{ db_workload }}",
+                      cpu_core_count: "{{ cpu_core_count }}",
+                      data_storage_size_in_tbs: "{{ data_storage_size_in_tbs }}",
+                      admin_password: "{{ admin_password }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        oke_cluster: {
+          label: "OKE – Kubernetes cluster",
+          description: "Create an Oracle Kubernetes Engine (OKE) cluster.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Cluster compartment" },
+            { id: "vcn_ocid", label: "VCN OCID", type: "text", default: "ocid1.vcn.oc1..xxxxx", hint: "VCN for the cluster" },
+            { id: "cluster_name", label: "Cluster name", type: "text", default: "court-oke", hint: "OKE cluster name" },
+            { id: "k8s_version", label: "Kubernetes version", type: "text", default: "v1.29.1", hint: "K8s version string" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create OKE cluster",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  vcn_ocid: vals.vcn_ocid,
+                  cluster_name: vals.cluster_name,
+                  k8s_version: vals.k8s_version
+                },
+                tasks: [
+                  {
+                    name: "Create OKE control plane",
+                    "oracle.oci.oci_containerengine_cluster": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      name: "{{ cluster_name }}",
+                      kubernetes_version: "{{ k8s_version }}",
+                      vcn_id: "{{ vcn_ocid }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        kms_key: {
+          label: "Security – KMS vault key",
+          description: "Create a Vault master encryption key in OCI KMS.",
+          inputs: [
+            { id: "compartment_ocid", label: "Compartment OCID", type: "text", default: "ocid1.compartment.oc1..xxxxx", hint: "Key compartment" },
+            { id: "vault_ocid", label: "Vault OCID", type: "text", default: "ocid1.vault.oc1..xxxxx", hint: "Existing Vault OCID" },
+            { id: "key_display_name", label: "Key display name", type: "text", default: "court-data-key", hint: "Friendly key name" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Vault master key",
+                hosts,
+                become: false,
+                gather_facts: false,
+                vars: {
+                  compartment_ocid: vals.compartment_ocid,
+                  vault_ocid: vals.vault_ocid,
+                  key_display_name: vals.key_display_name
+                },
+                tasks: [
+                  {
+                    name: "Create KMS key",
+                    "oracle.oci.oci_kms_key": {
+                      compartment_id: "{{ compartment_ocid }}",
+                      vault_id: "{{ vault_ocid }}",
+                      display_name: "{{ key_display_name }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        }
+      }
+    },
+vmware: {
+      label: "VMware vSphere / vCenter",
+      scenarios: {
+        vsphere_vm_from_template: {
+          label: "Create VM from template",
+          description: "Provision a vSphere VM from an existing template with network and datastore settings.",
+          inputs: [
+            {
+              id: "vcenter_hostname",
+              label: "vCenter hostname or IP",
+              type: "text",
+              default: "vcenter.example.com",
+              hint: "API endpoint used by Ansible"
+            },
+            {
+              id: "vcenter_username",
+              label: "vCenter username",
+              type: "text",
+              default: "administrator@vsphere.local",
+              hint: "Use a service account in real environments"
+            },
+            {
+              id: "vcenter_password",
+              label: "vCenter password",
+              type: "text",
+              default: "ChangeMe123!",
+              hint: "Use Ansible Vault / cred store in reality"
+            },
+            {
+              id: "validate_certs",
+              label: "Validate TLS certs",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "true = require valid certs"
+            },
+            {
+              id: "datacenter_name",
+              label: "Datacenter name",
+              type: "text",
+              default: "DC1",
+              hint: "vSphere datacenter"
+            },
+            {
+              id: "cluster_name",
+              label: "Cluster name",
+              type: "text",
+              default: "Compute-Cluster",
+              hint: "Cluster where VM will run"
+            },
+            {
+              id: "template_name",
+              label: "Template name",
+              type: "text",
+              default: "golden-linux-template",
+              hint: "Existing VM template"
+            },
+            {
+              id: "vm_name",
+              label: "New VM name",
+              type: "text",
+              default: "court-app-01",
+              hint: "Resulting VM object name"
+            },
+            {
+              id: "datastore_name",
+              label: "Datastore",
+              type: "text",
+              default: "datastore1",
+              hint: "Primary datastore"
+            },
+            {
+              id: "vm_network",
+              label: "Portgroup / Network",
+              type: "text",
+              default: "VM Network",
+              hint: "Backed by standard or distributed switch"
+            },
+            {
+              id: "cpu_count",
+              label: "vCPUs",
+              type: "number",
+              default: 2,
+              hint: "Number of vCPUs"
+            },
+            {
+              id: "memory_mb",
+              label: "Memory (MB)",
+              type: "number",
+              default: 4096,
+              hint: "RAM in MB"
+            },
+            {
+              id: "disk_gb",
+              label: "Disk size (GB)",
+              type: "number",
+              default: 60,
+              hint: "Primary disk size (can be same as template for thin provisioning)"
+            },
+            {
+              id: "power_on",
+              label: "Power on after create",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "Start VM immediately"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Create vSphere VM from template",
+              hosts,
+              gather_facts: false,
+              become: false,
+              vars: {
+                vcenter_hostname: vals.vcenter_hostname,
+                vcenter_username: vals.vcenter_username,
+                vcenter_password: vals.vcenter_password,
+                validate_certs: vals.validate_certs === "true",
+                datacenter_name: vals.datacenter_name,
+                cluster_name: vals.cluster_name,
+                template_name: vals.template_name,
+                vm_name: vals.vm_name,
+                datastore_name: vals.datastore_name,
+                vm_network: vals.vm_network,
+                cpu_count: Number(vals.cpu_count),
+                memory_mb: Number(vals.memory_mb),
+                disk_gb: Number(vals.disk_gb),
+                power_on: vals.power_on === "true"
+              },
+              tasks: [
+                {
+                  name: "Create or update VM from template",
+                  "community.vmware.vmware_guest": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name }}",
+                    cluster: "{{ cluster_name }}",
+                    name: "{{ vm_name }}",
+                    template: "{{ template_name }}",
+                    datastore: "{{ datastore_name }}",
+                    state: "poweredon",
+                    hardware: {
+                      memory_mb: "{{ memory_mb }}",
+                      num_cpus: "{{ cpu_count }}"
+                    },
+                    disk: [
+                      {
+                        size_gb: "{{ disk_gb }}",
+                        type: "thin"
+                      }
+                    ],
+                    networks: [
+                      {
+                        name: "{{ vm_network }}"
+                      }
+                    ],
+                    wait_for_ip_address: false
+                  },
+                  register: "vm_result"
+                },
+                {
+                  name: "Ensure VM power state matches desired",
+                  "community.vmware.vmware_guest_powerstate": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    name: "{{ vm_name }}",
+                    state: "{{ 'powered-on' if power_on else 'powered-off' }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        vsphere_vm_power_and_snapshot: {
+          label: "VM power & snapshot management",
+          description: "Standardize power operations and snapshots for an existing VM.",
+          inputs: [
+            {
+              id: "vcenter_hostname",
+              label: "vCenter hostname or IP",
+              type: "text",
+              default: "vcenter.example.com",
+              hint: "Same as above"
+            },
+            {
+              id: "vcenter_username",
+              label: "vCenter username",
+              type: "text",
+              default: "automation@vsphere.local",
+              hint: "Service account"
+            },
+            {
+              id: "vcenter_password",
+              label: "vCenter password",
+              type: "text",
+              default: "ChangeMe123!",
+              hint: "Use Vault in prod"
+            },
+            {
+              id: "validate_certs",
+              label: "Validate TLS certs",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "true / false"
+            },
+            {
+              id: "datacenter_name",
+              label: "Datacenter name",
+              type: "text",
+              default: "DC1",
+              hint: "Optional but recommended"
+            },
+            {
+              id: "vm_name",
+              label: "Target VM name",
+              type: "text",
+              default: "court-app-01",
+              hint: "Existing VM"
+            },
+            {
+              id: "power_state",
+              label: "Desired power state",
+              control: "select",
+              options: [
+                { value: "powered-on", label: "Power on" },
+                { value: "powered-off", label: "Power off" },
+                { value: "restarted", label: "Restart" }
+              ],
+              default: "powered-on",
+              hint: "Standard lifecycle"
+            },
+            {
+              id: "snapshot_action",
+              label: "Snapshot action",
+              control: "select",
+              options: [
+                { value: "none", label: "None" },
+                { value: "create", label: "Create snapshot" },
+                { value: "revert", label: "Revert to snapshot" }
+              ],
+              default: "none",
+              hint: "Pick snapshot workflow"
+            },
+            {
+              id: "snapshot_name",
+              label: "Snapshot name",
+              type: "text",
+              default: "pre-change",
+              hint: "Used for create/revert when relevant"
+            },
+            {
+              id: "snapshot_description",
+              label: "Snapshot description",
+              type: "text",
+              default: "Automated snapshot before change",
+              hint: "For audit trail"
+            },
+            {
+              id: "remove_children",
+              label: "Remove child snapshots on revert",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "true / false"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Manage VM power state and snapshots",
+              hosts,
+              gather_facts: false,
+              become: false,
+              vars: {
+                vcenter_hostname: vals.vcenter_hostname,
+                vcenter_username: vals.vcenter_username,
+                vcenter_password: vals.vcenter_password,
+                validate_certs: vals.validate_certs === "true",
+                datacenter_name: vals.datacenter_name,
+                vm_name: vals.vm_name,
+                power_state: vals.power_state,
+                snapshot_action: vals.snapshot_action,
+                snapshot_name: vals.snapshot_name,
+                snapshot_description: vals.snapshot_description,
+                remove_children: vals.remove_children === "true"
+              },
+              tasks: [
+                {
+                  name: "Set VM power state",
+                  "community.vmware.vmware_guest_powerstate": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    name: "{{ vm_name }}",
+                    state: "{{ power_state }}",
+                    state_change_timeout: 300
+                  }
+                },
+                {
+                  name: "Create snapshot if requested",
+                  when: "snapshot_action == 'create'",
+                  "community.vmware.vmware_guest_snapshot": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name | default(omit) }}",
+                    name: "{{ vm_name }}",
+                    state: "present",
+                    snapshot_name: "{{ snapshot_name }}",
+                    description: "{{ snapshot_description }}",
+                    memory: false,
+                    quiesce: true
+                  }
+                },
+                {
+                  name: "Revert to snapshot if requested",
+                  when: "snapshot_action == 'revert'",
+                  "community.vmware.vmware_guest_snapshot": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name | default(omit) }}",
+                    name: "{{ vm_name }}",
+                    state: "reverted",
+                    snapshot_name: "{{ snapshot_name }}",
+                    remove_children: "{{ remove_children }}"
+                  }
+                }
+              ]
+            }
+          ])
+        },
+
+        vsphere_vm_add_disk: {
+          label: "Add extra virtual disk",
+          description: "Attach an additional virtual disk to an existing VM on a given datastore.",
+          inputs: [
+            {
+              id: "vcenter_hostname",
+              label: "vCenter hostname or IP",
+              type: "text",
+              default: "vcenter.example.com",
+              hint: "API endpoint used by Ansible"
+            },
+            {
+              id: "vcenter_username",
+              label: "vCenter username",
+              type: "text",
+              default: "automation@vsphere.local",
+              hint: "Account with rights to modify VMs"
+            },
+            {
+              id: "vcenter_password",
+              label: "vCenter password",
+              type: "text",
+              default: "CHANGE_ME",
+              hint: "Use Ansible Vault / cred store in reality"
+            },
+            {
+              id: "validate_certs",
+              label: "Validate TLS certs",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "false for lab / self-signed; true for hardened prod"
+            },
+            {
+              id: "datacenter_name",
+              label: "Datacenter name",
+              type: "text",
+              default: "Court-DC1",
+              hint: "Datacenter containing the VM"
+            },
+            {
+              id: "vm_name",
+              label: "VM name",
+              type: "text",
+              default: "court-db-01",
+              hint: "Target VM to attach extra disk"
+            },
+            {
+              id: "datastore_name",
+              label: "Datastore",
+              type: "text",
+              default: "vsanDatastore",
+              hint: "Datastore that will hold the new disk"
+            },
+            {
+              id: "new_disk_size_gb",
+              label: "New disk size (GB)",
+              type: "number",
+              default: "100",
+              hint: "Size of the additional data disk"
+            },
+            {
+              id: "unit_number",
+              label: "Disk unit number (optional)",
+              type: "number",
+              default: "",
+              hint: "Leave blank to let vSphere choose next unit"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Add extra virtual disk to VM",
+                hosts,
+                gather_facts: false,
+                vars: {
+                  vcenter_hostname: vals.vcenter_hostname,
+                  vcenter_username: vals.vcenter_username,
+                  vcenter_password: vals.vcenter_password,
+                  validate_certs: vals.validate_certs === "true",
+                  datacenter_name: vals.datacenter_name,
+                  vm_name: vals.vm_name,
+                  datastore_name: vals.datastore_name,
+                  new_disk_size_gb: Number(vals.new_disk_size_gb),
+                  unit_number: vals.unit_number
+                },
+                tasks: [
+                  {
+                    name: "Attach new disk",
+                    "community.vmware.vmware_guest_disk": {
+                      hostname: "{{ vcenter_hostname }}",
+                      username: "{{ vcenter_username }}",
+                      password: "{{ vcenter_password }}",
+                      validate_certs: "{{ validate_certs }}",
+                      datacenter: "{{ datacenter_name }}",
+                      name: "{{ vm_name }}",
+                      disk: [
+                        {
+                          state: "present",
+                          size_gb: "{{ new_disk_size_gb }}",
+                          datastore: "{{ datastore_name }}",
+                          type: "thin",
+                          unit_number: "{{ unit_number | default(omit) }}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        vsphere_vm_folder_and_annotation: {
+          label: "Organize VM into folder + annotation",
+          description: "Move an existing VM into a folder and set an annotation for tagging / audit.",
+          inputs: [
+            {
+              id: "vcenter_hostname",
+              label: "vCenter hostname or IP",
+              type: "text",
+              default: "vcenter.example.com",
+              hint: "API endpoint used by Ansible"
+            },
+            {
+              id: "vcenter_username",
+              label: "vCenter username",
+              type: "text",
+              default: "automation@vsphere.local",
+              hint: "Account with permission to move VMs"
+            },
+            {
+              id: "vcenter_password",
+              label: "vCenter password",
+              type: "text",
+              default: "CHANGE_ME",
+              hint: "Use Ansible Vault / cred store in reality"
+            },
+            {
+              id: "validate_certs",
+              label: "Validate TLS certs",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "false for lab / self-signed; true for hardened prod"
+            },
+            {
+              id: "datacenter_name",
+              label: "Datacenter name",
+              type: "text",
+              default: "Court-DC1",
+              hint: "Datacenter containing the VM"
+            },
+            {
+              id: "vm_name",
+              label: "VM name",
+              type: "text",
+              default: "court-app-01",
+              hint: "VM to move and annotate"
+            },
+            {
+              id: "folder_path",
+              label: "Destination folder path",
+              type: "text",
+              default: "/Court/Prod/IL5",
+              hint: "Full folder path, e.g. /Court/Prod/IL5"
+            },
+            {
+              id: "annotation",
+              label: "VM annotation",
+              type: "text",
+              default: "System of record: CourtCaseMgmt; Data class: CJIS",
+              hint: "Free text used for tagging / classification"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Move VM to folder and set annotation",
+                hosts,
+                gather_facts: false,
+                vars: {
+                  vcenter_hostname: vals.vcenter_hostname,
+                  vcenter_username: vals.vcenter_username,
+                  vcenter_password: vals.vcenter_password,
+                  validate_certs: vals.validate_certs === "true",
+                  datacenter_name: vals.datacenter_name,
+                  vm_name: vals.vm_name,
+                  folder_path: vals.folder_path,
+                  annotation: vals.annotation
+                },
+                tasks: [
+                  {
+                    name: "Move VM to destination folder",
+                    "community.vmware.vmware_guest_move": {
+                      hostname: "{{ vcenter_hostname }}",
+                      username: "{{ vcenter_username }}",
+                      password: "{{ vcenter_password }}",
+                      validate_certs: "{{ validate_certs }}",
+                      datacenter: "{{ datacenter_name }}",
+                      name: "{{ vm_name }}",
+                      folder: "{{ folder_path }}"
+                    }
+                  },
+                  {
+                    name: "Set VM annotation",
+                    "community.vmware.vmware_guest": {
+                      hostname: "{{ vcenter_hostname }}",
+                      username: "{{ vcenter_username }}",
+                      password: "{{ vcenter_password }}",
+                      validate_certs: "{{ validate_certs }}",
+                      datacenter: "{{ datacenter_name }}",
+                      name: "{{ vm_name }}",
+                      annotation: "{{ annotation }}",
+                      state: "present"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+
+        vsphere_vm_reconfigure: {
+          label: "VM reconfigure (CPU/RAM/disk/network)",
+          description: "Adjust hardware and network settings for an existing VM.",
+          inputs: [
+            {
+              id: "vcenter_hostname",
+              label: "vCenter hostname or IP",
+              type: "text",
+              default: "vcenter.example.com",
+              hint: "Same as above"
+            },
+            {
+              id: "vcenter_username",
+              label: "vCenter username",
+              type: "text",
+              default: "automation@vsphere.local",
+              hint: "Service account"
+            },
+            {
+              id: "vcenter_password",
+              label: "vCenter password",
+              type: "text",
+              default: "ChangeMe123!",
+              hint: "Use Vault in prod"
+            },
+            {
+              id: "validate_certs",
+              label: "Validate TLS certs",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "true / false"
+            },
+            {
+              id: "datacenter_name",
+              label: "Datacenter name",
+              type: "text",
+              default: "DC1",
+              hint: "Optional"
+            },
+            {
+              id: "vm_name",
+              label: "VM name",
+              type: "text",
+              default: "court-app-01",
+              hint: "Existing VM"
+            },
+            {
+              id: "cpu_count",
+              label: "New vCPU count",
+              type: "number",
+              default: 4,
+              hint: "Leave same as current if no change"
+            },
+            {
+              id: "memory_mb",
+              label: "New memory (MB)",
+              type: "number",
+              default: 8192,
+              hint: "RAM in MB"
+            },
+            {
+              id: "disk_gb",
+              label: "New primary disk size (GB)",
+              type: "number",
+              default: 80,
+              hint: "Must be >= current size"
+            },
+            {
+              id: "vm_network",
+              label: "Network / portgroup",
+              type: "text",
+              default: "VM Network",
+              hint: "New network, or keep same"
+            }
+          ],
+          buildPlay: (vals, hosts) => ([
+            {
+              name: "Reconfigure vSphere VM",
+              hosts,
+              gather_facts: false,
+              become: false,
+              vars: {
+                vcenter_hostname: vals.vcenter_hostname,
+                vcenter_username: vals.vcenter_username,
+                vcenter_password: vals.vcenter_password,
+                validate_certs: vals.validate_certs === "true",
+                datacenter_name: vals.datacenter_name,
+                vm_name: vals.vm_name,
+                cpu_count: Number(vals.cpu_count),
+                memory_mb: Number(vals.memory_mb),
+                disk_gb: Number(vals.disk_gb),
+                vm_network: vals.vm_network
+              },
+              tasks: [
+                {
+                  name: "Resize CPU and memory",
+                  "community.vmware.vmware_guest": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name | default(omit) }}",
+                    name: "{{ vm_name }}",
+                    state: "present",
+                    hardware: {
+                      num_cpus: "{{ cpu_count }}",
+                      memory_mb: "{{ memory_mb }}"
+                    }
+                  }
+                },
+                {
+                  name: "Resize disk if requested",
+                  "community.vmware.vmware_guest_disk": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name | default(omit) }}",
+                    name: "{{ vm_name }}",
+                    disk: [
+                      {
+                        state: "present",
+                        size_gb: "{{ disk_gb }}",
+                        unit_number: 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  name: "Update network if requested",
+                  "community.vmware.vmware_guest_network": {
+                    hostname: "{{ vcenter_hostname }}",
+                    username: "{{ vcenter_username }}",
+                    password: "{{ vcenter_password }}",
+                    validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name | default(omit) }}",
+                    name: "{{ vm_name }}",
+                    networks: [
+                      {
+                        name: "{{ vm_network }}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ])
+        }
+      }
+    },
+
+    linux: {
+      label: "Generic Linux hosts",
+      scenarios: {
+        nginx_server: {
+          label: "Web – NGINX server",
+          description: "Install NGINX, enable service, and deploy a simple index page.",
+          inputs: [
+            {
+              id: "http_port",
+              label: "HTTP port",
+              type: "number",
+              default: "80",
+              hint: "e.g. 80, 8080"
+            },
+            {
+              id: "index_message",
+              label: "Index page message",
+              type: "text",
+              default: "Hello from Ansible",
+              hint: "Simple banner text"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Configure NGINX web server",
+                hosts,
+                become: true,
+                vars: {
+                  index_message: vals.index_message
+                },
+                tasks: [
+                  {
+                    name: "Install NGINX",
+                    "ansible.builtin.package": {
+                      name: "nginx",
+                      state: "present"
+                    }
+                  },
+                  {
+                    name: "Ensure NGINX running and enabled",
+                    "ansible.builtin.service": {
+                      name: "nginx",
+                      state: "started",
+                      enabled: true
+                    }
+                  },
+                  {
+                    name: "Deploy index page",
+                    "ansible.builtin.copy": {
+                      dest: "/usr/share/nginx/html/index.html",
+                      mode: "0644",
+                      content: "<html><body><h1>{{ index_message }}</h1></body></html>"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        linux_patch: {
+          label: "Ops – Security updates",
+          description: "Run package updates and reboot if required.",
+          inputs: [
+            {
+              id: "reboot_if_needed",
+              label: "Reboot if kernel updated",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "true / false"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Apply Linux security updates",
+                hosts,
+                become: true,
+                vars: {
+                  reboot_if_needed: vals.reboot_if_needed === "true"
+                },
+                tasks: [
+                  {
+                    name: "Update packages to latest",
+                    "ansible.builtin.package": {
+                      name: "*",
+                      state: "latest"
+                    }
+                  },
+                  {
+                    name: "Check if reboot is required (Debian/Ubuntu)",
+                    "ansible.builtin.stat": {
+                      path: "/var/run/reboot-required"
+                    },
+                    register: "reboot_required_file",
+                    when: "ansible_os_family == 'Debian'"
+                  },
+                  {
+                    name: "Reboot if needed",
+                    "ansible.builtin.reboot": {},
+                    when: "reboot_if_needed and reboot_required_file.stat.exists | default(false)"
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        linux_users: {
+          label: "Identity – Users & groups",
+          description: "Manage local users, groups and SSH keys.",
+          inputs: [
+            { id: "group_name", label: "Group name", type: "text", default: "appusers", hint: "Primary group" },
+            { id: "username", label: "User name", type: "text", default: "deploy", hint: "Login user" },
+            {
+              id: "shell",
+              label: "Shell",
+              control: "select",
+              options: [
+                { value: "/bin/bash", label: "/bin/bash" },
+                { value: "/bin/zsh", label: "/bin/zsh" },
+                { value: "/bin/sh", label: "/bin/sh" }
+              ],
+              default: "/bin/bash",
+              hint: "Default shell"
+            },
+            { id: "ssh_pubkey", label: "SSH public key", type: "text", default: "ssh-ed25519 AAAA...", hint: "User key" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Create Linux users & groups",
+                hosts,
+                become: true,
+                vars: {
+                  group_name: vals.group_name,
+                  username: vals.username,
+                  user_shell: vals.shell,
+                  ssh_pubkey: vals.ssh_pubkey
+                },
+                tasks: [
+                  {
+                    name: "Ensure group exists",
+                    "ansible.builtin.group": {
+                      name: "{{ group_name }}",
+                      state: "present"
+                    }
+                  },
+                  {
+                    name: "Ensure user exists",
+                    "ansible.builtin.user": {
+                      name: "{{ username }}",
+                      group: "{{ group_name }}",
+                      shell: "{{ user_shell }}",
+                      create_home: true
+                    }
+                  },
+                  {
+                    name: "Install authorized key",
+                    "ansible.posix.authorized_key": {
+                      user: "{{ username }}",
+                      state: "present",
+                      key: "{{ ssh_pubkey }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        linux_cron_backup: {
+          label: "Ops – Cron job (backup script)",
+          description: "Install a cron job to run a backup script on a schedule.",
+          inputs: [
+            { id: "user", label: "Run as user", type: "text", default: "root", hint: "User for cron" },
+            { id: "job_name", label: "Job name", type: "text", default: "nightly-backup", hint: "Identifier" },
+            { id: "schedule", label: "Cron schedule", type: "text", default: "0 2 * * *", hint: "Standard cron string" },
+            { id: "command", label: "Command", type: "text", default: "/usr/local/bin/backup.sh", hint: "Script or command" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Configure backup cron job",
+                hosts,
+                become: true,
+                vars: {
+                  cron_user: vals.user,
+                  job_name: vals.job_name,
+                  schedule: vals.schedule,
+                  command: vals.command
+                },
+                tasks: [
+                  {
+                    name: "Install cron job",
+                    "ansible.builtin.cron": {
+                      user: "{{ cron_user }}",
+                      name: "{{ job_name }}",
+                      job: "{{ command }}",
+                      special_time: "absent",
+                      minute: "{{ schedule.split(' ')[0] }}",
+                      hour: "{{ schedule.split(' ')[1] }}",
+                      day: "{{ schedule.split(' ')[2] }}",
+                      month: "{{ schedule.split(' ')[3] }}",
+                      weekday: "{{ schedule.split(' ')[4] }}"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        linux_harden_ssh: {
+          label: "Security – Harden SSH",
+          description: "Apply basic SSH hardening to sshd_config.",
+          inputs: [
+            {
+              id: "allow_password_auth",
+              label: "Allow password auth",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "false",
+              hint: "Prefer false for security"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Harden SSH configuration",
+                hosts,
+                become: true,
+                vars: {
+                  allow_password_auth: vals.allow_password_auth === "true"
+                },
+                tasks: [
+                  {
+                    name: "Ensure SSHD config present",
+                    "ansible.builtin.lineinfile": {
+                      path: "/etc/ssh/sshd_config",
+                      regexp: "^PasswordAuthentication",
+                      line: "PasswordAuthentication {{ 'yes' if allow_password_auth else 'no' }}",
+                      backup: true
+                    }
+                  },
+                  {
+                    name: "Disable root login via SSH",
+                    "ansible.builtin.lineinfile": {
+                      path: "/etc/ssh/sshd_config",
+                      regexp: "^PermitRootLogin",
+                      line: "PermitRootLogin prohibit-password",
+                      backup: true
+                    }
+                  },
+                  {
+                    name: "Restart SSH service",
+                    "ansible.builtin.service": {
+                      name: "ssh",
+                      state: "restarted"
+                    },
+                    when: "ansible_service_mgr != 'systemd' or ansible_os_family != 'RedHat'"
+                  },
+                  {
+                    name: "Restart sshd service",
+                    "ansible.builtin.service": {
+                      name: "sshd",
+                      state: "restarted"
+                    },
+                    when: "ansible_service_mgr == 'systemd' and ansible_os_family == 'RedHat'"
+                  }
+                ]
+              }
+            ];
+          }
+        }
+      }
+    },
+
+    windows: {
+      label: "Generic Windows hosts",
+      scenarios: {
+        join_domain: {
+          label: "Identity – Join to AD domain",
+          description: "Join a Windows host to an Active Directory domain using win_domain_membership.",
+          inputs: [
+            { id: "domain_name", label: "Domain name", type: "text", default: "corp.example.com", hint: "FQDN" },
+            { id: "ou_path", label: "OU path (optional)", type: "text", default: "OU=Servers,DC=corp,DC=example,DC=com", hint: "Can be blank" },
+            { id: "domain_user", label: "Domain join user (UPN)", type: "text", default: "ansible-join@corp.example.com", hint: "UPN format" },
+            {
+              id: "reboot_after",
+              label: "Reboot after join",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "true / false"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Join Windows servers to domain",
+                hosts,
+                gather_facts: false,
+                vars: {
+                  domain_name: vals.domain_name,
+                  ou_path: vals.ou_path,
+                  domain_user: vals.domain_user,
+                  reboot_after: vals.reboot_after === "true"
+                },
+                tasks: [
+                  {
+                    name: "Join domain",
+                    "ansible.windows.win_domain_membership": {
+                      dns_domain_name: "{{ domain_name }}",
+                      domain_admin_user: "{{ domain_user }}",
+                      domain_admin_password: "{{ domain_join_password | default('CHANGEME') }}",
+                      domain_ou_path: "{{ ou_path }}",
+                      state: "domain"
+                    },
+                    register: "domain_state"
+                  },
+                  {
+                    name: "Reboot if domain join changed and reboot_after is true",
+                    "ansible.windows.win_reboot": {},
+                    when: "reboot_after and domain_state.reboot_required"
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        install_iis: {
+          label: "Web – IIS server",
+          description: "Enable IIS role and deploy a simple default page.",
+          inputs: [
+            { id: "site_name", label: "Site name", type: "text", default: "Default Web Site", hint: "IIS site" },
+            { id: "index_message", label: "Index page message", type: "text", default: "Hello from Ansible on IIS", hint: "HTML content heading" }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Install IIS",
+                hosts,
+                gather_facts: false,
+                vars: {
+                  index_message: vals.index_message
+                },
+                tasks: [
+                  {
+                    name: "Install IIS role",
+                    "ansible.windows.win_feature": {
+                      name: "Web-Server",
+                      state: "present",
+                      include_management_tools: true
+                    }
+                  },
+                  {
+                    name: "Ensure IIS service running",
+                    "ansible.windows.win_service": {
+                      name: "W3SVC",
+                      state: "started",
+                      start_mode: "auto"
+                    }
+                  },
+                  {
+                    name: "Deploy default page",
+                    "ansible.windows.win_copy": {
+                      dest: "C:\\inetpub\\wwwroot\\index.html",
+                      content: "<html><body><h1>{{ index_message }}</h1></body></html>"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        windows_updates: {
+          label: "Ops – Windows Updates",
+          description: "Apply Windows Updates with optional reboot.",
+          inputs: [
+            {
+              id: "category_names",
+              label: "Update categories (comma-separated)",
+              type: "text",
+              default: "SecurityUpdates,CriticalUpdates",
+              hint: "Use ALL for everything"
+            },
+            {
+              id: "reboot_if_needed",
+              label: "Reboot if required",
+              control: "select",
+              options: BOOL_OPTIONS,
+              default: "true",
+              hint: "true / false"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Apply Windows Updates",
+                hosts,
+                gather_facts: false,
+                vars: {
+                  categories_raw: vals.category_names,
+                  reboot_if_needed: vals.reboot_if_needed === "true"
+                },
+                tasks: [
+                  {
+                    name: "Install updates",
+                    "ansible.windows.win_updates": {
+                      category_names: "{{ categories_raw.split(',') if categories_raw != 'ALL' else [] }}",
+                      state: "installed"
+                    },
+                    register: "update_result"
+                  },
+                  {
+                    name: "Reboot if required and allowed",
+                    "ansible.windows.win_reboot": {},
+                    when: "reboot_if_needed and update_result.reboot_required"
+                  }
+                ]
+              }
+            ];
+          }
+        },
+        windows_local_user: {
+          label: "Identity – Local user",
+          description: "Create or update a local Windows user.",
+          inputs: [
+            { id: "username", label: "Username", type: "text", default: "svc_ansible", hint: "Local account" },
+            { id: "password", label: "Password", type: "text", default: "CHANGE_ME!", hint: "Use vault/secret in real life" },
+            {
+              id: "group",
+              label: "Primary group",
+              type: "text",
+              default: "Users",
+              hint: "e.g. Administrators, Users"
+            }
+          ],
+          buildPlay: (vals, hosts) => {
+            return [
+              {
+                name: "Manage local Windows user",
+                hosts,
+                gather_facts: false,
+                vars: {
+                  username: vals.username,
+                  password: vals.password,
+                  group: vals.group
+                },
+                tasks: [
+                  {
+                    name: "Ensure user exists",
+                    "ansible.windows.win_user": {
+                      name: "{{ username }}",
+                      password: "{{ password }}",
+                      groups: "{{ group }}",
+                      state: "present"
+                    }
+                  }
+                ]
+              }
+            ];
+          }
+        }
+      }
+    }
+  };
+
+  // -----------------------
+  // Simple YAML serializer (for our limited structures)
+  // -----------------------
+  function toYaml(value, indent = 0) {
+    const pad = "  ".repeat(indent);
+
+    if (value === null || value === undefined) {
+      return "null";
+    }
+    if (typeof value === "string") {
+      if (/[:{}\[\],&*#?|<>=!%@`\\]/.test(value) || value.trim() !== value || value.includes("\n")) {
+        return JSON.stringify(value);
+      }
+      return value;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) return "[]";
+      return value
+        .map(item => pad + "- " + toYaml(item, indent + 1).replace(/^\s+/, ""))
+        .join("\n");
+    }
+    if (typeof value === "object") {
+      const keys = Object.keys(value);
+      if (keys.length === 0) return "{}";
+      return keys
+        .map(key => {
+          const v = value[key];
+          const keyStr = String(key);
+          if (
+            v === null ||
+            typeof v === "string" ||
+            typeof v === "number" ||
+            typeof v === "boolean"
+          ) {
+            return pad + keyStr + ": " + toYaml(v, indent + 1);
+          } else {
+            const nested = toYaml(v, indent + 1);
+            return pad + keyStr + ":\n" + nested;
+          }
+        })
+        .join("\n");
+    }
+    return JSON.stringify(value);
+  }
+
+  // -----------------------
+  // UI wiring
+  // -----------------------
+  const platformSelect = document.getElementById("platformSelect");
+  const scenarioSelect = document.getElementById("scenarioSelect");
+  const paramsArea = document.getElementById("paramsArea");
+  const generateButton = document.getElementById("generateButton");
+  const resetButton = document.getElementById("resetButton");
+  const formatToggle = document.getElementById("formatToggle");
+  const outputKindToggle = document.getElementById("outputKindToggle");
+  const outputPre = document.getElementById("outputPre");
+  const codeMeta = document.getElementById("codeMeta");
+  const filenameInput = document.getElementById("filenameInput");
+  const hostsInput = document.getElementById("hostsInput");
+  const downloadButton = document.getElementById("downloadButton");
+  const copyButton = document.getElementById("copyButton");
+  const copyCommandButton = document.getElementById("copyCommandButton");
+  const commandHint = document.getElementById("commandHint");
+  const statusLine = document.getElementById("statusLine");
+
+  let currentFormat = "yaml";
+  let currentOutputKind = "playbook"; // "playbook" or "vars"
+
+  function initSelectors() {
+    platformSelect.innerHTML = "";
+    Object.entries(SCENARIO_DEFS).forEach(([id, def]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = def.label;
+      platformSelect.appendChild(opt);
+    });
+    loadScenariosForPlatform(platformSelect.value);
+  }
+
+  function loadScenariosForPlatform(platformId) {
+    const platform = SCENARIO_DEFS[platformId];
+    scenarioSelect.innerHTML = "";
+    if (!platform) return;
+    Object.entries(platform.scenarios).forEach(([id, sc]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = sc.label;
+      scenarioSelect.appendChild(opt);
+    });
+    renderParams(platformId, scenarioSelect.value);
+  }
+
+  function renderParams(platformId, scenarioId) {
+    const platform = SCENARIO_DEFS[platformId];
+    const scenario = platform && platform.scenarios[scenarioId];
+    paramsArea.innerHTML = "";
+    if (!scenario) return;
+
+    const desc = document.createElement("p");
+    desc.className = "hint";
+    desc.textContent = scenario.description || "";
+    paramsArea.appendChild(desc);
+
+    scenario.inputs.forEach(input => {
+      const field = document.createElement("div");
+      field.className = "field";
+
+      const labelRow = document.createElement("div");
+      labelRow.className = "field-label-row";
+
+      const label = document.createElement("label");
+      label.htmlFor = input.id;
+      label.textContent = input.label;
+
+      const hintSpan = document.createElement("span");
+      hintSpan.className = "hint";
+      hintSpan.textContent = input.hint || "";
+
+      labelRow.appendChild(label);
+      labelRow.appendChild(hintSpan);
+      field.appendChild(labelRow);
+
+      if (input.control === "select" && Array.isArray(input.options)) {
+        const selectEl = document.createElement("select");
+        selectEl.id = input.id;
+        input.options.forEach(optDef => {
+          const opt = document.createElement("option");
+          opt.value = optDef.value;
+          opt.textContent = optDef.label;
+          selectEl.appendChild(opt);
+        });
+        if (input.default !== undefined) {
+          selectEl.value = input.default;
+        }
+        field.appendChild(selectEl);
+      } else {
+        const inputEl = document.createElement("input");
+        inputEl.type = input.type || "text";
+        inputEl.id = input.id;
+        inputEl.value = input.default || "";
+        field.appendChild(inputEl);
+      }
+
+      paramsArea.appendChild(field);
+    });
+  }
+
+  function collectValues(platformId, scenarioId) {
+    const platform = SCENARIO_DEFS[platformId];
+    const scenario = platform && platform.scenarios[scenarioId];
+    const values = {};
+    if (!scenario) return values;
+    scenario.inputs.forEach(input => {
+      const el = document.getElementById(input.id);
+      values[input.id] = el ? el.value : "";
+    });
+    return values;
+  }
+
+  function safeUpdateStatus(ok, msg) {
+    const dot = statusLine.querySelector(".status-dot");
+    const textNode = statusLine.querySelector("span:nth-child(2)");
+    if (!dot || !textNode) return;
+    dot.classList.toggle("error", !ok);
+    textNode.textContent = msg;
+    if (!ok) {
+      textNode.classList.add("error-text");
+    } else {
+      textNode.classList.remove("error-text");
+    }
+  }
+
+  function generatePlaybook() {
+    const platformId = platformSelect.value;
+    const scenarioId = scenarioSelect.value;
+    const hosts = hostsInput.value || "all";
+    const platform = SCENARIO_DEFS[platformId];
+    const scenario = platform && platform.scenarios[scenarioId];
+
+    if (!scenario) {
+      outputPre.textContent = "# No service / blueprint selected.";
+      safeUpdateStatus(false, "No service / blueprint selected.");
+      return;
+    }
+
+    const vals = collectValues(platformId, scenarioId);
+    let playbook;
+    try {
+      playbook = scenario.buildPlay(vals, hosts);
+    } catch (err) {
+      outputPre.textContent = "# Error building playbook: " + err.message;
+      safeUpdateStatus(false, "Error building playbook: " + err.message);
+      return;
+    }
+
+    let text;
+
+    if (currentOutputKind === "vars") {
+      // Vars-only mode: try to use vars from the first play, fallback to empty object
+      const firstPlay = Array.isArray(playbook) && playbook.length > 0 ? playbook[0] : {};
+      const varsOnly = firstPlay && firstPlay.vars ? firstPlay.vars : {};
+      if (currentFormat === "json") {
+        text = JSON.stringify(varsOnly, null, 2);
+      } else {
+        text = toYaml(varsOnly, 0);
+      }
+    } else {
+      // Full playbook mode (default)
+      if (currentFormat === "json") {
+        text = JSON.stringify(playbook, null, 2);
+      } else {
+        text = toYaml(playbook, 0);
+      }
+    }
+
+    outputPre.textContent = text;
+
+    var baseName = currentOutputKind === "vars" ? "vars_generated" : "playbook_generated";
+    var filename = filenameInput.value || (currentFormat === "yaml" ? baseName + ".yml" : baseName + ".json");
+
+    if (currentOutputKind === "vars") {
+      commandHint.textContent = "# Include vars in your playbooks, e.g. vars_files: ['" + filename + "']";
+    } else {
+      commandHint.textContent = "ansible-playbook -i inventory.yml " + filename;
+    }
+
+    var kindLabel = currentOutputKind === "vars" ? "VARS" : "PLAYBOOK";
+    codeMeta.textContent = platform.label + " · " + scenario.label + " · Output: " + kindLabel + " · Format: " + currentFormat.toUpperCase();
+
+    safeUpdateStatus(true, "Generation successful.");
+  }
+
+
+  function handleDownload() {
+    const filename = filenameInput.value || (currentFormat === "yaml" ? "playbook_generated.yml" : "playbook_generated.json");
+    const blob = new Blob([outputPre.textContent], {
+      type: currentFormat === "yaml" ? "text/yaml" : "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCopyCode() {
+    navigator.clipboard.writeText(outputPre.textContent).then(() => {
+      safeUpdateStatus(true, "Playbook copied to clipboard.");
+    }).catch(() => {
+      safeUpdateStatus(false, "Unable to copy playbook.");
+    });
+  }
+
+  function handleCopyCommand() {
+    navigator.clipboard.writeText(commandHint.textContent).then(() => {
+      safeUpdateStatus(true, "Command copied to clipboard.");
+    }).catch(() => {
+      safeUpdateStatus(false, "Unable to copy command.");
+    });
+  }
+
+  function handleFormatToggle(ev) {
+    const btn = ev.target.closest("button[data-format]");
+    if (!btn) return;
+    const fmt = btn.getAttribute("data-format");
+    if (!fmt || fmt === currentFormat) return;
+    currentFormat = fmt;
+    Array.from(formatToggle.querySelectorAll("button[data-format]")).forEach(b => {
+      b.classList.toggle("active", b.getAttribute("data-format") === currentFormat);
+    });
+    generatePlaybook();
+  }
+
+  function handleOutputKindToggle(ev) {
+    const btn = ev.target.closest("button[data-output-kind]");
+    if (!btn) return;
+    const kind = btn.getAttribute("data-output-kind");
+    if (!kind || kind === currentOutputKind) return;
+    currentOutputKind = kind;
+    Array.from(outputKindToggle.querySelectorAll("button[data-output-kind]")).forEach(b => {
+      b.classList.toggle("active", b.getAttribute("data-output-kind") === currentOutputKind);
+    });
+    generatePlaybook();
+  }
+
+
+  function resetAll() {
+    hostsInput.value = "all";
+    filenameInput.value = "playbook_generated.yml";
+    initSelectors();
+    outputPre.textContent = "# Select a platform & service / blueprint, adjust parameters, then click “Generate Playbook”.";
+    commandHint.textContent = "ansible-playbook -i inventory.yml playbook_generated.yml";
+    codeMeta.textContent = "Waiting for input…";
+    safeUpdateStatus(true, "Reset to defaults.");
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    initSelectors();
+    generateButton.addEventListener("click", generatePlaybook);
+    resetButton.addEventListener("click", resetAll);
+    platformSelect.addEventListener("change", () => {
+      loadScenariosForPlatform(platformSelect.value);
+      safeUpdateStatus(true, "Platform changed; service / blueprint & parameters updated.");
+    });
+    scenarioSelect.addEventListener("change", () => {
+      renderParams(platformSelect.value, scenarioSelect.value);
+      safeUpdateStatus(true, "Service / blueprint changed; review parameters.");
+    });
+    formatToggle.addEventListener("click", handleFormatToggle);
+    outputKindToggle.addEventListener("click", handleOutputKindToggle);
+    downloadButton.addEventListener("click", handleDownload);
+    copyButton.addEventListener("click", handleCopyCode);
+    copyCommandButton.addEventListener("click", handleCopyCommand);
+  });
+</script>
+</body>
+</html>

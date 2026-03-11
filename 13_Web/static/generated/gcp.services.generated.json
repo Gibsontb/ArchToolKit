@@ -1,0 +1,480 @@
+{
+  "provider": "gcp",
+  "provider_name": "Google Cloud",
+  "catalog_version": "2025-v2.5",
+  "generated_at": "2026-01-08T19:55:39.782Z",
+  "services": [
+    {
+      "id": "gcp.deep_learning",
+      "name": "Deep Learning",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_containers",
+      "capability_name": "AI CONTAINERS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.gemini_for_google",
+      "name": "Gemini for Google",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_powered_assistant",
+      "capability_name": "AI-POWERED ASSISTANT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dialogflow",
+      "name": "Dialogflow",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.chatbot_builder",
+      "capability_name": "CHATBOT BUILDER",
+      "status": "active"
+    },
+    {
+      "id": "gcp.vertex_ai_data",
+      "name": "Vertex AI Data",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.data_labeling",
+      "capability_name": "DATA LABELING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.document_ai",
+      "name": "Document AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.document_extraction",
+      "capability_name": "DOCUMENT EXTRACTION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.vertex_ai",
+      "name": "Vertex AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.generative_ai",
+      "capability_name": "GENERATIVE AI",
+      "status": "active"
+    },
+    {
+      "id": "gcp.vision_ai",
+      "name": "Vision AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.image_recognition",
+      "capability_name": "IMAGE RECOGNITION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud_tpu",
+      "name": "Cloud TPU",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.inference_acceleration",
+      "capability_name": "INFERENCE ACCELERATION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.edge_tpu",
+      "name": "Edge TPU",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.inference_acceleration",
+      "capability_name": "INFERENCE ACCELERATION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.translation_ai",
+      "name": "Translation AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.language_translation",
+      "capability_name": "LANGUAGE TRANSLATION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud_tpu",
+      "name": "Cloud TPU",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "capability_name": "ML/AI CHIPS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.trillium",
+      "name": "Trillium",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "capability_name": "ML/AI CHIPS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.vertex_ai",
+      "name": "Vertex AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.managed_ml_platform",
+      "capability_name": "MANAGED ML PLATFORM",
+      "status": "active"
+    },
+    {
+      "id": "gcp.vertex_ai_workbench",
+      "name": "Vertex AI Workbench",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.notebooks",
+      "capability_name": "NOTEBOOKS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.recaptcha",
+      "name": "reCAPTCHA",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.online_fraud_detection",
+      "capability_name": "ONLINE FRAUD DETECTION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.deep_learning_vm",
+      "name": "Deep Learning VM",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.preconfigured_ml_vms",
+      "capability_name": "PRECONFIGURED ML VMS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.recommendations_ai",
+      "name": "Recommendations AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recommendation",
+      "capability_name": "RECOMMENDATION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.speech_to_text",
+      "name": "Speech-to-Text &",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.speech",
+      "capability_name": "SPEECH",
+      "status": "active"
+    },
+    {
+      "id": "gcp.text_to_speech_api",
+      "name": "Text-to-Speech API",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recognition_synthesis",
+      "capability_name": "RECOGNITION/SYNTHESIS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.natural_language_api",
+      "name": "Natural Language API",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.text_analysis",
+      "capability_name": "TEXT ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.timesfm",
+      "name": "TimesFM",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.time_series_forecasting",
+      "capability_name": "TIME-SERIES FORECASTING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.vertex_ai",
+      "name": "Vertex AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.time_series_forecasting",
+      "capability_name": "TIME-SERIES FORECASTING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.video_intelligence_api",
+      "name": "Video Intelligence API",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.video_analysis",
+      "capability_name": "VIDEO ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.visual_inspection_ai",
+      "name": "Visual Inspection AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.visual_inspection",
+      "capability_name": "VISUAL INSPECTION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dataproc",
+      "name": "Dataproc",
+      "category": "Analytics",
+      "capability_id": "analytics.big_data_processing",
+      "capability_name": "BIG DATA PROCESSING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.looker",
+      "name": "Looker",
+      "category": "Analytics",
+      "capability_id": "analytics.business_analytics",
+      "capability_name": "BUSINESS ANALYTICS",
+      "status": "active"
+    },
+    {
+      "id": "gcp.analytics_hub",
+      "name": "Analytics Hub",
+      "category": "Analytics",
+      "capability_id": "analytics.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "gcp.catalog",
+      "name": "Catalog",
+      "category": "Analytics",
+      "capability_id": "analytics.exploration_catalog",
+      "capability_name": "EXPLORATION/CATALOG",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud_storage",
+      "name": "Cloud Storage",
+      "category": "Analytics",
+      "capability_id": "analytics.data_lake_creation",
+      "capability_name": "DATA LAKE CREATION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.datashare",
+      "name": "Datashare",
+      "category": "Analytics",
+      "capability_id": "analytics.sharing_exchange",
+      "capability_name": "SHARING/EXCHANGE",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dataflow",
+      "name": "Dataflow",
+      "category": "Analytics",
+      "capability_id": "analytics.data_streaming",
+      "capability_name": "DATA STREAMING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.bigquery",
+      "name": "BigQuery",
+      "category": "Analytics",
+      "capability_id": "analytics.data_warehousing",
+      "capability_name": "DATA WAREHOUSING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dataprep_by",
+      "name": "Dataprep by",
+      "category": "Analytics",
+      "capability_id": "analytics.data_wrangling",
+      "capability_name": "DATA WRANGLING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dataflow",
+      "name": "Dataflow",
+      "category": "Analytics",
+      "capability_id": "analytics.etl",
+      "capability_name": "ETL",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud",
+      "name": "Cloud",
+      "category": "Analytics",
+      "capability_id": "analytics.etl",
+      "capability_name": "ETL",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dataproc",
+      "name": "Dataproc",
+      "category": "Analytics",
+      "capability_id": "analytics.hosted_hadoop_spark",
+      "capability_name": "HOSTED HADOOP/SPARK",
+      "status": "active"
+    },
+    {
+      "id": "gcp.confluent_cloud",
+      "name": "Confluent Cloud",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_kafka",
+      "capability_name": "MANAGED KAFKA",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud_search",
+      "name": "Cloud Search",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_search",
+      "capability_name": "MANAGED SEARCH",
+      "status": "active"
+    },
+    {
+      "id": "gcp.bigquery_sql",
+      "name": "BigQuery SQL",
+      "category": "Analytics",
+      "capability_id": "analytics.query_service",
+      "capability_name": "QUERY SERVICE",
+      "status": "active"
+    },
+    {
+      "id": "gcp.assured",
+      "name": "Assured",
+      "category": "Security",
+      "capability_id": "security.audit_and_compliance",
+      "capability_name": "AUDIT AND COMPLIANCE",
+      "status": "active"
+    },
+    {
+      "id": "gcp.security",
+      "name": "Security",
+      "category": "Security",
+      "capability_id": "security.centralized_security",
+      "capability_name": "CENTRALIZED SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "gcp.command_center",
+      "name": "Command Center",
+      "category": "Security",
+      "capability_id": "security.mgmt",
+      "capability_name": "MGMT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.certificate",
+      "name": "Certificate",
+      "category": "Security",
+      "capability_id": "security.certificate_management",
+      "capability_name": "CERTIFICATE MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.confidential",
+      "name": "Confidential",
+      "category": "Security",
+      "capability_id": "security.confidential_computing",
+      "capability_name": "CONFIDENTIAL COMPUTING",
+      "status": "active"
+    },
+    {
+      "id": "gcp.binary",
+      "name": "Binary",
+      "category": "Security",
+      "capability_id": "security.container_security",
+      "capability_name": "CONTAINER SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "gcp.dlp_api",
+      "name": "DLP API",
+      "category": "Security",
+      "capability_id": "security.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "gcp.data",
+      "name": "Data",
+      "category": "Security",
+      "capability_id": "security.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "gcp.catalog",
+      "name": "Catalog",
+      "category": "Security",
+      "capability_id": "security.discovery_classification",
+      "capability_name": "DISCOVERY/CLASSIFICATION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.google_cloud",
+      "name": "Google Cloud",
+      "category": "Security",
+      "capability_id": "security.ddos_protection",
+      "capability_name": "DDOS PROTECTION",
+      "status": "active"
+    },
+    {
+      "id": "gcp.identity_platform",
+      "name": "Identity Platform",
+      "category": "Security",
+      "capability_id": "security.identity_access_mgmt",
+      "capability_name": "IDENTITY & ACCESS MGMT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.iam",
+      "name": "IAM",
+      "category": "Security",
+      "capability_id": "security.iam",
+      "capability_name": "(IAM)",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud_kms",
+      "name": "Cloud KMS",
+      "category": "Security",
+      "capability_id": "security.certificate_key",
+      "capability_name": "CERTIFICATE/KEY",
+      "status": "active"
+    },
+    {
+      "id": "gcp.cloud",
+      "name": "Cloud",
+      "category": "Security",
+      "capability_id": "security.certificate_key",
+      "capability_name": "CERTIFICATE/KEY",
+      "status": "active"
+    },
+    {
+      "id": "gcp.hsm",
+      "name": "HSM",
+      "category": "Security",
+      "capability_id": "security.management",
+      "capability_name": "MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.managed_ad",
+      "name": "Managed AD",
+      "category": "Security",
+      "capability_id": "security.microsoft_ad_support",
+      "capability_name": "MICROSOFT AD SUPPORT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.assured",
+      "name": "Assured",
+      "category": "Security",
+      "capability_id": "security.regulated_cloud_zones",
+      "capability_name": "REGULATED CLOUD ZONES",
+      "status": "active"
+    },
+    {
+      "id": "gcp.resource_manager",
+      "name": "Resource Manager",
+      "category": "Security",
+      "capability_id": "security.resource_access_policies",
+      "capability_name": "RESOURCE ACCESS POLICIES",
+      "status": "active"
+    },
+    {
+      "id": "gcp.secret_manager",
+      "name": "Secret Manager",
+      "category": "Security",
+      "capability_id": "security.secrets_management",
+      "capability_name": "SECRETS MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "gcp.identity_aware",
+      "name": "Identity-Aware",
+      "category": "Security",
+      "capability_id": "security.context_based_access",
+      "capability_name": "CONTEXT-BASED ACCESS",
+      "status": "active"
+    }
+  ]
+}

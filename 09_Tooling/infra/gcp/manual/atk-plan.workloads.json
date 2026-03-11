@@ -1,0 +1,10 @@
+{
+  "export": "gcp-workloads",
+  "export_name": "manual",
+  "internet_exposed": false,
+  "data_classification": [],
+  "strict_defaults": false,
+  "notes": [
+    "Firewall intent only. Apply tags (atk-public) to real instances later."
+  ]
+}

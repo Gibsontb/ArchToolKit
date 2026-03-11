@@ -1,0 +1,472 @@
+{
+  "provider": "aws",
+  "provider_name": "AWS",
+  "catalog_version": "2025-v2.5",
+  "generated_at": "2026-01-08T19:55:39.781Z",
+  "services": [
+    {
+      "id": "aws.deep_learning",
+      "name": "Deep Learning",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_containers",
+      "capability_name": "AI CONTAINERS",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_q",
+      "name": "Amazon Q",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_powered_assistant",
+      "capability_name": "AI-POWERED ASSISTANT",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.human",
+      "capability_name": "HUMAN",
+      "status": "active"
+    },
+    {
+      "id": "aws.augmented_ai",
+      "name": "Augmented AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.review_moderation",
+      "capability_name": "REVIEW/MODERATION",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_lex",
+      "name": "Amazon Lex",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.chatbot_builder",
+      "capability_name": "CHATBOT BUILDER",
+      "status": "active"
+    },
+    {
+      "id": "aws.sagemaker",
+      "name": "SageMaker",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.data_labeling",
+      "capability_name": "DATA LABELING",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_textract",
+      "name": "Amazon Textract",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.document_extraction",
+      "capability_name": "DOCUMENT EXTRACTION",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_bedrock",
+      "name": "Amazon Bedrock",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.generative_ai",
+      "capability_name": "GENERATIVE AI",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.image_recognition",
+      "capability_name": "IMAGE RECOGNITION",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_inferentia",
+      "name": "AWS Inferentia",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.inference_acceleration",
+      "capability_name": "INFERENCE ACCELERATION",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.language_translation",
+      "capability_name": "LANGUAGE TRANSLATION",
+      "status": "active"
+    },
+    {
+      "id": "aws.inferentia",
+      "name": "Inferentia",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "capability_name": "ML/AI CHIPS",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.managed_ml_platform",
+      "capability_name": "MANAGED ML PLATFORM",
+      "status": "active"
+    },
+    {
+      "id": "aws.emr_notebooks",
+      "name": "EMR Notebooks",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.notebooks",
+      "capability_name": "NOTEBOOKS",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_fraud",
+      "name": "Amazon Fraud",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.online_fraud_detection",
+      "capability_name": "ONLINE FRAUD DETECTION",
+      "status": "active"
+    },
+    {
+      "id": "aws.deep_learning",
+      "name": "Deep Learning",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.preconfigured_ml_vms",
+      "capability_name": "PRECONFIGURED ML VMS",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recommendation",
+      "capability_name": "RECOMMENDATION",
+      "status": "active"
+    },
+    {
+      "id": "aws.personalize",
+      "name": "Personalize",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.engine",
+      "capability_name": "ENGINE",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.speech",
+      "capability_name": "SPEECH",
+      "status": "active"
+    },
+    {
+      "id": "aws.transcribe",
+      "name": "Transcribe",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recognition_synthesis",
+      "capability_name": "RECOGNITION/SYNTHESIS",
+      "status": "active"
+    },
+    {
+      "id": "aws.polly",
+      "name": "Polly",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recognition_synthesis",
+      "capability_name": "RECOGNITION/SYNTHESIS",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.text_analysis",
+      "capability_name": "TEXT ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.time_series_forecasting",
+      "capability_name": "TIME-SERIES FORECASTING",
+      "status": "active"
+    },
+    {
+      "id": "aws.rekognition",
+      "name": "Rekognition",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.video_analysis",
+      "capability_name": "VIDEO ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "aws.lookout_for",
+      "name": "Lookout for",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.visual_inspection",
+      "capability_name": "VISUAL INSPECTION",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_emr",
+      "name": "Amazon EMR",
+      "category": "Analytics",
+      "capability_id": "analytics.big_data_processing",
+      "capability_name": "BIG DATA PROCESSING",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws",
+      "name": "AWS",
+      "category": "Analytics",
+      "capability_id": "analytics.big_data_processing",
+      "capability_name": "BIG DATA PROCESSING",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_quicksight",
+      "name": "Amazon QuickSight",
+      "category": "Analytics",
+      "capability_id": "analytics.business_analytics",
+      "capability_name": "BUSINESS ANALYTICS",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_data_exchange",
+      "name": "AWS Data Exchange",
+      "category": "Analytics",
+      "capability_id": "analytics.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_glue_data",
+      "name": "AWS Glue Data",
+      "category": "Analytics",
+      "capability_id": "analytics.exploration_catalog",
+      "capability_name": "EXPLORATION/CATALOG",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_lake_formation",
+      "name": "AWS Lake Formation",
+      "category": "Analytics",
+      "capability_id": "analytics.data_lake_creation",
+      "capability_name": "DATA LAKE CREATION",
+      "status": "active"
+    },
+    {
+      "id": "aws.lake_formation",
+      "name": "Lake Formation",
+      "category": "Analytics",
+      "capability_id": "analytics.sharing_exchange",
+      "capability_name": "SHARING/EXCHANGE",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_kinesis",
+      "name": "Amazon Kinesis",
+      "category": "Analytics",
+      "capability_id": "analytics.data_streaming",
+      "capability_name": "DATA STREAMING",
+      "status": "active"
+    },
+    {
+      "id": "aws.data",
+      "name": "Data",
+      "category": "Analytics",
+      "capability_id": "analytics.data_streaming",
+      "capability_name": "DATA STREAMING",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_redshift",
+      "name": "Amazon Redshift",
+      "category": "Analytics",
+      "capability_id": "analytics.data_warehousing",
+      "capability_name": "DATA WAREHOUSING",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_glue_databrew",
+      "name": "AWS Glue DataBrew",
+      "category": "Analytics",
+      "capability_id": "analytics.data_wrangling",
+      "capability_name": "DATA WRANGLING",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_glue",
+      "name": "AWS Glue",
+      "category": "Analytics",
+      "capability_id": "analytics.etl",
+      "capability_name": "ETL",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_data",
+      "name": "AWS Data",
+      "category": "Analytics",
+      "capability_id": "analytics.etl",
+      "capability_name": "ETL",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_emr",
+      "name": "Amazon EMR",
+      "category": "Analytics",
+      "capability_id": "analytics.hosted_hadoop_spark",
+      "capability_name": "HOSTED HADOOP/SPARK",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_msk",
+      "name": "Amazon MSK",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_kafka",
+      "capability_name": "MANAGED KAFKA",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon",
+      "name": "Amazon",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_search",
+      "capability_name": "MANAGED SEARCH",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_athena",
+      "name": "Amazon Athena",
+      "category": "Analytics",
+      "capability_id": "analytics.query_service",
+      "capability_name": "QUERY SERVICE",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_artifact",
+      "name": "AWS Artifact",
+      "category": "Security",
+      "capability_id": "security.audit_and_compliance",
+      "capability_name": "AUDIT AND COMPLIANCE",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_security",
+      "name": "AWS Security",
+      "category": "Security",
+      "capability_id": "security.centralized_security",
+      "capability_name": "CENTRALIZED SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "aws.hub",
+      "name": "Hub",
+      "category": "Security",
+      "capability_id": "security.mgmt",
+      "capability_name": "MGMT",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_certificate",
+      "name": "AWS Certificate",
+      "category": "Security",
+      "capability_id": "security.certificate_management",
+      "capability_name": "CERTIFICATE MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_nitro",
+      "name": "AWS Nitro",
+      "category": "Security",
+      "capability_id": "security.confidential_computing",
+      "capability_name": "CONFIDENTIAL COMPUTING",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_ecr",
+      "name": "Amazon ECR",
+      "category": "Security",
+      "capability_id": "security.container_security",
+      "capability_name": "CONTAINER SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "aws.amazon_macie",
+      "name": "Amazon Macie",
+      "category": "Security",
+      "capability_id": "security.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_shield",
+      "name": "AWS Shield",
+      "category": "Security",
+      "capability_id": "security.ddos_protection",
+      "capability_name": "DDOS PROTECTION",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_iam",
+      "name": "AWS IAM",
+      "category": "Security",
+      "capability_id": "security.identity_access_mgmt",
+      "capability_name": "IDENTITY & ACCESS MGMT",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_kms",
+      "name": "AWS KMS",
+      "category": "Security",
+      "capability_id": "security.certificate_key",
+      "capability_name": "CERTIFICATE/KEY",
+      "status": "active"
+    },
+    {
+      "id": "aws.cloudhsm",
+      "name": "CloudHSM",
+      "category": "Security",
+      "capability_id": "security.management",
+      "capability_name": "MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_directory",
+      "name": "AWS Directory",
+      "category": "Security",
+      "capability_id": "security.microsoft_ad_support",
+      "capability_name": "MICROSOFT AD SUPPORT",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_govcloud",
+      "name": "AWS GovCloud",
+      "category": "Security",
+      "capability_id": "security.regulated_cloud_zones",
+      "capability_name": "REGULATED CLOUD ZONES",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_resource",
+      "name": "AWS Resource",
+      "category": "Security",
+      "capability_id": "security.resource_access_policies",
+      "capability_name": "RESOURCE ACCESS POLICIES",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_secrets",
+      "name": "AWS Secrets",
+      "category": "Security",
+      "capability_id": "security.secrets_management",
+      "capability_name": "SECRETS MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "aws.aws_verified",
+      "name": "AWS Verified",
+      "category": "Security",
+      "capability_id": "security.context_based_access",
+      "capability_name": "CONTEXT-BASED ACCESS",
+      "status": "active"
+    }
+  ]
+}

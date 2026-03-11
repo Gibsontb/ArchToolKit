@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cloud Technology Navigator</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #020617;
+      color: #e5e7eb;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1.25rem;
+      border-bottom: 1px solid #1f2937;
+      background: linear-gradient(to right, #020617, #111827);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    header h1 {
+      font-size: 1rem;
+      margin: 0;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+    header .subtitle {
+      font-size: 0.75rem;
+      color: #6b7280;
+    }
+
+
+    .main-menu-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.3rem 0.9rem;
+      font-size: 0.78rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.05s ease;
+      white-space: nowrap;
+    }
+
+    .main-menu-btn:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .tabs-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.75rem;
+      border-bottom: 1px solid #1f2937;
+      background: #020617;
+    }
+    .tab-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.3rem 0.85rem;
+      font-size: 0.8rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.05s ease;
+    }
+    .tab-btn:hover {
+      border-color: #2563eb66;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+    .tab-btn.active {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+    }
+    .tab-pill {
+      border-radius: 999px;
+      padding: 0.05rem 0.5rem;
+      font-size: 0.7rem;
+      border: 1px solid #1f2937;
+      color: #6b7280;
+      background: #020617;
+    }
+
+    #searchInput {
+      background: #020617;
+      border-radius: 9999px;
+      border: 1px solid #1f2937;
+      padding: 0.35rem 0.75rem;
+      color: #e5e7eb;
+      font-size: 0.8rem;
+      width: 220px;
+      margin-left: auto;
+    }
+    #searchInput::placeholder { color: #4b5563; }
+
+    main { flex: 1; overflow: hidden; }
+    .tab-panel { height: 100%; display: none; }
+    .tab-panel.active { display: block; }
+
+    .panel {
+      background: #020617;
+      border-radius: 0.5rem;
+      border: 1px solid #1f2937;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .panel-header {
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid #111827;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6b7280;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+    .panel-body {
+      padding: 0.5rem;
+      overflow-y: auto;
+      font-size: 0.85rem;
+    }
+    .pill {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.72rem;
+      color: #9ca3af;
+      background: #020617;
+    }
+
+    /* Cloud / Tech tab layout */
+    #cloudTabContent {
+      height: 100%;
+      display: grid;
+      grid-template-columns: 260px 260px minmax(0, 1fr);
+      gap: 0.75rem;
+      padding: 0.75rem;
+      overflow: hidden;
+    }
+
+    .category-list,
+    .service-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .category-btn,
+    .service-btn {
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      padding: 0.4rem 0.5rem;
+      border-radius: 0.35rem;
+      font-size: 0.82rem;
+      background: transparent;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      transition: background 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+      border: 1px solid transparent;
+    }
+    .category-btn:hover,
+    .service-btn:hover {
+      background: #020617;
+      border-color: #1d4ed8;
+      transform: translateY(-1px);
+    }
+    .category-btn.active {
+      background: #111827;
+      border-color: #2563eb;
+    }
+    .service-btn.active {
+      background: #0b1120;
+      border-color: #22c55e;
+    }
+    .category-label { font-weight: 500; }
+    .category-count { font-size: 0.7rem; color: #6b7280; }
+    .service-name { font-weight: 500; }
+    .service-meta { font-size: 0.7rem; color: #6b7280; }
+
+    .detail-title {
+      font-size: 1rem;
+      margin: 0 0 0.25rem 0;
+      color: #e5e7eb;
+    }
+    .detail-badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-bottom: 0.4rem;
+    }
+    .badge {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.15rem 0.55rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #9ca3af;
+      background: #020617;
+    }
+    .badge-accent {
+      border-color: #22c55e33;
+      color: #bbf7d0;
+      background: #022c22;
+    }
+    .badge-secondary {
+      border-color: #1d4ed8;
+      color: #bfdbfe;
+      background: #020617;
+    }
+    .detail-section {
+      margin-top: 0.5rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid #111827;
+    }
+    .detail-section h3 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      margin: 0 0 0.3rem 0;
+    }
+    .detail-section p {
+      margin: 0 0 0.25rem 0;
+      line-height: 1.4;
+      color: #d1d5db;
+    }
+    .detail-section ul {
+      margin: 0.1rem 0 0.35rem 1rem;
+      padding: 0;
+      color: #d1d5db;
+    }
+    .detail-section li { margin-bottom: 0.15rem; }
+    .detail-link {
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 0.8rem;
+    }
+    .detail-link:hover { text-decoration: underline; }
+
+    .empty-state {
+      font-size: 0.8rem;
+      color: #6b7280;
+      padding: 0.25rem 0.25rem 0.5rem 0.25rem;
+    }
+
+    .provider-selector-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      margin-bottom: 0.15rem;
+    }
+    .provider-selector {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      margin-bottom: 0.4rem;
+    }
+    .provider-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: #020617;
+      color: #9ca3af;
+      font-size: 0.72rem;
+      padding: 0.18rem 0.6rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.05s ease;
+    }
+    .provider-btn span {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .provider-btn:hover {
+      border-color: #2563eb66;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+    .provider-btn.active {
+      background: #111827;
+      border-color: #22c55e;
+      color: #e5e7eb;
+    }
+
+    /* Workspace tab layout */
+    #workspaceTabContent {
+      height: 100%;
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 0.75rem;
+      padding: 0.75rem;
+      overflow: hidden;
+    }
+    .task-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .task-btn {
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      padding: 0.45rem 0.55rem;
+      border-radius: 0.35rem;
+      font-size: 0.82rem;
+      background: transparent;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+      border: 1px solid transparent;
+      transition: background 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+    }
+    .task-btn:hover {
+      background: #020617;
+      border-color: #1d4ed8;
+      transform: translateY(-1px);
+    }
+    .task-btn.active {
+      background: #111827;
+      border-color: #22c55e;
+    }
+    .task-name { font-weight: 500; }
+    .task-area {
+      font-size: 0.7rem;
+      color: #6b7280;
+    }
+    .step-list {
+      margin: 0.1rem 0 0.35rem 1rem;
+      padding: 0;
+      color: #d1d5db;
+    }
+    .step-list li { margin-bottom: 0.15rem; }
+    .kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.72rem;
+      background: #020617;
+      border-radius: 3px;
+      border: 1px solid #1f2937;
+      padding: 0.05rem 0.35rem;
+      color: #9ca3af;
+    }
+
+    @media (max-width: 960px) {
+      #cloudTabContent {
+        grid-template-columns: 200px 220px minmax(0, 1fr);
+      }
+      #workspaceTabContent {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto;
+      }
+    }
+    @media (max-width: 768px) {
+      #cloudTabContent {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Cloud Tech Navigator</h1>
+      <div class="subtitle">
+        Flip between AWS / Azure / GCP / OCI / VMware / F5 / Terraform / Ansible / Networking + Workspace Admin click-paths.
+      </div>
+    </div>
+    <button
+      class="main-menu-btn"
+      type="button"
+      onclick="window.location.href='../index.html'">
+      ← Main menu
+    </button>
+  </header>
+
+  <div class="tabs-bar">
+    <button class="tab-btn active" data-tab="cloudTab">
+      Cloud / Tech Services
+      <span class="tab-pill">By cloud or technology</span>
+    </button>
+    <button class="tab-btn" data-tab="workspaceTab">
+      Workspace Admin Tasks
+      <span class="tab-pill">Admin console click-paths</span>
+    </button>
+    <input
+      id="searchInput"
+      type="text"
+      placeholder="Search service name (current cloud/tech)…"
+      autocomplete="off"
+    />
+  </div>
+
+  <main>
+    <!-- Cloud / Tech tab -->
+    <section id="cloudTab" class="tab-panel active">
+      <div id="cloudTabContent">
+        <!-- Categories + provider selector -->
+        <section class="panel">
+          <div class="panel-header">
+            <span>Service Categories</span>
+            <div style="display:flex;align-items:center;gap:0.3rem;">
+              <span class="pill" id="sourcePill">GCP</span>
+              <span class="pill" id="categoryCountPill">0</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="provider-selector-label">Cloud / technology source</div>
+            <div class="provider-selector" id="providerSelector"></div>
+
+            <div class="empty-state" id="categoryEmptyState" style="display:none;">
+              No categories loaded.
+            </div>
+            <ul class="category-list" id="categoryList"></ul>
+          </div>
+        </section>
+
+        <!-- Services -->
+        <section class="panel">
+          <div class="panel-header">
+            <span id="servicePanelTitle">Services</span>
+            <span class="pill" id="serviceCountPill">0</span>
+          </div>
+          <div class="panel-body">
+            <div class="empty-state" id="serviceEmptyState">
+              Pick a cloud/tech above, then a category, or type to search by service name.
+            </div>
+            <ul class="service-list" id="serviceList"></ul>
+          </div>
+        </section>
+
+        <!-- Details -->
+        <section class="panel">
+          <div class="panel-header">
+            <span>Details &amp; Guidance</span>
+            <span class="pill">What / When / Where</span>
+          </div>
+          <div class="panel-body" id="detailPanel">
+            <div class="empty-state">
+              Click a service to see: what it is, when to use it, and where to start in the console or docs for that cloud/technology.
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Workspace Admin tab -->
+    <section id="workspaceTab" class="tab-panel">
+      <div id="workspaceTabContent">
+        <section class="panel">
+          <div class="panel-header">
+            <span>Workspace Admin Tasks</span>
+            <span class="pill" id="workspaceTaskCount">0</span>
+          </div>
+          <div class="panel-body">
+            <ul class="task-list" id="workspaceTaskList"></ul>
+            <div class="empty-state" id="workspaceEmptyState" style="display:none;">
+              No tasks loaded.
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <span>What to do &amp; where to click</span>
+            <span class="pill">Admin console paths</span>
+          </div>
+          <div class="panel-body" id="workspaceDetailPanel">
+            <div class="empty-state">
+              Click a Workspace Admin task on the left to see the exact console path and step-by-step instructions.
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+<!-- Load all cloud / tech catalogs -->
+<script src="../generated/catalog.generated.js"></script>
+<script src="aws-services.js"></script>
+<script src="azure-services.js"></script>
+<script src="gcp-services.js"></script>
+<script src="oci-services.js"></script>
+<script src="ansible-options.js"></script>
+<script src="terraform-options.js"></script>
+<script src="networking-options.js"></script>
+<script src="vmware-profiles.js"></script>
+<script src="f5-services.js"></script>
+
+  <script>
+    // IRS-relevant / security-heavy hints (mainly GCP/Workspace); everything else falls back
+    // to generic "what/when/where" using the service name + cloud/tool.
+    const serviceHints = {
+      iam: {
+        what: "Cloud IAM controls who can do what on which resources using roles and policies.",
+        when: [
+          "Defining least-privilege roles for projects, folders, or accounts.",
+          "Granting service accounts the right level of access.",
+          "Auditing or tightening existing permissions."
+        ],
+        path: "Go to the cloud console → IAM / Identity section.",
+        docs: ""
+      },
+      "cloud-identity": {
+        what: "Cloud Identity / identity platform for accounts, SSO, MFA, and device policies.",
+        when: [
+          "Setting up Google accounts for users without full Workspace licenses.",
+          "Doing SSO from an external IdP into Google services.",
+          "Managing groups and security policies centrally."
+        ],
+        path: "Google Admin console → Directory → Users / Groups and Security → Authentication",
+        docs: "https://cloud.google.com/identity/docs"
+      },
+      "security-command-center": {
+        what: "Security Command Center is the central security and risk dashboard for Google Cloud.",
+        when: [
+          "Getting a consolidated view of security findings across projects.",
+          "Monitoring misconfigurations, vulnerabilities, and threats.",
+          "Proving security posture for audits and compliance."
+        ],
+        path: "Google Cloud Console → Security → Security Command Center",
+        docs: "https://cloud.google.com/security-command-center/docs"
+      },
+      kms: {
+        what: "Cloud KMS manages cryptographic keys for encrypting data at rest or in use.",
+        when: [
+          "Managing customer-managed keys for storage, databases, or workloads.",
+          "Rotating keys on a schedule for compliance.",
+          "Separating key management duties from data owners."
+        ],
+        path: "Cloud console → Security → Key Management / Key Vault / KMS (varies by cloud).",
+        docs: ""
+      },
+      "secret-manager": {
+        what: "Secret Manager stores API keys, passwords, and secrets with IAM and audit logs.",
+        when: [
+          "Storing app secrets instead of putting them in code or config files.",
+          "Rotating secrets centrally and updating workloads.",
+          "Auditing who accessed secrets and when."
+        ],
+        path: "Cloud console → Security → Secrets / Secret Manager.",
+        docs: ""
+      },
+      bigquery: {
+        what: "BigQuery is Google Cloud’s serverless data warehouse.",
+        when: [
+          "Running large-scale analytical queries on structured/semi-structured data.",
+          "Centralizing data sets from multiple systems for BI/reporting.",
+          "Building dashboards and reports for stakeholders."
+        ],
+        path: "Google Cloud Console → BigQuery",
+        docs: "https://cloud.google.com/bigquery/docs"
+      },
+      "cloud-logging": {
+        what: "Cloud Logging stores, queries, and routes logs from infrastructure and applications.",
+        when: [
+          "Centralizing logs for troubleshooting and operations.",
+          "Creating log-based metrics and alerts.",
+          "Exporting logs to SIEM or long-term storage."
+        ],
+        path: "Google Cloud Console → Logging",
+        docs: "https://cloud.google.com/logging/docs"
+      },
+      "cloud-monitoring": {
+        what: "Cloud Monitoring collects metrics and lets you build dashboards, SLOs, and alerts.",
+        when: [
+          "Monitoring health and performance of services and infrastructure.",
+          "Defining SLOs and alert policies.",
+          "Creating NOC-style dashboards."
+        ],
+        path: "Google Cloud Console → Monitoring",
+        docs: "https://cloud.google.com/monitoring/docs"
+      },
+      "workspace-admin": {
+        what: "Workspace Admin console manages users, groups, apps, security, and policies for Google Workspace.",
+        when: [
+          "Onboarding/offboarding users and admins.",
+          "Configuring Gmail, Drive, and Meet settings.",
+          "Implementing security, DLP, and retention policies."
+        ],
+        path: "https://admin.google.com (Workspace Admin console)",
+        docs: "https://support.google.com/a"
+      }
+    };
+
+    // Workspace admin tasks (IRS-style)
+    const workspaceTasks = [
+      {
+        id: "users",
+        name: "Manage Users (create, move, suspend)",
+        area: "Directory",
+        path: "Admin console → Directory → Users",
+        when: [
+          "Onboarding or offboarding staff or contractors.",
+          "Moving users into the correct OU for policy.",
+          "Temporarily suspending an account."
+        ],
+        steps: [
+          "Go to the <strong>Admin console</strong> and sign in with an admin account.",
+          "Click <span class='kbd'>Directory</span> → <span class='kbd'>Users</span>.",
+          "To create a user: click <span class='kbd'>Add user</span>, fill in details, and place them in the correct OU.",
+          "To move a user: select the user → click <span class='kbd'>More</span> → <span class='kbd'>Change organizational unit</span>.",
+          "To suspend a user: open the user → click <span class='kbd'>More</span> → <span class='kbd'>Suspend user</span>."
+        ]
+      },
+      {
+        id: "groups",
+        name: "Manage Groups (RBAC, mailing lists)",
+        area: "Directory",
+        path: "Admin console → Directory → Groups",
+        when: [
+          "You need a security or access control group (for example FTI handlers).",
+          "You want a mailing list for a team or bureau.",
+          "You need to assign admin roles or shared drive access via groups."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Directory</span> → <span class='kbd'>Groups</span>.",
+          "Click <span class='kbd'>Create group</span>, set group name, email, and description.",
+          "Set the group access type (for example Team or Restricted).",
+          "Add members or other groups as needed for access control or email distribution."
+        ]
+      },
+      {
+        id: "ous",
+        name: "Design & Manage Organizational Units (OUs)",
+        area: "Directory",
+        path: "Admin console → Directory → Organizational units",
+        when: [
+          "You need different security or sharing policies for different user populations.",
+          "You want a stricter OU for FTI-handling users or admins.",
+          "You are organizing the tenant to match IRS bureaus or regions."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Directory</span> → <span class='kbd'>Organizational units</span>.",
+          "Review the current OU tree and identify where you want new OUs (for example <code>/IRS/FTI-Handlers</code>).",
+          "Click the <span class='kbd'>+</span> icon to add a new OU under the correct parent.",
+          "Move users into the new OU via <span class='kbd'>Directory → Users</span> so they inherit the right policies."
+        ]
+      },
+      {
+        id: "admin-roles",
+        name: "Assign Admin Roles (least privilege)",
+        area: "Account",
+        path: "Admin console → Account → Admin roles",
+        when: [
+          "You need help desk, groups, or OU admins without giving full Super Admin rights.",
+          "You are implementing least privilege for the admin team.",
+          "You want break-glass super admin accounts separate from everyday admins."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Account</span> → <span class='kbd'>Admin roles</span>.",
+          "Review built-in roles such as Super Admin, Groups Admin, User Management Admin, and others.",
+          "Click a role to review permissions.",
+          "On the role page, go to the <span class='kbd'>Admins</span> tab and click <span class='kbd'>Assign admins</span>.",
+          "Prefer assigning roles to groups (for example <code>workspace-admins-prod@…</code>) instead of to individuals."
+        ]
+      },
+      {
+        id: "2sv",
+        name: "Enforce 2-Step Verification (MFA)",
+        area: "Security",
+        path: "Admin console → Security → Authentication → 2-step verification",
+        when: [
+          "You want MFA required for all or specific users.",
+          "You are hardening access for admins and FTI-handling OUs.",
+          "You are meeting IRS or federal security requirements for strong authentication."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Security</span> → <span class='kbd'>Authentication</span> → <span class='kbd'>2-step verification</span>.",
+          "Verify 2SV is On or Allowed for the domain.",
+          "In the enforcement section, choose the OU (for example <code>/IRS/FTI-Handlers</code>) where you want mandatory 2SV.",
+          "Set enforcement to required and communicate to affected users.",
+          "For admins, strongly consider security keys as the preferred 2SV method."
+        ]
+      },
+      {
+        id: "context-aware-access",
+        name: "Context-Aware Access (Zero Trust)",
+        area: "Security",
+        path: "Admin console → Security → Access and data control → Context-Aware Access",
+        when: [
+          "You want to restrict access to certain apps only from managed devices or specific networks.",
+          "You are implementing Zero Trust for high-risk apps like Admin console or Drive with FTI.",
+          "You need to control access based on device posture or location."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Security</span> → <span class='kbd'>Access and data control</span> → <span class='kbd'>Context-Aware Access</span>.",
+          "Click <span class='kbd'>Access levels</span> and create a new access level (for example Managed devices only).",
+          "Define conditions (device compliance, IP ranges, operating system, and similar).",
+          "Go to the target app access control (for example Drive or Admin console) and apply the access level to the relevant OU or group."
+        ]
+      },
+      {
+        id: "drive-sharing",
+        name: "Configure Drive & Docs Sharing (internal vs external)",
+        area: "Apps → Drive and Docs",
+        path: "Admin console → Apps → Google Workspace → Drive and Docs → Sharing settings",
+        when: [
+          "You need to control who can share files externally.",
+          "You want stricter sharing for FTI or sensitive OUs.",
+          "You are standardizing shared drive behavior across bureaus."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Apps</span> → <span class='kbd'>Google Workspace</span> → <span class='kbd'>Drive and Docs</span>.",
+          "Click <span class='kbd'>Sharing settings</span>.",
+          "On the left, choose the OU (for example <code>/IRS/FTI-Handlers</code>) or root for global defaults.",
+          "Set external sharing options (for example internal-only for FTI OUs, more flexible for low-risk OUs).",
+          "Save and communicate policy changes to affected users."
+        ]
+      },
+      {
+        id: "gmail-dlp",
+        name: "Set Gmail DLP / Compliance Rules",
+        area: "Apps → Gmail",
+        path: "Admin console → Apps → Google Workspace → Gmail → Compliance (or Data protection)",
+        when: [
+          "You want to prevent FTI or PII from being emailed externally.",
+          "You are adding warnings or blocking for sensitive patterns.",
+          "You need logging of potential data exfiltration."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Apps</span> → <span class='kbd'>Google Workspace</span> → <span class='kbd'>Gmail</span>.",
+          "Click <span class='kbd'>Compliance</span> or <span class='kbd'>Data protection</span> depending on your edition.",
+          "Create a new rule that detects patterns (for example SSNs, tax IDs) for the relevant OU or group.",
+          "Choose the action: warn user, quarantine, or block and log.",
+          "Test with non-production accounts before rolling out broadly."
+        ]
+      },
+      {
+        id: "vault-retention",
+        name: "Configure Vault Retention & Legal Holds",
+        area: "Google Vault",
+        path: "Vault console → Retention / Matters",
+        when: [
+          "You are implementing IRS records retention schedules in Workspace.",
+          "Legal or audit requires specific mail or file retention.",
+          "You need to place users or OUs on legal hold."
+        ],
+        steps: [
+          "Go to <a href='https://ediscovery.google.com' target='_blank' rel='noopener noreferrer' class='detail-link'>Google Vault</a> and sign in as an admin.",
+          "Define retention rules (by OU, service, and time period) per IRS requirements.",
+          "Create matters and holds for specific users, groups, or OUs as needed.",
+          "Coordinate with legal or records management before changing retention settings."
+        ]
+      },
+      {
+        id: "audit-logs",
+        name: "Review Audit Logs & Export to SIEM",
+        area: "Reporting",
+        path: "Admin console → Reporting → Audit log",
+        when: [
+          "You are investigating suspicious account or file access.",
+          "You need to confirm admin actions (for example role changes).",
+          "You are feeding Workspace logs into a central SIEM."
+        ],
+        steps: [
+          "Go to <span class='kbd'>Admin console</span> → <span class='kbd'>Reporting</span> → <span class='kbd'>Audit log</span>.",
+          "Select the log type (for example Admin, Drive, Login, Gmail).",
+          "Use filters (user, date, action) to find relevant events.",
+          "For SIEM export, configure log export via Workspace or associated GCP logging integration with the security or GCP team."
+        ]
+      }
+    ];
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const tabButtons = document.querySelectorAll(".tab-btn");
+      const tabPanels = document.querySelectorAll(".tab-panel");
+      const searchInput = document.getElementById("searchInput");
+
+      const categoryListEl = document.getElementById("categoryList");
+      const categoryEmptyStateEl = document.getElementById("categoryEmptyState");
+      const categoryCountPill = document.getElementById("categoryCountPill");
+      const sourcePill = document.getElementById("sourcePill");
+      const providerSelectorEl = document.getElementById("providerSelector");
+
+      const serviceListEl = document.getElementById("serviceList");
+      const serviceEmptyStateEl = document.getElementById("serviceEmptyState");
+      const serviceCountPill = document.getElementById("serviceCountPill");
+      const servicePanelTitle = document.getElementById("servicePanelTitle");
+      const detailPanelEl = document.getElementById("detailPanel");
+
+      const workspaceTaskListEl = document.getElementById("workspaceTaskList");
+      const workspaceDetailPanel = document.getElementById("workspaceDetailPanel");
+      const workspaceTaskCount = document.getElementById("workspaceTaskCount");
+      const workspaceEmptyState = document.getElementById("workspaceEmptyState");
+
+      let selectedCategoryId = null;
+      let selectedServiceId = null;
+      let allServicesIndex = [];
+      let currentData = { categories: [] };
+
+      const sources = [
+        { id: "aws",      label: "AWS",                 group: "Cloud", getData: () => window.CDK?.providers?.aws },
+        { id: "azure",    label: "Azure",               group: "Cloud", getData: () => window.CDK?.providers?.azure },
+        { id: "gcp",      label: "GCP",                 group: "Cloud", getData: () => window.CDK?.providers?.gcp },
+        { id: "oci",      label: "OCI",                 group: "Cloud", getData: () => window.CDK?.providers?.oci },
+        { id: "vmware",   label: "VMware",              group: "Infra", getData: () => window.CDK?.tools?.vmware },
+        { id: "network",  label: "Networking",          group: "Infra", getData: () => window.CDK?.tools?.networking },
+        { id: "terraform",label: "Terraform",           group: "Infra", getData: () => window.CDK?.tools?.terraform },
+        { id: "ansible",  label: "Ansible",             group: "Infra", getData: () => window.CDK?.tools?.ansible },
+        { id: "f5",       label: "F5 / BIG-IP / NGINX", group: "Infra", getData: () => window.CDK?.tools?.f5 }
+      ];
+
+      let activeSourceId = "gcp";
+
+      function getSourceById(id) {
+        return sources.find(s => s.id === id);
+      }
+
+      // Tabs
+      tabButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.tab;
+          tabButtons.forEach(b => b.classList.toggle("active", b === btn));
+          tabPanels.forEach(p => p.classList.toggle("active", p.id === target));
+
+          if (target === "cloudTab") {
+            searchInput.disabled = false;
+            searchInput.placeholder = "Search service name (current cloud/tech)…";
+          } else {
+            searchInput.disabled = true;
+            searchInput.placeholder = "Search only works on Cloud / Tech tab";
+          }
+        });
+      });
+
+      // Workspace tasks
+      function initWorkspaceTasks() {
+        workspaceTaskCount.textContent = workspaceTasks.length.toString();
+        if (!workspaceTasks.length) {
+          workspaceEmptyState.style.display = "block";
+          return;
+        }
+        workspaceEmptyState.style.display = "none";
+
+        workspaceTasks.forEach(task => {
+          const li = document.createElement("li");
+          const btn = document.createElement("button");
+          btn.className = "task-btn";
+          btn.dataset.taskId = task.id;
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "task-name";
+          nameSpan.textContent = task.name;
+
+          const areaSpan = document.createElement("span");
+          areaSpan.className = "task-area";
+          areaSpan.textContent = task.area;
+
+          btn.appendChild(nameSpan);
+          btn.appendChild(areaSpan);
+
+          btn.addEventListener("click", () => {
+            document.querySelectorAll(".task-btn").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            showWorkspaceTaskDetail(task);
+          });
+
+          li.appendChild(btn);
+          workspaceTaskListEl.appendChild(li);
+        });
+      }
+
+      function showWorkspaceTaskDetail(task) {
+        workspaceDetailPanel.innerHTML = "";
+
+        const title = document.createElement("h2");
+        title.className = "detail-title";
+        title.textContent = task.name;
+        workspaceDetailPanel.appendChild(title);
+
+        const badgeRow = document.createElement("div");
+        badgeRow.className = "detail-badge-row";
+
+        const areaBadge = document.createElement("span");
+        areaBadge.className = "badge badge-secondary";
+        areaBadge.textContent = task.area;
+
+        const consoleBadge = document.createElement("span");
+        consoleBadge.className = "badge badge-accent";
+        consoleBadge.textContent = "Admin Console";
+
+        badgeRow.appendChild(areaBadge);
+        badgeRow.appendChild(consoleBadge);
+        workspaceDetailPanel.appendChild(badgeRow);
+
+        const pathSection = document.createElement("div");
+        pathSection.className = "detail-section";
+        pathSection.innerHTML = "<h3>Where to click</h3><p><strong>Path:</strong> " + task.path + "</p>";
+        workspaceDetailPanel.appendChild(pathSection);
+
+        const whenSection = document.createElement("div");
+        whenSection.className = "detail-section";
+        whenSection.innerHTML = "<h3>When to use this</h3>";
+        const whenList = document.createElement("ul");
+        whenList.className = "step-list";
+        task.when.forEach(item => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          whenList.appendChild(li);
+        });
+        whenSection.appendChild(whenList);
+        workspaceDetailPanel.appendChild(whenSection);
+
+        const stepsSection = document.createElement("div");
+        stepsSection.className = "detail-section";
+        stepsSection.innerHTML = "<h3>Step-by-step</h3>";
+        const stepList = document.createElement("ul");
+        stepList.className = "step-list";
+        task.steps.forEach(step => {
+          const li = document.createElement("li");
+          li.innerHTML = step;
+          stepList.appendChild(li);
+        });
+        stepsSection.appendChild(stepList);
+        workspaceDetailPanel.appendChild(stepsSection);
+      }
+
+      // Cloud / Tech helpers
+      function clearDetailPanel() {
+        detailPanelEl.innerHTML =
+          "<div class='empty-state'>Click a service to see: what it is, when to use it, and where to start in the console or docs for that cloud/technology.</div>";
+      }
+
+      function docsUrlForSource(sourceId, serviceName, hintDocs) {
+        if (hintDocs) return hintDocs;
+
+        const q = encodeURIComponent(serviceName);
+        switch (sourceId) {
+          case "aws":
+            return "https://docs.aws.amazon.com/search/doc-search.html?searchPath=documentation&searchQuery=" + q;
+          case "azure":
+            return "https://learn.microsoft.com/search/?terms=" + q;
+          case "gcp":
+            return "https://cloud.google.com/s/results?q=" + q;
+          case "oci":
+            return "https://docs.oracle.com/en/search/?q=" + q + "&label=cloud";
+          case "ansible":
+            return "https://docs.ansible.com/ansible/latest/search.html?q=" + q;
+          case "terraform":
+            return "https://developer.hashicorp.com/terraform/search?query=" + q;
+          case "network":
+            return "https://www.google.com/search?q=" + encodeURIComponent(serviceName + " cloud networking pattern");
+          case "vmware":
+            return "https://docs.vmware.com/en/search/?q=" + q;
+          case "f5":
+            return "https://my.f5.com/manage/s/article/K000092245?query=" + q;
+          default:
+            return "https://www.google.com/search?q=" + q;
+        }
+      }
+
+      function defaultPathForSource(sourceId, serviceName) {
+        switch (sourceId) {
+          case "aws":
+            return 'AWS Management Console → search for "' + serviceName + '".';
+          case "azure":
+            return 'Azure Portal → search bar → "' + serviceName + '".';
+          case "gcp":
+            return 'Google Cloud Console → search bar → "' + serviceName + '".';
+          case "oci":
+            return 'OCI Console → search for "' + serviceName + '" or open the matching menu.';
+          case "ansible":
+            return 'Ansible docs / collection docs for "' + serviceName + '".';
+          case "terraform":
+            return 'Terraform Registry or your internal module registry for "' + serviceName + '".';
+          case "network":
+            return 'Relevant cloud networking console (VPC/VNet/VCN) for pattern "' + serviceName + '".';
+          case "vmware":
+            return 'vCenter / NSX / HCX / SDDC console for "' + serviceName + '".';
+          case "f5":
+            return 'F5 BIG-IP / NGINX / Distributed Cloud console → locate the app or service named "' + serviceName + '".';
+          default:
+            return 'Open the console or docs and search for "' + serviceName + '".';
+        }
+      }
+
+      function showServiceDetails(categoryId, service) {
+        const src = getSourceById(activeSourceId) || { label: "Unknown" };
+        const hints = serviceHints[service.id] || {};
+        const what = hints.what || (service.name + " is a " + (service.category || "cloud / platform") + " capability in " + src.label + ".");
+        const whenList = hints.when || [
+          "Use " + service.name + " when you have a use case that fits this category.",
+          "Review the official documentation for reference architectures and limits."
+        ];
+        const path = hints.path || defaultPathForSource(activeSourceId, service.name);
+        const docsUrl = docsUrlForSource(activeSourceId, service.name, hints.docs);
+
+        detailPanelEl.innerHTML = "";
+
+        const title = document.createElement("h2");
+        title.className = "detail-title";
+        title.textContent = service.name;
+        detailPanelEl.appendChild(title);
+
+        const badgeRow = document.createElement("div");
+        badgeRow.className = "detail-badge-row";
+
+        const catBadge = document.createElement("span");
+        catBadge.className = "badge badge-secondary";
+        catBadge.textContent = service.category || "Service";
+
+        const idBadge = document.createElement("span");
+        idBadge.className = "badge";
+        idBadge.textContent = "ID: " + service.id;
+
+        const providerBadge = document.createElement("span");
+        providerBadge.className = "badge badge-accent";
+        providerBadge.textContent = src.label;
+
+        badgeRow.appendChild(catBadge);
+        badgeRow.appendChild(idBadge);
+        badgeRow.appendChild(providerBadge);
+        detailPanelEl.appendChild(badgeRow);
+
+        const whatSection = document.createElement("div");
+        whatSection.className = "detail-section";
+        whatSection.innerHTML = "<h3>What it is</h3><p>" + what + "</p>";
+        detailPanelEl.appendChild(whatSection);
+
+        const whenSection = document.createElement("div");
+        whenSection.className = "detail-section";
+        whenSection.innerHTML = "<h3>When to use it</h3>";
+        const ul = document.createElement("ul");
+        ul.className = "step-list";
+        whenList.forEach(item => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          ul.appendChild(li);
+        });
+        whenSection.appendChild(ul);
+        detailPanelEl.appendChild(whenSection);
+
+        const whereSection = document.createElement("div");
+        whereSection.className = "detail-section";
+        const p = document.createElement("p");
+        p.innerHTML = "<strong>Where to start:</strong> " + path;
+        whereSection.innerHTML = "<h3>Where to go</h3>";
+        whereSection.appendChild(p);
+
+        const docsLink = document.createElement("a");
+        docsLink.href = docsUrl;
+        docsLink.target = "_blank";
+        docsLink.rel = "noopener noreferrer";
+        docsLink.className = "detail-link";
+        docsLink.textContent = "Open product documentation / search";
+        whereSection.appendChild(docsLink);
+
+        detailPanelEl.appendChild(whereSection);
+      }
+
+      function renderServicesForCategory(categoryId) {
+        const category = currentData.categories.find(c => c.id === categoryId);
+        serviceListEl.innerHTML = "";
+        selectedServiceId = null;
+
+        if (!category || !category.services.length) {
+          serviceEmptyStateEl.style.display = "block";
+          serviceEmptyStateEl.textContent = "No services in this category.";
+          serviceCountPill.textContent = "0";
+          servicePanelTitle.textContent = "Services";
+          clearDetailPanel();
+          return;
+        }
+
+        servicePanelTitle.textContent = "Services – " + category.label;
+        serviceCountPill.textContent = category.services.length.toString();
+        serviceEmptyStateEl.style.display = "none";
+
+        category.services.forEach(service => {
+          const li = document.createElement("li");
+          const btn = document.createElement("button");
+          btn.className = "service-btn";
+          btn.dataset.serviceId = service.id;
+          btn.dataset.categoryId = categoryId;
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "service-name";
+          nameSpan.textContent = service.name;
+
+          const metaSpan = document.createElement("span");
+          metaSpan.className = "service-meta";
+          metaSpan.textContent = service.category || "";
+
+          btn.appendChild(nameSpan);
+          btn.appendChild(metaSpan);
+
+          btn.addEventListener("click", () => {
+            selectedServiceId = service.id;
+            document.querySelectorAll(".service-btn").forEach(el => el.classList.remove("active"));
+            btn.classList.add("active");
+            showServiceDetails(categoryId, service);
+          });
+
+          li.appendChild(btn);
+          serviceListEl.appendChild(li);
+        });
+      }
+
+      function renderServicesForSearch(query) {
+        const q = query.trim().toLowerCase();
+        serviceListEl.innerHTML = "";
+        selectedServiceId = null;
+
+        if (!q) {
+          serviceEmptyStateEl.style.display = "block";
+          serviceEmptyStateEl.textContent =
+            "Pick a cloud/tech above, then a category, or type to search by service name.";
+          serviceCountPill.textContent = "0";
+          servicePanelTitle.textContent = "Services";
+          clearDetailPanel();
+          return;
+        }
+
+        const matches = allServicesIndex.filter(entry => {
+          const s = entry.service;
+          return (
+            (s.name || "").toLowerCase().includes(q) ||
+            (s.category || "").toLowerCase().includes(q)
+          );
+        });
+
+        if (!matches.length) {
+          serviceEmptyStateEl.style.display = "block";
+          serviceEmptyStateEl.textContent = 'No services match "' + query + '" in ' + (getSourceById(activeSourceId)?.label || "current source") + ".";
+          serviceCountPill.textContent = "0";
+          servicePanelTitle.textContent = "Services (search)";
+          clearDetailPanel();
+          return;
+        }
+
+        serviceEmptyStateEl.style.display = "none";
+        servicePanelTitle.textContent = 'Services (search: "' + query + '")';
+        serviceCountPill.textContent = matches.length.toString();
+
+        matches.forEach(entry => {
+          const categoryId = entry.categoryId;
+          const categoryLabel = entry.categoryLabel;
+          const service = entry.service;
+
+          const li = document.createElement("li");
+          const btn = document.createElement("button");
+          btn.className = "service-btn";
+          btn.dataset.serviceId = service.id;
+          btn.dataset.categoryId = categoryId;
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "service-name";
+          nameSpan.textContent = service.name;
+
+          const metaSpan = document.createElement("span");
+          metaSpan.className = "service-meta";
+          metaSpan.textContent = (service.category || "") + " • " + categoryLabel;
+
+          btn.appendChild(nameSpan);
+          btn.appendChild(metaSpan);
+
+          btn.addEventListener("click", () => {
+            selectedServiceId = service.id;
+            document.querySelectorAll(".service-btn").forEach(el => el.classList.remove("active"));
+            btn.classList.add("active");
+            showServiceDetails(categoryId, service);
+          });
+
+          li.appendChild(btn);
+          serviceListEl.appendChild(li);
+        });
+      }
+
+      function rebuildIndexes() {
+        allServicesIndex = [];
+        currentData.categories.forEach(cat => {
+          (cat.services || []).forEach(svc => {
+            allServicesIndex.push({
+              categoryId: cat.id,
+              categoryLabel: cat.label,
+              service: svc
+            });
+          });
+        });
+      }
+
+      function setActiveSource(sourceId) {
+        const src = getSourceById(sourceId);
+        activeSourceId = sourceId;
+        selectedCategoryId = null;
+        selectedServiceId = null;
+
+        document.querySelectorAll(".provider-btn").forEach(b => {
+          b.classList.toggle("active", b.dataset.sourceId === sourceId);
+        });
+
+        const dataObj = src && src.getData ? src.getData() : null;
+
+        categoryListEl.innerHTML = "";
+        serviceListEl.innerHTML = "";
+        clearDetailPanel();
+
+        if (!dataObj || !dataObj.serviceCategories) {
+          categoryEmptyStateEl.style.display = "block";
+          categoryEmptyStateEl.textContent = "No categories for " + (src?.label || sourceId) + ". Is the corresponding JS file loaded?";
+          categoryCountPill.textContent = "0";
+          serviceEmptyStateEl.style.display = "block";
+          serviceEmptyStateEl.textContent = "No services available for this cloud/technology.";
+          serviceCountPill.textContent = "0";
+          servicePanelTitle.textContent = "Services";
+          sourcePill.textContent = src?.label || sourceId;
+          currentData = { categories: [] };
+          allServicesIndex = [];
+          return;
+        }
+
+        const categories = Object.entries(dataObj.serviceCategories).map(([id, cat]) => ({
+          id,
+          label: cat.label || id,
+          services: (cat.services || []).map(s => ({
+            id: s.id,
+            name: s.name,
+            category: s.category
+          }))
+        }));
+
+        currentData = { categories };
+        rebuildIndexes();
+
+        categoryCountPill.textContent = categories.length.toString();
+        sourcePill.textContent = src.label;
+        categoryEmptyStateEl.style.display = "none";
+
+        categories.forEach(cat => {
+          const li = document.createElement("li");
+          const btn = document.createElement("button");
+          btn.className = "category-btn";
+          btn.dataset.categoryId = cat.id;
+
+          const labelSpan = document.createElement("span");
+          labelSpan.className = "category-label";
+          labelSpan.textContent = cat.label;
+
+          const countSpan = document.createElement("span");
+          countSpan.className = "category-count";
+          countSpan.textContent = (cat.services || []).length + " services";
+
+          btn.appendChild(labelSpan);
+          btn.appendChild(countSpan);
+
+          btn.addEventListener("click", () => {
+            selectedCategoryId = cat.id;
+            selectedServiceId = null;
+            document.querySelectorAll(".category-btn").forEach(el => el.classList.remove("active"));
+            btn.classList.add("active");
+            searchInput.value = "";
+            renderServicesForCategory(cat.id);
+            clearDetailPanel();
+          });
+
+          li.appendChild(btn);
+          categoryListEl.appendChild(li);
+        });
+
+        serviceEmptyStateEl.style.display = "block";
+        serviceEmptyStateEl.textContent =
+          "Select a category on the left or type to search by service name.";
+        serviceCountPill.textContent = "0";
+        servicePanelTitle.textContent = "Services";
+      }
+
+      function initProviderSelector() {
+        providerSelectorEl.innerHTML = "";
+        sources.forEach(src => {
+          const btn = document.createElement("button");
+          btn.className = "provider-btn";
+          btn.dataset.sourceId = src.id;
+
+          const mainSpan = document.createElement("span");
+          mainSpan.textContent = src.label;
+
+          const groupSpan = document.createElement("span");
+          groupSpan.textContent = src.group;
+
+          btn.appendChild(mainSpan);
+          btn.appendChild(groupSpan);
+
+          btn.addEventListener("click", () => {
+            setActiveSource(src.id);
+          });
+
+          providerSelectorEl.appendChild(btn);
+        });
+      }
+
+      // Search (Cloud / Tech tab only)
+      searchInput.addEventListener("input", e => {
+        const value = e.target.value;
+        const cloudTabActive = document.getElementById("cloudTab").classList.contains("active");
+        if (!cloudTabActive || !currentData.categories.length) return;
+
+        if (!value.trim()) {
+          if (selectedCategoryId) {
+            renderServicesForCategory(selectedCategoryId);
+          } else {
+            renderServicesForSearch("");
+          }
+          clearDetailPanel();
+        } else {
+          document.querySelectorAll(".category-btn").forEach(el => el.classList.remove("active"));
+          selectedCategoryId = null;
+          renderServicesForSearch(value);
+          clearDetailPanel();
+        }
+      });
+
+      // Init everything
+      initProviderSelector();
+      initWorkspaceTasks();
+      setActiveSource("gcp"); // default view
+    });
+  </script>
+</body>
+</html>
+

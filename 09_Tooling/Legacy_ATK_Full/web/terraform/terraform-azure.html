@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Azure Terraform Map · Architect's Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1a2735, #050608 60%);
+      color: #f5f5f5;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1100px;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 16px;
+      padding: 1.25rem 1.5rem 1.5rem;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+
+    h1.page-title {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 600;
+      outline: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+
+    .page-title-hint {
+      font-size: 0.75rem;
+      color: #9ca3af;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      justify-content: flex-end;
+    }
+
+    .btn-chip {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.35rem 0.95rem;
+      font-size: 0.78rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.05s ease;
+      white-space: nowrap;
+    }
+
+    .btn-chip:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .workspace {
+      flex: 1;
+      margin-top: 0.25rem;
+      border-radius: 0.9rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      padding: 0;
+      font-size: 0.9rem;
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      min-height: 480px;
+      box-sizing: border-box;
+      background: radial-gradient(circle at top left, rgba(37,99,235,0.14), transparent 55%);
+      overflow: hidden;
+    }
+
+    .footer-note {
+      margin-top: 0.5rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+
+    /* Layout */
+    .tf-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .tf-nav {
+      width: 230px;
+      min-width: 200px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.35);
+      padding: 1rem;
+      box-sizing: border-box;
+      backdrop-filter: blur(18px);
+      background: linear-gradient(180deg, rgba(15,23,42,0.7), rgba(15,23,42,0.35));
+      overflow-y: auto;
+    }
+
+    .tf-nav h2 {
+      margin: 0 0 0.4rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .tf-nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+
+    .tf-nav-section-label {
+      margin-top: 0.7rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .tf-nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.83rem;
+    }
+
+    .tf-nav li {
+      margin: 0;
+    }
+
+    .tf-nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.22rem 0.4rem;
+      border-radius: 999px;
+      transition: background 0.12s ease, color 0.12s ease, transform 0.04s ease;
+    }
+
+    .tf-nav a:hover {
+      background: rgba(37, 99, 235, 0.25);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+
+    .tf-content {
+      flex: 1;
+      padding: 1rem 1.25rem 1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    .tf-section {
+      margin-bottom: 1.6rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
+    }
+
+    .tf-section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0.2rem;
+      padding-bottom: 0.2rem;
+    }
+
+    .tf-section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .tf-section-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+
+    .tf-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96,165,250,0.7);
+      color: #bfdbfe;
+      background: rgba(15,23,42,0.9);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .tf-tagline {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      margin: 0.35rem 0 0.5rem;
+    }
+
+    .tf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 0.45rem;
+      border-radius: 0.6rem;
+      overflow: hidden;
+    }
+
+    .tf-table thead {
+      background: rgba(15,23,42, 0.9);
+    }
+
+    .tf-table th,
+    .tf-table td {
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      padding: 0.35rem 0.45rem;
+      text-align: left;
+    }
+
+    .tf-table th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .tf-table td {
+      color: #d1d5db;
+    }
+
+    .tf-code {
+      margin-top: 0.4rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      background: #020617;
+      border-radius: 0.6rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      overflow-x: auto;
+      line-height: 1.35;
+    }
+
+    .tf-code code {
+      white-space: pre;
+    }
+
+    .tf-list {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+    }
+
+    .tf-list li {
+      margin-bottom: 0.12rem;
+    }
+
+    .tf-columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .tf-note {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      margin-top: 0.4rem;
+    }
+
+    details.tf-details {
+      border-radius: 0.7rem;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15,23,42,0.82);
+      padding: 0.5rem 0.75rem 0.6rem;
+      font-size: 0.83rem;
+      margin-top: 0.55rem;
+    }
+
+    details.tf-details > summary {
+      cursor: pointer;
+      list-style: none;
+      outline: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    details.tf-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .tf-summary-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .tf-summary-label {
+      font-weight: 500;
+    }
+
+    .tf-summary-meta {
+      font-size: 0.7rem;
+      color: #9ca3af;
+    }
+
+    .tf-details-body {
+      margin-top: 0.55rem;
+      border-top: 1px dashed rgba(55, 65, 81, 0.9);
+      padding-top: 0.45rem;
+      display: grid;
+      gap: 0.4rem;
+    }
+
+    @media (max-width: 900px) {
+      .tf-layout {
+        flex-direction: column;
+      }
+      .tf-nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+      }
+    }
+
+    @media (max-width: 700px) {
+      .shell {
+        padding: 1.25rem;
+      }
+      .card {
+        padding: 1rem 1rem 1.25rem;
+      }
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .footer-note {
+        text-align: left;
+      }
+      .tf-columns {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <header>
+        <div class="title-block">
+          <h1 class="page-title" contenteditable="true" spellcheck="false">Azure Terraform Map · Architect's Toolkit</h1>
+          <div class="page-title-hint">Rename this title to match a specific subscription, hub, or court if you want.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn-chip" type="button" onclick="window.location.href='../terraform.html'">
+            ← Terraform Encyclopedia
+          </button>
+          <button class="btn-chip" type="button" onclick="window.location.href='../index.html'">
+            ⌂ Main menu
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="tf-layout">
+          <nav class="tf-nav">
+            <h2>Azure Terraform Map</h2>
+            <p>Subscriptions, VNets, identity, AKS and more, mapped to <code>azurerm_*</code>/<code>azuread_*</code>.</p>
+
+            <div class="tf-nav-section-label">Sections</div>
+            <ul>
+              <li><a href="#az-overview">1. Azure Terraform Overview</a></li>
+              <li><a href="#az-identity">2. Identity, Tenants & RBAC</a></li>
+              <li><a href="#az-networking">3. Networking & Connectivity</a></li>
+              <li><a href="#az-compute">4. Compute, AKS & App Services</a></li>
+              <li><a href="#az-storage">5. Storage & Data</a></li>
+              <li><a href="#az-database">6. Databases & Analytics</a></li>
+              <li><a href="#az-governance">7. Security, Policy & Monitoring</a></li>
+              <li><a href="#az-patterns">8. CCoE Patterns & Recipes</a></li>
+            </ul>
+          </nav>
+
+          <main class="tf-content">
+            <!-- 1. OVERVIEW -->
+            <section id="az-overview" class="tf-section">
+              <div class="tf-section-header">
+                <h2>1. Azure Terraform Overview</h2>
+                <span class="tf-badge">Azure</span>
+              </div>
+              <p class="tf-tagline">
+                Azure + Terraform = subscriptions, resource groups, VNets, workloads, and guardrails expressed
+                as <em>repeatable blueprints</em> for every court, tenant, or environment.
+              </p>
+
+              <div class="tf-columns">
+                <div>
+                  <ul class="tf-list">
+                    <li><strong>Provider:</strong> <code>azurerm</code> for Azure resources, <code>azuread</code> for identities.</li>
+                    <li><strong>Scope:</strong> Tenant → Management Group → Subscription → Resource Group.</li>
+                    <li><strong>State:</strong> commonly Azure Storage backend per environment.</li>
+                  </ul>
+                  <div class="tf-code">
+                    <code>terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~&gt; 4.0"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~&gt; 3.0"
+    }
+  }
+
+  backend "azurerm" {
+    resource_group_name  = "tfstate-rg"
+    storage_account_name = "tfstateaccount"
+    container_name       = "tfstate"
+    key                  = "azure/core.tfstate"
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+provider "azuread" {}</code>
+                  </div>
+                </div>
+                <div>
+                  <p class="tf-note">
+                    In the Architect’s Kit, this page is your “Azure lens” on Terraform. The main
+                    encyclopedia stays provider-agnostic; here you get the concrete mapping from
+                    Azure concepts → <code>azurerm_*</code> resources → language options and module patterns.
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <!-- 2. IDENTITY / RBAC -->
+            <section id="az-identity" class="tf-section">
+              <div class="tf-section-header">
+                <h2>2. Identity, Tenants & RBAC</h2>
+                <span class="tf-badge">Identity</span>
+              </div>
+              <p class="tf-tagline">
+                Azure identity in Terraform splits across Azure AD (<code>azuread</code>) and subscription-level RBAC
+                (<code>azurerm</code>). Your main decision surface is <em>how you model personas & access</em>.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Concept</th>
+                    <th>Service</th>
+                    <th>Terraform Resources</th>
+                    <th>Language Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Tenant & Directory</td>
+                    <td>Azure AD</td>
+                    <td><code>data "azuread_client_config"</code>, <code>data "azuread_directory_object"</code></td>
+                    <td>Used mainly as data sources; feed IDs into RBAC modules.</td>
+                  </tr>
+                  <tr>
+                    <td>Users & Groups</td>
+                    <td>Azure AD</td>
+                    <td><code>azuread_user</code>, <code>azuread_group</code>, <code>azuread_group_member</code></td>
+                    <td><code>for_each</code> over “role → members” maps; use objects to describe personas.</td>
+                  </tr>
+                  <tr>
+                    <td>Managed Identities</td>
+                    <td>Azure</td>
+                    <td><code>azurerm_user_assigned_identity</code>, <code>azurerm_linux_virtual_machine</code> / <code>azurerm_kubernetes_cluster</code> identity blocks</td>
+                    <td>Expose identity IDs via outputs for app modules to consume.</td>
+                  </tr>
+                  <tr>
+                    <td>RBAC Assignments</td>
+                    <td>Azure RBAC</td>
+                    <td><code>azurerm_role_assignment</code>, <code>azurerm_role_definition</code></td>
+                    <td><code>for_each</code> across a standard RBAC matrix: “scope, principal, role”.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: RBAC matrix with for_each</span>
+                    <span class="tf-summary-meta">Map from policy decisions → Terraform.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>locals {
+  # CCoE-approved RBAC mapping
+  rbac = {
+    "court-admins" = {
+      principal_id = azuread_group.court_admins.object_id
+      role_name    = "Owner"
+      scope        = "/subscriptions/${var.subscription_id}"
+    }
+    "app-ops" = {
+      principal_id = azuread_group.app_ops.object_id
+      role_name    = "Contributor"
+      scope        = "/subscriptions/${var.subscription_id}/resourceGroups/${var.app_rg}"
+    }
+  }
+}
+
+data "azurerm_role_definition" "by_name" {
+  for_each = { for k, v in local.rbac : k =&gt; v.role_name }
+
+  name  = each.value
+  scope = local.rbac[each.key].scope
+}
+
+resource "azurerm_role_assignment" "rbac" {
+  for_each = local.rbac
+
+  principal_id         = each.value.principal_id
+  role_definition_id   = data.azurerm_role_definition.by_name[each.key].role_definition_resource_id
+  scope                = each.value.scope
+  skip_service_principal_aad_check = true
+}</code>
+                  </div>
+                  <p class="tf-note">
+                    This is where “who can do what where” from your CCoE policy gets turned into
+                    Terraform options: <code>locals</code> map + <code>for_each</code> + data sources.
+                  </p>
+                </div>
+              </details>
+            </section>
+
+            <!-- 3. NETWORKING -->
+            <section id="az-networking" class="tf-section">
+              <div class="tf-section-header">
+                <h2>3. Networking & Connectivity</h2>
+                <span class="tf-badge">Network</span>
+              </div>
+              <p class="tf-tagline">
+                VNets, subnets, NSGs, firewalls and connectivity (VPN, ExpressRoute) are the spine of your
+                Azure landing zone. Terraform options decide <em>how strongly</em> you standardize them.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Services</th>
+                    <th>Terraform Resources</th>
+                    <th>Pattern / Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Virtual Networks</td>
+                    <td>VNet, Subnet</td>
+                    <td><code>azurerm_virtual_network</code>, <code>azurerm_subnet</code></td>
+                    <td>Module around VNet + subnets; <code>cidrsubnet</code> for address planning, <code>for_each</code> to emit subnets.</td>
+                  </tr>
+                  <tr>
+                    <td>Security</td>
+                    <td>NSG, Azure Firewall, DDoS plan</td>
+                    <td><code>azurerm_network_security_group</code>, <code>azurerm_network_security_rule</code>, <code>azurerm_firewall</code>, <code>azurerm_firewall_policy</code></td>
+                    <td>Rules from object variables; shared firewall policy module for consistent north-south rules.</td>
+                  </tr>
+                  <tr>
+                    <td>Hybrid Connectivity</td>
+                    <td>VPN, ExpressRoute</td>
+                    <td><code>azurerm_virtual_network_gateway</code>, <code>azurerm_local_network_gateway</code>, <code>azurerm_virtual_network_gateway_connection</code>, <code>azurerm_express_route_circuit</code></td>
+                    <td>“Court-to-court / court-to-datacenter” connectivity modules; <code>depends_on</code> for ordering.</td>
+                  </tr>
+                  <tr>
+                    <td>Private Access</td>
+                    <td>Private Link</td>
+                    <td><code>azurerm_private_endpoint</code>, <code>azurerm_private_dns_zone</code>, <code>azurerm_private_dns_zone_virtual_network_link</code></td>
+                    <td>Standard module for “private PaaS access” across storage, SQL, etc.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: VNet module skeleton</span>
+                    <span class="tf-summary-meta">Hub / spoke friendly.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>variable "name"         { type = string }
+variable "resource_group" { type = string }
+variable "location"       { type = string }
+variable "address_space"  { type = string }
+
+variable "subnets" {
+  description = "Map of subnet name -&gt; cidr + flags"
+  type = map(object({
+    cidr      = string
+    nsg_name  = optional(string)
+    delegated = optional(string)
+  }))
+}
+
+resource "azurerm_virtual_network" "this" {
+  name                = var.name
+  location            = var.location
+  resource_group_name = var.resource_group
+  address_space       = [var.address_space]
+}
+
+resource "azurerm_subnet" "this" {
+  for_each             = var.subnets
+  name                 = each.key
+  resource_group_name  = var.resource_group
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [each.value.cidr]
+}</code>
+                  </div>
+                  <p class="tf-note">
+                    Your CCoE decides which flags go into <code>subnets</code> (internet-facing, private, data, management, etc.).
+                    Terraform’s “options” here are types and <code>for_each</code> patterns.
+                  </p>
+                </div>
+              </details>
+            </section>
+
+            <!-- 4. COMPUTE & APP -->
+            <section id="az-compute" class="tf-section">
+              <div class="tf-section-header">
+                <h2>4. Compute, AKS & App Services</h2>
+                <span class="tf-badge">Compute</span>
+              </div>
+              <p class="tf-tagline">
+                VMs, scale sets, AKS clusters, and PaaS app services – the main execution engines for your apps.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Services</th>
+                    <th>Terraform Resources</th>
+                    <th>Options / Patterns</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>VMs</td>
+                    <td>Linux/Windows VM</td>
+                    <td><code>azurerm_linux_virtual_machine</code>, <code>azurerm_windows_virtual_machine</code></td>
+                    <td>Use objects for size, OS, disks, identity; <code>templatefile</code> for cloud-init.</td>
+                  </tr>
+                  <tr>
+                    <td>Scale Sets</td>
+                    <td>VMSS</td>
+                    <td><code>azurerm_linux_virtual_machine_scale_set</code>, <code>azurerm_windows_virtual_machine_scale_set</code></td>
+                    <td>Fronted by load balancer or Application Gateway; count/for_each for zone distribution.</td>
+                  </tr>
+                  <tr>
+                    <td>Containers</td>
+                    <td>AKS, ACR</td>
+                    <td><code>azurerm_kubernetes_cluster</code>, <code>azurerm_container_registry</code></td>
+                    <td>Cluster module with options for node pools, network plugin, RBAC, Azure AD integration.</td>
+                  </tr>
+                  <tr>
+                    <td>PaaS Apps</td>
+                    <td>App Service / Functions</td>
+                    <td><code>azurerm_app_service_plan</code>, <code>azurerm_linux_web_app</code>, <code>azurerm_windows_web_app</code>, <code>azurerm_function_app</code></td>
+                    <td>Module accepts app metadata, app settings, slots; builds diagnostic settings and identity by default.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: AKS cluster snippet</span>
+                    <span class="tf-summary-meta">Standardized cluster options.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>resource "azurerm_kubernetes_cluster" "aks" {
+  name                = "${var.environment}-${var.name}"
+  location            = var.location
+  resource_group_name = var.resource_group
+  dns_prefix          = "${var.environment}-${var.name}"
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  default_node_pool {
+    name       = "system"
+    node_count = var.node_count
+    vm_size    = var.node_size
+    vnet_subnet_id = var.subnet_id
+  }
+
+  network_profile {
+    network_plugin    = "azure"
+    load_balancer_sku = "standard"
+  }
+
+  role_based_access_control_enabled = true
+
+  tags = var.tags
+}</code>
+                  </div>
+                  <p class="tf-note">
+                    From the Architect Kit perspective, the “options” here are: node size, node count,
+                    network plugin choice, identity mode, and allowed add-ons. Everything else is locked
+                    into your standard module.
+                  </p>
+                </div>
+              </details>
+            </section>
+
+            <!-- 5. STORAGE & DATA -->
+            <section id="az-storage" class="tf-section">
+              <div class="tf-section-header">
+                <h2>5. Storage & Data</h2>
+                <span class="tf-badge">Storage</span>
+              </div>
+              <p class="tf-tagline">
+                Storage Accounts, blobs, files, queues and other data services become “evidence buckets”,
+                log sinks, and integration channels.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Service</th>
+                    <th>Terraform Resources</th>
+                    <th>What You Decide</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Storage Account</td>
+                    <td><code>azurerm_storage_account</code></td>
+                    <td>Kind (StorageV2), replication (LRS/ZRS/GZRS), access tier, public access disabled, encryption, managed identity.</td>
+                  </tr>
+                  <tr>
+                    <td>Blob Containers & Queues</td>
+                    <td><code>azurerm_storage_container</code>, <code>azurerm_storage_queue</code></td>
+                    <td>Container/queue names and ACLs; usually created by a “logging” or “evidence” module.</td>
+                  </tr>
+                  <tr>
+                    <td>File Shares</td>
+                    <td><code>azurerm_storage_share</code></td>
+                    <td>Size, protocol (if NFS), retention; referenced from VM or app modules.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: Evidence Storage module core</span>
+                    <span class="tf-summary-meta">Court-friendly pattern.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>variable "evidence_rg"   { type = string }
+variable "location"      { type = string }
+variable "environment"   { type = string }
+
+resource "azurerm_storage_account" "evidence" {
+  name                     = lower(replace("${var.environment}evidence", "-", ""))
+  resource_group_name      = var.evidence_rg
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "ZRS"
+  min_tls_version          = "TLS1_2"
+  allow_blob_public_access = false
+
+  blob_properties {
+    delete_retention_policy {
+      days = 90
+    }
+  }
+
+  tags = {
+    environment = var.environment
+    purpose     = "evidence"
+  }
+}
+
+resource "azurerm_storage_container" "evidence" {
+  name                  = "evidence"
+  storage_account_name  = azurerm_storage_account.evidence.name
+  container_access_type = "private"
+}</code>
+                  </div>
+                  <p class="tf-note">
+                    Here the “options” per court/environment are: replication choice, retention days,
+                    storage tier. Everything else is hard-coded to match your compliance posture.
+                  </p>
+                </div>
+              </details>
+            </section>
+
+            <!-- 6. DATABASES & ANALYTICS -->
+            <section id="az-database" class="tf-section">
+              <div class="tf-section-header">
+                <h2>6. Databases & Analytics</h2>
+                <span class="tf-badge">Data</span>
+              </div>
+              <p class="tf-tagline">
+                Azure SQL, PostgreSQL, Cosmos DB, Synapse and other data services – tied into VNets and
+                private endpoints, plus backups and encryption.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Service</th>
+                    <th>Terraform Resources</th>
+                    <th>Key Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Azure SQL</td>
+                    <td><code>azurerm_mssql_server</code>, <code>azurerm_mssql_database</code>, <code>azurerm_mssql_virtual_network_rule</code></td>
+                    <td>Version, backup retention, minimum TLS, AAD auth, vNet rules vs. public. Modules enforce defaults.</td>
+                  </tr>
+                  <tr>
+                    <td>PostgreSQL Flexible</td>
+                    <td><code>azurerm_postgresql_flexible_server</code>, <code>azurerm_postgresql_flexible_database</code></td>
+                    <td>SKU, HA, backup window, storage, public vs. private access, connection limits.</td>
+                  </tr>
+                  <tr>
+                    <td>Cosmos DB</td>
+                    <td><code>azurerm_cosmosdb_account</code>, <code>azurerm_cosmosdb_sql_database</code>, <code>azurerm_cosmosdb_sql_container</code></td>
+                    <td>Consistency, throughput, region replicas, IP filters, key vs. RBAC access.</td>
+                  </tr>
+                  <tr>
+                    <td>Analytics</td>
+                    <td><code>azurerm_synapse_workspace</code>, <code>azurerm_synapse_sql_pool</code></td>
+                    <td>Network, managed VNet, integration with storage/logging.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <!-- 7. SECURITY & GOVERNANCE -->
+            <section id="az-governance" class="tf-section">
+              <div class="tf-section-header">
+                <h2>7. Security, Policy & Monitoring</h2>
+                <span class="tf-badge">Guardrails</span>
+              </div>
+              <p class="tf-tagline">
+                Key Vault, policies, blueprints, monitoring and diagnostics – this is where Terraform enforces
+                your security model instead of relying on manual clicks.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Services</th>
+                    <th>Resources</th>
+                    <th>Terraform “Options”</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Secrets & Keys</td>
+                    <td>Key Vault</td>
+                    <td><code>azurerm_key_vault</code>, <code>azurerm_key_vault_key</code>, <code>azurerm_key_vault_secret</code></td>
+                    <td>Vault creation and configuration as a reusable module; soft delete, purge protection, RBAC vs. access policies.</td>
+                  </tr>
+                  <tr>
+                    <td>Policy</td>
+                    <td>Azure Policy</td>
+                    <td><code>azurerm_policy_definition</code>, <code>azurerm_policy_set_definition</code>, <code>azurerm_policy_assignment</code></td>
+                    <td>Policies stored as JSON templates; Terraform wires them to scopes (MG / subscription / RG).</td>
+                  </tr>
+                  <tr>
+                    <td>Diagnostics</td>
+                    <td>Monitor & Logs</td>
+                    <td><code>azurerm_monitor_diagnostic_setting</code>, <code>azurerm_log_analytics_workspace</code>, <code>azurerm_monitor_action_group</code></td>
+                    <td>Standard diagnostic settings module attaches logs/metrics to workspace + event hub.</td>
+                  </tr>
+                  <tr>
+                    <td>Security Center</td>
+                    <td>Defender for Cloud</td>
+                    <td><code>azurerm_security_center_contact</code>, <code>azurerm_security_center_subscription_pricing</code></td>
+                    <td>Baseline module ensures security pricing is enabled for all subscriptions.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <details class="tf-details">
+                <summary>
+                  <div class="tf-summary-text">
+                    <span class="tf-summary-label">Example: Policy assignment via template</span>
+                    <span class="tf-summary-meta">Connect written policy → Terraform.</span>
+                  </div>
+                </summary>
+                <div class="tf-details-body">
+                  <div class="tf-code">
+                    <code>resource "azurerm_policy_definition" "allowed_locations" {
+  name         = "allowed-locations"
+  policy_type  = "Custom"
+  mode         = "Indexed"
+  display_name = "Allowed locations for resources"
+
+  policy_rule = templatefile("${path.module}/policies/allowed_locations.json", {
+    locations = var.allowed_locations
+  })
+}
+
+resource "azurerm_policy_assignment" "allowed_locations" {
+  name                 = "allowed-locations"
+  scope                = "/subscriptions/${var.subscription_id}"
+  policy_definition_id = azurerm_policy_definition.allowed_locations.id
+
+  parameters = jsonencode({
+    listOfAllowedLocations = {
+      value = var.allowed_locations
+    }
+  })
+}</code>
+                  </div>
+                  <p class="tf-note">
+                    Your CCoE decides <em>which</em> policy files exist and what their defaults are.
+                    Terraform’s job is to attach them everywhere consistently.
+                  </p>
+                </div>
+              </details>
+            </section>
+
+            <!-- 8. PATTERNS -->
+            <section id="az-patterns" class="tf-section">
+              <div class="tf-section-header">
+                <h2>8. CCoE Patterns & Recipes (Azure)</h2>
+                <span class="tf-badge">Patterns</span>
+              </div>
+              <p class="tf-tagline">
+                A small index of “things we actually do” on Azure and which Terraform blocks/modules/options
+                you combine each time. This is the Azure pillar of your overall decision logic kit.
+              </p>
+
+              <table class="tf-table">
+                <thead>
+                  <tr>
+                    <th>Pattern</th>
+                    <th>Scope</th>
+                    <th>Terraform Stack</th>
+                    <th>Language Options</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Hub-and-Spoke Landing Zone</td>
+                    <td>Tenant → MG → Subscriptions → VNets</td>
+                    <td>Org/landing-zone module, VNet module, RBAC module, logs module</td>
+                    <td><code>modules</code>, <code>for_each</code> on subscriptions/spokes, <code>object</code> inputs for address spaces.</td>
+                  </tr>
+                  <tr>
+                    <td>Court-Isolated Subscription</td>
+                    <td>Subscription + core resource groups + VNets</td>
+                    <td>“Court subscription bootstrap” module calling RG, VNet, RBAC, logging modules</td>
+                    <td><code>locals</code> for RG names, <code>for_each</code> for RBAC entries, <code>validation</code> for allowed regions.</td>
+                  </tr>
+                  <tr>
+                    <td>Court-to-Court Secure Link (Azure-only)</td>
+                    <td>VNets between subscriptions</td>
+                    <td>VNet peering module, shared firewall module</td>
+                    <td><code>depends_on</code> between VNets, <code>for_each</code> over peering pairs.</td>
+                  </tr>
+                  <tr>
+                    <td>Court-to-Datacenter Hybrid Link</td>
+                    <td>On-prem ↔ Azure</td>
+                    <td>VPN/ExpressRoute connectivity module + standard routes + NSGs</td>
+                    <td><code>resource</code> for gateways, <code>data</code> for remote networks, <code>locals</code> for allowed prefixes.</td>
+                  </tr>
+                  <tr>
+                    <td>Secure App Stack (AKS + PaaS)</td>
+                    <td>AKS cluster, ACR, Key Vault, app services</td>
+                    <td>“App stack” module that wires AKS, ACR, KV, App Insights, diagnostics</td>
+                    <td><code>module</code> composition, <code>object</code> “app descriptor”, <code>jsonencode</code> for appsettings.</td>
+                  </tr>
+                  <tr>
+                    <td>Evidence & Log Enclave</td>
+                    <td>Storage + Log Analytics + Policy</td>
+                    <td>Evidence storage module, central logs module, policy assignments</td>
+                    <td><code>prevent_destroy</code> in lifecycle, <code>for_each</code> over courts, <code>cidr*</code> for private endpoints.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <p class="tf-note">
+                You can mirror these rows back into the main Terraform Encyclopedia’s decision tables so
+                every “Azure recipe” is discoverable from the high-level CCoE flow.
+              </p>
+            </section>
+          </main>
+        </div>
+      </section>
+
+      <div class="footer-note">
+        Azure Terraform map for the Architect's Toolkit. Extend sections as you refine your CCoE patterns.
+      </div>
+    </div>
+  </div>
+</body>
+</html>

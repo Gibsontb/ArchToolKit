@@ -1,0 +1,382 @@
+{
+  "catalog_version": "from-base-provider-lists-2026-01-08",
+  "source": "Derived from base navigator provider JS lists (aws/azure/gcp/oci).",
+  "note": "This is a category-aligned master list, not a fully curated equivalency map from the PDF yet.",
+  "rows": [
+    {
+      "domain": "ai-ml",
+      "capability_name": "ai-ml",
+      "capability_id": "ai_ml",
+      "used_for": "ai-ml services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "analytics",
+      "capability_name": "analytics",
+      "capability_id": "analytics",
+      "used_for": "analytics services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "app-integration",
+      "capability_name": "app-integration",
+      "capability_id": "app_integration",
+      "used_for": "app-integration services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "business-apps",
+      "capability_name": "business-apps",
+      "capability_id": "business_apps",
+      "used_for": "business-apps services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "compute",
+      "capability_name": "compute",
+      "capability_id": "compute",
+      "used_for": "compute services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "containers",
+      "capability_name": "containers",
+      "capability_id": "containers",
+      "used_for": "containers services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "cost-controls",
+      "capability_name": "cost-controls",
+      "capability_id": "cost_controls",
+      "used_for": "cost-controls services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "databases",
+      "capability_name": "databases",
+      "capability_id": "databases",
+      "used_for": "databases services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "devtools",
+      "capability_name": "devtools",
+      "capability_id": "devtools",
+      "used_for": "devtools services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "iot",
+      "capability_name": "iot",
+      "capability_id": "iot",
+      "used_for": "iot services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "management-governance",
+      "capability_name": "management-governance",
+      "capability_id": "management_governance",
+      "used_for": "management-governance services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "migration",
+      "capability_name": "migration",
+      "capability_id": "migration",
+      "used_for": "migration services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "misc",
+      "capability_name": "misc",
+      "capability_id": "misc",
+      "used_for": "misc services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "networking-cdn",
+      "capability_name": "networking-cdn",
+      "capability_id": "networking_cdn",
+      "used_for": "networking-cdn services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    },
+    {
+      "domain": "security",
+      "capability_name": "security",
+      "capability_id": "security",
+      "used_for": "security services and capabilities used in cloud architectures.",
+      "providers": {
+        "aws": [
+          "label",
+          "services"
+        ],
+        "azure": [
+          "label",
+          "services"
+        ],
+        "gcp": [
+          "label",
+          "services"
+        ],
+        "oci": [
+          "label",
+          "services"
+        ]
+      },
+      "lastReviewed": "2026-01-08"
+    }
+  ]
+}

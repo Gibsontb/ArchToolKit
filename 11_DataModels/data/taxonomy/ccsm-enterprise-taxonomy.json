@@ -1,0 +1,657 @@
+{
+  "meta": {
+    "name": "CCSM Enterprise Taxonomy",
+    "version": "1.0.0",
+    "generatedAt": "2026-02-15",
+    "notes": "Cloud Canonical Service Model (CCSM) categories for cross-cloud catalog normalization."
+  },
+  "categories": [
+    {
+      "id": "identity_iam",
+      "name": "Identity & Access Management",
+      "keywords": [
+        "iam",
+        "identity",
+        "access",
+        "rbac",
+        "directory",
+        "auth",
+        "authorization"
+      ]
+    },
+    {
+      "id": "identity_pki_certs",
+      "name": "PKI & Certificates",
+      "keywords": [
+        "certificate",
+        "cert",
+        "pki",
+        "ca",
+        "acm",
+        "key vault certificate"
+      ]
+    },
+    {
+      "id": "identity_sso_federation",
+      "name": "SSO & Federation",
+      "keywords": [
+        "sso",
+        "federation",
+        "saml",
+        "oidc",
+        "oauth"
+      ]
+    },
+    {
+      "id": "security_kms_hsm",
+      "name": "Key Management & HSM",
+      "keywords": [
+        "kms",
+        "key management",
+        "hsm",
+        "vault keys",
+        "cryptographic"
+      ]
+    },
+    {
+      "id": "security_secrets",
+      "name": "Secrets Management",
+      "keywords": [
+        "secrets",
+        "secret manager",
+        "vault secret",
+        "password"
+      ]
+    },
+    {
+      "id": "security_waf_ddos",
+      "name": "WAF & DDoS Protection",
+      "keywords": [
+        "waf",
+        "ddos",
+        "shield",
+        "front door",
+        "armor"
+      ]
+    },
+    {
+      "id": "security_cspm_posture",
+      "name": "Security Posture (CSPM)",
+      "keywords": [
+        "security center",
+        "defender",
+        "commander",
+        "posture",
+        "cspm"
+      ]
+    },
+    {
+      "id": "security_siem_soar",
+      "name": "SIEM & SOAR",
+      "keywords": [
+        "siem",
+        "soar",
+        "sentinel",
+        "chronicle",
+        "security lake"
+      ]
+    },
+    {
+      "id": "security_threat_detection",
+      "name": "Threat Detection",
+      "keywords": [
+        "guardduty",
+        "threat",
+        "detector",
+        "security hub",
+        "threat intelligence"
+      ]
+    },
+    {
+      "id": "governance_policy",
+      "name": "Governance & Policy",
+      "keywords": [
+        "policy",
+        "blueprint",
+        "guardrails",
+        "landing zone",
+        "organization",
+        "management group"
+      ]
+    },
+    {
+      "id": "governance_cost_finops",
+      "name": "Cost Management & FinOps",
+      "keywords": [
+        "cost",
+        "billing",
+        "budget",
+        "finops",
+        "advisor",
+        "optimizer"
+      ]
+    },
+    {
+      "id": "governance_compliance",
+      "name": "Compliance & Audit",
+      "keywords": [
+        "compliance",
+        "audit",
+        "assurance",
+        "artifact",
+        "attestation"
+      ]
+    },
+    {
+      "id": "compute_vm",
+      "name": "Virtual Machines",
+      "keywords": [
+        "virtual machine",
+        "vm",
+        "ec2",
+        "instance",
+        "compute engine"
+      ]
+    },
+    {
+      "id": "compute_baremetal",
+      "name": "Bare Metal",
+      "keywords": [
+        "bare metal",
+        "baremetal"
+      ]
+    },
+    {
+      "id": "compute_autoscaling",
+      "name": "Auto Scaling",
+      "keywords": [
+        "autoscaling",
+        "scale set",
+        "managed instance group",
+        "auto scale"
+      ]
+    },
+    {
+      "id": "containers_kubernetes",
+      "name": "Kubernetes",
+      "keywords": [
+        "kubernetes",
+        "k8s",
+        "aks",
+        "eks",
+        "gke",
+        "oke"
+      ]
+    },
+    {
+      "id": "containers_registry",
+      "name": "Container Registry",
+      "keywords": [
+        "container registry",
+        "registry",
+        "ecr",
+        "acr",
+        "artifact registry"
+      ]
+    },
+    {
+      "id": "containers_service_mesh",
+      "name": "Service Mesh",
+      "keywords": [
+        "service mesh",
+        "istio",
+        "mesh"
+      ]
+    },
+    {
+      "id": "serverless_functions",
+      "name": "Serverless Functions",
+      "keywords": [
+        "lambda",
+        "cloud functions",
+        "azure functions",
+        "functions",
+        "fn"
+      ]
+    },
+    {
+      "id": "serverless_containers",
+      "name": "Serverless Containers",
+      "keywords": [
+        "fargate",
+        "cloud run",
+        "container instances",
+        "serverless container"
+      ]
+    },
+    {
+      "id": "platform_app_hosting",
+      "name": "App Hosting (PaaS)",
+      "keywords": [
+        "app service",
+        "app engine",
+        "web app",
+        "elastic beanstalk",
+        "functions app"
+      ]
+    },
+    {
+      "id": "integration_api_gateway",
+      "name": "API Gateway & Management",
+      "keywords": [
+        "api gateway",
+        "api management",
+        "apim",
+        "endpoints",
+        "gateway"
+      ]
+    },
+    {
+      "id": "integration_messaging_queue",
+      "name": "Messaging & Queues",
+      "keywords": [
+        "queue",
+        "sqs",
+        "service bus",
+        "pubsub",
+        "mq",
+        "queueing"
+      ]
+    },
+    {
+      "id": "integration_event_bus",
+      "name": "Event Bus",
+      "keywords": [
+        "eventbridge",
+        "event grid",
+        "eventarc",
+        "events"
+      ]
+    },
+    {
+      "id": "integration_workflow_orchestration",
+      "name": "Workflow Orchestration",
+      "keywords": [
+        "step functions",
+        "logic apps",
+        "workflows",
+        "orchestration"
+      ]
+    },
+    {
+      "id": "networking_vpc_vnet",
+      "name": "VPC/VNet Networking",
+      "keywords": [
+        "vpc",
+        "vnet",
+        "network",
+        "subnet",
+        "route table"
+      ]
+    },
+    {
+      "id": "networking_load_balancing",
+      "name": "Load Balancing",
+      "keywords": [
+        "load balancer",
+        "elb",
+        "alb",
+        "nlb",
+        "application gateway"
+      ]
+    },
+    {
+      "id": "networking_dns",
+      "name": "DNS",
+      "keywords": [
+        "dns",
+        "route 53",
+        "cloud dns",
+        "traffic manager"
+      ]
+    },
+    {
+      "id": "networking_cdn",
+      "name": "CDN & Edge",
+      "keywords": [
+        "cdn",
+        "cloudfront",
+        "front door",
+        "edge"
+      ]
+    },
+    {
+      "id": "networking_vpn",
+      "name": "VPN",
+      "keywords": [
+        "vpn",
+        "gateway",
+        "client vpn"
+      ]
+    },
+    {
+      "id": "networking_interconnect",
+      "name": "Direct Connect / Interconnect",
+      "keywords": [
+        "direct connect",
+        "expressroute",
+        "interconnect",
+        "fastconnect"
+      ]
+    },
+    {
+      "id": "networking_firewall",
+      "name": "Network Firewall",
+      "keywords": [
+        "firewall",
+        "network firewall",
+        "nsg",
+        "security group"
+      ]
+    },
+    {
+      "id": "storage_object",
+      "name": "Object Storage",
+      "keywords": [
+        "object storage",
+        "s3",
+        "blob",
+        "cloud storage",
+        "objectstorage"
+      ]
+    },
+    {
+      "id": "storage_block",
+      "name": "Block Storage",
+      "keywords": [
+        "block storage",
+        "ebs",
+        "disk",
+        "volume"
+      ]
+    },
+    {
+      "id": "storage_file",
+      "name": "File Storage",
+      "keywords": [
+        "file storage",
+        "efs",
+        "fsx",
+        "filestore",
+        "nfs",
+        "files"
+      ]
+    },
+    {
+      "id": "storage_backup_archive",
+      "name": "Backup & Archive",
+      "keywords": [
+        "backup",
+        "archive",
+        "recovery vault",
+        "snapshot",
+        "coldline"
+      ]
+    },
+    {
+      "id": "storage_transfer",
+      "name": "Data Transfer & Migration",
+      "keywords": [
+        "transfer",
+        "migration",
+        "datasync",
+        "storage transfer",
+        "snowball",
+        "migrate"
+      ]
+    },
+    {
+      "id": "database_relational_managed",
+      "name": "Managed Relational Databases",
+      "keywords": [
+        "rds",
+        "sql database",
+        "cloud sql",
+        "autonomous",
+        "postgres",
+        "mysql",
+        "mariadb",
+        "oracle database"
+      ]
+    },
+    {
+      "id": "database_nosql",
+      "name": "NoSQL Databases",
+      "keywords": [
+        "dynamodb",
+        "cosmos",
+        "firestore",
+        "cassandra",
+        "documentdb",
+        "nosql"
+      ]
+    },
+    {
+      "id": "database_cache",
+      "name": "Caching",
+      "keywords": [
+        "redis",
+        "memcached",
+        "cache",
+        "elasticache"
+      ]
+    },
+    {
+      "id": "database_data_warehouse",
+      "name": "Data Warehouse",
+      "keywords": [
+        "redshift",
+        "synapse",
+        "bigquery",
+        "warehouse",
+        "adata warehouse"
+      ]
+    },
+    {
+      "id": "data_lake_analytics",
+      "name": "Data Lake & Analytics",
+      "keywords": [
+        "data lake",
+        "databricks",
+        "emr",
+        "dataflow",
+        "spark",
+        "athena"
+      ]
+    },
+    {
+      "id": "data_streaming",
+      "name": "Streaming",
+      "keywords": [
+        "kinesis",
+        "event hubs",
+        "stream",
+        "kafka",
+        "pub/sub"
+      ]
+    },
+    {
+      "id": "data_etl",
+      "name": "ETL/ELT",
+      "keywords": [
+        "glue",
+        "data factory",
+        "etl",
+        "elt",
+        "dataprep",
+        "data integration"
+      ]
+    },
+    {
+      "id": "observability_logging",
+      "name": "Logging",
+      "keywords": [
+        "logging",
+        "log analytics",
+        "cloudwatch logs",
+        "stackdriver logging"
+      ]
+    },
+    {
+      "id": "observability_monitoring",
+      "name": "Monitoring & Metrics",
+      "keywords": [
+        "monitor",
+        "metrics",
+        "cloudwatch",
+        "monitoring",
+        "stackdriver monitoring"
+      ]
+    },
+    {
+      "id": "observability_tracing_apm",
+      "name": "Tracing & APM",
+      "keywords": [
+        "trace",
+        "apm",
+        "application insights",
+        "x-ray",
+        "opentelemetry"
+      ]
+    },
+    {
+      "id": "devops_ci_cd",
+      "name": "CI/CD",
+      "keywords": [
+        "pipeline",
+        "cicd",
+        "build",
+        "deploy",
+        "codepipeline",
+        "devops"
+      ]
+    },
+    {
+      "id": "devops_artifacts",
+      "name": "Artifacts & Packages",
+      "keywords": [
+        "artifacts",
+        "packages",
+        "artifact",
+        "repository"
+      ]
+    },
+    {
+      "id": "devops_iac",
+      "name": "Infrastructure as Code",
+      "keywords": [
+        "terraform",
+        "arm",
+        "bicep",
+        "cloudformation",
+        "pulumi"
+      ]
+    },
+    {
+      "id": "mgmt_config",
+      "name": "Configuration Management",
+      "keywords": [
+        "configuration",
+        "automation",
+        "ansible",
+        "chef",
+        "puppet",
+        "state manager"
+      ]
+    },
+    {
+      "id": "mgmt_patch",
+      "name": "Patch Management",
+      "keywords": [
+        "patch",
+        "update management",
+        "os patch"
+      ]
+    },
+    {
+      "id": "mgmt_cmdb_asset",
+      "name": "Asset/CMDB",
+      "keywords": [
+        "cmdb",
+        "asset",
+        "inventory",
+        "resource graph"
+      ]
+    },
+    {
+      "id": "ai_ml_platform",
+      "name": "AI/ML Platforms",
+      "keywords": [
+        "machine learning",
+        "sagemaker",
+        "vertex",
+        "azure ml",
+        "ml platform"
+      ]
+    },
+    {
+      "id": "ai_genai",
+      "name": "Generative AI",
+      "keywords": [
+        "genai",
+        "generative",
+        "bedrock",
+        "openai",
+        "llm",
+        "gpt"
+      ]
+    },
+    {
+      "id": "end_user_vdi",
+      "name": "VDI & End User Computing",
+      "keywords": [
+        "workspaces",
+        "virtual desktop",
+        "vdi",
+        "appstream",
+        "avd"
+      ]
+    },
+    {
+      "id": "iot",
+      "name": "IoT",
+      "keywords": [
+        "iot",
+        "device",
+        "greengrass",
+        "edge device"
+      ]
+    },
+    {
+      "id": "edge_hybrid",
+      "name": "Hybrid & Edge",
+      "keywords": [
+        "outposts",
+        "stack hub",
+        "anthos",
+        "edge",
+        "arc"
+      ]
+    },
+    {
+      "id": "marketplace_saas",
+      "name": "Marketplace & SaaS",
+      "keywords": [
+        "marketplace",
+        "saas",
+        "appsource",
+        "partner"
+      ]
+    },
+    {
+      "id": "unknown",
+      "name": "Unclassified",
+      "keywords": []
+    }
+  ]
+}

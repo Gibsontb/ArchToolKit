@@ -1,0 +1,7 @@
+{
+  "aws": {
+    "AmazonS3": "Amazon S3",
+    "AmazonEC2": "Amazon EC2",
+    "AmazonIAM": "AWS Identity and Access Management (IAM)"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ATK Migration Portfolio Input",
+  "type": "object",
+  "properties": {
+    "migration": {
+      "type": "object",
+      "properties": {
+        "wave_mode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "fast",
+            "modernize"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "portfolio": {
+      "type": "array",
+      "items": {
+        "$ref": "schema.app.json"
+      }
+    }
+  },
+  "additionalProperties": true
+}

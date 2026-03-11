@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ATK - Migration Manual + Interactive Engine (Add-on)</title>
+  <link rel="stylesheet" href="../styles.css"/>
+  <style>
+    .card { border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 14px; margin-top: 14px; }
+    .muted { opacity: .8; }
+    .grid { display:grid; grid-template-columns: 1.2fr .8fr; gap: 12px; }
+    textarea { width:100%; min-height: 220px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.2); color: inherit; }
+    select { padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.2); color: inherit; width:100%; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .btn { padding:10px 14px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); cursor:pointer; }
+    code { background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 6px; }
+    h3 { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Manual + Interactive Engine</h1>
+    <p class="muted">Paste an application JSON and click <b>Run Evaluation</b>. This page also pulls recommended services from your provider catalogs in <code>web/cloud-decision-logic-kit/data/*-services.js</code>.</p>
+
+    <div class="button-row" style="margin-top:12px;">
+      <a class="tool-button" href="index.html"><span class="label">Back</span><span>↩</span></a>
+    </div>
+
+    <section class="card grid">
+      <div>
+        <h2>Application JSON</h2>
+        <textarea id="appJson" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" id="run">Run Evaluation</button>
+          <button class="btn" id="export">Export JSON</button>
+          <span class="muted" id="status"></span>
+        </div>
+      </div>
+      <div>
+        <h2>Target Cloud</h2>
+        <select id="provider">
+          <option value="AWS">AWS</option>
+          <option value="AZURE">Azure</option>
+          <option value="GCP">GCP</option>
+          <option value="OCI">OCI</option>
+        </select>
+
+        <h2 style="margin-top:12px;">Wave Mode</h2>
+        <select id="waveMode">
+          <option value="default">default</option>
+          <option value="fast">fast</option>
+          <option value="modernize">modernize</option>
+        </select>
+
+        <section class="card" style="margin-top:12px;">
+          <h2>Results</h2>
+          <div class="muted">Readiness Score (0–100)</div>
+          <div style="font-size:34px; font-weight:700;" id="score">—</div>
+          <div class="muted">Course of Action</div>
+          <div style="font-size:20px; font-weight:700;" id="route">—</div>
+          <div class="muted">Risk</div>
+          <div style="font-size:20px; font-weight:700;" id="risk">—</div>
+          <div class="muted">Wave</div>
+          <div style="font-size:20px; font-weight:700;" id="wave">—</div>
+          <h3>Rationale</h3>
+          <div class="muted" id="rationale">—</div>
+        </section>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Step-by-Step Plan</h2>
+      <ol>
+        <li>Inventory & dependency map (apps, ports, DNS, AD, certs, integrations).</li>
+        <li>Landing zone alignment (networking, IAM, logging, guardrails).</li>
+        <li>Image/VM strategy (gold images, hardened baselines, patch posture).</li>
+        <li>Data migration approach (block/file/object, replication, cutover plan).</li>
+        <li>Build target environment (subnets, security groups/NSGs, routing).</li>
+        <li>Migration rehearsal (pilot, performance baseline, rollback).</li>
+        <li>Cutover (freeze, final sync, switch DNS, validate).</li>
+        <li>Stabilization (monitoring, backups, DR, incident runbooks).</li>
+        <li>Decommission on-prem (licenses, contracts, CMDB updates).</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Recommended Services</h2>
+      <p class="muted">Closest matches from your catalogs (cloud-decision-logic-kit). If you see “Catalog load failed”, the provider file didn’t import (usually means your local server isn’t serving ES modules correctly).</p>
+      <div id="services"></div>
+    </section>
+  </main>
+
+<script type="module">
+  import { findClosestServices } from "./catalog-matcher.js";
+
+  const $ = (id)=>document.getElementById(id);
+
+  $("appJson").value = JSON.stringify({
+    name:"Example App",
+    primaryStack:".NET",
+    osRuntime:"Windows Server 2019",
+    database:"SQL Server",
+    identity:"Active Directory (AD)",
+    integrationCount:10,
+    dataSizeGb:200,
+    compliance:["fedramp_moderate"],
+    ratings:{ cloudCompatibility:3, technicalDebt:3, vendorLockRisk:3, complianceComplexity:4, architectureModularity:2, refactorEffort:3 }
+  }, null, 2);
+
+  function lower(x){ return String(x||"").toLowerCase(); }
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+  function n(v){ return clamp(Number(v || 3), 1, 5); }
+  function inv(x){ return 6 - x; }
+
+  function computeReadinessScore(r){
+    r = r || {};
+    const score =
+      (n(r.cloudCompatibility) * 20) +
+      (inv(n(r.technicalDebt)) * 20) +
+      (n(r.architectureModularity) * 15) +
+      (inv(n(r.complianceComplexity)) * 15) +
+      (inv(n(r.vendorLockRisk)) * 10) +
+      (inv(n(r.refactorEffort)) * 20);
+    return Math.round((score / 500) * 100);
+  }
+
+  function classifyCourse(app){
+    const flags = app.flags || {};
+    if (flags.noLongerUsed || flags.isObsolete) return { route:"Retire", rationale:"Obsolete or no longer used." };
+    if (flags.mustStayOnPrem || flags.hardwareBound || flags.mainframeBound) return { route:"Retain", rationale:"Must remain on-prem due to constraint." };
+    if (flags.vendorSaaSAvailable) return { route:"Repurchase", rationale:"SaaS replacement available." };
+
+    const readiness = Number(app.readinessScore ?? computeReadinessScore(app.ratings));
+    const integrations = Number(app.integrationCount || 0);
+    const arch = lower(app.architecturePattern || "");
+
+    if (readiness >= 70 && integrations <= 10 && (arch.includes("micro") || arch.includes("event") || arch.includes("soa")))
+      return { route:"Replatform", rationale:"High readiness; suitable for managed services." };
+    if (readiness >= 60 && integrations <= 15)
+      return { route:"Rehost", rationale:"Moderate readiness; rehost (lift-and-shift) to reduce data center footprint quickly." };
+    if (readiness < 40 || integrations > 25)
+      return { route:"Refactor", rationale:"Low readiness or high coupling; modernization required." };
+    return { route:"Replatform", rationale:"Moderate readiness; prefer platform improvements." };
+  }
+
+  function riskBadge(app){
+    let points = 0;
+    const crit = String(app.criticality || "").trim();
+    if (crit.toLowerCase().includes("mission")) points += 3;
+    else if (crit === "High") points += 2;
+    else if (crit === "Medium") points += 1;
+
+    const rto = Number(app.rtoHours || 0);
+    const rpo = Number(app.rpoHours || 0);
+    if (rto && rto <= 4) points += 2; else if (rto && rto <= 24) points += 1;
+    if (rpo && rpo <= 1) points += 2; else if (rpo && rpo <= 4) points += 1;
+
+    const ic = Number(app.integrationCount || 0);
+    if (ic >= 20) points += 2; else if (ic >= 10) points += 1;
+
+    const cmp = (app.compliance || []).map(x=>String(x).toLowerCase());
+    if (cmp.some(x=>["fedramp_low","fedramp_moderate","fedramp_high","itar","cjis"].includes(x))) points += 2;
+    else if (cmp.length) points += 1;
+
+    if (points >= 8) return "High";
+    if (points >= 5) return "Medium";
+    return "Low";
+  }
+
+  function wavePlan(route, readiness, risk, mode){
+    if (route === "Retain") return { wave:"Blocked", rationale:"Constraint blocks migration." };
+    if (route === "Retire" || route === "Repurchase") return { wave:"Wave 1", rationale:"Quick outcome reduces footprint early." };
+
+    const riskScore = (risk === "High") ? 3 : (risk === "Medium" ? 2 : 1);
+
+    if (mode === "fast"){
+      if ((route === "Rehost" || route === "Replatform") && riskScore <= 2) return { wave:"Wave 1", rationale:"Fast exit mode." };
+    }
+    if (mode === "modernize"){
+      if (route === "Refactor" && riskScore <= 2 && readiness >= 70) return { wave:"Wave 1", rationale:"Modernize-first mode." };
+    }
+
+    if (riskScore === 1 && readiness >= 55) return { wave:"Wave 1", rationale:"Low risk + ready." };
+    if (riskScore <= 2 && readiness >= 40) return { wave:"Wave 2", rationale:"Core migration band." };
+    return { wave:"Wave 3", rationale:"High risk and/or heavy modernization." };
+  }
+
+  function download(obj, filename){
+    const blob = new Blob([JSON.stringify(obj,null,2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function renderServices(provider, app){
+    const serviceDiv = $("services");
+    serviceDiv.innerHTML = "";
+    const caps = ["iam","monitoring","secrets","objectStorage","computeVm","blockStorage","fileStorage","managedDb"];
+    for (const cap of caps){
+      const row = document.createElement("div");
+      row.className = "card";
+      row.innerHTML = "<div style='font-weight:700; margin-bottom:6px;'>" + cap + "</div><div class='muted' id='m_"+cap+"'>Loading…</div>";
+      serviceDiv.appendChild(row);
+      try{
+        const extra = [app.primaryStack, app.database, app.identity].filter(Boolean);
+        const matches = await findClosestServices(provider, cap, extra);
+        const el = row.querySelector("#m_"+cap);
+        el.innerHTML = matches.length ? ("• " + matches.join("<br>• ")) : "• (No close match found in catalog)";
+      } catch(e){
+        const el = row.querySelector("#m_"+cap);
+        el.textContent = "• (Catalog load failed) " + e.message;
+      }
+    }
+  }
+
+  function run(){
+    $("status").textContent = "";
+    let app;
+    try { app = JSON.parse($("appJson").value); }
+    catch { $("status").textContent = "Invalid JSON."; return; }
+
+    const provider = $("provider").value;
+    const waveMode = $("waveMode").value;
+
+    app.readinessScore = Number(app.readinessScore ?? computeReadinessScore(app.ratings));
+    const course = classifyCourse(app);
+    const risk = riskBadge(app);
+    const wave = wavePlan(course.route, app.readinessScore, risk, waveMode);
+
+    $("score").textContent = String(app.readinessScore);
+    $("route").textContent = course.route;
+    $("risk").textContent = risk + " Risk";
+    $("wave").textContent = wave.wave;
+    $("rationale").textContent = course.rationale + " " + wave.rationale;
+
+    renderServices(provider, app);
+  }
+
+  $("run").addEventListener("click", run);
+  $("export").addEventListener("click", ()=>{
+    try{
+      const obj = JSON.parse($("appJson").value);
+      download(obj, (String(obj.name||"app").replace(/[^a-z0-9]+/gi,"_").slice(0,40)||"app") + ".migration.json");
+      $("status").textContent = "Exported JSON.";
+    } catch {
+      $("status").textContent = "Invalid JSON.";
+    }
+  });
+
+  run();
+</script>
+</body>
+</html>

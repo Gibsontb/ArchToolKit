@@ -1,0 +1,94 @@
+{
+  "capabilities": [
+    {
+      "capability_id": "ai_ml",
+      "name": "ai-ml",
+      "domain": "ai-ml",
+      "used_for": "ai-ml services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "analytics",
+      "name": "analytics",
+      "domain": "analytics",
+      "used_for": "analytics services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "app_integration",
+      "name": "app-integration",
+      "domain": "app-integration",
+      "used_for": "app-integration services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "business_apps",
+      "name": "business-apps",
+      "domain": "business-apps",
+      "used_for": "business-apps services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "compute",
+      "name": "compute",
+      "domain": "compute",
+      "used_for": "compute services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "containers",
+      "name": "containers",
+      "domain": "containers",
+      "used_for": "containers services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "cost_controls",
+      "name": "cost-controls",
+      "domain": "cost-controls",
+      "used_for": "cost-controls services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "databases",
+      "name": "databases",
+      "domain": "databases",
+      "used_for": "databases services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "devtools",
+      "name": "devtools",
+      "domain": "devtools",
+      "used_for": "devtools services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "iot",
+      "name": "iot",
+      "domain": "iot",
+      "used_for": "iot services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "management_governance",
+      "name": "management-governance",
+      "domain": "management-governance",
+      "used_for": "management-governance services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "migration",
+      "name": "migration",
+      "domain": "migration",
+      "used_for": "migration services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "misc",
+      "name": "misc",
+      "domain": "misc",
+      "used_for": "misc services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "networking_cdn",
+      "name": "networking-cdn",
+      "domain": "networking-cdn",
+      "used_for": "networking-cdn services and capabilities used in cloud architectures."
+    },
+    {
+      "capability_id": "security",
+      "name": "security",
+      "domain": "security",
+      "used_for": "security services and capabilities used in cloud architectures."
+    }
+  ]
+}

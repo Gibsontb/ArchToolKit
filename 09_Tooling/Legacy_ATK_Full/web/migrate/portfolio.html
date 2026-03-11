@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ATK - Migration Portfolio Dashboard (Add-on)</title>
+  <link rel="stylesheet" href="../styles.css"/>
+  <style>
+    .card { border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 14px; margin-top: 14px; }
+    .muted { opacity: .8; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,.08); text-align:left; vertical-align:top; }
+    code { background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Migration Portfolio Dashboard</h1>
+    <p class="muted">Loads scored output from <code>web/generated/migration/migration-portfolio.json</code>.</p>
+
+    <div class="button-row" style="margin-top:12px;">
+      <a class="tool-button" href="index.html"><span class="label">Back</span><span>↩</span></a>
+    </div>
+
+    <section class="card">
+      <div id="status" class="muted">Loading…</div>
+      <div style="overflow:auto; margin-top:10px;">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th>Wave</th><th>Route</th><th>Target Cloud</th><th>Readiness</th><th>Risk</th><th>Application</th><th>Compliance</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:10px;">If empty, run: <code>node scripts/migrate/run-all.mjs input.json</code></p>
+    </section>
+  </main>
+
+<script>
+(async function(){
+  "use strict";
+  const status = document.getElementById("status");
+  const tbody = document.querySelector("#tbl tbody");
+
+  try{
+    const res = await fetch("../generated/migration/migration-portfolio.json", { cache: "no-store" });
+    if(!res.ok) throw new Error("Missing generated output. Run: node scripts/migrate/run-all.mjs input.json");
+    const data = await res.json();
+    const items = data.items || [];
+    status.textContent = "Loaded " + items.length + " apps (generated " + (data.generatedAt||"") + ")";
+
+    tbody.innerHTML = "";
+    for(const it of items){
+      const a = it.application || {};
+      const r = it.results || {};
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + (r.wave||"") + "</td>" +
+        "<td>" + (r.route||"") + "</td>" +
+        "<td>" + (r.targetCloud||"") + "</td>" +
+        "<td>" + (r.readinessScore ?? "") + "</td>" +
+        "<td>" + (r.risk||"") + "</td>" +
+        "<td><b>" + (a.name||"") + "</b><div class='muted'>" + (a.primaryStack||"") + " • " + (a.osRuntime||"") + " • " + (a.database||"") + "</div></td>" +
+        "<td>" + ((a.compliance||[]).join(", ")) + "</td>";
+      tbody.appendChild(tr);
+    }
+  } catch(e){
+    status.textContent = e.message;
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ATK - Migration Workspace (Add-on)</title>
+  <link rel="stylesheet" href="../styles.css"/>
+  <style>
+    .card { border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 14px; margin-top: 14px; }
+    .muted { opacity: .8; }
+    code { background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Application Migration &amp; Modernization</h1>
+    <p class="muted">Drop-in workspace (add-on). Open this directly: <code>web/migrate/index.html</code></p>
+
+    <div class="button-row" style="margin-top:12px;">
+      <a class="tool-button" href="../index.html"><span class="label">Back to ATK Home</span><span>↩</span></a>
+      <a class="tool-button secondary" href="app-intake.html"><span class="label">Single App Intake</span><span>↗</span></a>
+      <a class="tool-button secondary" href="portfolio.html"><span class="label">Portfolio Dashboard</span><span>↗</span></a>
+      <a class="tool-button secondary" href="interactive-engine.html"><span class="label">Manual + Interactive Engine</span><span>↗</span></a>
+    </div>
+
+    <section class="card">
+      <h2>CLI</h2>
+      <pre><code>node scripts/migrate/run-all.mjs input.json</code></pre>
+      <p class="muted">Writes: <code>web/generated/migration/migration-portfolio.json</code></p>
+    </section>
+
+    <section class="card">
+      <h2>VMware helper</h2>
+      <pre><code>node scripts/migrate/from-vmware-inventory.mjs inventory.json --out data/migrate/generated/portfolio.from-vmware.json</code></pre>
+    </section>
+  </main>
+</body>
+</html>

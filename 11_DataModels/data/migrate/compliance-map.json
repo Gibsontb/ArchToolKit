@@ -1,0 +1,42 @@
+{
+  "aliases": {
+    "fedramp": "fedramp_moderate",
+    "pci": "pci_dss",
+    "iso_27001": "iso27001",
+    "soc_2": "soc2"
+  },
+  "rules": {
+    "fedramp_low": {
+      "adds": [
+        "commercial"
+      ]
+    },
+    "fedramp_moderate": {
+      "adds": [
+        "commercial"
+      ]
+    },
+    "fedramp_high": {
+      "adds": [
+        "commercial"
+      ]
+    }
+  },
+  "allowed": [
+    "commercial",
+    "fedramp_low",
+    "fedramp_moderate",
+    "fedramp_high",
+    "cjis",
+    "hipaa",
+    "pci_dss",
+    "sox",
+    "fisma",
+    "cmmc",
+    "itar",
+    "gdpr",
+    "ferpa",
+    "soc2",
+    "iso27001"
+  ]
+}

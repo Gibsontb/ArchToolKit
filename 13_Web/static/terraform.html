@@ -1,0 +1,2190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Terraform Script Generator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #050810;
+      --panel: #0f172a;
+      --panel-alt: #020617;
+      --border: #1f2937;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56,189,248,0.12);
+      --text: #e5e7eb;
+      --text-muted: #9ca3af;
+      --danger: #f97373;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 6px;
+      --shadow-soft: 0 18px 45px rgba(15,23,42,0.9);
+      --shadow-subtle: 0 10px 30px rgba(15,23,42,0.55);
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      background: radial-gradient(circle at top, #020617 0, #020617 180px, #020617 200px, #000 500px);
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .app {
+      max-width: 1440px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-end;
+      padding: 14px 18px;
+      background: linear-gradient(135deg, #020617 0, #020617 40%, #020617 65%, #020617 100%);
+      border-radius: 18px;
+      border: 1px solid rgba(148,163,184,0.24);
+      box-shadow: var(--shadow-soft);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .app-header::before {
+      content: "";
+      position: absolute;
+      inset: -120px;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(56,189,248,0.32) 0, transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(129,140,248,0.26) 0, transparent 50%);
+      mix-blend-mode: screen;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    .app-header-main { position: relative; z-index: 1; }
+
+    .app-title {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pill {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.6);
+      color: var(--text-muted);
+      background: rgba(15,23,42,0.7);
+    }
+
+    .app-subtitle {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--text-muted);
+      max-width: 640px;
+    }
+
+    .app-header-controls {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .hint-chip {
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      opacity: 0.9;
+    }
+
+    .hint-chip .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 10px rgba(56,189,248,0.9);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(260px, 380px) minmax(360px, 1fr);
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    @media (max-width: 1080px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 840px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: radial-gradient(circle at top left, rgba(15,23,42,0.95) 0, #020617 60%, #020617 100%);
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(15,23,42,0.95);
+      box-shadow: var(--shadow-subtle);
+      padding: 12px 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top, rgba(15,23,42,0.9) 0, transparent 55%);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    .panel-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #9ca3af;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.55);
+      color: var(--text-muted);
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .field-label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: #d1d5db;
+    }
+
+    .field .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    select,
+    input[type="text"],
+    input[type="number"] {
+      background: rgba(15,23,42,0.9);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(31,41,55,0.95);
+      padding: 6px 8px;
+      font-size: 12px;
+      color: var(--text);
+      outline: none;
+      width: 100%;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    select:focus,
+    input[type="text"]:focus,
+    input[type="number"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(56,189,248,0.45);
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .tiny-pill {
+      font-size: 10px;
+      padding: 2px 5px;
+      border-radius: 999px;
+      border: 1px solid rgba(55,65,81,0.9);
+      color: var(--text-muted);
+      background: rgba(15,23,42,0.9);
+    }
+
+    .button-row {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    button { font-family: inherit; }
+
+    .btn {
+      border-radius: 999px;
+      font-size: 12px;
+      padding: 6px 10px;
+      border: 1px solid rgba(31,41,55,0.95);
+      background: rgba(15,23,42,0.95);
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+    }
+
+    .btn-primary {
+      border-color: rgba(56,189,248,0.85);
+      background: radial-gradient(circle at top, rgba(56,189,248,0.35) 0, rgba(8,47,73,0.9) 60%, #020617 100%);
+      color: #e0f2fe;
+    }
+
+    .btn:hover {
+      transform: translateY(-0.5px);
+      border-color: rgba(148,163,184,0.9);
+    }
+
+    .btn-primary:hover {
+      border-color: rgba(56,189,248,1);
+      box-shadow: 0 0 18px rgba(56,189,248,0.55);
+    }
+
+    .btn-ghost {
+      border-style: dashed;
+      border-color: rgba(55,65,81,0.9);
+      color: var(--text-muted);
+    }
+
+    .btn-sm { padding: 4px 8px; font-size: 11px; }
+
+    
+/* Main menu return button */
+.btn-mainmenu{
+  border-color: rgba(148,163,184,.28);
+  background: rgba(2,6,23,.18);
+  color: rgba(226,232,240,.78);
+  font-weight: 650;
+}
+.btn-mainmenu:hover{
+  border-color: rgba(56,189,248,.38);
+  color: rgba(226,232,240,.92);
+}
+.code-panel {
+      background: linear-gradient(145deg, #020617 0, #020617 40%, #020617 100%);
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(15,23,42,0.95);
+      box-shadow: var(--shadow-soft);
+      padding: 10px 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .code-panel::before {
+      content: "";
+      position: absolute;
+      inset: -150px;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(56,189,248,0.18) 0, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(129,140,248,0.18) 0, transparent 50%);
+      opacity: 0.9;
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .code-panel-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      gap: 8px;
+    }
+
+    .code-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .code-header-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #9ca3af;
+    }
+
+    .code-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .code-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 10px 10px;
+      border-radius: var(--radius-md);
+      background: rgba(15,23,42,0.96);
+      border: 1px solid rgba(31,41,55,0.95);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #e5e7eb;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre;
+    }
+
+    .command-bar {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: var(--radius-md);
+      background: rgba(15,23,42,0.9);
+      border: 1px dashed rgba(55,65,81,0.9);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .command-text {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #9ca3af;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .status-line {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(74,222,128,0.95);
+      box-shadow: 0 0 10px rgba(74,222,128,0.75);
+    }
+
+    .status-dot.error {
+      background: var(--danger);
+      box-shadow: 0 0 10px rgba(248,113,113,0.85);
+    }
+
+    .error-text { color: var(--danger); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <div class="app-header-main">
+      <div class="app-title">
+        <span>TERRAFORM SCRIPT GENERATOR</span>
+        <span class="pill">Multi-Cloud · VMware · OS</span>
+      </div>
+      <p class="app-subtitle">
+        Pick a platform and blueprint, feed it parameters, and get a ready-to-paste Terraform configuration
+        (HCL) for AWS, Azure, GCP, VMware vSphere, Linux and Windows — including gov / IL5+ regions.
+      </p>
+    </div>
+    <div class="app-header-controls">
+      
+      <button type="button" class="btn btn-sm btn-mainmenu" onclick="window.location.href='index.html'">← Main menu</button>
+<div class="hint-chip">
+        <span class="dot"></span>
+        <span>All blueprints live in <code>TERRA_DEFS</code>. Extend platforms / services there.</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- PLATFORM / BLUEPRINT PICKER -->
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="panel-header">
+          <div class="panel-title">Platform &amp; Blueprint</div>
+          <div class="badge">Step 1</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="platformSelect">Platform / Provider</label>
+            <span class="hint">Cloud, VMware, or OS</span>
+          </div>
+          <select id="platformSelect"></select>
+          <div class="pill-row">
+            <span class="tiny-pill">AWS (incl. Gov/ISO)</span>
+            <span class="tiny-pill">Azure (incl. US Gov / DoD / Secret)</span>
+            <span class="tiny-pill">GCP (Assured workloads)</span>
+            <span class="tiny-pill">OCI</span>
+            <span class="tiny-pill">VMware vSphere</span>
+            <span class="tiny-pill">Linux</span>
+            <span class="tiny-pill">Windows</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="scenarioSelect">Blueprint</label>
+            <span class="hint">What Terraform should build</span>
+          </div>
+          <select id="scenarioSelect"></select>
+        </div>
+
+        <div class="field">
+          <div class="field-label-row">
+            <label for="moduleNameInput">Module / file label (optional)</label>
+            <span class="hint">Used in comments/tags only</span>
+          </div>
+          <input id="moduleNameInput" type="text" value="generated_module" />
+        </div>
+
+        <div class="button-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="resetButton">Reset</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PARAMETER FORM -->
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="panel-header">
+          <div class="panel-title">Parameters &amp; Options</div>
+          <div class="badge">Step 2</div>
+        </div>
+
+        <div id="paramsArea"></div>
+
+        <div class="button-row">
+          <button type="button" class="btn btn-primary" id="generateButton">
+            <span>⚙️</span>
+            <span>Generate Terraform</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- GENERATED CODE -->
+    <section class="code-panel">
+      <div class="code-panel-inner">
+        <div class="code-header">
+          <div class="code-header-left">
+            <div class="code-header-title">Generated Terraform (HCL)</div>
+            <div class="code-meta" id="codeMeta">Waiting for input…</div>
+          </div>
+          <div class="code-actions">
+            <button type="button" class="btn btn-sm" id="downloadButton">⬇️ Download</button>
+            <button type="button" class="btn btn-sm btn-ghost" id="copyButton">📋 Copy</button>
+          </div>
+        </div>
+
+        <pre id="outputPre"># Select a platform & blueprint, adjust parameters, then click “Generate Terraform”.</pre>
+
+        <div class="command-bar">
+          <div class="command-text" id="commandHint">
+            # Save as main.tf and run: terraform init && terraform plan
+          </div>
+        </div>
+
+        <div class="status-line" id="statusLine">
+          <span class="status-dot"></span>
+          <span>Idle — no errors.</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  // -----------------------
+  // Region / location lists (incl. gov / DoD / secret where supported)
+  // -----------------------
+
+  const AWS_REGIONS = [
+    // Core US
+    "us-east-1",   // N. Virginia
+    "us-east-2",   // Ohio
+    "us-west-1",   // N. California
+    "us-west-2",   // Oregon
+    // Non-US commonly used
+    "eu-central-1",
+    "eu-west-1",
+    "eu-west-2",
+    "ap-southeast-1",
+    "ap-southeast-2",
+    // GovCloud / classified
+    "us-gov-east-1",
+    "us-gov-west-1",
+    "us-iso-east-1",
+    "us-iso-west-1",
+    "us-isob-east-1"
+  ];
+
+  const AZURE_REGIONS = [
+    // Commercial
+    "eastus",
+    "eastus2",
+    "centralus",
+    "westus",
+    "westus2",
+    "southcentralus",
+    "northeurope",
+    "westeurope",
+    "uksouth",
+    // Azure US Government
+    "usgovvirginia",
+    "usgovtexas",
+    "usgovarizona",
+    // Azure Government DoD
+    "usdodcentral",
+    "usdodeast",
+    // Azure Government Secret
+    "ussecwest",
+    "usseceast"
+  ];
+
+  const GCP_REGIONS = [
+    "us-central1",
+    "us-east1",
+    "us-east4",
+    "us-west1",
+    "us-west2",
+    "europe-west1",
+    "europe-west4"
+  ];
+
+  const GCP_ZONES = [
+    "us-central1-a",
+    "us-central1-b",
+    "us-central1-c",
+    "us-central1-f",
+    "us-east1-b",
+    "us-east1-c",
+    "us-east1-d",
+    "us-east4-a",
+    "us-east4-b",
+    "us-east4-c",
+    "us-west1-a",
+    "us-west1-b",
+    "us-west1-c",
+    "us-west2-a",
+    "us-west2-b",
+    "us-west2-c"
+  ];
+
+  const OCI_REGIONS = [
+    // Commercial
+    "us-ashburn-1",
+    "us-phoenix-1",
+    "us-sanjose-1",
+    "uk-london-1",
+    "eu-frankfurt-1",
+    "eu-amsterdam-1",
+    "me-dubai-1",
+    "ap-mumbai-1",
+    "ap-seoul-1",
+    "ap-tokyo-1",
+    "ap-osaka-1",
+    "ap-sydney-1",
+    "ap-melbourne-1",
+    "sa-saopaulo-1",
+    "sa-vinhedo-1",
+    // US Gov
+    "us-gov-ashburn-1",
+    "us-gov-chicago-1",
+    "us-gov-phoenix-1"
+  ];
+
+  // -----------------------
+  // Data model: platforms & blueprints
+  // Each scenario's buildTf(vals, moduleName) returns Terraform HCL as a string
+  // -----------------------
+
+  const TERRA_DEFS = {
+    aws: {
+      label: "Amazon Web Services (AWS)",
+      scenarios: {
+        aws_ec2_instance: {
+          label: "EC2 instance + security group",
+          description: "Basic EC2 instance in a VPC subnet with an attached security group.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Commercial + Gov / ISO regions"
+            },
+            { id: "instance_name", label: "Instance Name tag", type: "text", default: "court-app-01", hint: "Name tag / logical name" },
+            { id: "instance_type", label: "Instance type", type: "text", default: "t3.small", hint: "e.g. t3.small, m5.large" },
+            { id: "ami_id", label: "AMI ID", type: "text", default: "ami-xxxxxxxx", hint: "Hardened AMI" },
+            { id: "subnet_id", label: "Subnet ID", type: "text", default: "subnet-xxxxxxx", hint: "Existing subnet" },
+            { id: "vpc_security_group_name", label: "Security group name", type: "text", default: "sg-court-app", hint: "SG created in this module" },
+            { id: "allow_ssh_cidr", label: "Allowed SSH CIDR", type: "text", default: "10.0.0.0/16", hint: "Lock down in prod" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "aws_ec2_instance";
+            return `# terraform init && terraform plan
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "${vals.aws_region}"
+}
+
+resource "aws_security_group" "this" {
+  name        = "${vals.vpc_security_group_name}"
+  description = "Security group for ${vals.instance_name}"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["${vals.allow_ssh_cidr}"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "${vals.vpc_security_group_name}"
+    System      = "${m}"
+    Environment = var.environment
+  }
+}
+
+resource "aws_instance" "this" {
+  ami                    = "${vals.ami_id}"
+  instance_type          = "${vals.instance_type}"
+  subnet_id              = "${vals.subnet_id}"
+  vpc_security_group_ids = [aws_security_group.this.id]
+
+  tags = {
+    Name        = "${vals.instance_name}"
+    System      = "${m}"
+    Environment = var.environment
+  }
+}
+
+variable "vpc_id" {
+  type        = string
+  description = "Target VPC ID"
+}
+
+variable "environment" {
+  type        = string
+  description = "Environment name (dev/stage/prod)"
+  default     = "dev"
+}
+`;
+          }
+        },
+
+        aws_s3_secure_bucket: {
+          label: "S3 bucket (versioned + encrypted)",
+          description: "S3 bucket with versioning, SSE and private access.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region for bucket"
+            },
+            { id: "bucket_name", label: "Bucket name", type: "text", default: "court-records-archive", hint: "Globally unique" },
+            { id: "sse_algorithm", label: "SSE algorithm", type: "text", default: "aws:kms", hint: "AES256 or aws:kms" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "aws_s3_secure_bucket";
+            return `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "${vals.aws_region}"
+}
+
+resource "aws_s3_bucket" "this" {
+  bucket = "${vals.bucket_name}"
+
+  versioning {
+    enabled = true
+  }
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm = "${vals.sse_algorithm}"
+      }
+    }
+  }
+
+  acl = "private"
+
+  tags = {
+    Name        = "${vals.bucket_name}"
+    System      = "${m}"
+    Environment = var.environment
+  }
+}
+
+variable "environment" {
+  type        = string
+  default     = "dev"
+  description = "Environment name"
+}
+`;
+          }
+        },
+
+        aws_vpc_baseline: {
+          label: "VPC baseline (2 subnets + IGW)",
+          description: "Creates a VPC, two public subnets, an Internet Gateway and a route table.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region for VPC"
+            },
+            { id: "vpc_cidr", label: "VPC CIDR block", type: "text", default: "10.20.0.0/16", hint: "Top-level CIDR (non-overlapping)" },
+            { id: "subnet1_cidr", label: "Public subnet 1 CIDR", type: "text", default: "10.20.1.0/24", hint: "AZ A" },
+            { id: "subnet2_cidr", label: "Public subnet 2 CIDR", type: "text", default: "10.20.2.0/24", hint: "AZ B" },
+            { id: "name_prefix", label: "Name prefix", type: "text", default: "court-vpc", hint: "Prefix for tags/names" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "aws_vpc_baseline";
+            return `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "${vals.aws_region}"
+}
+
+resource "aws_vpc" "this" {
+  cidr_block           = "${vals.vpc_cidr}"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name   = "${vals.name_prefix}"
+    System = "${m}"
+  }
+}
+
+resource "aws_internet_gateway" "this" {
+  vpc_id = aws_vpc.this.id
+
+  tags = {
+    Name   = "${vals.name_prefix}-igw"
+    System = "${m}"
+  }
+}
+
+resource "aws_subnet" "public_a" {
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = "${vals.subnet1_cidr}"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name   = "${vals.name_prefix}-public-a"
+    System = "${m}"
+  }
+}
+
+resource "aws_subnet" "public_b" {
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = "${vals.subnet2_cidr}"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name   = "${vals.name_prefix}-public-b"
+    System = "${m}"
+  }
+}
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.this.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.this.id
+  }
+
+  tags = {
+    Name   = "${vals.name_prefix}-public-rt"
+    System = "${m}"
+  }
+}
+
+resource "aws_route_table_association" "public_a" {
+  subnet_id      = aws_subnet.public_a.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = aws_subnet.public_b.id
+  route_table_id = aws_route_table.public.id
+}
+`;
+          }
+        },
+
+        aws_rds_postgres: {
+          label: "RDS PostgreSQL instance",
+          description: "Creates an RDS PostgreSQL instance and subnet group in existing subnets.",
+          inputs: [
+            {
+              id: "aws_region",
+              label: "AWS region",
+              control: "select",
+              options: AWS_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-east-1",
+              hint: "Region for RDS"
+            },
+            { id: "db_identifier", label: "DB identifier", type: "text", default: "court-pgsql-01", hint: "Unique DB identifier" },
+            { id: "db_name", label: "Database name", type: "text", default: "court", hint: "Initial database name" },
+            { id: "username", label: "Master username", type: "text", default: "courtadmin", hint: "Master user (use secrets in prod)" },
+            { id: "password", label: "Master password", type: "text", default: "CHANGEME", hint: "Use secrets manager in prod" },
+            { id: "subnet_ids_csv", label: "Subnet IDs (comma-separated)", type: "text", default: "subnet-1,subnet-2", hint: "At least two subnets" },
+            { id: "vpc_security_group_ids_csv", label: "VPC security group IDs (comma-separated)", type: "text", default: "sg-xxxx", hint: "Existing SG(s)" },
+            { id: "instance_class", label: "Instance class", type: "text", default: "db.t3.medium", hint: "e.g. db.t3.medium" },
+            { id: "storage_gb", label: "Allocated storage (GB)", type: "number", default: "100", hint: "Storage size" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "aws_rds_postgres";
+            const subnetList = vals.subnet_ids_csv.split(",").map(s => s.trim()).filter(Boolean);
+            const sgList = vals.vpc_security_group_ids_csv.split(",").map(s => s.trim()).filter(Boolean);
+            const subnetHcl = subnetList.map(s => `"${s}"`).join(", ");
+            const sgHcl = sgList.map(s => `"${s}"`).join(", ");
+            return `terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "${vals.aws_region}"
+}
+
+resource "aws_db_subnet_group" "this" {
+  name       = "${vals.db_identifier}-subnets"
+  subnet_ids = [${subnetHcl}]
+
+  tags = {
+    Name   = "${vals.db_identifier}-subnets"
+    System = "${m}"
+  }
+}
+
+resource "aws_db_instance" "this" {
+  identifier              = "${vals.db_identifier}"
+  engine                  = "postgres"
+  engine_version          = "15"
+  instance_class          = "${vals.instance_class}"
+  allocated_storage       = ${Number(vals.storage_gb) || 100}
+  db_name                 = "${vals.db_name}"
+  username                = "${vals.username}"
+  password                = "${vals.password}"
+  db_subnet_group_name    = aws_db_subnet_group.this.name
+  vpc_security_group_ids  = [${sgHcl}]
+  skip_final_snapshot     = true
+  deletion_protection     = false
+  publicly_accessible     = false
+  storage_encrypted       = true
+  auto_minor_version_upgrade = true
+
+  tags = {
+    Name   = "${vals.db_identifier}"
+    System = "${m}"
+  }
+}
+`;
+          }
+        }
+      }
+    },
+
+    azure: {
+      label: "Microsoft Azure",
+      scenarios: {
+        azurerm_linux_vm: {
+          label: "Linux VM + NIC + NSG",
+          description: "Resource group, network, NSG and a Linux VM.",
+          inputs: [
+            {
+              id: "location",
+              label: "Location",
+              control: "select",
+              options: AZURE_REGIONS.map(r => ({ value: r, label: r })),
+              default: "eastus",
+              hint: "Commercial + US Gov / DoD / Secret"
+            },
+            { id: "rg_name", label: "Resource group name", type: "text", default: "rg-court-app", hint: "New RG" },
+            { id: "vm_name", label: "VM name", type: "text", default: "court-az-linux-01", hint: "Linux VM name" },
+            { id: "vm_size", label: "VM size", type: "text", default: "Standard_B2s", hint: "Size / SKU" },
+            { id: "admin_username", label: "Admin username", type: "text", default: "courtadmin", hint: "SSH login user" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "azurerm_linux_vm";
+            return `terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "this" {
+  name     = "${vals.rg_name}"
+  location = "${vals.location}"
+}
+
+resource "azurerm_virtual_network" "this" {
+  name                = "${vals.rg_name}-vnet"
+  address_space       = ["10.10.0.0/16"]
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+}
+
+resource "azurerm_subnet" "this" {
+  name                 = "subnet-app"
+  resource_group_name  = azurerm_resource_group.this.name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = ["10.10.1.0/24"]
+}
+
+resource "azurerm_network_security_group" "this" {
+  name                = "${vals.rg_name}-nsg"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+
+  security_rule {
+    name                       = "SSH"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "10.0.0.0/8"
+    destination_address_prefix = "*"
+  }
+
+  tags = {
+    System      = "${m}"
+    Environment = "dev"
+  }
+}
+
+resource "azurerm_network_interface" "this" {
+  name                = "${vals.vm_name}-nic"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.this.id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+resource "azurerm_network_interface_security_group_association" "this" {
+  network_interface_id      = azurerm_network_interface.this.id
+  network_security_group_id = azurerm_network_security_group.this.id
+}
+
+resource "azurerm_linux_virtual_machine" "this" {
+  name                = "${vals.vm_name}"
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  size                = "${vals.vm_size}"
+  admin_username      = "${vals.admin_username}"
+
+  network_interface_ids = [azurerm_network_interface.this.id]
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-focal"
+    sku       = "20_04-lts"
+    version   = "latest"
+  }
+
+  admin_ssh_key {
+    username   = "${vals.admin_username}"
+    public_key = var.admin_ssh_public_key
+  }
+
+  tags = {
+    System      = "${m}"
+    Environment = "dev"
+  }
+}
+
+variable "admin_ssh_public_key" {
+  type        = string
+  description = "SSH public key for admin user"
+}
+`;
+          }
+        },
+
+        azurerm_storage_account_secure: {
+          label: "Secure Storage Account",
+          description: "Creates a storage account locked to HTTPS, TLS 1.2+, with private access.",
+          inputs: [
+            {
+              id: "location",
+              label: "Location",
+              control: "select",
+              options: AZURE_REGIONS.map(r => ({ value: r, label: r })),
+              default: "eastus",
+              hint: "Region for storage account"
+            },
+            { id: "rg_name", label: "Resource group name", type: "text", default: "rg-court-storage", hint: "Existing or new RG" },
+            { id: "storage_account_name", label: "Storage account name", type: "text", default: "courtstoracct01", hint: "Globally unique" },
+            { id: "account_tier", label: "Account tier", type: "text", default: "Standard", hint: "Standard or Premium" },
+            { id: "replication_type", label: "Replication type", type: "text", default: "LRS", hint: "LRS, GRS, RAGRS, ZRS..." }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "azurerm_storage_account_secure";
+            return `terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "this" {
+  name     = "${vals.rg_name}"
+  location = "${vals.location}"
+}
+
+resource "azurerm_storage_account" "this" {
+  name                     = "${vals.storage_account_name}"
+  resource_group_name      = azurerm_resource_group.this.name
+  location                 = azurerm_resource_group.this.location
+  account_tier             = "${vals.account_tier}"
+  account_replication_type = "${vals.replication_type}"
+
+  allow_blob_public_access      = false
+  min_tls_version               = "TLS1_2"
+  enable_https_traffic_only     = true
+  infrastructure_encryption_enabled = true
+
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+
+  tags = {
+    System      = "${m}"
+    Environment = "dev"
+  }
+}
+`;
+          }
+        }
+      }
+    },
+
+    gcp: {
+      label: "Google Cloud Platform",
+      scenarios: {
+        gcp_compute_instance: {
+          label: "Compute Engine VM",
+          description: "Simple Compute Engine VM in an existing subnet.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "court-project", hint: "GCP project ID" },
+            {
+              id: "region",
+              label: "Region",
+              control: "select",
+              options: GCP_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-central1",
+              hint: "Region (also used by Assured Workloads)"
+            },
+            {
+              id: "zone",
+              label: "Zone",
+              control: "select",
+              options: GCP_ZONES.map(z => ({ value: z, label: z })),
+              default: "us-central1-a",
+              hint: "Zone within region"
+            },
+            { id: "instance_name", label: "Instance name", type: "text", default: "court-gce-01", hint: "GCE VM name" },
+            { id: "machine_type", label: "Machine type", type: "text", default: "e2-medium", hint: "e.g. e2-medium" },
+            { id: "subnetwork", label: "Subnetwork", type: "text", default: "default", hint: "Existing subnetwork name" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "gcp_compute_instance";
+            return `terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "google" {
+  project = "${vals.project_id}"
+  region  = "${vals.region}"
+  zone    = "${vals.zone}"
+}
+
+resource "google_compute_instance" "this" {
+  name         = "${vals.instance_name}"
+  machine_type = "${vals.machine_type}"
+  zone         = "${vals.zone}"
+
+  boot_disk {
+    initialize_params {
+      image = "projects/debian-cloud/global/images/family/debian-11"
+    }
+  }
+
+  network_interface {
+    subnetwork = "${vals.subnetwork}"
+    access_config {}
+  }
+
+  labels = {
+    system      = "${m}"
+    environment = "dev"
+  }
+}
+`;
+          }
+        },
+
+        gcp_storage_bucket_secure: {
+          label: "GCS bucket (secure)",
+          description: "Creates a private, versioned GCS bucket with uniform bucket-level access.",
+          inputs: [
+            { id: "project_id", label: "Project ID", type: "text", default: "court-project", hint: "GCP project ID" },
+            {
+              id: "location",
+              label: "Location",
+              control: "select",
+              options: GCP_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-central1",
+              hint: "Regional bucket location"
+            },
+            { id: "bucket_name", label: "Bucket name", type: "text", default: "court-gcs-archive", hint: "Globally unique" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "gcp_storage_bucket_secure";
+            return `terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "google" {
+  project = "${vals.project_id}"
+}
+
+resource "google_storage_bucket" "this" {
+  name          = "${vals.bucket_name}"
+  location      = "${vals.location}"
+  storage_class = "STANDARD"
+
+  versioning {
+    enabled = true
+  }
+
+  uniform_bucket_level_access = true
+
+  labels = {
+    system      = "${m}"
+    environment = "dev"
+  }
+}
+`;
+          }
+        }
+      }
+    },
+
+    oci: {
+      label: "Oracle Cloud Infrastructure (OCI)",
+      scenarios: {
+        oci_core_vcn_baseline: {
+          label: "VCN baseline (public + private subnets)",
+          description: "Creates an OCI VCN with one public and one private subnet, Internet Gateway and route table.",
+          inputs: [
+            {
+              id: "oci_region",
+              label: "OCI region",
+              control: "select",
+              options: OCI_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-ashburn-1",
+              hint: "Commercial + US Gov regions"
+            },
+            {
+              id: "tenancy_ocid",
+              label: "Tenancy OCID",
+              type: "text",
+              default: "ocid1.tenancy.oc1..example",
+              hint: "Use TF vars or env in real use"
+            },
+            {
+              id: "user_ocid",
+              label: "User OCID",
+              type: "text",
+              default: "ocid1.user.oc1..example",
+              hint: "User allowed to manage network"
+            },
+            {
+              id: "fingerprint",
+              label: "API key fingerprint",
+              type: "text",
+              default: "aa:bb:cc:dd:ee:ff",
+              hint: "From OCI console"
+            },
+            {
+              id: "private_key_path",
+              label: "Private key path",
+              type: "text",
+              default: "~/.oci/oci_api_key.pem",
+              hint: "On Terraform runner"
+            },
+            {
+              id: "compartment_ocid",
+              label: "Compartment OCID",
+              type: "text",
+              default: "ocid1.compartment.oc1..example",
+              hint: "Target compartment for VCN"
+            },
+            {
+              id: "vcn_display_name",
+              label: "VCN display name",
+              type: "text",
+              default: "court-vcn",
+              hint: "Friendly VCN name"
+            },
+            {
+              id: "vcn_cidr",
+              label: "VCN CIDR",
+              type: "text",
+              default: "10.40.0.0/16",
+              hint: "Top-level CIDR (non-overlapping)"
+            },
+            {
+              id: "pub_subnet_cidr",
+              label: "Public subnet CIDR",
+              type: "text",
+              default: "10.40.1.0/24",
+              hint: "For internet-facing workloads / bastion"
+            },
+            {
+              id: "priv_subnet_cidr",
+              label: "Private subnet CIDR",
+              type: "text",
+              default: "10.40.2.0/24",
+              hint: "For app / DB tiers"
+            }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "oci_core_vcn_baseline";
+            return `terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "oci" {
+  region           = "${vals.oci_region}"
+  tenancy_ocid     = "${vals.tenancy_ocid}"
+  user_ocid        = "${vals.user_ocid}"
+  fingerprint      = "${vals.fingerprint}"
+  private_key_path = "${vals.private_key_path}"
+}
+
+resource "oci_core_vcn" "this" {
+  cidr_block     = "${vals.vcn_cidr}"
+  compartment_id = "${vals.compartment_ocid}"
+  display_name   = "${vals.vcn_display_name}"
+}
+
+resource "oci_core_internet_gateway" "igw" {
+  compartment_id = "${vals.compartment_ocid}"
+  display_name   = "${vals.vcn_display_name}-igw"
+  vcn_id         = oci_core_vcn.this.id
+  is_enabled     = true
+}
+
+resource "oci_core_route_table" "public_rt" {
+  compartment_id = "${vals.compartment_ocid}"
+  vcn_id         = oci_core_vcn.this.id
+  display_name   = "${vals.vcn_display_name}-public-rt"
+
+  route_rules {
+    network_entity_id = oci_core_internet_gateway.igw.id
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+  }
+}
+
+resource "oci_core_subnet" "public" {
+  compartment_id      = "${vals.compartment_ocid}"
+  vcn_id              = oci_core_vcn.this.id
+  display_name        = "${vals.vcn_display_name}-public"
+  cidr_block          = "${vals.pub_subnet_cidr}"
+  route_table_id      = oci_core_route_table.public_rt.id
+  prohibit_public_ip_on_vnic = false
+}
+
+resource "oci_core_subnet" "private" {
+  compartment_id      = "${vals.compartment_ocid}"
+  vcn_id              = oci_core_vcn.this.id
+  display_name        = "${vals.vcn_display_name}-private"
+  cidr_block          = "${vals.priv_subnet_cidr}"
+  prohibit_public_ip_on_vnic = true
+}
+`;
+          }
+        },
+
+        oci_core_instance_linux: {
+          label: "Linux compute instance",
+          description: "Creates a Linux compute instance in an existing subnet + compartment.",
+          inputs: [
+            {
+              id: "oci_region",
+              label: "OCI region",
+              control: "select",
+              options: OCI_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-ashburn-1",
+              hint: "Region for compute"
+            },
+            {
+              id: "tenancy_ocid",
+              label: "Tenancy OCID",
+              type: "text",
+              default: "ocid1.tenancy.oc1..example",
+              hint: "Use TF vars or env in real use"
+            },
+            {
+              id: "user_ocid",
+              label: "User OCID",
+              type: "text",
+              default: "ocid1.user.oc1..example",
+              hint: "User allowed to manage compute"
+            },
+            {
+              id: "fingerprint",
+              label: "API key fingerprint",
+              type: "text",
+              default: "aa:bb:cc:dd:ee:ff",
+              hint: "From OCI console"
+            },
+            {
+              id: "private_key_path",
+              label: "Private key path",
+              type: "text",
+              default: "~/.oci/oci_api_key.pem",
+              hint: "On Terraform runner"
+            },
+            {
+              id: "compartment_ocid",
+              label: "Compartment OCID",
+              type: "text",
+              default: "ocid1.compartment.oc1..example",
+              hint: "Target compartment for instance"
+            },
+            {
+              id: "availability_domain",
+              label: "Availability domain name",
+              type: "text",
+              default: "Uocm:PHX-AD-1",
+              hint: "From OCI console (AD1/AD2/AD3)"
+            },
+            {
+              id: "subnet_ocid",
+              label: "Subnet OCID",
+              type: "text",
+              default: "ocid1.subnet.oc1..example",
+              hint: "Existing subnet within VCN"
+            },
+            {
+              id: "shape",
+              label: "Shape",
+              type: "text",
+              default: "VM.Standard3.Flex",
+              hint: "e.g. VM.Standard3.Flex"
+            },
+            {
+              id: "ocpus",
+              label: "OCPUs",
+              type: "number",
+              default: "2",
+              hint: "CPU count"
+            },
+            {
+              id: "memory_in_gbs",
+              label: "Memory (GB)",
+              type: "number",
+              default: "16",
+              hint: "RAM in GB"
+            },
+            {
+              id: "image_ocid",
+              label: "Image OCID",
+              type: "text",
+              default: "ocid1.image.oc1..example",
+              hint: "Linux image OCID"
+            },
+            {
+              id: "instance_display_name",
+              label: "Instance display name",
+              type: "text",
+              default: "court-oci-linux-01",
+              hint: "Friendly name"
+            },
+            {
+              id: "ssh_authorized_keys",
+              label: "SSH authorized key (single line)",
+              type: "text",
+              default: "ssh-rsa AAAA... user@example",
+              hint: "Admin SSH key"
+            }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "oci_core_instance_linux";
+            const ocpus = Number(vals.ocpus) || 2;
+            const mem   = Number(vals.memory_in_gbs) || 16;
+            return `terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "oci" {
+  region           = "${vals.oci_region}"
+  tenancy_ocid     = "${vals.tenancy_ocid}"
+  user_ocid        = "${vals.user_ocid}"
+  fingerprint      = "${vals.fingerprint}"
+  private_key_path = "${vals.private_key_path}"
+}
+
+resource "oci_core_instance" "this" {
+  availability_domain = "${vals.availability_domain}"
+  compartment_id      = "${vals.compartment_ocid}"
+  display_name        = "${vals.instance_display_name}"
+  shape               = "${vals.shape}"
+
+  shape_config {
+    ocpus         = ${ocpus}
+    memory_in_gbs = ${mem}
+  }
+
+  create_vnic_details {
+    subnet_id              = "${vals.subnet_ocid}"
+    assign_public_ip       = true
+    display_name           = "${vals.instance_display_name}-vnic"
+    hostname_label         = "courtlinux01"
+    skip_source_dest_check = false
+  }
+
+  source_details {
+    source_type = "image"
+    source_id   = "${vals.image_ocid}"
+  }
+
+  metadata = {
+    ssh_authorized_keys = "${vals.ssh_authorized_keys}"
+  }
+}
+`;
+          }
+        },
+
+        oci_objectstorage_bucket_secure: {
+          label: "Object Storage bucket (secure)",
+          description: "Creates a private, encrypted OCI Object Storage bucket with versioning enabled.",
+          inputs: [
+            {
+              id: "oci_region",
+              label: "OCI region",
+              control: "select",
+              options: OCI_REGIONS.map(r => ({ value: r, label: r })),
+              default: "us-ashburn-1",
+              hint: "Region for bucket"
+            },
+            {
+              id: "tenancy_ocid",
+              label: "Tenancy OCID",
+              type: "text",
+              default: "ocid1.tenancy.oc1..example",
+              hint: "Use TF vars or env in real use"
+            },
+            {
+              id: "user_ocid",
+              label: "User OCID",
+              type: "text",
+              default: "ocid1.user.oc1..example",
+              hint: "User allowed to manage Object Storage"
+            },
+            {
+              id: "fingerprint",
+              label: "API key fingerprint",
+              type: "text",
+              default: "aa:bb:cc:dd:ee:ff",
+              hint: "From OCI console"
+            },
+            {
+              id: "private_key_path",
+              label: "Private key path",
+              type: "text",
+              default: "~/.oci/oci_api_key.pem",
+              hint: "On Terraform runner"
+            },
+            {
+              id: "compartment_ocid",
+              label: "Compartment OCID",
+              type: "text",
+              default: "ocid1.compartment.oc1..example",
+              hint: "Compartment for bucket"
+            },
+            {
+              id: "bucket_name",
+              label: "Bucket name",
+              type: "text",
+              default: "court-oci-archive",
+              hint: "Unique within namespace"
+            }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "oci_objectstorage_bucket_secure";
+            return `terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "oci" {
+  region           = "${vals.oci_region}"
+  tenancy_ocid     = "${vals.tenancy_ocid}"
+  user_ocid        = "${vals.user_ocid}"
+  fingerprint      = "${vals.fingerprint}"
+  private_key_path = "${vals.private_key_path}"
+}
+
+data "oci_objectstorage_namespace" "ns" {
+  compartment_id = "${vals.compartment_ocid}"
+}
+
+resource "oci_objectstorage_bucket" "this" {
+  compartment_id = "${vals.compartment_ocid}"
+  name           = "${vals.bucket_name}"
+  namespace      = data.oci_objectstorage_namespace.ns.namespace
+  access_type    = "NoPublicAccess"
+
+  versioning = "Enabled"
+
+  kms_key_id = null
+
+  metadata = {
+    system      = "${m}"
+    environment = "dev"
+  }
+}
+`;
+          }
+        }
+      }
+    },
+
+    vmware: {
+      label: "VMware vSphere / vCenter",
+      scenarios: {
+        vsphere_vm_from_template: {
+          label: "vSphere VM from template",
+          description: "Terraform config using vsphere provider to clone a VM from template.",
+          inputs: [
+            { id: "vsphere_user", label: "vSphere username", type: "text", default: "administrator@vsphere.local", hint: "User with clone rights" },
+            { id: "vsphere_password", label: "vSphere password", type: "text", default: "CHANGEME", hint: "Use environment variables in real use" },
+            { id: "vsphere_server", label: "vSphere server", type: "text", default: "vcenter.example.com", hint: "vCenter hostname" },
+            { id: "datacenter", label: "Datacenter name", type: "text", default: "Court-DC1", hint: "Datacenter" },
+            { id: "cluster", label: "Cluster name", type: "text", default: "Cluster1", hint: "Target cluster" },
+            { id: "datastore", label: "Datastore", type: "text", default: "vsanDatastore", hint: "Datastore for VM" },
+            { id: "template", label: "Template name", type: "text", default: "rhel8-template", hint: "Existing template name" },
+            { id: "vm_name", label: "VM name", type: "text", default: "court-vsphere-01", hint: "New VM name" },
+            { id: "network_label", label: "Network label", type: "text", default: "VM Network", hint: "Portgroup name" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "vsphere_vm_from_template";
+            return `terraform {
+  required_providers {
+    vsphere = {
+      source  = "hashicorp/vsphere"
+      version = "~> 2.0"
+    }
+  }
+}
+
+provider "vsphere" {
+  user           = "${vals.vsphere_user}"
+  password       = "${vals.vsphere_password}"
+  vsphere_server = "${vals.vsphere_server}"
+
+  allow_unverified_ssl = true
+}
+
+data "vsphere_datacenter" "dc" {
+  name = "${vals.datacenter}"
+}
+
+data "vsphere_compute_cluster" "cluster" {
+  name          = "${vals.cluster}"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_datastore" "datastore" {
+  name          = "${vals.datastore}"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_network" "network" {
+  name          = "${vals.network_label}"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_virtual_machine" "template" {
+  name          = "${vals.template}"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+resource "vsphere_virtual_machine" "this" {
+  name             = "${vals.vm_name}"
+  resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
+  datastore_id     = data.vsphere_datastore.datastore.id
+
+  num_cpus = 2
+  memory   = 4096
+  guest_id = data.vsphere_virtual_machine.template.guest_id
+
+  network_interface {
+    network_id   = data.vsphere_network.network.id
+    adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+  }
+
+  disk {
+    label            = "disk0"
+    size             = data.vsphere_virtual_machine.template.disks.0.size
+    eagerly_scrub    = data.vsphere_virtual_machine.template.disks.0.eagerly_scrub
+    thin_provisioned = data.vsphere_virtual_machine.template.disks.0.thin_provisioned
+  }
+
+  clone {
+    template_uuid = data.vsphere_virtual_machine.template.id
+  }
+
+  annotation = "System=${m}, Environment=dev"
+}
+`;
+          }
+        },
+
+        vsphere_tagged_foldered_vm: {
+          label: "Tag + folder an existing VM",
+          description: "Adds a folder and tags around an existing VM for classification / audit.",
+          inputs: [
+            { id: "vsphere_user", label: "vSphere username", type: "text", default: "administrator@vsphere.local", hint: "User with tag/folder rights" },
+            { id: "vsphere_password", label: "vSphere password", type: "text", default: "CHANGEME", hint: "Use env vars in real use" },
+            { id: "vsphere_server", label: "vSphere server", type: "text", default: "vcenter.example.com", hint: "vCenter hostname" },
+            { id: "datacenter", label: "Datacenter name", type: "text", default: "Court-DC1", hint: "Datacenter" },
+            { id: "vm_name", label: "Existing VM name", type: "text", default: "court-vsphere-01", hint: "Target VM" },
+            { id: "folder_path", label: "Folder path", type: "text", default: "Court/Prod/IL5", hint: "Folder path under datacenter" },
+            { id: "tag_category_name", label: "Tag category name", type: "text", default: "DataClassification", hint: "e.g. DataClassification" },
+            { id: "tag_category_description", label: "Tag category description", type: "text", default: "Data classification level", hint: "Category description" },
+            { id: "tag_name", label: "Tag name", type: "text", default: "CJIS", hint: "e.g. CJIS, PHI, FOUO" },
+            { id: "tag_description", label: "Tag description", type: "text", default: "CJIS-controlled workload", hint: "Tag description" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "vsphere_tagged_foldered_vm";
+            return `terraform {
+  required_providers {
+    vsphere = {
+      source  = "hashicorp/vsphere"
+      version = "~> 2.0"
+    }
+  }
+}
+
+provider "vsphere" {
+  user           = "${vals.vsphere_user}"
+  password       = "${vals.vsphere_password}"
+  vsphere_server = "${vals.vsphere_server}"
+
+  allow_unverified_ssl = true
+}
+
+data "vsphere_datacenter" "dc" {
+  name = "${vals.datacenter}"
+}
+
+data "vsphere_virtual_machine" "vm" {
+  name          = "${vals.vm_name}"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+resource "vsphere_folder" "folder" {
+  path          = "${vals.folder_path}"
+  type          = "vm"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+resource "vsphere_tag_category" "classification" {
+  name        = "${vals.tag_category_name}"
+  description = "${vals.tag_category_description}"
+  cardinality = "MULTIPLE"
+  associable_types = [
+    "VirtualMachine"
+  ]
+}
+
+resource "vsphere_tag" "classification_tag" {
+  name        = "${vals.tag_name}"
+  description = "${vals.tag_description}"
+  category_id = vsphere_tag_category.classification.id
+}
+
+resource "vsphere_virtual_machine" "annotated" {
+  # We do not recreate the VM; we only use this to move/tag via Terraform's understanding of the object.
+  # In practice, management via separate module is recommended.
+
+  name             = data.vsphere_virtual_machine.vm.name
+  resource_pool_id = data.vsphere_virtual_machine.vm.resource_pool_id
+  datastore_id     = data.vsphere_virtual_machine.vm.datastore_id
+
+  num_cpus = data.vsphere_virtual_machine.vm.num_cpus
+  memory   = data.vsphere_virtual_machine.vm.memory
+
+  clone {
+    template_uuid = data.vsphere_virtual_machine.vm.id
+  }
+
+  folder = vsphere_folder.folder.path
+
+  tags = [
+    vsphere_tag.classification_tag.id
+  ]
+
+  annotation = "System=${m}, Classification=${vals.tag_name}"
+}
+`;
+          }
+        }
+      }
+    },
+
+    linux: {
+      label: "Linux OS configuration",
+      scenarios: {
+        linux_null_remote_exec: {
+          label: "Remote-exec on Linux host",
+          description: "Terraform null_resource with remote-exec provisioner for Linux (for bootstrapping configs).",
+          inputs: [
+            { id: "host", label: "Target host (IP / DNS)", type: "text", default: "10.0.0.10", hint: "Linux host address" },
+            { id: "user", label: "SSH username", type: "text", default: "courtadmin", hint: "Remote user" },
+            { id: "private_key_path", label: "Private key path", type: "text", default: "~/.ssh/id_rsa", hint: "Path on Terraform runner" },
+            { id: "inline_command", label: "Inline command", type: "text", default: "sudo apt-get update && sudo apt-get -y upgrade", hint: "Bootstrap command" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "linux_null_remote_exec";
+            return `terraform {
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
+  }
+}
+
+resource "null_resource" "linux_bootstrap" {
+  provisioner "remote-exec" {
+    inline = [
+      "${vals.inline_command}"
+    ]
+
+    connection {
+      type        = "ssh"
+      host        = "${vals.host}"
+      user        = "${vals.user}"
+      private_key = file("${vals.private_key_path}")
+    }
+  }
+
+  triggers = {
+    system = "${m}"
+  }
+}
+`;
+          }
+        }
+      }
+    },
+
+    windows: {
+      label: "Windows OS configuration",
+      scenarios: {
+        windows_null_winrm_exec: {
+          label: "Remote-exec on Windows host (WinRM)",
+          description: "Terraform null_resource using WinRM to run a bootstrap PowerShell script on Windows.",
+          inputs: [
+            { id: "host", label: "Target host (IP / DNS)", type: "text", default: "10.0.0.20", hint: "Windows host address" },
+            { id: "user", label: "WinRM username", type: "text", default: "COURT\\administrator", hint: "Domain or local user" },
+            { id: "password", label: "WinRM password", type: "text", default: "CHANGEME", hint: "Secure with env vars / cloud secrets" },
+            { id: "inline_command", label: "PowerShell command", type: "text", default: "Install-WindowsFeature -Name Web-Server", hint: "Bootstrap command" }
+          ],
+          buildTf: (vals, moduleName) => {
+            const m = moduleName || "windows_null_winrm_exec";
+            return `terraform {
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
+  }
+}
+
+resource "null_resource" "windows_bootstrap" {
+  provisioner "remote-exec" {
+    inline = [
+      "powershell -Command \\"${vals.inline_command}\\""
+    ]
+
+    connection {
+      type     = "winrm"
+      host     = "${vals.host}"
+      user     = "${vals.user}"
+      password = "${vals.password}"
+      https    = false
+      insecure = true
+    }
+  }
+
+  triggers = {
+    system = "${m}"
+  }
+}
+`;
+          }
+        }
+      }
+    }
+  };
+
+  // -----------------------
+  // UI wiring
+  // -----------------------
+
+  const platformSelect = document.getElementById("platformSelect");
+  const scenarioSelect = document.getElementById("scenarioSelect");
+  const paramsArea = document.getElementById("paramsArea");
+  const generateButton = document.getElementById("generateButton");
+  const resetButton = document.getElementById("resetButton");
+  const outputPre = document.getElementById("outputPre");
+  const codeMeta = document.getElementById("codeMeta");
+  const moduleNameInput = document.getElementById("moduleNameInput");
+  const downloadButton = document.getElementById("downloadButton");
+  const copyButton = document.getElementById("copyButton");
+  const commandHint = document.getElementById("commandHint");
+  const statusLine = document.getElementById("statusLine");
+
+  function initSelectors() {
+    platformSelect.innerHTML = "";
+    Object.entries(TERRA_DEFS).forEach(([id, def]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = def.label;
+      platformSelect.appendChild(opt);
+    });
+    loadScenariosForPlatform(platformSelect.value);
+  }
+
+  function loadScenariosForPlatform(platformId) {
+    const platform = TERRA_DEFS[platformId];
+    scenarioSelect.innerHTML = "";
+    if (!platform) return;
+    Object.entries(platform.scenarios).forEach(([id, sc]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = sc.label;
+      scenarioSelect.appendChild(opt);
+    });
+    renderParams(platformId, scenarioSelect.value);
+  }
+
+  function renderParams(platformId, scenarioId) {
+    const platform = TERRA_DEFS[platformId];
+    const scenario = platform && platform.scenarios[scenarioId];
+    paramsArea.innerHTML = "";
+    if (!scenario) return;
+
+    if (scenario.description) {
+      const desc = document.createElement("p");
+      desc.className = "hint";
+      desc.textContent = scenario.description;
+      paramsArea.appendChild(desc);
+    }
+
+    scenario.inputs.forEach(input => {
+      const field = document.createElement("div");
+      field.className = "field";
+
+      const labelRow = document.createElement("div");
+      labelRow.className = "field-label-row";
+
+      const label = document.createElement("label");
+      label.htmlFor = input.id;
+      label.textContent = input.label;
+
+      const hintSpan = document.createElement("span");
+      hintSpan.className = "hint";
+      hintSpan.textContent = input.hint || "";
+
+      labelRow.appendChild(label);
+      labelRow.appendChild(hintSpan);
+      field.appendChild(labelRow);
+
+      if (input.control === "select" && Array.isArray(input.options)) {
+        const selectEl = document.createElement("select");
+        selectEl.id = input.id;
+        input.options.forEach(optDef => {
+          const opt = document.createElement("option");
+          opt.value = optDef.value;
+          opt.textContent = optDef.label;
+          selectEl.appendChild(opt);
+        });
+        if (input.default !== undefined) {
+          selectEl.value = input.default;
+        }
+        field.appendChild(selectEl);
+      } else {
+        const inputEl = document.createElement("input");
+        inputEl.type = input.type || "text";
+        inputEl.id = input.id;
+        inputEl.value = input.default || "";
+        field.appendChild(inputEl);
+      }
+
+      paramsArea.appendChild(field);
+    });
+  }
+
+  function collectValues(platformId, scenarioId) {
+    const platform = TERRA_DEFS[platformId];
+    const scenario = platform && platform.scenarios[scenarioId];
+    const values = {};
+    if (!scenario) return values;
+    scenario.inputs.forEach(input => {
+      const el = document.getElementById(input.id);
+      values[input.id] = el ? el.value : "";
+    });
+    return values;
+  }
+
+  function safeUpdateStatus(ok, msg) {
+    const dot = statusLine.querySelector(".status-dot");
+    const textNode = statusLine.querySelector("span:nth-child(2)");
+    if (!dot || !textNode) return;
+    dot.classList.toggle("error", !ok);
+    textNode.textContent = msg;
+    if (!ok) {
+      textNode.classList.add("error-text");
+    } else {
+      textNode.classList.remove("error-text");
+    }
+  }
+
+  function generateTerraform() {
+    const platformId = platformSelect.value;
+    const scenarioId = scenarioSelect.value;
+    const moduleName = moduleNameInput.value || "";
+
+    const platform = TERRA_DEFS[platformId];
+    const scenario = platform && platform.scenarios[scenarioId];
+
+    if (!scenario) {
+      outputPre.textContent = "# No platform/blueprint selected.";
+      safeUpdateStatus(false, "No platform/blueprint selected.");
+      return;
+    }
+
+    const vals = collectValues(platformId, scenarioId);
+    let hcl;
+
+    try {
+      hcl = scenario.buildTf(vals, moduleName);
+    } catch (err) {
+      outputPre.textContent = "# Error building Terraform: " + err.message;
+      safeUpdateStatus(false, "Error building Terraform: " + err.message);
+      console.error(err);
+      return;
+    }
+
+    outputPre.textContent = hcl;
+
+    codeMeta.textContent = platform.label + " · " + scenario.label;
+    commandHint.textContent = "# Save as main.tf and run: terraform init && terraform plan";
+    safeUpdateStatus(true, "Terraform configuration generated.");
+  }
+
+  function handleDownload() {
+    const filename = (moduleNameInput.value || "terraform_generated") + ".tf";
+    const blob = new Blob([outputPre.textContent], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCopy() {
+    navigator.clipboard.writeText(outputPre.textContent).then(() => {
+      safeUpdateStatus(true, "Terraform copied to clipboard.");
+    }).catch(() => {
+      safeUpdateStatus(false, "Unable to copy Terraform.");
+    });
+  }
+
+  function resetAll() {
+    moduleNameInput.value = "generated_module";
+    initSelectors();
+    outputPre.textContent = "# Select a platform & blueprint, adjust parameters, then click “Generate Terraform”.";
+    codeMeta.textContent = "Waiting for input…";
+    commandHint.textContent = "# Save as main.tf and run: terraform init && terraform plan";
+    safeUpdateStatus(true, "Reset to defaults.");
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    initSelectors();
+    generateButton.addEventListener("click", generateTerraform);
+    resetButton.addEventListener("click", resetAll);
+    platformSelect.addEventListener("change", () => {
+      loadScenariosForPlatform(platformSelect.value);
+      safeUpdateStatus(true, "Platform changed; blueprint & parameters updated.");
+    });
+    scenarioSelect.addEventListener("change", () => {
+      renderParams(platformSelect.value, scenarioSelect.value);
+      safeUpdateStatus(true, "Blueprint changed; review parameters.");
+    });
+    downloadButton.addEventListener("click", handleDownload);
+    copyButton.addEventListener("click", handleCopy);
+  });
+</script>
+</body>
+</html>

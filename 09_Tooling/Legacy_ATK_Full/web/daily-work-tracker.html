@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Daily Work Tracker · Architect's Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1a2735, #050608 60%);
+      color: #f5f5f5;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1200px;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 16px;
+      padding: 1.4rem 1.6rem 1.6rem;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      min-width: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: #9ca3af;
+    }
+
+    .datetime-pill {
+      font-size: 0.8rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      color: #e5e7eb;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .main-menu-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.35rem 0.95rem;
+      font-size: 0.78rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.05s ease;
+      white-space: nowrap;
+    }
+
+    .main-menu-btn:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+
+    .filters span {
+      opacity: 0.9;
+    }
+
+    .badge {
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      padding: 0.2rem 0.7rem;
+      font-size: 0.78rem;
+      color: #e5e7eb;
+    }
+
+    .form {
+      margin-top: 0.2rem;
+      border-radius: 0.9rem;
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      padding: 0.9rem 1rem;
+      background: radial-gradient(circle at top left, rgba(37,99,235,0.2), transparent 60%);
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.6rem;
+      align-items: end;
+      font-size: 0.85rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .form-group label {
+      font-size: 0.78rem;
+      color: #cbd5f5;
+    }
+
+    select, input[type="text"], input[type="time"] {
+      width: 100%;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(55, 65, 81, 1);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      padding: 0.35rem 0.5rem;
+      font-size: 0.82rem;
+      outline: none;
+    }
+
+    select:focus, input[type="text"]:focus, input[type="time"]:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.6);
+    }
+
+    .description-input {
+      grid-column: span 2;
+    }
+
+    .work-type {
+      grid-column: span 1;
+    }
+
+    .subtype {
+      grid-column: span 1;
+    }
+
+    .expected-time {
+      grid-column: span 1;
+    }
+
+    .add-btn-wrap {
+      grid-column: span 1;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .add-task-btn {
+      border-radius: 999px;
+      border: 1px solid rgba(37, 99, 235, 0.9);
+      padding: 0.45rem 1.1rem;
+      font-size: 0.8rem;
+      background: linear-gradient(135deg, #2563eb, #0ea5e9);
+      color: #f9fafb;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.8);
+      white-space: nowrap;
+    }
+
+    .add-task-btn:hover {
+      filter: brightness(1.05);
+      transform: translateY(-1px);
+    }
+
+    .task-table-wrap {
+      margin-top: 0.75rem;
+      border-radius: 0.9rem;
+      border: 1px solid rgba(31, 41, 55, 1);
+      overflow: hidden;
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+
+    thead {
+      background: rgba(15, 23, 42, 0.95);
+    }
+
+    th, td {
+      padding: 0.5rem 0.6rem;
+      border-bottom: 1px solid rgba(31, 41, 55, 1);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      font-weight: 500;
+      color: #9ca3af;
+      white-space: nowrap;
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(17, 24, 39, 0.9);
+    }
+
+    tbody tr:nth-child(odd) {
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .task-type-pill {
+      border-radius: 999px;
+      padding: 0.1rem 0.55rem;
+      font-size: 0.72rem;
+      border: 1px solid rgba(59, 130, 246, 0.7);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .task-subtype {
+      font-size: 0.72rem;
+      color: #9ca3af;
+    }
+
+    .task-desc {
+      font-size: 0.8rem;
+    }
+
+    .task-meta {
+      font-size: 0.72rem;
+      color: #9ca3af;
+    }
+
+    .done-checkbox {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .done-checkbox input[type="checkbox"] {
+      width: 1rem;
+      height: 1rem;
+    }
+
+    .row-done .task-desc {
+      text-decoration: line-through;
+      color: #6b7280;
+    }
+
+    .row-done .task-meta {
+      color: #6b7280;
+    }
+
+    .footer-row {
+      margin-top: 0.4rem;
+      font-size: 0.75rem;
+      color: #6b7280;
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .footer-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .small-btn {
+      border-radius: 999px;
+      border: 1px solid rgba(55, 65, 81, 1);
+      padding: 0.2rem 0.7rem;
+      font-size: 0.75rem;
+      background: rgba(15, 23, 42, 1);
+      color: #e5e7eb;
+      cursor: pointer;
+    }
+
+    .small-btn:hover {
+      background: rgba(31, 41, 55, 1);
+    }
+
+    @media (max-width: 900px) {
+      .form {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .description-input {
+        grid-column: span 2;
+      }
+      .add-btn-wrap {
+        grid-column: span 2;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .shell {
+        padding: 1.25rem;
+      }
+      .card {
+        padding: 1rem 1rem 1.25rem;
+      }
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <header>
+        <div class="title-block">
+          <h1>Daily Work Tracker</h1>
+          <div class="subtitle">
+            Quick capture of hardware, software, admin, and cloud work you need to knock out today.
+          </div>
+        </div>
+        <button
+          class="main-menu-btn"
+          type="button"
+          onclick="window.location.href='index.html'">
+          ← Main menu
+        </button>
+      </header>
+
+      <div class="meta-row">
+        <div class="datetime-pill" id="nowDisplay">
+          Today
+        </div>
+        <div class="filters">
+          <span>Work types:</span>
+          <span class="badge">Hardware</span>
+          <span class="badge">Software</span>
+          <span class="badge">Admin</span>
+          <span class="badge">IaaS</span>
+          <span class="badge">PaaS</span>
+          <span class="badge">SaaS</span>
+          <span class="badge">Networking</span>
+          <span class="badge">Security</span>
+        </div>
+      </div>
+
+      <section class="form" id="taskForm">
+        <div class="form-group work-type">
+          <label for="workType">Type of work</label>
+          <select id="workType">
+            <option value="hardware">Hardware</option>
+            <option value="software">Software</option>
+            <option value="admin">Admin</option>
+            <option value="iaas">IaaS</option>
+            <option value="paas">PaaS</option>
+            <option value="saas">SaaS</option>
+            <option value="network">Networking</option>
+            <option value="security">Security</option>
+            <option value="doc">Documentation</option>
+            <option value="meeting">Meeting</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div class="form-group subtype">
+          <label for="workSubtype">Sub-type</label>
+          <select id="workSubtype">
+            <!-- Filled by JS based on work type -->
+          </select>
+        </div>
+
+        <div class="form-group description-input">
+          <label for="taskDescription">What needs to be done?</label>
+          <input type="text" id="taskDescription" placeholder="Example: Patch ESXi host, update firewall rules, build Terraform module, write SBR, etc." />
+        </div>
+
+        <div class="form-group expected-time">
+          <label for="expectedTime">Expected completion time</label>
+          <input type="time" id="expectedTime" />
+        </div>
+
+        <div class="add-btn-wrap">
+          <button type="button" class="add-task-btn" id="addTaskBtn">
+            + Add item
+          </button>
+        </div>
+      </section>
+
+      <section class="task-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Done</th>
+              <th>Type</th>
+              <th>Task</th>
+              <th>Expected by</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="taskTableBody">
+            <!-- rows inserted by JS -->
+          </tbody>
+        </table>
+      </section>
+
+      <div class="footer-row">
+        <div>
+          Tasks are stored in your browser only (localStorage). Use this as a quick daily scratchpad.
+        </div>
+        <div class="footer-actions">
+          <button type="button" class="small-btn" id="clearDoneBtn">Clear completed</button>
+          <button type="button" class="small-btn" id="clearAllBtn">Clear all</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const nowDisplay = document.getElementById('nowDisplay');
+    const workTypeSelect = document.getElementById('workType');
+    const workSubtypeSelect = document.getElementById('workSubtype');
+    const taskDescriptionInput = document.getElementById('taskDescription');
+    const expectedTimeInput = document.getElementById('expectedTime');
+    const addTaskBtn = document.getElementById('addTaskBtn');
+    const taskTableBody = document.getElementById('taskTableBody');
+    const clearDoneBtn = document.getElementById('clearDoneBtn');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+
+    const STORAGE_KEY = 'dailyWorkTasks_v1';
+
+    const subtypeOptions = {
+      hardware: ['Install / upgrade', 'Troubleshooting', 'Inventory / asset', 'Cabling / rack', 'Other hardware'],
+      software: ['Bug fix', 'Feature work', 'Patch / upgrade', 'Testing / QA', 'Other software'],
+      admin: ['User access / IAM', 'Reporting', 'Documentation', 'Planning', 'Other admin'],
+      iaas: ['VMs / instances', 'Storage', 'Networking', 'Security groups', 'Backup / DR'],
+      paas: ['Databases', 'Functions / serverless', 'App services', 'Messaging / queues', 'Other PaaS'],
+      saas: ['Account setup', 'Config / tuning', 'Integration', 'License management', 'Other SaaS'],
+      network: ['Firewalls', 'Load balancers', 'VPN / routing', 'DNS / IPAM', 'Other networking'],
+      security: ['Patching', 'Vuln review', 'Audit / compliance', 'Alerts / SIEM', 'Other security'],
+      doc: ['Write docs', 'Update runbooks', 'Update diagrams', 'Review docs'],
+      meeting: ['Standup', 'Planning', 'Review', 'One-on-one', 'Workshop'],
+      other: ['General work', 'Follow-ups', 'Research / learning']
+    };
+
+    function updateNowDisplay() {
+      const now = new Date();
+      const date = now.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+      const time = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      nowDisplay.textContent = date + ' • ' + time;
+    }
+
+    function populateSubtypeOptions(type) {
+      const opts = subtypeOptions[type] || subtypeOptions['other'];
+      workSubtypeSelect.innerHTML = '';
+      opts.forEach(label => {
+        const opt = document.createElement('option');
+        opt.value = label;
+        opt.textContent = label;
+        workSubtypeSelect.appendChild(opt);
+      });
+    }
+
+    function loadTasks() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        return JSON.parse(raw) || [];
+      } catch (e) {
+        console.error('Failed to load tasks', e);
+        return [];
+      }
+    }
+
+    function saveTasks(tasks) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+      } catch (e) {
+        console.error('Failed to save tasks', e);
+      }
+    }
+
+    function renderTasks() {
+      const tasks = loadTasks();
+      taskTableBody.innerHTML = '';
+      tasks.forEach((task, index) => {
+        const tr = document.createElement('tr');
+        if (task.done) tr.classList.add('row-done');
+
+        const tdDone = document.createElement('td');
+        tdDone.className = 'done-checkbox';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = !!task.done;
+        checkbox.addEventListener('change', () => {
+          const all = loadTasks();
+          if (all[index]) {
+            all[index].done = checkbox.checked;
+            saveTasks(all);
+            renderTasks();
+          }
+        });
+        tdDone.appendChild(checkbox);
+        tr.appendChild(tdDone);
+
+        const tdType = document.createElement('td');
+        const typePill = document.createElement('div');
+        typePill.className = 'task-type-pill';
+        typePill.textContent = task.typeLabel || task.type;
+        tdType.appendChild(typePill);
+        if (task.subtype) {
+          const sub = document.createElement('div');
+          sub.className = 'task-subtype';
+          sub.textContent = task.subtype;
+          tdType.appendChild(sub);
+        }
+        tr.appendChild(tdType);
+
+        const tdDesc = document.createElement('td');
+        const descDiv = document.createElement('div');
+        descDiv.className = 'task-desc';
+        descDiv.textContent = task.description || '';
+        tdDesc.appendChild(descDiv);
+        tr.appendChild(tdDesc);
+
+        const tdExpected = document.createElement('td');
+        const meta = document.createElement('div');
+        meta.className = 'task-meta';
+        meta.textContent = task.expectedTime || '';
+        tdExpected.appendChild(meta);
+        tr.appendChild(tdExpected);
+
+        const tdCreated = document.createElement('td');
+        const createdDiv = document.createElement('div');
+        createdDiv.className = 'task-meta';
+        createdDiv.textContent = task.createdAt || '';
+        tdCreated.appendChild(createdDiv);
+        tr.appendChild(tdCreated);
+
+        taskTableBody.appendChild(tr);
+      });
+    }
+
+    function addTask() {
+      const type = workTypeSelect.value;
+      const typeLabel = workTypeSelect.options[workTypeSelect.selectedIndex].textContent;
+      const subtype = workSubtypeSelect.value;
+      const description = taskDescriptionInput.value.trim();
+      const expectedTime = expectedTimeInput.value;
+      if (!description) {
+        taskDescriptionInput.focus();
+        return;
+      }
+      const now = new Date();
+      const createdAt = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+      const tasks = loadTasks();
+      tasks.push({
+        type,
+        typeLabel,
+        subtype,
+        description,
+        expectedTime,
+        createdAt,
+        done: false
+      });
+      saveTasks(tasks);
+      taskDescriptionInput.value = '';
+      expectedTimeInput.value = '';
+      renderTasks();
+      taskDescriptionInput.focus();
+    }
+
+    function clearDoneTasks() {
+      const tasks = loadTasks().filter(t => !t.done);
+      saveTasks(tasks);
+      renderTasks();
+    }
+
+    function clearAllTasks() {
+      if (!confirm('Clear all tasks for today?')) return;
+      saveTasks([]);
+      renderTasks();
+    }
+
+    // Wire up events
+    workTypeSelect.addEventListener('change', () => {
+      populateSubtypeOptions(workTypeSelect.value);
+    });
+
+    addTaskBtn.addEventListener('click', addTask);
+    taskDescriptionInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addTask();
+      }
+    });
+
+    clearDoneBtn.addEventListener('click', clearDoneTasks);
+    clearAllBtn.addEventListener('click', clearAllTasks);
+
+    // Init
+    updateNowDisplay();
+    setInterval(updateNowDisplay, 60 * 1000);
+    populateSubtypeOptions(workTypeSelect.value);
+    renderTasks();
+  </script>
+</body>
+</html>

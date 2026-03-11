@@ -1,0 +1,472 @@
+{
+  "provider": "azure",
+  "provider_name": "Azure",
+  "catalog_version": "2025-v2.5",
+  "generated_at": "2026-01-08T19:55:39.782Z",
+  "services": [
+    {
+      "id": "azure.gpu_support",
+      "name": "GPU support",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_containers",
+      "capability_name": "AI CONTAINERS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_openai",
+      "name": "Azure OpenAI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_powered_assistant",
+      "capability_name": "AI-POWERED ASSISTANT",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ai",
+      "name": "Azure AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.human",
+      "capability_name": "HUMAN",
+      "status": "active"
+    },
+    {
+      "id": "azure.content_safety",
+      "name": "Content Safety",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.review_moderation",
+      "capability_name": "REVIEW/MODERATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_bot",
+      "name": "Azure Bot",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.chatbot_builder",
+      "capability_name": "CHATBOT BUILDER",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ml_data",
+      "name": "Azure ML Data",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.data_labeling",
+      "capability_name": "DATA LABELING",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure",
+      "name": "Azure",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.document_extraction",
+      "capability_name": "DOCUMENT EXTRACTION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_openai",
+      "name": "Azure OpenAI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.generative_ai",
+      "capability_name": "GENERATIVE AI",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ai_vision",
+      "name": "Azure AI Vision",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.image_recognition",
+      "capability_name": "IMAGE RECOGNITION",
+      "status": "active"
+    },
+    {
+      "id": "azure.gpu_support",
+      "name": "GPU support",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.inference_acceleration",
+      "capability_name": "INFERENCE ACCELERATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure",
+      "name": "Azure",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.language_translation",
+      "capability_name": "LANGUAGE TRANSLATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.maia_100",
+      "name": "Maia 100",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "capability_name": "ML/AI CHIPS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_machine",
+      "name": "Azure Machine",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.managed_ml_platform",
+      "capability_name": "MANAGED ML PLATFORM",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure",
+      "name": "Azure",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.notebooks",
+      "capability_name": "NOTEBOOKS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_anomaly",
+      "name": "Azure Anomaly",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.online_fraud_detection",
+      "capability_name": "ONLINE FRAUD DETECTION",
+      "status": "active"
+    },
+    {
+      "id": "azure.data_science",
+      "name": "Data Science",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.preconfigured_ml_vms",
+      "capability_name": "PRECONFIGURED ML VMS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ai",
+      "name": "Azure AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recommendation",
+      "capability_name": "RECOMMENDATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.personalizer",
+      "name": "Personalizer",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.engine",
+      "capability_name": "ENGINE",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_speech",
+      "name": "Azure Speech",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.speech",
+      "capability_name": "SPEECH",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ai",
+      "name": "Azure AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.text_analysis",
+      "capability_name": "TEXT ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_automl",
+      "name": "Azure AutoML",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.time_series_forecasting",
+      "capability_name": "TIME-SERIES FORECASTING",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_video",
+      "name": "Azure Video",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.video_analysis",
+      "capability_name": "VIDEO ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_custom",
+      "name": "Azure Custom",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.visual_inspection",
+      "capability_name": "VISUAL INSPECTION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_hdin_sight",
+      "name": "Azure HDIn sight",
+      "category": "Analytics",
+      "capability_id": "analytics.big_data_processing",
+      "capability_name": "BIG DATA PROCESSING",
+      "status": "active"
+    },
+    {
+      "id": "azure.data",
+      "name": "Data",
+      "category": "Analytics",
+      "capability_id": "analytics.big_data_processing",
+      "capability_name": "BIG DATA PROCESSING",
+      "status": "active"
+    },
+    {
+      "id": "azure.power_bi",
+      "name": "Power BI",
+      "category": "Analytics",
+      "capability_id": "analytics.business_analytics",
+      "capability_name": "BUSINESS ANALYTICS",
+      "status": "active"
+    },
+    {
+      "id": "azure.a_zure",
+      "name": "A zure",
+      "category": "Analytics",
+      "capability_id": "analytics.business_analytics",
+      "capability_name": "BUSINESS ANALYTICS",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_data_share",
+      "name": "Azure Data Share",
+      "category": "Analytics",
+      "capability_id": "analytics.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_data_catalog",
+      "name": "Azure Data Catalog",
+      "category": "Analytics",
+      "capability_id": "analytics.exploration_catalog",
+      "capability_name": "EXPLORATION/CATALOG",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_data_lake",
+      "name": "Azure Data Lake",
+      "category": "Analytics",
+      "capability_id": "analytics.data_lake_creation",
+      "capability_name": "DATA LAKE CREATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_strea_m",
+      "name": "Azure Strea m",
+      "category": "Analytics",
+      "capability_id": "analytics.data_streaming",
+      "capability_name": "DATA STREAMING",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_syna_pse",
+      "name": "Azure Syna pse",
+      "category": "Analytics",
+      "capability_id": "analytics.data_warehousing",
+      "capability_name": "DATA WAREHOUSING",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_data_factory",
+      "name": "Azure Data Factory",
+      "category": "Analytics",
+      "capability_id": "analytics.data_wrangling",
+      "capability_name": "DATA WRANGLING",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_data_factory",
+      "name": "Azure Data Factory",
+      "category": "Analytics",
+      "capability_id": "analytics.etl",
+      "capability_name": "ETL",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_hdin_sight",
+      "name": "Azure HDIn sight",
+      "category": "Analytics",
+      "capability_id": "analytics.hosted_hadoop_spark",
+      "capability_name": "HOSTED HADOOP/SPARK",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_event_hubs_for",
+      "name": "Azure Event Hubs for",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_kafka",
+      "capability_name": "MANAGED KAFKA",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_cogn_itive",
+      "name": "Azure Cogn itive",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_search",
+      "capability_name": "MANAGED SEARCH",
+      "status": "active"
+    },
+    {
+      "id": "azure.synapse_an_alytics",
+      "name": "Synapse An alytics",
+      "category": "Analytics",
+      "capability_id": "analytics.query_service",
+      "capability_name": "QUERY SERVICE",
+      "status": "active"
+    },
+    {
+      "id": "azure.microsoft_service",
+      "name": "Microsoft Service",
+      "category": "Security",
+      "capability_id": "security.audit_and_compliance",
+      "capability_name": "AUDIT AND COMPLIANCE",
+      "status": "active"
+    },
+    {
+      "id": "azure.microsoft_defender",
+      "name": "Microsoft Defender",
+      "category": "Security",
+      "capability_id": "security.centralized_security",
+      "capability_name": "CENTRALIZED SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "azure.for_cloud",
+      "name": "for Cloud",
+      "category": "Security",
+      "capability_id": "security.mgmt",
+      "capability_name": "MGMT",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_app_service",
+      "name": "Azure App Service",
+      "category": "Security",
+      "capability_id": "security.certificate_management",
+      "capability_name": "CERTIFICATE MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_confidential",
+      "name": "Azure Confidential",
+      "category": "Security",
+      "capability_id": "security.confidential_computing",
+      "capability_name": "CONFIDENTIAL COMPUTING",
+      "status": "active"
+    },
+    {
+      "id": "azure.microsoft_defender",
+      "name": "Microsoft Defender",
+      "category": "Security",
+      "capability_id": "security.container_security",
+      "capability_name": "CONTAINER SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_information",
+      "name": "Azure Information",
+      "category": "Security",
+      "capability_id": "security.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "azure.protection",
+      "name": "Protection",
+      "category": "Security",
+      "capability_id": "security.discovery_classification",
+      "capability_name": "DISCOVERY/CLASSIFICATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.data",
+      "name": "Data",
+      "category": "Security",
+      "capability_id": "security.discovery_classification",
+      "capability_name": "DISCOVERY/CLASSIFICATION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ddos",
+      "name": "Azure DDoS",
+      "category": "Security",
+      "capability_id": "security.ddos_protection",
+      "capability_name": "DDOS PROTECTION",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_ad",
+      "name": "Azure AD",
+      "category": "Security",
+      "capability_id": "security.identity_access_mgmt",
+      "capability_name": "IDENTITY & ACCESS MGMT",
+      "status": "active"
+    },
+    {
+      "id": "azure.microsoft",
+      "name": "Microsoft",
+      "category": "Security",
+      "capability_id": "security.identity_access_mgmt",
+      "capability_name": "IDENTITY & ACCESS MGMT",
+      "status": "active"
+    },
+    {
+      "id": "azure.entra",
+      "name": "Entra",
+      "category": "Security",
+      "capability_id": "security.iam",
+      "capability_name": "(IAM)",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_key_vault",
+      "name": "Azure Key Vault",
+      "category": "Security",
+      "capability_id": "security.certificate_key",
+      "capability_name": "CERTIFICATE/KEY",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_dedicated",
+      "name": "Azure Dedicated",
+      "category": "Security",
+      "capability_id": "security.management",
+      "capability_name": "MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "azure.microsoft_entra",
+      "name": "Microsoft Entra",
+      "category": "Security",
+      "capability_id": "security.microsoft_ad_support",
+      "capability_name": "MICROSOFT AD SUPPORT",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_government",
+      "name": "Azure Government",
+      "category": "Security",
+      "capability_id": "security.regulated_cloud_zones",
+      "capability_name": "REGULATED CLOUD ZONES",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_resource",
+      "name": "Azure Resource",
+      "category": "Security",
+      "capability_id": "security.resource_access_policies",
+      "capability_name": "RESOURCE ACCESS POLICIES",
+      "status": "active"
+    },
+    {
+      "id": "azure.azure_key_vault",
+      "name": "Azure Key Vault",
+      "category": "Security",
+      "capability_id": "security.secrets_management",
+      "capability_name": "SECRETS MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "azure.microsoft_entra",
+      "name": "Microsoft Entra",
+      "category": "Security",
+      "capability_id": "security.context_based_access",
+      "capability_name": "CONTEXT-BASED ACCESS",
+      "status": "active"
+    }
+  ]
+}

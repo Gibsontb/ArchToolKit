@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ATK - Single App Intake (Add-on)</title>
+  <link rel="stylesheet" href="../styles.css"/>
+  <style>
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .field { display:flex; flex-direction:column; gap:6px; }
+    input, textarea { padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.2); color: inherit; }
+    textarea { min-height: 90px; }
+    .card { border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 14px; margin-top: 14px; }
+    .muted { opacity: .8; }
+    code { background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 6px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .btn { padding:10px 14px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); cursor:pointer; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Single App Intake</h1>
+    <p class="muted">Exports a single app JSON you can paste into <code>input.json → portfolio[]</code>.</p>
+
+    <div class="button-row" style="margin-top:12px;">
+      <a class="tool-button" href="index.html"><span class="label">Back</span><span>↩</span></a>
+      <a class="tool-button secondary" href="portfolio.html"><span class="label">Open Portfolio Dashboard</span><span>↗</span></a>
+    </div>
+
+    <section class="card">
+      <div class="grid">
+        <div class="field"><label>Name</label><input id="name" placeholder="App name"/></div>
+        <div class="field"><label>Owner</label><input id="owner" placeholder="Team / Dept"/></div>
+        <div class="field"><label>Primary Stack</label><input id="stack" placeholder=".NET, Java, Node, Python"/></div>
+        <div class="field"><label>OS / Runtime</label><input id="os" placeholder="Windows Server 2019, RHEL 8"/></div>
+        <div class="field"><label>Database</label><input id="db" placeholder="SQL Server, Oracle, Postgres"/></div>
+        <div class="field"><label>Vendor</label><input id="vendor" placeholder="Microsoft / Oracle / VendorName"/></div>
+        <div class="field"><label>Identity</label><input id="idp" placeholder="AD/LDAP, SAML, OIDC"/></div>
+        <div class="field"><label>Integrations (count)</label><input id="integrations" type="number" placeholder="5"/></div>
+        <div class="field"><label>Data Size (GB)</label><input id="data" type="number" placeholder="200"/></div>
+        <div class="field"><label>Compliance (semicolon separated)</label><input id="compliance" placeholder="cjis;fedramp_moderate"/></div>
+      </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Notes</label>
+        <textarea id="notes" placeholder="Key constraints, requirements, pain points"></textarea>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <button class="btn" id="btnExport">Export JSON</button>
+        <span class="muted" id="status"></span>
+      </div>
+
+      <pre class="card" style="margin-top:12px; white-space:pre-wrap;" id="out"></pre>
+    </section>
+  </main>
+
+<script>
+(function(){
+  "use strict";
+  const $ = (id)=>document.getElementById(id);
+  function download(obj, filename){
+    const blob = new Blob([JSON.stringify(obj,null,2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+  $("btnExport").addEventListener("click", ()=>{
+    const app = {
+      name: $("name").value.trim(),
+      owner: $("owner").value.trim(),
+      primaryStack: $("stack").value.trim(),
+      osRuntime: $("os").value.trim(),
+      database: $("db").value.trim(),
+      vendor: $("vendor").value.trim(),
+      identity: $("idp").value.trim(),
+      integrationCount: Number($("integrations").value||0),
+      dataSizeGb: Number($("data").value||0),
+      compliance: $("compliance").value.split(/[;,]/).map(x=>x.trim()).filter(Boolean),
+      notes: $("notes").value.trim(),
+      flags: {},
+      ratings: {}
+    };
+    if(!app.name){ $("status").textContent = "Name is required."; return; }
+    $("out").textContent = JSON.stringify(app,null,2);
+    download(app, (app.name.replace(/[^a-z0-9]+/gi,"_").slice(0,40)||"app") + ".migration.json");
+    $("status").textContent = "Exported app JSON.";
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "version": "0.1.0",
+  "rules": [
+    {
+      "rule_id": "regulated_requires_security_baseline",
+      "when": {
+        "data_classification_any_of": ["CJIS", "PHI", "HIPAA", "FIPS", "REGULATED"]
+      },
+      "require_capabilities": [
+        "identity.federation",
+        "security.key_management",
+        "security.audit_logging",
+        "security.threat_detection"
+      ],
+      "prefer_patterns": [
+        "sec.regulated.baseline",
+        "ops.central.logging.siem"
+      ],
+      "weight": 50,
+      "reason": "Regulated data requires strong identity, encryption key control, auditability, and threat detection."
+    },
+    {
+      "rule_id": "private_connectivity_preferred_for_regulated",
+      "when": {
+        "data_classification_any_of": ["CJIS", "PHI", "HIPAA", "FIPS", "REGULATED"]
+      },
+      "prefer_capabilities": [
+        "network.private_connectivity"
+      ],
+      "weight": 20,
+      "reason": "Regulated workloads typically prefer private service access and reduced public exposure."
+    },
+    {
+      "rule_id": "low_rto_prefers_multi_region",
+      "when": {
+        "rto_minutes_lte": 60
+      },
+      "prefer_capabilities": [
+        "resiliency.multi_region",
+        "data.backup_and_recovery"
+      ],
+      "weight": 25,
+      "reason": "Low RTO implies higher resiliency expectations and tested recovery."
+    },
+    {
+      "rule_id": "internet_exposed_prefers_waf_ddos",
+      "when": {
+        "internet_exposed_is": true
+      },
+      "prefer_capabilities": [
+        "security.waf",
+        "security.ddos_protection"
+      ],
+      "weight": 20,
+      "reason": "Public endpoints should be protected by WAF and DDoS controls."
+    }
+  ]
+}

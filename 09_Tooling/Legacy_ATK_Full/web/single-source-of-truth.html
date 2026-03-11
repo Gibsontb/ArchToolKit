@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Single Source of Truth · Court Data & Architecture Registry</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, #111827, #020617 60%),
+        radial-gradient(circle at bottom, #000000, #020617 70%);
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1150px;
+      background: rgba(15, 23, 42, 0.94);
+      border-radius: 18px;
+      padding: 1.5rem 1.75rem 1.75rem;
+      box-shadow:
+        0 22px 60px rgba(0, 0, 0, 0.85),
+        0 0 0 1px rgba(148, 163, 184, 0.35);
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: -40%;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.18), transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.16), transparent 55%),
+        radial-gradient(circle at 50% 100%, rgba(16, 185, 129, 0.11), transparent 55%);
+      opacity: 0.95;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
+    .card-inner {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.25rem;
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      min-width: 0;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+
+    h1.page-title {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+
+    .page-title-hint {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      margin: 0;
+    }
+
+    .pill {
+      border-radius: 999px;
+      border: 1px solid rgba(248, 250, 252, 0.9);
+      padding: 0.18rem 0.6rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      color: #e5e7eb;
+      background: rgba(15, 23, 42, 0.95);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.3);
+    }
+
+    .tagline {
+      margin: 0.1rem 0 0;
+      font-size: 0.86rem;
+      color: #d1d5db;
+      max-width: 720px;
+    }
+
+    .meta {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin-top: 0.1rem;
+    }
+
+    .meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .meta-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.9);
+    }
+
+    .main-menu-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.4rem 0.95rem;
+      font-size: 0.8rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.06s ease;
+      white-space: nowrap;
+    }
+
+    .main-menu-btn:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .workspace {
+      margin-top: 0.3rem;
+      border-radius: 1rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      min-height: 520px;
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 55%);
+      overflow: hidden;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+    }
+
+    .layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .nav {
+      width: 245px;
+      min-width: 220px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.4);
+      padding: 1rem;
+      box-sizing: border-box;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.82));
+      backdrop-filter: blur(18px);
+      overflow-y: auto;
+      font-size: 0.83rem;
+    }
+
+    .nav h2 {
+      margin: 0 0 0.35rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .nav-section-label {
+      margin-top: 0.7rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .nav li {
+      margin: 0;
+    }
+
+    .nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.22rem 0.4rem;
+      border-radius: 999px;
+      transition:
+        background 0.12s ease,
+        color 0.12s ease,
+        transform 0.04s ease;
+    }
+
+    .nav a:hover {
+      background: rgba(37, 99, 235, 0.25);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+
+    .content {
+      flex: 1;
+      padding: 1rem 1.25rem 1.1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+      font-size: 0.85rem;
+    }
+
+    .section {
+      margin-bottom: 1.5rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.45);
+    }
+
+    .section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0.4rem;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .section-header h2 {
+      margin: 0;
+      font-size: 1.02rem;
+      font-weight: 600;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96, 165, 250, 0.75);
+      color: #bfdbfe;
+      background: rgba(15, 23, 42, 0.96);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .section-tagline {
+      margin: 0.3rem 0 0.4rem;
+      color: #9ca3af;
+      font-size: 0.82rem;
+    }
+
+    .columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.35rem;
+    }
+
+    .pill-small {
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      border: 1px solid rgba(156, 163, 175, 0.85);
+      color: #e5e7eb;
+      white-space: nowrap;
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .pill-small--primary {
+      border-color: rgba(59, 130, 246, 0.9);
+      color: #dbeafe;
+    }
+
+    .list {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+    }
+
+    .list li {
+      margin-bottom: 0.18rem;
+    }
+
+    .callout {
+      font-size: 0.8rem;
+      border-radius: 0.7rem;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid rgba(59, 130, 246, 0.85);
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.35), rgba(15, 23, 42, 0.96));
+      color: #e5e7eb;
+    }
+
+    .callout strong {
+      color: #bfdbfe;
+      font-weight: 600;
+    }
+
+    .kv {
+      margin: 0.4rem 0;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 0.15rem 0.6rem;
+      font-size: 0.8rem;
+    }
+
+    .kv dt {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .kv dd {
+      margin: 0;
+      color: #9ca3af;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.45rem;
+      font-size: 0.8rem;
+      border-radius: 0.7rem;
+      overflow: hidden;
+    }
+
+    .table thead {
+      background: rgba(15, 23, 42, 0.98);
+    }
+
+    .table th,
+    .table td {
+      border: 1px solid rgba(55, 65, 81, 0.95);
+      padding: 0.3rem 0.45rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .table th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .table td {
+      color: #d1d5db;
+    }
+
+    .note {
+      margin-top: 0.4rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-top: 0.3rem;
+    }
+
+    .chip {
+      font-size: 0.7rem;
+      border-radius: 999px;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid rgba(148, 163, 184, 0.85);
+      background: rgba(15, 23, 42, 0.95);
+      color: #e5e7eb;
+    }
+
+    .checklist {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+      list-style: none;
+    }
+
+    .checklist li::before {
+      content: "☐";
+      margin-right: 0.4rem;
+      color: #9ca3af;
+    }
+
+    .footnote {
+      margin-top: 0.4rem;
+      font-size: 0.75rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      background: rgba(15, 23, 42, 0.85);
+      padding: 0.12rem 0.3rem;
+      border-radius: 999px;
+      border: 1px solid rgba(30, 64, 175, 0.8);
+      color: #c7d2fe;
+    }
+
+    @media (max-width: 950px) {
+      .layout {
+        flex-direction: column;
+      }
+
+      .nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+      }
+
+      .columns {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 1.25rem;
+      }
+
+      .card {
+        padding: 1.1rem 1.1rem 1.3rem;
+      }
+
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      h1.page-title {
+        font-size: 1.35rem;
+      }
+
+      .footnote {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <div class="card-inner">
+        <header>
+          <div class="title-block">
+            <div class="title-row">
+              <h1 class="page-title" contenteditable="true" spellcheck="false">
+                Single Source of Truth · Court Data &amp; Architecture Registry
+              </h1>
+              <div class="pill">
+                <span class="pill-dot"></span>
+                <span>All Courts · All Artifacts</span>
+              </div>
+            </div>
+            <p class="page-title-hint">
+              You can rename this to match your program (e.g., “Unified Court Evidence &amp; Work Registry”).
+            </p>
+            <p class="tagline">
+              Define one authoritative, central repository for everything the courts own:
+              case files, court documents, photographs, recordings, warrants, evidence,
+              personal data, daily work artifacts, calendars, schedules, and collaboration
+              data (Office 365, Google Workspace, etc.) across ~300 courts
+              (Supreme, appellate, FISA, specialty, and more) — all backed by a consistent
+              tagging and security scheme so nobody has to guess what is real.
+            </p>
+            <div class="meta">
+              <span><span class="meta-dot"></span> Canonical home for all court data, records &amp; daily work</span>
+              <span><span class="meta-dot"></span> Includes sensitive &amp; personal data with strict tagging</span>
+              <span><span class="meta-dot"></span> Connects to CCoE, Terraform, Ansible, governance &amp; collaboration suites</span>
+            </div>
+          </div>
+          <button
+            class="main-menu-btn"
+            type="button"
+            onclick="window.location.href='index.html'">
+            ← Main menu
+          </button>
+        </header>
+
+        <section class="workspace">
+          <div class="layout">
+            <!-- NAV -->
+            <nav class="nav">
+              <h2>Single Source of Truth</h2>
+              <p>
+                Use this page as the design and working registry for your “one true place”:
+                a central repository for court data, documents, evidence, and daily work
+                (schedules, calendars, collaboration artifacts) with a unified tagging
+                and security scheme.
+              </p>
+
+              <div class="nav-section-label">Orientation</div>
+              <ul>
+                <li><a href="#ssot-overview">1. What “Single Source of Truth” Means</a></li>
+                <li><a href="#ssot-scope">2. Scope &amp; Boundaries</a></li>
+              </ul>
+
+              <div class="nav-section-label">Domains &amp; Objects</div>
+              <ul>
+                <li><a href="#ssot-domains">3. Information Domains</a></li>
+                <li><a href="#ssot-objects">4. Object Types &amp; Examples</a></li>
+              </ul>
+
+              <div class="nav-section-label">Repository &amp; Structure</div>
+              <ul>
+                <li><a href="#ssot-repos">5. Repository Layout</a></li>
+                <li><a href="#ssot-identifiers">6. Identifiers &amp; Versioning</a></li>
+              </ul>
+
+              <div class="nav-section-label">Workflows</div>
+              <ul>
+                <li><a href="#ssot-workflows">7. Create / Change / Approve</a></li>
+                <li><a href="#ssot-lifecycle">8. Lifecycle &amp; Deprecation</a></li>
+              </ul>
+
+              <div class="nav-section-label">Ties to Other Kits</div>
+              <ul>
+                <li><a href="#ssot-integrations">9. Integration with CCoE &amp; IaC</a></li>
+                <li><a href="#ssot-views">10. Views by Role</a></li>
+              </ul>
+
+              <div class="nav-section-label">Implementation</div>
+              <ul>
+                <li><a href="#ssot-checklist">11. Implementation Checklist</a></li>
+                <li><a href="#ssot-roadmap">12. Roadmap &amp; Hardening</a></li>
+              </ul>
+            </nav>
+
+            <!-- CONTENT -->
+            <main class="content">
+              <!-- 1. OVERVIEW -->
+              <section id="ssot-overview" class="section">
+                <div class="section-header">
+                  <h2>1. What “Single Source of Truth” Means</h2>
+                  <span class="badge">Orientation</span>
+                </div>
+                <p class="section-tagline">
+                  This is not just “a wiki” or “a repo.” It is the central, authoritative
+                  repository for all material the courts rely on — structured data, documents,
+                  evidence, and daily work artifacts like calendars, schedules, and shared files —
+                  across Supreme Court, FISA, appellate, and hundreds of other courts.
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <dl class="kv">
+                      <dt>Goal</dt>
+                      <dd>
+                        Everyone—from clerk to architect to auditor—knows exactly where the
+                        real, current version of any case file, document, photograph,
+                        recording, warrant, dataset, calendar, schedule, or work artifact lives,
+                        with clear tags and security classification.
+                      </dd>
+
+                      <dt>Principle</dt>
+                      <dd>
+                        One authoritative location per object (case file, evidence item,
+                        schedule, standard, pattern, runbook). Mirrors and copies are allowed
+                        but never the truth; they always reference the canonical source with IDs
+                        and tags.
+                      </dd>
+
+                      <dt>Audience</dt>
+                      <dd>
+                        CCoE, architects, engineers, security, clerks, judges, operations,
+                        and program managers for migrations and day-2 operations across all courts.
+                      </dd>
+                    </dl>
+
+                    <div class="pill-row">
+                      <span class="pill-small pill-small--primary">Authoritative</span>
+                      <span class="pill-small pill-small--primary">Centralized</span>
+                      <span class="pill-small">Tagged</span>
+                      <span class="pill-small">Security-aware</span>
+                      <span class="pill-small">Court-wide</span>
+                      <span class="pill-small">Auditable</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="callout">
+                      <strong>Architect’s rule:</strong>
+                      if you can’t answer “where is the truth for this case, warrant, recording,
+                      or court schedule?” in under 5 seconds, you don’t have a single source of
+                      truth yet. Use this design to point everything to one central location.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 2. SCOPE & BOUNDARIES -->
+              <section id="ssot-scope" class="section">
+                <div class="section-header">
+                  <h2>2. Scope &amp; Boundaries</h2>
+                  <span class="badge">Scope</span>
+                </div>
+                <p class="section-tagline">
+                  Define exactly what this registry and repository cover so it owns
+                  “court truth” (all data + all docs + evidence + daily work + technical design),
+                  without trying to duplicate transient systems.
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">2.1 In Scope</h3>
+                    <ul class="list">
+                      <li>Core court data sets (case records, parties, dockets, calendars, dispositions).</li>
+                      <li>
+                        Court documents and files (orders, motions, filings, briefs, warrants,
+                        subpoenas, PDFs, scans, attachments).
+                      </li>
+                      <li>
+                        Evidence assets: photographs, bodycam and audio recordings, videos,
+                        forensic exports, large media files and external file references.
+                      </li>
+                      <li>
+                        Personal and sensitive data attached to cases and operations (where allowed by law).
+                      </li>
+                      <li>
+                        Daily work artifacts produced by court personnel:
+                        <ul class="list">
+                          <li>Judicial and courtroom calendars &amp; schedules.</li>
+                          <li>Staff task lists, shift schedules, duty rosters.</li>
+                          <li>Shared drives, Teams/SharePoint/OneDrive/Google Drive artifacts tied to court work.</li>
+                          <li>Templates and forms used for daily operations.</li>
+                        </ul>
+                      </li>
+                      <li>
+                        Collaboration platform structures and policies:
+                        Office 365 / M365, Google Workspace (mailboxes, groups, teams, sites, channels).
+                      </li>
+                      <li>Architecture standards, patterns, and reference diagrams.</li>
+                      <li>Governance mappings (regulation → framework → control → implementation).</li>
+                      <li>Terraform &amp; Ansible module catalogs and ownership.</li>
+                      <li>Runbooks, playbooks, and operating procedures.</li>
+                      <li>Key decisions (ADR/SBR style) and rationale.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">2.2 Out of Scope</h3>
+                    <ul class="list">
+                      <li>Transient tickets and chats (Jira, email, Slack/Teams chat) — link them, don’t store them here.</li>
+                      <li>Raw logs and metrics (those live in observability tools).</li>
+                      <li>Local scratch docs or personal notes (they can reference registry objects).</li>
+                    </ul>
+
+                    <p class="note">
+                      The single source of truth points to where those things live and captures
+                      their impact, but does not try to be an inbox, chat history, or log store.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 3. INFORMATION DOMAINS -->
+              <section id="ssot-domains" class="section">
+                <div class="section-header">
+                  <h2>3. Information Domains</h2>
+                  <span class="badge">Domains</span>
+                </div>
+                <p class="section-tagline">
+                  Break the universe into clear domains so each object—court file, evidence item,
+                  work artifact, document, dataset, or pattern—has a “home” and can be tagged
+                  and secured consistently.
+                </p>
+
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Domain</th>
+                      <th>Examples</th>
+                      <th>Primary System of Record</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Court Data &amp; Case Records</strong></td>
+                      <td>
+                        Case master data, party information, dockets, calendars, dispositions,
+                        structured court data across Supreme, appellate, FISA, and other courts.
+                      </td>
+                      <td>
+                        Court data lake / warehouse or case management system, registered and
+                        indexed here with tags and security classification.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Court Documents &amp; Files</strong></td>
+                      <td>
+                        Orders, motions, filings, briefs, warrants, subpoenas, PDFs, scans,
+                        attachments, and all document types tied to a case.
+                      </td>
+                      <td>
+                        Document management system / object storage; this registry defines the
+                        canonical buckets, folders, and tagging &amp; security model.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Evidence &amp; Media</strong></td>
+                      <td>
+                        Photographs, audio and video recordings (bodycam, surveillance, calls),
+                        forensic exports, large media files.
+                      </td>
+                      <td>
+                        Evidence repositories or specialized media stores; this registry defines
+                        IDs, tags, and how evidence links back to case files.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Operational &amp; Administrative Work</strong></td>
+                      <td>
+                        Courtroom calendars, judge schedules, duty rosters, staff task lists,
+                        room reservations, docket scheduling, operational spreadsheets.
+                      </td>
+                      <td>
+                        Collaboration platforms (Office 365 / M365, Google Workspace, calendaring systems),
+                        referenced and governed here with tag and retention models.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Collaboration &amp; Knowledge</strong></td>
+                      <td>
+                        Shared folders, SharePoint/Teams sites, Google Drive folders,
+                        internal knowledge bases tied to court processes.
+                      </td>
+                      <td>
+                        Collaboration suites; this registry defines which sites/folders are canonical
+                        for which workflows and tags them accordingly.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Architecture &amp; Design</strong></td>
+                      <td>
+                        Reference architectures, diagrams, landing zone designs, integrations
+                        across the 300+ courts.
+                      </td>
+                      <td>Architecture repo / docs (e.g., Git + diagram store). This page links into those.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Governance &amp; Controls</strong></td>
+                      <td>Policies, standards, control mappings, ATO packages.</td>
+                      <td><code>governances.html</code>, ATO workspace, and backed policies repo.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Infrastructure as Code</strong></td>
+                      <td>Terraform modules, Ansible roles, playbooks, pipelines.</td>
+                      <td>Git repositories plus catalogs on <code>terraform.html</code> and <code>ansible.html</code>.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Operations &amp; Runbooks</strong></td>
+                      <td>Runbooks, incident playbooks, shift checklists, DR plans.</td>
+                      <td>Ops/runbooks repo, linked from this registry and daily work tracker.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Decisions &amp; Rationale</strong></td>
+                      <td>ADRs, SBRs, platform choice records, exception approvals.</td>
+                      <td>SBRs / decision repo; referenced by SBR workspace and here.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="note">
+                  Extend this table with any additional court-specific domains you need (e.g. jail interfaces,
+                  probation, specialty problem-solving courts) as long as each has one clearly tagged,
+                  secured system of record.
+                </p>
+              </section>
+
+              <!-- 4. OBJECT TYPES -->
+              <section id="ssot-objects" class="section">
+                <div class="section-header">
+                  <h2>4. Object Types &amp; Examples</h2>
+                  <span class="badge">Objects</span>
+                </div>
+                <p class="section-tagline">
+                  “Single source of truth” is about objects: case files, evidence items, documents,
+                  work artifacts, datasets, standards, and modules. Each object has a type, an ID,
+                  tags, and a canonical home.
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">4.1 Core Object Types</h3>
+                    <ul class="list">
+                      <li><strong>Case File</strong> – canonical record for a court case, with ID and tags.</li>
+                      <li><strong>Document</strong> – individual filing/order (PDF, scan, brief, warrant, etc.).</li>
+                      <li><strong>Evidence Item</strong> – photographs, recordings, media, or other artifacts tied to a case.</li>
+                      <li><strong>Dataset</strong> – curated court dataset (e.g. “Daily Docket Extract”).</li>
+                      <li><strong>Work Artifact</strong> – calendar entry, schedule, roster, or shared file tied to court operations.</li>
+                      <li><strong>Standard</strong> – normative rule (e.g., “all P3 data must be encrypted at rest”).</li>
+                      <li><strong>Pattern</strong> – reusable architecture or implementation blueprint.</li>
+                      <li><strong>Module</strong> – Terraform/Ansible module or role with versioning.</li>
+                      <li><strong>Runbook</strong> – step-by-step operations procedure.</li>
+                      <li><strong>Decision Record</strong> – why a choice was made, with date and approvers.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">4.2 Example IDs &amp; Tags</h3>
+                    <ul class="list">
+                      <li><code>CASE-2025-CR-001234</code> – Case file with tags: <code>[court=SUP]</code>, <code>[type=Criminal]</code>, <code>[sensitivity=P3]</code>.</li>
+                      <li><code>DOC-CASE-2025-CR-001234-ORD-01</code> – Order document linked to the case.</li>
+                      <li><code>EVID-CASE-2025-CR-001234-PHOTO-01</code> – Photograph evidence linked to the case.</li>
+                      <li><code>EVID-CASE-2025-CR-001234-AUDIO-01</code> – Audio recording linked to the case.</li>
+                      <li><code>WORK-SUP-COURTROOM-01-2025-03-01-AM-DOCKET</code> – Courtroom schedule for a day/slot.</li>
+                      <li><code>DATA-DOCKET-DAILY</code> – Docket data mart export, tagged for reporting only.</li>
+                      <li><code>STD-SEC-001</code> – Encryption at Rest for P3 Data.</li>
+                      <li><code>PAT-LZ-COURT-STD</code> – Standard Court Landing Zone Pattern.</li>
+                      <li><code>MOD-TF-NET-TRANSIT-01</code> – Terraform Transit Network Module.</li>
+                    </ul>
+
+                    <div class="chip-row">
+                      <span class="chip">Prefix by type</span>
+                      <span class="chip">Case / doc / evidence / work IDs</span>
+                      <span class="chip">Tags for court, type, sensitivity</span>
+                      <span class="chip">Stable URLs / URIs</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 5. REPOSITORY LAYOUT -->
+              <section id="ssot-repos" class="section">
+                <div class="section-header">
+                  <h2>5. Repository Layout</h2>
+                  <span class="badge">Structure</span>
+                </div>
+                <p class="section-tagline">
+                  Define where things live: which data platforms, DMS/evidence buckets,
+                  collaboration suites, and Git repos. The goal is no guessing and no duplicate
+                  “systems of record.”
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">5.1 Logical Layout</h3>
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th>Area</th>
+                          <th>Location</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>Court case data</td>
+                          <td>
+                            Court data lake / warehouse schemas (e.g. <code>court_cases</code>,
+                            <code>dockets</code>); registered here with tags and sensitivity levels.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>Court documents &amp; files</td>
+                          <td>
+                            Canonical object storage and DMS (e.g. <code>court-docs-prod</code> bucket);
+                            folder / key conventions defined here.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>Evidence media</td>
+                          <td>
+                            Evidence/media buckets or systems (e.g. <code>court-evidence-prod</code>);
+                            this registry defines allowed types, retention, and access patterns.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>Operational &amp; admin work</td>
+                          <td>
+                            Court calendars and schedules in Exchange/Outlook/M365 or Google Calendar;
+                            Teams/SharePoint/OneDrive or Google Drive sites/folders that are designated
+                            as canonical for specific workflows (e.g., “Supreme Court Daily Docket Site”).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>Architecture patterns</td>
+                          <td><code>arch/</code> repo + linked from this page &amp; CCoE workspace.</td>
+                        </tr>
+                        <tr>
+                          <td>Governance &amp; controls</td>
+                          <td><code>governance/</code> repo + <code>governances.html</code>.</td>
+                        </tr>
+                        <tr>
+                          <td>Terraform modules</td>
+                          <td><code>iac/terraform-modules/</code> repos + <code>terraform.html</code> catalogs.</td>
+                        </tr>
+                        <tr>
+                          <td>Ansible roles</td>
+                          <td><code>iac/ansible/</code> repos + <code>ansible.html</code> catalogs.</td>
+                        </tr>
+                        <tr>
+                          <td>Runbooks</td>
+                          <td><code>ops/runbooks/</code> repo, linked from this page &amp; daily tracker.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">5.2 HTML Front Doors</h3>
+                    <ul class="list">
+                      <li><code>index.html</code> – overall entrypoint.</li>
+                      <li><code>ccoe.html</code> – CCoE &amp; platform design.</li>
+                      <li><code>terraform.html</code> – Terraform encyclopedia &amp; catalogs.</li>
+                      <li><code>ansible.html</code> – Ansible encyclopedia &amp; command/module dictionary.</li>
+                      <li><code>governances.html</code> – regulations, frameworks, and standards.</li>
+                      <li><code>single-source-of-truth.html</code> – this registry; references the central data/doc/evidence/work repos and all of the above.</li>
+                    </ul>
+
+                    <p class="note">
+                      This page is the <em>map of maps and data</em>: it defines
+                      the one true data stores, document stores, evidence stores,
+                      collaboration sites, and the catalogs that sit on top of them.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 6. IDENTIFIERS & VERSIONING -->
+              <section id="ssot-identifiers" class="section">
+                <div class="section-header">
+                  <h2>6. Identifiers, Tagging &amp; Versioning</h2>
+                  <span class="badge">Identity</span>
+                </div>
+                <p class="section-tagline">
+                  Every object needs a stable identifier, tags (for search and security),
+                  and a way to talk about versions in emails, tickets, and audits.
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">6.1 ID Scheme</h3>
+                    <ul class="list">
+                      <li>Prefix by object type (CASE, DOC, EVID, DATA, WORK, STD, PAT, MOD, RUN, ADR, etc.).</li>
+                      <li>Include jurisdiction / court and optional domain (e.g., <code>SUP</code>, <code>FISA</code>, <code>APP</code>, <code>CR</code>).</li>
+                      <li>Numeric sequence or structured timestamp for work artifacts (calendars/schedules).</li>
+                    </ul>
+
+                    <p class="note">
+                      Example: <code>WORK-SUP-COURTROOM-A-2025-09-10-AM</code> → canonical schedule
+                      for Courtroom A’s morning session on that date, tied to case entries and staff.
+                    </p>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">6.2 Tagging &amp; Versioning</h3>
+                    <ul class="list">
+                      <li>Standard tag sets:
+                        <ul class="list">
+                          <li><strong>Classification:</strong> P1, P2, P3, CJIS, Juvenile, Sealed, FISA.</li>
+                          <li><strong>Domain:</strong> Criminal, Civil, Family, Traffic, FISA, Appellate, Admin.</li>
+                          <li><strong>Lifecycle:</strong> Open, Scheduled, Closed, Archived.</li>
+                          <li><strong>Retention:</strong> standard, extended, legal hold.</li>
+                          <li><strong>Work type:</strong> Courtroom schedule, staff roster, meeting, training, etc.</li>
+                        </ul>
+                      </li>
+                      <li>Semantic versioning for living artifacts (standards, patterns, modules, runbooks):
+                        <ul class="list">
+                          <li><code>MAJOR</code> – breaking changes to behavior or guarantees.</li>
+                          <li><code>MINOR</code> – new capabilities, backwards compatible.</li>
+                          <li><code>PATCH</code> – documentation fixes or risk clarifications.</li>
+                        </ul>
+                      </li>
+                      <li>Document/evidence/work versions can be either:
+                        <ul class="list">
+                          <li>Immutable “record per version” with tags (<code>DOC-...-v3</code>, <code>EVID-...-v2</code>, <code>WORK-...-v5</code>), or</li>
+                          <li>Single ID with a version history managed in the DMS/evidence/collaboration system.</li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 7. WORKFLOWS -->
+              <section id="ssot-workflows" class="section">
+                <div class="section-header">
+                  <h2>7. Create / Change / Approve Workflows</h2>
+                  <span class="badge">Process</span>
+                </div>
+                <p class="section-tagline">
+                  The registry is only as good as the workflows behind it. This captures how
+                  case records, documents, evidence, work artifacts, datasets, and standards
+                  are created, tagged, secured, reviewed, and published as truth.
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">7.1 Data, Documents, Evidence &amp; Work Flow</h3>
+                    <ol class="list">
+                      <li>New case/doc/evidence/work item is created in the source system (CMS, DMS, evidence store, M365/Workspace).</li>
+                      <li>It is assigned a canonical ID and stored in the central data/doc/evidence/work platform.</li>
+                      <li>Tags are applied (court, type, sensitivity, retention, lifecycle, work type).</li>
+                      <li>The registry entry is created/updated to point at the canonical object.</li>
+                      <li>Security and access groups are evaluated based on tags and legal constraints.</li>
+                      <li>Scheduled items (calendars, rosters) are linked back to cases and rooms where appropriate.</li>
+                    </ol>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">7.2 Standards &amp; Technical Artifacts</h3>
+                    <ul class="list">
+                      <li>Proposal created in working branch or draft doc.</li>
+                      <li>Reviewers assigned (architects, security, ops, court business owner).</li>
+                      <li>Comments resolved; ADR/SBR raised if it’s a big directional change.</li>
+                      <li>On approval, artifact gets a new version and updates this registry.</li>
+                      <li>Communication to impacted teams and updates to training/runbooks.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 8. LIFECYCLE -->
+              <section id="ssot-lifecycle" class="section">
+                <div class="section-header">
+                  <h2>8. Lifecycle &amp; Deprecation</h2>
+                  <span class="badge">Lifecycle</span>
+                </div>
+                <p class="section-tagline">
+                  Truth changes. Cases close, documents and warrants are superseded, evidence is reprocessed,
+                  schedules are updated, and standards evolve. Lifecycle and tags keep the central repository
+                  clean without losing history.
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">8.1 States</h3>
+                    <ul class="list">
+                      <li><strong>Draft</strong> – being written, not yet authoritative (for standards/patterns).</li>
+                      <li><strong>Active</strong> – current and authoritative (case/doc/evidence/work or standard in force).</li>
+                      <li><strong>Superseded</strong> – replaced by a newer version, still visible for history.</li>
+                      <li><strong>Scheduled</strong> – work items like calendars/rosters that are upcoming.</li>
+                      <li><strong>Completed / Closed / Archived</strong> – case closed, hearing held, schedule completed, retained per policy.</li>
+                      <li><strong>Retired</strong> – no longer used except for audit history.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">8.2 Deprecation Rules</h3>
+                    <ul class="list">
+                      <li>New standards and patterns reference which older items they supersede.</li>
+                      <li>New documents/orders reference the prior order they supersede when relevant.</li>
+                      <li>Evidence reprocessing keeps original artifacts, but marks them as superseded by the new version.</li>
+                      <li>Schedule changes keep prior versions visible for audit (what was on the calendar at a given time).</li>
+                      <li>Deprecated or superseded items remain discoverable with a clear pointer:
+                        <ul class="list">
+                          <li>“Replaced by <code>DOC-CASE-...-ORD-02</code> v2.0.0.”</li>
+                        </ul>
+                      </li>
+                      <li>Retirement after a defined sunset period when no active systems depend on them.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 9. INTEGRATIONS -->
+              <section id="ssot-integrations" class="section">
+                <div class="section-header">
+                  <h2>9. Integration with CCoE, Terraform, Ansible, Governance &amp; Collaboration</h2>
+                  <span class="badge">Integration</span>
+                </div>
+                <p class="section-tagline">
+                  This registry is the glue between your central court data/doc/evidence/work repository,
+                  your CCoE architecture, your code (Terraform &amp; Ansible), your governance,
+                  and your collaboration suites (Office 365 / M365, Google Workspace).
+                </p>
+
+                <div class="columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">9.1 CCoE &amp; Landing Zones</h3>
+                    <ul class="list">
+                      <li>Each landing zone pattern (<code>ccoe.html</code>) defines where
+                        central court data, documents, evidence, and collaboration systems physically live
+                        (regions, buckets, DBs, tenants).</li>
+                      <li>For each pattern, list:
+                        <ul class="list">
+                          <li>Pattern ID and version.</li>
+                          <li>Linked Terraform modules and Ansible roles.</li>
+                          <li>Associated standards and controls.</li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">9.2 IaC, Governance, Security &amp; Collaboration</h3>
+                    <ul class="list">
+                      <li>For key controls in <code>governances.html</code>, map:
+                        <ul class="list">
+                          <li>Regulation / framework control.</li>
+                          <li>Terraform modules implementing it (encryption, retention, tagging, tenant/O365/Workspace settings).</li>
+                          <li>Ansible roles enforcing it on hosts and data/evidence/collaboration services.</li>
+                        </ul>
+                      </li>
+                      <li>
+                        Ensure data/doc/evidence/work tags (sensitivity, classification, retention,
+                        court, work type) drive IAM policies and group membership in
+                        Cloud Identity / Google Workspace / Entra ID / O365.
+                      </li>
+                      <li>
+                        Use tags to drive default retention and legal hold on collaboration data
+                        (mailboxes, Teams/SharePoint, Google Drive/Docs).
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 10. VIEWS BY ROLE -->
+              <section id="ssot-views" class="section">
+                <div class="section-header">
+                  <h2>10. Views by Role</h2>
+                  <span class="badge">Consumption</span>
+                </div>
+                <p class="section-tagline">
+                  Different people need different slices of the truth. Tags + security give each
+                  role the right view of the same central repository.
+                </p>
+
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Role</th>
+                      <th>What they need</th>
+                      <th>How they use this registry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Clerk / Court Staff</td>
+                      <td>
+                        Canonical case files, documents, evidence, and daily calendars by case ID,
+                        court, and lifecycle.
+                      </td>
+                      <td>
+                        Search by case ID, party, or courtroom; follow links to the true
+                        DMS/data/evidence and official schedules.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Judge / Chambers</td>
+                      <td>
+                        Current and prior orders, motions, warrants, exhibits, and calendar views
+                        for their docket.
+                      </td>
+                      <td>
+                        Use case- and judge-centric views with security tags to filter sealed/
+                        Juvenile/FISA content.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Court Administration</td>
+                      <td>
+                        Daily/weekly schedules, staff rosters, room usage, backlog metrics.
+                      </td>
+                      <td>
+                        Use aggregated “work” domain views to manage capacity and planning;
+                        link to collaboration sites for details.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Architect</td>
+                      <td>Standards, patterns, data domains, decisions, collaboration topology.</td>
+                      <td>Navigate by domain and pattern ID; update and approve new patterns.</td>
+                    </tr>
+                    <tr>
+                      <td>Engineer (Terraform/Ansible)</td>
+                      <td>Canonical module lists and supported patterns.</td>
+                      <td>Jump from pattern → module → repo; align code with standards and tags.</td>
+                    </tr>
+                    <tr>
+                      <td>Security &amp; Compliance</td>
+                      <td>Control mappings, data classification, ATO packages, and implementation details.</td>
+                      <td>Use regulation → control → implementation maps and tag reports for audits.</td>
+                    </tr>
+                    <tr>
+                      <td>Ops &amp; SRE</td>
+                      <td>Runbooks, incident playbooks, DR plans.</td>
+                      <td>Find current versions of operational procedures tied to tagged systems and data.</td>
+                    </tr>
+                    <tr>
+                      <td>Program / Court Leadership</td>
+                      <td>High-level view of coverage, risk, and progress across all courts.</td>
+                      <td>Consume dashboards built on this registry (counts by tag, coverage by control, etc.).</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <!-- 11. IMPLEMENTATION CHECKLIST -->
+              <section id="ssot-checklist" class="section">
+                <div class="section-header">
+                  <h2>11. Implementation Checklist</h2>
+                  <span class="badge">Execution</span>
+                </div>
+                <p class="section-tagline">
+                  Use this to track bringing your central, tagged, secure “single source of truth”
+                  from concept to reality. Copy and paste into your task tracker if needed.
+                </p>
+
+                <ul class="checklist">
+                  <li>Agree on domains and object types (cases, docs, evidence, work, datasets, standards, patterns, modules, runbooks, decisions).</li>
+                  <li>Define ID scheme and versioning rules for case/doc/evidence/work and technical artifacts.</li>
+                  <li>Design and lock down the tagging model (classification, domain, lifecycle, retention, FISA/CJIS/juvenile, work types, etc.).</li>
+                  <li>Choose systems of record for each domain (data lake/warehouse, DMS, evidence system, collaboration suite, repos, catalogs).</li>
+                  <li>Wire this page into <code>index.html</code> and other workspaces.</li>
+                  <li>Register existing key artifacts and assign IDs and tags.</li>
+                  <li>Define workflow for create/change/approve per object type.</li>
+                  <li>Enforce security &amp; access rules based on tags and group membership.</li>
+                  <li>Map governance controls to IaC modules, roles, and tagged data/doc/evidence/work domains.</li>
+                  <li>Validate with at least one audit or tabletop exercise focused on court records, evidence, and daily work artifacts.</li>
+                  <li>Review yearly (or quarterly) and update as the courts and program mature.</li>
+                </ul>
+              </section>
+
+              <!-- 12. ROADMAP -->
+              <section id="ssot-roadmap" class="section">
+                <div class="section-header">
+                  <h2>12. Roadmap &amp; Hardening</h2>
+                  <span class="badge">Roadmap</span>
+                </div>
+                <p class="section-tagline">
+                  Implement the single source of truth in phases so it becomes the default
+                  way the courts operate, not just another project.
+                </p>
+
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Phase</th>
+                      <th>Focus</th>
+                      <th>Key Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Phase 0 – Baseline</strong></td>
+                      <td>Define domains, IDs, tags, and where things live (data/doc/evidence/work).</td>
+                      <td>Stand up this page, connect it to existing case/evidence systems, collaboration suites, data platforms, Terraform/Ansible/Governance/CCoE workspaces.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Phase 1 – Registration</strong></td>
+                      <td>Register top 20–50 critical datasets, doc collections, evidence collections, and operational calendars.</td>
+                      <td>Assign IDs, tags, versions, owners, and states; clean up obvious duplicates and shadow systems.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Phase 2 – Workflow</strong></td>
+                      <td>Enforce create/change/approve flows using IDs + tags.</td>
+                      <td>Update contribution guidelines; add registry steps to change management and court operations.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Phase 3 – Automation &amp; Audit</strong></td>
+                      <td>Automate lookups, security decisions, and reporting from tags.</td>
+                      <td>Expose registry as data (JSON/CSV); generate reports for courts, execs, and auditors across all 300+ courts.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="note">
+                  Over time, the single source of truth becomes the only place people look for
+                  court data, documents, evidence, and work artifacts—and everything else is just
+                  a view on top of it.
+                </p>
+              </section>
+            </main>
+          </div>
+        </section>
+
+        <div class="footnote">
+          Save this file as <code>single-source-of-truth.html</code> next to
+          <code>index.html</code>, then add a button on the index pointing here as your
+          “Single Source of Truth” workspace for all court data, documents, evidence,
+          daily work, and architecture.
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

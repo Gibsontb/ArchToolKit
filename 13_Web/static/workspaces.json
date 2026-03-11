@@ -1,0 +1,100 @@
+[
+  {
+    "id": "multi-cloud-matrix",
+    "label": "Multi-Cloud Decision Matrix",
+    "href": "cloud-decision-logic-kit/multi-cloud-decision-matrix.html",
+    "style": "primary",
+    "description": "Select cloud/provider based on constraints and workload traits."
+  },
+  {
+    "id": "cloud-tech-navigator",
+    "label": "Cloud Tech Navigator",
+    "href": "cloud-tech-navigator/cloud-tech-navigator.html",
+    "style": "secondary",
+    "description": "Interactive cloud tech reference and capability mapping."
+  },
+  {
+    "id": "sbrs",
+    "label": "SBRs Workspace",
+    "href": "sbrs.html",
+    "style": "secondary",
+    "description": "Service-based requirements workspace."
+  },
+  {
+    "id": "atos",
+    "label": "ATOS Workspace",
+    "href": "atos.html",
+    "style": "secondary",
+    "description": "ATO/authorization artifacts workspace."
+  },
+  {
+    "id": "ccoe",
+    "label": "Court CCoE Blueprint",
+    "href": "ccoe.html",
+    "style": "secondary",
+    "description": "Court CCoE design and operating model."
+  },
+  {
+    "id": "ansible",
+    "label": "Ansible, Playbooks & Automation",
+    "href": "ansible.html",
+    "style": "secondary",
+    "description": "Automation patterns, playbooks, and runbooks."
+  },
+  {
+    "id": "terraform",
+    "label": "Terraform Workspace",
+    "href": "terraform.html",
+    "style": "secondary",
+    "description": "Infrastructure as Code workspace."
+  },
+  {
+    "id": "governance",
+    "label": "Governance Workspace",
+    "href": "governances.html",
+    "style": "secondary",
+    "description": "Governance, policies, guardrails."
+  },
+  {
+    "id": "ssot",
+    "label": "Single Source of Truth Registry",
+    "href": "single-source-of-truth.html",
+    "style": "secondary",
+    "description": "Canonical registries and catalogs."
+  },
+  {
+    "id": "data-classification",
+    "label": "Data Classification Console",
+    "href": "data-classification.html",
+    "style": "secondary",
+    "description": "Classify data + map compliance constraints."
+  },
+  {
+    "id": "vmware-import",
+    "label": "VMware Inventory Import",
+    "href": "vmware-inventory-import.html",
+    "style": "secondary",
+    "description": "PowerCLI/RVTools CSV ingest \u2192 inventory.json"
+  },
+  {
+    "id": "migrate",
+    "label": "Application Migration & Modernization",
+    "href": "migrate/index.html",
+    "style": "secondary",
+    "description": "7R routing + readiness scoring + wave planning."
+  },
+  {
+    "id": "migrate-portfolio",
+    "label": "Migration Portfolio Dashboard",
+    "href": "migrate/portfolio.html",
+    "style": "secondary",
+    "description": "Portfolio view, filters, exports from generated results."
+  },
+  {
+    "id": "daily-work",
+    "label": "Daily Work Tracker",
+    "href": "daily-work-tracker.html",
+    "style": "secondary",
+    "description": "Track daily tasks and outputs."
+  }
+]

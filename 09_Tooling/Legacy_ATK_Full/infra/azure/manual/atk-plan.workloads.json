@@ -1,0 +1,10 @@
+{
+  "export": "azure-workloads",
+  "export_name": "manual",
+  "internet_exposed": false,
+  "data_classification": [],
+  "strict_defaults": false,
+  "notes": [
+    "NSG intent only (no compute)."
+  ]
+}

@@ -1,0 +1,2230 @@
+{
+  "pulledAt": "2026-02-16T22:10:16.483Z",
+  "provider": "azure",
+  "count": 171,
+  "services": [
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AAD",
+      "name": "Microsoft.AAD",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AAD"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Addons",
+      "name": "Microsoft.Addons",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Addons"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ADHybridHealthService",
+      "name": "Microsoft.ADHybridHealthService",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ADHybridHealthService"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Advisor",
+      "name": "Microsoft.Advisor",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Advisor"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AlertsManagement",
+      "name": "Microsoft.AlertsManagement",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AlertsManagement"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AnalysisServices",
+      "name": "Microsoft.AnalysisServices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AnalysisServices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ApiManagement",
+      "name": "Microsoft.ApiManagement",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ApiManagement"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.App",
+      "name": "Microsoft.App",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.App"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AppConfiguration",
+      "name": "Microsoft.AppConfiguration",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AppConfiguration"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AppPlatform",
+      "name": "Microsoft.AppPlatform",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AppPlatform"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Attestation",
+      "name": "Microsoft.Attestation",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Attestation"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Authorization",
+      "name": "Microsoft.Authorization",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Authorization"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Automation",
+      "name": "Microsoft.Automation",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Automation"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AutonomousSystems",
+      "name": "Microsoft.AutonomousSystems",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AutonomousSystems"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AVS",
+      "name": "Microsoft.AVS",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AVS"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AzureActiveDirectory",
+      "name": "Microsoft.AzureActiveDirectory",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AzureActiveDirectory"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AzureArcData",
+      "name": "Microsoft.AzureArcData",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AzureArcData"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AzureData",
+      "name": "Microsoft.AzureData",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AzureData"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AzureStack",
+      "name": "Microsoft.AzureStack",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AzureStack"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.AzureStackHCI",
+      "name": "Microsoft.AzureStackHCI",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.AzureStackHCI"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Batch",
+      "name": "Microsoft.Batch",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Batch"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Billing",
+      "name": "Microsoft.Billing",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Billing"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.BingMaps",
+      "name": "Microsoft.BingMaps",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.BingMaps"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Blockchain",
+      "name": "Microsoft.Blockchain",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Blockchain"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.BlockchainTokens",
+      "name": "Microsoft.BlockchainTokens",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.BlockchainTokens"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Blueprint",
+      "name": "Microsoft.Blueprint",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Blueprint"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.BotService",
+      "name": "Microsoft.BotService",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.BotService"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Cache",
+      "name": "Microsoft.Cache",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Cache"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Capacity",
+      "name": "Microsoft.Capacity",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Capacity"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Cdn",
+      "name": "Microsoft.Cdn",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Cdn"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.CertificateRegistration",
+      "name": "Microsoft.CertificateRegistration",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.CertificateRegistration"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ChangeAnalysis",
+      "name": "Microsoft.ChangeAnalysis",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ChangeAnalysis"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ChangeSafety",
+      "name": "Microsoft.ChangeSafety",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ChangeSafety"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ClassicCompute",
+      "name": "Microsoft.ClassicCompute",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ClassicCompute"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ClassicInfrastructureMigrate",
+      "name": "Microsoft.ClassicInfrastructureMigrate",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ClassicInfrastructureMigrate"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ClassicNetwork",
+      "name": "Microsoft.ClassicNetwork",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ClassicNetwork"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ClassicStorage",
+      "name": "Microsoft.ClassicStorage",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ClassicStorage"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ClassicSubscription",
+      "name": "Microsoft.ClassicSubscription",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ClassicSubscription"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.CognitiveServices",
+      "name": "Microsoft.CognitiveServices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.CognitiveServices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Commerce",
+      "name": "Microsoft.Commerce",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Commerce"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Communication",
+      "name": "Microsoft.Communication",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Communication"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Compute",
+      "name": "Microsoft.Compute",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Compute"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Consumption",
+      "name": "Microsoft.Consumption",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Consumption"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ContainerInstance",
+      "name": "Microsoft.ContainerInstance",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ContainerInstance"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ContainerRegistry",
+      "name": "Microsoft.ContainerRegistry",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ContainerRegistry"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ContainerService",
+      "name": "Microsoft.ContainerService",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ContainerService"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.CostManagement",
+      "name": "Microsoft.CostManagement",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.CostManagement"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.CostManagementExports",
+      "name": "Microsoft.CostManagementExports",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.CostManagementExports"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.CustomerLockbox",
+      "name": "Microsoft.CustomerLockbox",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.CustomerLockbox"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.CustomProviders",
+      "name": "Microsoft.CustomProviders",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.CustomProviders"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataBox",
+      "name": "Microsoft.DataBox",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataBox"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataBoxEdge",
+      "name": "Microsoft.DataBoxEdge",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataBoxEdge"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Databricks",
+      "name": "Microsoft.Databricks",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Databricks"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataCatalog",
+      "name": "Microsoft.DataCatalog",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataCatalog"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataFactory",
+      "name": "Microsoft.DataFactory",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataFactory"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataLakeAnalytics",
+      "name": "Microsoft.DataLakeAnalytics",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataLakeAnalytics"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataLakeStore",
+      "name": "Microsoft.DataLakeStore",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataLakeStore"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataMigration",
+      "name": "Microsoft.DataMigration",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataMigration"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataProtection",
+      "name": "Microsoft.DataProtection",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataProtection"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DataShare",
+      "name": "Microsoft.DataShare",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DataShare"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DBforMariaDB",
+      "name": "Microsoft.DBforMariaDB",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DBforMariaDB"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DBforMySQL",
+      "name": "Microsoft.DBforMySQL",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DBforMySQL"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DBforPostgreSQL",
+      "name": "Microsoft.DBforPostgreSQL",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DBforPostgreSQL"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DesktopVirtualization",
+      "name": "Microsoft.DesktopVirtualization",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DesktopVirtualization"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DevCenter",
+      "name": "Microsoft.DevCenter",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DevCenter"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DeviceRegistry",
+      "name": "Microsoft.DeviceRegistry",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DeviceRegistry"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Devices",
+      "name": "Microsoft.Devices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Devices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DeviceUpdate",
+      "name": "Microsoft.DeviceUpdate",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DeviceUpdate"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DevOpsInfrastructure",
+      "name": "Microsoft.DevOpsInfrastructure",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DevOpsInfrastructure"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DevSpaces",
+      "name": "Microsoft.DevSpaces",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DevSpaces"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DevTestLab",
+      "name": "Microsoft.DevTestLab",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DevTestLab"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DigitalTwins",
+      "name": "Microsoft.DigitalTwins",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DigitalTwins"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DocumentDB",
+      "name": "Microsoft.DocumentDB",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DocumentDB"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DomainRegistration",
+      "name": "Microsoft.DomainRegistration",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DomainRegistration"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.DynamicsLcs",
+      "name": "Microsoft.DynamicsLcs",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.DynamicsLcs"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Edge",
+      "name": "Microsoft.Edge",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Edge"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ElasticSan",
+      "name": "Microsoft.ElasticSan",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ElasticSan"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.EnterpriseKnowledgeGraph",
+      "name": "Microsoft.EnterpriseKnowledgeGraph",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.EnterpriseKnowledgeGraph"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.EventGrid",
+      "name": "Microsoft.EventGrid",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.EventGrid"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.EventHub",
+      "name": "Microsoft.EventHub",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.EventHub"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Features",
+      "name": "Microsoft.Features",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Features"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.GuestConfiguration",
+      "name": "Microsoft.GuestConfiguration",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.GuestConfiguration"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HanaOnAzure",
+      "name": "Microsoft.HanaOnAzure",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HanaOnAzure"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HardwareSecurityModules",
+      "name": "Microsoft.HardwareSecurityModules",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HardwareSecurityModules"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HDInsight",
+      "name": "Microsoft.HDInsight",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HDInsight"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HealthcareApis",
+      "name": "Microsoft.HealthcareApis",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HealthcareApis"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HybridCompute",
+      "name": "Microsoft.HybridCompute",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HybridCompute"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HybridData",
+      "name": "Microsoft.HybridData",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HybridData"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.HybridNetwork",
+      "name": "Microsoft.HybridNetwork",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.HybridNetwork"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ImportExport",
+      "name": "Microsoft.ImportExport",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ImportExport"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Insights",
+      "name": "Microsoft.Insights",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Insights"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Intune",
+      "name": "Microsoft.Intune",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Intune"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.IoTCentral",
+      "name": "Microsoft.IoTCentral",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.IoTCentral"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.IoTOperations",
+      "name": "Microsoft.IoTOperations",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.IoTOperations"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.IoTSpaces",
+      "name": "Microsoft.IoTSpaces",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.IoTSpaces"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.KeyVault",
+      "name": "Microsoft.KeyVault",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.KeyVault"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Kubernetes",
+      "name": "Microsoft.Kubernetes",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Kubernetes"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.KubernetesConfiguration",
+      "name": "Microsoft.KubernetesConfiguration",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.KubernetesConfiguration"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Kusto",
+      "name": "Microsoft.Kusto",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Kusto"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.LabServices",
+      "name": "Microsoft.LabServices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.LabServices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.LoadTestService",
+      "name": "Microsoft.LoadTestService",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.LoadTestService"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Logic",
+      "name": "Microsoft.Logic",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Logic"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.MachineLearningServices",
+      "name": "Microsoft.MachineLearningServices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.MachineLearningServices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Maintenance",
+      "name": "Microsoft.Maintenance",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Maintenance"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ManagedIdentity",
+      "name": "Microsoft.ManagedIdentity",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ManagedIdentity"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ManagedNetwork",
+      "name": "Microsoft.ManagedNetwork",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ManagedNetwork"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ManagedServices",
+      "name": "Microsoft.ManagedServices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ManagedServices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Management",
+      "name": "Microsoft.Management",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Management"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Maps",
+      "name": "Microsoft.Maps",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Maps"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Marketplace",
+      "name": "Microsoft.Marketplace",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Marketplace"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.MarketplaceApps",
+      "name": "Microsoft.MarketplaceApps",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.MarketplaceApps"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.MarketplaceOrdering",
+      "name": "Microsoft.MarketplaceOrdering",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.MarketplaceOrdering"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Microservices4Spring",
+      "name": "Microsoft.Microservices4Spring",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Microservices4Spring"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Migrate",
+      "name": "Microsoft.Migrate",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Migrate"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.MobileNetwork",
+      "name": "Microsoft.MobileNetwork",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.MobileNetwork"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Monitor",
+      "name": "Microsoft.Monitor",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Monitor"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.NetApp",
+      "name": "Microsoft.NetApp",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.NetApp"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Network",
+      "name": "Microsoft.Network",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Network"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Notebooks",
+      "name": "Microsoft.Notebooks",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Notebooks"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.NotificationHubs",
+      "name": "Microsoft.NotificationHubs",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.NotificationHubs"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ObjectStore",
+      "name": "Microsoft.ObjectStore",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ObjectStore"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.OffAzure",
+      "name": "Microsoft.OffAzure",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.OffAzure"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.OperationalInsights",
+      "name": "Microsoft.OperationalInsights",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.OperationalInsights"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.OperationsManagement",
+      "name": "Microsoft.OperationsManagement",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.OperationsManagement"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Peering",
+      "name": "Microsoft.Peering",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Peering"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.PolicyInsights",
+      "name": "Microsoft.PolicyInsights",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.PolicyInsights"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Portal",
+      "name": "Microsoft.Portal",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Portal"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.PowerBI",
+      "name": "Microsoft.PowerBI",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.PowerBI"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.PowerBIDedicated",
+      "name": "Microsoft.PowerBIDedicated",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.PowerBIDedicated"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.PowerPlatform",
+      "name": "Microsoft.PowerPlatform",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.PowerPlatform"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ProjectBabylon",
+      "name": "Microsoft.ProjectBabylon",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ProjectBabylon"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Purview",
+      "name": "Microsoft.Purview",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Purview"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Quantum",
+      "name": "Microsoft.Quantum",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Quantum"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.RecoveryServices",
+      "name": "Microsoft.RecoveryServices",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.RecoveryServices"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.RedHatOpenShift",
+      "name": "Microsoft.RedHatOpenShift",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.RedHatOpenShift"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Relay",
+      "name": "Microsoft.Relay",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Relay"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ResourceGraph",
+      "name": "Microsoft.ResourceGraph",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ResourceGraph"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ResourceHealth",
+      "name": "Microsoft.ResourceHealth",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ResourceHealth"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ResourceNotification",
+      "name": "Microsoft.ResourceNotification",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ResourceNotification"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Resources",
+      "name": "Microsoft.Resources",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Resources"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.SaaS",
+      "name": "Microsoft.SaaS",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.SaaS"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Scheduler",
+      "name": "Microsoft.Scheduler",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Scheduler"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Search",
+      "name": "Microsoft.Search",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Search"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Security",
+      "name": "Microsoft.Security",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Security"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.SecurityInsights",
+      "name": "Microsoft.SecurityInsights",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.SecurityInsights"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.SerialConsole",
+      "name": "Microsoft.SerialConsole",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.SerialConsole"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ServiceBus",
+      "name": "Microsoft.ServiceBus",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ServiceBus"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.ServiceFabric",
+      "name": "Microsoft.ServiceFabric",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.ServiceFabric"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Services",
+      "name": "Microsoft.Services",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Services"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.SignalRService",
+      "name": "Microsoft.SignalRService",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.SignalRService"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.SoftwarePlan",
+      "name": "Microsoft.SoftwarePlan",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.SoftwarePlan"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Solutions",
+      "name": "Microsoft.Solutions",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Solutions"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Sql",
+      "name": "Microsoft.Sql",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Sql"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.SqlVirtualMachine",
+      "name": "Microsoft.SqlVirtualMachine",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.SqlVirtualMachine"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Storage",
+      "name": "Microsoft.Storage",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Storage"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.StorageCache",
+      "name": "Microsoft.StorageCache",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.StorageCache"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.StorageSync",
+      "name": "Microsoft.StorageSync",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.StorageSync"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.StorSimple",
+      "name": "Microsoft.StorSimple",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.StorSimple"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.StreamAnalytics",
+      "name": "Microsoft.StreamAnalytics",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.StreamAnalytics"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Subscription",
+      "name": "Microsoft.Subscription",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Subscription"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Synapse",
+      "name": "Microsoft.Synapse",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Synapse"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Token",
+      "name": "Microsoft.Token",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Token"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.VirtualMachineImages",
+      "name": "Microsoft.VirtualMachineImages",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.VirtualMachineImages"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.VMware",
+      "name": "Microsoft.VMware",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.VMware"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.VMwareCloudSimple",
+      "name": "Microsoft.VMwareCloudSimple",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.VMwareCloudSimple"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.VSOnline",
+      "name": "Microsoft.VSOnline",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.VSOnline"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.Web",
+      "name": "Microsoft.Web",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.Web"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.WindowsDefenderATP",
+      "name": "Microsoft.WindowsDefenderATP",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.WindowsDefenderATP"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.WindowsESU",
+      "name": "Microsoft.WindowsESU",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.WindowsESU"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.WindowsIoT",
+      "name": "Microsoft.WindowsIoT",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.WindowsIoT"
+      }
+    },
+    {
+      "provider": "azure",
+      "serviceId": "Microsoft.WorkloadMonitor",
+      "name": "Microsoft.WorkloadMonitor",
+      "aliases": [],
+      "source": {
+        "type": "mslearn_public_reference",
+        "url": "https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-services-resource-providers"
+      },
+      "raw": {
+        "namespace": "Microsoft.WorkloadMonitor"
+      }
+    }
+  ]
+}

@@ -1,0 +1,456 @@
+{
+  "provider": "oci",
+  "provider_name": "Oracle Cloud",
+  "catalog_version": "2025-v2.5",
+  "generated_at": "2026-01-08T19:55:39.783Z",
+  "services": [
+    {
+      "id": "oci.data_science_container",
+      "name": "Data Science Container",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_containers",
+      "capability_name": "AI CONTAINERS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_generative_ai",
+      "name": "OCI Generative AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ai_powered_assistant",
+      "capability_name": "AI-POWERED ASSISTANT",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_ai_services",
+      "name": "OCI AI Services",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.human",
+      "capability_name": "HUMAN",
+      "status": "active"
+    },
+    {
+      "id": "oci.vision",
+      "name": "(Vision",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.review_moderation",
+      "capability_name": "REVIEW/MODERATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.text",
+      "name": "Text",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.review_moderation",
+      "capability_name": "REVIEW/MODERATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.language",
+      "name": "Language)",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.review_moderation",
+      "capability_name": "REVIEW/MODERATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_digital_assistant",
+      "name": "Oracle Digital Assistant",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.chatbot_builder",
+      "capability_name": "CHATBOT BUILDER",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_data_labeling",
+      "name": "OCI Data Labeling",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.data_labeling",
+      "capability_name": "DATA LABELING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_document",
+      "name": "OCI Document",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.document_extraction",
+      "capability_name": "DOCUMENT EXTRACTION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_generative_ai",
+      "name": "OCI Generative AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.generative_ai",
+      "capability_name": "GENERATIVE AI",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_vision_ai",
+      "name": "OCI Vision AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.image_recognition",
+      "capability_name": "IMAGE RECOGNITION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_ai_gpu_instances",
+      "name": "OCI AI GPU Instances",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.inference_acceleration",
+      "capability_name": "INFERENCE ACCELERATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_language_service",
+      "name": "OCI Language Service",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.language_translation",
+      "capability_name": "LANGUAGE TRANSLATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.nvidia_a100",
+      "name": "NVIDIA A100",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "capability_name": "ML/AI CHIPS",
+      "status": "active"
+    },
+    {
+      "id": "oci.h100_gp",
+      "name": "H100 GP",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.ml_ai_chips",
+      "capability_name": "ML/AI CHIPS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_data_science",
+      "name": "OCI Data Science",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.managed_ml_platform",
+      "capability_name": "MANAGED ML PLATFORM",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_data_science",
+      "name": "OCI Data Science",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.notebooks",
+      "capability_name": "NOTEBOOKS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_anomaly_detection",
+      "name": "OCI Anomaly Detection",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.online_fraud_detection",
+      "capability_name": "ONLINE FRAUD DETECTION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_marketplace_ml",
+      "name": "OCI Marketplace ML",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.preconfigured_ml_vms",
+      "capability_name": "PRECONFIGURED ML VMS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_ai_recommendatio",
+      "name": "OCI AI Recommendatio",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.recommendation",
+      "capability_name": "RECOMMENDATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.system",
+      "name": "System",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.engine",
+      "capability_name": "ENGINE",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_speech_ai",
+      "name": "OCI Speech AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.speech",
+      "capability_name": "SPEECH",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_text_ai",
+      "name": "OCI Text AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.text_analysis",
+      "capability_name": "TEXT ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_forecasting_ai",
+      "name": "OCI Forecasting AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.time_series_forecasting",
+      "capability_name": "TIME-SERIES FORECASTING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_vision_ai",
+      "name": "OCI Vision AI",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.video_analysis",
+      "capability_name": "VIDEO ANALYSIS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_vision_custom",
+      "name": "OCI Vision Custom",
+      "category": "AI and Machine Learning",
+      "capability_id": "ai_and_machine_learning.visual_inspection",
+      "capability_name": "VISUAL INSPECTION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_big_dat",
+      "name": "Oracle Big Dat",
+      "category": "Analytics",
+      "capability_id": "analytics.big_data_processing",
+      "capability_name": "BIG DATA PROCESSING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_analyti",
+      "name": "Oracle Analyti",
+      "category": "Analytics",
+      "capability_id": "analytics.business_analytics",
+      "capability_name": "BUSINESS ANALYTICS",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_data",
+      "name": "Oracle Data",
+      "category": "Analytics",
+      "capability_id": "analytics.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_lakeho",
+      "name": "Oracle Lakeho",
+      "category": "Analytics",
+      "capability_id": "analytics.data_lake_creation",
+      "capability_name": "DATA LAKE CREATION",
+      "status": "active"
+    },
+    {
+      "id": "oci.integration",
+      "name": "Integration",
+      "category": "Analytics",
+      "capability_id": "analytics.sharing_exchange",
+      "capability_name": "SHARING/EXCHANGE",
+      "status": "active"
+    },
+    {
+      "id": "oci.o",
+      "name": "O",
+      "category": "Analytics",
+      "capability_id": "analytics.sharing_exchange",
+      "capability_name": "SHARING/EXCHANGE",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_cloud",
+      "name": "Oracle Cloud",
+      "category": "Analytics",
+      "capability_id": "analytics.data_streaming",
+      "capability_name": "DATA STREAMING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_auton",
+      "name": "Oracle Auton",
+      "category": "Analytics",
+      "capability_id": "analytics.data_warehousing",
+      "capability_name": "DATA WAREHOUSING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_data_in",
+      "name": "Oracle Data In",
+      "category": "Analytics",
+      "capability_id": "analytics.data_wrangling",
+      "capability_name": "DATA WRANGLING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_data_in",
+      "name": "Oracle Data In",
+      "category": "Analytics",
+      "capability_id": "analytics.etl",
+      "capability_name": "ETL",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_big_dat",
+      "name": "Oracle Big Dat",
+      "category": "Analytics",
+      "capability_id": "analytics.hosted_hadoop_spark",
+      "capability_name": "HOSTED HADOOP/SPARK",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_streaming",
+      "name": "OCI Streaming",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_kafka",
+      "capability_name": "MANAGED KAFKA",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_opens",
+      "name": "Oracle OpenS",
+      "category": "Analytics",
+      "capability_id": "analytics.managed_search",
+      "capability_name": "MANAGED SEARCH",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_auton",
+      "name": "Oracle Auton",
+      "category": "Analytics",
+      "capability_id": "analytics.query_service",
+      "capability_name": "QUERY SERVICE",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_risk",
+      "name": "Oracle Risk",
+      "category": "Security",
+      "capability_id": "security.audit_and_compliance",
+      "capability_name": "AUDIT AND COMPLIANCE",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_cloud",
+      "name": "Oracle Cloud",
+      "category": "Security",
+      "capability_id": "security.centralized_security",
+      "capability_name": "CENTRALIZED SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_certific",
+      "name": "Oracle Certific",
+      "category": "Security",
+      "capability_id": "security.certificate_management",
+      "capability_name": "CERTIFICATE MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "oci.not_publicly_a",
+      "name": "Not Publicly A",
+      "category": "Security",
+      "capability_id": "security.confidential_computing",
+      "capability_name": "CONFIDENTIAL COMPUTING",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_contai",
+      "name": "Oracle Contai",
+      "category": "Security",
+      "capability_id": "security.container_security",
+      "capability_name": "CONTAINER SECURITY",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_data_s",
+      "name": "Oracle Data S",
+      "category": "Security",
+      "capability_id": "security.data",
+      "capability_name": "DATA",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_web",
+      "name": "Oracle Web",
+      "category": "Security",
+      "capability_id": "security.ddos_protection",
+      "capability_name": "DDOS PROTECTION",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_identit",
+      "name": "Oracle Identit",
+      "category": "Security",
+      "capability_id": "security.identity_access_mgmt",
+      "capability_name": "IDENTITY & ACCESS MGMT",
+      "status": "active"
+    },
+    {
+      "id": "oci.access_manag",
+      "name": "Access Manag",
+      "category": "Security",
+      "capability_id": "security.iam",
+      "capability_name": "(IAM)",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_cloud",
+      "name": "Oracle Cloud",
+      "category": "Security",
+      "capability_id": "security.certificate_key",
+      "capability_name": "CERTIFICATE/KEY",
+      "status": "active"
+    },
+    {
+      "id": "oci.infrastructure",
+      "name": "Infrastructure",
+      "category": "Security",
+      "capability_id": "security.management",
+      "capability_name": "MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_manag",
+      "name": "Oracle Manag",
+      "category": "Security",
+      "capability_id": "security.microsoft_ad_support",
+      "capability_name": "MICROSOFT AD SUPPORT",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_govern",
+      "name": "Oracle Govern",
+      "category": "Security",
+      "capability_id": "security.regulated_cloud_zones",
+      "capability_name": "REGULATED CLOUD ZONES",
+      "status": "active"
+    },
+    {
+      "id": "oci.oci_compart",
+      "name": "OCI Compart",
+      "category": "Security",
+      "capability_id": "security.resource_access_policies",
+      "capability_name": "RESOURCE ACCESS POLICIES",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_secrets",
+      "name": "Oracle Secrets",
+      "category": "Security",
+      "capability_id": "security.secrets_management",
+      "capability_name": "SECRETS MANAGEMENT",
+      "status": "active"
+    },
+    {
+      "id": "oci.oracle_iam_co",
+      "name": "Oracle IAM Co",
+      "category": "Security",
+      "capability_id": "security.context_based_access",
+      "capability_name": "CONTEXT-BASED ACCESS",
+      "status": "active"
+    }
+  ]
+}

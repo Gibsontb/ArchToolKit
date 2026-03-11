@@ -1,0 +1,2149 @@
+{
+  "pulledAt": "2026-02-16T22:10:18.998Z",
+  "provider": "oci",
+  "count": 119,
+  "services": [
+    {
+      "provider": "oci",
+      "serviceId": "about-oracle",
+      "name": "About Oracle",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "About Oracle"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "administration-audit-automated-cemli-execution-cloud",
+      "name": "Administration Audit Automated CEMLI Execution Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Administration Audit Automated CEMLI Execution Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "ai-analytics-cloud-ai",
+      "name": "AI Analytics Cloud AI",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "AI Analytics Cloud AI"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "analytics-cloud",
+      "name": "Analytics Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Analytics Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "api-gateway",
+      "name": "API Gateway",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "API Gateway"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "application-dependency-management-blockchain-platform-database",
+      "name": "Application Dependency Management Blockchain Platform Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Application Dependency Management Blockchain Platform Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "application-performance-monitoring",
+      "name": "Application Performance Monitoring",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Application Performance Monitoring"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "archive-storage",
+      "name": "Archive Storage",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Archive Storage"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "archive-storage-block-volume-file-storage",
+      "name": "Archive Storage Block Volume File Storage",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Archive Storage Block Volume File Storage"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "artifact-registry",
+      "name": "Artifact Registry",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Artifact Registry"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-ai-database",
+      "name": "Autonomous AI Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous AI Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-ai-database-for-analytics-and-data-warehousing",
+      "name": "Autonomous AI Database for Analytics and Data Warehousing",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous AI Database for Analytics and Data Warehousing"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-ai-database-for-transaction-processing-and-mixed-workloads",
+      "name": "Autonomous AI Database for Transaction Processing and Mixed Workloads",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous AI Database for Transaction Processing and Mixed Workloads"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-ai-database-on-dedicated-exadata-infrastructure",
+      "name": "Autonomous AI Database on Dedicated Exadata Infrastructure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous AI Database on Dedicated Exadata Infrastructure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-ai-database-on-exadata-cloud-customer",
+      "name": "Autonomous AI Database on Exadata Cloud@Customer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous AI Database on Exadata Cloud@Customer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-ai-json-database",
+      "name": "Autonomous AI JSON Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous AI JSON Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "autonomous-linux-console-dashboards-database",
+      "name": "Autonomous Linux Console Dashboards Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Autonomous Linux Console Dashboards Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "aws-oracle-database",
+      "name": "AWS Oracle Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "AWS Oracle Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "azure-oracle-database",
+      "name": "Azure Oracle Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Azure Oracle Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "azure-oracle-database-service",
+      "name": "Azure Oracle Database Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Azure Oracle Database Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "base-database",
+      "name": "Base Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Base Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "batch-new-compute-container-instances-container-registry",
+      "name": "Batch New Compute Container Instances Container Registry",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Batch New Compute Container Instances Container Registry"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "cloud-advisor",
+      "name": "Cloud Advisor",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Cloud Advisor"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "cloud-at-customer",
+      "name": "Cloud at Customer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Cloud at Customer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "cloud-guard",
+      "name": "Cloud Guard",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Cloud Guard"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "compute",
+      "name": "Compute",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Compute"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "compute-cloud-customer",
+      "name": "Compute Cloud@Customer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Compute Cloud@Customer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "compute-cloud-customer-isolated",
+      "name": "Compute Cloud@Customer Isolated",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Compute Cloud@Customer Isolated"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "connectivity-cluster-placement-groups-dns",
+      "name": "Connectivity Cluster Placement Groups DNS",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Connectivity Cluster Placement Groups DNS"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "container-registry",
+      "name": "Container Registry",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Container Registry"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "customer-autonomous-recovery-service-base-database",
+      "name": "Customer Autonomous Recovery Service Base Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Customer Autonomous Recovery Service Base Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "customer-coherence-data-hub-data-visualization-database",
+      "name": "Customer Coherence Data Hub Data Visualization Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Customer Coherence Data Hub Data Visualization Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "customer-compute-cloud",
+      "name": "Customer Compute Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Customer Compute Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "customer-external-database-globally-distributed-autonomous-ai",
+      "name": "Customer External Database Globally Distributed Autonomous AI",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Customer External Database Globally Distributed Autonomous AI"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "customer-isolated-private-cloud",
+      "name": "Customer Isolated Private Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Customer Isolated Private Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "data-catalog-data-flow-data-safe-database",
+      "name": "Data Catalog Data Flow Data Safe Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Data Catalog Data Flow Data Safe Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "data-preparation-blockchain-platform-business-intelligence-cloud",
+      "name": "Data Preparation Blockchain Platform Business Intelligence Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Data Preparation Blockchain Platform Business Intelligence Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "data-warehousing-autonomous-ai-json-database",
+      "name": "Data Warehousing Autonomous AI JSON Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Data Warehousing Autonomous AI JSON Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "database-backup",
+      "name": "Database Backup",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Database Backup"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "database-globally-distributed-exadata-database",
+      "name": "Database Globally Distributed Exadata Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Database Globally Distributed Exadata Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "database-management",
+      "name": "Database Management",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Database Management"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "database-migration",
+      "name": "Database Migration",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Database Migration"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "database-tools",
+      "name": "Database Tools",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Database Tools"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "dedicated-exadata-infrastructure-autonomous-ai-database",
+      "name": "Dedicated Exadata Infrastructure Autonomous AI Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Dedicated Exadata Infrastructure Autonomous AI Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "dedicated-infrastructure-exadata-database-service",
+      "name": "Dedicated Infrastructure Exadata Database Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Dedicated Infrastructure Exadata Database Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "devops-digital-assistant-email-delivery-events-functions",
+      "name": "DevOps Digital Assistant Email Delivery Events Functions",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "DevOps Digital Assistant Email Delivery Events Functions"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "dns-and-traffic-management",
+      "name": "DNS and Traffic Management",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "DNS and Traffic Management"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "documentation-try-free-tier-launch-oracle-cloud",
+      "name": "Documentation Try Free Tier Launch Oracle Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Documentation Try Free Tier Launch Oracle Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "dyn-managed-dns-ravello-storage",
+      "name": "Dyn Managed DNS Ravello Storage",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Dyn Managed DNS Ravello Storage"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "exadata-cloud",
+      "name": "Exadata Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Exadata Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "exadata-database-service-on-cloud-customer",
+      "name": "Exadata Database Service on Cloud@Customer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Exadata Database Service on Cloud@Customer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "exadata-database-service-on-dedicated-infrastructure",
+      "name": "Exadata Database Service on Dedicated Infrastructure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Exadata Database Service on Dedicated Infrastructure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "exadata-database-service-on-exascale-infrastructure",
+      "name": "Exadata Database Service on Exascale Infrastructure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Exadata Database Service on Exascale Infrastructure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "exascale-infrastructure-exadata-database-service",
+      "name": "Exascale Infrastructure Exadata Database Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Exascale Infrastructure Exadata Database Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "exascale-infrastructure-mysql-heatwave-nosql-database",
+      "name": "Exascale Infrastructure MySQL Heatwave NoSQL Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Exascale Infrastructure MySQL Heatwave NoSQL Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "external-database",
+      "name": "External Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "External Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "file-storage",
+      "name": "File Storage",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "File Storage"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "file-storage-with-lustre",
+      "name": "File Storage with Lustre",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "File Storage with Lustre"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "firewall-zero-trust-packet-routing-storage",
+      "name": "Firewall Zero Trust Packet Routing Storage",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Firewall Zero Trust Packet Routing Storage"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "full-stack-disaster-recovery-multicloud-oracle-database",
+      "name": "Full Stack Disaster Recovery Multicloud Oracle Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Full Stack Disaster Recovery Multicloud Oracle Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "functions",
+      "name": "Functions",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Functions"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "globally-distributed-autonomous-ai-database",
+      "name": "Globally Distributed Autonomous AI Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Globally Distributed Autonomous AI Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "globally-distributed-exadata-database-on-exascale-infrastructure",
+      "name": "Globally Distributed Exadata Database on Exascale Infrastructure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Globally Distributed Exadata Database on Exascale Infrastructure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "google-cloud",
+      "name": "Google Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Google Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "google-cloud-oracle-multicloud-hub-new-networking",
+      "name": "Google Cloud Oracle Multicloud Hub New Networking",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Google Cloud Oracle Multicloud Hub New Networking"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "guard-compliance-documents-identity",
+      "name": "Guard Compliance Documents Identity",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Guard Compliance Documents Identity"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "iam-with-identity-domains",
+      "name": "IAM with Identity Domains",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "IAM with Identity Domains"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "iam-without-identity-domains",
+      "name": "IAM without Identity Domains",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "IAM without Identity Domains"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "identity-domains-managed-access-secret-management-service",
+      "name": "Identity Domains Managed Access Secret Management Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Identity Domains Managed Access Secret Management Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "kubernetes-engine",
+      "name": "Kubernetes Engine (OKE)",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Kubernetes Engine (OKE)"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "language-speech-vision-application-development-api-gateway",
+      "name": "Language Speech Vision Application Development API Gateway",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Language Speech Vision Application Development API Gateway"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "load-balancer",
+      "name": "Load Balancer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Load Balancer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "logging",
+      "name": "Logging",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Logging"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "logging-management-agent-management-dashboard-monitoring",
+      "name": "Logging Management Agent Management Dashboard Monitoring",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Logging Management Agent Management Dashboard Monitoring"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "lustre-object-storage-other-services-analytics-services",
+      "name": "Lustre Object Storage Other Services Analytics Services",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Lustre Object Storage Other Services Analytics Services"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "managed-cloud-self-service-platform",
+      "name": "Managed Cloud Self Service Platform",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Managed Cloud Self Service Platform"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "management-application-performance-monitoring",
+      "name": "Management Application Performance Monitoring",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Management Application Performance Monitoring"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "migration-oci-database",
+      "name": "Migration OCI Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Migration OCI Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "mixed-workloads-autonomous-ai-database",
+      "name": "Mixed Workloads Autonomous AI Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Mixed Workloads Autonomous AI Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "monitoring",
+      "name": "Monitoring",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Monitoring"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "network-load-balancer",
+      "name": "Network Load Balancer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Network Load Balancer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "network-load-balancer-networking-network",
+      "name": "Network Load Balancer Networking Network",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Network Load Balancer Networking Network"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "networking",
+      "name": "Networking",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Networking"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "nosql-database",
+      "name": "NoSQL Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "NoSQL Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "object-storage",
+      "name": "Object Storage",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Object Storage"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oci-database-with-postgresql",
+      "name": "OCI Database with PostgreSQL",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "OCI Database with PostgreSQL"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oke-edge-cloud-compute-cloud",
+      "name": "OKE Edge Cloud Compute Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "OKE Edge Cloud Compute Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "opensearch-timesten-database",
+      "name": "OpenSearch TimesTen Database",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "OpenSearch TimesTen Database"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-dyn-email-delivery",
+      "name": "Oracle + Dyn Email Delivery",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle + Dyn Email Delivery"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-dyn-managed-dns",
+      "name": "Oracle + Dyn Managed DNS",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle + Dyn Managed DNS"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-apex",
+      "name": "Oracle APEX",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle APEX"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-apex-apex-service",
+      "name": "Oracle APEX APEX Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle APEX APEX Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-cloud",
+      "name": "Oracle Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-cloud-infrastructure-documentation",
+      "name": "Oracle Cloud Infrastructure Documentation",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Cloud Infrastructure Documentation"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-cloud-infrastructure-documentation-oracle-cloud",
+      "name": "Oracle Cloud Infrastructure Documentation Oracle Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Cloud Infrastructure Documentation Oracle Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-cloud-migrations",
+      "name": "Oracle Cloud Migrations",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Cloud Migrations"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-database-service-for-azure",
+      "name": "Oracle Database Service for Azure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Database Service for Azure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-database-aws",
+      "name": "Oracle Database@AWS",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Database@AWS"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-database-azure",
+      "name": "Oracle Database@Azure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Database@Azure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-database-google-cloud",
+      "name": "Oracle Database@Google Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Database@Google Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-interconnect-for-azure",
+      "name": "Oracle Interconnect for Azure",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Interconnect for Azure"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-interconnect-for-google-cloud",
+      "name": "Oracle Interconnect for Google Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Interconnect for Google Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-linux",
+      "name": "Oracle Linux",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Linux"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-multicloud-hub",
+      "name": "Oracle Multicloud Hub",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Multicloud Hub"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-support-rewards",
+      "name": "Oracle Support Rewards",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Support Rewards"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "oracle-support-rewards-compute-artifact-registry",
+      "name": "Oracle Support Rewards Compute Artifact Registry",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Oracle Support Rewards Compute Artifact Registry"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "postgresql-exadata-database-service",
+      "name": "PostgreSQL Exadata Database Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "PostgreSQL Exadata Database Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "private-cloud-appliance",
+      "name": "Private Cloud Appliance",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Private Cloud Appliance"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "resource-manager-search-stack-monitoring",
+      "name": "Resource Manager Search Stack Monitoring",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Resource Manager Search Stack Monitoring"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "scheduler-support-requests-tagging-integration-api-gateway",
+      "name": "Scheduler Support Requests Tagging Integration API Gateway",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Scheduler Support Requests Tagging Integration API Gateway"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "security-advisor-security-zones-threat-intelligence-vault",
+      "name": "Security Advisor Security Zones Threat Intelligence Vault",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Security Advisor Security Zones Threat Intelligence Vault"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "security-guide-access-governance-bastion-certificates-cloud",
+      "name": "Security Guide Access Governance Bastion Certificates Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Security Guide Access Governance Bastion Certificates Cloud"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "stack-monitoring",
+      "name": "Stack Monitoring",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Stack Monitoring"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "storage-software-appliance",
+      "name": "Storage Software Appliance",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Storage Software Appliance"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "things-managed-cloud-self-service",
+      "name": "Things Managed Cloud Self Service",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Things Managed Cloud Self Service"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "timesten-database-for-oke",
+      "name": "TimesTen Database for OKE",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "TimesTen Database for OKE"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "traffic-management-fastconnect-ip-management-load-balancer",
+      "name": "Traffic Management FastConnect IP Management Load Balancer",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Traffic Management FastConnect IP Management Load Balancer"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "vault",
+      "name": "Vault",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "Vault"
+      }
+    },
+    {
+      "provider": "oci",
+      "serviceId": "vmware-solution-oracle-cloud",
+      "name": "VMware Solution Oracle Cloud",
+      "aliases": [],
+      "source": {
+        "type": "public_scrape",
+        "candidates": [
+          "https://docs.oracle.com/en-us/iaas/api/",
+          "https://docs.oracle.com/en-us/iaas/Content/home.htm",
+          "https://docs.oracle.com/en-us/iaas/Content/index.htm",
+          "https://www.oracle.com/cloud/cloud-native/services/"
+        ]
+      },
+      "raw": {
+        "name": "VMware Solution Oracle Cloud"
+      }
+    }
+  ]
+}

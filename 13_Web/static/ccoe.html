@@ -1,0 +1,1413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Court CCoE · Cloud Center of Excellence Design</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, #111827, #020617 60%),
+        radial-gradient(circle at bottom, #000000, #020617 70%);
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1150px;
+      background: rgba(15, 23, 42, 0.94);
+      border-radius: 18px;
+      padding: 1.5rem 1.75rem 1.75rem;
+      box-shadow:
+        0 22px 60px rgba(0, 0, 0, 0.85),
+        0 0 0 1px rgba(148, 163, 184, 0.35);
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: -40%;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.18), transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.16), transparent 55%),
+        radial-gradient(circle at 50% 100%, rgba(16, 185, 129, 0.11), transparent 55%);
+      opacity: 0.95;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
+    .card-inner {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.25rem;
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      min-width: 0;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+
+    h1.page-title {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+
+    .page-title-hint {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      margin: 0;
+    }
+
+    .pill {
+      border-radius: 999px;
+      border: 1px solid rgba(248, 250, 252, 0.9);
+      padding: 0.18rem 0.6rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      color: #e5e7eb;
+      background: rgba(15, 23, 42, 0.95);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.3);
+    }
+
+    .tagline {
+      margin: 0.1rem 0 0;
+      font-size: 0.86rem;
+      color: #d1d5db;
+      max-width: 720px;
+    }
+
+    .meta {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin-top: 0.1rem;
+    }
+
+    .meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .meta-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.9);
+    }
+
+    .main-menu-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.4rem 0.95rem;
+      font-size: 0.8rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.06s ease;
+      white-space: nowrap;
+    }
+
+    .main-menu-btn:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .workspace {
+      margin-top: 0.3rem;
+      border-radius: 1rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      min-height: 520px;
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 55%);
+      overflow: hidden;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+    }
+
+    .ccoe-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .ccoe-nav {
+      width: 245px;
+      min-width: 220px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.4);
+      padding: 1rem;
+      box-sizing: border-box;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.82));
+      backdrop-filter: blur(18px);
+      overflow-y: auto;
+      font-size: 0.83rem;
+    }
+
+    .ccoe-nav h2 {
+      margin: 0 0 0.35rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .ccoe-nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .ccoe-nav-section-label {
+      margin-top: 0.7rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .ccoe-nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .ccoe-nav li {
+      margin: 0;
+    }
+
+    .ccoe-nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.22rem 0.4rem;
+      border-radius: 999px;
+      transition:
+        background 0.12s ease,
+        color 0.12s ease,
+        transform 0.04s ease;
+    }
+
+    .ccoe-nav a:hover {
+      background: rgba(37, 99, 235, 0.25);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+
+    .ccoe-content {
+      flex: 1;
+      padding: 1rem 1.25rem 1.1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+      font-size: 0.85rem;
+    }
+
+    .ccoe-section {
+      margin-bottom: 1.5rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.45);
+    }
+
+    .ccoe-section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0.4rem;
+    }
+
+    .ccoe-section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .ccoe-section-header h2 {
+      margin: 0;
+      font-size: 1.02rem;
+      font-weight: 600;
+    }
+
+    .ccoe-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96, 165, 250, 0.75);
+      color: #bfdbfe;
+      background: rgba(15, 23, 42, 0.96);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .ccoe-tagline {
+      margin: 0.3rem 0 0.4rem;
+      color: #9ca3af;
+      font-size: 0.82rem;
+    }
+
+    .ccoe-columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .ccoe-pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.35rem;
+    }
+
+    .ccoe-pill {
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      border: 1px solid rgba(156, 163, 175, 0.85);
+      color: #e5e7eb;
+      white-space: nowrap;
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .ccoe-pill--primary {
+      border-color: rgba(59, 130, 246, 0.9);
+      color: #dbeafe;
+    }
+
+    .ccoe-list {
+      margin: 0.35rem 0 0.2rem;
+      padding-left: 1.1rem;
+      font-size: 0.82rem;
+    }
+
+    .ccoe-list li {
+      margin-bottom: 0.18rem;
+    }
+
+    .ccoe-callout {
+      font-size: 0.8rem;
+      border-radius: 0.7rem;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid rgba(59, 130, 246, 0.85);
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.35), rgba(15, 23, 42, 0.96));
+      color: #e5e7eb;
+    }
+
+    .ccoe-callout strong {
+      color: #bfdbfe;
+      font-weight: 600;
+    }
+
+    .ccoe-kv {
+      margin: 0.4rem 0;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 0.15rem 0.6rem;
+      font-size: 0.8rem;
+    }
+
+    .ccoe-kv dt {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .ccoe-kv dd {
+      margin: 0;
+      color: #9ca3af;
+    }
+
+    .ccoe-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.45rem;
+      font-size: 0.8rem;
+      border-radius: 0.7rem;
+      overflow: hidden;
+    }
+
+    .ccoe-table thead {
+      background: rgba(15, 23, 42, 0.98);
+    }
+
+    .ccoe-table th,
+    .ccoe-table td {
+      border: 1px solid rgba(55, 65, 81, 0.95);
+      padding: 0.3rem 0.45rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .ccoe-table th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .ccoe-table td {
+      color: #d1d5db;
+    }
+
+    .ccoe-note {
+      margin-top: 0.4rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .ccoe-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-top: 0.3rem;
+    }
+
+    .ccoe-chip {
+      font-size: 0.7rem;
+      border-radius: 999px;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid rgba(148, 163, 184, 0.85);
+      background: rgba(15, 23, 42, 0.95);
+      color: #e5e7eb;
+    }
+
+    .footnote {
+      margin-top: 0.4rem;
+      font-size: 0.75rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+
+    @media (max-width: 950px) {
+      .ccoe-layout {
+        flex-direction: column;
+      }
+
+      .ccoe-nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+      }
+
+      .ccoe-columns {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 1.25rem;
+      }
+
+      .card {
+        padding: 1.1rem 1.1rem 1.3rem;
+      }
+
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      h1.page-title {
+        font-size: 1.35rem;
+      }
+
+      .footnote {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <div class="card-inner">
+        <header>
+          <div class="title-block">
+            <div class="title-row">
+              <h1 class="page-title" contenteditable="true" spellcheck="false">
+                Court Cloud CCoE · Migration & Platform Design
+              </h1>
+              <div class="pill">
+                <span class="pill-dot"></span>
+                <span>Courts · CCoE · Landing Zones</span>
+              </div>
+            </div>
+            <p class="page-title-hint">
+              This is for the devlopment of a CCOE for the Federal Court System.
+            </p>
+            <p class="tagline">
+              Full design for a Cloud Center of Excellence focused on court migrations:
+              landing zones, migration factory, governance, security, and operations.
+            </p>
+            <div class="meta">
+              <span><span class="meta-dot"></span> Multi-court · Multi-cloud ready</span>
+              <span><span class="meta-dot"></span> Terraform · Ansible · CI/CD integrated</span>
+              <span><span class="meta-dot"></span> P1 · P2 · P3 data classifications</span>
+            </div>
+          </div>
+          <button
+            class="main-menu-btn"
+            type="button"
+            onclick="window.location.href='index.html'">
+            ← Main menu
+          </button>
+        </header>
+
+        <section class="workspace">
+          <div class="ccoe-layout">
+            <!-- NAV -->
+            <nav class="ccoe-nav">
+              <h2>Court CCoE Blueprint</h2>
+              <p>Use this as the master reference for court migrations and cloud operations.</p>
+
+              <div class="ccoe-nav-section-label">Overview</div>
+              <ul>
+                <li><a href="#ccoe-overview">1. Purpose &amp; Scope</a></li>
+                <li><a href="#ccoe-pillars">2. CCoE Pillars &amp; Roles</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Operating Model</div>
+              <ul>
+                <li><a href="#ccoe-engagement">3. Engagement Model (Courts &amp; CCoE)</a></li>
+                <li><a href="#ccoe-raci">4. RACI Snapshot</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Platform &amp; Landing Zones</div>
+              <ul>
+                <li><a href="#ccoe-platform-structure">5. Landing Zone Structure</a></li>
+                <li><a href="#ccoe-platform-services">6. Shared Platform Services</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Tooling &amp; Automation</div>
+              <ul>
+                <li><a href="#ccoe-tooling-iac">7. Infrastructure as Code</a></li>
+                <li><a href="#ccoe-tooling-config">8. Configuration &amp; Pipelines</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Governance &amp; Compliance</div>
+              <ul>
+                <li><a href="#ccoe-governance">9. Policy Layers &amp; Guardrails</a></li>
+                <li><a href="#ccoe-framework-mapping">10. Framework &amp; Control Mapping</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Migration Factory</div>
+              <ul>
+                <li><a href="#ccoe-mig-factory">11. Migration Factory Design</a></li>
+                <li><a href="#ccoe-mig-lifecycle">12. Migration Lifecycle (Per App)</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Security &amp; Network</div>
+              <ul>
+                <li><a href="#ccoe-security">13. Security Architecture</a></li>
+                <li><a href="#ccoe-network">14. Network &amp; Connectivity</a></li>
+              </ul>
+
+              <div class="ccoe-nav-section-label">Operations &amp; Roadmap</div>
+              <ul>
+                <li><a href="#ccoe-ops">15. Operations, SRE &amp; FinOps</a></li>
+                <li><a href="#ccoe-roadmap">16. Maturation Phases &amp; Roadmap</a></li>
+              </ul>
+            </nav>
+
+            <!-- CONTENT -->
+            <main class="ccoe-content">
+              <!-- 1. PURPOSE & SCOPE -->
+              <section id="ccoe-overview" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>1. Purpose &amp; Scope of the Court CCoE</h2>
+                  <span class="ccoe-badge">Orientation</span>
+                </div>
+                <p class="ccoe-tagline">
+                  The Cloud Center of Excellence (CCoE) provides a single, governed way to migrate
+                  and run court workloads in the cloud across multiple courts, environments, and
+                  clouds, under strict security and compliance requirements.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <dl class="ccoe-kv">
+                      <dt>Mission</dt>
+                      <dd>
+                        Design, build, and operate a cloud platform that safely hosts court
+                        workloads: case management, evidence, scheduling, finance, HR, and more,
+                        at P1/P2/P3 data sensitivity.
+                      </dd>
+
+                      <dt>Scope</dt>
+                      <dd>
+                        Multi-court (state, county, municipal) and multi-environment (Dev, Test,
+                        Training, Pre-Prod, Prod, DR), with patterns that can extend to multi-cloud.
+                      </dd>
+
+                      <dt>Outcomes</dt>
+                      <dd>
+                        Standard landing zones, a migration factory, mapped governance, reusable
+                        Terraform/Ansible blueprints, and a repeatable path for each court to
+                        onboard.
+                      </dd>
+                    </dl>
+
+                    <div class="ccoe-pill-row">
+                      <span class="ccoe-pill ccoe-pill--primary">Landing Zones</span>
+                      <span class="ccoe-pill ccoe-pill--primary">Migration Factory</span>
+                      <span class="ccoe-pill">Governance &amp; Controls</span>
+                      <span class="ccoe-pill">Security &amp; Compliance</span>
+                      <span class="ccoe-pill">Operations &amp; FinOps</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="ccoe-callout">
+                      <strong>Architect’s intent:</strong>
+                      this CCoE is not a “committee.” It is a delivery engine with
+                      opinionated templates and automation. Courts shouldn’t invent their own
+                      cloud practices; they plug into this blueprint.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 2. CCOE PILLARS & ROLES -->
+              <section id="ccoe-pillars" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>2. CCoE Pillars &amp; Roles</h2>
+                  <span class="ccoe-badge">Organization</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Structure the CCoE into capability pillars that own standards, patterns, and
+                  automation — not just documents.
+                </p>
+
+                <table class="ccoe-table">
+                  <thead>
+                    <tr>
+                      <th>Pillar</th>
+                      <th>Primary Responsibilities</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Cloud Strategy &amp; Governance</strong></td>
+                      <td>
+                        Own the cloud roadmap, policies, and guardrails. Approve reference architectures,
+                        risk posture, and exceptions. Maintain governance documentation and alignment to
+                        court business goals.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Platform Engineering (Landing Zones)</strong></td>
+                      <td>
+                        Design and build multi-account/subscription landing zones, network baselines, IAM,
+                        and shared services. Own Terraform platform modules and golden images.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Security &amp; Compliance</strong></td>
+                      <td>
+                        Map HIPAA, CJIS-like rules, FIPS, NIST, ISO, etc. into technical controls.
+                        Own CIS/STIG baselines, encryption standards, key management, and continuous
+                        compliance evidence.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Network &amp; Connectivity</strong></td>
+                      <td>
+                        Design and operate hub-and-spoke networks, court connectivity (VPN/DirectConnect,
+                        etc.), segmentation for P1/P2/P3, and integration with justice networks.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Data &amp; Integration</strong></td>
+                      <td>
+                        Define data classification, retention, and replication. Own data landing zones,
+                        ETL/ELT patterns, APIs, event buses, and integrations with external systems.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Application Modernization &amp; Migration Factory</strong></td>
+                      <td>
+                        Own application inventory, migration assessments, patterns (lift &amp; shift, replatform,
+                        refactor), wave planning, and migration runbooks for each court.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Operations, SRE &amp; FinOps</strong></td>
+                      <td>
+                        Run observability stack, incident response, capacity planning, and cost management.
+                        Define SLIs/SLOs and cost allocation/showback to courts.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="ccoe-note">
+                  In a smaller organization, these can be “virtual pillars” (same people wearing
+                  multiple hats) as long as responsibilities remain clearly defined.
+                </p>
+              </section>
+
+              <!-- 3. ENGAGEMENT MODEL -->
+              <section id="ccoe-engagement" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>3. Engagement Model (Courts &amp; CCoE)</h2>
+                  <span class="ccoe-badge">Operating Model</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Courts interact with the CCoE through a clear onboarding and migration flow —
+                  not ad-hoc tickets and emails.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">3.1 Court Engagement Lifecycle</h3>
+                    <ol class="ccoe-list">
+                      <li><strong>Intake &amp; Readiness</strong> – Court requests onboarding; CCoE performs readiness assessment (network, identity, data sensitivity, key systems).</li>
+                      <li><strong>Landing Zone Assignment</strong> – Court is mapped to a landing zone type:
+                        <ul class="ccoe-list">
+                          <li><strong>LZ-Basic</strong> – Mostly P1 workloads.</li>
+                          <li><strong>LZ-Standard</strong> – P2 workloads with moderate sensitivity.</li>
+                          <li><strong>LZ-Secure</strong> – P3/CJIS-like workloads, PHI/PII.</li>
+                        </ul>
+                      </li>
+                      <li><strong>Portfolio Assessment &amp; Wave Planning</strong> – Inventory all court systems; assign migration strategies and group into waves.</li>
+                      <li><strong>Landing Zone Build &amp; Validation</strong> – Terraform pipelines create the court-specific landing zone; CCoE validates security, connectivity, identity and logging.</li>
+                      <li><strong>Application &amp; Data Migration</strong> – Migration factory waves run using standardized runbooks, patterns, and automation.</li>
+                      <li><strong>Operate &amp; Improve</strong> – Court moves into normal operations with periodic posture reviews and continuous improvement of baselines.</li>
+                    </ol>
+                  </div>
+                  <div>
+                    <div class="ccoe-callout">
+                      <strong>Intake artifacts:</strong>
+                      <br />
+                      – Court profile (size, types of cases, existing vendors).<br />
+                      – Data classification inventory (P1–P3).<br />
+                      – Initial risk assessment.<br />
+                      – List of active projects and deadlines (e.g., mandated legacy system retirement dates).
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 4. RACI -->
+              <section id="ccoe-raci" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>4. RACI Snapshot</h2>
+                  <span class="ccoe-badge">Responsibilities</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Clarify who is accountable vs responsible across CCoE, court IT, security, and
+                  vendors to avoid “everyone and no one” owning critical outcomes.
+                </p>
+
+                <table class="ccoe-table">
+                  <thead>
+                    <tr>
+                      <th>Activity</th>
+                      <th>CCoE</th>
+                      <th>Court IT</th>
+                      <th>Security Office</th>
+                      <th>Vendors / Integrators</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Define cloud standards &amp; landing zones</td>
+                      <td><strong>A</strong></td>
+                      <td>C</td>
+                      <td>C</td>
+                      <td>I</td>
+                    </tr>
+                    <tr>
+                      <td>Design migration wave plans</td>
+                      <td><strong>A</strong></td>
+                      <td><strong>R</strong></td>
+                      <td>C</td>
+                      <td>R</td>
+                    </tr>
+                    <tr>
+                      <td>Implement Terraform/Ansible baselines</td>
+                      <td><strong>A/R</strong></td>
+                      <td>C</td>
+                      <td>C</td>
+                      <td>R</td>
+                    </tr>
+                    <tr>
+                      <td>Security control definition &amp; sign-off</td>
+                      <td>C</td>
+                      <td>C</td>
+                      <td><strong>A/R</strong></td>
+                      <td>I</td>
+                    </tr>
+                    <tr>
+                      <td>Day-to-day application support</td>
+                      <td>I</td>
+                      <td><strong>A/R</strong></td>
+                      <td>C</td>
+                      <td>R (if under contract)</td>
+                    </tr>
+                    <tr>
+                      <td>Incident response &amp; escalation</td>
+                      <td>A/R (platform)</td>
+                      <td>A/R (app)</td>
+                      <td>A (security incidents)</td>
+                      <td>R (if vendor-owned app)</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="ccoe-note">
+                  A = Accountable, R = Responsible, C = Consulted, I = Informed.
+                </p>
+              </section>
+
+              <!-- 5. PLATFORM STRUCTURE -->
+              <section id="ccoe-platform-structure" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>5. Landing Zone Structure</h2>
+                  <span class="ccoe-badge">Platform</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Landing zones are the standardized, Terraform-built environments that each court
+                  receives. They are templated, not one-off snowflakes.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">5.1 Organizational Hierarchy</h3>
+                    <ul class="ccoe-list">
+                      <li><strong>Org Root / Management Groups</strong> – global guardrails and high-level policies.</li>
+                      <li><strong>Security &amp; Logging Accounts</strong> – central security tooling, SIEM, audit logs.</li>
+                      <li><strong>Shared Services</strong> – identity, DNS, CI/CD tooling, registries.</li>
+                      <li><strong>Court OUs / Management Groups</strong> – one per court (or court cluster) with:
+                        <ul class="ccoe-list">
+                          <li>Dev</li>
+                          <li>Test/QA</li>
+                          <li>Prod</li>
+                          <li>DR (optional separate)</li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">5.2 Environment Breakdown</h3>
+                    <table class="ccoe-table">
+                      <thead>
+                        <tr>
+                          <th>Environment</th>
+                          <th>Purpose</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><strong>Dev</strong></td>
+                          <td>Experimentation and early integration; relaxed guardrails but still policy-controlled.</td>
+                        </tr>
+                        <tr>
+                          <td><strong>Test / QA</strong></td>
+                          <td>Realistic, near-prod tests for functionality and performance.</td>
+                        </tr>
+                        <tr>
+                          <td><strong>Prod</strong></td>
+                          <td>Strict policies, P2/P3 workloads, strong logging, access review, and auditing.</td>
+                        </tr>
+                        <tr>
+                          <td><strong>DR</strong></td>
+                          <td>Failover region or account with replication for critical P3 workloads.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 6. SHARED PLATFORM SERVICES -->
+              <section id="ccoe-platform-services" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>6. Shared Platform Services</h2>
+                  <span class="ccoe-badge">Platform Services</span>
+                </div>
+                <p class="ccoe-tagline">
+                  CCoE-provided platform services keep every court from reinventing identity,
+                  logging, monitoring, CI/CD, and security from scratch.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">6.1 Identity &amp; Access</h3>
+                    <ul class="ccoe-list">
+                      <li>Central identity provider (AD/IdP) with SSO into cloud consoles and apps.</li>
+                      <li>Role-based access (RBAC) for platform, court admins, and vendor accounts.</li>
+                      <li>Mandatory MFA for privileged roles and P2/P3 access.</li>
+                      <li>Just-in-time elevation and break-glass accounts with strict monitoring.</li>
+                    </ul>
+
+                    <h3 style="margin:0.5rem 0 0.25rem;">6.2 Logging &amp; Monitoring</h3>
+                    <ul class="ccoe-list">
+                      <li>Central log aggregation for audit, application, and infrastructure logs.</li>
+                      <li>Standard dashboards per court, per environment, and per application.</li>
+                      <li>Alerting rules for performance, availability, and security events.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">6.3 Network &amp; Security Services</h3>
+                    <ul class="ccoe-list">
+                      <li>Hub-and-spoke network topology with central transit connectivity.</li>
+                      <li>Edge WAF and DDoS protections at public entry points.</li>
+                      <li>Endpoint protection, vulnerability scanning, and compliance scanning.</li>
+                      <li>Key management services (KMS) for encryption at rest and in transit.</li>
+                    </ul>
+
+                    <div class="ccoe-callout">
+                      <strong>Reuse pattern:</strong> each new court landing zone
+                      attaches to the same shared services for identity, logs, and CI/CD,
+                      but has its own accounts, policies, and data boundaries.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 7. INFRASTRUCTURE AS CODE -->
+              <section id="ccoe-tooling-iac" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>7. Infrastructure as Code (Terraform)</h2>
+                  <span class="ccoe-badge">Tooling</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Terraform is the primary “owner of truth” for cloud infrastructure, including
+                  landing zones, accounts, and shared services.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">7.1 Platform Modules</h3>
+                    <ul class="ccoe-list">
+                      <li>Org / Mgmt groups and account/subscription creation.</li>
+                      <li>VPC/VNet/VCN, subnets, routing, and transit networking.</li>
+                      <li>IAM roles, policies, and service principals.</li>
+                      <li>Logging, monitoring, and security tools (CSPM, SIEM integration).</li>
+                    </ul>
+
+                    <h3 style="margin:0.4rem 0 0.25rem;">7.2 Court Landing Modules</h3>
+                    <ul class="ccoe-list">
+                      <li>Standard court stacks: web/app/db tiers, message queues, object storage.</li>
+                      <li>Secure storage for evidence, documents, and case histories.</li>
+                      <li>Patterns for vendor-hosted vs court-hosted applications.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">7.3 Module Governance</h3>
+                    <ul class="ccoe-list">
+                      <li>Internal Terraform module registry with semantic versioning.</li>
+                      <li>Promotion pipelines (dev → test → prod) with security and compliance checks.</li>
+                      <li>Policies-as-code (e.g., Sentinel/OPA) to enforce tagging, encryption, and guardrails.</li>
+                    </ul>
+
+                    <div class="ccoe-callout">
+                      <strong>Rule of thumb:</strong> courts consume only approved CCoE modules.
+                      If a new pattern is needed, it is designed jointly, added to the registry,
+                      and then re-used — not hand-built per court.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 8. CONFIG & PIPELINES -->
+              <section id="ccoe-tooling-config" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>8. Configuration, Ansible &amp; CI/CD</h2>
+                  <span class="ccoe-badge">Tooling</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Ansible and CI/CD pipelines are the configuration and day-2 operations layer,
+                  working on top of the Terraform-built landing zones.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">8.1 Ansible Baselines</h3>
+                    <ul class="ccoe-list">
+                      <li>OS hardening roles aligned with CIS/STIG for Linux and Windows.</li>
+                      <li>Agent installation roles for monitoring, logging, EDR, backups.</li>
+                      <li>Application deployment roles for common court application types.</li>
+                      <li>Compliance roles for periodic re-enforcement (check mode and remediation).</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">8.2 CI/CD Pipelines</h3>
+                    <ul class="ccoe-list">
+                      <li>Template pipelines for Terraform:
+                        <ul class="ccoe-list">
+                          <li>Validate → plan → review/approve → apply → post-checks.</li>
+                        </ul>
+                      </li>
+                      <li>Template pipelines for Ansible:
+                        <ul class="ccoe-list">
+                          <li>Lint → Molecule tests → dry-run (check mode) → controlled rollout.</li>
+                        </ul>
+                      </li>
+                      <li>App pipelines:
+                        <ul class="ccoe-list">
+                          <li>Build → test → scan → deploy with blue/green or rolling patterns.</li>
+                        </ul>
+                      </li>
+                    </ul>
+
+                    <p class="ccoe-note">
+                      Terraform and Ansible pipelines should both report into the same
+                      change management and evidence stores to simplify audits.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 9. GOVERNANCE & POLICY LAYERS -->
+              <section id="ccoe-governance" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>9. Policy Layers &amp; Guardrails</h2>
+                  <span class="ccoe-badge">Governance</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Governance is implemented as layered policies, not just documents. Each layer
+                  corresponds to specific Terraform, Ansible, and process controls.
+                </p>
+
+                <table class="ccoe-table">
+                  <thead>
+                    <tr>
+                      <th>Policy Layer</th>
+                      <th>Description</th>
+                      <th>Implementation Examples</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Org / Tenant Policies</strong></td>
+                      <td>High-level rules for cloud usage across all courts.</td>
+                      <td>
+                        Allowed regions list, restrictions on root accounts, global MFA requirement,
+                        baseline logging and retention rules.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Platform Guardrails</strong></td>
+                      <td>Guardrails baked into landing zones and shared services.</td>
+                      <td>
+                        SCPs, IAM policy baselines, default VPC/VNet lockdown, required tagging policies,
+                        encryption enforcement.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Workload Policies</strong></td>
+                      <td>Expectations for specific apps and data classes.</td>
+                      <td>
+                        App-level network rules, access patterns, retention for case data, evidence handling,
+                        chain-of-custody logging.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Process Policies</strong></td>
+                      <td>Procedural and operational rules.</td>
+                      <td>
+                        Change management, incident response, DR testing cadence, vendor onboarding and
+                        assessment, training policies.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="ccoe-note">
+                  Your <code>governances.html</code> page can link back to specific CCoE controls
+                  in this document and to Terraform/Ansible modules that implement them.
+                </p>
+              </section>
+
+              <!-- 10. FRAMEWORK MAPPING -->
+              <section id="ccoe-framework-mapping" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>10. Framework &amp; Control Mapping</h2>
+                  <span class="ccoe-badge">Compliance</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Map regulations (HIPAA, PCI, CJIS-like, FISMA, etc.) to frameworks (NIST, ISO,
+                  CIS) and then to concrete platform and automation controls.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">10.1 Mapping Dimensions</h3>
+                    <ul class="ccoe-list">
+                      <li><strong>Regulation</strong> – e.g., HIPAA, CJIS-like requirements, state-level mandates.</li>
+                      <li><strong>Framework</strong> – e.g., NIST 800-53, ISO 27001, CIS Benchmarks.</li>
+                      <li><strong>Control</strong> – individual requirements (logging, access, encryption, etc.).</li>
+                      <li><strong>Implementation</strong> – Terraform modules, Ansible roles, pipelines, processes.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">10.2 Example Control Mapping</h3>
+                    <table class="ccoe-table">
+                      <thead>
+                        <tr>
+                          <th>Control</th>
+                          <th>Implementation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>Encryption at rest for P3 data</td>
+                          <td>Terraform modules that enforce KMS-backed encryption for all storage &amp; DBs; Ansible checks for encryption flags; periodic scans.</td>
+                        </tr>
+                        <tr>
+                          <td>Audit logging &amp; retention</td>
+                          <td>Central logging account, standardized log pipelines, Terraform log sinks, Ansible roles configuring OS audit and forwarding, SIEM integration.</td>
+                        </tr>
+                        <tr>
+                          <td>Least privilege access</td>
+                          <td>Standard IAM roles for CCoE, court IT, and vendors; policy-as-code tests for privilege boundaries; periodic access reviews.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 11. MIGRATION FACTORY -->
+              <section id="ccoe-mig-factory" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>11. Migration Factory Design</h2>
+                  <span class="ccoe-badge">Migration</span>
+                </div>
+                <p class="ccoe-tagline">
+                  The migration factory is the repeatable engine that moves court workloads into
+                  the landing zones, wave by wave, with defined patterns and runbooks.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">11.1 Factory Components</h3>
+                    <ul class="ccoe-list">
+                      <li><strong>Portfolio &amp; Assessment Hub</strong> – database of court systems, owners, tech stacks, data sensitivity and dependencies.</li>
+                      <li><strong>Pattern Catalog</strong> – reference architectures for:
+                        <ul class="ccoe-list">
+                          <li>Lift-and-shift VMs.</li>
+                          <li>Replatformed web/database stacks.</li>
+                          <li>Refactored services where necessary.</li>
+                        </ul>
+                      </li>
+                      <li><strong>Wave Planning</strong> – grouping of apps by dependency, risk and court, with defined migration dates and rollback strategies.</li>
+                      <li><strong>Toolchain</strong> – Terraform, Ansible, data migration tools, replication, and cutover automation.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">11.2 Migration Wave Design</h3>
+                    <ul class="ccoe-list">
+                      <li>Start with low-risk systems to validate patterns and landing zones.</li>
+                      <li>Progress to core court systems (case management, evidence) once patterns are proven.</li>
+                      <li>Align waves with budget cycles and statutory deadlines (e.g., decommission dates).</li>
+                      <li>Include dry runs, mock cutovers, and training in wave plans.</li>
+                    </ul>
+
+                    <div class="ccoe-callout">
+                      <strong>Key point:</strong> migrations happen <em>by pattern</em>, not
+                      one-off hero projects. If a pattern doesn’t exist, create it once,
+                      validate it, then reuse it across courts.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 12. MIGRATION LIFECYCLE -->
+              <section id="ccoe-mig-lifecycle" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>12. Migration Lifecycle (Per Application)</h2>
+                  <span class="ccoe-badge">Migration</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Each application follows the same lifecycle from discovery to hypercare,
+                  regardless of which court owns it.
+                </p>
+
+                <ol class="ccoe-list">
+                  <li>
+                    <strong>Discovery &amp; Assessment</strong>
+                    <ul class="ccoe-list">
+                      <li>Document app architecture, dependencies, data classification (P1/P2/P3).</li>
+                      <li>Assess complexity, risk, and migration readiness.</li>
+                      <li>Select migration pattern (rehost/replatform/refactor/retire).</li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Design &amp; Blueprint</strong>
+                    <ul class="ccoe-list">
+                      <li>Map to a reference architecture within the court’s landing zone.</li>
+                      <li>Design data migration strategy (bulk + delta/CDC; cutover window).</li>
+                      <li>Define testing, validation, and rollback plans.</li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Build &amp; Pre-Prod</strong>
+                    <ul class="ccoe-list">
+                      <li>Use Terraform modules to build target infra.</li>
+                      <li>Use Ansible + images to configure OS/app hardening and deployment.</li>
+                      <li>Run functional and performance tests in pre-prod.</li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Cutover</strong>
+                    <ul class="ccoe-list">
+                      <li>Freeze writes on legacy systems during the cutover window.</li>
+                      <li>Run final delta sync; switch DNS/routes to new system.</li>
+                      <li>Monitor health; execute rollback if critical issues arise.</li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Hypercare &amp; Stabilization</strong>
+                    <ul class="ccoe-list">
+                      <li>Run enhanced monitoring and daily checks for 30–90 days.</li>
+                      <li>Capture incidents, lessons learned, and pattern improvements.</li>
+                      <li>Transition to steady-state operations under SRE/ops.</li>
+                    </ul>
+                  </li>
+                </ol>
+              </section>
+
+              <!-- 13. SECURITY ARCHITECTURE -->
+              <section id="ccoe-security" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>13. Security Architecture for Courts</h2>
+                  <span class="ccoe-badge">Security</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Court workloads handle sensitive and sometimes life-impacting data; the security
+                  architecture must be explicit, layered, and enforced by code.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">13.1 Identity &amp; Access</h3>
+                    <ul class="ccoe-list">
+                      <li>Federated login from court identity providers with SSO.</li>
+                      <li>RBAC aligned to roles (judges, clerks, IT admins, vendors, etc.).</li>
+                      <li>Privileged Access Management (PAM) for high-risk operations.</li>
+                      <li>Service identities for applications with least-privilege policies.</li>
+                    </ul>
+
+                    <h3 style="margin:0.5rem 0 0.25rem;">13.2 Data Protection</h3>
+                    <ul class="ccoe-list">
+                      <li>Encryption at rest for all P2/P3 data with KMS/Key Vault.</li>
+                      <li>TLS everywhere feasible, with strong cipher policies.</li>
+                      <li>Strict data retention and archival policies for case-related data.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">13.3 Monitoring &amp; Incident Response</h3>
+                    <ul class="ccoe-list">
+                      <li>Central SIEM for logs from cloud, OS, apps, and security tools.</li>
+                      <li>Detection rules tailored to court-specific risks (tampering, illegal access to case files, etc.).</li>
+                      <li>Incident playbooks driven by Ansible for containment (revoke keys, isolate instances, adjust firewall rules).</li>
+                      <li>Regular incident simulations covering insider, external attacker, and misconfiguration scenarios.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 14. NETWORK & CONNECTIVITY -->
+              <section id="ccoe-network" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>14. Network &amp; Connectivity Design</h2>
+                  <span class="ccoe-badge">Network</span>
+                </div>
+                <p class="ccoe-tagline">
+                  Network design must support secure connectivity between court data centers,
+                  justice networks, and cloud landing zones while preserving segmentation.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">14.1 Hub-and-Spoke Topology</h3>
+                    <ul class="ccoe-list">
+                      <li>Central hub for shared services, security, and egress.</li>
+                      <li>Spoke networks per court landing zone with limited east–west connectivity.</li>
+                      <li>Regional hubs where latency and jurisdiction requirements demand it.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">14.2 Connectivity &amp; Segmentation</h3>
+                    <ul class="ccoe-list">
+                      <li>Redundant VPN or private circuits to each court’s data center.</li>
+                      <li>Environment separation (Dev/Test vs Prod) at network and policy layers.</li>
+                      <li>Data class separation (P1, P2, P3) via separate subnets, security groups, and potentially accounts.</li>
+                      <li>Strict egress controls with URL/port filtering for P3 workloads.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 15. OPERATIONS & FINOPS -->
+              <section id="ccoe-ops" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>15. Operations, SRE &amp; FinOps</h2>
+                  <span class="ccoe-badge">Operations</span>
+                </div>
+                <p class="ccoe-tagline">
+                  The CCoE doesn’t stop at migration; it must define how the platform is run,
+                  monitored, and paid for day to day.
+                </p>
+
+                <div class="ccoe-columns">
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">15.1 Observability &amp; Reliability</h3>
+                    <ul class="ccoe-list">
+                      <li>Standard metrics, logs, and traces across courts and apps.</li>
+                      <li>SLOs defined per workload type (case management vs evidence vs backoffice).</li>
+                      <li>Regular DR and failover tests for P3 applications.</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0 0 0.25rem;">15.2 FinOps &amp; Cost Management</h3>
+                    <ul class="ccoe-list">
+                      <li>Tagging standards: <code>court</code>, <code>env</code>, <code>app</code>, <code>owner</code>, <code>data_class</code>, <code>cost_center</code>.</li>
+                      <li>Showback/chargeback reports per court and per major application.</li>
+                      <li>Optimization backlog for rightsizing, idle resources, and storage lifecycle policies.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 16. ROADMAP -->
+              <section id="ccoe-roadmap" class="ccoe-section">
+                <div class="ccoe-section-header">
+                  <h2>16. Maturation Phases &amp; Roadmap</h2>
+                  <span class="ccoe-badge">Roadmap</span>
+                </div>
+                <p class="ccoe-tagline">
+                  The CCoE evolves in phases: build foundations, pilot with a few courts, then
+                  scale and optimize across the entire court system.
+                </p>
+
+                <table class="ccoe-table">
+                  <thead>
+                    <tr>
+                      <th>Phase</th>
+                      <th>Focus</th>
+                      <th>Key Deliverables</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Phase 0 – Foundations</strong></td>
+                      <td>Stand up the CCoE, baseline governance, and the first landing zone.</td>
+                      <td>CCoE charter, org structure, MVP landing zone, initial Terraform/Ansible baselines.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Phase 1 – Pilot Courts</strong></td>
+                      <td>Onboard 1–2 pilot courts with low/medium criticality workloads.</td>
+                      <td>Validated landing zone, migration patterns, lessons learned, refined templates.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Phase 2 – Scale Out</strong></td>
+                      <td>Increase migration capacity and onboard additional courts.</td>
+                      <td>Established migration factory, standardized patterns, expanded CI/CD and observability.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Phase 3 – Optimization &amp; Multi-Cloud</strong></td>
+                      <td>Optimize cost, performance, and prepare for multi-cloud or special secure zones.</td>
+                      <td>Advanced security controls, multi-cloud reference architectures, mature FinOps and SLO management.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="ccoe-note">
+                  Use this roadmap as a slide-ready outline or as a section in your main
+                  architecture document to show where each current initiative fits.
+                </p>
+              </section>
+            </main>
+          </div>
+        </section>
+
+        <div class="footnote">
+          Save this file as <code>ccoe.html</code> next to <code>index.html</code>,
+          <code>terraform.html</code>, and <code>ansible.html</code>. Link to it from your
+          main menu as the master CCoE blueprint.
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

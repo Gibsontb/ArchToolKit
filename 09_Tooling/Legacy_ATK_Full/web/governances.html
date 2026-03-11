@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Governance Workspace · Architect's Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, #1f2937, #020617 55%),
+        radial-gradient(circle at bottom right, #000000, #020617 70%);
+      color: #e5e7eb;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1150px;
+      background: rgba(15, 23, 42, 0.92);
+      border-radius: 18px;
+      padding: 1.5rem 1.75rem 1.75rem;
+      box-shadow:
+        0 22px 60px rgba(0, 0, 0, 0.85),
+        0 0 0 1px rgba(148, 163, 184, 0.35);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: -40%;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.15), transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.15), transparent 55%),
+        radial-gradient(circle at 50% 100%, rgba(16, 185, 129, 0.12), transparent 55%);
+      opacity: 0.95;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
+    .card-inner {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.25rem;
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      min-width: 0;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+
+    h1.page-title {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    h1.page-title[contenteditable="true"] {
+      cursor: text;
+    }
+
+    .pill {
+      border-radius: 999px;
+      border: 1px solid rgba(248, 250, 252, 0.9);
+      padding: 0.18rem 0.6rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      color: #e5e7eb;
+      background: rgba(15, 23, 42, 0.95);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.3);
+    }
+
+    .tagline {
+      margin: 0;
+      font-size: 0.86rem;
+      color: #d1d5db;
+      max-width: 700px;
+    }
+
+    .meta {
+      font-size: 0.76rem;
+      color: #9ca3af;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+    }
+
+    .meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .meta-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.9);
+    }
+
+    .main-menu-btn {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 0.4rem 0.95rem;
+      font-size: 0.8rem;
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition:
+        background 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        transform 0.06s ease;
+      white-space: nowrap;
+    }
+
+    .main-menu-btn:hover {
+      background: #111827;
+      border-color: #2563eb;
+      color: #e5e7eb;
+      transform: translateY(-1px);
+    }
+
+    .workspace {
+      margin-top: 0.2rem;
+      border-radius: 1rem;
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      min-height: 520px;
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 55%);
+      overflow: hidden;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+    }
+
+    .gov-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .gov-nav {
+      width: 245px;
+      min-width: 220px;
+      max-width: 260px;
+      border-right: 1px solid rgba(148, 163, 184, 0.4);
+      padding: 1rem;
+      box-sizing: border-box;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.75));
+      backdrop-filter: blur(18px);
+      overflow-y: auto;
+      font-size: 0.83rem;
+    }
+
+    .gov-nav h2 {
+      margin: 0 0 0.35rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .gov-nav p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .nav-label {
+      margin-top: 0.75rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.73rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .gov-nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .gov-nav li {
+      margin: 0;
+    }
+
+    .gov-nav a {
+      color: #cbd5f5;
+      text-decoration: none;
+      display: block;
+      padding: 0.25rem 0.45rem;
+      border-radius: 999px;
+      transition:
+        background 0.12s ease,
+        color 0.12s ease,
+        transform 0.04s ease;
+    }
+
+    .gov-nav a:hover {
+      background: rgba(37, 99, 235, 0.23);
+      color: #eff6ff;
+      transform: translateX(1px);
+    }
+
+    .gov-content {
+      flex: 1;
+      padding: 1rem 1.25rem 1.1rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+      font-size: 0.85rem;
+    }
+
+    .gov-section {
+      margin-bottom: 1.6rem;
+      padding-bottom: 1.1rem;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.45);
+    }
+
+    .gov-section:last-of-type {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0.2rem;
+    }
+
+    .gov-section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .gov-section-header h2 {
+      margin: 0;
+      font-size: 1.02rem;
+      font-weight: 600;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(96, 165, 250, 0.75);
+      color: #bfdbfe;
+      background: rgba(15, 23, 42, 0.96);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .subhead {
+      margin: 0.3rem 0 0.4rem;
+      color: #9ca3af;
+      font-size: 0.82rem;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.35rem;
+    }
+
+    .pill-tag {
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      border: 1px solid rgba(156, 163, 175, 0.85);
+      color: #e5e7eb;
+      white-space: nowrap;
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .pill-tag.primary {
+      border-color: rgba(59, 130, 246, 0.9);
+      color: #dbeafe;
+    }
+
+    ul.compact {
+      margin: 0.35rem 0;
+      padding-left: 1.05rem;
+    }
+
+    ul.compact li {
+      margin-bottom: 0.18rem;
+    }
+
+    .callout {
+      font-size: 0.8rem;
+      border-radius: 0.7rem;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid rgba(59, 130, 246, 0.85);
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.35), rgba(15, 23, 42, 0.96));
+      color: #e5e7eb;
+    }
+
+    .callout strong {
+      color: #bfdbfe;
+      font-weight: 600;
+    }
+
+    table.grid {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.45rem;
+      font-size: 0.8rem;
+      border-radius: 0.7rem;
+      overflow: hidden;
+    }
+
+    table.grid thead {
+      background: rgba(15, 23, 42, 0.98);
+    }
+
+    table.grid th,
+    table.grid td {
+      border: 1px solid rgba(55, 65, 81, 0.95);
+      padding: 0.3rem 0.45rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    table.grid th {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    table.grid td {
+      color: #d1d5db;
+    }
+
+    .note {
+      margin-top: 0.4rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-top: 0.3rem;
+    }
+
+    .chip {
+      font-size: 0.7rem;
+      border-radius: 999px;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid rgba(148, 163, 184, 0.85);
+      background: rgba(15, 23, 42, 0.95);
+      color: #e5e7eb;
+    }
+
+    .footnote {
+      margin-top: 0.4rem;
+      font-size: 0.75rem;
+      color: #9ca3af;
+      text-align: right;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 0.12rem 0.32rem;
+      border-radius: 999px;
+      border: 1px solid rgba(30, 64, 175, 0.9);
+      color: #c7d2fe;
+    }
+
+    .badge-soft {
+      display: inline-block;
+      padding: 0.12rem 0.45rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      font-size: 0.7rem;
+      color: #e5e7eb;
+      background: rgba(15, 23, 42, 0.96);
+    }
+
+    .policy-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 0.7rem;
+      margin-top: 0.5rem;
+    }
+
+    .policy-card {
+      border-radius: 0.7rem;
+      border: 1px solid rgba(75, 85, 99, 0.9);
+      background: rgba(15, 23, 42, 0.96);
+      padding: 0.55rem 0.7rem;
+      font-size: 0.8rem;
+    }
+
+    .policy-card h3 {
+      margin: 0 0 0.2rem 0;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .policy-card h4 {
+      margin: 0.25rem 0 0.1rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #cbd5f5;
+    }
+
+    .policy-card p {
+      margin: 0.15rem 0;
+      color: #d1d5db;
+    }
+
+    .policy-card ul {
+      margin: 0.15rem 0 0.3rem;
+      padding-left: 1rem;
+    }
+
+    .policy-card ul li {
+      margin-bottom: 0.12rem;
+    }
+
+    @media (max-width: 950px) {
+      .gov-layout {
+        flex-direction: column;
+      }
+
+      .gov-nav {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+      }
+
+      .policy-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 1.25rem;
+      }
+
+      .card {
+        padding: 1.1rem 1.1rem 1.3rem;
+      }
+
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      h1.page-title {
+        font-size: 1.35rem;
+      }
+
+      .two-col {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .footnote {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <div class="card-inner">
+        <header>
+          <div class="title-block">
+            <div class="title-row">
+              <h1 class="page-title" contenteditable="true" spellcheck="false">
+                Governance Workspace · Controls, Regs &amp; Frameworks
+              </h1>
+              <div class="pill">
+                <span class="pill-dot"></span>
+                <span>Governance · Risk · Compliance</span>
+              </div>
+            </div>
+            <p class="tagline">
+              One place to line up data classifications (P0–P3), regulations (HIPAA, PCI, FIPS, etc.),
+              security frameworks (NIST, ISO, CIS), and cloud programs (FedRAMP, StateRAMP, CJIS) so you can
+              map any requirement into concrete controls and implementation patterns.
+            </p>
+            <div class="meta">
+              <span><span class="meta-dot"></span> Data classification &amp; impact levels</span>
+              <span><span class="meta-dot"></span> Regulatory &amp; statutory obligations</span>
+              <span><span class="meta-dot"></span> Framework and control-mapping reference</span>
+            </div>
+          </div>
+          <button class="main-menu-btn" type="button" onclick="window.location.href='index.html'">
+            ← Back to index
+          </button>
+        </header>
+
+        <section class="workspace">
+          <div class="gov-layout">
+            <nav class="gov-nav">
+              <h2>Governance Map</h2>
+              <p>Pick what you’re dealing with: data, law, framework, cloud program, or a specific requirement.</p>
+
+              <div class="nav-label">Orientation</div>
+              <ul>
+                <li><a href="#gov-overview">1. Overview &amp; How to Use</a></li>
+                <li><a href="#gov-flow">2. Governance Decision Flow</a></li>
+              </ul>
+
+              <div class="nav-label">Data &amp; Impact</div>
+              <ul>
+                <li><a href="#gov-classification">3. Data Categories &amp; P0–P3</a></li>
+              </ul>
+
+              <div class="nav-label">Regulations &amp; Laws</div>
+              <ul>
+                <li><a href="#gov-health">4. Health &amp; Personal Data (HIPAA, etc.)</a></li>
+                <li><a href="#gov-finance">5. Payments &amp; Financial (PCI, GLBA, SOX)</a></li>
+                <li><a href="#gov-privacy">6. Privacy &amp; Data Protection (GDPR, etc.)</a></li>
+                <li><a href="#gov-public">7. Public Sector &amp; Defense (FISMA, FIPS, CJIS, etc.)</a></li>
+              </ul>
+
+              <div class="nav-label">Frameworks &amp; Controls</div>
+              <ul>
+                <li><a href="#gov-frameworks">8. Security Frameworks (NIST, ISO, CIS)</a></li>
+                <li><a href="#gov-soc">9. SOC 2 &amp; Trust Principles</a></li>
+              </ul>
+
+              <div class="nav-label">Cloud Programs</div>
+              <ul>
+                <li><a href="#gov-cloud-programs">10. FedRAMP, StateRAMP &amp; Cloud Programs</a></li>
+              </ul>
+
+              <div class="nav-label">Decision Maps</div>
+              <ul>
+                <li><a href="#gov-mappings">11. Requirement → Regs → Frameworks</a></li>
+                <li><a href="#gov-implementation">12. Implementation Hooks (Terraform / Ansible)</a></li>
+              </ul>
+            </nav>
+
+            <main class="gov-content">
+              <!-- 1. OVERVIEW -->
+              <section id="gov-overview" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>1. Governance Overview &amp; Intent</h2>
+                  <span class="badge">Root Map</span>
+                </div>
+                <p class="subhead">
+                  This page is your index of “everything governance”: which regulations might apply, how
+                  you classify data (P0–P3), which frameworks you anchor to, and how that eventually
+                  becomes concrete controls in cloud, code, and operations.
+                </p>
+
+                <div class="two-col">
+                  <div>
+                    <h3 style="margin:0.2rem 0 0.25rem;">Core Pieces</h3>
+                    <ul class="compact">
+                      <li><strong>Data classification (P0–P3)</strong> – how dangerous is exposure?</li>
+                      <li><strong>Regulations</strong> – HIPAA, PCI DSS, SOX, GLBA, GDPR, FISMA, CJIS, etc.</li>
+                      <li><strong>Frameworks</strong> – NIST 800-53, NIST CSF, ISO 27001, CIS Controls, SOC 2.</li>
+                      <li><strong>Cloud programs</strong> – FedRAMP, StateRAMP, IRAP, others.</li>
+                      <li><strong>Implementation</strong> – Terraform guardrails, Ansible hardening, CI/CD checks.</li>
+                    </ul>
+                    <div class="pill-row">
+                      <span class="pill-tag primary">Data → Regulation → Framework → Controls</span>
+                      <span class="pill-tag">People · Process · Tech</span>
+                      <span class="pill-tag">Policy → Standard → Procedure</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="callout">
+                      <strong>Idea:</strong> You don’t need to memorize everything below. Use this as
+                      a lookup table. When someone says “HIPAA app” or “needs FedRAMP High”, you:
+                      <br /><br />
+                      1) Classify the data (P2? P3?)<br />
+                      2) Identify regulations that trigger<br />
+                      3) Pick a framework baseline (NIST / ISO / CIS)<br />
+                      4) Map to specific cloud + IaC controls.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 2. FLOW -->
+              <section id="gov-flow" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>2. Governance Decision Flow (High Level)</h2>
+                  <span class="badge">Flow</span>
+                </div>
+                <p class="subhead">
+                  Use this flow every time you design a solution or review a proposal. It keeps you
+                  from missing a regulation or framework dependency.
+                </p>
+
+                <table class="grid">
+                  <thead>
+                    <tr>
+                      <th>Step</th>
+                      <th>Question</th>
+                      <th>Output</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>1. Data</strong></td>
+                      <td>What data is processed/stored/transmitted? (PHI, cardholder, PII, CJIS, etc.)</td>
+                      <td>Data categories (health, payment, identity, criminal, etc.) and P0–P3 impact.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>2. Jurisdiction</strong></td>
+                      <td>Where are data subjects, orgs, and systems located? Which sectors (public, finance, etc.)?</td>
+                      <td>Candidate regulations (HIPAA, PCI DSS, GDPR, FISMA, CJIS, state laws, etc.).</td>
+                    </tr>
+                    <tr>
+                      <td><strong>3. Framework</strong></td>
+                      <td>What baseline frameworks does your org use?</td>
+                      <td>Primary framework(s): NIST 800-53 / NIST CSF / ISO 27001 / CIS Controls / SOC 2.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>4. Cloud Program</strong></td>
+                      <td>Is there a mandated cloud program (FedRAMP, StateRAMP, etc.)?</td>
+                      <td>Target program (e.g., FedRAMP Moderate/High, StateRAMP) and required control set.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>5. Control Set</strong></td>
+                      <td>Which controls are required across frameworks/programs?</td>
+                      <td>Concrete controls: IAM, logging, encryption, config baselines, monitoring.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>6. Implementation</strong></td>
+                      <td>How do we enforce this in code / cloud?</td>
+                      <td>Terraform guardrails, policies, Ansible hardening, CI/CD checks, alerting, runbooks.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="note">
+                  This workspace helps with steps 1–5. The Terraform and Ansible workspaces take
+                  over at step 6.
+                </p>
+              </section>
+
+              <!-- 3. DATA CLASSIFICATION -->
+              <section id="gov-classification" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>3. Data Categories &amp; P0–P3 Impact Levels</h2>
+                  <span class="badge">Data &amp; Risk</span>
+                </div>
+                <p class="subhead">
+                  These levels are generic and can be tuned per organization, but they give you a
+                  baseline language: “P3 health data” has a very different security bar than “P1
+                  internal metrics”.
+                </p>
+
+                <table class="grid">
+                  <thead>
+                    <tr>
+                      <th>Level</th>
+                      <th>Typical Data Types</th>
+                      <th>Impact if Compromised</th>
+                      <th>Typical Controls Baseline</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>P0 – Public</strong></td>
+                      <td>
+                        Public marketing content, published documentation, public status pages.
+                      </td>
+                      <td>
+                        Low confidentiality risk; integrity/availability may still matter (defacement, downtime).
+                      </td>
+                      <td>
+                        Hardened hosting, WAF/CDN for public sites, uptime monitoring, backups, change control.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>P1 – Internal Only</strong></td>
+                      <td>
+                        Internal emails, low-sensitivity business docs, internal metrics without PII.
+                      </td>
+                      <td>
+                        Embarrassment, minor financial/operational impact if leaked or modified.
+                      </td>
+                      <td>
+                        IAM with least privilege, MFA for admins, encryption in transit and at rest,
+                        basic logging and access reviews.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>P2 – Sensitive</strong></td>
+                      <td>
+                        Customer contact details (PII), non-public financial data, security configs,
+                        most application database content.
+                      </td>
+                      <td>
+                        Significant privacy/financial impact, regulatory scrutiny, reputational damage.
+                      </td>
+                      <td>
+                        Strong IAM, segmentation, role-based access, encryption with managed keys,
+                        detailed logging/monitoring, change management and approvals.
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>P3 – Highly Sensitive / Regulated</strong></td>
+                      <td>
+                        PHI (health records), cardholder data, authentication secrets, keys, law
+                        enforcement data (CJI), export-controlled technical data, critical
+                        infrastructure controls.
+                      </td>
+                      <td>
+                        Severe impact: regulatory fines, lawsuits, safety risk, national security
+                        impact, personal harm.
+                      </td>
+                      <td>
+                        Hardened enclaves or isolated tenants, FIPS-validated crypto where required,
+                        zero-trust access, continuous monitoring, dedicated key management, strict
+                        SoD (segregation of duties), and tight incident response obligations.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <!-- 4. HEALTH & PERSONAL -->
+              <section id="gov-health" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>4. Health &amp; Personal Data Regulations</h2>
+                  <span class="badge">HIPAA &amp; Related</span>
+                </div>
+                <p class="subhead">
+                  When you’re into medical/health data or personally identifiable information, these
+                  are the first names that usually show up.
+                </p>
+
+                <div class="policy-grid">
+                  <div class="policy-card">
+                    <h3>HIPAA (Health Insurance Portability and Accountability Act)</h3>
+                    <p><strong>Domain:</strong> US healthcare</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Protect the privacy and security of PHI (Protected Health Information) handled
+                      by covered entities (providers, plans, clearinghouses) and their business associates.
+                    </p>
+
+                    <h4>Who It Applies To</h4>
+                    <ul>
+                      <li>Hospitals, clinics, doctors, health plans, clearinghouses.</li>
+                      <li>Vendors (cloud, SaaS, integrators) that create/receive/maintain/transmit PHI.</li>
+                    </ul>
+
+                    <h4>Scope of Data</h4>
+                    <p>
+                      PHI: health-related information tied to an identifiable individual (diagnoses,
+                      treatment, billing records, etc.). EPHI for electronic forms.
+                    </p>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>Administrative, physical, and technical safeguards for PHI.</li>
+                      <li>Risk analysis and risk management program.</li>
+                      <li>Access control, audit logging, integrity protection, transmission security.</li>
+                      <li>Business Associate Agreements (BAAs) with vendors handling PHI.</li>
+                      <li>Breach notification processes.</li>
+                    </ul>
+
+                    <h4>Common Pitfalls</h4>
+                    <ul>
+                      <li>Shadow IT or apps storing PHI outside defined boundaries.</li>
+                      <li>Insufficient logging or inability to produce audit trails for PHI access.</li>
+                      <li>Weak vendor management or missing BAAs.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Use PHI-isolated environments (P3 zones) with strict network and IAM controls.</li>
+                      <li>Encrypt PHI in transit and at rest; restrict ops access; use key management with separation of duties.</li>
+                      <li>Use Terraform to enforce PHI tagging, encryption defaults, logging, and network restrictions.</li>
+                    </ul>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>HITECH (Health Information Technology for Economic and Clinical Health)</h3>
+                    <p><strong>Domain:</strong> US health IT</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Strengthens HIPAA, especially for electronic health records (EHR) and breach notification.
+                    </p>
+
+                    <h4>Who It Applies To</h4>
+                    <ul>
+                      <li>HIPAA-covered entities and business associates handling EHR/EPHI.</li>
+                      <li>Health IT systems that digitize or exchange PHI.</li>
+                    </ul>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>Stricter breach notification timelines and penalties.</li>
+                      <li>More explicit expectations for EHR security and auditability.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Detailed logging and alerting on EHR platforms.</li>
+                      <li>Evidence-friendly configurations (centralized logs, immutable storage, backups).</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">GDPR (General Data Protection Regulation)</h3>
+                    <p><strong>Domain:</strong> EU/EEA + global entities processing EU personal data</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Protect personal data of individuals in the EU/EEA and give them extensive rights
+                      over collection, use, access, correction, and deletion of their data.
+                    </p>
+
+                    <h4>Who It Applies To</h4>
+                    <ul>
+                      <li>Controllers and processors handling personal data of EU/EEA individuals.</li>
+                      <li>Applies even if your company is outside the EU but targets or monitors EU residents.</li>
+                    </ul>
+
+                    <h4>Scope of Data</h4>
+                    <p>
+                      “Personal data” broadly: any information relating to an identified or identifiable
+                      natural person (name, email, IP address, identifiers, health data, biometrics, etc.).
+                    </p>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>Lawful basis for processing (consent, contract, legal obligation, etc.).</li>
+                      <li>Transparency and notices; rights to access, rectify, erase, restrict, and port data.</li>
+                      <li>Data minimization, purpose limitation, storage limitation.</li>
+                      <li>Appropriate security and breach notification obligations.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Data mapping: know where EU personal data lives and flows.</li>
+                      <li>Support deletion and export of data per user; retention policies enforced at DB/object-storage level.</li>
+                      <li>Terraform/Ansible patterns for per-region isolation, data residency, and retention schedules.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 5. FINANCIAL -->
+              <section id="gov-finance" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>5. Payment &amp; Financial Regulations</h2>
+                  <span class="badge">PCI, SOX &amp; More</span>
+                </div>
+                <p class="subhead">
+                  Financial and payment systems carry their own world of expectations: card data,
+                  financial reporting integrity, and banking privacy.
+                </p>
+
+                <div class="policy-grid">
+                  <div class="policy-card">
+                    <h3>PCI DSS (Payment Card Industry Data Security Standard)</h3>
+                    <p><strong>Domain:</strong> Global cardholder data security</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Ensure secure handling of cardholder data (CHD) and sensitive authentication data
+                      by merchants, processors, and service providers.
+                    </p>
+
+                    <h4>Who It Applies To</h4>
+                    <ul>
+                      <li>Any entity that stores, processes, or transmits cardholder data.</li>
+                      <li>Service providers that could impact CHD security (hosting, cloud, payment gateways, etc.).</li>
+                    </ul>
+
+                    <h4>Scope of Data</h4>
+                    <p>
+                      PAN (primary account number) plus associated data (cardholder name, expiry date, etc.).
+                      Sensitive authentication data (CVV, PIN) must never be stored after authorization.
+                    </p>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>12 high-level requirements around network security, access, logging, testing, and policy.</li>
+                      <li>Strong access control, encryption, and segmentation of the “cardholder data environment” (CDE).</li>
+                      <li>Regular vulnerability scans and penetration tests.</li>
+                    </ul>
+
+                    <h4>Common Pitfalls</h4>
+                    <ul>
+                      <li>Letting CHD leak outside the tightly controlled CDE (logs, caches, test data).</li>
+                      <li>Inadequate segmentation: entire network ends up in PCI scope.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Design a dedicated, locked-down CDE (network segments, accounts, projects).</li>
+                      <li>Use Terraform to enforce segmentation, security groups, WAF, encryption, and logging for CDE resources.</li>
+                      <li>Ensure Ansible/ops hardening scripts align with PCI-required configs and patching cadence.</li>
+                    </ul>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>SOX (Sarbanes-Oxley Act)</h3>
+                    <p><strong>Domain:</strong> US public company financial reporting</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Improve accuracy and reliability of financial reporting; ensure strong internal
+                      controls over financial systems and reporting processes.
+                    </p>
+
+                    <h4>Who It Applies To</h4>
+                    <ul>
+                      <li>Publicly traded companies in the US.</li>
+                      <li>Systems materially supporting financial reporting (GL, ERP, billing, revenue recognition).</li>
+                    </ul>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>Documented internal controls over financial reporting (ICFR).</li>
+                      <li>Management assessment and external auditor attestation of control effectiveness.</li>
+                      <li>Change management, access control, and segregation of duties for financial systems.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Clearly define which cloud services and databases are “SOX in-scope”.</li>
+                      <li>Terraform must enforce consistent access control and logging for in-scope resources.</li>
+                      <li>Version-controlled infrastructure and configuration; change approvals and traceability.</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">GLBA (Gramm–Leach–Bliley Act)</h3>
+                    <p><strong>Domain:</strong> US financial institutions</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Protect “non-public personal information” (NPI) collected by financial institutions
+                      about their customers.
+                    </p>
+
+                    <h4>Who It Applies To</h4>
+                    <ul>
+                      <li>Banks, lenders, investment firms, insurance companies, and similar financial institutions.</li>
+                    </ul>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>Safeguards Rule: implement a written information security program.</li>
+                      <li>Privacy Rule: inform consumers about data collection and sharing; give opt-out options where required.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Classify and protect NPI as at least P2–P3.</li>
+                      <li>Terraform/Ansible hardening and monitoring at the data store and service perimeter.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 6. PRIVACY -->
+              <section id="gov-privacy" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>6. Global Privacy &amp; Data Protection</h2>
+                  <span class="badge">Privacy</span>
+                </div>
+                <p class="subhead">
+                  These laws kick in largely based on jurisdiction and who your data subjects are,
+                  not just what tech stack you use.
+                </p>
+
+                <div class="policy-grid">
+                  <div class="policy-card">
+                    <h3>GDPR (General Data Protection Regulation)</h3>
+                    <p><strong>Domain:</strong> EU/EEA and global processing of EU personal data</p>
+
+                    <h4>Key Concepts</h4>
+                    <ul>
+                      <li>Controller vs. Processor roles.</li>
+                      <li>Lawful bases (consent, contract, legal obligation, vital interests, public task, legitimate interests).</li>
+                      <li>Data subject rights (access, erasure, portability, etc.).</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Implications</h4>
+                    <ul>
+                      <li>Per-region deployments; data residency for EU workloads.</li>
+                      <li>APIs and backend workflows that support data subject rights (delete, export).</li>
+                      <li>Terraform-managed policies restricting cross-region replication and logs that contain personal data.</li>
+                    </ul>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>CCPA / CPRA (California Consumer Privacy Act / Privacy Rights Act)</h3>
+                    <p><strong>Domain:</strong> California residents’ personal information</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Provide consumers with transparency and control over how businesses collect, use,
+                      and share their personal information.
+                    </p>
+
+                    <h4>Key Rights</h4>
+                    <ul>
+                      <li>Right to know what personal information is collected and shared.</li>
+                      <li>Right to delete, in many cases.</li>
+                      <li>Right to opt out of sale or sharing of personal information.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Data inventory and classification for “personal information”.</li>
+                      <li>APIs/workflows for data access and deletion, especially in distributed data stores.</li>
+                      <li>Tagging and access controls to limit which systems hold data subject to CCPA/CPRA.</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">Other National / State Privacy Laws</h3>
+                    <p>
+                      Many jurisdictions (Brazil LGPD, Canada PIPEDA, other US states) are adding GDPR-style
+                      requirements. Use the same core pattern:
+                    </p>
+                    <ul>
+                      <li>Maintain a unified data inventory and data flow diagrams.</li>
+                      <li>Standardize technical controls via your chosen frameworks (NIST, ISO, CIS).</li>
+                      <li>Use Terraform/Ansible to apply the same baseline across multiple regions and providers.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 7. PUBLIC SECTOR -->
+              <section id="gov-public" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>7. Public Sector, Defense &amp; Criminal Justice</h2>
+                  <span class="badge">Gov / Justice</span>
+                </div>
+                <p class="subhead">
+                  When you’re dealing with government systems, classified data, or criminal justice
+                  information, these programs and standards show up quickly.
+                </p>
+
+                <div class="policy-grid">
+                  <div class="policy-card">
+                    <h3>FISMA (Federal Information Security Modernization Act)</h3>
+                    <p><strong>Domain:</strong> US federal information systems</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Require federal agencies and some contractors to implement information security
+                      programs based on NIST standards (e.g., NIST SP 800-53).
+                    </p>
+
+                    <h4>Key Elements</h4>
+                    <ul>
+                      <li>System categorization (Low, Moderate, High) based on impact.</li>
+                      <li>Selection and tailoring of NIST 800-53 controls.</li>
+                      <li>Continuous monitoring and authorization (A&amp;A) processes.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Use NIST 800-53 as main control catalog for design and implementation.</li>
+                      <li>Map Terraform modules and policies directly to control families (AC, AU, SC, etc.).</li>
+                      <li>Enable continuous monitoring hooks (SIEM, CSPM tools, etc.).</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">FIPS (Federal Information Processing Standards)</h3>
+                    <p><strong>Domain:</strong> US government cryptographic and security requirements</p>
+
+                    <h4>Key Concept</h4>
+                    <p>
+                      FIPS 140-2 / 140-3 sets requirements for cryptographic modules. When required,
+                      crypto components must be FIPS-validated.
+                    </p>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Use FIPS-validated crypto libraries and cloud key management systems when mandates apply.</li>
+                      <li>Terraform variables and modules that enforce “FIPS-only” modes or approved key types/algorithms.</li>
+                    </ul>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>CJIS (Criminal Justice Information Services)</h3>
+                    <p><strong>Domain:</strong> US law enforcement / criminal justice information (CJI)</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Protect CJI held by law enforcement, courts, and related agencies or partners.
+                    </p>
+
+                    <h4>Key Obligations</h4>
+                    <ul>
+                      <li>Detailed policy covering access control, authentication, encryption, logging, training, and more.</li>
+                      <li>Personnel screening and background checks for access to CJI.</li>
+                      <li>Physical security requirements for facilities and data centers.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Dedicated CJIS-aligned environments or cloud regions where supported.</li>
+                      <li>Strong IAM policies, just-in-time access, and auditable logging of all CJI access.</li>
+                      <li>Terraform-managed segmentation and encryption; Ansible hardening for CJI workloads.</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">ITAR / EAR</h3>
+                    <p><strong>Domain:</strong> Export-controlled defense &amp; dual-use technical data</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Control export and handling of technical data related to defense articles (ITAR) and certain
+                      dual-use items (EAR).
+                    </p>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Region and personnel restrictions (only certain citizenships and geographies).</li>
+                      <li>Sovereign cloud and strong data residency controls.</li>
+                      <li>Terraform-based guardrails that prevent deployment in non-approved regions.</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 8. FRAMEWORKS -->
+              <section id="gov-frameworks" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>8. Security Frameworks &amp; Control Catalogs</h2>
+                  <span class="badge">Frameworks</span>
+                </div>
+                <p class="subhead">
+                  Frameworks are the “control language” you use to structure your governance program.
+                  Regulations tell you <em>what</em> you must achieve; frameworks give you the catalog
+                  of controls to do it systematically.
+                </p>
+
+                <div class="policy-grid">
+                  <div class="policy-card">
+                    <h3>NIST SP 800-53</h3>
+                    <p><strong>Type:</strong> Detailed control catalog</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Provide a comprehensive list of security and privacy controls, organized into
+                      families (AC – Access Control, AU – Audit, SC – System &amp; Communications, etc.).
+                    </p>
+
+                    <h4>Why It Matters</h4>
+                    <ul>
+                      <li>Backbone of FISMA, FedRAMP, and many public-sector security programs.</li>
+                      <li>Often reused in enterprises as a core control set even outside government.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Use</h4>
+                    <ul>
+                      <li>Map each Terraform module/Ansible role to relevant control families.</li>
+                      <li>Create “control coverage” views: which stacks implement which controls.</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">NIST Cybersecurity Framework (CSF)</h3>
+                    <p><strong>Type:</strong> High-level framework (Identify, Protect, Detect, Respond, Recover)</p>
+
+                    <h4>Use</h4>
+                    <ul>
+                      <li>Gives executives and architects a simple, shared language for security posture.</li>
+                      <li>Maps to more detailed frameworks like 800-53 or ISO controls underneath.</li>
+                    </ul>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>ISO/IEC 27001 (&amp; Related Standards)</h3>
+                    <p><strong>Type:</strong> ISMS (Information Security Management System) standard</p>
+
+                    <h4>ISO 27001</h4>
+                    <ul>
+                      <li>Defines requirements for an ISMS and Annex A control set.</li>
+                      <li>Widely used globally; certification is often requested by customers.</li>
+                    </ul>
+
+                    <h4>Related</h4>
+                    <ul>
+                      <li><strong>27002</strong> – Control implementation guidance.</li>
+                      <li><strong>27017</strong> – Cloud-specific security controls.</li>
+                      <li><strong>27018</strong> – Protection of PII in public cloud.</li>
+                      <li><strong>27701</strong> – Privacy extension (PII Controllers/Processors).</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Align your baseline hardening and access control to ISO Annex A / 27017 / 27018.</li>
+                      <li>Use Terraform and Ansible baselines as control implementation evidence for audits.</li>
+                    </ul>
+
+                    <h3 style="margin-top:0.6rem;">CIS Controls</h3>
+                    <p><strong>Type:</strong> Prescriptive control set</p>
+                    <p>
+                      Prioritized “top N” security actions: inventory, secure configuration, vulnerability
+                      management, logging, etc. Good for day-to-day security engineering.
+                    </p>
+                    <ul>
+                      <li>Map directly into Terraform/Ansible hardening and baseline patterns.</li>
+                      <li>Great starting point for practical control implementation.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div class="policy-grid" style="margin-top:0.6rem;">
+                  <div class="policy-card">
+                    <h3>COBIT</h3>
+                    <p><strong>Type:</strong> IT governance framework</p>
+                    <p>
+                      Focuses on aligning IT processes and controls with business goals and governance.
+                      Often used by auditors and governance teams.
+                    </p>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>MITRE ATT&amp;CK</h3>
+                    <p><strong>Type:</strong> Adversary tactics &amp; techniques matrix</p>
+                    <p>
+                      Not a control catalog but a model of attacker behavior. Used heavily for detection
+                      engineering, threat hunting, and incident response.
+                    </p>
+                    <ul>
+                      <li>Map detections and logging patterns to ATT&amp;CK techniques.</li>
+                      <li>Ensure Terraform/Ansible deploy log sources and telemetry needed for those detections.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <p class="note">
+                  Answering your original question directly: yes, you want frameworks on top of raw
+                  regulations. They give you a structured, reusable control language for Terraform,
+                  Ansible, and audits, instead of ad-hoc one-off controls.
+                </p>
+              </section>
+
+              <!-- 9. SOC 2 -->
+              <section id="gov-soc" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>9. SOC 2 &amp; Trust Service Criteria</h2>
+                  <span class="badge">Assurance</span>
+                </div>
+                <p class="subhead">
+                  SOC 2 is an attestation framework used heavily in SaaS and service providers. It
+                  focuses on “Trust Services Criteria” (TSC) rather than prescribing specific controls.
+                </p>
+
+                <table class="grid">
+                  <thead>
+                    <tr>
+                      <th>Trust Services Category</th>
+                      <th>What It Focuses On</th>
+                      <th>Examples of Technical Themes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Security</strong></td>
+                      <td>Protection against unauthorized access</td>
+                      <td>Access control, network security, logging, vulnerability management, change control.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Availability</strong></td>
+                      <td>Service uptime and performance</td>
+                      <td>Redundancy, failover, capacity management, backup and restore, DR testing.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Confidentiality</strong></td>
+                      <td>Protection of confidential information</td>
+                      <td>Data encryption, segregation, DLP, restricted access to secrets and code.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Processing Integrity</strong></td>
+                      <td>Complete, valid, accurate, timely processing</td>
+                      <td>Input validation, transaction controls, reconciling jobs, robust SDLC.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Privacy</strong></td>
+                      <td>Personal information handling practices</td>
+                      <td>Consent, data subject rights processes, retention and deletion controls.</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p class="note">
+                  SOC 2 doesn’t tell you “use this cipher” or “turn on this specific log”. Instead,
+                  you design controls using NIST/ISO/CIS, then map them into the SOC 2 Trust Services
+                  Criteria; auditors evaluate design and operating effectiveness.
+                </p>
+              </section>
+
+              <!-- 10. CLOUD PROGRAMS -->
+              <section id="gov-cloud-programs" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>10. Cloud Programs (FedRAMP, StateRAMP, etc.)</h2>
+                  <span class="badge">Cloud</span>
+                </div>
+                <p class="subhead">
+                  These programs sit on top of NIST/FIPS and define what’s required for cloud
+                  services offered to particular government sectors.
+                </p>
+
+                <div class="policy-grid">
+                  <div class="policy-card">
+                    <h3>FedRAMP (Federal Risk and Authorization Management Program)</h3>
+                    <p><strong>Audience:</strong> US federal agencies consuming cloud services</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Standardize security assessment, authorization, and continuous monitoring for cloud
+                      products used by US federal agencies.
+                    </p>
+
+                    <h4>Key Elements</h4>
+                    <ul>
+                      <li>NIST 800-53-based baselines (Low, Moderate, High).</li>
+                      <li>Authorization to Operate (ATO) from an agency or the JAB.</li>
+                      <li>Continuous monitoring and reporting requirements.</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Design FedRAMP “stack” with strict boundaries and audited controls.</li>
+                      <li>Terraform is used to codify the entire authorized boundary and its controls.</li>
+                    </ul>
+                  </div>
+
+                  <div class="policy-card">
+                    <h3>StateRAMP &amp; Other National Programs</h3>
+                    <p><strong>StateRAMP:</strong> US state/local government oriented, modeled after FedRAMP.</p>
+
+                    <h4>Purpose</h4>
+                    <p>
+                      Give state and local governments a consistent way to assess the security of cloud services.
+                    </p>
+
+                    <h4>Other Programs</h4>
+                    <ul>
+                      <li>IRAP (Australia), and other country-specific sovereign cloud programs.</li>
+                      <li>Typically map to a national control baseline (NIST-like or ISO-based).</li>
+                    </ul>
+
+                    <h4>Architecture / Cloud Impact</h4>
+                    <ul>
+                      <li>Separate tenants, regions, or accounts for each program where needed.</li>
+                      <li>Baseline patterns and Terraform modules per program (FedRAMP, StateRAMP, IRAP, etc.).</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 11. MAPPINGS -->
+              <section id="gov-mappings" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>11. Requirement → Regulations → Frameworks</h2>
+                  <span class="badge">Decision Map</span>
+                </div>
+                <p class="subhead">
+                  This table is the “cheat sheet” for common patterns. Start from a sentence someone
+                  says in a meeting and chase it across data, regs, and frameworks.
+                </p>
+
+                <table class="grid">
+                  <thead>
+                    <tr>
+                      <th>Requirement Pattern</th>
+                      <th>Data / P Level</th>
+                      <th>Likely Regulations</th>
+                      <th>Frameworks / Programs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>“We’re building a cloud-hosted electronic health records system.”</td>
+                      <td>P3, PHI, health data</td>
+                      <td>HIPAA, HITECH, possibly GDPR/other privacy laws if global</td>
+                      <td>NIST 800-53 or ISO 27001 baseline; HIPAA mappings; FedRAMP if federal</td>
+                    </tr>
+                    <tr>
+                      <td>“We store and process credit card payments online.”</td>
+                      <td>P3, cardholder data</td>
+                      <td>PCI DSS, possibly privacy laws (GDPR, CCPA, etc.)</td>
+                      <td>PCI DSS mapped to NIST/ISO/CIS; SOC 2 Security/Availability for assurance</td>
+                    </tr>
+                    <tr>
+                      <td>“SaaS product for public sector agencies in the US.”</td>
+                      <td>P2–P3, depending on agency and data</td>
+                      <td>FISMA context, plus sector laws (health, justice, etc.)</td>
+                      <td>FedRAMP baseline; NIST 800-53; FIPS crypto where required</td>
+                    </tr>
+                    <tr>
+                      <td>“Analytics platform with EU customer data.”</td>
+                      <td>P2–P3 (PII, possibly sensitive)</td>
+                      <td>GDPR, maybe other national privacy laws</td>
+                      <td>NIST CSF or ISO 27001/27701; SOC 2 Privacy/Confidentiality</td>
+                    </tr>
+                    <tr>
+                      <td>“Law enforcement case management for multiple states.”</td>
+                      <td>P3, CJI</td>
+                      <td>CJIS; state laws; maybe FISMA if federal</td>
+                      <td>NIST 800-53 with CJIS overlays; possibly StateRAMP; strong logging/encryption</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="chip-row">
+                  <span class="chip">Start with data and who you serve</span>
+                  <span class="chip">Then pick regulations and frameworks</span>
+                  <span class="chip">Then enforce via Terraform / Ansible baselines</span>
+                </div>
+              </section>
+
+              <!-- 12. IMPLEMENTATION -->
+              <section id="gov-implementation" class="gov-section">
+                <div class="gov-section-header">
+                  <h2>12. Implementation Hooks (Terraform, Ansible, Pipelines)</h2>
+                  <span class="badge">Execution</span>
+                </div>
+                <p class="subhead">
+                  This page stops at the governance map. Terraform, Ansible, and automation are
+                  where you turn the map into guardrails and concrete controls.
+                </p>
+
+                <div class="two-col">
+                  <div>
+                    <h3 style="margin:0.1rem 0 0.25rem;">Terraform Hooks</h3>
+                    <ul class="compact">
+                      <li>
+                        <span class="badge-soft">Landing zone modules</span>
+                        – enforce segmentation, baseline logging, and encryption by default for P2/P3 patterns.
+                      </li>
+                      <li>
+                        <span class="badge-soft">Policy-as-code</span>
+                        – validate configs against NIST/ISO/CIS mappings (e.g., OPA, Sentinel, ConfTest).
+                      </li>
+                      <li>
+                        <span class="badge-soft">Tagging &amp; metadata</span>
+                        – encode classification (P0–P3), owner, data type, and regulation tags onto resources.
+                      </li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 style="margin:0.1rem 0 0.25rem;">Ansible / Ops Hooks</h3>
+                    <ul class="compact">
+                      <li>
+                        <span class="badge-soft">Hardening roles</span>
+                        – CIS/NIST/ISO-aligned OS and middleware baselines for P2/P3 systems.
+                      </li>
+                      <li>
+                        <span class="badge-soft">Audit &amp; logging roles</span>
+                        – ensure logs needed for HIPAA/PCI/FedRAMP/CJIS are consistently enabled and shipped.
+                      </li>
+                      <li>
+                        <span class="badge-soft">Runbooks &amp; response</span>
+                        – incident response and change management tied back to NIST CSF (Respond/Recover).
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <p class="note">
+                  This workspace is deliberately <em>implementation-neutral</em>. The Terraform and
+                  Ansible HTML workspaces carry the actual code patterns; here you define what
+                  <strong>must exist</strong> so those patterns have something to anchor to.
+                </p>
+              </section>
+            </main>
+          </div>
+        </section>
+
+        <div class="footnote">
+          Save this file as <code>governances.html</code> next to <code>index.html</code>.
+          Link here from the index with the “Governance Workspace” button.
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,67 @@
+{
+  "version": "0.1.0",
+  "patterns": [
+    {
+      "pattern_id": "net.hub_spoke.inspection",
+      "name": "Hub-and-Spoke with Centralized Inspection",
+      "used_for": "Standard enterprise network segmentation with shared services, centralized egress/ingress inspection, and consistent routing control.",
+      "requires_capabilities": [
+        "network.private_connectivity",
+        "network.routing_control",
+        "security.network_firewall_or_inspection",
+        "security.logging_and_monitoring"
+      ],
+      "nice_to_have_capabilities": [
+        "security.ddos_protection",
+        "security.waf"
+      ],
+      "notes": [
+        "Best for multi-VPC/VNet environments and shared security controls.",
+        "Pairs naturally with landing zone + centralized logging."
+      ]
+    },
+    {
+      "pattern_id": "sec.regulated.baseline",
+      "name": "Regulated Security Baseline",
+      "used_for": "Baseline controls for regulated workloads (CJIS/FIPS/HIPAA-style): identity hardening, encryption, audit logging, threat detection, and private connectivity preference.",
+      "requires_capabilities": [
+        "identity.federation",
+        "security.key_management",
+        "security.audit_logging",
+        "security.threat_detection"
+      ],
+      "nice_to_have_capabilities": [
+        "network.private_connectivity",
+        "security.data_loss_prevention"
+      ]
+    },
+    {
+      "pattern_id": "data.worm.retention",
+      "name": "WORM Retention + Evidence Vault",
+      "used_for": "Write-once-read-many retention, immutability, and evidentiary storage for sensitive records and audit needs.",
+      "requires_capabilities": [
+        "data.object_storage",
+        "data.worm_retention",
+        "security.key_management",
+        "security.audit_logging"
+      ],
+      "nice_to_have_capabilities": [
+        "data.backup_and_recovery",
+        "security.data_classification"
+      ]
+    },
+    {
+      "pattern_id": "ops.central.logging.siem",
+      "name": "Centralized Logging + SIEM Integration",
+      "used_for": "Central collection, retention, and analysis of logs/events with integrations into SIEM/SOAR for response workflows.",
+      "requires_capabilities": [
+        "security.audit_logging",
+        "security.siem_or_security_analytics"
+      ],
+      "nice_to_have_capabilities": [
+        "security.soar_or_automation",
+        "security.threat_detection"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Application Migration & Modernization · CDK Toolkit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#050816;
+      --card:#0b1020;
+      --card2:#0f1730;
+      --muted:#9ca3af;
+      --text:#e5e7eb;
+      --accent:#6366f1;
+      --accent2:#22c55e;
+      --warn:#f59e0b;
+      --danger:#ef4444;
+      --border:rgba(255,255,255,0.12);
+      --shadow:0 12px 40px rgba(0,0,0,0.35);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+    body{
+      margin:0;
+      background: radial-gradient(1200px 700px at 10% 10%, rgba(99,102,241,0.18), transparent 55%),
+                  radial-gradient(900px 600px at 90% 10%, rgba(34,197,94,0.12), transparent 55%),
+                  radial-gradient(900px 700px at 50% 90%, rgba(245,158,11,0.10), transparent 60%),
+                  var(--bg);
+      color: var(--text);
+      min-height:100vh;
+    }
+    a{ color:inherit; text-decoration:none; }
+    .wrap{ max-width: 1200px; margin: 0 auto; padding: 22px; }
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:14px; padding:14px 16px; border:1px solid var(--border);
+      background: rgba(11,16,32,0.75); backdrop-filter: blur(10px);
+      border-radius: 16px; box-shadow: var(--shadow);
+    }
+    .brand{ display:flex; flex-direction:column; gap:2px; }
+    .brand h1{ margin:0; font-size: 18px; letter-spacing: 0.3px; }
+    .brand p{ margin:0; color: var(--muted); font-size: 12px; }
+    .actions{ display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+    .btn{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:9px 12px; border-radius: 12px;
+      border:1px solid var(--border);
+      background: rgba(15,23,48,0.85);
+      font-weight: 600; font-size: 12px;
+      cursor:pointer;
+    }
+    .btn:hover{ border-color: rgba(99,102,241,0.55); }
+    .btn.primary{ background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.45); }
+    .btn.good{ background: rgba(34,197,94,0.18); border-color: rgba(34,197,94,0.45); }
+    .grid{
+      display:grid; grid-template-columns: 1.15fr 0.85fr; gap: 16px;
+      margin-top: 16px;
+    }
+    @media (max-width: 980px){
+      .grid{ grid-template-columns: 1fr; }
+      .actions{ justify-content:flex-start; }
+    }
+    .card{
+      border:1px solid var(--border);
+      background: rgba(11,16,32,0.72);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card .hd{
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(15,23,48,0.55);
+      display:flex; align-items:center; justify-content:space-between; gap: 10px;
+    }
+    .card .hd h2{ margin:0; font-size: 14px; letter-spacing: 0.2px; }
+    .card .bd{ padding: 14px 16px; }
+    .tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+    .tab{
+      padding:7px 10px; border-radius: 999px;
+      border:1px solid var(--border);
+      background: rgba(15,23,48,0.75);
+      font-size: 12px; font-weight: 700; cursor:pointer;
+      user-select:none;
+    }
+    .tab.active{ border-color: rgba(99,102,241,0.55); background: rgba(99,102,241,0.18); }
+    .pill{ display:inline-flex; align-items:center; gap:8px; padding: 6px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); background: rgba(15,23,48,0.75); }
+    .muted{ color: var(--muted); }
+    .section{ display:none; }
+    .section.active{ display:block; }
+    .two{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 720px){ .two{ grid-template-columns: 1fr; } }
+    label{ display:block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input, select, textarea{
+      width: 100%;
+      padding: 10px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(5,8,22,0.60);
+      color: var(--text);
+      outline: none;
+      box-sizing: border-box;
+    }
+    textarea{ min-height: 88px; resize: vertical; }
+    .row{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .row3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    @media (max-width: 980px){ .row, .row3{ grid-template-columns: 1fr; } }
+    .checks{ display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    @media (max-width: 720px){ .checks{ grid-template-columns: 1fr; } }
+    .chk{
+      display:flex; gap:10px; align-items:flex-start;
+      padding:10px; border:1px solid rgba(255,255,255,0.10);
+      border-radius: 12px; background: rgba(15,23,48,0.45);
+    }
+    .chk input{ width:auto; margin-top: 2px; }
+    .kpi{
+      display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+    }
+    @media (max-width: 720px){ .kpi{ grid-template-columns: 1fr; } }
+    .kpi .box{
+      border:1px solid rgba(255,255,255,0.12);
+      background: rgba(15,23,48,0.55);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .kpi .box .v{ font-size: 18px; font-weight: 900; }
+    .kpi .box .k{ font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .route{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:12px; padding: 12px; border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(15,23,48,0.55);
+    }
+    .route .big{ font-size: 16px; font-weight: 900; }
+    .badge{
+      font-size: 12px; font-weight: 900;
+      padding: 6px 10px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(99,102,241,0.18);
+    }
+    .badge.good{ background: rgba(34,197,94,0.18); border-color: rgba(34,197,94,0.35); }
+    .badge.warn{ background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.35); }
+    .badge.danger{ background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.35); }
+    .list{
+      margin: 10px 0 0 0; padding: 0;
+      list-style: none;
+    }
+    .list li{
+      padding: 8px 10px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px;
+      background: rgba(5,8,22,0.55);
+      margin-bottom: 8px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .small{ font-size: 12px; color: var(--muted); }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .divider{ height:1px; background: rgba(255,255,255,0.10); margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1>Application Migration & Modernization</h1>
+        <p>Evaluate each on‑prem software package → choose the right course → generate the playbook (AWS / Azure / GCP / OCI)</p>
+      </div>
+      <div class="actions">
+        <a class="btn" href="index.html">← Toolkit Home</a>
+        <a class="btn" href="app-migration-portfolio.html">Portfolio Dashboard ↗</a>
+        <button class="btn primary" id="btnRun">Run Evaluation</button>
+        <button class="btn good" id="btnExport">Export JSON</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="hd">
+          <h2>Manual + Interactive Engine</h2>
+          <div class="tabs">
+            <div class="tab active" data-tab="manual">Manual</div>
+            <div class="tab" data-tab="intake">Intake</div>
+            <div class="tab" data-tab="ratings">Ratings</div>
+            <div class="tab" data-tab="results">Results</div>
+            <div class="tab" data-tab="playbooks">Playbooks</div>
+          </div>
+        </div>
+        <div class="bd">
+          <!-- MANUAL -->
+          <div class="section active" id="sec-manual">
+            <div class="route">
+              <div>
+                <div class="big">Purpose</div>
+                <div class="muted">A repeatable system to determine: migrate vs. retain vs. retire — and if migrating, whether to rehost, replatform, refactor, or repurchase.</div>
+              </div>
+              <div class="badge">EAMME v1.0</div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="two">
+              <div>
+                <div class="pill"><strong>Decision Framework</strong> <span class="muted">Expanded 7R</span></div>
+                <ul class="list">
+                  <li><strong>Rehost</strong> — lift & shift VMs / minimal change</li>
+                  <li><strong>Replatform</strong> — move to managed services w/ limited code change</li>
+                  <li><strong>Refactor</strong> — modernization (containers, microservices, serverless)</li>
+                  <li><strong>Repurchase</strong> — vendor SaaS replacement</li>
+                  <li><strong>Retain</strong> — keep on‑prem temporarily due to blockers</li>
+                  <li><strong>Retire</strong> — decommission / archive</li>
+                </ul>
+              </div>
+              <div>
+                <div class="pill"><strong>How to use</strong> <span class="muted">Per application</span></div>
+                <ul class="list">
+                  <li>Fill out <strong>Intake</strong> (business + tech + infra + constraints).</li>
+                  <li>Assign 1–5 ratings for readiness factors in <strong>Ratings</strong>.</li>
+                  <li>Click <strong>Run Evaluation</strong> → get route + cloud target + step-by-step plan.</li>
+                  <li>Export JSON to build a migration backlog / portfolio plan.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="pill"><strong>Readiness Score</strong> <span class="muted">(0–100)</span></div>
+            <ul class="list">
+              <li><span class="mono">80–100</span> → Refactor / Modernize</li>
+              <li><span class="mono">60–79</span> → Replatform</li>
+              <li><span class="mono">40–59</span> → Rehost</li>
+              <li><span class="mono">20–39</span> → Retain</li>
+              <li><span class="mono">0–19</span> → Retire</li>
+            </ul>
+
+            <div class="small">Note: Hard gates override score (e.g., obsolete → Retire, SaaS available → Repurchase, hardware/mainframe → Retain).</div>
+          </div>
+
+          <!-- INTAKE -->
+          <div class="section" id="sec-intake">
+            <div class="row">
+              <div>
+                <label>Application Name</label>
+                <input id="appName" placeholder="e.g., Case Management System" />
+              </div>
+              <div>
+                <label>Business Owner / Team</label>
+                <input id="appOwner" placeholder="e.g., Courts IT / Clerk’s Office" />
+              </div>
+            </div>
+
+            <div class="row3" style="margin-top:12px;">
+              <div>
+                <label>Business Criticality</label>
+                <select id="criticality">
+                  <option>Low</option>
+                  <option>Medium</option>
+                  <option selected>High</option>
+                  <option>Mission Critical</option>
+                </select>
+              </div>
+              <div>
+                <label>RTO (hours)</label>
+                <input id="rto" type="number" min="0" step="0.5" value="24" />
+              </div>
+              <div>
+                <label>RPO (hours)</label>
+                <input id="rpo" type="number" min="0" step="0.5" value="4" />
+              </div>
+            </div>
+
+            <div class="row" style="margin-top:12px;">
+              <div>
+                <label>Workload Type</label>
+                <select id="workloadType">
+                  <option selected>General LOB App</option>
+                  <option>Public Web</option>
+                  <option>Internal Web</option>
+                  <option>Batch</option>
+                  <option>Analytics</option>
+                  <option>AI/ML</option>
+                  <option>ETL / Data Movement</option>
+                  <option>Messaging / Integration</option>
+                </select>
+              </div>
+              <div>
+                <label>Enterprise Standard Cloud (optional)</label>
+                <select id="enterpriseCloud">
+                  <option value="">(none)</option>
+                  <option value="aws">AWS</option>
+                  <option value="azure">Azure</option>
+                  <option value="gcp">GCP</option>
+                  <option value="oci">OCI</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="row3">
+              <div>
+                <label>Primary Stack / Language</label>
+                <input id="primaryStack" list="dlPrimaryStack" placeholder="Select or type…" aria-label="Primary Stack / Language" />
+                <datalist id="dlPrimaryStack">
+                  <!-- options injected below -->
+                  <option value=".NET Framework"></option>
+                  <option value=".NET (Core/Modern)"></option>
+                  <option value="C#"></option>
+                  <option value="F#"></option>
+                  <option value="ASP.NET MVC"></option>
+                  <option value="ASP.NET WebForms"></option>
+                  <option value="Java 8"></option>
+                  <option value="Java 11"></option>
+                  <option value="Java 17+"></option>
+                  <option value="Spring"></option>
+                  <option value="JBoss/WildFly"></option>
+                  <option value="WebLogic"></option>
+                  <option value="Node.js"></option>
+                  <option value="Express"></option>
+                  <option value="NestJS"></option>
+                  <option value="Python"></option>
+                  <option value="Django"></option>
+                  <option value="Flask"></option>
+                  <option value="FastAPI"></option>
+                  <option value="Go"></option>
+                  <option value="Gin"></option>
+                  <option value="PHP"></option>
+                  <option value="Laravel"></option>
+                  <option value="Symfony"></option>
+                  <option value="Ruby"></option>
+                  <option value="Rails"></option>
+                  <option value="C/C++"></option>
+                  <option value="Rust"></option>
+                  <option value="COBOL"></option>
+                  <option value="Mainframe"></option>
+                  <option value="PowerBuilder"></option>
+                  <option value="VB6"></option>
+                  <option value="Delphi"></option>
+                  <option value="ColdFusion"></option>
+                  <option value="SharePoint"></option>
+                  <option value="Dynamics"></option>
+                  <option value="SAP ABAP"></option>
+                  <option value="Microservices"></option>
+                  <option value="SOA"></option>
+                  <option value="Monolith (single deployable)"></option>
+                  <option value="Mixed / Hybrid"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+              <div>
+                <label>OS / Runtime</label>
+                <input id="osRuntime" list="dlOsRuntime" placeholder="Select or type…" aria-label="OS / Runtime" />
+                <datalist id="dlOsRuntime">
+                  <!-- options injected below -->
+                  <option value="Windows Server 2008 R2"></option>
+                  <option value="Windows Server 2012"></option>
+                  <option value="Windows Server 2016"></option>
+                  <option value="Windows Server 2019"></option>
+                  <option value="Windows Server 2022"></option>
+                  <option value="RHEL 6"></option>
+                  <option value="RHEL 7"></option>
+                  <option value="RHEL 8"></option>
+                  <option value="RHEL 9"></option>
+                  <option value="Ubuntu 16.04"></option>
+                  <option value="Ubuntu 18.04"></option>
+                  <option value="Ubuntu 20.04"></option>
+                  <option value="Ubuntu 22.04"></option>
+                  <option value="Ubuntu 24.04"></option>
+                  <option value="SUSE SLES 12"></option>
+                  <option value="SUSE SLES 15"></option>
+                  <option value="Amazon Linux 2"></option>
+                  <option value="Amazon Linux 2023"></option>
+                  <option value="Debian"></option>
+                  <option value="CentOS"></option>
+                  <option value="AIX"></option>
+                  <option value="HP-UX"></option>
+                  <option value="Solaris"></option>
+                  <option value="Mainframe z/OS"></option>
+                  <option value="VMware Appliance"></option>
+                  <option value="Bare Metal"></option>
+                  <option value="Containerized Runtime"></option>
+                  <option value="Kubernetes"></option>
+                  <option value="Serverless Runtime"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+              <div>
+                <label>Database</label>
+                <input id="database" list="dlDatabase" placeholder="Select or type…" aria-label="Database" />
+                <datalist id="dlDatabase">
+                  <!-- options injected below -->
+                  <option value="SQL Server"></option>
+                  <option value="SQL Server Always On"></option>
+                  <option value="Oracle"></option>
+                  <option value="Oracle RAC"></option>
+                  <option value="PostgreSQL"></option>
+                  <option value="MySQL"></option>
+                  <option value="MariaDB"></option>
+                  <option value="DB2"></option>
+                  <option value="MongoDB"></option>
+                  <option value="Cassandra"></option>
+                  <option value="Couchbase"></option>
+                  <option value="Redis"></option>
+                  <option value="SQLite"></option>
+                  <option value="Teradata"></option>
+                  <option value="Netezza"></option>
+                  <option value="Vertica"></option>
+                  <option value="Snowflake"></option>
+                  <option value="No Database"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+            </div>
+
+            
+            <div class="row3" style="margin-top:12px;">
+              <div>
+                <label>Current Hosting Platform</label>
+                <input id="hostingPlatform" list="dlHostingPlatform" placeholder="Select or type…" />
+                <datalist id="dlHostingPlatform">
+                  <option value="VMware vSphere"></option>
+                  <option value="Hyper-V"></option>
+                  <option value="Bare Metal"></option>
+                  <option value="KVM"></option>
+                  <option value="Mainframe"></option>
+                  <option value="On-Prem Kubernetes"></option>
+                  <option value="On-Prem PaaS"></option>
+                  <option value="Already in Cloud"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+              <div>
+                <label>Integration Types</label>
+                <input id="integrationTypes" list="dlIntegrationTypes" placeholder="Select or type (comma-separated)…" />
+                <datalist id="dlIntegrationTypes">
+                  <option value="REST API"></option>
+                  <option value="SOAP"></option>
+                  <option value="Message Queue (MQ)"></option>
+                  <option value="Kafka"></option>
+                  <option value="File Drop (SFTP/FTPS)"></option>
+                  <option value="Database Link / Replication"></option>
+                  <option value="Email"></option>
+                  <option value="EDI"></option>
+                  <option value="Custom TCP/UDP"></option>
+                </datalist>
+              </div>
+              <div>
+                <label>Architecture Pattern</label>
+                <input id="archPattern" list="dlArchPattern" placeholder="Select or type…" />
+                <datalist id="dlArchPattern">
+                  <option value="Monolith"></option>
+                  <option value="3-tier"></option>
+                  <option value="N-tier"></option>
+                  <option value="SOA"></option>
+                  <option value="Microservices"></option>
+                  <option value="Event-driven"></option>
+                  <option value="Client/Server"></option>
+                  <option value="Batch"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+            </div>
+
+<div class="row3" style="margin-top:12px;">
+              <div>
+                <label>Vendor (if applicable)</label>
+                <input id="vendor" list="dlVendor" placeholder="Select or type…" aria-label="Vendor" />
+                <datalist id="dlVendor">
+                  <!-- options injected below -->
+                  <option value="Custom Built"></option>
+                  <option value="Open Source"></option>
+                  <option value="Microsoft"></option>
+                  <option value="Oracle"></option>
+                  <option value="IBM"></option>
+                  <option value="SAP"></option>
+                  <option value="VMware"></option>
+                  <option value="Red Hat"></option>
+                  <option value="Broadcom"></option>
+                  <option value="Cisco"></option>
+                  <option value="Salesforce"></option>
+                  <option value="ServiceNow"></option>
+                  <option value="Workday"></option>
+                  <option value="Atlassian"></option>
+                  <option value="Infor"></option>
+                  <option value="Epic"></option>
+                  <option value="Cerner"></option>
+                  <option value="Tyler Technologies"></option>
+                  <option value="OpenText"></option>
+                  <option value="Micro Focus"></option>
+                  <option value="Other Vendor"></option>
+                </datalist>
+              </div>
+              <div>
+                <label>Integrations (count)</label>
+                <input id="integrationCount" type="number" min="0" step="1" value="5" />
+              </div>
+              <div>
+                <label>Data Size (GB)</label>
+                <input id="dataSizeGb" type="number" min="0" step="1" value="200" />
+              </div>
+            </div>
+
+            <div class="row" style="margin-top:12px;">
+              <div>
+                <label>Authentication / Identity</label>
+                <input id="identity" list="dlIdentity" placeholder="Select or type…" aria-label="Authentication / Identity" />
+                <datalist id="dlIdentity">
+                  <!-- options injected below -->
+                  <option value="Active Directory (AD)"></option>
+                  <option value="LDAP"></option>
+                  <option value="Kerberos"></option>
+                  <option value="Azure AD / Entra ID"></option>
+                  <option value="Okta"></option>
+                  <option value="Ping Identity"></option>
+                  <option value="ADFS"></option>
+                  <option value="SAML"></option>
+                  <option value="OIDC"></option>
+                  <option value="OAuth2"></option>
+                  <option value="RADIUS"></option>
+                  <option value="CAC/PIV"></option>
+                  <option value="Local Accounts"></option>
+                  <option value="Custom Auth"></option>
+                  <option value="Other"></option>
+                </datalist>
+              </div>
+              <div>
+                <label>Notes</label>
+                <textarea id="notes" placeholder="Key constraints, special requirements, known pain points"></textarea>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            
+            <label>Compliance Scope (select all that apply)</label>
+            <div class="checks">
+              <div class="chk"><input type="checkbox" value="commercial" class="cmp" /> <div><strong>Commercial</strong><div class="small">Standard commercial cloud controls</div></div></div>
+
+              <div class="chk"><input type="checkbox" value="fedramp_low" class="cmp" /> <div><strong>FedRAMP Low</strong><div class="small">Federal ATO baseline (Low)</div></div></div>
+              <div class="chk"><input type="checkbox" value="fedramp_moderate" class="cmp" /> <div><strong>FedRAMP Moderate</strong><div class="small">Federal ATO baseline (Moderate)</div></div></div>
+              <div class="chk"><input type="checkbox" value="fedramp_high" class="cmp" /> <div><strong>FedRAMP High</strong><div class="small">Federal ATO baseline (High)</div></div></div>
+
+              <div class="chk"><input type="checkbox" value="cjis" class="cmp" /> <div><strong>CJIS</strong><div class="small">Justice / law enforcement data</div></div></div>
+              <div class="chk"><input type="checkbox" value="hipaa" class="cmp" /> <div><strong>HIPAA</strong><div class="small">PHI / healthcare</div></div></div>
+              <div class="chk"><input type="checkbox" value="pci" class="cmp" /> <div><strong>PCI DSS</strong><div class="small">Payment card data</div></div></div>
+              <div class="chk"><input type="checkbox" value="sox" class="cmp" /> <div><strong>SOX</strong><div class="small">Financial reporting controls</div></div></div>
+
+              <div class="chk"><input type="checkbox" value="fisma" class="cmp" /> <div><strong>FISMA</strong><div class="small">Federal IS controls (program)</div></div></div>
+              <div class="chk"><input type="checkbox" value="cmmc" class="cmp" /> <div><strong>CMMC</strong><div class="small">Defense supply chain requirements</div></div></div>
+              <div class="chk"><input type="checkbox" value="itars" class="cmp" /> <div><strong>ITAR</strong><div class="small">Export-controlled data</div></div></div>
+
+              <div class="chk"><input type="checkbox" value="gdpr" class="cmp" /> <div><strong>GDPR</strong><div class="small">EU personal data protections</div></div></div>
+              <div class="chk"><input type="checkbox" value="ferpa" class="cmp" /> <div><strong>FERPA</strong><div class="small">Student education records</div></div></div>
+
+              <div class="chk"><input type="checkbox" value="soc2" class="cmp" /> <div><strong>SOC 2</strong><div class="small">Trust services criteria</div></div></div>
+              <div class="chk"><input type="checkbox" value="iso27001" class="cmp" /> <div><strong>ISO 27001</strong><div class="small">ISMS certification</div></div></div>
+            </div>
+
+            <div class="small">
+              FedRAMP selections imply a <strong>FedRAMP-authorized commercial cloud boundary</strong> (not on-prem).
+              If your program requires a specific Gov/Sovereign region, use the <strong>Data sovereignty</strong> gate below.
+            </div>
+
+            <div class="divider"></div>
+
+
+            <label>Hard Gates / Constraints</label>
+            <div class="checks">
+              <div class="chk"><input type="checkbox" id="fgObsolete" /> <div><strong>Obsolete / No longer used</strong><div class="small">Candidate for retirement</div></div></div>
+              <div class="chk"><input type="checkbox" id="fgSaaS" /> <div><strong>Vendor SaaS replacement exists</strong><div class="small">Candidate for repurchase</div></div></div>
+              <div class="chk"><input type="checkbox" id="fgMustStay" /> <div><strong>Must stay on‑prem (policy)</strong><div class="small">Retain for now</div></div></div>
+              <div class="chk"><input type="checkbox" id="fgHardware" /> <div><strong>Hardware bound / appliance dependency</strong><div class="small">Retain until decoupled</div></div></div>
+              <div class="chk"><input type="checkbox" id="fgMainframe" /> <div><strong>Mainframe dependency</strong><div class="small">Retain until strategy defined</div></div></div>
+              <div class="chk"><input type="checkbox" id="fgSov" /> <div><strong>Data sovereignty required</strong><div class="small">Sovereign / regulated landing zone</div></div></div>
+            </div>
+          </div>
+
+          <!-- RATINGS -->
+          <div class="section" id="sec-ratings">
+            <div class="pill"><strong>Rate each factor</strong> <span class="muted">(1 = worst / hardest, 5 = best / easiest)</span></div>
+            <div class="row3" style="margin-top:12px;">
+              <div>
+                <label>Cloud Compatibility</label>
+                <select id="rCloudCompat">
+                  <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </div>
+              <div>
+                <label>Technical Debt</label>
+                <select id="rTechDebt">
+                  <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </div>
+              <div>
+                <label>Vendor Lock Risk</label>
+                <select id="rVendorLock">
+                  <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row3" style="margin-top:12px;">
+              <div>
+                <label>Compliance Complexity</label>
+                <select id="rCompliance">
+                  <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </div>
+              <div>
+                <label>Architecture Modularity</label>
+                <select id="rModularity">
+                  <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </div>
+              <div>
+                <label>Refactor Effort</label>
+                <select id="rRefactorEffort">
+                  <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="small">
+              Tip: Use your intake to anchor ratings:
+              <ul>
+                <li><strong>Cloud Compatibility</strong>: OS support, networking patterns, dependencies, licensing portability</li>
+                <li><strong>Technical Debt</strong>: age, patch posture, brittle releases, manual operations</li>
+                <li><strong>Vendor Lock Risk</strong>: proprietary middleware, closed formats, contracts</li>
+                <li><strong>Compliance Complexity</strong>: CJIS/FedRAMP/ITAR constraints and audit overhead</li>
+                <li><strong>Modularity</strong>: clear components, APIs, separation of concerns</li>
+                <li><strong>Refactor Effort</strong>: effort/time to modernize safely</li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- RESULTS -->
+          <div class="section" id="sec-results">
+            <div class="kpi">
+              <div class="box">
+                <div class="v" id="kReadiness">—</div>
+                <div class="k">Readiness Score (0–100)</div>
+              </div>
+              <div class="box">
+                <div class="v" id="kRoute">—</div>
+                <div class="k">Course of Action</div>
+              </div>
+              <div class="box">
+                <div class="v" id="kCloud">—</div>
+                <div class="k">Target Cloud</div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="route">
+              <div>
+                <div class="big" id="rationaleTitle">Rationale</div>
+                <div class="muted" id="rationaleText">Run evaluation to populate results.</div>
+              </div>
+              <div class="badge" id="badgeRisk">—</div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="pill"><strong>Step-by-Step Plan</strong></div>
+            <ul class="list" id="planList"></ul>
+
+            <div class="divider"></div>
+
+            <div class="pill"><strong>Recommended Services</strong> <span class="muted">(closest matches from your catalogs)</span></div>
+            <div class="small muted">These are pulled from the provider service lists in <span class="mono">cloud-decision-logic-kit/data/*-services.js</span>.</div>
+            <ul class="list" id="svcList"></ul>
+
+            <div class="small">Export JSON to create a portfolio backlog and track outcomes per application.</div>
+          </div>
+
+          <!-- PLAYBOOKS -->
+          <div class="section" id="sec-playbooks">
+            <div class="pill"><strong>Playbooks</strong> <span class="muted">Standardized execution plans</span></div>
+            <div class="divider"></div>
+
+            <div class="two">
+              <div class="card" style="background: rgba(11,16,32,0.0); border:none; box-shadow:none;">
+                <div class="route"><div><div class="big">Rehost</div><div class="muted">Lift & shift</div></div><div class="badge">Runbook</div></div>
+                <ul class="list" id="pbRehost"></ul>
+              </div>
+              <div class="card" style="background: rgba(11,16,32,0.0); border:none; box-shadow:none;">
+                <div class="route"><div><div class="big">Replatform</div><div class="muted">Managed services</div></div><div class="badge">Runbook</div></div>
+                <ul class="list" id="pbReplatform"></ul>
+              </div>
+            </div>
+
+            <div class="two" style="margin-top:10px;">
+              <div class="card" style="background: rgba(11,16,32,0.0); border:none; box-shadow:none;">
+                <div class="route"><div><div class="big">Refactor</div><div class="muted">Modernize</div></div><div class="badge">Runbook</div></div>
+                <ul class="list" id="pbRefactor"></ul>
+              </div>
+              <div class="card" style="background: rgba(11,16,32,0.0); border:none; box-shadow:none;">
+                <div class="route"><div><div class="big">Repurchase / Retain / Retire</div><div class="muted">Non-migration or replacement</div></div><div class="badge">Runbook</div></div>
+                <ul class="list" id="pbOther"></ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <h2>Output Record</h2>
+          <div class="pill"><strong>JSON</strong> <span class="muted">portfolio-ready</span></div>
+        </div>
+        <div class="bd">
+          <label>Preview</label>
+          <textarea id="jsonPreview" class="mono" readonly></textarea>
+          <div class="small">This record is what you will collect per app (backlog item). Export saves a file locally.</div>
+
+          <div class="divider"></div>
+
+          <div class="pill"><strong>Risk Hint</strong> <span class="muted">fast triage</span></div>
+          <ul class="list">
+            <li><strong>High risk</strong>: Mission critical + tight RTO/RPO + heavy compliance + lots of integrations.</li>
+            <li><strong>Low risk</strong>: low criticality + few integrations + tolerant RTO/RPO + modern stack.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load existing provider catalogs -->
+  <script src="cloud-decision-logic-kit/data/aws-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/azure-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/gcp-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/oci-services.js"></script>
+
+  <!-- CCSM (canonical cross-cloud service index) -->
+  <script src="cloud-decision-logic-kit/data/ccsm-index.js"></script>
+
+  <!-- Engine -->
+  <script src="cloud-decision-logic-kit/data/app-migration-engine.js"></script>
+  <script src="cloud-decision-logic-kit/data/app-migration-playbook-provider.js"></script>
+
+  <script>
+    (function(){
+      "use strict";
+async function ensureAppMigrationEngineLoaded(){
+  // Some users host ATK at different roots; attempt a couple common relative paths.
+  const candidates = [
+    "cloud-decision-logic-kit/data/app-migration-engine.js",
+    "./cloud-decision-logic-kit/data/app-migration-engine.js",
+    "web/cloud-decision-logic-kit/data/app-migration-engine.js",
+    "./web/cloud-decision-logic-kit/data/app-migration-engine.js"
+  ];
+
+  function already(){
+    return (window.CDK && window.CDK.appMigration);
+  }
+  if (already()) return true;
+
+  for (const src of candidates){
+    try{
+      await new Promise((resolve)=>{
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = ()=>resolve(true);
+        s.onerror = ()=>resolve(false);
+        document.head.appendChild(s);
+      });
+      if (already()) return true;
+    } catch {}
+  }
+  return false;
+}
+
+
+      const $ = (id) => document.getElementById(id);
+
+      const tabs = Array.from(document.querySelectorAll(".tab"));
+      const sections = {
+        manual: $("sec-manual"),
+        intake: $("sec-intake"),
+        ratings: $("sec-ratings"),
+        results: $("sec-results"),
+        playbooks: $("sec-playbooks")
+      };
+
+      function setTab(name){
+        tabs.forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+        Object.keys(sections).forEach(k => sections[k].classList.toggle("active", k === name));
+      }
+      tabs.forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
+
+      // Populate playbooks
+      function li(text){
+        const x = document.createElement("li");
+        x.textContent = text;
+        return x;
+      }
+      function fillList(el, items){
+        el.innerHTML = "";
+        (items || []).forEach(i => el.appendChild(li(i)));
+      }
+      function initPlaybooks(){
+        const pb = (window.CDK && window.CDK.appMigration && window.CDK.appMigration.playbooks) || {};
+        fillList($("pbRehost"), pb.Rehost || []);
+        fillList($("pbReplatform"), pb.Replatform || []);
+        fillList($("pbRefactor"), pb.Refactor || []);
+        const other = []
+          .concat(["Repurchase"], (pb.Repurchase || []), ["Retain"], (pb.Retain || []), ["Retire"], (pb.Retire || []));
+        fillList($("pbOther"), other.map(x => x === "Repurchase" || x === "Retain" || x === "Retire" ? ("— " + x + " —") : x));
+      }
+
+      function gatherCompliance(){
+        const raw = Array.from(document.querySelectorAll(".cmp:checked")).map(x => x.value);
+        if (window.CDK && window.CDK.appMigration && window.CDK.appMigration.normalizeCompliance){
+          return window.CDK.appMigration.normalizeCompliance(raw);
+        }
+        return raw;
+      }
+
+      function computeRiskBadge(app){
+        // quick heuristic risk label for the UI (not part of engine decisions)
+        let points = 0;
+        const crit = $("criticality").value;
+        if (crit === "Mission Critical") points += 3;
+        else if (crit === "High") points += 2;
+        else if (crit === "Medium") points += 1;
+
+        const rto = Number($("rto").value || 0);
+        const rpo = Number($("rpo").value || 0);
+        if (rto <= 4) points += 2;
+        else if (rto <= 24) points += 1;
+        if (rpo <= 1) points += 2;
+        else if (rpo <= 4) points += 1;
+
+        const ic = Number($("integrationCount").value || 0);
+        if (ic >= 20) points += 2;
+        else if (ic >= 10) points += 1;
+
+        const cmp = app.compliance || [];
+        if (cmp.includes("fedramp") || cmp.includes("itars") || cmp.includes("cjis")) points += 2;
+        else if (cmp.length) points += 1;
+
+        if (points >= 8) return { label: "High Risk", cls: "danger" };
+        if (points >= 5) return { label: "Medium Risk", cls: "warn" };
+        return { label: "Low Risk", cls: "good" };
+      }
+
+      function buildAppModel(){
+        return {
+          name: $("appName").value.trim(),
+          owner: $("appOwner").value.trim(),
+          criticality: $("criticality").value,
+          rtoHours: Number($("rto").value || 0),
+          rpoHours: Number($("rpo").value || 0),
+          workloadType: $("workloadType").value,
+          enterpriseStandardCloud: $("enterpriseCloud").value,
+          primaryStack: $("primaryStack").value.trim(),
+          osRuntime: $("osRuntime").value.trim(),
+          database: $("database").value.trim(),
+          vendor: $("vendor").value.trim(),
+          integrationCount: Number($("integrationCount").value || 0),
+          dataSizeGb: Number($("dataSizeGb").value || 0),
+          identity: $("identity").value.trim(),
+          notes: $("notes").value.trim(),
+          hostingPlatform: $("hostingPlatform") ? $("hostingPlatform").value.trim() : "",
+          integrationTypes: $("integrationTypes") ? $("integrationTypes").value.trim() : "",
+          architecturePattern: $("archPattern") ? $("archPattern").value.trim() : "",
+          compliance: gatherCompliance(),
+          dataSovereigntyRequired: $("fgSov").checked,
+          flags: {
+            isObsolete: $("fgObsolete").checked,
+            noLongerUsed: $("fgObsolete").checked,
+            vendorSaaSAvailable: $("fgSaaS").checked,
+            mustStayOnPrem: $("fgMustStay").checked,
+            hardwareBound: $("fgHardware").checked,
+            mainframeBound: $("fgMainframe").checked
+          },
+          ratings: {
+            cloudCompatibility: Number($("rCloudCompat").value),
+            technicalDebt: Number($("rTechDebt").value),
+            vendorLockRisk: Number($("rVendorLock").value),
+            complianceComplexity: Number($("rCompliance").value),
+            architectureModularity: Number($("rModularity").value),
+            refactorEffort: Number($("rRefactorEffort").value)
+          }
+        };
+      }
+
+      function runEvaluation(){
+        if (!window.CDK || !window.CDK.appMigration){
+          alert("CDK appMigration engine not loaded.");
+          return;
+        }
+
+        const app = buildAppModel();
+        const score = window.CDK.appMigration.computeReadinessScore(app.ratings);
+        app.readinessScore = score;
+
+        const classification = window.CDK.appMigration.classifyCourse(app);
+        const cloud = window.CDK.appMigration.targetCloud(app);
+
+        const route = classification.route; // Rehost/Replatform/Refactor/Repurchase/Retain/Retire
+
+        // Service recommendations: map cloud name to providerId
+        const providerId = (cloud.cloud || "AWS").toLowerCase(); // aws/azure/gcp/oci
+	        const svc = window.CDK.appMigration.recommendServices(providerId, route, app);
+
+        // Plan steps
+        const plan = (window.CDK.appMigration.getPlaybook
+          ? window.CDK.appMigration.getPlaybook(providerId, route, app)
+          : (window.CDK.appMigration.playbooks[route] || window.CDK.appMigration.playbooks.Retain || []));
+
+        // Populate UI
+        $("kReadiness").textContent = String(score);
+        $("kRoute").textContent = route;
+        $("kCloud").textContent = cloud.cloud;
+
+        $("rationaleText").textContent = classification.rationale + " " + cloud.rationale;
+
+        const risk = computeRiskBadge(app);
+        const badge = $("badgeRisk");
+        badge.textContent = risk.label;
+        badge.classList.remove("good","warn","danger");
+        badge.classList.add(risk.cls);
+
+        // Steps
+        const planEl = $("planList");
+        planEl.innerHTML = "";
+        plan.forEach(s => planEl.appendChild(li(s)));
+
+        // Services
+        const svcEl = $("svcList");
+        svcEl.innerHTML = "";
+	        const methods = (svc && svc._meta && svc._meta.methods) ? svc._meta.methods : {};
+	        Object.keys(svc).filter(k => k !== "_meta").forEach(k => {
+          const header = document.createElement("li");
+	          const src = methods[k] ? String(methods[k]) : "closest matches";
+	          header.innerHTML = "<strong>" + k + "</strong><div class='small muted'>" + src + "</div>";
+          svcEl.appendChild(header);
+          svc[k].forEach(name => {
+            const item = document.createElement("li");
+            item.textContent = "• " + name;
+            svcEl.appendChild(item);
+          });
+        });
+
+        const results = { readinessScore: score, courseOfAction: classification, targetCloud: cloud, route, providerId, services: svc, plan };
+        const record = window.CDK.appMigration.buildRecord(app, results);
+
+        $("jsonPreview").value = JSON.stringify(record, null, 2);
+
+        setTab("results");
+        window.__LAST_APP_MIGRATION_RECORD__ = record;
+      }
+
+      function exportJson(){
+        const record = window.__LAST_APP_MIGRATION_RECORD__ || null;
+        if (!record){
+          alert("Run evaluation first.");
+          return;
+        }
+        const safeName = (record.application.name || "application").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g,"").toLowerCase();
+        const filename = "app-migration-" + safeName + ".json";
+        window.CDK.appMigration.downloadJson(filename, record);
+      }
+
+      $("btnRun").addEventListener("click", runEvaluation);
+      $("btnExport").addEventListener("click", exportJson);
+
+      initPlaybooks();
+      // Default to Intake for quick use
+      setTab("intake");
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>VMware Inventory Import (PowerCLI CSV Set)</title>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --panel: rgba(15,23,42,.92);
+      --panel2: rgba(17,24,39,.92);
+      --border: rgba(148,163,184,.18);
+      --text:#e5e7eb;
+      --muted: rgba(226,232,240,.72);
+      --accent: rgba(56,189,248,.95);
+      --accent-soft: rgba(56,189,248,.12);
+      --good: rgba(34,197,94,.95);
+      --warn: rgba(245,158,11,.95);
+      --bad: rgba(239,68,68,.95);
+      --radius: 14px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color:var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(56,189,248,.18), transparent 45%),
+        radial-gradient(circle at 85% 15%, rgba(168,85,247,.16), transparent 45%),
+        radial-gradient(circle at 50% 100%, rgba(34,197,94,.10), transparent 45%),
+        var(--bg);
+      min-height:100vh;
+    }
+    .wrap{max-width:1100px;margin:0 auto;padding:28px 18px 70px}
+    .top{
+      display:flex; gap:14px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
+      margin-bottom:16px;
+    }
+    .title{
+      background: linear-gradient(135deg, rgba(15,23,42,.95), rgba(15,23,42,.82));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 16px 14px;
+      box-shadow: 0 10px 26px rgba(0,0,0,.35);
+      flex:1 1 560px;
+    }
+    .title h1{margin:0 0 6px;font-size:18px;letter-spacing:.3px}
+    .title p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+    .actions{
+      background: linear-gradient(135deg, rgba(15,23,42,.95), rgba(15,23,42,.82));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      box-shadow: 0 10px 26px rgba(0,0,0,.35);
+      flex: 0 1 360px;
+      min-width: 290px;
+    }
+    .row{display:flex; gap:10px; flex-wrap:wrap}
+    .btn{
+      appearance:none;border:1px solid var(--border);
+      background: rgba(2,6,23,.35);
+      color:var(--text);
+      padding:10px 12px;
+      border-radius: 12px;
+      cursor:pointer;
+      font-weight:650;
+      font-size:12px;
+      letter-spacing:.2px;
+      transition: transform .08s ease, border-color .12s ease, background .12s ease;
+    }
+    .btn:hover{transform: translateY(-1px); border-color: rgba(56,189,248,.38); background: rgba(2,6,23,.55)}
+    .btn.primary{border-color: rgba(56,189,248,.45); background: rgba(56,189,248,.12)}
+    .btn.good{border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.10)}
+    .btn.warn{border-color: rgba(245,158,11,.45); background: rgba(245,158,11,.10)}
+    .btn.danger{border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.10)}
+    
+    .btn.mainmenu{
+      border-color: rgba(148,163,184,.28);
+      background: rgba(2,6,23,.18);
+      color: rgba(226,232,240,.78);
+      font-weight: 650;
+    }
+    .btn.mainmenu:hover{
+      border-color: rgba(56,189,248,.38);
+      color: rgba(226,232,240,.92);
+    }
+.file{
+      width:100%;
+      padding: 10px;
+      border-radius: 12px;
+      border:1px dashed rgba(148,163,184,.35);
+      background: rgba(2,6,23,.28);
+      color: var(--muted);
+      font-size: 12px;
+      margin-top:10px;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap:12px;
+      margin-top:12px;
+    }
+    @media(max-width:900px){ .grid{grid-template-columns:1fr} }
+    .card{
+      background: linear-gradient(135deg, rgba(15,23,42,.92), rgba(15,23,42,.80));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 26px rgba(0,0,0,.35);
+      overflow:hidden;
+    }
+    .card .hd{
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(148,163,184,.14);
+      display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;
+    }
+    .card .hd h2{margin:0;font-size:13px;letter-spacing:.2px}
+    .card .bd{padding: 12px 14px}
+    .kv{
+      display:grid;grid-template-columns: 160px 1fr;gap:8px 10px;
+      font-size: 12px;
+    }
+    .k{color:var(--muted)}
+    .v{color:var(--text); overflow-wrap:anywhere}
+    .log{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      padding: 12px 14px;
+      background: rgba(2,6,23,.45);
+      border-top: 1px solid rgba(148,163,184,.14);
+      max-height: 380px;
+      overflow:auto;
+      color: rgba(226,232,240,.86);
+      white-space: pre-wrap;
+    }
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding: 6px 10px; border-radius: 999px;
+      border: 1px solid rgba(148,163,184,.18);
+      background: rgba(2,6,23,.30);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .dot{width:8px;height:8px;border-radius:50%}
+    .dot.good{background: var(--good)}
+    .dot.warn{background: var(--warn)}
+    .dot.bad{background: var(--bad)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="title">
+        <h1>VMware Inventory Import (PowerCLI CSV Set)</h1>
+        <p>Upload the <b>complete PowerCLI CSV set</b> (multi-select all CSVs in the export folder). This page normalizes it into <b>inventory.json</b> for reuse across your toolkit (Terraform, Ansible, SSOT, classification, etc.).</p>
+      </div>
+      <div class="actions">
+        <div class="row">
+          <button class="btn mainmenu" type="button" onclick="window.location.href='index.html'">← Main menu</button>
+          <button class="btn primary" id="btnBuild">Build Inventory JSON</button>
+          <button class="btn good" id="btnSave" disabled>Save to Toolkit Storage</button>
+          <button class="btn warn" id="btnDownload" disabled>Download inventory.json</button>
+          <button class="btn danger" id="btnClear">Clear Loaded Files</button>
+        </div>
+        <input class="file" id="fileInput" type="file" multiple accept=".csv" />
+        <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+          <span class="badge" id="badgeStatus"><span class="dot warn"></span><span>Waiting for CSVs</span></span>
+          <span class="badge" id="badgeCount">0 files</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="hd">
+          <h2>Summary</h2>
+          <span class="badge" id="badgeSchema">Schema v1.0</span>
+        </div>
+        <div class="bd">
+          <div class="kv" id="summaryKV">
+            <div class="k">vCenter</div><div class="v">—</div>
+            <div class="k">Datacenter</div><div class="v">—</div>
+            <div class="k">Clusters</div><div class="v">—</div>
+            <div class="k">Hosts</div><div class="v">—</div>
+            <div class="k">Datastores</div><div class="v">—</div>
+            <div class="k">Networks</div><div class="v">—</div>
+            <div class="k">VMs</div><div class="v">—</div>
+            <div class="k">Snapshots</div><div class="v">—</div>
+            <div class="k">RDMs</div><div class="v">—</div>
+            <div class="k">Tags assigned</div><div class="v">—</div>
+            <div class="k">Custom attrs</div><div class="v">—</div>
+          </div>
+        </div>
+        <div class="log" id="log"></div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <h2>Required / Expected Files</h2>
+        </div>
+        <div class="bd">
+          <div style="color:var(--muted); font-size:12px; line-height:1.55;">
+            <b>Required:</b> <code>vms.csv</code><br/>
+            <b>Strongly recommended:</b> <code>clusters.csv</code>, <code>hosts.csv</code>, <code>datastores.csv</code>, <code>vm_disks.csv</code>, <code>vm_nics.csv</code>, <code>vm_guest.csv</code><br/>
+            <b>Migration gotchas:</b> <code>vm_snapshots.csv</code>, <code>vm_rdms.csv</code>, <code>vm_extra_config.csv</code><br/>
+            <b>Ownership/metadata:</b> <code>tag_assignments.csv</code>, <code>custom_attribute_values.csv</code><br/><br/>
+            If a file is missing, the importer will still build inventory.json — but some sections will be empty.
+          </div>
+          <div style="margin-top:12px; color:var(--muted); font-size:12px;">
+            Storage key used by toolkit: <code>ccoe_inventory_v1</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const $ = (id)=>document.getElementById(id);
+
+  const REQUIRED = ["vms.csv"];
+  const EXPECTED = [
+    "vcenters.csv","datacenters.csv","clusters.csv","hosts.csv","resource_pools.csv","folders.csv",
+    "datastores.csv","datastore_clusters.csv",
+    "dvswitches.csv","dvportgroups.csv","net_portgroups.csv",
+    "host_vmkernels.csv","host_pnics.csv","host_vswitches.csv",
+    "vm_guest.csv","vm_disks.csv","vm_nics.csv",
+    "vm_cdroms.csv","vm_floppies.csv","vm_serial_ports.csv","vm_usb_devices.csv",
+    "vm_snapshots.csv","vm_rdms.csv","vm_extra_config.csv",
+    "tags.csv","tag_assignments.csv","custom_attributes.csv","custom_attribute_values.csv",
+    "permissions.csv"
+  ];
+
+  let filesByName = new Map(); // lower filename -> File
+  let builtInventory = null;
+
+  function log(line){
+    const el = $("log");
+    el.textContent += (line + "\n");
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function setStatus(kind, text){
+    const badge = $("badgeStatus");
+    const dot = badge.querySelector(".dot");
+    dot.className = "dot " + kind;
+    badge.querySelector("span:last-child").textContent = text;
+  }
+
+  function setCount(n){ $("badgeCount").textContent = `${n} file${n===1?"":"s"}`; }
+
+  function parseCSV(text){
+    // Basic RFC4180-ish CSV parser (handles commas, quotes, newlines).
+    const rows = [];
+    let i=0, field="", row=[], inQuotes=false;
+
+    while(i < text.length){
+      const c = text[i];
+
+      if(inQuotes){
+        if(c === '"'){
+          if(text[i+1] === '"'){ field += '"'; i+=2; continue; }
+          inQuotes = false; i++; continue;
+        } else {
+          field += c; i++; continue;
+        }
+      } else {
+        if(c === '"'){ inQuotes = true; i++; continue; }
+        if(c === ','){ row.push(field); field=""; i++; continue; }
+        if(c === '\r'){
+          if(text[i+1] === '\n'){ i++; }
+          row.push(field); rows.push(row); row=[]; field=""; i++; continue;
+        }
+        if(c === '\n'){
+          row.push(field); rows.push(row); row=[]; field=""; i++; continue;
+        }
+        field += c; i++; continue;
+      }
+    }
+    // flush
+    row.push(field);
+    rows.push(row);
+
+    if(rows.length === 0) return [];
+
+    // Remove trailing empty row (common when file ends with newline)
+    if(rows.length > 1 && rows[rows.length-1].length===1 && rows[rows.length-1][0]===""){
+      rows.pop();
+    }
+
+    const header = rows[0].map(h => (h||"").trim());
+    const out = [];
+    for(let r=1;r<rows.length;r++){
+      const obj = {};
+      const cols = rows[r];
+      if(cols.length===1 && cols[0]==="") continue;
+      for(let c=0;c<header.length;c++){
+        obj[header[c]] = (cols[c] ?? "");
+      }
+      out.push(obj);
+    }
+    return out;
+  }
+
+  async function readFileAsText(file){
+    return await file.text();
+  }
+
+  function indexBy(arr, key){
+    const m = new Map();
+    for(const o of arr){
+      const k = (o[key] ?? "").toString();
+      if(!k) continue;
+      m.set(k, o);
+    }
+    return m;
+  }
+
+  function groupBy(arr, key){
+    const m = new Map();
+    for(const o of arr){
+      const k = (o[key] ?? "").toString();
+      if(!k) continue;
+      if(!m.has(k)) m.set(k, []);
+      m.get(k).push(o);
+    }
+    return m;
+  }
+
+  function toNum(v){
+    const n = Number((v ?? "").toString().replace(/[^0-9.\-]/g,""));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function normFilename(name){
+    return (name || "").trim().toLowerCase();
+  }
+
+  function setSummary(inv){
+    const vcenter = inv?.vcenter?.name || "—";
+    const dc = inv?.datacenter?.name || "—";
+    const kv = $("summaryKV");
+    const pairs = [
+      ["vCenter", vcenter],
+      ["Datacenter", dc],
+      ["Clusters", String(inv.clusters?.length ?? 0)],
+      ["Hosts", String(inv.hosts?.length ?? 0)],
+      ["Datastores", String(inv.datastores?.length ?? 0)],
+      ["Networks", String(inv.networks?.length ?? 0)],
+      ["VMs", String(inv.vms?.length ?? 0)],
+      ["Snapshots", String(inv._stats?.snapshots ?? 0)],
+      ["RDMs", String(inv._stats?.rdms ?? 0)],
+      ["Tags assigned", String(inv._stats?.tagAssignments ?? 0)],
+      ["Custom attrs", String(inv._stats?.customAttrs ?? 0)]
+    ];
+    kv.innerHTML = "";
+    for(const [k,v] of pairs){
+      const dk = document.createElement("div");
+      dk.className="k"; dk.textContent=k;
+      const dv = document.createElement("div");
+      dv.className="v"; dv.textContent=v;
+      kv.appendChild(dk); kv.appendChild(dv);
+    }
+  }
+
+  async function buildInventory(){
+    $("log").textContent = "";
+    builtInventory = null;
+    $("btnSave").disabled = true;
+    $("btnDownload").disabled = true;
+
+    const loadedNames = Array.from(filesByName.keys());
+    log(`Loaded files: ${loadedNames.length}`);
+    for(const n of loadedNames) log(` - ${n}`);
+
+    // Required check
+    const missingReq = REQUIRED.filter(r => !filesByName.has(r));
+    if(missingReq.length){
+      setStatus("bad", `Missing required: ${missingReq.join(", ")}`);
+      log(`ERROR: Missing required files: ${missingReq.join(", ")}`);
+      return;
+    }
+
+    // Parse all expected present files
+    const data = {};
+    for(const fname of EXPECTED){
+      if(!filesByName.has(fname)) continue;
+      const file = filesByName.get(fname);
+      const text = await readFileAsText(file);
+      data[fname] = parseCSV(text);
+      log(`Parsed ${fname}: ${data[fname].length} rows`);
+    }
+
+    // Helpers for joins
+    const vmRows = data["vms.csv"] || [];
+    const guestByVmId = indexBy((data["vm_guest.csv"]||[]), "VmId");
+    const disksByVmId = groupBy((data["vm_disks.csv"]||[]), "VmId");
+    const nicsByVmId = groupBy((data["vm_nics.csv"]||[]), "VmId");
+    const snapsByVmId = groupBy((data["vm_snapshots.csv"]||[]), "VmId");
+    const rdmsByVmId = groupBy((data["vm_rdms.csv"]||[]), "VmId");
+    const extraByVmId = groupBy((data["vm_extra_config.csv"]||[]), "VmId");
+    const customByVmId = groupBy((data["custom_attribute_values.csv"]||[]), "VmId");
+
+    const tagAssignments = data["tag_assignments.csv"] || [];
+    const tagsByEntityId = new Map();
+    for(const t of tagAssignments){
+      const id = (t["EntityId"] ?? "").toString();
+      if(!id) continue;
+      if(!tagsByEntityId.has(id)) tagsByEntityId.set(id, []);
+      tagsByEntityId.get(id).push({ category: t["Category"] ?? "", tag: t["Tag"] ?? "" });
+    }
+
+    // vCenter + DC info
+    const vcRow = (data["vcenters.csv"]||[])[0] || null;
+    const dcRow = (data["datacenters.csv"]||[])[0] || null;
+
+    const inv = {
+      schemaVersion: "1.0",
+      source: {
+        type: "powercli-csvset",
+        importedAt: new Date().toISOString(),
+        files: loadedNames.slice().sort()
+      },
+      datacenter: {
+        name: dcRow?.Name ?? "",
+        location: dcRow?.Location ?? "",
+        timezone: "America/New_York"
+      },
+      vcenter: {
+        name: vcRow?.vCenter ?? "",
+        version: vcRow?.ApiVersion ?? "",
+        build: vcRow?.Build ?? ""
+      },
+      clusters: (data["clusters.csv"]||[]).map(c => ({
+        id: c["ClusterId"] ?? "",
+        name: c["Name"] ?? "",
+        datacenter: c["Datacenter"] ?? "",
+        haEnabled: (c["HAEnabled"] ?? "").toString(),
+        drsEnabled: (c["DrsEnabled"] ?? "").toString(),
+        drsAutomationLevel: c["DrsAutomationLevel"] ?? "",
+        evcMode: c["EVCMode"] ?? "",
+        vsanEnabled: (c["VsanEnabled"] ?? "").toString()
+      })).filter(c=>c.id || c.name),
+      hosts: (data["hosts.csv"]||[]).map(h => ({
+        id: h["HostId"] ?? "",
+        name: h["Name"] ?? "",
+        clusterId: h["ClusterId"] ?? "",
+        connectionState: h["ConnectionState"] ?? "",
+        powerState: h["PowerState"] ?? "",
+        vendor: h["Vendor"] ?? "",
+        model: h["Model"] ?? "",
+        cpuModel: h["CpuModel"] ?? "",
+        cpuSockets: toNum(h["CpuSockets"]),
+        cpuCores: toNum(h["CpuCores"]),
+        memoryGB: toNum(h["MemoryGB"]),
+        esxiVersion: h["Version"] ?? "",
+        build: h["Build"] ?? ""
+      })).filter(h=>h.id || h.name),
+      datastores: (data["datastores.csv"]||[]).map(ds => ({
+        id: ds["DatastoreId"] ?? "",
+        name: ds["Name"] ?? "",
+        type: ds["Type"] ?? "",
+        capacityGB: toNum(ds["CapacityGB"]),
+        freeGB: toNum(ds["FreeGB"]),
+        accessible: (ds["Accessible"] ?? "").toString(),
+        maintenanceMode: ds["MaintenanceMode"] ?? "",
+        multipleHostAccess: (ds["MultipleHostAccess"] ?? "").toString(),
+        url: ds["Url"] ?? ""
+      })).filter(ds=>ds.id || ds.name),
+      networks: [],
+      vms: [],
+      applications: [],
+      dependencies: [],
+      _stats: {
+        snapshots: 0,
+        rdms: 0,
+        tagAssignments: tagAssignments.length,
+        customAttrs: (data["custom_attribute_values.csv"]||[]).length
+      }
+    };
+
+    // Networks (merge dv + standard pgs)
+    const nets = [];
+    for(const pg of (data["dvportgroups.csv"]||[])){
+      nets.push({
+        id: pg["DVPortgroupId"] ?? "",
+        name: pg["Name"] ?? "",
+        type: "distributed-portgroup",
+        dvswitchId: pg["DVSwitchId"] ?? "",
+        vlan: pg["VlanConfiguration"] ?? "",
+        numPorts: toNum(pg["NumPorts"])
+      });
+    }
+    for(const pg of (data["net_portgroups.csv"]||[])){
+      nets.push({
+        id: pg["PortgroupId"] ?? "",
+        name: pg["Name"] ?? "",
+        type: "standard-portgroup",
+        vswitch: pg["VirtualSwitch"] ?? "",
+        vlan: toNum(pg["VLanId"]),
+        hostId: pg["HostId"] ?? "",
+        host: pg["Host"] ?? ""
+      });
+    }
+    // de-dupe by (type+name+vlan)
+    const seen = new Set();
+    inv.networks = nets.filter(n=>{
+      const k = `${n.type}|${(n.name||"").toLowerCase()}|${n.vlan ?? ""}|${n.vswitch ?? ""}|${n.dvswitchId ?? ""}`;
+      if(seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    // VMs (enrich with guest/disks/nics/tags/custom attrs)
+    for(const r of vmRows){
+      const vmId = (r["VmId"] ?? "").toString();
+      const g = guestByVmId.get(vmId) || null;
+
+      const vmTags = tagsByEntityId.get(vmId) || [];
+      // Convert tags array -> tag map (category -> [tags])
+      const tagMap = {};
+      for(const t of vmTags){
+        const cat = (t.category || "uncategorized");
+        if(!tagMap[cat]) tagMap[cat] = [];
+        if(t.tag) tagMap[cat].push(t.tag);
+      }
+
+      const custom = customByVmId.get(vmId) || [];
+      const customMap = {};
+      for(const c of custom){
+        const k = (c["Key"] ?? "").toString();
+        if(!k) continue;
+        customMap[k] = (c["Value"] ?? "").toString();
+      }
+
+      const disks = (disksByVmId.get(vmId) || []).map(d => ({
+        name: d["DiskName"] ?? "",
+        sizeGB: toNum(d["CapacityGB"]),
+        storageFormat: d["StorageFormat"] ?? "",
+        persistence: d["Persistence"] ?? "",
+        filename: d["Filename"] ?? "",
+        datastoreName: d["Datastore"] ?? ""
+      }));
+
+      const nics = (nicsByVmId.get(vmId) || []).map(n => ({
+        name: n["Name"] ?? "",
+        type: n["Type"] ?? "",
+        mac: n["MacAddress"] ?? "",
+        networkName: n["NetworkName"] ?? "",
+        connected: (n["Connected"] ?? "").toString(),
+        startConnected: (n["StartConnected"] ?? "").toString()
+      }));
+
+      const ipList = (g?.IPAddress ? g.IPAddress.split(";").map(s=>s.trim()).filter(Boolean) : []);
+
+      const snaps = (snapsByVmId.get(vmId) || []);
+      const rdms = (rdmsByVmId.get(vmId) || []);
+      inv._stats.snapshots += snaps.length;
+      inv._stats.rdms += rdms.length;
+
+      const extra = (extraByVmId.get(vmId) || []);
+      const extraConfig = {};
+      for(const kv of extra){
+        const key = (kv["Key"] ?? "").toString();
+        if(!key) continue;
+        extraConfig[key] = (kv["Value"] ?? "").toString();
+      }
+
+      inv.vms.push({
+        id: vmId,
+        name: r["Name"] ?? "",
+        powerState: r["PowerState"] ?? "",
+        clusterId: r["ClusterId"] ?? "",
+        hostId: r["HostId"] ?? "",
+        resourcePoolId: r["ResourcePoolId"] ?? "",
+        folderId: r["FolderId"] ?? "",
+        os: {
+          guestId: r["GuestId"] ?? "",
+          fullName: g?.OSFullName ?? ""
+        },
+        cpu: { vcpus: toNum(r["NumCpu"]) },
+        memoryGB: toNum(r["MemoryGB"]),
+        toolsStatus: r["ToolsStatus"] ?? "",
+        toolsVersionStatus2: r["ToolsVersionStatus2"] ?? "",
+        firmware: r["Firmware"] ?? "",
+        secureBootEnabled: (r["SecureBootEnabled"] ?? "").toString(),
+        uuid: r["Uuid"] ?? "",
+        instanceUuid: r["InstanceUuid"] ?? "",
+        vmPathName: r["VmPathName"] ?? "",
+        guest: {
+          hostname: g?.HostName ?? "",
+          state: g?.State ?? "",
+          ips: ipList
+        },
+        disks,
+        nics,
+        snapshots: snaps.map(s=>({
+          name: s["Name"] ?? "",
+          created: s["Created"] ?? "",
+          sizeGB: toNum(s["SizeGB"]),
+          isCurrent: (s["IsCurrent"] ?? "").toString()
+        })),
+        rdms: rdms.map(d=>({
+          diskLabel: d["DiskLabel"] ?? "",
+          mode: d["Mode"] ?? "",
+          lunUuid: d["LunUuid"] ?? "",
+          deviceName: d["DeviceName"] ?? ""
+        })),
+        tags: tagMap,
+        customAttributes: customMap,
+        extraConfig
+      });
+    }
+
+    // Warnings
+    const missing = EXPECTED.filter(n => !filesByName.has(n));
+    if(missing.length){
+      setStatus("warn", `Built with missing optional files (${missing.length})`);
+      log(`WARN: Missing optional files: ${missing.join(", ")}`);
+    } else {
+      setStatus("good", "Built successfully (all expected files present)");
+    }
+
+    builtInventory = inv;
+    setSummary(inv);
+
+    $("btnSave").disabled = false;
+    $("btnDownload").disabled = false;
+
+    log("DONE: inventory.json built.");
+    log("Tip: use 'Save to Toolkit Storage' to share across other toolkit pages.");
+  }
+
+  function downloadJSON(obj){
+    const blob = new Blob([JSON.stringify(obj, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "inventory.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function saveToStorage(obj){
+    localStorage.setItem("ccoe_inventory_v1", JSON.stringify(obj));
+  }
+
+  function clear(){
+    filesByName.clear();
+    builtInventory = null;
+    $("fileInput").value = "";
+    $("log").textContent = "";
+    setCount(0);
+    setStatus("warn","Waiting for CSVs");
+    setSummary({
+      clusters:[],hosts:[],datastores:[],networks:[],vms:[],
+      _stats:{snapshots:0,rdms:0,tagAssignments:0,customAttrs:0},
+      vcenter:{name:""},datacenter:{name:""}
+    });
+    $("btnSave").disabled = true;
+    $("btnDownload").disabled = true;
+  }
+
+  $("fileInput").addEventListener("change", (e)=>{
+    const files = Array.from(e.target.files || []);
+    filesByName.clear();
+    for(const f of files){
+      filesByName.set(normFilename(f.name), f);
+    }
+    setCount(filesByName.size);
+
+    const missingReq = REQUIRED.filter(r => !filesByName.has(r));
+    if(missingReq.length){
+      setStatus("bad", `Missing required: ${missingReq.join(", ")}`);
+    } else {
+      setStatus("warn", "Ready to build (optional files may be missing)");
+    }
+    log(`Selected ${filesByName.size} files.`);
+  });
+
+  $("btnBuild").addEventListener("click", buildInventory);
+
+  $("btnSave").addEventListener("click", ()=>{
+    if(!builtInventory) return;
+    saveToStorage(builtInventory);
+    log("Saved to localStorage key: ccoe_inventory_v1");
+  });
+
+  $("btnDownload").addEventListener("click", ()=>{
+    if(!builtInventory) return;
+    downloadJSON(builtInventory);
+    log("Downloaded inventory.json");
+  });
+
+  $("btnClear").addEventListener("click", clear);
+
+  // Try to detect existing saved inventory
+  try{
+    const saved = localStorage.getItem("ccoe_inventory_v1");
+    if(saved){
+      const inv = JSON.parse(saved);
+      setSummary(inv);
+      log("Found existing inventory in localStorage (ccoe_inventory_v1).");
+      setStatus("warn", "Existing inventory found (load CSVs to rebuild)");
+    }
+  } catch(e){ /* ignore */ }
+})();
+</script>
+</body>
+</html>
