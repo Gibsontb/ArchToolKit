@@ -41,47 +41,36 @@ VERSION.md
 \# Core Platform Layout
 
 ArchToolKit/
-
 │
-
-├── 00\_Executive
-
-├── 01\_Governance
-
-├── 02\_Compliance
-
-├── 03\_Security
-
-├── 04\_Cloud
-
-├── 05\_Data
-
-├── 06\_AppModernization
-
-├── 07\_Operations
-
-├── 08\_Financial
-
-├── 09\_Tooling
-
-├── 10\_Artifacts
-
-├── 11\_DataModels
-
-├── 12\_Scripts
-
-├── 13\_Web
-
+├── 00_Executive
+├── 01_Governance
+├── 02_Compliance
+├── 03_Security
+├── 04_Cloud
+├── 05_Data
+├── 06_AppModernization
+├── 07_Operations
+├── 08_Financial
+├── 09_Tooling
+├── 10_Artifacts
+├── 11_DataModels
+├── 12_Scripts
+├── 13_Web
 │
-
+├── docs
+│   ├── architecture-overview.md
+│   ├── platform-design.md
+│   ├── repository-structure.md
+│   ├── data-models.md
+│   ├── runtime-architecture.md
+│   ├── migration-history.md
+│   ├── user-guide.md
+│   └── pdf
+│
 ├── README.md
-
 ├── VERSION.md
-
-├── REPO\_STRUCTURE.md
-
+├── REPO_STRUCTURE.md
 └── .gitignore
-
 
 
 ---
