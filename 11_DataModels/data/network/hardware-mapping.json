@@ -1,0 +1,38 @@
+{
+  "router": {
+    "aws": "Transit Gateway",
+    "azure": "Virtual WAN / Route Server",
+    "gcp": "Cloud Router",
+    "oci": "DRG"
+  },
+  "firewall": {
+    "aws": "AWS Network Firewall",
+    "azure": "Azure Firewall",
+    "gcp": "Firewall Rules / Appliance",
+    "oci": "OCI Network Firewall"
+  },
+  "switch": {
+    "aws": "Subnet",
+    "azure": "Subnet",
+    "gcp": "Subnetwork",
+    "oci": "Subnet"
+  },
+  "edge": {
+    "aws": "Internet Gateway / Load Balancer",
+    "azure": "Public IP / App Gateway / Front Door",
+    "gcp": "External LB / Global LB",
+    "oci": "Internet Gateway / Load Balancer"
+  },
+  "hybrid": {
+    "aws": "VPN / Direct Connect",
+    "azure": "VPN Gateway / ExpressRoute",
+    "gcp": "Cloud VPN / Interconnect",
+    "oci": "IPSec / FastConnect"
+  },
+  "cache": {
+    "aws": "ElastiCache / CloudFront",
+    "azure": "Azure Cache for Redis",
+    "gcp": "Memorystore / Cloud CDN",
+    "oci": "OCI Cache"
+  }
+}

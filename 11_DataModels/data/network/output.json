@@ -1,0 +1,22 @@
+{
+  "cloud": "aws",
+  "design_name": "network-infrastructure-design",
+  "vpcs": [
+    {
+      "environment": "dev",
+      "cidr": "10.100.0.0/16",
+      "subnets": [
+        { "name": "dev-public-az1", "cidr": "10.100.0.0/24", "tier": "public", "az": "az1" },
+        { "name": "dev-public-az2", "cidr": "10.100.1.0/24", "tier": "public", "az": "az2" },
+        { "name": "dev-app-az1", "cidr": "10.100.10.0/24", "tier": "app", "az": "az1" },
+        { "name": "dev-app-az2", "cidr": "10.100.11.0/24", "tier": "app", "az": "az2" },
+        { "name": "dev-db-az1", "cidr": "10.100.20.0/24", "tier": "db", "az": "az1" },
+        { "name": "dev-db-az2", "cidr": "10.100.21.0/24", "tier": "db", "az": "az2" }
+      ],
+      "internet_gateway": true,
+      "nat_gateways": 2,
+      "vpn_gateway": true,
+      "centralized_firewall": true
+    }
+  ]
+}

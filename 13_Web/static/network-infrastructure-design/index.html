@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>AWS Network Graph Engine</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>AWS Network Graph Engine</h1>
+  <p class="lead">True architecture model with VPCs, TGW attachments, firewalls, route tables, security devices, and traffic flows.</p>
+
+  <section class="grid">
+    <div class="card">
+      <h2>AWS Inputs</h2>
+      <label>Region
+        <select id="regionSelect">
+          <option>us-east-1</option><option>us-east-2</option><option>us-west-1</option><option>us-west-2</option>
+          <option>ca-central-1</option><option>eu-west-1</option><option>eu-west-2</option><option>eu-central-1</option>
+          <option>ap-southeast-1</option><option>ap-southeast-2</option><option>ap-northeast-1</option>
+          <option>us-gov-east-1</option><option>us-gov-west-1</option>
+        </select>
+      </label>
+      <label>Topology
+        <select id="topologySelect">
+          <option value="hub_spoke">Hub and Spoke</option>
+          <option value="segmented">Segmented</option>
+          <option value="transit_hub">Transit Hub</option>
+          <option value="inspection_hub">Inspection Hub</option>
+        </select>
+      </label>
+      <label>AZ Count <input id="azCount" type="number" min="1" max="4" value="2" /></label>
+      <label>Root CIDR <input id="rootCidr" value="10.0.0.0/8" /></label>
+      <label>Environment Prefix <input id="envPrefix" type="number" min="8" max="28" value="16" /></label>
+      <label>Subnet Prefix <input id="subnetPrefix" type="number" min="16" max="30" value="24" /></label>
+      <label>Environments <input id="environments" value="prod" /></label>
+      <label><input id="centralFirewall" type="checkbox" checked /> Centralized Firewall</label>
+      <label><input id="tgwRequired" type="checkbox" checked /> Transit Gateway Required</label>
+      <label><input id="hybridRequired" type="checkbox" checked /> Hybrid Connectivity Required</label>
+      <label><input id="edgeRequired" type="checkbox" checked /> Edge Load Balancers Required</label>
+    </div>
+
+    <div class="card">
+      <h2>Add On-Prem Network Block</h2>
+      <label>Name <input id="netName" placeholder="app" /></label>
+      <label>CIDR <input id="netCidr" placeholder="10.1.20.0/24" /></label>
+      <label>Type
+        <select id="netType">
+          <option value="dmz">DMZ</option>
+          <option value="application">Application</option>
+          <option value="database">Database</option>
+          <option value="management">Management</option>
+          <option value="shared">Shared</option>
+        </select>
+      </label>
+      <label><input id="netInternet" type="checkbox" /> Internet Exposed</label>
+      <button id="addNetwork">Add Network</button>
+      <div id="networkList" class="list"></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>IP Allocation Preview</h2>
+      <pre id="ipPreview"></pre>
+    </div>
+    <div class="card">
+      <h2>AWS Graph Preview</h2>
+      <pre id="graphPreview"></pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Generated AWS Input JSON</h2>
+    <textarea id="jsonOutput"></textarea>
+    <button id="generateJson">Generate JSON</button>
+  </section>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

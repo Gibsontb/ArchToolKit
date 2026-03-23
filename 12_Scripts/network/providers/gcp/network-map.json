@@ -1,0 +1,13 @@
+{
+  "provider": "gcp",
+  "logical_network": "VPC Network",
+  "hub": "Hub VPC",
+  "spoke": "Spoke VPC",
+  "subnet": "Subnet",
+  "internet_gateway": "Default Internet Route",
+  "nat": "Cloud NAT",
+  "firewall": "VPC Firewall Rules / Cloud Firewall Appliances",
+  "hybrid_gateway": "Cloud VPN / Interconnect / Cloud Router",
+  "routing": "Routes / Cloud Router",
+  "dns": "Cloud DNS"
+}

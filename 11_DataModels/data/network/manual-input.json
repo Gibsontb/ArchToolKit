@@ -1,0 +1,27 @@
+{
+  "source": "manual",
+  "requirements": {
+    "clouds": ["aws"],
+    "cloud_family": "aws",
+    "cloud_realm": "commercial",
+    "environments": ["prod"],
+    "regions": ["us-east-1"],
+    "availability_units": 2,
+    "network_strategy": "hub_spoke",
+    "high_availability": true,
+    "multi_region": false,
+    "hybrid_connectivity": ["vpn"],
+    "centralized_firewall": true,
+    "inspection_required": true,
+    "edge_required": true,
+    "cache_required": false,
+    "shared_services_required": true,
+    "root_cidr": "10.0.0.0/8",
+    "environment_prefix": 16,
+    "subnet_prefix": 24
+  },
+  "on_prem": {
+    "root_cidrs": ["10.0.0.0/8"],
+    "networks": []
+  }
+}

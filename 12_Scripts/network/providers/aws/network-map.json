@@ -1,0 +1,13 @@
+{
+  "provider": "aws",
+  "logical_network": "VPC",
+  "hub": "Transit VPC / Shared Services VPC",
+  "spoke": "Application VPC",
+  "subnet": "Subnet",
+  "internet_gateway": "Internet Gateway",
+  "nat": "NAT Gateway",
+  "firewall": "AWS Network Firewall / Security Group / NACL",
+  "hybrid_gateway": "VGW / TGW / Direct Connect Gateway",
+  "routing": "Route Tables",
+  "dns": "Route 53 Resolver"
+}

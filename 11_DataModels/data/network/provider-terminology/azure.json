@@ -1,0 +1,12 @@
+{
+  "provider": "azure",
+  "availability_term": "availability_zone",
+  "network_term": "virtual_network",
+  "subnet_term": "subnet",
+  "route_term": "udr",
+  "router_term": "virtual_wan / route_server",
+  "firewall_term": "azure_firewall / nsg",
+  "hybrid_term": "vpn_gateway / expressroute_gateway",
+  "edge_term": "public_ip / application_gateway / front_door",
+  "cache_term": "azure_cache_for_redis / front_door_cache"
+}

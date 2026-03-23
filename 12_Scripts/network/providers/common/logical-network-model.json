@@ -1,0 +1,13 @@
+{
+  "tiers": ["public", "app", "db", "management", "shared"],
+  "components": {
+    "logical_network": "top-level cloud network",
+    "subnet": "segmented address range within logical network",
+    "internet_gateway": "public ingress/egress",
+    "nat": "private outbound egress",
+    "firewall": "inspection and policy enforcement",
+    "hybrid_gateway": "on-prem / cloud connectivity",
+    "routing": "path control between network segments",
+    "dns": "name resolution"
+  }
+}

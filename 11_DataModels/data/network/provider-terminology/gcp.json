@@ -1,0 +1,12 @@
+{
+  "provider": "gcp",
+  "availability_term": "zone",
+  "network_term": "vpc_network",
+  "subnet_term": "subnetwork",
+  "route_term": "route",
+  "router_term": "cloud_router",
+  "firewall_term": "firewall_rules",
+  "hybrid_term": "cloud_vpn / interconnect",
+  "edge_term": "external_lb / global_lb",
+  "cache_term": "memorystore / cloud_cdn"
+}

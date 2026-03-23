@@ -1,0 +1,26 @@
+{
+  "provider": "aws",
+  "region": "us-east-1",
+  "topology": "hub_spoke",
+  "requirements": {
+    "environments": ["prod"],
+    "availability_zones": 2,
+    "root_cidr": "10.0.0.0/8",
+    "environment_prefix": 16,
+    "subnet_prefix": 24,
+    "centralized_firewall": true,
+    "transit_gateway_required": true,
+    "hybrid_connectivity": ["vpn"],
+    "edge_load_balancer": true,
+    "shared_services_required": true,
+    "management_required": true
+  },
+  "on_prem": {
+    "networks": [
+      { "name": "dmz-web", "cidr": "10.1.10.0/24", "type": "dmz", "internet_exposed": true },
+      { "name": "app", "cidr": "10.1.20.0/24", "type": "application", "internet_exposed": false },
+      { "name": "db", "cidr": "10.1.30.0/24", "type": "database", "internet_exposed": false },
+      { "name": "mgmt", "cidr": "10.1.40.0/24", "type": "management", "internet_exposed": false }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "provider": "azure",
+  "logical_network": "Virtual Network",
+  "hub": "Hub VNet",
+  "spoke": "Spoke VNet",
+  "subnet": "Subnet",
+  "internet_gateway": "Public IP + Default Route",
+  "nat": "NAT Gateway",
+  "firewall": "Azure Firewall / NSG",
+  "hybrid_gateway": "VPN Gateway / ExpressRoute Gateway",
+  "routing": "UDR",
+  "dns": "Azure DNS / Private DNS"
+}

@@ -1,0 +1,12 @@
+{
+  "provider": "oci",
+  "availability_term": "availability_domain / fault_domain",
+  "network_term": "vcn",
+  "subnet_term": "subnet",
+  "route_term": "route_table",
+  "router_term": "drg",
+  "firewall_term": "network_firewall / nsg / security_lists",
+  "hybrid_term": "ipsec / fastconnect / drg",
+  "edge_term": "internet_gateway / load_balancer",
+  "cache_term": "oci_cache / edge_service"
+}

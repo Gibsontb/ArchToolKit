@@ -1,0 +1,13 @@
+{
+  "provider": "oci",
+  "logical_network": "VCN",
+  "hub": "Hub VCN",
+  "spoke": "Spoke VCN",
+  "subnet": "Subnet",
+  "internet_gateway": "Internet Gateway",
+  "nat": "NAT Gateway",
+  "firewall": "OCI Network Firewall / NSG / Security Lists",
+  "hybrid_gateway": "DRG / IPSec / FastConnect",
+  "routing": "Route Tables",
+  "dns": "Private DNS"
+}

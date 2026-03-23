@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Network Infrastructure Design Input",
+  "type": "object",
+  "required": ["source", "requirements", "on_prem"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": ["manual", "vcenter"]
+    },
+    "requirements": {
+      "type": "object",
+      "required": ["clouds", "environments", "availability_zones", "network_strategy"],
+      "properties": {
+        "clouds": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["aws", "azure", "gcp", "oci"] }
+        },
+        "environments": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "availability_zones": { "type": "integer", "minimum": 1, "maximum": 6 },
+        "network_strategy": {
+          "type": "string",
+          "enum": ["hub_spoke", "flat", "segmented"]
+        },
+        "high_availability": { "type": "boolean" },
+        "multi_region": { "type": "boolean" },
+        "hybrid_connectivity": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["vpn", "dedicated_link"] }
+        },
+        "centralized_firewall": { "type": "boolean" },
+        "inspection_required": { "type": "boolean" }
+      }
+    },
+    "on_prem": {
+      "type": "object",
+      "required": ["cidr_blocks", "networks"],
+      "properties": {
+        "cidr_blocks": { "type": "array", "items": { "type": "string" } },
+        "networks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "cidr", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "cidr": { "type": "string" },
+              "type": { "type": "string", "enum": ["web", "application", "database", "management", "shared", "dmz"] },
+              "internet_exposed": { "type": "boolean" },
+              "compliance_zone": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

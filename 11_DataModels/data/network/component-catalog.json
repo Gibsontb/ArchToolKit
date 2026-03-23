@@ -1,0 +1,14 @@
+{
+  "logical_components": [
+    { "name": "internet_gateway", "role": "public ingress/egress" },
+    { "name": "nat_gateway", "role": "private egress translation" },
+    { "name": "hybrid_gateway", "role": "on-prem to cloud connectivity" },
+    { "name": "transit_router", "role": "east-west and hub routing" },
+    { "name": "firewall", "role": "inspection and policy enforcement" },
+    { "name": "edge_lb", "role": "external entry/load balancing" },
+    { "name": "internal_lb", "role": "internal service balancing" },
+    { "name": "dns_resolver", "role": "name resolution" },
+    { "name": "bastion", "role": "administrative access" },
+    { "name": "cache", "role": "edge or application cache tier" }
+  ]
+}

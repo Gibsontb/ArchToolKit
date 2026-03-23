@@ -1,0 +1,24 @@
+{
+  "patterns": [
+    {
+      "name": "flat",
+      "description": "single top-level network with minimal segmentation"
+    },
+    {
+      "name": "segmented",
+      "description": "single top-level network with explicit public/app/db/mgmt segmentation"
+    },
+    {
+      "name": "hub_spoke",
+      "description": "hub for shared and inspection, spokes per environment"
+    },
+    {
+      "name": "transit_hub",
+      "description": "central routing hub plus environment spokes"
+    },
+    {
+      "name": "inspection_hub",
+      "description": "centralized inspection hub with routed spokes"
+    }
+  ]
+}

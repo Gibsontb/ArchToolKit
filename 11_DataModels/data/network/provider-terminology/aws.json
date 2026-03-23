@@ -1,0 +1,12 @@
+{
+  "provider": "aws",
+  "availability_term": "availability_zone",
+  "network_term": "vpc",
+  "subnet_term": "subnet",
+  "route_term": "route_table",
+  "router_term": "transit_gateway",
+  "firewall_term": "network_firewall / security_groups / nacls",
+  "hybrid_term": "vpn_gateway / direct_connect_gateway",
+  "edge_term": "internet_gateway / alb / nlb",
+  "cache_term": "elasticache / cloudfront"
+}

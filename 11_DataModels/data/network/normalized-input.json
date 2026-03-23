@@ -1,0 +1,23 @@
+{
+  "source": "manual",
+  "requirements": {
+    "clouds": ["aws", "azure", "gcp", "oci"],
+    "environments": ["dev", "prod"],
+    "availability_zones": 2,
+    "network_strategy": "hub_spoke",
+    "high_availability": true,
+    "multi_region": false,
+    "hybrid_connectivity": ["vpn"],
+    "centralized_firewall": true,
+    "inspection_required": true
+  },
+  "on_prem": {
+    "cidr_blocks": ["10.0.0.0/16", "172.16.0.0/16"],
+    "networks": [
+      { "name": "dmz-web", "cidr": "10.0.10.0/24", "type": "dmz", "internet_exposed": true, "compliance_zone": "public" },
+      { "name": "app", "cidr": "10.0.20.0/24", "type": "application", "internet_exposed": false, "compliance_zone": "internal" },
+      { "name": "db", "cidr": "10.0.30.0/24", "type": "database", "internet_exposed": false, "compliance_zone": "restricted" },
+      { "name": "mgmt", "cidr": "10.0.40.0/24", "type": "management", "internet_exposed": false, "compliance_zone": "admin" }
+    ]
+  }
+}
