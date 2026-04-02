@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ATK AWS Architecture Topology</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121b2f;
+      --panel-2: #16213a;
+      --border: #2c3a57;
+      --text: #e5ecf6;
+      --muted: #9fb0ca;
+      --accent: #5aa2ff;
+      --accent-2: #8bc3ff;
+      --chip: #1a2745;
+      --success: #8fd3a8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: linear-gradient(180deg, #08101d 0%, #0c1424 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .header h1 {
+      margin: 0 0 6px 0;
+      font-size: 26px;
+      font-weight: 700;
+    }
+
+    .header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+    }
+
+    .panel-header {
+      padding: 14px 16px 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .panel-header h2 {
+      margin: 0 0 6px 0;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .panel-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .panel-body {
+      padding: 14px 16px 16px 16px;
+    }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #192847;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: left;
+      transition: 120ms ease;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+      background: #1d3158;
+    }
+
+    .btn.primary {
+      background: #163662;
+      border-color: #295b9d;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .services {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+      margin-top: 8px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text);
+      padding: 8px 9px;
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .check input { accent-color: var(--accent); }
+
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .stat {
+      font-size: 12px;
+      color: var(--accent-2);
+      background: rgba(90,162,255,0.08);
+      border: 1px solid rgba(90,162,255,0.18);
+      border-radius: 999px;
+      padding: 6px 10px;
+    }
+
+    .canvas-wrap {
+      padding: 16px;
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .lane {
+      min-width: 0;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .lane h3 {
+      margin: 0 0 10px 0;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-2);
+    }
+
+    .card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+
+    .card:last-child { margin-bottom: 0; }
+
+    .card .name {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .card .meta {
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .edges {
+      margin-top: 14px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .edges h3 {
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .edge-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .edge {
+      font-size: 11px;
+      color: var(--success);
+      border: 1px solid rgba(143,211,168,0.18);
+      background: rgba(143,211,168,0.06);
+      border-radius: 999px;
+      padding: 5px 9px;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 16px;
+      border: 1px dashed rgba(255,255,255,0.08);
+      border-radius: 12px;
+    }
+
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 1fr; }
+      .board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 760px) {
+      .services, .preset-grid, .board { grid-template-columns: 1fr; }
+      .page { padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div>
+        <h1>AWS Architecture Topology</h1>
+        <p>Standalone topology page for the toolkit. Uses the live AWS service inventory, architecture catalog, and graph engine.</p>
+      </div>
+    </div>
+
+    <div class="shell">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Presets & Services</h2>
+          <p>Choose a preset or select services manually, then render the inferred architecture.</p>
+        </div>
+        <div class="panel-body">
+          <div class="preset-grid">
+            <button class="btn primary" type="button" data-preset="threeTier">3-Tier Web App</button>
+            <button class="btn" type="button" data-preset="staticCdn">Static Site + CDN</button>
+            <button class="btn" type="button" data-preset="dataApp">Data App</button>
+            <button class="btn" type="button" data-preset="edgeSecure">Secure Edge App</button>
+          </div>
+
+          <div id="controls" class="services">
+            <label class="check"><input type="checkbox" value="ec2" checked> EC2</label>
+            <label class="check"><input type="checkbox" value="rds" checked> RDS</label>
+            <label class="check"><input type="checkbox" value="cloudfront" checked> CloudFront</label>
+            <label class="check"><input type="checkbox" value="route53" checked> Route 53</label>
+            <label class="check"><input type="checkbox" value="waf" checked> WAF</label>
+            <label class="check"><input type="checkbox" value="alb"> ALB</label>
+            <label class="check"><input type="checkbox" value="s3"> S3</label>
+            <label class="check"><input type="checkbox" value="cloudwatch"> CloudWatch</label>
+            <label class="check"><input type="checkbox" value="secrets_manager"> Secrets Manager</label>
+            <label class="check"><input type="checkbox" value="acm"> ACM</label>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn primary" id="renderBtn" type="button">Render Topology</button>
+            <button class="btn" id="resetBtn" type="button">Reset</button>
+          </div>
+
+          <div class="summary" id="summary"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Rendered Architecture</h2>
+          <p>Grouped by inferred layers so you can validate relationships before moving to validation and IaC generation.</p>
+        </div>
+        <div class="canvas-wrap">
+          <div id="architecture-canvas"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="cloud-decision-logic-kit/data/aws-services.js"></script>
+  <script src="cloud-decision-logic-kit/data/aws-architecture-catalog.js"></script>
+  <script src="cloud-decision-logic-kit/engine/architecture-engine.js"></script>
+  <script src="cloud-decision-logic-kit/engine/architecture-renderer.js"></script>
+
+  <script>
+    (function () {
+      var DEFAULTS = ["ec2", "rds", "cloudfront", "route53", "waf"];
+      var PRESETS = {
+        threeTier: ["ec2", "rds", "cloudfront", "route53", "waf", "cloudwatch"],
+        staticCdn: ["s3", "cloudfront", "route53", "waf", "acm"],
+        dataApp: ["ec2", "rds", "secrets_manager", "cloudwatch"],
+        edgeSecure: ["ec2", "alb", "cloudfront", "route53", "waf", "acm", "cloudwatch"]
+      };
+
+      function selectedValues() {
+        return Array.from(document.querySelectorAll('#controls input[type="checkbox"]:checked'))
+          .map(function (el) { return el.value; });
+      }
+
+      function setSelected(values) {
+        document.querySelectorAll('#controls input[type="checkbox"]').forEach(function (el) {
+          el.checked = values.indexOf(el.value) !== -1;
+        });
+      }
+
+      function syncSummary(graph, services) {
+        var summary = document.getElementById('summary');
+        if (!summary) return;
+        summary.innerHTML = '';
+        [
+          'Selected: ' + services.length,
+          'Nodes: ' + Object.keys(graph.nodes || {}).length,
+          'Edges: ' + (graph.edges || []).length
+        ].forEach(function (text) {
+          var span = document.createElement('span');
+          span.className = 'stat';
+          span.textContent = text;
+          summary.appendChild(span);
+        });
+      }
+
+      function renderTopology() {
+        if (!window.CDK || !window.CDK.engine || !window.CDK.renderer) {
+          console.error('ATK topology dependencies failed to load.', window.CDK);
+          return;
+        }
+
+        var services = selectedValues();
+        var graph = window.CDK.engine.buildArchitecture(services);
+        syncSummary(graph, services);
+        window.CDK.renderer.renderArchitecture(graph, 'architecture-canvas');
+        window.__ATK_LAST_GRAPH__ = graph;
+      }
+
+      document.getElementById('renderBtn').addEventListener('click', renderTopology);
+      document.getElementById('resetBtn').addEventListener('click', function () {
+        setSelected(DEFAULTS);
+        renderTopology();
+      });
+
+      document.querySelectorAll('[data-preset]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          setSelected(PRESETS[btn.getAttribute('data-preset')] || DEFAULTS);
+          renderTopology();
+        });
+      });
+
+      document.querySelectorAll('#controls input[type="checkbox"]').forEach(function (el) {
+        el.addEventListener('change', renderTopology);
+      });
+
+      window.addEventListener('load', renderTopology);
+    })();
+  </script>
+</body>
+</html>
