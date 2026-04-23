@@ -7,185 +7,64 @@
   <title>ATK | VCF Master Architecture Workspace</title>
   <style>
     :root{
-      --bg:#08101e;
-      --panel:#11192b;
-      --panel2:#16213a;
-      --panel3:#0f1627;
-      --text:#e9eef8;
-      --muted:#a6b4cc;
-      --line:#2a3a61;
-      --accent:#5fb3ff;
-      --accent2:#7af2cb;
-      --warn:#ffd166;
-      --good:#86efac;
-      --bad:#fda4af;
-      --shadow:0 18px 44px rgba(0,0,0,.28);
-      --radius:20px;
+      --bg:#08101e; --panel:#11192b; --panel2:#16213a; --panel3:#0f1627; --text:#e9eef8;
+      --muted:#a6b4cc; --line:#2a3a61; --accent:#5fb3ff; --accent2:#7af2cb; --warn:#ffd166;
+      --good:#86efac; --bad:#fda4af; --shadow:0 18px 44px rgba(0,0,0,.28); --radius:20px;
     }
-    *{box-sizing:border-box}
-    html{scroll-behavior:smooth}
-    body{
-      margin:0;
-      font-family:Inter, Segoe UI, Arial, sans-serif;
-      background:
-        radial-gradient(circle at top right, rgba(95,179,255,.12), transparent 30%),
-        linear-gradient(180deg, #07101d 0%, #0b1425 100%);
-      color:var(--text);
-      line-height:1.45;
-    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth}
+    body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:
+      radial-gradient(circle at top right, rgba(95,179,255,.12), transparent 30%),
+      linear-gradient(180deg, #07101d 0%, #0b1425 100%); color:var(--text); line-height:1.45;}
     a{color:#9bd8ff}
-    .wrap{max-width:1560px;margin:0 auto;padding:24px 18px 56px}
-    .hero{
-      display:grid;
-      grid-template-columns:1.2fr .8fr;
-      gap:18px;
-      margin-bottom:18px;
-    }
-    .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.01));
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-    }
-    .heroMain{padding:26px}
-    .heroSide{padding:20px}
-    h1{margin:0 0 8px;font-size:34px;line-height:1.1}
-    h2{margin:0 0 12px;font-size:24px}
-    h3{margin:0 0 10px;font-size:18px}
-    h4{margin:0 0 8px;font-size:15px}
-    p{margin:0}
-    .sub{color:var(--muted);max-width:980px;font-size:15px}
-    .pillbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
-    .pill{
-      font-size:13px;padding:8px 12px;border-radius:999px;
-      border:1px solid #2d4877;background:#10213d;color:#d8ebff
-    }
-    .statusGrid{display:grid;gap:10px}
-    .statusRow{
-      display:flex;justify-content:space-between;gap:16px;
-      padding:12px 14px;border-radius:14px;background:#10192b;border:1px solid #243555
-    }
+    .wrap{max-width:1600px;margin:0 auto;padding:24px 18px 56px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow)}
+    .hero{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;margin-bottom:18px}
+    .heroMain{padding:26px}.heroSide{padding:20px}
+    h1{margin:0 0 8px;font-size:34px;line-height:1.1} h2{margin:0 0 12px;font-size:24px} h3{margin:0 0 10px;font-size:18px} h4{margin:0 0 8px;font-size:15px}
+    p{margin:0}.sub{color:var(--muted);max-width:980px;font-size:15px}
+    .pillbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.pill{font-size:13px;padding:8px 12px;border-radius:999px;border:1px solid #2d4877;background:#10213d;color:#d8ebff}
+    .statusGrid{display:grid;gap:10px}.statusRow{display:flex;justify-content:space-between;gap:16px;padding:12px 14px;border-radius:14px;background:#10192b;border:1px solid #243555}
     .small{font-size:12px;text-transform:uppercase;letter-spacing:.11em;color:#8ea6c8}
-    .layout{
-      display:grid;
-      grid-template-columns:360px 1fr;
-      gap:18px;
-      align-items:start;
-    }
+    .layout{display:grid;grid-template-columns:380px 1fr;gap:18px;align-items:start}
     .side{padding:18px;position:sticky;top:14px}
     label{display:block;font-size:13px;color:#d6e4fb;margin:10px 0 6px}
-    select, input[type="text"], textarea{
-      width:100%;padding:12px 13px;border-radius:12px;border:1px solid #334b78;
-      background:#0d1527;color:var(--text);outline:none
-    }
+    select,input[type="text"],textarea{width:100%;padding:12px 13px;border-radius:12px;border:1px solid #334b78;background:#0d1527;color:var(--text);outline:none}
     textarea{min-height:140px;resize:vertical}
     .btnbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
-    button{
-      border:none;border-radius:12px;padding:12px 14px;font-weight:700;cursor:pointer;
-      background:#1e78d7;color:#fff
-    }
-    button.secondary{background:#223252;border:1px solid #36517f;color:#dceaff}
-    button.ghost{background:transparent;border:1px solid #36517f;color:#dceaff}
-    .main{display:grid;gap:18px}
-    .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-    .tab{
-      padding:10px 12px;border-radius:12px;background:#12203b;border:1px solid #29436d;color:#d7ebff;
-      cursor:pointer;font-weight:700
-    }
-    .tab.active{background:#1a3b68;border-color:#69b5ff}
-    .pane{display:none}
-    .pane.active{display:block}
-    .section{padding:20px}
-    .flow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:8px}
-    .chip{background:#0f182c;border:1px solid #25385c;border-radius:14px;padding:12px;min-height:85px}
-    .chip strong{display:block;margin-bottom:6px}
-    .banner{
-      margin-top:14px;padding:14px 16px;border-radius:16px;border:1px solid #325f87;
-      background:linear-gradient(180deg,#0f2238,#0e1a2d)
-    }
-    .kpiGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-    .kpi{padding:14px;border-radius:16px;background:#0f182c;border:1px solid #25385c}
-    .kpi .num{font-size:26px;font-weight:800;margin-top:4px}
-    .stepCard{
-      border:1px solid #28446e;border-radius:18px;background:linear-gradient(180deg,#0f1c33,#0c1525);
-      padding:18px;margin-top:12px
-    }
+    button{border:none;border-radius:12px;padding:12px 14px;font-weight:700;cursor:pointer;background:#1e78d7;color:#fff}
+    button.secondary{background:#223252;border:1px solid #36517f;color:#dceaff} button.ghost{background:transparent;border:1px solid #36517f;color:#dceaff}
+    .main{display:grid;gap:18px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    .tab{padding:10px 12px;border-radius:12px;background:#12203b;border:1px solid #29436d;color:#d7ebff;cursor:pointer;font-weight:700}
+    .tab.active{background:#1a3b68;border-color:#69b5ff}.pane{display:none}.pane.active{display:block}.section{padding:20px}
+    .banner{margin-top:14px;padding:14px 16px;border-radius:16px;border:1px solid #325f87;background:linear-gradient(180deg,#0f2238,#0e1a2d)}
+    .flow,.kpiGrid,.domainGrid,.patternGrid,.flowDiagram,.cardsGrid,.cols3{display:grid;gap:12px}
+    .flow{grid-template-columns:repeat(5,1fr)} .kpiGrid{grid-template-columns:repeat(4,1fr)} .domainGrid{grid-template-columns:repeat(4,1fr)} .patternGrid,.cardsGrid,.cols3{grid-template-columns:repeat(3,1fr)}
+    .grid2,.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+    .chip,.miniCard,.kpi,.flowNode{background:#0f182c;border:1px solid #25385c;border-radius:14px;padding:12px}
+    .chip{min-height:85px}.chip strong{display:block;margin-bottom:6px}
+    .stepCard{border:1px solid #28446e;border-radius:18px;background:linear-gradient(180deg,#0f1c33,#0c1525);padding:18px;margin-top:12px}
     .stepHead{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:10px}
-    .tag{
-      display:inline-block;padding:8px 10px;border-radius:999px;font-size:12px;font-weight:800;text-transform:uppercase;
-      color:#061120;background:linear-gradient(90deg,var(--accent2),#9cdcff)
-    }
-    .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}
-    .cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:12px}
-    .mini{font-size:12px;color:#8ea6c8}
-    ul{margin:8px 0 0 18px;padding:0}
-    li{margin:6px 0}
-    .check{
-      display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;
-      background:#0f1729;border:1px solid #223559;margin:8px 0
-    }
+    .tag{display:inline-block;padding:8px 10px;border-radius:999px;font-size:12px;font-weight:800;text-transform:uppercase;color:#061120;background:linear-gradient(90deg,var(--accent2),#9cdcff)}
+    .mini{font-size:12px;color:#8ea6c8} ul{margin:8px 0 0 18px;padding:0} li{margin:6px 0}
+    .check{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:#0f1729;border:1px solid #223559;margin:8px 0}
     .next{margin-top:14px;padding:14px;border-radius:14px;background:#0e2436;border:1px dashed #3f7499}
-    .jumpList{display:grid;gap:8px;max-height:280px;overflow:auto}
-    .jumpBtn{
-      width:100%;text-align:left;padding:11px 12px;border-radius:12px;border:1px solid #2e436e;
-      background:#10182d;color:#dceaff;cursor:pointer;font-weight:700
-    }
+    .jumpList{display:grid;gap:8px;max-height:220px;overflow:auto}.jumpBtn{width:100%;text-align:left;padding:11px 12px;border-radius:12px;border:1px solid #2e436e;background:#10182d;color:#dceaff;cursor:pointer;font-weight:700}
     .jumpBtn.active{background:#173662;border-color:#67b4ff}
-    table{
-      width:100%;border-collapse:collapse;font-size:13px
-    }
-    th, td{
-      border:1px solid #284161;padding:10px 9px;vertical-align:top
-    }
-    th{background:#10203a;text-align:left}
-    .good{color:var(--good);font-weight:700}
-    .warn{color:var(--warn);font-weight:700}
-    .bad{color:var(--bad);font-weight:700}
-    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-    .cardsGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-    .miniCard{padding:14px;border-radius:16px;background:#0f182c;border:1px solid #25385c}
-    .searchBar{display:grid;grid-template-columns:1fr 200px;gap:10px;margin-bottom:12px}
-    .serviceList{display:grid;gap:10px;max-height:480px;overflow:auto}
-    .serviceRow{
-      padding:12px;border-radius:14px;background:#101a2e;border:1px solid #284161
-    }
-    .domainGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-    .patternGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-    .flowDiagram{
-      display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:12px
-    }
-    .flowNode{
-      padding:12px;border-radius:14px;background:#0f182c;border:1px solid #2b446c;text-align:center;font-weight:700
-    }
-    .arrow{display:flex;align-items:center;justify-content:center;color:#7dbff7;font-size:24px}
-    .builderOut{
-      white-space:pre-wrap;background:#0b1324;border:1px solid #2b446c;border-radius:16px;padding:16px;
-      min-height:240px;font-family:Consolas, Monaco, monospace;font-size:13px
-    }
+    table{width:100%;border-collapse:collapse;font-size:13px} th,td{border:1px solid #284161;padding:10px 9px;vertical-align:top} th{background:#10203a;text-align:left}
+    .flowDiagram{grid-template-columns:repeat(6,1fr)} .arrow{display:flex;align-items:center;justify-content:center;color:#7dbff7;font-size:24px}
+    .builderOut,.jsonOut{white-space:pre-wrap;background:#0b1324;border:1px solid #2b446c;border-radius:16px;padding:16px;min-height:240px;font-family:Consolas,Monaco,monospace;font-size:13px}
+    .jsonOut{min-height:180px;max-height:420px;overflow:auto}
+    .notice{padding:10px 12px;border-radius:12px;background:#112035;border:1px solid #2a4a74;color:#d9ebff;margin-top:10px}
+    .presetList{display:grid;gap:8px;max-height:220px;overflow:auto}
+    .presetBtn{width:100%;text-align:left;padding:10px 12px;border-radius:12px;border:1px solid #36517f;background:#10182d;color:#dceaff;cursor:pointer;font-weight:700}
+    .sessionBtns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+    .board{display:grid;gap:14px}.lane{border:1px solid #284161;border-radius:16px;padding:14px;background:#0e1728}
+    .lane .card{box-shadow:none;border-radius:12px;padding:10px 12px;margin-top:8px}
+    .lane .name{font-weight:800}.lane .meta{font-size:12px;color:#9eb3d1;margin-top:4px}
+    .edge-list{display:flex;gap:8px;flex-wrap:wrap}.edge{display:inline-block;padding:6px 8px;border-radius:999px;background:#10203a;border:1px solid #2a4a74;font-size:12px}
     .footerNote{padding:18px;color:var(--muted)}
-
-    .topologyControls{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
-    .topologyPreview{margin-top:14px}
-    .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:14px}
-    .lane{background:#0f182c;border:1px solid #2b446c;border-radius:16px;padding:14px}
-    .lane h3{margin:0 0 10px;font-size:15px}
-    .lane .card{background:#101a2e;border:1px solid #284161;border-radius:12px;padding:10px 11px;box-shadow:none;margin-bottom:8px}
-    .lane .name{font-weight:800;margin-bottom:4px}
-    .lane .meta{font-size:12px;color:#9fb2ce}
-    .edges{margin-top:16px;padding:14px;border-radius:16px;background:#0f182c;border:1px solid #2b446c}
-    .edge-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-    .edge{display:inline-block;padding:7px 9px;border-radius:999px;background:#11223f;border:1px solid #315284;font-size:12px;color:#d9ebff}
-    .topologyJson{white-space:pre-wrap;background:#0b1324;border:1px solid #2b446c;border-radius:16px;padding:16px;min-height:160px;font-family:Consolas, Monaco, monospace;font-size:12px}
-
-    @media (max-width:1280px){
-      .hero,.layout,.cols,.cols3,.grid2,.cardsGrid,.patternGrid,.domainGrid,.searchBar{grid-template-columns:1fr}
-      .flow,.kpiGrid,.flowDiagram{grid-template-columns:1fr 1fr}
-      .side{position:static}
-    }
-    @media (max-width:700px){
-      .flow,.kpiGrid,.flowDiagram{grid-template-columns:1fr}
-      h1{font-size:28px}
-    }
+    @media (max-width:1280px){.hero,.layout,.grid2,.cols,.cols3,.cardsGrid,.patternGrid,.domainGrid,.kpiGrid,.flow{grid-template-columns:1fr}.flowDiagram{grid-template-columns:1fr 1fr}.side{position:static}.sessionBtns{grid-template-columns:1fr}}
+    @media (max-width:700px){h1{font-size:28px}.flowDiagram{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -194,24 +73,12 @@
     <div class="card heroMain">
       <h1>VCF Master Architecture Workspace</h1>
       <p class="sub">
-        Full toolkit-native workspace for VMware Cloud Foundation architecture, NSX and Avi load balancing,
-        four-cloud extension planning, and VCF 5.x to 9.0 conversion sequencing. This page now includes the
-        blueprint areas you listed: target architecture, reference patterns, traffic flows, decision paths,
-        HA/DR, security, Kubernetes and Supervisor, operations, HLD/LLD deliverables, and build sequencing.
+        Data-driven workspace for VMware Cloud Foundation architecture, NSX and Avi load balancing, four-cloud extension planning, and VCF 5.x to 9.0 conversion sequencing. The VCF content model now lives in JSON files so the page is easier to maintain, save, reload, and extend.
       </p>
       <div class="pillbar">
-        <div class="pill">Architecture blueprint</div>
-        <div class="pill">Daily how-to</div>
-        <div class="pill">Reference patterns</div>
-        <div class="pill">Traffic flows</div>
-        <div class="pill">HA / DR</div>
-        <div class="pill">Security</div>
-        <div class="pill">Supervisor / K8s</div>
-        <div class="pill">Operations</div>
-        <div class="pill">VCF 5.x → 9.0</div>
-        <div class="pill">4-cloud crosswalk</div>
-        <div class="pill">HLD / LLD builder</div>
+        <div class="pill">JSON-backed content</div><div class="pill">Save / load sessions</div><div class="pill">Export / import JSON</div><div class="pill">Topology graph</div><div class="pill">HLD / LLD generator</div><div class="pill">Runbook starter</div>
       </div>
+      <div class="notice" id="dataStatus">Loading VCF data model…</div>
     </div>
     <div class="card heroSide">
       <div class="small">Current recommendation</div>
@@ -230,49 +97,17 @@
       <h2>Design path</h2>
 
       <label for="mode">Deployment mode</label>
-      <select id="mode">
-        <option value="greenfield">Greenfield / new private cloud build</option>
-        <option value="brownfield">Brownfield / existing VCF or VMware estate</option>
-      </select>
-
+      <select id="mode"><option value="greenfield">Greenfield / new private cloud build</option><option value="brownfield">Brownfield / existing VCF or VMware estate</option></select>
       <label for="scope">Scope</label>
-      <select id="scope">
-        <option value="mgmt_workload">Management + workload domains</option>
-        <option value="mgmt_only">Management domain only</option>
-        <option value="workload_only">Workload domain only</option>
-        <option value="supervisor">Supervisor-enabled / Kubernetes-aware</option>
-      </select>
-
+      <select id="scope"><option value="mgmt_workload">Management + workload domains</option><option value="mgmt_only">Management domain only</option><option value="workload_only">Workload domain only</option><option value="supervisor">Supervisor-enabled / Kubernetes-aware</option></select>
       <label for="lb">Load-balancer model</label>
-      <select id="lb">
-        <option value="avi">Avi / NSX Advanced Load Balancer</option>
-        <option value="nsx">NSX load balancer</option>
-        <option value="hybrid">Hybrid coexistence or transition</option>
-      </select>
-
+      <select id="lb"><option value="avi">Avi / NSX Advanced Load Balancer</option><option value="nsx">NSX load balancer</option><option value="hybrid">Hybrid coexistence or transition</option></select>
       <label for="vcfSource">Current VCF baseline</label>
-      <select id="vcfSource">
-        <option value="5.0">VCF 5.0.x</option>
-        <option value="5.1">VCF 5.1.x</option>
-        <option value="5.2" selected>VCF 5.2.x</option>
-        <option value="9.0">VCF 9.0</option>
-      </select>
-
+      <select id="vcfSource"><option value="5.0">VCF 5.0.x</option><option value="5.1">VCF 5.1.x</option><option value="5.2" selected>VCF 5.2.x</option><option value="9.0">VCF 9.0</option></select>
       <label for="cloud">Primary cloud alignment</label>
-      <select id="cloud">
-        <option value="aws">AWS</option>
-        <option value="azure">Azure</option>
-        <option value="gcp">GCP</option>
-        <option value="oci">OCI</option>
-      </select>
-
+      <select id="cloud"><option value="aws">AWS</option><option value="azure">Azure</option><option value="gcp">GCP</option><option value="oci">OCI</option></select>
       <label for="migrationMotion">Migration motion</label>
-      <select id="migrationMotion">
-        <option value="private_only">Stay private cloud only</option>
-        <option value="hybrid_cloud">Hybrid private + public cloud</option>
-        <option value="provider_vmware">Cloud VMware SDDC alignment</option>
-        <option value="native_refactor">Private cloud with native cloud service extension</option>
-      </select>
+      <select id="migrationMotion"><option value="private_only">Stay private cloud only</option><option value="hybrid_cloud">Hybrid private + public cloud</option><option value="provider_vmware">Cloud VMware SDDC alignment</option><option value="native_refactor">Private cloud with native cloud service extension</option></select>
 
       <div class="btnbar">
         <button id="recommendBtn">Recommend next step</button>
@@ -280,7 +115,20 @@
         <button class="ghost" id="resetBtn">Reset checklists</button>
       </div>
 
-      <div style="margin-top:18px">
+      <div class="sessionBtns">
+        <button class="secondary" id="saveSessionBtn">Save session</button>
+        <button class="secondary" id="loadSessionBtn">Load saved</button>
+        <button class="ghost" id="exportSessionBtn">Export JSON</button>
+        <button class="ghost" id="importSessionBtn">Import JSON</button>
+      </div>
+      <input id="importSessionFile" type="file" accept=".json,application/json" style="display:none" />
+
+      <div style="margin-top:16px">
+        <div class="small">Topology presets</div>
+        <div class="presetList" id="presetList"></div>
+      </div>
+
+      <div style="margin-top:16px">
         <div class="small">Jump to day</div>
         <div class="jumpList" id="jumpList"></div>
       </div>
@@ -307,121 +155,28 @@
         <div class="pane active" id="pane-blueprint">
           <h2>Architecture blueprint</h2>
           <div class="banner" id="blueprintBanner">Loading blueprint recommendation…</div>
-          <div class="domainGrid">
-            <div class="miniCard">
-              <h3>Layer 1</h3>
-              <h4>Physical underlay</h4>
-              <ul>
-                <li>Datacenter fabric</li>
-                <li>Upstream routers and BGP peers</li>
-                <li>Routed VLAN-backed networks</li>
-                <li>MTU, DNS, NTP, IPAM</li>
-                <li>Certificate authority and firewall policy</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Layer 2</h3>
-              <h4>VCF platform</h4>
-              <ul>
-                <li>Management domain first</li>
-                <li>One or more workload domains</li>
-                <li>Consolidated or workload-hosting model</li>
-                <li>Tenancy and scale boundaries</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Layer 3</h3>
-              <h4>NSX services</h4>
-              <ul>
-                <li>NSX Manager</li>
-                <li>Transport zones</li>
-                <li>Overlay and VLAN segments</li>
-                <li>Edge cluster, Tier-0, Tier-1</li>
-                <li>NAT, service insertion, north-south path</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Layer 4</h3>
-              <h4>Application delivery</h4>
-              <ul>
-                <li>Avi Controllers</li>
-                <li>Service Engines</li>
-                <li>L4/L7 virtual services</li>
-                <li>Health monitors and policies</li>
-                <li>App-facing VIP delivery</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="cols3">
+          <div class="domainGrid" id="layerGrid"></div>
+          <div class="cols3" style="margin-top:16px">
             <div class="miniCard">
               <h3>Recommended reference pattern</h3>
-              <ul>
-                <li>Management domain with SDDC Manager, vCenter, NSX Managers, Edge cluster, shared services, and Avi Controllers</li>
-                <li>Workload domains for app clusters, optional Supervisor workloads, and tenant segments behind Tier-1</li>
-                <li>Dedicated or shared Service Engine Groups by environment</li>
-              </ul>
+              <div id="referencePatternBlock"></div>
             </div>
             <div class="miniCard">
               <h3>Core design principle</h3>
-              <ul>
-                <li>VCF owns domain lifecycle</li>
-                <li>NSX owns routing, segmentation, and stateful network services</li>
-                <li>Avi owns application delivery and modern load balancing</li>
-                <li>Shared standards own DNS, certs, logging, HA, and operations</li>
-              </ul>
+              <ul id="principlesList"></ul>
             </div>
             <div class="miniCard">
               <h3>Build sequence</h3>
-              <ol style="margin:8px 0 0 18px">
-                <li>Confirm VCF version, scale, tenancy, app classes</li>
-                <li>Design underlay routing and IP plan</li>
-                <li>Lay out management and workload domains</li>
-                <li>Design NSX topology</li>
-                <li>Design Avi placement and Service Engine groups</li>
-                <li>Define app patterns, security, HA, then HLD and LLD</li>
-              </ol>
+              <ol id="buildSequenceList" style="margin:8px 0 0 18px"></ol>
             </div>
           </div>
-
           <div class="stepCard">
             <h3>Blueprint by architecture domain</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Domain</th>
-                  <th>What to define</th>
-                  <th>Key outputs</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><strong>Foundation and prerequisites</strong></td>
-                  <td>VCF version, site model, workload-domain count, routing model, DNS/IPAM, PKI, tenancy, L4 or L7 scope</td>
-                  <td>Scope statement, BOM, dependency model</td>
-                </tr>
-                <tr>
-                  <td><strong>Physical network</strong></td>
-                  <td>Edge uplink VLANs, BGP peering, management networks, overlay reachability, VIP networks, Service Engine networks</td>
-                  <td>IP plan, VLAN matrix, routing map</td>
-                </tr>
-                <tr>
-                  <td><strong>VCF domain blueprint</strong></td>
-                  <td>Management domain, workload domains, optional platform isolation domain</td>
-                  <td>Domain placement diagram</td>
-                </tr>
-                <tr>
-                  <td><strong>NSX blueprint</strong></td>
-                  <td>Transport zones, overlay and VLAN segments, Edge sizing, Tier-0/Tier-1, NAT, east-west segmentation, north-south path</td>
-                  <td>NSX topology and segmentation model</td>
-                </tr>
-                <tr>
-                  <td><strong>Load balancing</strong></td>
-                  <td>3 Controllers, Service Engine Groups, VIP/data-network separation, health monitors, profiles, certs, persistence, internal/public/K8s/shared designs</td>
-                  <td>LB reference design and service-class standards</td>
-                </tr>
-              </tbody>
-            </table>
+            <table><thead><tr><th>Domain</th><th>What to define</th><th>Key outputs</th></tr></thead><tbody id="domainBlueprintBody"></tbody></table>
+          </div>
+          <div class="cols" style="margin-top:16px">
+            <div class="miniCard"><h3>Recommended production blueprint</h3><div id="prodBlueprint"></div></div>
+            <div class="miniCard"><h3>Straight recommendation</h3><div id="straightRecommendation"></div></div>
           </div>
         </div>
 
@@ -440,63 +195,7 @@
 
         <div class="pane" id="pane-patterns">
           <h2>Reference patterns</h2>
-          <div class="patternGrid">
-            <div class="miniCard">
-              <h3>Single-site enterprise baseline</h3>
-              <ul>
-                <li>1 management domain</li>
-                <li>Shared Edge cluster</li>
-                <li>3 Avi Controllers in management domain</li>
-                <li>Separate workload domains by environment or business boundary</li>
-                <li>Dedicated VIP pools per environment</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Shared platform services pattern</h3>
-              <ul>
-                <li>Central shared services in management or shared platform domain</li>
-                <li>Shared DNS/IPAM, certs, logging</li>
-                <li>Shared Service Engine Group for platform use only</li>
-                <li>Separate app-facing service groups for tenant traffic</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Supervisor-aware pattern</h3>
-              <ul>
-                <li>Define ingress ownership up front</li>
-                <li>Separate internal and external service classes</li>
-                <li>Explicit namespace or tenant boundaries</li>
-                <li>Cluster-to-Service Engine connectivity rules</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Brownfield coexistence pattern</h3>
-              <ul>
-                <li>Inventory legacy VIPs and monitors first</li>
-                <li>Keep rollback path per wave</li>
-                <li>Separate uplift tasks from service migration</li>
-                <li>Document support boundaries for old and new paths</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Hybrid cloud extension pattern</h3>
-              <ul>
-                <li>Private cloud remains control point</li>
-                <li>Use cloud landing zones for extension, not sprawl</li>
-                <li>Map services by capability domain</li>
-                <li>Keep ownership explicit across clouds</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Service class pattern</h3>
-              <ul>
-                <li>Internal application VIPs</li>
-                <li>External/public VIPs</li>
-                <li>Kubernetes/Supervisor services</li>
-                <li>Shared platform services</li>
-              </ul>
-            </div>
-          </div>
+          <div class="patternGrid" id="patternsGrid"></div>
         </div>
 
         <div class="pane" id="pane-flows">
@@ -504,408 +203,126 @@
           <div class="miniCard">
             <h3>Recommended north-south application path</h3>
             <div class="flowDiagram">
-              <div class="flowNode">Client</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">External DNS</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">VIP on Avi Service Engine</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">Pool member on app segment</div>
+              <div class="flowNode">Client</div><div class="arrow">→</div><div class="flowNode">External DNS</div><div class="arrow">→</div><div class="flowNode">VIP on LB data plane</div><div class="arrow">→</div><div class="flowNode">Pool member on app segment</div>
             </div>
             <div class="flowDiagram">
-              <div class="flowNode">Client network</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">Upstream router</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">NSX Tier-0</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">Tier-1 / data network</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">Avi frontend VIP</div>
-              <div class="arrow">→</div>
-              <div class="flowNode">Backend pool</div>
+              <div class="flowNode">Client network</div><div class="arrow">→</div><div class="flowNode">Upstream router</div><div class="arrow">→</div><div class="flowNode">NSX Tier-0</div><div class="arrow">→</div><div class="flowNode">Tier-1 / data network</div><div class="arrow">→</div><div class="flowNode">Frontend VIP</div><div class="arrow">→</div><div class="flowNode">Backend pool</div>
             </div>
           </div>
-
-          <div class="cols">
-            <div class="miniCard">
-              <h3>Internal service path</h3>
-              <ul>
-                <li>East-west or campus client path</li>
-                <li>Internal DNS zone</li>
-                <li>Private VIP range</li>
-                <li>App segment behind internal Tier-1</li>
-                <li>DFW controls around pool members</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>External service path</h3>
-              <ul>
-                <li>Public or partner-facing DNS</li>
-                <li>Public or DMZ-aligned VIP range</li>
-                <li>North-south firewall and inspection policy</li>
-                <li>Dedicated external service class</li>
-                <li>Explicit cert and WAF ownership</li>
-              </ul>
-            </div>
+          <div class="cols" style="margin-top:16px">
+            <div class="miniCard"><h3>Internal service path</h3><ul><li>East-west or campus client path</li><li>Internal DNS zone</li><li>Private VIP range</li><li>App segment behind internal Tier-1</li><li>DFW controls around pool members</li></ul></div>
+            <div class="miniCard"><h3>External service path</h3><ul><li>Public or partner-facing DNS</li><li>Public or DMZ-aligned VIP range</li><li>North-south firewall and inspection policy</li><li>Dedicated external service class</li><li>Explicit cert and WAF ownership</li></ul></div>
           </div>
-
           <div class="stepCard">
             <h3>Decision blueprint: when to use what</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Need</th>
-                  <th>Use NSX native stateful services</th>
-                  <th>Use Avi / NSX ALB</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Routing and NAT adjacency</td>
-                  <td class="good">Yes, core use case</td>
-                  <td>Not primary reason</td>
-                </tr>
-                <tr>
-                  <td>Modern L4/L7 app delivery</td>
-                  <td>Possible but limited target pattern</td>
-                  <td class="good">Primary target pattern</td>
-                </tr>
-                <tr>
-                  <td>Elastic service engine model</td>
-                  <td>No</td>
-                  <td class="good">Yes</td>
-                </tr>
-                <tr>
-                  <td>Central analytics and app policy</td>
-                  <td>Limited</td>
-                  <td class="good">Yes</td>
-                </tr>
-                <tr>
-                  <td>Brownfield coexistence</td>
-                  <td class="warn">Possible as source path</td>
-                  <td class="good">Good as target path</td>
-                </tr>
-              </tbody>
-            </table>
+            <table><thead><tr><th>Need</th><th>Use NSX native stateful services</th><th>Use Avi / NSX ALB</th></tr></thead>
+            <tbody>
+              <tr><td>Routing and NAT adjacency</td><td class="good">Yes, core use case</td><td>Not primary reason</td></tr>
+              <tr><td>Modern L4/L7 app delivery</td><td>Possible but limited target pattern</td><td class="good">Primary target pattern</td></tr>
+              <tr><td>Elastic service engine model</td><td>No</td><td class="good">Yes</td></tr>
+              <tr><td>Central analytics and app policy</td><td>Limited</td><td class="good">Yes</td></tr>
+              <tr><td>Brownfield coexistence</td><td class="warn">Possible as source path</td><td class="good">Good as target path</td></tr>
+            </tbody></table>
           </div>
         </div>
 
         <div class="pane" id="pane-ha">
           <h2>HA / DR</h2>
           <div class="cols3">
-            <div class="miniCard">
-              <h3>Platform HA</h3>
-              <ul>
-                <li>Redundant management-domain infrastructure</li>
-                <li>Multiple NSX Managers</li>
-                <li>Redundant Edge nodes</li>
-                <li>Resilient shared platform services</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>LB control-plane HA</h3>
-              <ul>
-                <li>3-node Avi Controller cluster</li>
-                <li>Dedicated control-plane health monitoring</li>
-                <li>Admin access and break-glass model</li>
-                <li>Backup and restore tested</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>LB data-plane HA</h3>
-              <ul>
-                <li>Multiple Service Engines</li>
-                <li>Service Engine Groups aligned to failure domains</li>
-                <li>Frontend VIP redundancy</li>
-                <li>Deterministic routing and return path</li>
-              </ul>
-            </div>
+            <div class="miniCard"><h3>Platform HA</h3><ul><li>Redundant management-domain infrastructure</li><li>Multiple NSX Managers</li><li>Redundant Edge nodes</li><li>Resilient shared platform services</li></ul></div>
+            <div class="miniCard"><h3>LB control-plane HA</h3><ul><li>3-node Avi Controller cluster</li><li>Dedicated control-plane health monitoring</li><li>Admin access and break-glass model</li><li>Backup and restore tested</li></ul></div>
+            <div class="miniCard"><h3>LB data-plane HA</h3><ul><li>Multiple Service Engines</li><li>Service Engine Groups aligned to failure domains</li><li>Frontend VIP redundancy</li><li>Deterministic routing and return path</li></ul></div>
           </div>
-
           <div class="stepCard">
             <h3>HA / DR validation matrix</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Scenario</th>
-                  <th>What to test</th>
-                  <th>Expected result</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td>Controller loss</td><td>Controller cluster resiliency, admin continuity, policy retention</td><td>Management recovers without uncontrolled service impact</td></tr>
-                <tr><td>Service Engine loss</td><td>Data-plane failover and health-monitor response</td><td>VIP traffic fails over within documented behavior</td></tr>
-                <tr><td>Edge loss</td><td>Tier-0/Tier-1, north-south routing, NAT dependency</td><td>Routing and stateful services remain within HA design</td></tr>
-                <tr><td>Upstream route failure</td><td>BGP resiliency and alternate path behavior</td><td>North-south traffic converges as designed</td></tr>
-                <tr><td>Certificate failure</td><td>Expired or rotated certificate handling</td><td>Documented alerting and rotation process works</td></tr>
-              </tbody>
-            </table>
+            <table><thead><tr><th>Scenario</th><th>What to test</th><th>Expected result</th></tr></thead><tbody>
+              <tr><td>Controller loss</td><td>Controller cluster resiliency, admin continuity, policy retention</td><td>Management recovers without uncontrolled service impact</td></tr>
+              <tr><td>Service Engine loss</td><td>Data-plane failover and health-monitor response</td><td>VIP traffic fails over within documented behavior</td></tr>
+              <tr><td>Edge loss</td><td>Tier-0/Tier-1, north-south routing, NAT dependency</td><td>Routing and stateful services remain within HA design</td></tr>
+              <tr><td>Upstream route failure</td><td>BGP resiliency and alternate path behavior</td><td>North-south traffic converges as designed</td></tr>
+              <tr><td>Certificate failure</td><td>Expired or rotated certificate handling</td><td>Documented alerting and rotation process works</td></tr>
+            </tbody></table>
           </div>
         </div>
 
         <div class="pane" id="pane-security">
           <h2>Security blueprint</h2>
           <div class="grid2">
-            <div class="miniCard">
-              <h3>Security controls to define up front</h3>
-              <ul>
-                <li>Dedicated management networks for VCF and Avi control plane</li>
-                <li>Frontend VIP separation from backend app networks</li>
-                <li>TLS termination policy by service class</li>
-                <li>Certificate lifecycle ownership</li>
-                <li>DFW and segmentation policy for Controllers, Service Engines, apps, and management services</li>
-                <li>Administrative RBAC split among VCF, NSX, and LB teams</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Advanced app-security options</h3>
-              <ul>
-                <li>WAF-required service classes</li>
-                <li>Internet-facing service hardening</li>
-                <li>Logging and analytics per app class</li>
-                <li>Segmentation alignment with vDefend and broader workload controls</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="stepCard">
-            <h3>Security architecture matrix</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Area</th>
-                  <th>Design question</th>
-                  <th>Output</th>
-                </tr>
-              </thead>
-              <tbody>
+            <div class="miniCard"><h3>Security controls to define up front</h3><ul id="securityList"></ul></div>
+            <div class="miniCard"><h3>Architecture matrix</h3>
+              <table><thead><tr><th>Area</th><th>Design question</th><th>Output</th></tr></thead><tbody>
                 <tr><td>Certificates</td><td>Who owns issuance, renewal, rollover, and emergency replacement?</td><td>Certificate lifecycle runbook</td></tr>
                 <tr><td>Segmentation</td><td>How are Controllers, Service Engines, app tiers, and management networks isolated?</td><td>DFW and gateway rule matrix</td></tr>
                 <tr><td>Admin access</td><td>Who can deploy, change, approve, and recover services?</td><td>RBAC and change-control model</td></tr>
                 <tr><td>Internet-facing policy</td><td>Which service classes require extra controls or inspection?</td><td>External service security standard</td></tr>
-              </tbody>
-            </table>
+              </tbody></table>
+            </div>
           </div>
         </div>
 
         <div class="pane" id="pane-supervisor">
           <h2>Kubernetes / Supervisor blueprint</h2>
           <div class="cols">
-            <div class="miniCard">
-              <h3>What to define</h3>
-              <ul>
-                <li>Ingress ownership</li>
-                <li>L4 versus L7 service boundaries</li>
-                <li>Cluster-to-Service Engine connectivity</li>
-                <li>Tenant or org separation</li>
-                <li>DNS zone strategy for app teams</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Supervisor-aware design notes</h3>
-              <ul>
-                <li>Keep platform-team and app-team responsibilities explicit</li>
-                <li>Separate internal and external service classes</li>
-                <li>Define cert ownership per ingress model</li>
-                <li>Decide whether namespaces or orgs map to distinct service boundaries</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="stepCard">
-            <h3>Supervisor onboarding checklist</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Step</th>
-                  <th>Question</th>
-                  <th>Deliverable</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td>1</td><td>Who owns ingress and external publishing?</td><td>Ownership matrix</td></tr>
-                <tr><td>2</td><td>What service classes exist for internal, external, and shared platform exposure?</td><td>Service class list</td></tr>
-                <tr><td>3</td><td>How do clusters reach Service Engines and VIP networks?</td><td>Connectivity design</td></tr>
-                <tr><td>4</td><td>How are DNS, certs, and logging handled per app team?</td><td>Standard onboarding package</td></tr>
-              </tbody>
-            </table>
+            <div class="miniCard"><h3>What to define</h3><ul id="supervisorList"></ul></div>
+            <div class="miniCard"><h3>Supervisor-aware design notes</h3><ul><li>Keep platform-team and app-team responsibilities explicit</li><li>Separate internal and external service classes</li><li>Define cert ownership per ingress model</li><li>Decide whether namespaces or orgs map to distinct service boundaries</li></ul></div>
           </div>
         </div>
 
         <div class="pane" id="pane-ops">
           <h2>Operations blueprint</h2>
-          <div class="cardsGrid">
-            <div class="miniCard">
-              <h3>Lifecycle</h3>
-              <ul>
-                <li>Controller and Service Engine upgrades</li>
-                <li>Platform version alignment</li>
-                <li>Change sequencing and rollback</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Recovery</h3>
-              <ul>
-                <li>Backup and restore</li>
-                <li>Break-glass admin access</li>
-                <li>Runbooks for component failure</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Security operations</h3>
-              <ul>
-                <li>Password rotation</li>
-                <li>Certificate renewal</li>
-                <li>RBAC review and audit</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Observability</h3>
-              <ul>
-                <li>Monitoring and analytics</li>
-                <li>Alert thresholds</li>
-                <li>Service health visibility</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Capacity</h3>
-              <ul>
-                <li>Thresholds by environment</li>
-                <li>Service Engine scaling triggers</li>
-                <li>Growth and forecasting inputs</li>
-              </ul>
-            </div>
-            <div class="miniCard">
-              <h3>Governance</h3>
-              <ul>
-                <li>Object naming and tagging</li>
-                <li>Incident ownership and escalation</li>
-                <li>New-service intake and approval</li>
-              </ul>
-            </div>
-          </div>
+          <div class="cardsGrid" id="operationsCards"></div>
         </div>
 
         <div class="pane" id="pane-conversion">
           <h2>VCF 5.x to 9.0 conversion planner</h2>
-          <div class="kpiGrid">
-            <div class="kpi"><div class="small">From</div><div class="num" id="convFrom">5.2.x</div></div>
-            <div class="kpi"><div class="small">To</div><div class="num">9.0</div></div>
-            <div class="kpi"><div class="small">LB target</div><div class="num" id="convLb">Avi</div></div>
-            <div class="kpi"><div class="small">Motion</div><div class="num" id="convMotion">Hybrid</div></div>
-          </div>
-          <div class="grid2" style="margin-top:16px">
-            <div class="miniCard">
-              <h3>Upgrade and conversion notes</h3>
-              <ul id="conversionNotes"></ul>
-            </div>
-            <div class="miniCard">
-              <h3>Architecture risks to control</h3>
-              <ul id="conversionRisks"></ul>
-            </div>
-          </div>
-          <div class="stepCard">
-            <h3>Recommended wave sequence</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Wave</th>
-                  <th>What to do</th>
-                  <th>Exit criteria</th>
-                </tr>
-              </thead>
-              <tbody id="conversionTable"></tbody>
-            </table>
-          </div>
+          <div class="kpiGrid"><div class="kpi"><div class="small">From</div><div class="num" id="convFrom">5.2.x</div></div><div class="kpi"><div class="small">To</div><div class="num">9.0</div></div><div class="kpi"><div class="small">LB target</div><div class="num" id="convLb">Avi</div></div><div class="kpi"><div class="small">Motion</div><div class="num" id="convMotion">Hybrid</div></div></div>
+          <div class="grid2" style="margin-top:16px"><div class="miniCard"><h3>Upgrade and conversion notes</h3><ul id="conversionNotes"></ul></div><div class="miniCard"><h3>Architecture risks to control</h3><ul id="conversionRisks"></ul></div></div>
+          <div class="stepCard"><h3>Recommended wave sequence</h3><table><thead><tr><th>Wave</th><th>What to do</th><th>Exit criteria</th></tr></thead><tbody id="conversionTable"></tbody></table></div>
         </div>
 
         <div class="pane" id="pane-topology">
           <h2>Topology graph</h2>
-          <p class="sub" style="max-width:none;margin-bottom:14px">
-            This view uses the toolkit graph renderer with a VCF-aware topology builder. Change the design path on the left and regenerate to see how the management domain, workload domains, NSX, load balancing, and cloud extension components resolve into a visual topology.
-          </p>
-          <div class="topologyControls">
-            <div class="miniCard"><div class="small">Topology mode</div><div style="font-size:22px;font-weight:800;margin-top:4px" id="topologyModeLabel">Greenfield</div></div>
-            <div class="miniCard"><div class="small">Scope</div><div style="font-size:22px;font-weight:800;margin-top:4px" id="topologyScopeLabel">Management + Workload</div></div>
-            <div class="miniCard"><div class="small">LB path</div><div style="font-size:22px;font-weight:800;margin-top:4px" id="topologyLbLabel">Avi</div></div>
-            <div class="miniCard"><div class="small">Cloud extension</div><div style="font-size:22px;font-weight:800;margin-top:4px" id="topologyCloudLabel">AWS</div></div>
-          </div>
-          <div class="btnbar" style="margin-bottom:10px">
-            <button id="regenTopologyBtn">Generate topology</button>
-          </div>
           <div class="banner" id="topologyBanner">Topology recommendation is loading…</div>
-          <div class="stepCard topologyPreview">
-            <h3>Rendered architecture</h3>
-            <div id="topologyBoard"></div>
-          </div>
-          <div class="stepCard">
-            <h3>Graph payload</h3>
-            <div class="topologyJson" id="topologyJson"></div>
+          <div class="btnbar"><button id="regenTopologyBtn">Generate topology</button><button class="secondary" id="copyTopologyBtn">Copy graph JSON</button></div>
+          <div class="grid2" style="margin-top:16px">
+            <div class="miniCard"><h3>Rendered topology</h3><div id="topologyBoard"></div></div>
+            <div class="miniCard"><h3>Graph payload</h3><div class="jsonOut" id="topologyJson"></div></div>
           </div>
         </div>
 
         <div class="pane" id="pane-clouds">
           <h2>Four-cloud capability crosswalk</h2>
-          <p class="sub" style="max-width:none;margin-bottom:14px">
-            Filter the toolkit catalog to see which AWS, Azure, GCP, and OCI services map to a capability domain.
-            Use this to extend a VCF design into native cloud landing zones, shared services, migration targets, or hybrid patterns.
-          </p>
-          <div class="searchBar">
-            <input id="domainSearch" type="text" placeholder="Search capability domain or capability name…" />
-            <select id="providerFilter">
-              <option value="all">All providers</option>
-              <option value="aws">AWS only</option>
-              <option value="azure">Azure only</option>
-              <option value="gcp">GCP only</option>
-              <option value="oci">OCI only</option>
-            </select>
-          </div>
-          <div class="cardsGrid" id="cloudSummary"></div>
-          <div class="stepCard" style="margin-top:16px">
-            <table>
-              <thead>
-                <tr>
-                  <th>Domain</th>
-                  <th>Capability</th>
-                  <th>AWS</th>
-                  <th>Azure</th>
-                  <th>GCP</th>
-                  <th>OCI</th>
-                </tr>
-              </thead>
-              <tbody id="crosswalkBody"></tbody>
-            </table>
-          </div>
+          <p class="sub" style="max-width:none;margin-bottom:14px">Filter the toolkit catalog to see which AWS, Azure, GCP, and OCI services map to a capability domain.</p>
+          <div class="grid2"><input id="domainSearch" type="text" placeholder="Search capability domain or capability name…" /><select id="providerFilter"><option value="all">All providers</option><option value="aws">AWS only</option><option value="azure">Azure only</option><option value="gcp">GCP only</option><option value="oci">OCI only</option></select></div>
+          <div class="cardsGrid" id="cloudSummary" style="margin-top:16px"></div>
+          <div class="stepCard" style="margin-top:16px"><table><thead><tr><th>Domain</th><th>Capability</th><th>AWS</th><th>Azure</th><th>GCP</th><th>OCI</th></tr></thead><tbody id="crosswalkBody"></tbody></table></div>
         </div>
 
         <div class="pane" id="pane-builder">
-          <h2>HLD / LLD builder</h2>
+          <h2>HLD / LLD Builder</h2>
           <div class="grid2">
             <div class="miniCard">
               <h3>Builder inputs</h3>
-              <label for="projectName">Project / program name</label>
-              <input id="projectName" type="text" value="VCF Load Balancer Architecture" />
-              <label for="businessDrivers">Business drivers</label>
-              <textarea id="businessDrivers">Modernize VCF networking and load balancing, standardize internal and external VIP patterns, prepare for VCF 9.0-aligned operations, and map extension paths across AWS, Azure, GCP, and OCI.</textarea>
-              <label for="assumptions">Scope and assumptions</label>
-              <textarea id="assumptions">Management domain first, one or more workload domains, NSX for routing and segmentation, Avi as preferred modern application-delivery layer, explicit ownership for DNS/IPAM/certs/logging, and controlled service classes for internal, external, and Supervisor-facing services.</textarea>
+              <label for="projectName">Project / program name</label><input id="projectName" type="text" value="VCF Load Balancer Architecture" />
+              <label for="businessDrivers">Business drivers</label><textarea id="businessDrivers">Modernize VCF networking and load balancing, standardize internal and external VIP patterns, prepare for VCF 9.0-aligned operations, and map extension paths across AWS, Azure, GCP, and OCI.</textarea>
+              <label for="assumptions">Scope and assumptions</label><textarea id="assumptions">Management domain first, one or more workload domains, NSX for routing and segmentation, Avi as the preferred modern application-delivery layer, explicit ownership for DNS/IPAM/certs/logging, and controlled service classes for internal, external, and Supervisor-facing services.</textarea>
               <div class="btnbar">
-                <button id="buildDocsBtn">Build HLD / LLD text</button>
+                <button id="buildDocsBtn">Build document pack</button>
+                <button class="secondary" id="copyDocsBtn">Copy output</button>
               </div>
             </div>
             <div class="miniCard">
-              <h3>Document structure covered</h3>
+              <h3>Generated outputs</h3>
               <ul>
-                <li>HLD: executive summary, drivers, scope, target-state VCF, NSX, load balancing, security, HA/DR, operations, risks and decisions</li>
-                <li>LLD: BOM, physical network mappings, VLAN/IP plan, Tier-0/Tier-1, Edge placement, Controller placement, Service Engine Groups, VIP standards, DNS/IPAM, certificate model, monitoring, deployment sequence, test plan, rollback steps</li>
+                <li>Polished HLD starter</li>
+                <li>Polished LLD starter</li>
+                <li>Implementation checklist</li>
+                <li>Migration wave plan</li>
+                <li>Operations runbook starter</li>
               </ul>
             </div>
           </div>
-          <div class="stepCard">
-            <h3>Generated outline</h3>
-            <div class="builderOut" id="builderOutput">Press “Build HLD / LLD text” to generate the outline for the current path.</div>
-          </div>
+          <div class="stepCard"><h3>Generated document pack</h3><div class="builderOut" id="builderOutput">Press “Build document pack” to generate the current path.</div></div>
         </div>
 
         <div class="pane" id="pane-references">
@@ -925,22 +342,18 @@
               </ul>
             </div>
             <div class="miniCard">
-              <h3>What this page now covers</h3>
+              <h3>JSON files now backing this page</h3>
               <ul>
-                <li>Target architecture and reference pattern</li>
-                <li>Blueprint by architecture domain</li>
-                <li>Traffic-flow paths and decision matrix</li>
-                <li>HA/DR, security, Kubernetes/Supervisor, and operations</li>
-                <li>Recommended production blueprint and build sequence</li>
-                <li>VCF 5.x to 9.0 conversion planning</li>
-                <li>Four-cloud service crosswalks</li>
-                <li>HLD / LLD document builder</li>
+                <li><code>data/vcf/vcf-blueprints.json</code></li>
+                <li><code>data/vcf/vcf-playbook.json</code></li>
+                <li><code>data/vcf/vcf-reference-patterns.json</code></li>
+                <li><code>data/vcf/vcf-conversion-paths.json</code></li>
+                <li><code>data/vcf/vcf-hld-lld-templates.json</code></li>
+                <li><code>data/vcf/vcf-topology-presets.json</code></li>
               </ul>
             </div>
           </div>
-          <div class="footerNote">
-            Use this page as the master orchestrator. Use the deeper ATK pages for cloud-specific analysis, network graphing, and provider-specific build decisions.
-          </div>
+          <div class="footerNote">Use this page as the master orchestrator. The VCF content model is now separated from the HTML, so expanding content is much easier.</div>
         </div>
       </section>
     </main>
@@ -951,755 +364,446 @@
 <script src="./cloud-decision-logic-kit/data/vmware-profiles.js"></script>
 <script src="./cloud-decision-logic-kit/engine/architecture-renderer.js"></script>
 <script>
-const steps = [
-  {
-    day:1,
-    title:"Define scope, current state, and operating model",
-    purpose:"Lock who owns the platform, what VCF version you start on, and whether the design is net-new, brownfield, or conversion-heavy.",
-    actions:[
-      "Record current VCF baseline, NSX state, vCenter count, workload domains, Edge clusters, and any existing load-balancer objects.",
-      "Decide whether the target pattern is private cloud only, hybrid private plus public cloud, cloud VMware SDDC alignment, or native cloud service extension.",
-      "Define whether the first wave covers management services, tenant workloads, or Supervisor-enabled workloads.",
-      "Name the first business services that must be published through the target load-balancer architecture."
-    ],
-    outputs:["Scope statement","Current-state inventory","Environment decision log","Day-2 ownership model"],
-    checks:[
-      "I know the starting VCF version and domain layout.",
-      "I know the primary migration motion.",
-      "I know who owns network, load balancing, certificates, DNS, and operations."
-    ]
-  },
-  {
-    day:2,
-    title:"Build the underlay and routing plan",
-    purpose:"Do not place Avi or NSX load-balancing objects until the underlay, BGP, VIP, and return-path design is documented.",
-    actions:[
-      "Map upstream routing, BGP peers, Edge uplinks, VLANs, MTU, DNS, NTP, and IPAM ownership.",
-      "Reserve management, Edge, frontend VIP, backend, and Service Engine or service-interface networks.",
-      "Document north-south and east-west firewall paths and the policy owners for each one.",
-      "Decide whether VIP ranges are dedicated by environment, domain, or application class."
-    ],
-    outputs:["IP plan","VLAN and subnet matrix","BGP adjacency map","Firewall rule ownership matrix"],
-    checks:[
-      "VIP ranges are reserved.",
-      "Return paths are understood.",
-      "Edge uplink connectivity is documented."
-    ]
-  },
-  {
-    day:3,
-    title:"Lay out VCF domain architecture",
-    purpose:"Separate management, workload, and tenant concerns before connecting applications.",
-    actions:[
-      "Place VCF core services and control-plane dependencies in the management domain.",
-      "Decide which workload domains receive shared load-balancer services first.",
-      "For Supervisor-aware paths, define Kubernetes ingress ownership and namespace or tenant boundaries.",
-      "For multi-cloud extension, decide where the first cloud landing zone connects and which patterns remain private-cloud-only."
-    ],
-    outputs:["Domain architecture diagram","Tenancy and environment split","Application onboarding list"],
-    checks:[
-      "I know where the control plane lives.",
-      "I know which workload domain is first.",
-      "Cloud-extension boundaries are identified."
-    ]
-  },
-  {
-    day:4,
-    title:"Design the NSX foundation",
-    purpose:"Tier-0, Tier-1, Edge, segment, NAT, and security choices define where the load balancer can safely live.",
-    actions:[
-      "Document Tier-0 and Tier-1 topology and identify which gateways own stateful services.",
-      "Define Edge cluster count, HA placement, uplinks, and failure domains.",
-      "Define overlay and VLAN-backed segment patterns for management, frontend, backend, and extension paths.",
-      "Record DFW, gateway firewall, and segmentation rules between Controllers, Service Engines, applications, and external networks."
-    ],
-    outputs:["NSX topology","Edge placement plan","Segment catalog","Security control matrix"],
-    checks:[
-      "I know where stateful services belong.",
-      "Failure domains are documented.",
-      "Segmentation rules exist for control and data planes."
-    ]
-  },
-  {
-    day:5,
-    title:"Choose the load-balancer architecture",
-    purpose:"Pick the primary service model before building templates.",
-    actions:[
-      "For Avi, decide Controller location, Service Engine Groups, VIP ranges, frontend and backend networks, and app service classes.",
-      "For NSX LB, decide service-interface placement, Tier-1 ownership, object standards, and operational boundaries.",
-      "For hybrid, define which existing VIPs stay put, which new ones land on Avi, and what order migration waves run in.",
-      "Decide how internet-facing, internal-only, shared-platform, and Kubernetes-facing services differ."
-    ],
-    outputs:["LB architecture decision","Coexistence or migration policy","Service-class model"],
-    checks:[
-      "The target LB model is chosen.",
-      "I have service classes.",
-      "Cutover or coexistence rules are written."
-    ]
-  },
-  {
-    day:6,
-    title:"Deploy or validate the control plane",
-    purpose:"Make the management side healthy before touching production traffic.",
-    actions:[
-      "For Avi, deploy or validate the Controller cluster, licensing, reachability, NTP, DNS, certificates, and admin RBAC.",
-      "For NSX LB, validate NSX Manager, Edge readiness, and Tier-1 service dependencies.",
-      "For conversions, verify the current-state object inventory and document rollback ownership.",
-      "For multi-cloud extension, identify the cloud-side administrative control plane and landing-zone dependencies."
-    ],
-    outputs:["Validated control plane","RBAC model","Certificate and DNS readiness report"],
-    checks:[
-      "Control plane is reachable.",
-      "RBAC is documented.",
-      "Certificate ownership exists."
-    ]
-  },
-  {
-    day:7,
-    title:"Build the data plane and publish a standard connectivity pattern",
-    purpose:"Place the traffic-bearing components and verify the path end-to-end.",
-    actions:[
-      "Create or validate Service Engine Groups, service interfaces, and VIP networks.",
-      "Validate backend reachability, route advertisement, SNAT or no-SNAT behavior, and asymmetric-path avoidance.",
-      "Build one standard internal pattern and one standard external pattern.",
-      "For cloud extension, decide whether the first consumer is a VMware SDDC in cloud or a native cloud workload set."
-    ],
-    outputs:["Data-plane blueprint","VIP pattern","Internal and external standard path"],
-    checks:[
-      "Frontend networks work.",
-      "Backend networks work.",
-      "Path symmetry is tested."
-    ]
-  },
-  {
-    day:8,
-    title:"Build reusable templates and service classes",
-    purpose:"Stop recreating monitors, SSL profiles, persistence, and tagging standards every time.",
-    actions:[
-      "Create L4 and L7 templates, health monitors, persistence modes, and naming standards.",
-      "Create service classes for management, platform shared services, tenant workloads, internet-facing apps, and Kubernetes ingress.",
-      "Decide whether cloud-native services in AWS, Azure, GCP, or OCI require a different class or can consume the same pattern.",
-      "Tie each class to logging, certificate, and alerting requirements."
-    ],
-    outputs:["Template library","Naming and tagging standard","Class-to-control mapping"],
-    checks:[
-      "Service templates exist.",
-      "Naming is standardized.",
-      "Logging and certificates are attached to classes."
-    ]
-  },
-  {
-    day:9,
-    title:"Pilot one application and one cloud extension use case",
-    purpose:"Prove the pattern inside VCF and then prove how it extends.",
-    actions:[
-      "Select one low-risk application and publish it behind the chosen load-balancer path.",
-      "Select one cloud extension path, such as AWS networking integration, Azure landing-zone service extension, GCP data path, or OCI hybrid service.",
-      "Document latency, certificate behavior, health state, failover observations, and operations ownership.",
-      "Update the design based on the first real data."
-    ],
-    outputs:["Pilot runbook","Validation report","Known-issues register"],
-    checks:[
-      "VCF pilot works.",
-      "Cloud extension pilot is identified.",
-      "Operations accepts the pattern."
-    ]
-  },
-  {
-    day:10,
-    title:"Plan and execute the conversion waves",
-    purpose:"If starting on VCF 5.x, sequence the 5-to-9 uplift without mixing uncontrolled architecture changes into the same wave.",
-    actions:[
-      "Separate platform upgrade tasks from service migration tasks whenever possible.",
-      "Upgrade or align management-domain prerequisites first, then workload-domain readiness, then application-facing services.",
-      "Inventory old VIPs, certificates, persistence rules, and DNS cutover points before moving traffic.",
-      "Use rollback gates for each wave and capture exact validation criteria."
-    ],
-    outputs:["Wave plan","Rollback checkpoints","Validation matrix"],
-    checks:[
-      "Upgrade and service migration are separated.",
-      "Each wave has a rollback gate.",
-      "Legacy object inventory is complete."
-    ]
-  },
-  {
-    day:11,
-    title:"Validate HA, security, and observability",
-    purpose:"A design is not done until you know how it fails, how it is watched, and how it is recovered.",
-    actions:[
-      "Test Controller, Service Engine, Edge, and routing failure scenarios.",
-      "Verify certificate renewal, logging, alerts, DFW or gateway firewall controls, and incident ownership.",
-      "Confirm that internet-facing services, internal services, and cloud-extended services all have support runbooks.",
-      "Document remaining manual recovery steps."
-    ],
-    outputs:["HA test report","Security control validation","Observability and incident map"],
-    checks:[
-      "HA was tested.",
-      "Security controls were validated.",
-      "Alerts and runbooks are connected."
-    ]
-  },
-  {
-    day:12,
-    title:"Operationalize and hand off",
-    purpose:"Turn the design into a production service with intake, governance, and repeatable onboarding.",
-    actions:[
-      "Create new-service intake forms, approval gates, service request templates, and ownership matrices.",
-      "Publish HLD, LLD, cutover guides, runbooks, and steady-state operations standards.",
-      "Link this page to the ATK cloud matrices and network-infrastructure design page for deeper per-cloud analysis.",
-      "Define the next backlog: additional clouds, additional workload domains, new service classes, and automation."
-    ],
-    outputs:["Production onboarding process","HLD and LLD package","Operations handoff","Backlog"],
-    checks:[
-      "App teams know how to request service.",
-      "Runbooks are published.",
-      "The next expansion phase is prioritized."
-    ]
-  }
-];
-
-const conversionTemplates = {
-  "5.0": {
-    notes:[
-      "Treat VCF 5.0.x as a legacy baseline that needs careful prerequisite validation before any major architecture consolidation.",
-      "Expect multiple upgrade and validation gates rather than a single leap with application traffic changes mixed in.",
-      "Inventory NSX, Edge, certificates, and management-domain dependencies before deciding where load-balancer changes belong."
-    ],
-    risks:[
-      "Combining platform uplift and VIP migration in one wave increases rollback complexity.",
-      "Unmapped legacy LB objects, certs, and monitors can delay conversion.",
-      "Older network assumptions often break when standardizing Tier-0, Tier-1, and VIP segmentation."
-    ],
-    waves:[
-      ["Wave 0","Freeze architecture scope, inventory all current-state objects, and document prerequisites.","Current-state inventory and rollback ownership are approved."],
-      ["Wave 1","Bring management-domain prerequisites to a supported, testable state and validate control-plane services.","Management domain is healthy and upgrade-ready."],
-      ["Wave 2","Validate NSX, Edge, routing, and service-boundary readiness for the target design.","North-south, Edge, and segmentation design pass validation."],
-      ["Wave 3","Upgrade or align workload domains and only then begin LB coexistence or migration work.","Workload domains are stable and app onboarding rules are clear."],
-      ["Wave 4","Move application traffic in controlled service waves.","Pilot and rollback gates are proven."],
-      ["Wave 5","Close with runbooks, certificate rotation, and day-2 operations.","Production support accepts handoff."]
-    ]
-  },
-  "5.1": {
-    notes:[
-      "Use a staged uplift approach with strict separation between platform upgrade tasks and service-migration tasks.",
-      "Revalidate management-domain dependencies before introducing new Avi or NSX LB standards.",
-      "Use brownfield discovery rigor even if the environment is mostly standardized."
-    ],
-    risks:[
-      "Policy drift between management and workload domains can delay a consistent LB target model.",
-      "Existing app teams may depend on undocumented persistence or DNS behaviors.",
-      "Cloud-extension work can outrun private-cloud standardization if started too early."
-    ],
-    waves:[
-      ["Wave 0","Inventory current state and define target-state architecture.","Target-state design and discovery are signed off."],
-      ["Wave 1","Validate management-domain readiness and control-plane dependencies.","Control plane is stable and recoverable."],
-      ["Wave 2","Standardize NSX routing and segmentation boundaries.","Tier-0, Tier-1, Edge, and security policies are documented."],
-      ["Wave 3","Deploy or align Avi / NSX LB templates and coexistence rules.","Pilot-ready LB platform exists."],
-      ["Wave 4","Move pilot services and then larger service classes.","Service waves pass rollback tests."],
-      ["Wave 5","Finalize day-2 operations and cloud-extension patterns.","Operations and governance accept the new pattern."]
-    ]
-  },
-  "5.2": {
-    notes:[
-      "VCF 5.2.x is the cleanest 5.x baseline to normalize before a 9.0-aligned operating model.",
-      "Keep the conversion centered on management-domain health, workload-domain readiness, and the target LB service model.",
-      "Use one pilot app and one pilot cloud-extension path before broad rollout."
-    ],
-    risks:[
-      "Hidden certificate, VIP, and DNS dependencies can stall cutover waves.",
-      "Supervisor or Kubernetes-facing services need their own ingress and ownership decisions.",
-      "Avi, NSX LB, and hybrid paths require different coexistence documentation."
-    ],
-    waves:[
-      ["Wave 0","Confirm current 5.2.x inventory, business drivers, and target 9.0 architecture.","Inventory, risks, and service classes are signed off."],
-      ["Wave 1","Validate management-domain prerequisites and control-plane readiness.","Management domain is ready for standardized operations."],
-      ["Wave 2","Finalize NSX topology, Edge, segments, and service boundaries.","North-south and stateful-service design is approved."],
-      ["Wave 3","Deploy or validate the chosen load-balancer model and templates.","LB control and data plane are pilot-ready."],
-      ["Wave 4","Run pilot service waves and validate cloud extension.","Pilot metrics and rollback tests pass."],
-      ["Wave 5","Operationalize 9.0-aligned runbooks, intake, and service onboarding.","Production handoff is complete."]
-    ]
-  },
-  "9.0": {
-    notes:[
-      "If already on VCF 9.0, use this planner as a modernization and service-standardization playbook rather than an upgrade plan.",
-      "Focus on design debt, LB standardization, and cloud-extension alignment.",
-      "Use the conversion view to sequence architecture refactoring rather than version uplift."
-    ],
-    risks:[
-      "Directly standardizing too many service classes at once can cause avoidable churn.",
-      "Cloud extension can sprawl if not tied to defined service classes and landing zones.",
-      "Operations debt remains if HLD, LLD, and intake models are not updated."
-    ],
-    waves:[
-      ["Wave 0","Inventory current architecture debt and service classes.","Debt register and priorities are accepted."],
-      ["Wave 1","Standardize LB platform, templates, and service classes.","Golden patterns exist."],
-      ["Wave 2","Extend into cloud-aligned service paths.","Landing-zone patterns are documented."],
-      ["Wave 3","Operationalize day-2 governance and automation.","Operations is using the new model."]
-    ]
-  }
+const DATA_FILES = {
+  blueprints: './data/vcf/vcf-blueprints.json',
+  playbook: './data/vcf/vcf-playbook.json',
+  patterns: './data/vcf/vcf-reference-patterns.json',
+  conversion: './data/vcf/vcf-conversion-paths.json',
+  templates: './data/vcf/vcf-hld-lld-templates.json',
+  presets: './data/vcf/vcf-topology-presets.json'
 };
-
-const providerOrder = ["aws","azure","gcp","oci"];
+const DEFAULT_DATA = {blueprints:{},playbook:{steps:[]},patterns:{patterns:[]},conversion:{paths:{}},templates:{},presets:{presets:[]}};
+let VCF_DATA = structuredClone ? structuredClone(DEFAULT_DATA) : JSON.parse(JSON.stringify(DEFAULT_DATA));
 let currentDay = 1;
 let showAll = false;
+const SESSION_KEY = 'atk_vcf_workspace_session_v2';
+
+function setStatus(msg){ document.getElementById('dataStatus').textContent = msg; }
+async function loadJson(url){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('Failed to load ' + url);
+  return await res.json();
+}
+async function initData(){
+  try{
+    const [blueprints, playbook, patterns, conversion, templates, presets] = await Promise.all([
+      loadJson(DATA_FILES.blueprints), loadJson(DATA_FILES.playbook), loadJson(DATA_FILES.patterns),
+      loadJson(DATA_FILES.conversion), loadJson(DATA_FILES.templates), loadJson(DATA_FILES.presets)
+    ]);
+    VCF_DATA = {blueprints, playbook, patterns, conversion, templates, presets};
+    setStatus('VCF data model loaded from JSON files.');
+  }catch(err){
+    console.error(err);
+    setStatus('VCF JSON files could not be fetched. The page is still usable, but serve the toolkit over HTTP to load the JSON-backed content.');
+  }
+}
 
 function selections(){
   return {
-    mode: document.getElementById("mode").value,
-    scope: document.getElementById("scope").value,
-    lb: document.getElementById("lb").value,
-    vcfSource: document.getElementById("vcfSource").value,
-    cloud: document.getElementById("cloud").value,
-    migrationMotion: document.getElementById("migrationMotion").value
+    mode: el('mode').value, scope: el('scope').value, lb: el('lb').value, vcfSource: el('vcfSource').value,
+    cloud: el('cloud').value, migrationMotion: el('migrationMotion').value
   };
 }
-
-function label(selectId){
-  const el = document.getElementById(selectId);
-  return el.options[el.selectedIndex].textContent;
-}
+function el(id){ return document.getElementById(id); }
+function label(id){ const e = el(id); return e.options[e.selectedIndex].textContent; }
 
 function recommendation(sel){
-  if(sel.mode === "brownfield" && sel.vcfSource !== "9.0") return "Inventory every existing VIP, certificate, monitor, and DNS dependency before combining any platform upgrade with service migration.";
-  if(sel.lb === "hybrid") return "Separate coexistence rules first: what stays on the current path, what lands on Avi, and what migrates later.";
-  if(sel.scope === "supervisor") return "Lock ingress ownership, service classes, and management-domain boundaries before publishing Supervisor-facing services.";
-  if(sel.migrationMotion === "native_refactor") return "Use the cloud crosswalk to map which capabilities should stay in VCF and which should extend into native cloud services.";
-  return "Document prerequisites, domain boundaries, service classes, and underlay readiness before deploying or changing any LB objects.";
+  if(sel.mode === 'brownfield' && sel.vcfSource !== '9.0') return 'Inventory every existing VIP, certificate, monitor, and DNS dependency before combining any platform upgrade with service migration.';
+  if(sel.lb === 'hybrid') return 'Separate coexistence rules first: what stays on the current path, what lands on Avi, and what migrates later.';
+  if(sel.scope === 'supervisor') return 'Lock ingress ownership, service classes, and management-domain boundaries before publishing Supervisor-facing services.';
+  if(sel.migrationMotion === 'native_refactor') return 'Use the cloud crosswalk to map which capabilities should stay in VCF and which should extend into native cloud services.';
+  return 'Document prerequisites, domain boundaries, service classes, and underlay readiness before deploying or changing any LB objects.';
 }
-
 function branchGuidance(sel, day){
   const items = [];
-  if(sel.mode === "brownfield"){
-    items.push("Brownfield note: keep a full migration worksheet with existing VIPs, certificates, health monitors, persistence rules, app owners, and rollback contacts.");
-  } else {
-    items.push("Greenfield note: keep the target-state design clean and standardized so early pilots do not become permanent technical debt.");
-  }
-  if(sel.scope === "mgmt_only") items.push("Scope note: focus on platform and management-domain services before tenant applications.");
-  if(sel.scope === "workload_only") items.push("Scope note: assign each workload domain a clean tenancy, Tier-1, and service ownership model.");
-  if(sel.scope === "supervisor") items.push("Supervisor note: define ingress ownership, service classes, namespace or tenant separation, and platform support boundaries.");
-  if(sel.lb === "avi") items.push("Avi note: define Controller placement, Service Engine Group segmentation, VIP ranges, and app service classes early.");
-  if(sel.lb === "nsx") items.push("NSX LB note: keep the design tightly tied to Tier-1 placement, service interfaces, and Edge stateful-service boundaries.");
-  if(sel.lb === "hybrid") items.push("Hybrid note: clearly label which services remain legacy, which are net-new on Avi, and which migrate later.");
+  items.push(sel.mode === 'brownfield'
+    ? 'Brownfield note: keep a full migration worksheet with existing VIPs, certificates, health monitors, persistence rules, app owners, and rollback contacts.'
+    : 'Greenfield note: keep the target-state design clean and standardized so early pilots do not become permanent technical debt.');
+  if(sel.scope === 'mgmt_only') items.push('Scope note: focus on platform and management-domain services before tenant applications.');
+  if(sel.scope === 'workload_only') items.push('Scope note: assign each workload domain a clean tenancy, Tier-1, and service ownership model.');
+  if(sel.scope === 'supervisor') items.push('Supervisor note: define ingress ownership, service classes, namespace or tenant separation, and platform support boundaries.');
+  if(sel.lb === 'avi') items.push('Avi note: define Controller placement, Service Engine Group segmentation, VIP ranges, and app service classes early.');
+  if(sel.lb === 'nsx') items.push('NSX LB note: keep the design tightly tied to Tier-1 placement, service interfaces, and Edge stateful-service boundaries.');
+  if(sel.lb === 'hybrid') items.push('Hybrid note: clearly label which services remain legacy, which are net-new on Avi, and which migrate later.');
   const cloudMap = {
-    aws:"Cloud note: pair VCF private-cloud services with AWS landing-zone patterns, transit connectivity, and native shared services only where there is clear value.",
-    azure:"Cloud note: pair VCF with Azure landing-zone governance, hybrid identity, and native service extension where service ownership remains clear.",
-    gcp:"Cloud note: pair VCF with GCP service extension patterns for analytics, platform services, or app adjacency with explicit network and security ownership.",
-    oci:"Cloud note: pair VCF with OCI extension or VMware-in-OCI patterns where operations, networking, and tenancy boundaries stay explicit."
+    aws:'Cloud note: pair VCF private-cloud services with AWS landing-zone patterns, transit connectivity, and native shared services only where there is clear value.',
+    azure:'Cloud note: pair VCF with Azure landing-zone governance, hybrid identity, and native service extension where service ownership remains clear.',
+    gcp:'Cloud note: pair VCF with GCP service extension patterns for analytics, platform services, or app adjacency with explicit network and security ownership.',
+    oci:'Cloud note: pair VCF with OCI extension or VMware-in-OCI patterns where operations, networking, and tenancy boundaries stay explicit.'
   };
   items.push(cloudMap[sel.cloud]);
   return items;
 }
-
-function nextStepText(day, sel){
-  if(day === 1 && sel.mode === "brownfield") return "Proceed next to a full current-state discovery and dependency inventory.";
-  if(day === 5 && sel.lb === "avi") return "Proceed next to Controller deployment or validation, Service Engine Group design, and VIP-range governance.";
-  if(day === 5 && sel.lb === "nsx") return "Proceed next to Tier-1 attachment, service-interface readiness, and NSX LB object standards.";
-  if(day === 9 && sel.vcfSource !== "9.0") return "Proceed next to the conversion waves and separate platform uplift from service cutovers.";
-  if(day >= steps.length) return "Proceed to HLD, LLD, runbooks, intake model, and cloud-extension backlog.";
-  return `Proceed to Day ${Math.min(day + 1, steps.length)} after today’s checklist and outputs are complete.`;
+function nextStepText(day, sel, maxDay){
+  if(day === 1 && sel.mode === 'brownfield') return 'Proceed next to a full current-state discovery and dependency inventory.';
+  if(day === 5 && sel.lb === 'avi') return 'Proceed next to Controller deployment or validation, Service Engine Group design, and VIP-range governance.';
+  if(day === 5 && sel.lb === 'nsx') return 'Proceed next to Tier-1 attachment, service-interface readiness, and NSX LB object standards.';
+  if(day === 9 && sel.vcfSource !== '9.0') return 'Proceed next to the conversion waves and separate platform uplift from service cutovers.';
+  if(day >= maxDay) return 'Proceed to HLD, LLD, runbooks, intake model, and cloud-extension backlog.';
+  return `Proceed to Day ${Math.min(day + 1, maxDay)} after today’s checklist and outputs are complete.`;
 }
 
-function renderSteps(day = 1, all = false){
-  const sel = selections();
-  const target = all ? steps : [steps.find(s => s.day === day)];
-  document.getElementById("playbookBanner").innerHTML = `
-    <strong>Path:</strong> ${label("mode")} · ${label("scope")} · ${label("lb")} · ${label("cloud")} · ${label("vcfSource")}
-    <br><strong>Immediate recommendation:</strong> ${recommendation(sel)}
-  `;
-  document.getElementById("stepsContainer").innerHTML = target.map(step => `
-    <article class="stepCard" id="step-${step.day}">
-      <div class="stepHead">
-        <div>
-          <span class="tag">Day ${step.day}</span>
-          <div style="font-size:24px;font-weight:800;margin-top:8px">${step.title}</div>
-          <div class="mini" style="margin-top:6px">${step.purpose}</div>
-        </div>
-      </div>
-      <div class="cols">
-        <div>
-          <h3>What to do</h3>
-          <ul>${step.actions.map(x => `<li>${x}</li>`).join("")}</ul>
-          <h3 style="margin-top:16px">Branch guidance</h3>
-          <ul>${branchGuidance(sel, step.day).map(x => `<li>${x}</li>`).join("")}</ul>
-        </div>
-        <div>
-          <h3>Required outputs</h3>
-          <ul>${step.outputs.map(x => `<li>${x}</li>`).join("")}</ul>
-          <h3 style="margin-top:16px">Completion checklist</h3>
-          ${step.checks.map((c, i) => `
-            <label class="check">
-              <input type="checkbox" data-check="step${step.day}_${i}">
-              <span>${c}</span>
-            </label>`).join("")}
-        </div>
-      </div>
-      <div class="next"><strong>Auto-guided next step:</strong> ${nextStepText(step.day, sel)}</div>
-    </article>
-  `).join("");
-  restoreChecks();
-  populateJump(day);
+function renderBlueprint(){
+  const bp = VCF_DATA.blueprints || {};
+  el('layerGrid').innerHTML = (bp.layers || []).map(layer => `
+    <div class="miniCard"><h3>Layer ${layer.layer}</h3><h4>${layer.name}</h4><ul>${(layer.items||[]).map(x=>`<li>${x}</li>`).join('')}</ul></div>
+  `).join('');
+  el('referencePatternBlock').innerHTML = `
+    <strong>Management Domain</strong><ul>${((bp.referencePattern||{}).managementDomain||[]).map(x=>`<li>${x}</li>`).join('')}</ul>
+    <strong>Workload Domains</strong><ul>${((bp.referencePattern||{}).workloadDomains||[]).map(x=>`<li>${x}</li>`).join('')}</ul>`;
+  el('principlesList').innerHTML = (bp.coreDesignPrinciples||[]).map(x=>`<li>${x}</li>`).join('');
+  el('buildSequenceList').innerHTML = (bp.buildSequence||[]).map(x=>`<li>${x}</li>`).join('');
+  el('domainBlueprintBody').innerHTML = (bp.domainBlueprints||[]).map(d => `<tr><td><strong>${d.domain}</strong></td><td><ul>${(d.whatToDefine||[]).map(x=>`<li>${x}</li>`).join('')}</ul></td><td><ul>${(d.outputs||[]).map(x=>`<li>${x}</li>`).join('')}</ul></td></tr>`).join('');
+  el('prodBlueprint').innerHTML = `<strong>Management Domain</strong><ul>${((bp.recommendedProductionBlueprint||{}).managementDomain||[]).map(x=>`<li>${x}</li>`).join('')}</ul><strong>Workload Domains</strong><ul>${((bp.recommendedProductionBlueprint||{}).workloadDomains||[]).map(x=>`<li>${x}</li>`).join('')}</ul>`;
+  el('straightRecommendation').textContent = bp.straightRecommendation || '';
 }
-
-function populateJump(active){
-  document.getElementById("jumpList").innerHTML = steps.map(step => `
-    <button class="jumpBtn ${active === step.day && !showAll ? "active" : ""}" data-day="${step.day}">
-      Day ${step.day}: ${step.title}
-    </button>
-  `).join("");
-  document.querySelectorAll(".jumpBtn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      currentDay = Number(btn.dataset.day);
-      showAll = false;
-      renderAll();
-      window.scrollTo({top:0, behavior:"smooth"});
-    });
-  });
+function renderPatterns(){
+  el('patternsGrid').innerHTML = (VCF_DATA.patterns.patterns || []).map(p => `<div class="miniCard"><h3>${p.name}</h3><ul>${(p.items||[]).map(x=>`<li>${x}</li>`).join('')}</ul></div>`).join('');
 }
-
-function saveChecks(){
-  document.querySelectorAll("[data-check]").forEach(cb => localStorage.setItem(cb.dataset.check, cb.checked ? "1" : "0"));
+function renderSecuritySupervisorOps(){
+  el('securityList').innerHTML = (VCF_DATA.blueprints.securityControls || []).map(x=>`<li>${x}</li>`).join('');
+  el('supervisorList').innerHTML = (VCF_DATA.blueprints.supervisorControls || []).map(x=>`<li>${x}</li>`).join('');
+  const ops = VCF_DATA.blueprints.operationsControls || [];
+  const buckets = [
+    ['Lifecycle', ops.slice(0,2)],
+    ['Security operations', ops.slice(2,4)],
+    ['Observability and support', ops.slice(4,6)],
+    ['Governance', ops.slice(6)]
+  ];
+  el('operationsCards').innerHTML = buckets.map(([title, items]) => `<div class="miniCard"><h3>${title}</h3><ul>${items.map(x=>`<li>${x}</li>`).join('')}</ul></div>`).join('');
 }
-function restoreChecks(){
-  document.querySelectorAll("[data-check]").forEach(cb => {
-    cb.checked = localStorage.getItem(cb.dataset.check) === "1";
-    cb.addEventListener("change", saveChecks);
-  });
-}
-function resetChecks(){
-  document.querySelectorAll("[data-check]").forEach(cb => {
-    localStorage.removeItem(cb.dataset.check);
-    cb.checked = false;
-  });
-}
-
 function renderStatuses(){
   const sel = selections();
-  document.getElementById("statusMode").textContent = label("mode");
-  document.getElementById("statusScope").textContent = label("scope");
-  document.getElementById("statusLb").textContent = label("lb");
-  document.getElementById("statusCloud").textContent = label("cloud");
-  document.getElementById("statusNext").textContent = recommendation(sel);
-  document.getElementById("convFrom").textContent = label("vcfSource").replace("VCF ","");
-  document.getElementById("convLb").textContent = label("lb").includes("Avi") ? "Avi" : label("lb").includes("NSX") ? "NSX" : "Hybrid";
-  const motionText = label("migrationMotion")
-    .replace("Stay ","")
-    .replace("private cloud only","Private")
-    .replace("private + public cloud","Hybrid")
-    .replace("alignment","VMware SDDC")
-    .replace("Private cloud with ","");
-  document.getElementById("convMotion").textContent = motionText;
-
-  document.getElementById("blueprintBanner").innerHTML = `
-    <strong>Recommended production blueprint:</strong>
-    Management domain with shared north-south services and control plane, workload domains segmented by environment or business boundary,
-    NSX for routing and segmentation, ${sel.lb === "avi" ? "Avi as the preferred application-delivery layer" : sel.lb === "nsx" ? "NSX load balancer aligned to stateful network-service boundaries" : "a documented hybrid coexistence path with Avi as target where appropriate"},
-    and ${label("cloud")} used as the primary cloud-alignment path for extension work.
-    <br><strong>Straight recommendation:</strong> Do not treat load balancing as a side feature. Architect it as a dedicated application-delivery layer on top of the NSX network-services foundation.
-  `;
+  el('statusMode').textContent = label('mode');
+  el('statusScope').textContent = label('scope');
+  el('statusLb').textContent = label('lb');
+  el('statusCloud').textContent = label('cloud');
+  el('statusNext').textContent = recommendation(sel);
+  el('convFrom').textContent = label('vcfSource').replace('VCF ','');
+  el('convLb').textContent = label('lb').includes('Avi') ? 'Avi' : label('lb').includes('NSX') ? 'NSX' : 'Hybrid';
+  let motionText = label('migrationMotion').replace('Stay ','').replace('private cloud only','Private').replace('private + public cloud','Hybrid').replace('alignment','VMware SDDC').replace('Private cloud with ','');
+  el('convMotion').textContent = motionText;
+  el('blueprintBanner').innerHTML = `<strong>Recommended production blueprint:</strong> Management domain with shared north-south services and control plane, workload domains segmented by environment or business boundary, NSX for routing and segmentation, ${sel.lb === 'avi' ? 'Avi as the preferred application-delivery layer' : sel.lb === 'nsx' ? 'NSX load balancer aligned to stateful network-service boundaries' : 'a documented hybrid coexistence path with Avi as target where appropriate'}, and ${label('cloud')} used as the primary cloud-alignment path for extension work.<br><strong>Straight recommendation:</strong> ${(VCF_DATA.blueprints.straightRecommendation || '')}`;
 }
+function renderSteps(day=1, all=false){
+  const steps = VCF_DATA.playbook.steps || [];
+  const sel = selections();
+  const target = all ? steps : [steps.find(s => s.day === day)].filter(Boolean);
+  el('playbookBanner').innerHTML = `<strong>Path:</strong> ${label('mode')} · ${label('scope')} · ${label('lb')} · ${label('cloud')} · ${label('vcfSource')}<br><strong>Immediate recommendation:</strong> ${recommendation(sel)}`;
+  el('stepsContainer').innerHTML = target.map(step => `
+    <article class="stepCard" id="step-${step.day}">
+      <div class="stepHead"><div><span class="tag">Day ${step.day}</span><div style="font-size:24px;font-weight:800;margin-top:8px">${step.title}</div><div class="mini" style="margin-top:6px">${step.purpose}</div></div></div>
+      <div class="cols">
+        <div><h3>What to do</h3><ul>${(step.actions||[]).map(x=>`<li>${x}</li>`).join('')}</ul><h3 style="margin-top:16px">Branch guidance</h3><ul>${branchGuidance(sel, step.day).map(x=>`<li>${x}</li>`).join('')}</ul></div>
+        <div><h3>Required outputs</h3><ul>${(step.outputs||[]).map(x=>`<li>${x}</li>`).join('')}</ul><h3 style="margin-top:16px">Completion checklist</h3>${(step.checks||[]).map((c,i)=>`<label class="check"><input type="checkbox" data-check="step${step.day}_${i}"><span>${c}</span></label>`).join('')}</div>
+      </div>
+      <div class="next"><strong>Auto-guided next step:</strong> ${nextStepText(step.day, sel, steps.length)}</div>
+    </article>`).join('');
+  restoreChecks();
+  populateJump(day, steps);
+}
+function populateJump(active, steps){
+  el('jumpList').innerHTML = (steps||[]).map(step => `<button class="jumpBtn ${active===step.day && !showAll ? 'active':''}" data-day="${step.day}">Day ${step.day}: ${step.title}</button>`).join('');
+  document.querySelectorAll('.jumpBtn').forEach(btn => btn.addEventListener('click', ()=>{ currentDay = Number(btn.dataset.day); showAll=false; renderAll(); window.scrollTo({top:0,behavior:'smooth'}); }));
+}
+function saveChecks(){ document.querySelectorAll('[data-check]').forEach(cb => localStorage.setItem(cb.dataset.check, cb.checked ? '1' : '0')); }
+function restoreChecks(){ document.querySelectorAll('[data-check]').forEach(cb => { cb.checked = localStorage.getItem(cb.dataset.check)==='1'; cb.addEventListener('change', saveChecks); }); }
+function resetChecks(){ document.querySelectorAll('[data-check]').forEach(cb => { localStorage.removeItem(cb.dataset.check); cb.checked=false; }); }
 
 function renderConversion(){
   const sel = selections();
-  const t = conversionTemplates[sel.vcfSource] || conversionTemplates["5.2"];
-  document.getElementById("conversionNotes").innerHTML = t.notes.map(x => `<li>${x}</li>`).join("");
-  const risks = [...t.risks];
-  if(sel.lb === "hybrid") risks.push("Hybrid coexistence needs explicit ownership, support boundaries, and service-wave mapping.");
-  if(sel.scope === "supervisor") risks.push("Supervisor-aware services add ingress, certificate, and namespace or tenant ownership decisions.");
-  if(sel.migrationMotion === "native_refactor") risks.push("Native cloud extension can create service sprawl if not tied to a defined capability model.");
-  document.getElementById("conversionRisks").innerHTML = risks.map(x => `<li>${x}</li>`).join("");
-
-  const rows = t.waves.map(w => `<tr><td><strong>${w[0]}</strong></td><td>${w[1]}</td><td>${w[2]}</td></tr>`).join("");
-  document.getElementById("conversionTable").innerHTML = rows;
+  const t = (VCF_DATA.conversion.paths || {})[sel.vcfSource] || {notes:[],risks:[],waves:[]};
+  let risks = [...(t.risks || [])];
+  if(sel.lb === 'hybrid') risks.push('Hybrid coexistence needs explicit ownership, support boundaries, and service-wave mapping.');
+  if(sel.scope === 'supervisor') risks.push('Supervisor-aware services add ingress, certificate, and namespace or tenant ownership decisions.');
+  if(sel.migrationMotion === 'native_refactor') risks.push('Native cloud extension can create service sprawl if not tied to a defined capability model.');
+  el('conversionNotes').innerHTML = (t.notes||[]).map(x=>`<li>${x}</li>`).join('');
+  el('conversionRisks').innerHTML = risks.map(x=>`<li>${x}</li>`).join('');
+  el('conversionTable').innerHTML = (t.waves||[]).map(w => `<tr><td><strong>${w[0]}</strong></td><td>${w[1]}</td><td>${w[2]}</td></tr>`).join('');
 }
 
-function getCatalogRows(){
-  return (window.ATK && window.ATK.catalog && Array.isArray(window.ATK.catalog.rows)) ? window.ATK.catalog.rows : [];
-}
-
+function getCatalogRows(){ return (window.ATK && window.ATK.catalog && Array.isArray(window.ATK.catalog.rows)) ? window.ATK.catalog.rows : []; }
 function renderCloudSummary(filteredRows){
   const totals = {aws:0, azure:0, gcp:0, oci:0};
-  filteredRows.forEach(r => providerOrder.forEach(p => { if((r.providers?.[p] || []).length) totals[p] += 1; }));
-  document.getElementById("cloudSummary").innerHTML = providerOrder.map(p => `
-    <div class="miniCard">
-      <div class="small">${p.toUpperCase()}</div>
-      <div style="font-size:26px;font-weight:800;margin-top:4px">${totals[p]}</div>
-      <div class="mini">Capabilities matched by current filter</div>
-    </div>
-  `).join("");
+  filteredRows.forEach(r => ['aws','azure','gcp','oci'].forEach(p => { if((r.providers?.[p] || []).length) totals[p]+=1; }));
+  el('cloudSummary').innerHTML = ['aws','azure','gcp','oci'].map(p => `<div class="miniCard"><div class="small">${p.toUpperCase()}</div><div style="font-size:26px;font-weight:800;margin-top:4px">${totals[p]}</div><div class="mini">Capabilities matched by current filter</div></div>`).join('');
 }
-
 function renderCrosswalk(){
-  const q = document.getElementById("domainSearch").value.trim().toLowerCase();
-  const provider = document.getElementById("providerFilter").value;
+  const q = el('domainSearch').value.trim().toLowerCase();
+  const provider = el('providerFilter').value;
   const rows = getCatalogRows().filter(row => {
-    const hay = `${row.domain} ${row.capability_name} ${row.used_for || ""}`.toLowerCase();
+    const hay = `${row.domain} ${row.capability_name} ${row.used_for || ''}`.toLowerCase();
     if(q && !hay.includes(q)) return false;
-    if(provider !== "all" && !(row.providers?.[provider] || []).length) return false;
+    if(provider !== 'all' && !(row.providers?.[provider] || []).length) return false;
     return true;
-  }).slice(0, 120);
-
+  }).slice(0,120);
   renderCloudSummary(rows);
-
-  document.getElementById("crosswalkBody").innerHTML = rows.map(row => `
-    <tr>
-      <td>${row.domain}</td>
-      <td><strong>${row.capability_name}</strong><div class="mini">${row.used_for || ""}</div></td>
-      <td>${(row.providers?.aws || []).join("<br>") || "—"}</td>
-      <td>${(row.providers?.azure || []).join("<br>") || "—"}</td>
-      <td>${(row.providers?.gcp || []).join("<br>") || "—"}</td>
-      <td>${(row.providers?.oci || []).join("<br>") || "—"}</td>
-    </tr>
-  `).join("");
+  el('crosswalkBody').innerHTML = rows.map(row => `<tr><td>${row.domain}</td><td><strong>${row.capability_name}</strong><div class="mini">${row.used_for || ''}</div></td><td>${(row.providers?.aws||[]).join('<br>') || '—'}</td><td>${(row.providers?.azure||[]).join('<br>') || '—'}</td><td>${(row.providers?.gcp||[]).join('<br>') || '—'}</td><td>${(row.providers?.oci||[]).join('<br>') || '—'}</td></tr>`).join('');
 }
 
-function buildDocOutline(){
-  const sel = selections();
-  const project = document.getElementById("projectName").value.trim() || "VCF Load Balancer Architecture";
-  const drivers = document.getElementById("businessDrivers").value.trim();
-  const assumptions = document.getElementById("assumptions").value.trim();
-  const outline = `${project}
-
-HLD
-1.0 Executive Summary
-1.1 Business Drivers
-${drivers}
-
-2.0 Scope and Assumptions
-${assumptions}
-
-3.0 Target-State VCF Architecture
-3.1 Four-layer architecture model
-3.2 Management domain design
-3.3 Workload domain design
-3.4 Recommended production blueprint for ${label("mode")} / ${label("scope")}
-
-4.0 NSX Architecture
-4.1 Tier-0 and Tier-1 topology
-4.2 Edge cluster placement
-4.3 Overlay and VLAN-backed segments
-4.4 NAT and service boundaries
-4.5 East-west and north-south security controls
-
-5.0 Load Balancing Architecture
-5.1 Selected model: ${label("lb")}
-5.2 Controller placement and control plane
-5.3 Service Engine Groups / service interfaces
-5.4 VIP, pool, profile, monitor, and persistence standards
-5.5 Internal, external, shared platform, and Kubernetes service classes
-
-6.0 Security Architecture
-6.1 Management-plane isolation
-6.2 VIP and backend-network separation
-6.3 Certificate lifecycle ownership
-6.4 RBAC and change control
-6.5 Internet-facing and WAF-related requirements
-
-7.0 HA / DR Architecture
-7.1 Platform HA
-7.2 LB control-plane HA
-7.3 LB data-plane HA
-7.4 Failure testing and recovery sequence
-
-8.0 Operations Model
-8.1 Upgrade and lifecycle
-8.2 Backup and restore
-8.3 Password and certificate rotation
-8.4 Monitoring, analytics, and alerting
-8.5 Incident ownership and escalation
-
-9.0 Four-Cloud Extension Strategy
-9.1 Primary alignment: ${label("cloud")}
-9.2 Motion: ${label("migrationMotion")}
-9.3 Capability crosswalk usage
-9.4 Landing-zone or VMware-cloud alignment decisions
-
-10.0 Risks and Decisions
-10.1 Version and conversion risks
-10.2 Coexistence or migration risks
-10.3 Security and operations risks
-
-LLD
-1.0 BOM and Version Matrix
-2.0 Physical Network Mappings
-3.0 VLAN / IP Plan
-4.0 Management Domain Placement
-5.0 Workload Domain Placement
-6.0 Tier-0 / Tier-1 Design
-7.0 Edge Node Placement
-8.0 Controller Placement
-9.0 Service Engine Group / Service Interface Design
-10.0 VIP / Pool / Profile / Monitor Standards
-11.0 DNS / IPAM Integration
-12.0 Certificate Model
-13.0 Monitoring and Logging Integration
-14.0 Deployment Sequence
-15.0 Test Plan
-16.0 Runbook and Rollback Steps`;
-  document.getElementById("builderOutput").textContent = outline;
-}
-
-function addNode(graph,id,category,extra={}){
-  if(!graph.nodes[id]) graph.nodes[id] = Object.assign({id, category}, extra);
-}
-function addEdge(graph,from,to){ graph.edges.push({from,to}); }
-
-function buildVcfGraph(){
-  const sel = selections();
-  const g = {nodes:{}, edges:[]};
-  addNode(g,'user_client','edge',{placement:'external', exposure:'north-south', scope:'client access'});
-  addNode(g,'dns','dns',{placement:'shared', exposure:'global', scope:'enterprise dns'});
-  addNode(g,'datacenter_fabric','network',{placement:'underlay', scope:'physical fabric', layer:1});
-  addNode(g,'upstream_router','network',{placement:'underlay', scope:'north-south routing', layer:1});
-  addNode(g,'management_domain','other',{placement:'vcf platform', scope:'management domain', layer:2});
-  addNode(g,'workload_domain','other',{placement:'vcf platform', scope: sel.scope === 'mgmt_only' ? 'optional future workload domain' : 'primary workload domain', layer:2});
-  addNode(g,'sddc_manager','other',{placement:'management domain', scope:'vcf control plane', layer:2});
-  addNode(g,'vcenter','other',{placement:'management domain', scope:'virtualization control plane', layer:2});
-  addNode(g,'nsx_manager','network',{placement:'management domain', scope:'nsx control plane', layer:3});
-  addNode(g,'edge_cluster','network',{placement:'shared edge', scope:'stateful network services', layer:3, multi_az_supported:true});
-  addNode(g,'tier_0_gateway','network',{placement:'edge cluster', scope:'north-south uplink', layer:3});
-  addNode(g,'tier_1_gateway','network',{placement:'tenant or app boundary', scope:'application routing', layer:3});
-  addNode(g,'vip_network','network',{placement:'frontend', scope:'vip and service exposure', layer:3, subnet_type:'frontend'});
-  addNode(g,'backend_network','network',{placement:'backend', scope:'application pools', layer:3, subnet_type:'backend'});
-  addNode(g,'management_network','network',{placement:'management', scope:'control-plane services', layer:3, subnet_type:'management'});
-  addNode(g,'security_policy','security',{placement:'shared', scope:'dfw and gateway controls', layer:3});
-  addNode(g,'observability','monitoring',{placement:'shared', scope:'monitoring and analytics', layer:4});
-
-  addEdge(g,'user_client','dns');
-  addEdge(g,'dns','upstream_router');
-  addEdge(g,'upstream_router','datacenter_fabric');
-  addEdge(g,'datacenter_fabric','tier_0_gateway');
-  addEdge(g,'management_domain','sddc_manager');
-  addEdge(g,'management_domain','vcenter');
-  addEdge(g,'management_domain','nsx_manager');
-  addEdge(g,'nsx_manager','edge_cluster');
-  addEdge(g,'edge_cluster','tier_0_gateway');
-  addEdge(g,'tier_0_gateway','tier_1_gateway');
-  addEdge(g,'tier_1_gateway','vip_network');
-  addEdge(g,'tier_1_gateway','backend_network');
-  addEdge(g,'security_policy','vip_network');
-  addEdge(g,'security_policy','backend_network');
-  addEdge(g,'observability','nsx_manager');
-
+function buildTopologyGraph(sel){
+  const nodes = {
+    management_domain:{category:'network',placement:'vcf',scope:'management',layer:2},
+    sddc_manager:{category:'compute',placement:'management_domain',scope:'management',layer:2},
+    vcenter:{category:'compute',placement:'management_domain',scope:'management',layer:2},
+    nsx_manager:{category:'network',placement:'management_domain',scope:'management',layer:3},
+    edge_cluster:{category:'network',placement:'management_domain',scope:'management',layer:3},
+    tier_0:{category:'network',placement:'edge_cluster',scope:'north_south',layer:3},
+    dns:{category:'dns',placement:'shared_services',scope:'global',layer:1},
+    ipam:{category:'network',placement:'shared_services',scope:'global',layer:1},
+  };
+  const edges = [
+    {from:'dns',to:'management_domain'},{from:'ipam',to:'management_domain'},
+    {from:'management_domain',to:'sddc_manager'},{from:'management_domain',to:'vcenter'},
+    {from:'management_domain',to:'nsx_manager'},{from:'nsx_manager',to:'edge_cluster'},{from:'edge_cluster',to:'tier_0'}
+  ];
+  if(sel.scope !== 'mgmt_only'){
+    nodes.workload_domain = {category:'compute',placement:'vcf',scope:'workload',layer:2};
+    nodes.tier_1 = {category:'network',placement:'workload_domain',scope:'tenant',layer:3};
+    nodes.app_segment = {category:'network',placement:'workload_domain',scope:'application',layer:3};
+    edges.push({from:'tier_0',to:'tier_1'},{from:'workload_domain',to:'tier_1'},{from:'tier_1',to:'app_segment'});
+  }
   if(sel.lb === 'avi' || sel.lb === 'hybrid'){
-    addNode(g,'avi_controllers','load_balancer',{placement:'management domain', scope:'control plane', layer:4, multi_az_supported:true});
-    addNode(g,'service_engine_group','load_balancer',{placement:'workload domain', scope:'data plane', layer:4, multi_az_supported:true});
-    addNode(g,'virtual_service_vip','load_balancer',{placement:'frontend vip network', scope:'application delivery', layer:4, exposure:'internal/external'});
-    addEdge(g,'management_domain','avi_controllers');
-    addEdge(g,'avi_controllers','service_engine_group');
-    addEdge(g,'service_engine_group','virtual_service_vip');
-    addEdge(g,'vip_network','virtual_service_vip');
-    addEdge(g,'virtual_service_vip','backend_network');
-    addEdge(g,'observability','avi_controllers');
+    nodes.avi_controllers = {category:'load_balancer',placement:'management_domain',scope:'control_plane',layer:4};
+    nodes.service_engine_group = {category:'load_balancer',placement: sel.scope==='mgmt_only' ? 'management_domain' : 'workload_domain', scope:'data_plane', layer:4};
+    nodes.vip_network = {category:'load_balancer',placement:'service_engine_group',scope:'frontend',layer:4};
+    nodes.backend_pool = {category:'compute',placement:'app_segment',scope:'backend',layer:4};
+    edges.push({from:'management_domain',to:'avi_controllers'},{from:'avi_controllers',to:'service_engine_group'},{from:'tier_1',to:'vip_network'},{from:'vip_network',to:'backend_pool'});
   }
-
-  if(sel.lb === 'nsx' || sel.lb === 'hybrid'){
-    addNode(g,'nsx_lb_service','load_balancer',{placement:'tier-1 edge service path', scope:'native nsx lb', layer:4});
-    addEdge(g,'tier_1_gateway','nsx_lb_service');
-    addEdge(g,'nsx_lb_service','backend_network');
-    addEdge(g,'vip_network','nsx_lb_service');
+  if(sel.lb === 'nsx'){
+    nodes.nsx_lb = {category:'load_balancer',placement:'tier_1',scope:'stateful_service',layer:3};
+    nodes.vip_network = {category:'load_balancer',placement:'nsx_lb',scope:'frontend',layer:4};
+    nodes.backend_pool = {category:'compute',placement:'app_segment',scope:'backend',layer:4};
+    edges.push({from:'tier_1',to:'nsx_lb'},{from:'nsx_lb',to:'vip_network'},{from:'vip_network',to:'backend_pool'});
   }
-
   if(sel.scope === 'supervisor'){
-    addNode(g,'supervisor_cluster','compute',{placement:'workload domain', scope:'supervisor and kubernetes services', layer:2});
-    addNode(g,'ingress_service','load_balancer',{placement:'cluster ingress', scope:'l4/l7 service boundary', layer:4});
-    addEdge(g,'workload_domain','supervisor_cluster');
-    addEdge(g,'supervisor_cluster','ingress_service');
-    if(g.nodes['service_engine_group']) addEdge(g,'service_engine_group','ingress_service');
-    else if(g.nodes['nsx_lb_service']) addEdge(g,'nsx_lb_service','ingress_service');
-  } else if(sel.scope !== 'mgmt_only') {
-    addNode(g,'application_cluster','compute',{placement:'workload domain', scope:'vm app workloads', layer:2});
-    addEdge(g,'workload_domain','application_cluster');
-    addEdge(g,'backend_network','application_cluster');
+    nodes.supervisor_cluster = {category:'compute',placement:'workload_domain',scope:'supervisor',layer:2};
+    nodes.ingress_service = {category:'load_balancer',placement:'supervisor_cluster',scope:'ingress',layer:4};
+    edges.push({from:'workload_domain',to:'supervisor_cluster'},{from:'supervisor_cluster',to:'ingress_service'});
   }
-
   if(sel.mode === 'brownfield'){
-    addNode(g,'legacy_vips','load_balancer',{placement:'existing estate', scope:'brownfield source services', layer:4});
-    addNode(g,'migration_wave','other',{placement:'program layer', scope:'migration sequencing', layer:4});
-    addEdge(g,'legacy_vips','migration_wave');
-    if(g.nodes['virtual_service_vip']) addEdge(g,'migration_wave','virtual_service_vip');
-    if(g.nodes['nsx_lb_service']) addEdge(g,'migration_wave','nsx_lb_service');
+    nodes.legacy_lb = {category:'load_balancer',placement:'legacy',scope:'brownfield',layer:4};
+    nodes.migration_wave = {category:'other',placement:'program',scope:'migration',layer:0};
+    edges.push({from:'legacy_lb',to:'migration_wave'},{from:'migration_wave',to:(sel.lb==='nsx'?'nsx_lb':'service_engine_group')});
   }
-
-  const cloudMeta = {
-    aws:{ext:'aws_extension', net:'transit_gateway', edge:'route53', compute:'aws_workloads', provider:'AWS'},
-    azure:{ext:'azure_extension', net:'virtual_wan', edge:'azure_dns', compute:'azure_workloads', provider:'Azure'},
-    gcp:{ext:'gcp_extension', net:'cloud_router', edge:'cloud_dns', compute:'gcp_workloads', provider:'GCP'},
-    oci:{ext:'oci_extension', net:'drg', edge:'oci_dns', compute:'oci_workloads', provider:'OCI'}
-  }[sel.cloud];
-
-  if(sel.migrationMotion !== 'private_only'){
-    addNode(g,cloudMeta.ext,'other',{placement:'public cloud', scope:`${cloudMeta.provider} extension landing zone`, layer:2});
-    addNode(g,cloudMeta.net,'network',{placement:'public cloud', scope:'hybrid connectivity', layer:3});
-    addNode(g,cloudMeta.edge,'dns',{placement:'public cloud', scope:'provider edge or dns', layer:4});
-    addNode(g,cloudMeta.compute,'compute',{placement:'public cloud', scope:'cloud-native or vmware-aligned workloads', layer:4});
-    addEdge(g,'tier_0_gateway',cloudMeta.net);
-    addEdge(g,cloudMeta.net,cloudMeta.ext);
-    addEdge(g,cloudMeta.edge,cloudMeta.compute);
-    addEdge(g,cloudMeta.ext,cloudMeta.compute);
+  if(sel.cloud){
+    nodes.cloud_extension = {category:'edge',placement:sel.cloud,scope:'extension',layer:0};
+    edges.push({from:'tier_0',to:'cloud_extension'});
+    if(sel.migrationMotion === 'provider_vmware'){
+      nodes.vmware_sddc = {category:'compute',placement:sel.cloud,scope:'vmware_cloud',layer:0};
+      edges.push({from:'cloud_extension',to:'vmware_sddc'});
+    } else if(sel.migrationMotion === 'native_refactor'){
+      nodes.native_services = {category:'compute',placement:sel.cloud,scope:'native_services',layer:0};
+      edges.push({from:'cloud_extension',to:'native_services'});
+    }
   }
-
-  if(sel.migrationMotion === 'provider_vmware'){
-    addNode(g,'vmware_cloud_sddc','compute',{placement:'provider-hosted vmware', scope:'operating-model aligned sddc', layer:2});
-    addEdge(g,'tier_0_gateway','vmware_cloud_sddc');
-  }
-
-  return g;
+  return {nodes, edges};
 }
-
 function renderTopology(){
   const sel = selections();
-  document.getElementById('topologyModeLabel').textContent = label('mode');
-  document.getElementById('topologyScopeLabel').textContent = label('scope');
-  document.getElementById('topologyLbLabel').textContent = label('lb');
-  document.getElementById('topologyCloudLabel').textContent = label('cloud');
-  document.getElementById('topologyBanner').innerHTML = `<strong>Topology intent:</strong> ${label('mode')} · ${label('scope')} · ${label('lb')} · ${label('cloud')} · ${label('migrationMotion')}<br><strong>Interpretation:</strong> This graph shows the recommended VCF control plane, NSX routing path, load-balancer model, and cloud extension nodes for the selected architecture path.`;
-  const graph = buildVcfGraph();
-  if(window.CDK && window.CDK.renderer && typeof window.CDK.renderer.renderArchitecture === 'function') {
+  const graph = buildTopologyGraph(sel);
+  el('topologyBanner').innerHTML = `<strong>Topology intent:</strong> ${label('mode')} · ${label('scope')} · ${label('lb')} · ${label('cloud')} · ${label('migrationMotion')}<br><strong>Interpretation:</strong> This graph shows the recommended VCF control plane, NSX routing path, load-balancer model, and cloud extension nodes for the selected architecture path.`;
+  el('topologyJson').textContent = JSON.stringify(graph, null, 2);
+  if(window.CDK && window.CDK.renderer && typeof window.CDK.renderer.renderArchitecture === 'function'){
     window.CDK.renderer.renderArchitecture(graph, 'topologyBoard');
   } else {
-    document.getElementById('topologyBoard').innerHTML = '<div class="miniCard">Renderer unavailable.</div>';
+    el('topologyBoard').innerHTML = '<div class="notice">Topology renderer not available. JSON payload is still shown on the right.</div>';
   }
-  document.getElementById('topologyJson').textContent = JSON.stringify(graph, null, 2);
+}
+
+function getSession(){
+  return {
+    selections: selections(),
+    currentDay, showAll,
+    builder: {projectName: el('projectName').value, businessDrivers: el('businessDrivers').value, assumptions: el('assumptions').value},
+    checks: Object.fromEntries([...document.querySelectorAll('[data-check]')].map(cb => [cb.dataset.check, cb.checked]))
+  };
+}
+function applySession(session){
+  if(!session) return;
+  Object.entries(session.selections || {}).forEach(([k,v]) => { if(el(k)) el(k).value = v; });
+  currentDay = session.currentDay || 1;
+  showAll = !!session.showAll;
+  if(session.builder){ el('projectName').value = session.builder.projectName || el('projectName').value; el('businessDrivers').value = session.builder.businessDrivers || el('businessDrivers').value; el('assumptions').value = session.builder.assumptions || el('assumptions').value; }
+  renderAll();
+  Object.entries(session.checks || {}).forEach(([k,v]) => { const cb = document.querySelector(`[data-check="${k}"]`); if(cb){ cb.checked = !!v; localStorage.setItem(k, v ? '1' : '0'); } });
+}
+function saveSession(){
+  localStorage.setItem(SESSION_KEY, JSON.stringify(getSession()));
+  setStatus('Session saved in browser storage.');
+}
+function loadSession(){
+  const raw = localStorage.getItem(SESSION_KEY);
+  if(!raw){ setStatus('No saved session found in browser storage.'); return; }
+  try{ applySession(JSON.parse(raw)); setStatus('Saved session loaded.'); } catch(e){ console.error(e); setStatus('Saved session could not be loaded.'); }
+}
+function exportSession(){
+  const blob = new Blob([JSON.stringify(getSession(), null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'atk-vcf-session.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function importSessionFile(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{ applySession(JSON.parse(String(reader.result || '{}'))); setStatus('Session imported successfully.'); }
+    catch(e){ console.error(e); setStatus('Imported JSON could not be parsed as a VCF session.'); }
+  };
+  reader.readAsText(file);
+}
+
+function buildDocumentPack(){
+  const sel = selections();
+  const project = el('projectName').value.trim() || 'VCF Load Balancer Architecture';
+  const drivers = el('businessDrivers').value.trim();
+  const assumptions = el('assumptions').value.trim();
+  const bp = VCF_DATA.blueprints || {};
+  const tmpl = VCF_DATA.templates || {};
+  const conversionPath = (VCF_DATA.conversion.paths || {})[sel.vcfSource] || {waves:[]};
+
+  const hld = [
+    `${project}`,
+    '',
+    'HIGH-LEVEL DESIGN',
+    '',
+    `Executive Summary`,
+    `${project} establishes a ${label('mode').toLowerCase()} VCF architecture path centered on ${label('lb')}, with ${label('cloud')} as the primary cloud-alignment target and ${label('migrationMotion').toLowerCase()} as the operating motion.`,
+    '',
+    'Business Drivers',
+    drivers,
+    '',
+    'Scope and Assumptions',
+    assumptions,
+    '',
+    'Target-State VCF Architecture',
+    ...((bp.layers||[]).map(layer => `- Layer ${layer.layer} ${layer.name}: ${(layer.items||[]).join('; ')}`)),
+    '',
+    'NSX Architecture',
+    'Define Tier-0, Tier-1, Edge placement, NAT and service boundaries, overlay and VLAN-backed segments, and north-south routing posture.',
+    '',
+    'Load Balancing Architecture',
+    `Primary model: ${label('lb')}. Define control-plane placement, data-plane placement, VIP and backend networks, service classes, monitors, profiles, persistence, and cert lifecycle.`,
+    '',
+    'Security Architecture',
+    ...((bp.securityControls||[]).map(x => `- ${x}`)),
+    '',
+    'HA / DR Architecture',
+    '- Platform HA for management-domain services',
+    '- LB control-plane HA',
+    '- LB data-plane HA',
+    '- Failure testing and recovery expectations',
+    '',
+    'Operations Model',
+    ...((bp.operationsControls||[]).map(x => `- ${x}`)),
+    '',
+    'Risks and Decisions',
+    '- Version and conversion risk',
+    '- Coexistence or cutover risk',
+    '- Security and operations ownership risk'
+  ].join('\n');
+
+  const lld = [
+    'LOW-LEVEL DESIGN',
+    '',
+    ...((tmpl.lldSections||[]).map((s, idx) => `${idx+1}.0 ${s}`)),
+    '',
+    'Suggested low-level specifics for this path:',
+    `- Current baseline: ${label('vcfSource')}`,
+    `- Scope: ${label('scope')}`,
+    `- LB target: ${label('lb')}`,
+    `- Cloud alignment: ${label('cloud')}`,
+    `- Motion: ${label('migrationMotion')}`,
+    '- Record exact VLANs, subnets, VIP pools, Tier-0/Tier-1 objects, certificates, RBAC roles, logging targets, and deployment sequence.'
+  ].join('\n');
+
+  const checklist = [
+    'IMPLEMENTATION CHECKLIST',
+    '',
+    ...((tmpl.implementationChecklistSections||[]).map(section => `- ${section}`)),
+    '',
+    'Current-path checklist focus:',
+    `- Confirm ${label('mode').toLowerCase()} prerequisites and owners`,
+    `- Validate ${label('lb')} control-plane readiness`,
+    `- Validate ${label('cloud')} extension assumptions`,
+    `- Validate ${label('vcfSource')} conversion or modernization gates`
+  ].join('\n');
+
+  const waves = [
+    'MIGRATION / EXECUTION WAVES',
+    '',
+    ...((conversionPath.waves||[]).map(w => `${w[0]}: ${w[1]} Exit criteria: ${w[2]}`))
+  ].join('\n');
+
+  const runbook = [
+    'OPERATIONS RUNBOOK STARTER',
+    '',
+    ...((tmpl.runbookSections||[]).map((section, idx) => `${idx+1}. ${section}`)),
+    '',
+    'Recommended runbook notes:',
+    '- Document standard smoke tests for VIP reachability and health checks.',
+    '- Define rollback triggers for failed service-wave cutovers.',
+    '- Define cert-renewal steps and break-glass contacts.',
+    '- Define incident ownership across VCF, NSX, load balancing, DNS/IPAM, and application teams.'
+  ].join('\n');
+
+  const pack = [hld, '', '---', '', lld, '', '---', '', checklist, '', '---', '', waves, '', '---', '', runbook].join('\n');
+  el('builderOutput').textContent = pack;
+}
+function copyText(id){
+  const txt = el(id).textContent;
+  navigator.clipboard.writeText(txt).then(()=>setStatus('Copied to clipboard.'), ()=>setStatus('Clipboard copy failed.'));
+}
+function renderPresets(){
+  el('presetList').innerHTML = (VCF_DATA.presets.presets || []).map(p => `<button class="presetBtn" data-preset="${p.id}">${p.name}</button>`).join('');
+  document.querySelectorAll('.presetBtn').forEach(btn => btn.addEventListener('click', () => {
+    const preset = (VCF_DATA.presets.presets || []).find(p => p.id === btn.dataset.preset);
+    if(!preset) return;
+    ['mode','scope','lb','cloud','migrationMotion'].forEach(k => { if(preset[k]) el(k).value = preset[k]; });
+    renderAll();
+    setStatus(`Applied preset: ${preset.name}`);
+  }));
 }
 
 function renderAll(){
   renderStatuses();
+  renderBlueprint();
+  renderPatterns();
+  renderSecuritySupervisorOps();
   renderSteps(currentDay, showAll);
   renderConversion();
   renderCrosswalk();
   renderTopology();
+  renderPresets();
 }
 
-document.querySelectorAll(".tab").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-    document.querySelectorAll(".pane").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById(`pane-${btn.dataset.pane}`).classList.add("active");
-  });
-});
+document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  el(`pane-${btn.dataset.pane}`).classList.add('active');
+}));
+['mode','scope','lb','vcfSource','cloud','migrationMotion'].forEach(id => el(id).addEventListener('change', renderAll));
+el('domainSearch').addEventListener('input', renderCrosswalk);
+el('providerFilter').addEventListener('change', renderCrosswalk);
+el('recommendBtn').addEventListener('click', () => { currentDay = 1; showAll = false; renderAll(); });
+el('showAllBtn').addEventListener('click', e => { showAll = !showAll; e.target.textContent = showAll ? 'Show one day' : 'Show all days'; renderAll(); });
+el('resetBtn').addEventListener('click', resetChecks);
+el('regenTopologyBtn').addEventListener('click', renderTopology);
+el('copyTopologyBtn').addEventListener('click', () => copyText('topologyJson'));
+el('buildDocsBtn').addEventListener('click', buildDocumentPack);
+el('copyDocsBtn').addEventListener('click', () => copyText('builderOutput'));
+el('saveSessionBtn').addEventListener('click', saveSession);
+el('loadSessionBtn').addEventListener('click', loadSession);
+el('exportSessionBtn').addEventListener('click', exportSession);
+el('importSessionBtn').addEventListener('click', () => el('importSessionFile').click());
+el('importSessionFile').addEventListener('change', e => { const file = e.target.files && e.target.files[0]; if(file) importSessionFile(file); e.target.value=''; });
 
-["mode","scope","lb","vcfSource","cloud","migrationMotion"].forEach(id => {
-  document.getElementById(id).addEventListener("change", renderAll);
-});
-document.getElementById("domainSearch").addEventListener("input", renderCrosswalk);
-document.getElementById("providerFilter").addEventListener("change", renderCrosswalk);
-document.getElementById("buildDocsBtn").addEventListener("click", buildDocOutline);
-
-document.getElementById("recommendBtn").addEventListener("click", () => {
-  currentDay = 1;
-  showAll = false;
+(async function start(){
+  await initData();
   renderAll();
-});
-document.getElementById("showAllBtn").addEventListener("click", e => {
-  showAll = !showAll;
-  e.target.textContent = showAll ? "Show one day" : "Show all days";
-  renderAll();
-});
-document.getElementById("resetBtn").addEventListener("click", resetChecks);
-document.getElementById("regenTopologyBtn").addEventListener("click", renderTopology);
-
-renderAll();
+})();
 </script>
 </body>
 </html>
