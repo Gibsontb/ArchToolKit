@@ -1,0 +1,95 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>VCF &amp; VVF Planning | VCF Workbook Page</title>
+      <style>
+        body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:#0b1324;color:#e9eef8}
+        .wrap{max-width:1500px;margin:0 auto;padding:24px}
+        .card{background:#10192b;border:1px solid #2b436d;border-radius:18px;padding:18px;margin-bottom:18px}
+        h1{margin:0 0 8px;font-size:30px} h2{margin:0 0 10px;font-size:20px}
+        .muted{color:#a8b6cf} .small{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#90a5c8}
+        .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+        button,a.btn{border:none;border-radius:12px;padding:10px 12px;font-weight:700;cursor:pointer;background:#1f78d6;color:white;text-decoration:none;display:inline-block}
+        button.secondary,a.secondary{background:#223252;border:1px solid #36517f;color:#dceaff}
+        button.ghost{background:transparent;border:1px solid #36517f;color:#dceaff}
+        table{width:100%;border-collapse:collapse;font-size:13px}
+        td,th{border:1px solid #284161;padding:8px 9px;vertical-align:top}
+        th{background:#10203a;text-align:left}
+        td.section{background:#13213b;font-weight:800}
+        td.formula{color:#8fb7e8;font-family:Consolas,monospace}
+        input,textarea{width:100%;background:#0d1527;border:1px solid #36517f;border-radius:8px;color:#e9eef8;padding:8px}
+        textarea{min-height:70px;resize:vertical}
+        .notice{padding:10px 12px;border-radius:12px;background:#112035;border:1px solid #2a4a74;color:#d9ebff}
+      </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <div class="card">
+          <div class="small">1. Prerequisites and planning</div>
+          <h1>VCF &amp; VVF Planning</h1>
+          <div class="muted">Primary deployment-option and planning path selection.</div>
+          <div class="btns">
+            <a class="btn secondary" href="../index.html">Back to Workbook Index</a>
+            <button id="saveBtn">Save page</button>
+            <button class="secondary" id="resetBtn">Reset page</button>
+            <button class="ghost" id="exportBtn">Export JSON</button>
+          </div>
+          <div class="notice" id="status">Editable fields on this page save in your browser.</div>
+        </div>
+        <div class="card">
+          <h2>Fill-in page</h2>
+          <table>
+            <tbody>
+              <tr><td class="section">         VMware Cloud Foundation and VMware vSphere Foundation Planning</td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><td class="editable"><textarea data-field="vcf-vvf-planning__B3" placeholder=""></textarea></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B6" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><td class="editable"><textarea data-field="vcf-vvf-planning__B7" placeholder=""></textarea></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B9" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="section">Version</td><td class=""></td><td class=""></td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B10" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="section">VMware Cloud Foundation</td><td class=""></td><td class=""></td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B11" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="section formula">=IF(vcf_version_chosen=&quot;No Version Selected&quot;,&quot;Select Version&quot;,vcf_version_chosen)</td><td class=""></td><td class=""></td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B14" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="section">Deployment Type</td><td class=""></td><td class=""></td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B15" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="">Select Option</td><td class="">Feature</td><td class="">Final Result</td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B16" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="">9.0.2.0</td><td class="formula">=CONCATENATE(mgmt_domain_deployment_type_chosen,&quot; Deployment Version&quot;)</td><td class="formula">=IF(vcf_version_chosen=&quot;No Version Selected&quot;,&quot;Excluded&quot;,&quot;Included&quot;)</td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B17" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="">VMware Cloud Foundation</td><td class="">Deployment Specification </td><td class="formula">=IF(vcf_version_chosen=&quot;No Version Selected&quot;,&quot;Excluded&quot;,&quot;Included&quot;)</td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B18" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="">First Instance</td><td class="">Instance to perform operation on</td><td class="formula">=IF(vcf_version_chosen=&quot;No Version Selected&quot;,&quot;Excluded&quot;,IF(mgmt_domain_deployment_type_chosen=&quot;VMware vSphere Foundation&quot;,&quot;Excluded&quot;,IF(mgmt_domain_chosen=&quot;Deploy a new VCF fleet&quot;,&quot;Included&quot;,&quot;Included&quot;)))</td></tr><tr><td class="editable"><input type="text" data-field="vcf-vvf-planning__B19" placeholder="" /></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="">Deploy a new VCF fleet</td><td class="">Operation to be performed</td><td class="formula">=IF(vcf_version_chosen=&quot;No Version Selected&quot;,&quot;Excluded&quot;,
+IF(AND(mgmt_domain_deployment_type_chosen=&quot;VMware vSphere Foundation&quot;,vcf_granular_option_chosen=&quot;Create VI Workload Domain&quot;),&quot;Excluded&quot;,
+IF(AND(mgmt_domain_deployment_type_chosen=&quot;VMware vSphere Foundation&quot;,vcf_granular_option_chosen=&quot;Create Cluster&quot;),&quot;Excluded&quot;,
+IF(AND(mgmt_domain_deployment_type_chosen=&quot;VMware Cloud Foundation&quot;,vcf_granular_option_chosen=&quot;VMware vSphere Foundation Deployment&quot;),&quot;Excluded&quot;,
+IF(vcf_granular_option_chosen=&quot;None Chosen&quot;,&quot;Excluded&quot;,&quot;Included&quot;)))))</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <script>
+        const KEY_PREFIX = "atk_vcf_sheet_vcf-vvf-planning__";
+        function allFields() { return [...document.querySelectorAll("[data-field]")]; }
+        function savePage(){
+          const data = {};
+          allFields().forEach(el => {
+            data[el.dataset.field] = el.value;
+            localStorage.setItem(KEY_PREFIX + el.dataset.field, el.value);
+          });
+          document.getElementById("status").textContent = "Page saved in browser storage.";
+        }
+        function loadPage(){
+          allFields().forEach(el => {
+            const v = localStorage.getItem(KEY_PREFIX + el.dataset.field);
+            if(v !== null) el.value = v;
+          });
+        }
+        function resetPage(){
+          allFields().forEach(el => {
+            localStorage.removeItem(KEY_PREFIX + el.dataset.field);
+            el.value = "";
+          });
+          document.getElementById("status").textContent = "Saved values cleared for this page.";
+        }
+        function exportPage(){
+          const data = {};
+          allFields().forEach(el => data[el.dataset.field] = el.value);
+          const blob = new Blob([JSON.stringify({sheet:"VCF & VVF Planning", data}, null, 2)], {type:"application/json"});
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "vcf-vvf-planning.json";
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }
+        document.getElementById("saveBtn").addEventListener("click", savePage);
+        document.getElementById("resetBtn").addEventListener("click", resetPage);
+        document.getElementById("exportBtn").addEventListener("click", exportPage);
+        loadPage();
+      </script>
+    </body>
+    </html>

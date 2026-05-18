@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VCF &amp; VVF Planning | VCF Workbook Page</title>
+<style>
+:root {
+  --bg:#0b1324; --panel:#10192b; --panel2:#0f182c; --line:#2b436d; --line2:#25385c;
+  --text:#e9eef8; --muted:#a8b6cf; --accent:#1f78d6;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text)}
+.wrap{max-width:1700px;margin:0 auto;padding:24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:18px}
+.topbar{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+h1{margin:0 0 8px;font-size:30px} h2{margin:0 0 10px;font-size:20px}
+.muted{color:var(--muted)} .small{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#90a5c8}
+.btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+button,a.btn{border:none;border-radius:12px;padding:10px 12px;font-weight:700;cursor:pointer;background:var(--accent);color:white;text-decoration:none;display:inline-block}
+button.secondary,a.secondary{background:#223252;border:1px solid #36517f;color:#dceaff}
+button.ghost{background:transparent;border:1px solid #36517f;color:#dceaff}
+.notice{padding:10px 12px;border-radius:12px;background:#112035;border:1px solid #2a4a74;color:#d9ebff}
+.sheetwrap{overflow:auto;border:1px solid var(--line2);border-radius:16px;background:white}
+table.sheet{border-collapse:collapse;table-layout:fixed;width:max-content;min-width:100%;background:white;color:#10203a}
+table.sheet td{border:1px solid #c9d6e6;padding:8px 9px;white-space:pre-wrap;word-break:break-word;line-height:1.25}
+table.sheet td.editable{background:#fffef7 !important}
+input,textarea{width:100%;background:#fffdf2;border:1px solid #9fb3d3;border-radius:8px;color:#10203a;padding:8px;font:inherit}
+textarea{min-height:74px;resize:vertical}
+.legend{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
+.tag{padding:8px 10px;border-radius:999px;background:#112035;border:1px solid #2a4a74;color:#d9ebff;font-size:12px}
+.meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px}
+.meta .block{padding:12px;border-radius:14px;background:var(--panel2);border:1px solid var(--line2)}
+@media (max-width:1000px){.meta,.legend{grid-template-columns:1fr} .wrap{padding:16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="small">1. Prerequisites and planning</div>
+    <div class="topbar">
+      <div>
+        <h1>VCF &amp; VVF Planning</h1>
+        <div class="muted">Primary deployment-option and planning-path selection.</div>
+      </div>
+      <div class="btns">
+        <a class="btn secondary" href="../index.html">Back to Workbook Index</a>
+        <button id="saveBtn">Save page</button>
+        <button class="secondary" id="resetBtn">Reset page</button>
+        <button class="ghost" id="exportBtn">Export JSON</button>
+      </div>
+    </div>
+    <div class="meta">
+      <div class="block"><div class="small">Workbook tab</div><div>VCF &amp; VVF Planning</div></div>
+      <div class="block"><div class="small">Detected editable fields</div><div>4</div></div>
+      <div class="block"><div class="small">Layout mode</div><div>Preserved merged headers and aligned columns</div></div>
+    </div>
+    <div class="legend">
+      <div class="tag">Workbook titles and merged headers preserved</div>
+      <div class="tag">Unlocked workbook cells are editable</div>
+      <div class="tag">Save uses browser storage</div>
+      <div class="tag">Export produces page JSON</div>
+    </div>
+    <div class="notice" id="status" style="margin-top:14px">This page preserves workbook header rows and column alignment more closely than the earlier flat version.</div>
+  </div>
+
+  <div class="card">
+    <h2>Fill-in page</h2>
+    <div class="sheetwrap">
+      <table class="sheet">
+        <colgroup>
+          <col style="width:72px"><col style="width:101px"><col style="width:101px"><col style="width:360px"><col style="width:72px"><col style="width:101px"><col style="width:101px"><col style="width:72px"><col style="width:342px"><col style="width:360px"><col style="width:187px"><col style="width:360px">
+        </colgroup>
+        <tbody>
+          <tr style="height:72px"><td colspan="12" style="min-height:72px;background:#0e223a;color:#e9eef8;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">         VMware Cloud Foundation and VMware vSphere Foundation Planning</td></tr><tr style="height:27px"><td colspan="11" style="min-height:27px;background:#506069;color:#e9eef8;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Use this page to select your options for a VMware Cloud Foundation Deployment</td><td  style="min-height:27px;background:#506069;color:#e9eef8;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">v1.9.0.008</td></tr><tr style="height:27px"><td colspan="12" style="min-height:27px;background:#0e223a;color:#e9eef8;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">VMware Values</td></tr><tr style="height:27px"><td colspan="12" style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">At VMware we value inclusion. To foster this principle within our customer, partner, and internal community, we are replacing some of the terminology in our content. We have updated this document to remove instances of non-inclusive language.</td></tr><tr style="height:26px"><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td colspan="4" style="min-height:26px;background:#0e223a;color:#e9eef8;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Version</td></tr><tr style="height:27px"><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td colspan="4" style="min-height:27px;background:#e5f7ff;color:#10203a;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">VMware Cloud Foundation</td></tr><tr style="height:27px"><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td rowspan="2" colspan="4" style="min-height:27px;color:#10203a;font-weight:700;text-align:center;vertical-align:top;white-space:pre-wrap">9.0.2.0</td></tr><tr style="height:26px"><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td colspan="4" style="min-height:26px;background:#0e223a;color:#e9eef8;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Deployment Type</td></tr><tr style="height:26px"><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:26px;background:#e5f7ff;color:#10203a;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Select Option</td><td  style="min-height:26px;background:#e5f7ff;color:#10203a;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Feature</td><td  style="min-height:26px;background:#e5f7ff;color:#10203a;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Final Result</td><td  style="min-height:26px;background:#e5f7ff;color:#10203a;font-weight:700;text-align:left;vertical-align:top;white-space:pre-wrap">Information</td></tr><tr style="height:27px"><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td class="editable"  style="min-height:27px;background:#c65600;color:#006100;text-align:left;vertical-align:top;white-space:pre-wrap;padding:6px"><input data-field="vcf-and-vvf-planning__J16" value="9.0.2.0" /></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">VMware Cloud Foundation Deployment Version</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Included</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">VMware Cloud Foundation Version 9.0.2.0 selected</td></tr><tr style="height:27px"><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td class="editable"  style="min-height:27px;background:#505f69;color:#e9eef8;text-align:left;vertical-align:top;white-space:pre-wrap;padding:6px"><input data-field="vcf-and-vvf-planning__J17" value="VMware Cloud Foundation" /></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Deployment Specification </td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Included</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">VMware Cloud Foundation Private Cloud will be deployed</td></tr><tr style="height:27px"><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td class="editable"  style="min-height:27px;background:#505f69;color:#e9eef8;text-align:left;vertical-align:top;white-space:pre-wrap;padding:6px"><input data-field="vcf-and-vvf-planning__J18" value="First Instance" /></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Instance to perform operation on</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Included</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Operation will be performed on the First VCF Instance</td></tr><tr style="height:27px"><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap"></td><td class="editable"  style="min-height:27px;background:#505f69;color:#e9eef8;text-align:left;vertical-align:top;white-space:pre-wrap;padding:6px"><input data-field="vcf-and-vvf-planning__J19" value="Deploy a new VCF fleet" /></td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Operation to be performed</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">Included</td><td  style="min-height:27px;color:#10203a;text-align:left;vertical-align:top;white-space:pre-wrap">VMware Cloud Foundation Installer will deploy a new VCF fleet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEY = "atk_vcf_page_vcf-and-vvf-planning";
+function savePage(){
+  const data = {};
+  document.querySelectorAll("[data-field]").forEach(el => data[el.dataset.field] = el.value);
+  localStorage.setItem(KEY, JSON.stringify(data));
+  document.getElementById("status").textContent = "Saved in browser storage.";
+}
+function loadPage(){
+  const raw = localStorage.getItem(KEY);
+  if(!raw) return;
+  try {
+    const data = JSON.parse(raw);
+    document.querySelectorAll("[data-field]").forEach(el => {
+      if(Object.prototype.hasOwnProperty.call(data, el.dataset.field)) el.value = data[el.dataset.field];
+    });
+  } catch(e){}
+}
+function resetPage(){
+  localStorage.removeItem(KEY);
+  location.reload();
+}
+function exportPage(){
+  const data = {};
+  document.querySelectorAll("[data-field]").forEach(el => data[el.dataset.field] = el.value);
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = "vcf-and-vvf-planning.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+document.getElementById("saveBtn").addEventListener("click", savePage);
+document.getElementById("resetBtn").addEventListener("click", resetPage);
+document.getElementById("exportBtn").addEventListener("click", exportPage);
+loadPage();
+</script>
+</body>
+</html>

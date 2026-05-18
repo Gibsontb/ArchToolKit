@@ -1,0 +1,224 @@
+{
+  "sourceWorkbook": "vcf-9.0-planning-and-preparation-workbook.xlsx",
+  "phases": [
+    {
+      "phase": "1. Prerequisites and planning",
+      "description": "Establish prerequisites, baseline choices, sizing assumptions, and directory-service inputs before any deployment begins.",
+      "sheets": [
+        "Prerequisite Checklist",
+        "VCF & VVF Planning",
+        "Management Domain Sizing",
+        "Active Directory Inputs"
+      ],
+      "components": [
+        "Hardware prerequisites for management and workload domains",
+        "Physical network requirements",
+        "Deployment option selection",
+        "VCF versus VVF planning path",
+        "Management domain sizing inputs",
+        "Active Directory FQDN, NetBIOS, OU, and service-account inputs"
+      ]
+    },
+    {
+      "phase": "2. Management domain deployment flow",
+      "description": "Build and prepare the management domain, then layer post-deployment and day-N configuration.",
+      "sheets": [
+        "Deploy Management Domain",
+        "Configure Management Domain",
+        "Deploy Fleet Management Day-N",
+        "Management Domain As Built"
+      ],
+      "components": [
+        "Management domain deployment",
+        "Apply signed certificates",
+        "NSX routing and connectivity for management",
+        "AVI / load balancer preparation where selected",
+        "Fleet management day-N operations",
+        "As-built capture for management networks and NSX routing"
+      ]
+    },
+    {
+      "phase": "3. Workload domain and cluster deployment flow",
+      "description": "Deploy workload domains, add post-config services, and optionally deploy additional clusters and racks.",
+      "sheets": [
+        "Deploy Workload Domain",
+        "Configure Workload Domain",
+        "Deploy Cluster",
+        "Additional Racks",
+        "Workload Domain As Built"
+      ],
+      "components": [
+        "Workload domain creation",
+        "NSX network connectivity for workload domains",
+        "Deploy AVI Load Balancer",
+        "vSAN stretched cluster",
+        "NSX Federation",
+        "vSphere Supervisor with NSX VPC networking",
+        "Cluster deployment",
+        "Layer 2 and multi-rack Layer 3 cluster patterns",
+        "Principal and secondary storage choices",
+        "As-built capture for workload-domain routing and networks"
+      ]
+    },
+    {
+      "phase": "4. Governance and workbook control",
+      "description": "Track workbook field changes, reference values, version history, and supporting static tables.",
+      "sheets": [
+        "Change Control",
+        "Value Reference Tables - MR",
+        "Value Reference Tables",
+        "Static Reference Tables",
+        "Public Reference Sheet",
+        "Version History",
+        "Dumping Ground"
+      ],
+      "components": [
+        "Field-name change mapping",
+        "Reference values and sample inputs",
+        "Static lookup tables",
+        "Public reference outputs",
+        "Workbook version lineage"
+      ]
+    },
+    {
+      "phase": "5. Site protection, recovery, and resilience solutions",
+      "description": "Add validated-solution paths for site protection, ransomware recovery, and cloud-based recovery.",
+      "sheets": [
+        "Site Protection & DR",
+        "On-Premises Ransomware Recovery",
+        "Cloud-Based Ransomware Recovery"
+      ],
+      "components": [
+        "Site Protection and Disaster Recovery validated solution",
+        "VCF Operations Fleet Management Appliance DNS / domain search reconfiguration",
+        "VMware Live Recovery for on-premises ransomware recovery",
+        "Cloud-Based Ransomware Recovery validated solution",
+        "DRaaS Connector Appliance"
+      ]
+    },
+    {
+      "phase": "6. Cross-cloud mobility and extension",
+      "description": "Layer mobility services and cloud-adjacent solution components after core platform readiness.",
+      "sheets": [
+        "Cross Cloud Mobility"
+      ],
+      "components": [
+        "Cross Cloud Mobility validated solution",
+        "HCX Appliance",
+        "HCX network profiles",
+        "Management network range",
+        "vMotion network range"
+      ]
+    },
+    {
+      "phase": "7. Specialized validated solutions",
+      "description": "Add specialized infrastructure options after the core VCF platform and workload paths are defined.",
+      "sheets": [
+        "Private AI Ready Infrastructure"
+      ],
+      "components": [
+        "Private AI Ready Infrastructure validated solution",
+        "Private AI license",
+        "GPU VM class",
+        "GPU Operator namespace",
+        "GPU Network Operator namespace"
+      ]
+    }
+  ],
+  "sheetDetails": [
+    {
+      "sheet": "Prerequisite Checklist",
+      "focus": "Hardware, network, and minimum requirements",
+      "examples": [
+        "Management-domain server type and count",
+        "CPU and memory guidance",
+        "Storage for vSAN-OSA, vSAN-ESA, NFS, and FC",
+        "NIC requirements",
+        "Workload-domain hardware prerequisites",
+        "Physical network requirements"
+      ]
+    },
+    {
+      "sheet": "VCF & VVF Planning",
+      "focus": "Main deployment option selection",
+      "examples": [
+        "Choose VCF deployment options",
+        "Establish high-level deployment path"
+      ]
+    },
+    {
+      "sheet": "Configure Workload Domain",
+      "focus": "Post-deployment options for VI workload domains",
+      "examples": [
+        "Apply signed certificates",
+        "NSX Network Connectivity for VI Workload Domain",
+        "Deploy AVI Loadbalancer",
+        "vSAN Stretched Cluster",
+        "NSX Federation for VI Workload Domain"
+      ]
+    },
+    {
+      "sheet": "Deploy Cluster",
+      "focus": "Additional cluster deployment path",
+      "examples": [
+        "Deploy a single-rack or multi-rack Layer 2 cluster",
+        "Deploy a multi-rack Layer 3 cluster",
+        "Number of compute hosts per rack",
+        "Additional rack count",
+        "Principal storage model",
+        "Secondary storage network preparation"
+      ]
+    },
+    {
+      "sheet": "On-Premises Ransomware Recovery",
+      "focus": "VMware Live Recovery deployment inputs",
+      "examples": [
+        "Management vCenter server FQDN",
+        "Cluster",
+        "Virtual machine name",
+        "Compute resource",
+        "Datastore",
+        "Network and hostname",
+        "Initial root and admin passwords",
+        "NTP servers"
+      ]
+    },
+    {
+      "sheet": "Cloud-Based Ransomware Recovery",
+      "focus": "Cloud recovery validated solution components",
+      "examples": [
+        "DRaaS Connector Appliance",
+        "Reference hostname and IP patterns"
+      ]
+    },
+    {
+      "sheet": "Cross Cloud Mobility",
+      "focus": "Cross-cloud mobility components",
+      "examples": [
+        "HCX Appliance",
+        "HCX network profiles",
+        "Management IP range",
+        "vMotion IP range"
+      ]
+    },
+    {
+      "sheet": "Private AI Ready Infrastructure",
+      "focus": "Private AI validated solution inputs",
+      "examples": [
+        "Private AI License",
+        "GPU VM Class",
+        "GPU Operator Namespace",
+        "GPU Network Operator Namespace"
+      ]
+    },
+    {
+      "sheet": "Active Directory Inputs",
+      "focus": "Customer AD team inputs",
+      "examples": [
+        "Parent and child FQDN and NETBIOS names",
+        "User and group OUs",
+        "Service-account usernames and passwords"
+      ]
+    }
+  ]
+}

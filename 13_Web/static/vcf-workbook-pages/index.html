@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VCF Workbook Fill-In Pages</title>
+<style>
+body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:#0b1324;color:#e9eef8}
+.wrap{max-width:1600px;margin:0 auto;padding:24px}
+.card{background:#10192b;border:1px solid #2b436d;border-radius:18px;padding:18px;margin-bottom:18px}
+h1{margin:0 0 8px;font-size:32px} h2{margin:0 0 12px;font-size:22px}
+.small{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#90a5c8}
+.muted{color:#a8b6cf}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.sheet{padding:12px;border-radius:14px;background:#0f182c;border:1px solid #25385c;margin:8px 0}
+.sheet a{color:#9bd8ff;text-decoration:none;font-weight:700}
+.sheet .desc{font-size:13px;color:#a8b6cf;margin-top:4px}
+.notice{padding:10px 12px;border-radius:12px;background:#112035;border:1px solid #2a4a74;color:#d9ebff}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="small">VCF 9 planning workbook</div>
+    <h1>Workbook Fill-In Pages</h1>
+    <div class="muted">Separate HTML pages generated from the workbook tabs with workbook headers, merged sections, and aligned columns preserved more closely to the source workbook.</div>
+    <div class="notice" style="margin-top:14px">This corrected package fixes the earlier flat rendering by keeping the workbook’s section headers and layout alignment.</div>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>1. Prerequisites and planning</h2><div class="sheet"><a href="pages/prerequisite-checklist.html">Prerequisite Checklist</a><div class="desc">Minimum hardware, network, and readiness checks for VCF management and workload paths.</div></div><div class="sheet"><a href="pages/vcf-and-vvf-planning.html">VCF &amp; VVF Planning</a><div class="desc">Primary deployment-option and planning-path selection.</div></div><div class="sheet"><a href="pages/management-domain-sizing.html">Management Domain Sizing</a><div class="desc">Sizing assumptions and component counts for the management domain.</div></div><div class="sheet"><a href="pages/active-directory-inputs.html">Active Directory Inputs</a><div class="desc">Customer Active Directory team inputs for domains, OUs, and service accounts.</div></div></div><div class="card"><h2>2. Management domain deployment flow</h2><div class="sheet"><a href="pages/deploy-management-domain.html">Deploy Management Domain</a><div class="desc">Build-time values for the management domain.</div></div><div class="sheet"><a href="pages/configure-management-domain.html">Configure Management Domain</a><div class="desc">Post-deployment management-domain tasks and optional components.</div></div><div class="sheet"><a href="pages/deploy-fleet-management-day-n.html">Deploy Fleet Management Day-N</a><div class="desc">Day-N setup and operational additions for fleet management.</div></div><div class="sheet"><a href="pages/management-domain-as-built.html">Management Domain As Built</a><div class="desc">As-built capture for the deployed management domain.</div></div></div><div class="card"><h2>3. Workload domain and cluster deployment flow</h2><div class="sheet"><a href="pages/deploy-workload-domain.html">Deploy Workload Domain</a><div class="desc">Build-time values for workload-domain deployment.</div></div><div class="sheet"><a href="pages/arkham.html">Arkham</a><div class="desc">Workbook sheet retained from source workbook.</div></div><div class="sheet"><a href="pages/configure-workload-domain.html">Configure Workload Domain</a><div class="desc">Post-deployment workload-domain tasks including connectivity and optional solutions.</div></div><div class="sheet"><a href="pages/deploy-cluster.html">Deploy Cluster</a><div class="desc">Additional cluster deployment path and storage/network options.</div></div><div class="sheet"><a href="pages/additional-racks.html">Additional Racks</a><div class="desc">Additional rack and multi-rack deployment inputs.</div></div><div class="sheet"><a href="pages/workload-domain-as-built.html">Workload Domain As Built</a><div class="desc">As-built capture for deployed workload domains.</div></div></div><div class="card"><h2>4. Governance and workbook control</h2><div class="sheet"><a href="pages/change-control.html">Change Control</a><div class="desc">Workbook change tracking and field-name mapping.</div></div><div class="sheet"><a href="pages/value-reference-tables-mr.html">Value Reference Tables - MR</a><div class="desc">Reference values and example mappings.</div></div><div class="sheet"><a href="pages/value-reference-tables.html">Value Reference Tables</a><div class="desc">Reference values and workbook lookup content.</div></div><div class="sheet"><a href="pages/static-reference-tables.html">Static Reference Tables</a><div class="desc">Static workbook lookup tables and support values.</div></div><div class="sheet"><a href="pages/public-reference-sheet.html">Public Reference Sheet</a><div class="desc">Public-facing reference output sheet.</div></div><div class="sheet"><a href="pages/version-history.html">Version History</a><div class="desc">Workbook version and revision lineage.</div></div><div class="sheet"><a href="pages/dumping-ground.html">Dumping Ground</a><div class="desc">Workbook support and overflow content.</div></div></div><div class="card"><h2>5. Site protection, recovery, and resilience solutions</h2><div class="sheet"><a href="pages/site-protection-and-dr.html">Site Protection &amp; DR</a><div class="desc">Validated-solution planning for site protection and disaster recovery.</div></div><div class="sheet"><a href="pages/on-premises-ransomware-recovery.html">On-Premises Ransomware Recovery</a><div class="desc">VMware Live Recovery input values and deployment details.</div></div><div class="sheet"><a href="pages/cloud-based-ransomware-recovery.html">Cloud-Based Ransomware Recovery</a><div class="desc">Cloud recovery validated-solution inputs and components.</div></div></div><div class="card"><h2>6. Cross-cloud mobility and extension</h2><div class="sheet"><a href="pages/cross-cloud-mobility.html">Cross Cloud Mobility</a><div class="desc">HCX and cross-cloud mobility planning inputs.</div></div></div><div class="card"><h2>7. Specialized validated solutions</h2><div class="sheet"><a href="pages/private-ai-ready-infrastructure.html">Private AI Ready Infrastructure</a><div class="desc">Private AI validated-solution inputs and GPU-related settings.</div></div></div>
+  </div>
+</div>
+</body>
+</html>
