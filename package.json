@@ -1,0 +1,24 @@
+{
+  "name": "archtoolkit",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Offline-first architecture toolkit: multi-cloud decision logic, application migration, VMware inventory, VCF 9.1 sizing and spec generation, Terraform and Ansible authoring.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "watch": "node tools/build.mjs --watch",
+    "clean": "node tools/build.mjs --clean",
+    "serve": "node tools/serve.mjs",
+    "dev": "node tools/dev.mjs",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "test:watch": "node --test --watch \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "comments": {
+    "dependencies": "Intentionally none. The toolkit must run in air-gapped environments with no package registry. TypeScript is compiled by Node's built-in type stripper (tools/build.mjs); tests run on node:test. The only optional dev tool is tsc for full type checking, which is not required to build or run."
+  }
+}

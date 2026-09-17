@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ArchToolKit</title>
+    <link rel="stylesheet" href="styles/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
+      </a>
+      <nav class="header-nav">
+        <a href="index.html" aria-current="page">Home</a>
+        <a href="app/vcf-sizing.html">VCF Sizing</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <div class="page-header">
+        <h1>Architecture toolkit</h1>
+        <p>
+          Decision logic, migration planning and infrastructure authoring for multi-cloud and VMware
+          estates. Runs entirely in the browser with no server, no network calls and no telemetry —
+          designed to work from a laptop, an internal web server, or a zip carried into an air-gapped
+          environment.
+        </p>
+      </div>
+
+      <div class="tool-grid">
+        <a class="tool-card" href="app/vcf-sizing.html">
+          <h3>VCF 9.1 Sizing</h3>
+          <p>
+            Size a VCF fleet for greenfield or brownfield. Management-plane demand, host capacity,
+            vSAN overhead, IP and FQDN counts, and per-core licensing — with the provenance of every
+            figure.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
+
+        <span class="tool-card is-planned">
+          <h3>VCF 9.1 Spec Builder</h3>
+          <p>
+            Generate a complete <code>SddcSpec</code> for the VCF Installer, covering all 31 top-level
+            keys including <code>vspClusterSpec</code>, VPC/DTGW, LACP and dual-stack.
+          </p>
+          <span class="tag">In progress</span>
+        </span>
+
+        <span class="tool-card is-planned">
+          <h3>VMware Inventory</h3>
+          <p>
+            Import RVTools exports, PowerCLI collections or live vCenter data into one canonical
+            inventory model, then analyse it for capacity, consolidation and migration readiness.
+          </p>
+          <span class="tag">Planned</span>
+        </span>
+
+        <span class="tool-card is-planned">
+          <h3>Multi-Cloud Decision Matrix</h3>
+          <p>
+            Route a workload to the right provider and service against constraints, with a single
+            canonical service catalog shared across every tool here.
+          </p>
+          <span class="tag">Planned</span>
+        </span>
+
+        <span class="tool-card is-planned">
+          <h3>Application Migration</h3>
+          <p>
+            7R disposition routing, readiness scoring and wave planning across an application
+            portfolio.
+          </p>
+          <span class="tag">Planned</span>
+        </span>
+
+        <span class="tool-card is-planned">
+          <h3>Terraform &amp; Ansible Kit</h3>
+          <p>
+            Author, validate and export infrastructure code and structured configuration — HCL, JSON
+            and YAML — from a shared code generation core.
+          </p>
+          <span class="tag">Planned</span>
+        </span>
+      </div>
+
+      <div class="section-note" style="margin-top: var(--space-6)">
+        Sizing and specification data is tagged with how it was verified. Figures from Broadcom's API
+        reference, TechDocs or a real working deployment spec are marked
+        <span class="badge badge-verified">Verified</span>; figures from community sources are marked
+        <span class="badge badge-community">Community</span>. Nothing generated here should reach a
+        production deployment without validation against a live VCF Installer.
+      </div>
+    </main>
+  </body>
+</html>
