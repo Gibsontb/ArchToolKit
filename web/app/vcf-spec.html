@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VCF 9.1 Spec Builder · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="../index.html">
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
+      </a>
+      <nav class="header-nav">
+        <a href="../index.html">Home</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
+        <a href="vcf-spec.html" aria-current="page">VCF Spec Builder</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <div class="page-header">
+        <h1>VCF 9.1 specification builder</h1>
+        <p>
+          Generate a complete <code>SddcSpec</code> for the VCF Installer from a deployment plan —
+          including <code>vspClusterSpec</code>, the fleet services, VPC/DTGW and LACP, which the
+          existing public builders leave out. Runs entirely in this page; nothing is transmitted.
+        </p>
+      </div>
+
+      <div id="vcf-spec-root"></div>
+    </main>
+
+    <script type="module" src="../lib/ui/vcf-spec-page.js"></script>
+  </body>
+</html>

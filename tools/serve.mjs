@@ -131,17 +131,24 @@ function listenWithFallback(startPort, attemptsRemaining) {
         console.error(`\nCould not start the server on ${host}:${candidate} — ${err.code}.`);
         if (err.code === 'EACCES') {
           console.error(
-            'That port is reserved by the OS (commonly Hyper-V, WSL or Docker on Windows).\n' +
-              'Check reserved ranges with:\n' +
-              '  netsh interface ipv4 show excludedportrange protocol=tcp\n' +
-              'Then pick a port outside them:  node tools/serve.mjs --port 3000',
+            'Permission denied binding that port. On Windows the usual causes are:\n' +
+              '  - an OS-reserved port range:\n' +
+              '      netsh interface ipv4 show excludedportrange protocol=tcp\n' +
+              '  - a URL ACL reserved by another account:\n' +
+              '      netsh http show urlacl\n' +
+              '  - endpoint security intercepting listening sockets\n' +
+              'Or just pick another port:  node tools/serve.mjs --port 3000',
           );
         }
         process.exitCode = 1;
         return;
       }
 
-      const reason = err.code === 'EACCES' ? 'reserved by the OS' : 'already in use';
+      // EACCES on Windows has several causes and they are not distinguishable
+      // from here: an OS-reserved port range, a netsh http URL ACL held by
+      // another account, or endpoint security intercepting listening sockets.
+      // Report what happened rather than guessing which.
+      const reason = err.code === 'EACCES' ? 'not permitted (EACCES)' : 'already in use';
       console.log(`  Port ${candidate} is ${reason}, trying ${candidate + 1}…`);
       cleanup();
       attempt(candidate + 1, remaining - 1);
