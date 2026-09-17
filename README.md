@@ -30,6 +30,21 @@ Then open <http://127.0.0.1:8080/>.
 > ES modules cannot be loaded over `file://` in most browsers, so the local server is needed during
 > development. For distribution, serve `web/` from any static host.
 
+If the default port is taken or reserved, the server walks forward to the next free one and tells
+you which it used. To pick one explicitly:
+
+```bash
+node tools/serve.mjs --port 3000
+```
+
+**Windows note.** Hyper-V, WSL and Docker reserve blocks of TCP ports, and binding inside a reserved
+block fails with `EACCES` even as administrator with nothing listening. Port 8080 often falls inside
+one. The server handles this automatically; to see the reserved ranges yourself:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
 Run the tests:
 
 ```bash
