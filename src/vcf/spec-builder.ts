@@ -115,6 +115,24 @@ export interface ExistingComponent {
   readonly sslThumbprint?: string;
 }
 
+/**
+ * One ESX host as the installer wants it.
+ *
+ * These are the only four fields `SddcHostSpec` defines. There is no per-host
+ * IP (it resolves from DNS), and no per-host disk selection anywhere in the
+ * API — vSAN claiming is automatic at cluster level.
+ */
+export interface HostEntry {
+  /** Short name only; the DNS subdomain is appended by the installer. */
+  readonly hostname: string;
+  readonly password?: string;
+  readonly username?: string;
+  /** SHA256:<base64>, omittable when thumbprint validation is skipped. */
+  readonly sshThumbprint?: string;
+  /** Colon-separated uppercase hex SHA256. */
+  readonly sslThumbprint?: string;
+}
+
 export interface DeploymentPlan {
   // --- identity ------------------------------------------------------------
   /** 3-20 chars, alphanumeric and hyphens. */
@@ -130,10 +148,21 @@ export interface DeploymentPlan {
   readonly namePrefix?: string;
 
   // --- hosts ---------------------------------------------------------------
-  /** Short hostname base, e.g. "esx" produces esx01, esx02... */
+  /**
+   * Short hostname base, e.g. "esx" produces esx01, esx02...
+   * Used only to seed the host list; `hosts` overrides it entirely.
+   */
   readonly esxHostnameBase: string;
   readonly hostCount: number;
   readonly esxRootPassword?: string;
+  /**
+   * Explicit per-host detail.
+   *
+   * Real estates are not sequentially named and each host carries its own
+   * credentials and thumbprints, so when this is present it replaces the
+   * generated list rather than supplementing it.
+   */
+  readonly hosts?: HostEntry[];
 
   // --- infrastructure services --------------------------------------------
   /** Maximum 2. */
@@ -715,13 +744,55 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
   };
 
   // --- hosts ---------------------------------------------------------------
-  const hostSpecs: SddcHostSpec[] = Array.from({ length: plan.hostCount }, (_, i) => ({
-    hostname: `${plan.esxHostnameBase}${pad(i + 1)}`,
+  // Explicit host detail wins; otherwise names are generated from the base.
+  const hostSpecs: SddcHostSpec[] = (plan.hosts?.length
+    ? plan.hosts
+    : Array.from(
+        { length: plan.hostCount },
+        (_, i): HostEntry => ({ hostname: `${plan.esxHostnameBase}${pad(i + 1)}` }),
+      )
+  ).map((entry, i) => ({
+    hostname: entry.hostname,
     credentials: {
-      username: 'root',
-      password: plan.esxRootPassword ?? secret('esxRoot', 'hostSpecs[].credentials.password'),
+      username: entry.username ?? 'root',
+      password:
+        entry.password ??
+        plan.esxRootPassword ??
+        secret('esxRoot', `hostSpecs[${i}].credentials.password`),
     },
+    ...(entry.sshThumbprint ? { sshThumbprint: entry.sshThumbprint } : {}),
+    ...(entry.sslThumbprint ? { sslThumbprint: entry.sslThumbprint } : {}),
   }));
+
+  // Thumbprints are only omittable when validation is explicitly skipped.
+  const missingThumbprints = hostSpecs.filter((h) => !h.sslThumbprint && !h.sshThumbprint).length;
+  if (missingThumbprints > 0) {
+    findings.push(
+      info(
+        'vcf.build.hosts-without-thumbprints',
+        `${missingThumbprints} host(s) have no SSH or SSL thumbprint, so skipEsxThumbprintValidation must stay true.`,
+        {
+          path: 'hostSpecs',
+          remediation:
+            'Supply per-host thumbprints to validate host identity during bring-up, or leave validation skipped.',
+          source: 'VCF Installer API — SddcHostSpec',
+        },
+      ),
+    );
+  }
+
+  const duplicateHostnames = hostSpecs
+    .map((h) => h.hostname)
+    .filter((name, i, all) => all.indexOf(name) !== i);
+  if (duplicateHostnames.length > 0) {
+    findings.push(
+      warning(
+        'vcf.build.duplicate-hostnames',
+        `Duplicate host name(s): ${[...new Set(duplicateHostnames)].join(', ')}.`,
+        { path: 'hosts' },
+      ),
+    );
+  }
 
   // --- networks ------------------------------------------------------------
   const networkSpecs: SddcNetworkSpec[] = [];
@@ -1060,7 +1131,8 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
     // secondary is a silent misconfiguration.
     workflowType: plan.workflowType ?? (secondary ? 'VCF_EXTEND' : 'VCF'),
     ceipEnabled: plan.ceipEnabled ?? false,
-    skipEsxThumbprintValidation: false,
+    // Validation can only be enforced when every host carries a thumbprint.
+    skipEsxThumbprintValidation: missingThumbprints > 0,
     skipGatewayPingValidation: false,
 
     dnsSpec: {

@@ -19,7 +19,14 @@ import {
   statGrid,
 } from './components.js';
 import { countBySeverity, hasErrors,              } from '../core/findings.js';
-import { buildSddcSpec, serializeSpec, redactSpec,                                      } from '../vcf/spec-builder.js';
+import {
+  buildSddcSpec,
+  serializeSpec,
+  redactSpec,
+                      
+                  
+                 
+} from '../vcf/spec-builder.js';
 import { validateSddcSpec, validateSddcSpecJson } from '../vcf/spec-validate.js';
 import { SDDC_SPEC_TOP_LEVEL_KEYS,               } from '../vcf/spec-types.js';
                                                                            
@@ -98,11 +105,237 @@ function textInput(value        , placeholder = '')                   {
   })                    ;
 }
 
+/**
+ * Per-host detail editor.
+ *
+ * The installer takes four fields per host and nothing more, but every one of
+ * them is per-host: real estates are not sequentially named, and each host has
+ * its own credentials and thumbprints. Generating esx01..esxNN and offering no
+ * way to edit them is not usable for anything but a lab.
+ */
+class HostTable {
+           element             ;
+          rows              = [];
+                   body             ;
+                   summary             ;
+  // Declared explicitly rather than as constructor parameter properties, which
+  // are not erasable syntax and so cannot be type-stripped by the build.
+                   onChange            ;
+                   getDefaults                                       ;
+
+  constructor(onChange            , getDefaults                                       ) {
+    this.onChange = onChange;
+    this.getDefaults = getDefaults;
+    this.body = el('tbody');
+    this.summary = el('div', { class: 'field-hint' });
+
+    const regenerate = el('button', {
+      class: 'btn',
+      text: 'Regenerate from name base',
+      attrs: { type: 'button' },
+      on: { click: () => this.seed(true) },
+    });
+
+    const addRow = el('button', {
+      class: 'btn',
+      text: 'Add host',
+      attrs: { type: 'button' },
+      on: {
+        click: () => {
+          const { base } = this.getDefaults();
+          this.rows.push({ hostname: `${base}${String(this.rows.length + 1).padStart(2, '0')}` });
+          this.render();
+          this.onChange();
+        },
+      },
+    });
+
+    this.element = el(
+      'section',
+      { class: 'card' },
+      el(
+        'div',
+        { class: 'card-title' },
+        el('h2', { text: 'ESX hosts' }),
+        el('div', { class: 'btn-row' }, addRow, regenerate),
+      ),
+      el('p', {
+        class: 'muted small',
+        text: 'Short names only — the DNS subdomain is appended automatically. Thumbprints are optional; without them the spec must skip thumbprint validation.',
+      }),
+      el(
+        'div',
+        { class: 'table-wrap', style: { marginTop: 'var(--space-3)' } },
+        el(
+          'table',
+          {},
+          el(
+            'thead',
+            {},
+            el(
+              'tr',
+              {},
+              el('th', { text: '#' }),
+              el('th', { text: 'Hostname' }),
+              el('th', { text: 'Root password' }),
+              el('th', { text: 'SSH thumbprint' }),
+              el('th', { text: 'SSL thumbprint' }),
+              el('th', { text: '' }),
+            ),
+          ),
+          this.body,
+        ),
+      ),
+      this.summary,
+    );
+
+    // Do not notify: the owning const is not yet assigned at this point.
+    this.seed(true, false);
+  }
+
+  /**
+   * Rebuild the list from the name base and count.
+   *
+   * `notify` is false during construction: the owner holds this instance in a
+   * `const` that is still in its temporal dead zone, so calling back into the
+   * page's render at that point throws. The owner renders once itself after
+   * construction instead.
+   */
+  seed(force = false, notify = true)       {
+    const { base, count } = this.getDefaults();
+
+    if (force) {
+      this.rows = Array.from({ length: count }, (_, i) => ({
+        hostname: `${base}${String(i + 1).padStart(2, '0')}`,
+      }));
+    } else {
+      // Grow or shrink to match the count, preserving anything already typed.
+      while (this.rows.length < count) {
+        this.rows.push({
+          hostname: `${base}${String(this.rows.length + 1).padStart(2, '0')}`,
+        });
+      }
+      if (this.rows.length > count) this.rows.length = count;
+    }
+
+    this.render();
+    if (notify) this.onChange();
+  }
+
+  /** Match the row count to the host-count field without discarding edits. */
+  syncCount()       {
+    const { count } = this.getDefaults();
+    if (count !== this.rows.length) this.seed(false);
+  }
+
+  get entries()              {
+    return this.rows.filter((row) => row.hostname.trim().length > 0);
+  }
+
+          render()       {
+    replace(this.body);
+
+    this.rows.forEach((row, index) => {
+      const cell = (
+        value        ,
+        placeholder        ,
+        apply                        ,
+        type = 'text',
+      )              => {
+        const input = el('input', {
+          attrs: { type, value, placeholder },
+          style: { fontSize: '0.82rem', padding: '0.3rem 0.45rem' },
+        })                    ;
+        input.addEventListener('input', () => {
+          apply(input.value);
+          this.updateSummary();
+          this.onChange();
+        });
+        return el('td', {}, input);
+      };
+
+      const remove = el('button', {
+        class: 'btn',
+        text: '✕',
+        attrs: { type: 'button', title: 'Remove this host' },
+        style: { padding: '0.2rem 0.5rem' },
+        on: {
+          click: () => {
+            this.rows.splice(index, 1);
+            this.render();
+            this.onChange();
+          },
+        },
+      });
+
+      append(
+        this.body,
+        el(
+          'tr',
+          {},
+          el('td', { class: 'num muted', text: String(index + 1) }),
+          cell(row.hostname, 'esx01', (next) => {
+            this.rows[index] = { ...(this.rows[index]             ), hostname: next };
+          }),
+          cell(
+            row.password ?? '',
+            'inherit',
+            (next) => {
+              this.rows[index] = {
+                ...(this.rows[index]             ),
+                password: next || undefined,
+              };
+            },
+            'password',
+          ),
+          cell(row.sshThumbprint ?? '', 'SHA256:...', (next) => {
+            this.rows[index] = {
+              ...(this.rows[index]             ),
+              sshThumbprint: next || undefined,
+            };
+          }),
+          cell(row.sslThumbprint ?? '', 'AA:BB:CC:...', (next) => {
+            this.rows[index] = {
+              ...(this.rows[index]             ),
+              sslThumbprint: next || undefined,
+            };
+          }),
+          el('td', {}, remove),
+        ),
+      );
+    });
+
+    this.updateSummary();
+  }
+
+          updateSummary()       {
+    const total = this.rows.length;
+    const withThumbprints = this.rows.filter((r) => r.sslThumbprint || r.sshThumbprint).length;
+    const withPasswords = this.rows.filter((r) => r.password).length;
+    this.summary.textContent =
+      `${total} host(s) · ${withPasswords} with an individual password · ` +
+      `${withThumbprints} with a thumbprint` +
+      (withThumbprints < total ? ' — thumbprint validation will be skipped' : '');
+  }
+}
+
 export function mountVcfSpecPage(root             )       {
   const controls = {}            ;
   const outputPane = el('div', { class: 'stack' });
   const inputsPane = buildInputs(controls, () => render());
 
+  const hostTable = new HostTable(
+    () => render(),
+    () => ({
+      base: controls.esxBase.value.trim() || 'esx',
+      count: Math.max(1, Number(controls.hostCount.value) || 4),
+    }),
+  );
+
+  // Changing the host count adjusts the table without discarding typed detail.
+  controls.hostCount.addEventListener('change', () => hostTable.syncCount());
+
+  append(inputsPane, hostTable.element);
   append(root, el('div', { class: 'split' }, el('div', {}, inputsPane), outputPane));
 
   function currentPlan()                 {
@@ -127,6 +360,7 @@ export function mountVcfSpecPage(root             )       {
       instanceRole: controls.instanceRole.value                           ,
       esxHostnameBase: controls.esxBase.value.trim() || 'esx',
       hostCount: Math.max(1, num(controls.hostCount, 4)),
+      hosts: hostTable.entries,
       dnsServers: [controls.dns1.value.trim(), controls.dns2.value.trim()].filter(Boolean),
       ntpServers: [controls.ntp1.value.trim(), controls.ntp2.value.trim()].filter(Boolean),
       management: { cidr: controls.mgmtCidr.value.trim(), vlanId: num(controls.mgmtVlan, 30) },

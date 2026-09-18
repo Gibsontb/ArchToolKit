@@ -82,6 +82,86 @@ describe('buildSddcSpec — structure', () => {
   });
 });
 
+describe('buildSddcSpec — per-host detail', () => {
+  it('uses explicit host entries instead of generated names', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        hosts: [
+          { hostname: 'esx-prod-07' },
+          { hostname: 'esx-prod-11' },
+          { hostname: 'esx-prod-19' },
+        ],
+      }),
+    );
+    // Real estates are not sequentially named.
+    expect(spec.hostSpecs?.map((h) => h.hostname)).toEqual([
+      'esx-prod-07',
+      'esx-prod-11',
+      'esx-prod-19',
+    ]);
+  });
+
+  it('carries per-host credentials and thumbprints', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        hosts: [
+          {
+            hostname: 'esx01',
+            password: 'HostOne!Secret9',
+            sshThumbprint: 'SHA256:abc',
+            sslThumbprint: 'AA:BB:CC',
+          },
+          { hostname: 'esx02', password: 'HostTwo!Secret9' },
+        ],
+      }),
+    );
+    expect(spec.hostSpecs?.[0]?.credentials?.password).toBe('HostOne!Secret9');
+    expect(spec.hostSpecs?.[0]?.sshThumbprint).toBe('SHA256:abc');
+    expect(spec.hostSpecs?.[0]?.sslThumbprint).toBe('AA:BB:CC');
+    expect(spec.hostSpecs?.[1]?.credentials?.password).toBe('HostTwo!Secret9');
+    expect(spec.hostSpecs?.[1]?.sshThumbprint).toBeUndefined();
+  });
+
+  it('falls back to the shared password when a host has none', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ esxRootPassword: 'Shared!Password9', hosts: [{ hostname: 'esx01' }] }),
+    );
+    expect(spec.hostSpecs?.[0]?.credentials?.password).toBe('Shared!Password9');
+  });
+
+  it('enforces thumbprint validation only when every host has one', () => {
+    const complete = buildSddcSpec(
+      basePlan({
+        hosts: [
+          { hostname: 'esx01', sslThumbprint: 'AA:BB' },
+          { hostname: 'esx02', sslThumbprint: 'CC:DD' },
+        ],
+      }),
+    );
+    expect(complete.spec.skipEsxThumbprintValidation).toBe(false);
+
+    const partial = buildSddcSpec(
+      basePlan({ hosts: [{ hostname: 'esx01', sslThumbprint: 'AA:BB' }, { hostname: 'esx02' }] }),
+    );
+    expect(partial.spec.skipEsxThumbprintValidation).toBe(true);
+    expect(codes(partial.findings)).toContain('vcf.build.hosts-without-thumbprints');
+  });
+
+  it('warns about duplicate host names', () => {
+    const { findings } = buildSddcSpec(
+      basePlan({ hosts: [{ hostname: 'esx01' }, { hostname: 'esx01' }] }),
+    );
+    expect(codes(findings)).toContain('vcf.build.duplicate-hostnames');
+  });
+
+  it('honours a custom root username', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ hosts: [{ hostname: 'esx01', username: 'vcfadmin' }] }),
+    );
+    expect(spec.hostSpecs?.[0]?.credentials?.username).toBe('vcfadmin');
+  });
+});
+
 describe('buildSddcSpec — hosts and naming', () => {
   it('generates zero-padded short hostnames, not FQDNs', () => {
     const { spec } = buildSddcSpec(basePlan({ hostCount: 3 }));
