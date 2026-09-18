@@ -34,6 +34,12 @@
                        
  
 
+/** IPv6 range. Same field names as IpRange but wider length bounds (2-39). */
+                            
+                         
+                       
+ 
+
 /** Range shape used by the NSX host TEP pool. Note: start/end, not *IpAddress. */
                                          
                 
@@ -66,7 +72,8 @@
 
                            
                 
-                    
+                                                                
+                      
                        
                                
  
@@ -154,10 +161,17 @@
                          
  
 
+/**
+ * EVC baselines.
+ *
+ * Two spellings below are Broadcom's own and are reproduced verbatim:
+ * `INTEL_NEALEM` (not NEHALEM) and `AMD_STREAMROLLER` (not STEAMROLLER).
+ * Correcting them would produce a value the installer rejects.
+ */
                      
                  
                   
-                   
+                  
                     
                        
                      
@@ -173,7 +187,7 @@
                    
                    
                     
-                     
+                      
              
               
               
@@ -181,8 +195,9 @@
                   
 
                                    
+                      
                 
-                
+                                              
                           
                           
                     
@@ -301,6 +316,16 @@
 /** Only medium | large | xlarge are accepted for VCF bring-up. */
                                                             
 
+/**
+ * Overlay VTEP configuration.
+ *
+ * `NO_IP` disables VTEP creation entirely — the TEP-less deployment mode added
+ * in 9.1.1.
+ */
+                                  
+                     
+ 
+
                                
                                   
                   
@@ -318,6 +343,8 @@
                                                 
                                           
                                   
+                                      
+                                    
                    
                                   
                          

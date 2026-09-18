@@ -395,6 +395,18 @@ export function validateSddcSpec(
         );
       }
     }
+    // The schema caps this at 20 characters, which is easy to exceed with a
+    // generated passphrase and only fails at submission time.
+    if (typeof vc.rootVcenterPassword === 'string' && vc.rootVcenterPassword.length > 20) {
+      findings.push(
+        error(
+          'vcf.spec.vcenter-password-too-long',
+          `rootVcenterPassword is ${vc.rootVcenterPassword.length} characters; the maximum is 20.`,
+          { path: 'vcenterSpec.rootVcenterPassword', source: 'VCF Installer API — SddcVcenterSpec' },
+        ),
+      );
+    }
+
     if (vc.useExistingDeployment && !vc.sslThumbprint) {
       findings.push(
         error(
@@ -409,12 +421,36 @@ export function validateSddcSpec(
   // --- NSX -----------------------------------------------------------------
   if (spec.nsxtSpec) {
     const nsx = spec.nsxtSpec;
+    if (nsx.overlayVtepSpec?.vtepType === 'NO_IP' && nsx.ipAddressPoolSpec) {
+      findings.push(
+        warning(
+          'vcf.spec.tep-pool-with-tepless',
+          'A host TEP pool is configured alongside a TEP-less deployment, which creates no VTEPs.',
+          {
+            path: 'nsxtSpec.ipAddressPoolSpec',
+            remediation: 'Remove the TEP pool, or drop overlayVtepSpec to deploy VTEPs normally.',
+            source: 'VCF Installer API — OverlayVtepSpec',
+          },
+        ),
+      );
+    }
+
     if (nsx.nsxtManagerSize && !['medium', 'large', 'xlarge'].includes(nsx.nsxtManagerSize)) {
       findings.push(
         error(
           'vcf.spec.nsx-size-not-supported',
           `nsxtManagerSize "${nsx.nsxtManagerSize}" is not selectable for VCF bring-up. Use medium, large or xlarge.`,
           { path: 'nsxtSpec.nsxtManagerSize', source: 'VCF Installer API — SddcNsxtSpec' },
+        ),
+      );
+    }
+
+    if (Array.isArray(spec.vcfOperationsSpec?.nodes) && spec.vcfOperationsSpec.nodes.length > 3) {
+      findings.push(
+        error(
+          'vcf.spec.too-many-ops-nodes',
+          `VCF Operations accepts at most 3 nodes; ${spec.vcfOperationsSpec.nodes.length} supplied.`,
+          { path: 'vcfOperationsSpec.nodes', source: 'VCF Installer API — VcfOperationsSpec' },
         ),
       );
     }
@@ -537,6 +573,15 @@ export function validateSddcSpec(
           'vcf.spec.dvs-mtu-below-overlay-minimum',
           `MTU ${dvs.mtu} is below the ${NSX_OVERLAY_MIN_MTU} minimum for NSX overlay traffic.`,
           { path: `${at}.mtu`, source: 'NSX overlay requirements' },
+        ),
+      );
+    }
+    if ((dvs.nsxTeamings?.length ?? 0) > 1) {
+      findings.push(
+        error(
+          'vcf.spec.too-many-nsx-teamings',
+          `nsxTeamings accepts at most 1 entry; ${dvs.nsxTeamings?.length} supplied.`,
+          { path: `${at}.nsxTeamings`, source: 'VCF Installer API — DvsSpec' },
         ),
       );
     }
@@ -734,6 +779,47 @@ export function validateSddcSpec(
         ),
       );
     }
+  }
+
+  // --- workflow type -------------------------------------------------------
+  // Broadcom documents VCF_EXTEND explicitly for secondary instances. A spec
+  // that omits fleetFqdn and reuses Operations but still declares VCF is
+  // internally inconsistent and will not join the fleet correctly.
+  if (spec.workflowType && spec.vspClusterSpec) {
+    const looksSecondary =
+      !spec.vspClusterSpec.fleetFqdn || spec.vcfOperationsSpec?.useExistingDeployment === true;
+    if (looksSecondary && spec.workflowType === 'VCF') {
+      findings.push(
+        error(
+          'vcf.spec.secondary-needs-vcf-extend',
+          'This looks like a secondary instance (no fleetFqdn, or Operations reuses an existing deployment) but workflowType is "VCF".',
+          {
+            path: 'workflowType',
+            remediation: 'Set workflowType to VCF_EXTEND when joining an existing fleet.',
+            source: 'VCF Installer API — SddcSpec.workflowType',
+          },
+        ),
+      );
+    }
+    if (!looksSecondary && spec.workflowType === 'VCF_EXTEND') {
+      findings.push(
+        warning(
+          'vcf.spec.extend-without-fleet',
+          'workflowType is VCF_EXTEND, which joins an existing fleet, but this spec carries a fleetFqdn as a primary instance would.',
+          { path: 'workflowType' },
+        ),
+      );
+    }
+  }
+
+  if (spec.workflowType === 'VCF_COMPLETE' || spec.workflowType === 'VCF_BOOTSTRAP') {
+    findings.push(
+      warning(
+        'vcf.spec.undocumented-workflow-type',
+        `workflowType "${spec.workflowType}" is in the API enum but has no published definition.`,
+        { path: 'workflowType', source: 'VCF Installer API — SddcSpec' },
+      ),
+    );
   }
 
   // --- licensing -----------------------------------------------------------

@@ -44,6 +44,9 @@ import { PLACEHOLDER_SECRET } from './spec-types.js';
                 
                
               
+          
+                   
+               
                          
 
 
@@ -145,6 +148,50 @@ export { PLACEHOLDER_SECRET };
                                                                               
                                    
                                 
+                             
+                                              
+
+                                                                              
+                                             
+                                                                             
+                                                                  
+
+                                                                                
+                                       
+
+                                                                         
+                             
+
+     
+                                                   
+    
+                                                                              
+                                                                           
+                                 
+     
+                                   
+           
+                 
+                     
+                
+                     
+                     
+                     
+                    
+                    
+                 
+                         
+                      
+                       
+                        
+                    
+                            
+                     
+                     
+                   
+            
+     
+    
 
                                                                               
                                        
@@ -417,6 +464,12 @@ export function buildSddcSpec(plan                )              {
   const ha = plan.profile === 'ha';
   const secondary = plan.instanceRole === 'secondary';
 
+                                                                    
+
+  /** Resolve a component FQDN, honouring any per-component override. */
+  const name = (key         , shortName        )         =>
+    plan.fqdnOverrides?.[key] ?? fqdn(shortName, domain);
+
   const secret = (key        , path        )         => {
     const value = plan.passwords?.[key];
     if (value) return value;
@@ -505,9 +558,11 @@ export function buildSddcSpec(plan                )              {
 
   const nsxtSpec               = {
     nsxtManagers: ha
-      ? [1, 2, 3].map((n) => ({ hostname: fqdn(`${prefix}-nsx${pad(n)}`, domain) }))
-      : [{ hostname: fqdn(`${prefix}-nsx01`, domain) }],
-    vipFqdn: fqdn(`${prefix}-nsx`, domain),
+      ? ([1, 2, 3]         ).map((n) => ({
+          hostname: name(`nsxManager${n}`           , `${prefix}-nsx${pad(n)}`),
+        }))
+      : [{ hostname: name('nsxManager1', `${prefix}-nsx01`) }],
+    vipFqdn: name('nsxVip', `${prefix}-nsx`),
     nsxtManagerSize: plan.nsxManagerSize ?? 'medium',
     rootNsxtManagerPassword: secret('nsxRoot', 'nsxtSpec.rootNsxtManagerPassword'),
     nsxtAdminPassword: secret('nsxAdmin', 'nsxtSpec.nsxtAdminPassword'),
@@ -532,6 +587,7 @@ export function buildSddcSpec(plan                )              {
           },
         }
       : {}),
+    ...(plan.tepLess ? { overlayVtepSpec: { vtepType: 'NO_IP'          } } : {}),
     ...(plan.existing?.nsx
       ? {
           useExistingDeployment: true,
@@ -540,6 +596,19 @@ export function buildSddcSpec(plan                )              {
         }
       : {}),
   };
+
+  // A TEP-less deployment creates no host overlay VTEPs, so a TEP pool would
+  // be meaningless alongside it.
+  if (plan.tepLess) {
+    delete (nsxtSpec                                   ).ipAddressPoolSpec;
+    findings.push(
+      info(
+        'vcf.build.tep-less',
+        'TEP-less deployment selected: no host overlay TEP pool is emitted.',
+        { source: 'VCF 9.1.1 TEP-less deployments' },
+      ),
+    );
+  }
 
   if (plan.dtgw) {
     nsxtSpec.vpcSpec = {
@@ -574,10 +643,10 @@ export function buildSddcSpec(plan                )              {
     : null;
 
   const vspClusterSpec                     = {
-    platformFqdn: fqdn(`${prefix}-msr01`, domain),
-    instanceFqdn: fqdn(`${prefix}-int01`, domain),
+    platformFqdn: name('vspPlatform', `${prefix}-msr01`),
+    instanceFqdn: name('vspInstance', `${prefix}-int01`),
     // A secondary instance joins an existing fleet and must omit fleetFqdn.
-    ...(secondary ? {} : { fleetFqdn: fqdn(`${prefix}-flt01`, domain) }),
+    ...(secondary ? {} : { fleetFqdn: name('vspFleet', `${prefix}-flt01`) }),
     ipv4Pool: vcfmsRange
       ? { ipRange: { startIpAddress: formatIPv4(vcfmsRange.start), endIpAddress: formatIPv4(vcfmsRange.end) } }
       : {},
@@ -609,20 +678,20 @@ export function buildSddcSpec(plan                )              {
     ? {
         nodes: ha
           ? [
-              { hostname: fqdn(`${prefix}-ops01`, domain), type: 'master', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[0].rootUserPassword') },
-              { hostname: fqdn(`${prefix}-ops02`, domain), type: 'replica', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[1].rootUserPassword') },
-              { hostname: fqdn(`${prefix}-ops03`, domain), type: 'data', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[2].rootUserPassword') },
+              { hostname: name('opsPrimary', `${prefix}-ops01`), type: 'master', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[0].rootUserPassword') },
+              { hostname: name('opsReplica', `${prefix}-ops02`), type: 'replica', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[1].rootUserPassword') },
+              { hostname: name('opsData', `${prefix}-ops03`), type: 'data', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[2].rootUserPassword') },
             ]
           : [
               {
-                hostname: fqdn(`${prefix}-ops01`, domain),
+                hostname: name('opsPrimary', `${prefix}-ops01`),
                 type: 'master',
                 rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[0].rootUserPassword'),
               },
             ],
         adminUserPassword: secret('opsAdmin', 'vcfOperationsSpec.adminUserPassword'),
         applianceSize: plan.opsSize ?? (ha ? 'medium' : 'small'),
-        ...(ha ? { loadBalancerFqdn: fqdn(`${prefix}-ops`, domain) } : {}),
+        ...(ha ? { loadBalancerFqdn: name('opsLoadBalancer', `${prefix}-ops`) } : {}),
         // A secondary instance attaches to the fleet's existing Operations.
         ...(secondary || plan.existing?.operations ? { useExistingDeployment: true } : {}),
       }
@@ -636,8 +705,8 @@ export function buildSddcSpec(plan                )              {
 
   const vcfAutomationSpec                                = includeAutomation
     ? {
-        hostname: fqdn(`${prefix}-auto01`, domain),
-        platformFqdn: fqdn(`${prefix}-asr01`, domain),
+        hostname: name('automation', `${prefix}-auto01`),
+        platformFqdn: name('automationPlatform', `${prefix}-asr01`),
         internalClusterCidr: plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0],
         adminUserPassword: secret('automationAdmin', 'vcfAutomationSpec.adminUserPassword'),
         nodePrefix: `${prefix}-node-01`.toLowerCase(),
@@ -663,12 +732,37 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
+  // --- security ------------------------------------------------------------
+  const securitySpec                           = plan.esxiCertsMode
+    ? {
+        esxiCertsMode: plan.esxiCertsMode,
+        ...(plan.rootCaCerts ? { rootCaCerts: plan.rootCaCerts } : {}),
+      }
+    : undefined;
+
+  if (plan.esxiCertsMode === 'Custom' && !plan.rootCaCerts?.length) {
+    findings.push(
+      warning(
+        'vcf.build.custom-certs-without-ca',
+        'esxiCertsMode is Custom but no root CA certificates were supplied.',
+        {
+          path: 'rootCaCerts',
+          remediation: 'Provide the Base64-encoded CA chain, or use VMCA-issued certificates.',
+          source: 'VCF Installer API — SecuritySpec',
+        },
+      ),
+    );
+  }
+
   // --- assemble ------------------------------------------------------------
   const spec           = {
     sddcId: plan.sddcId,
     version: plan.version ?? '9.1.0.0',
     vcfInstanceName: plan.vcfInstanceName ?? plan.sddcId,
-    workflowType: plan.workflowType ?? 'VCF',
+    // Broadcom documents this explicitly: a secondary instance joining an
+    // existing fleet must declare VCF_EXTEND, not VCF. Emitting VCF for a
+    // secondary is a silent misconfiguration.
+    workflowType: plan.workflowType ?? (secondary ? 'VCF_EXTEND' : 'VCF'),
     ceipEnabled: plan.ceipEnabled ?? false,
     skipEsxThumbprintValidation: false,
     skipGatewayPingValidation: false,
@@ -685,10 +779,15 @@ export function buildSddcSpec(plan                )              {
     clusterSpec: {
       datacenterName: plan.datacenterName ?? `${prefix}-dc01`,
       clusterName: plan.clusterName ?? `${prefix}-cl01`,
+      ...(plan.evcMode ? { clusterEvcMode: plan.evcMode } : {}),
+      ...(plan.resourcePools ? { resourcePoolSpecs: plan.resourcePools } : {}),
     },
 
+    ...(plan.managementPoolName ? { managementPoolName: plan.managementPoolName } : {}),
+    ...(securitySpec ? { securitySpec } : {}),
+
     vcenterSpec: {
-      vcenterHostname: fqdn(`${prefix}-vc01`, domain),
+      vcenterHostname: name('vcenter', `${prefix}-vc01`),
       rootVcenterPassword: secret('vcenterRoot', 'vcenterSpec.rootVcenterPassword'),
       vmSize: plan.vcenterSize ?? 'small',
       storageSize: 'lstorage',
@@ -710,7 +809,7 @@ export function buildSddcSpec(plan                )              {
     dvsSpecs: buildDvsSpecs(plan, findings),
 
     sddcManagerSpec: {
-      hostname: fqdn(`${prefix}-sddcm01`, domain),
+      hostname: name('sddcManager', `${prefix}-sddcm01`),
       rootPassword: secret('sddcManagerRoot', 'sddcManagerSpec.rootPassword'),
       sshPassword: secret('sddcManagerSsh', 'sddcManagerSpec.sshPassword'),
       localUserPassword: secret('sddcManagerLocal', 'sddcManagerSpec.localUserPassword'),
@@ -726,21 +825,21 @@ export function buildSddcSpec(plan                )              {
 
     // Fleet and lifecycle services. An empty object signals "deploy with
     // defaults", which is how a real working 9.1 spec expresses them.
-    fleetLcmSpec: { hostname: fqdn(`${prefix}-flt01`, domain) },
-    sddcLcmSpec: { hostname: fqdn(`${prefix}-int01`, domain) },
+    fleetLcmSpec: { hostname: name('vspFleet', `${prefix}-flt01`) },
+    sddcLcmSpec: { hostname: name('vspInstance', `${prefix}-int01`) },
     fleetDepotSpec: {},
     telemetryAcceptorSpec: {},
     saltSpec: {},
     saltRaasSpec: {},
 
-    vidbSpec: { hostname: fqdn(`${prefix}-idb01`, domain) },
-    licenseServerSpec: { hostname: fqdn(`${prefix}-lic01`, domain) },
+    vidbSpec: { hostname: name('identityBroker', `${prefix}-idb01`) },
+    licenseServerSpec: { hostname: name('licenseServer', `${prefix}-lic01`) },
 
     ...(vcfOperationsSpec ? { vcfOperationsSpec } : {}),
     ...(includeOps
       ? {
           vcfOperationsCollectorSpec: {
-            hostname: fqdn(`${prefix}-proxy01`, domain),
+            hostname: name('opsCollector', `${prefix}-proxy01`),
             rootUserPassword: secret('opsCollectorRoot', 'vcfOperationsCollectorSpec.rootUserPassword'),
             applianceSize: 'small',
           },
@@ -753,8 +852,24 @@ export function buildSddcSpec(plan                )              {
     findings.push(
       info(
         'vcf.build.secondary-instance',
-        'Built as a secondary instance: vspClusterSpec.fleetFqdn is omitted and VCF Operations is set to use the existing fleet deployment.',
-        { source: 'VCF Installer API — SddcVspClusterSpec' },
+        'Built as a secondary instance: workflowType is VCF_EXTEND, vspClusterSpec.fleetFqdn is omitted, and VCF Operations uses the existing fleet deployment.',
+        { source: 'VCF Installer API — SddcSpec.workflowType' },
+      ),
+    );
+  }
+
+  // VCF_COMPLETE and VCF_BOOTSTRAP appear in the enum but Broadcom publishes no
+  // definition for either, so emitting one is a guess about deployment behaviour.
+  if (plan.workflowType === 'VCF_COMPLETE' || plan.workflowType === 'VCF_BOOTSTRAP') {
+    findings.push(
+      warning(
+        'vcf.build.undocumented-workflow-type',
+        `workflowType "${plan.workflowType}" appears in the API enum but Broadcom publishes no definition of what it does.`,
+        {
+          path: 'workflowType',
+          remediation: 'Use VCF for a primary instance, VCF_EXTEND for a secondary, or VVF for vSphere Foundation.',
+          source: 'VCF Installer API — SddcSpec',
+        },
       ),
     );
   }

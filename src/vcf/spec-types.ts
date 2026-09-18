@@ -34,6 +34,12 @@ export interface IpRange {
   endIpAddress: string;
 }
 
+/** IPv6 range. Same field names as IpRange but wider length bounds (2-39). */
+export interface IpRangeV6 {
+  startIpAddress: string;
+  endIpAddress: string;
+}
+
 /** Range shape used by the NSX host TEP pool. Note: start/end, not *IpAddress. */
 export interface IpAddressPoolRangeSpec {
   start: string;
@@ -66,7 +72,8 @@ export interface IPv4Pool {
 
 export interface IPv6Pool {
   cidr?: string;
-  ipRange?: IpRange;
+  /** Uses the wider IPv6 range bounds, not the IPv4 IpRange. */
+  ipRange?: IpRangeV6;
   addresses?: string[];
   excludedAddresses?: string[];
 }
@@ -154,10 +161,17 @@ export interface SddcHostSpec {
   sslThumbprint?: string;
 }
 
+/**
+ * EVC baselines.
+ *
+ * Two spellings below are Broadcom's own and are reproduced verbatim:
+ * `INTEL_NEALEM` (not NEHALEM) and `AMD_STREAMROLLER` (not STEAMROLLER).
+ * Correcting them would produce a value the installer rejects.
+ */
 export type EvcMode =
   | 'INTEL_MEROM'
   | 'INTEL_PENRYN'
-  | 'INTEL_NEHALEM'
+  | 'INTEL_NEALEM'
   | 'INTEL_WESTMERE'
   | 'INTEL_SANDYBRIDGE'
   | 'INTEL_IVYBRIDGE'
@@ -173,7 +187,7 @@ export type EvcMode =
   | 'AMD_GREYHOUND'
   | 'AMD_BULLDOZER'
   | 'AMD_PILEDRIVER'
-  | 'AMD_STEAMROLLER'
+  | 'AMD_STREAMROLLER'
   | 'AMD_ZEN'
   | 'AMD_ZEN2'
   | 'AMD_ZEN3'
@@ -181,8 +195,9 @@ export type EvcMode =
   | (string & {});
 
 export interface ResourcePoolSpec {
+  /** Max 80 chars. */
   name?: string;
-  type?: string;
+  type?: 'management' | 'compute' | 'network';
   cpuSharesLevel?: string;
   cpuSharesValue?: number;
   cpuLimit?: number;
@@ -301,6 +316,16 @@ export interface NsxtManagerSpec {
 /** Only medium | large | xlarge are accepted for VCF bring-up. */
 export type NsxtManagerSize = 'medium' | 'large' | 'xlarge';
 
+/**
+ * Overlay VTEP configuration.
+ *
+ * `NO_IP` disables VTEP creation entirely — the TEP-less deployment mode added
+ * in 9.1.1.
+ */
+export interface OverlayVtepSpec {
+  vtepType?: 'NO_IP';
+}
+
 export interface SddcNsxtSpec {
   nsxtManagers: NsxtManagerSpec[];
   vipFqdn: string;
@@ -318,6 +343,8 @@ export interface SddcNsxtSpec {
   skipNsxOverlayOverManagementNetwork?: boolean;
   /** Only when importing existing NSX. */
   enableEdgeClusterSync?: boolean;
+  /** TEP-less deployment (9.1.1+). */
+  overlayVtepSpec?: OverlayVtepSpec;
   version?: string;
   useExistingDeployment?: boolean;
   sslThumbprint?: string;

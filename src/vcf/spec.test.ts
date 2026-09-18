@@ -332,6 +332,20 @@ describe('buildSddcSpec — fleet position', () => {
     expect(codes(findings)).toContain('vcf.build.secondary-instance');
   });
 
+  it('declares VCF_EXTEND for a secondary instance and VCF for a primary', () => {
+    // Broadcom documents this explicitly; emitting VCF for a secondary is a
+    // silent misconfiguration that prevents it joining the fleet.
+    expect(buildSddcSpec(basePlan({ instanceRole: 'primary' })).spec.workflowType).toBe('VCF');
+    expect(buildSddcSpec(basePlan({ instanceRole: 'secondary' })).spec.workflowType).toBe(
+      'VCF_EXTEND',
+    );
+  });
+
+  it('warns when an undocumented workflow type is requested', () => {
+    const { findings } = buildSddcSpec(basePlan({ workflowType: 'VCF_BOOTSTRAP' }));
+    expect(codes(findings)).toContain('vcf.build.undocumented-workflow-type');
+  });
+
   it('restricts the internal cluster CIDR to a permitted block', () => {
     const { spec } = buildSddcSpec(basePlan());
     expect(['198.18.0.0/15', '240.0.0.0/15', '250.0.0.0/15']).toContain(
@@ -548,6 +562,134 @@ describe('validateSddcSpec — component rules', () => {
       vcenterSpec: { ...spec.vcenterSpec, useExistingDeployment: true, sslThumbprint: undefined },
     };
     expect(codes(validateSddcSpec(broken))).toContain('vcf.spec.missing-thumbprint');
+  });
+});
+
+describe('buildSddcSpec — schema fidelity corrections', () => {
+  it('reproduces Broadcom’s own EVC spelling rather than correcting it', () => {
+    // INTEL_NEALEM and AMD_STREAMROLLER are misspelled in the API enum.
+    // "Fixing" them produces values the installer rejects.
+    const { spec } = buildSddcSpec(basePlan({ evcMode: 'INTEL_NEALEM' }));
+    expect(spec.clusterSpec?.clusterEvcMode).toBe('INTEL_NEALEM');
+    expect(buildSddcSpec(basePlan({ evcMode: 'AMD_STREAMROLLER' })).spec.clusterSpec?.clusterEvcMode).toBe(
+      'AMD_STREAMROLLER',
+    );
+  });
+
+  it('emits a securitySpec when a certificate mode is chosen', () => {
+    const { spec } = buildSddcSpec(basePlan({ esxiCertsMode: 'VMCA' }));
+    expect(spec.securitySpec?.esxiCertsMode).toBe('VMCA');
+  });
+
+  it('warns when custom certificates are requested without a CA chain', () => {
+    const { findings } = buildSddcSpec(basePlan({ esxiCertsMode: 'Custom' }));
+    expect(codes(findings)).toContain('vcf.build.custom-certs-without-ca');
+  });
+
+  it('emits managementPoolName only when named', () => {
+    expect(buildSddcSpec(basePlan()).spec.managementPoolName).toBeUndefined();
+    expect(buildSddcSpec(basePlan({ managementPoolName: 'mgmt-pool-01' })).spec.managementPoolName).toBe(
+      'mgmt-pool-01',
+    );
+  });
+
+  it('emits resource pools and honours the management-pool requirement', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ resourcePools: [{ name: 'Management', type: 'management' }] }),
+    );
+    expect(spec.clusterSpec?.resourcePoolSpecs).toHaveLength(1);
+    expect(spec.clusterSpec?.resourcePoolSpecs?.[0]?.type).toBe('management');
+  });
+
+  it('drops the TEP pool for a TEP-less deployment', () => {
+    const { spec, findings } = buildSddcSpec(basePlan({ tepLess: true }));
+    expect(spec.nsxtSpec?.overlayVtepSpec?.vtepType).toBe('NO_IP');
+    expect(spec.nsxtSpec?.ipAddressPoolSpec).toBeUndefined();
+    expect(codes(findings)).toContain('vcf.build.tep-less');
+  });
+
+  it('applies per-component FQDN overrides', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        fqdnOverrides: {
+          vcenter: 'vcenter-prod.corp.example',
+          nsxVip: 'nsx-vip.corp.example',
+          licenseServer: 'lic.corp.example',
+        },
+      }),
+    );
+    expect(spec.vcenterSpec.vcenterHostname).toBe('vcenter-prod.corp.example');
+    expect(spec.nsxtSpec?.vipFqdn).toBe('nsx-vip.corp.example');
+    expect(spec.licenseServerSpec?.hostname).toBe('lic.corp.example');
+    // Un-overridden names still derive from the prefix.
+    expect(spec.sddcManagerSpec?.hostname).toBe('vcf-m01-sddcm01.vcf.lab');
+  });
+
+  it('keeps fleetLcmSpec and sddcLcmSpec aligned with the schema-backed FQDNs', () => {
+    // These two hostnames are not in the published schema and may be dropped,
+    // so the authoritative values must also appear on vspClusterSpec.
+    const { spec } = buildSddcSpec(basePlan());
+    expect(spec.fleetLcmSpec?.hostname).toBe(spec.vspClusterSpec?.fleetFqdn);
+    expect(spec.sddcLcmSpec?.hostname).toBe(spec.vspClusterSpec?.instanceFqdn);
+  });
+});
+
+describe('validateSddcSpec — newly confirmed constraints', () => {
+  it('rejects a secondary-shaped spec that still declares workflowType VCF', () => {
+    const { spec } = buildSddcSpec(basePlan({ instanceRole: 'secondary' }));
+    const mislabelled: SddcSpec = { ...spec, workflowType: 'VCF' };
+    expect(codes(validateSddcSpec(mislabelled))).toContain('vcf.spec.secondary-needs-vcf-extend');
+  });
+
+  it('accepts a correctly labelled secondary instance', () => {
+    const { spec } = buildSddcSpec(basePlan({ instanceRole: 'secondary' }));
+    const findings = validateSddcSpec(spec, { secondaryInstance: true });
+    expect(codes(findings)).not.toContain('vcf.spec.secondary-needs-vcf-extend');
+  });
+
+  it('rejects a vCenter password above the 20-character maximum', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ passwords: { vcenterRoot: 'ThisPasswordIsFarTooLongForVcenter!1' } }),
+    );
+    expect(codes(validateSddcSpec(spec))).toContain('vcf.spec.vcenter-password-too-long');
+  });
+
+  it('rejects more than one NSX teaming policy', () => {
+    const { spec } = buildSddcSpec(basePlan());
+    const broken: SddcSpec = {
+      ...spec,
+      dvsSpecs: [
+        {
+          ...spec.dvsSpecs![0]!,
+          nsxTeamings: [
+            { policy: 'LOADBALANCE_SRCID', activeUplinks: ['uplink1'] },
+            { policy: 'FAILOVER_ORDER', activeUplinks: ['uplink2'] },
+          ],
+        },
+      ],
+    };
+    expect(codes(validateSddcSpec(broken))).toContain('vcf.spec.too-many-nsx-teamings');
+  });
+
+  it('rejects more than three VCF Operations nodes', () => {
+    const { spec } = buildSddcSpec(basePlan({ profile: 'ha' }));
+    const broken: SddcSpec = {
+      ...spec,
+      vcfOperationsSpec: {
+        ...spec.vcfOperationsSpec!,
+        nodes: [...spec.vcfOperationsSpec!.nodes, { hostname: 'ops04.vcf.lab', type: 'data' }],
+      },
+    };
+    expect(codes(validateSddcSpec(broken))).toContain('vcf.spec.too-many-ops-nodes');
+  });
+
+  it('warns about a TEP pool alongside a TEP-less deployment', () => {
+    const { spec } = buildSddcSpec(basePlan());
+    const contradictory: SddcSpec = {
+      ...spec,
+      nsxtSpec: { ...spec.nsxtSpec!, overlayVtepSpec: { vtepType: 'NO_IP' } },
+    };
+    expect(codes(validateSddcSpec(contradictory))).toContain('vcf.spec.tep-pool-with-tepless');
   });
 });
 
