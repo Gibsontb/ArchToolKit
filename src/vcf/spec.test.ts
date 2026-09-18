@@ -634,6 +634,202 @@ describe('buildSddcSpec — schema fidelity corrections', () => {
   });
 });
 
+describe('buildSddcSpec — dual stack', () => {
+  it('emits an IPv6 twin for every network defining an IPv6 prefix', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        dualStack: true,
+        management: { cidr: '172.30.0.0/24', vlanId: 30, ipv6Cidr: '2001:db8:30::/64', ipv6Gateway: '2001:db8:30::1' },
+        vmotion: { cidr: '172.30.40.0/24', vlanId: 40, ipv6Cidr: '2001:db8:40::/64' },
+      }),
+    );
+    const v6 = spec.networkSpecs.filter((n) => n.ipAddressVersion === 'IPv6');
+    // MANAGEMENT, VMOTION, and VM_MANAGEMENT — the last shares the management
+    // network's configuration when no separate plan is given, exactly as it
+    // does for IPv4.
+    expect(v6).toHaveLength(3);
+    expect(v6.map((n) => n.networkType).sort()).toEqual(['MANAGEMENT', 'VMOTION', 'VM_MANAGEMENT']);
+    const mgmtV6 = v6.find((n) => n.networkType === 'MANAGEMENT');
+    // The API has no separate v6 fields; subnet/gateway carry the v6 values.
+    expect(mgmtV6?.subnet).toBe('2001:db8:30::/64');
+    expect(mgmtV6?.gateway).toBe('2001:db8:30::1');
+  });
+
+  it('keeps the IPv4 networks alongside the IPv6 ones', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        dualStack: true,
+        management: { cidr: '172.30.0.0/24', vlanId: 30, ipv6Cidr: '2001:db8:30::/64' },
+      }),
+    );
+    const mgmt = spec.networkSpecs.filter((n) => n.networkType === 'MANAGEMENT');
+    expect(mgmt).toHaveLength(2);
+    expect(mgmt.some((n) => n.ipAddressVersion === 'IPv4')).toBe(true);
+    expect(mgmt.some((n) => n.ipAddressVersion === 'IPv6')).toBe(true);
+  });
+
+  it('warns when dual stack is on but nothing defines an IPv6 prefix', () => {
+    const { findings } = buildSddcSpec(basePlan({ dualStack: true }));
+    expect(codes(findings)).toContain('vcf.build.dual-stack-without-v6');
+  });
+
+  it('emits an IPv6 internal cluster CIDR and VCFMS pool', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        internalClusterCidrIpv6: 'fd00::/111',
+        vcfmsIpv6Pool: { cidr: '2001:db8:ff::/112' },
+      }),
+    );
+    expect(spec.vspClusterSpec?.internalClusterCidrIpv6).toBe('fd00::/111');
+    expect(spec.vspClusterSpec?.ipv6Pool?.cidr).toBe('2001:db8:ff::/112');
+  });
+});
+
+describe('buildSddcSpec — IP pool forms', () => {
+  it('defaults to a contiguous range', () => {
+    const { spec } = buildSddcSpec(basePlan());
+    expect(spec.vspClusterSpec?.ipv4Pool.ipRange).toBeDefined();
+    expect(spec.vspClusterSpec?.ipv4Pool.addresses).toBeUndefined();
+  });
+
+  it('supports a non-contiguous explicit address list', () => {
+    const addresses = ['172.30.0.40', '172.30.0.55', '172.30.0.70'];
+    const { spec } = buildSddcSpec(
+      basePlan({ vcfmsPool: { mode: 'addresses', addresses } }),
+    );
+    expect(spec.vspClusterSpec?.ipv4Pool.addresses).toEqual(addresses);
+    expect(spec.vspClusterSpec?.ipv4Pool.ipRange).toBeUndefined();
+  });
+
+  it('supports a CIDR pool with exclusions', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        vcfmsPool: { mode: 'cidr', cidr: '172.30.9.0/24', excludedAddresses: ['172.30.9.5'] },
+      }),
+    );
+    expect(spec.vspClusterSpec?.ipv4Pool.cidr).toBe('172.30.9.0/24');
+    expect(spec.vspClusterSpec?.ipv4Pool.excludedAddresses).toEqual(['172.30.9.5']);
+  });
+
+  it('honours an explicit offset and count for a range', () => {
+    const { spec } = buildSddcSpec(basePlan({ vcfmsPool: { offset: 99, count: 14 } }));
+    const range = spec.vspClusterSpec?.ipv4Pool.ipRange;
+    expect(range?.startIpAddress).toBe('172.30.0.100');
+    expect(range?.endIpAddress).toBe('172.30.0.113');
+  });
+
+  it('flattens whichever pool form was used into the Automation address list', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ automationPool: { mode: 'addresses', addresses: ['172.30.0.80', '172.30.0.81'] } }),
+    );
+    expect(spec.vcfAutomationSpec?.ipPool).toEqual(['172.30.0.80', '172.30.0.81']);
+  });
+
+  it('omits excluded addresses when flattening a range', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        automationPool: { offset: 100, count: 5, excludedAddresses: ['172.30.0.103'] },
+      }),
+    );
+    expect(spec.vcfAutomationSpec?.ipPool).not.toContain('172.30.0.103');
+    expect(spec.vcfAutomationSpec?.ipPool).toHaveLength(4);
+  });
+});
+
+describe('buildSddcSpec — storage detail', () => {
+  it('emits multiple NFS servers and the required readOnly flag', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        storage: 'nfs',
+        nfsServers: ['10.0.0.50', '10.0.0.51'],
+        nfsPath: '/export/vcf-mgmt',
+        nfsUserTag: 'vcf',
+        nfsBindToVmknic: true,
+      }),
+    );
+    const nas = spec.datastoreSpec?.nfsDatastoreSpec?.nasVolume;
+    expect(nas?.serverName).toEqual(['10.0.0.50', '10.0.0.51']);
+    expect(nas?.path).toBe('/export/vcf-mgmt');
+    expect(nas?.readOnly).toBe(false);
+    expect(nas?.enableBindToVmknic).toBe(true);
+  });
+
+  it('warns when NFS is selected without a server', () => {
+    const { findings } = buildSddcSpec(basePlan({ storage: 'nfs' }));
+    expect(codes(findings)).toContain('vcf.build.nfs-no-server');
+  });
+
+  it('emits one FC entry per VMFS datastore', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ storage: 'vmfs-fc', vmfsDatastoreNames: ['fc-ds01', 'fc-ds02'] }),
+    );
+    expect(spec.datastoreSpec?.vmfsDatastoreSpec?.fcSpec).toHaveLength(2);
+  });
+
+  it('emits vSAN data-in-transit encryption with a rekey interval', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({ vsanEncryptionInTransit: true, vsanRekeyIntervalMinutes: 1440 }),
+    );
+    const dit = spec.datastoreSpec?.vsanSpec?.encryptionConfig?.dataInTransitConfig;
+    expect(dit?.enable).toBe(true);
+    expect(dit?.rekeyInterval).toBe(1440);
+  });
+
+  it('emits skipHclAutoDiskClaim only for ESA', () => {
+    expect(
+      buildSddcSpec(basePlan({ storage: 'vsan-esa', skipHclAutoDiskClaim: true })).spec.datastoreSpec
+        ?.vsanSpec?.esaConfig?.skipHclAutoDiskClaim,
+    ).toBe(true);
+    expect(
+      buildSddcSpec(basePlan({ storage: 'vsan-osa', skipHclAutoDiskClaim: true })).spec.datastoreSpec
+        ?.vsanSpec?.esaConfig?.skipHclAutoDiskClaim,
+    ).toBeUndefined();
+  });
+});
+
+describe('buildSddcSpec — per-traffic teaming', () => {
+  it('applies per-network teaming policy and uplink roles', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        vsan: {
+          cidr: '172.30.50.0/24',
+          vlanId: 50,
+          teamingPolicy: 'failover_explicit',
+          activeUplinks: ['uplink1'],
+          standbyUplinks: ['uplink2'],
+        },
+      }),
+    );
+    const vsan = spec.networkSpecs.find((n) => n.networkType === 'VSAN');
+    // The networkSpecs enum is lowercase, unlike the uppercase NSX one.
+    expect(vsan?.teamingPolicy).toBe('failover_explicit');
+    expect(vsan?.activeUplinks).toEqual(['uplink1']);
+    expect(vsan?.standbyUplinks).toEqual(['uplink2']);
+  });
+});
+
+describe('buildSddcSpec — management component networks', () => {
+  it('emits the cross-region network with IPv6 details', () => {
+    const { spec } = buildSddcSpec(
+      basePlan({
+        managementComponentNetworks: {
+          xRegion: {
+            networkName: 'xregion-seg',
+            subnetMask: '255.255.255.0',
+            gateway: '172.30.100.1',
+            ipv6Gateway: '2001:db8:100::1',
+            ipv6Prefix: 64,
+          },
+        },
+      }),
+    );
+    const infra = spec.vcfManagementComponentsInfrastructureSpec;
+    expect(infra?.xRegionNetwork?.networkName).toBe('xregion-seg');
+    expect(infra?.xRegionNetwork?.ipv6Prefix).toBe(64);
+    expect(infra?.localRegionNetwork).toBeUndefined();
+  });
+});
+
 describe('validateSddcSpec — newly confirmed constraints', () => {
   it('rejects a secondary-shaped spec that still declares workflowType VCF', () => {
     const { spec } = buildSddcSpec(basePlan({ instanceRole: 'secondary' }));

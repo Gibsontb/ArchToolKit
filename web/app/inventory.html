@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VCF 9.1 Sizing · ArchToolKit</title>
+    <title>VMware Inventory · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -14,25 +14,25 @@
       </a>
       <nav class="header-nav">
         <a href="../index.html">Home</a>
-        <a href="inventory.html">Inventory</a>
-        <a href="vcf-sizing.html" aria-current="page">VCF Sizing</a>
+        <a href="inventory.html" aria-current="page">Inventory</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
       </nav>
     </header>
 
     <main class="page">
       <div class="page-header">
-        <h1>VCF 9.1 sizing</h1>
+        <h1>VMware inventory</h1>
         <p>
-          Size a VMware Cloud Foundation 9.1 deployment for a greenfield build or a brownfield
-          converge/import, at single-instance or fleet scale. Every constraint that is checked is
-          reported with its source, so a result can be challenged rather than taken on faith.
+          Import an RVTools export or a PowerCLI collection and get the estate's capacity,
+          consolidation ratios, VCF licensing exposure and per-host VCF 9.1 readiness — then carry it
+          straight into sizing. Everything runs in this page; nothing is uploaded.
         </p>
       </div>
 
-      <div id="vcf-sizing-root"></div>
+      <div id="inventory-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/vcf-sizing-page.js"></script>
+    <script type="module" src="../lib/ui/inventory-page.js"></script>
   </body>
 </html>

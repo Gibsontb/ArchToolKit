@@ -4,6 +4,8 @@ import { importRvTools, importRvToolsFiles, detectSheet } from './rvtools.ts';
 import { computeTotals, rollupByCluster, mergeInventories, toSizingHostProfile } from './inventory.ts';
 import { analyzeEstate, estimateLicensing, toSizingInput } from './analyze.ts';
 import { sizeDeployment } from '../vcf/sizing.ts';
+import { importCollectorJson } from './powercli.ts';
+import { assessHost, assessEstate } from './readiness.ts';
 
 /**
  * Fixtures use the documented RVTools column headers, including the
@@ -416,5 +418,173 @@ describe('mergeInventories', () => {
 
   it('handles an empty list', () => {
     expect(mergeInventories([]).hosts).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Collector import and VCF readiness
+// ---------------------------------------------------------------------------
+
+const COLLECTOR_JSON = JSON.stringify({
+  schemaVersion: '1.0',
+  source: { kind: 'powercli', label: 'vcenter.corp.local', collectedAt: '2026-09-17T12:00:00Z' },
+  clusters: [{ name: 'Prod', haEnabled: true, drsEnabled: true, vsanEnabled: true, hostCount: 2 }],
+  hosts: [
+    {
+      name: 'esx01.corp.local',
+      cluster: 'Prod',
+      cpuSockets: 2,
+      coresPerSocket: 32,
+      totalCores: 64,
+      threads: 128,
+      hyperthreadingActive: true,
+      memoryGib: 1024,
+      esxVersion: '8.0.3',
+      tpmPresent: true,
+      nicCount: 4,
+      physicalNics: [
+        { name: 'vmnic0', speedMb: 25000, linkUp: true },
+        { name: 'vmnic1', speedMb: 25000, linkUp: true },
+      ],
+      vmkernelAdapters: [
+        { name: 'vmk0', ip: '172.30.0.11', mtu: 1500, services: ['management'] },
+        { name: 'vmk1', ip: '172.30.40.11', mtu: 9000, services: ['vMotion'] },
+      ],
+      storageDevices: [
+        { name: 'eui.001', type: 'NVMe', capacityGib: 3840, isSsd: true, isLocal: true },
+        { name: 'eui.002', type: 'NVMe', capacityGib: 3840, isSsd: true, isLocal: true },
+      ],
+      hbas: [{ name: 'vmhba0', type: 'FibreChannel', status: 'online' }],
+      cpuStats: { averagePct: 41, peakPct: 78, samples: 360 },
+    },
+    {
+      name: 'esx02.corp.local',
+      cluster: 'Prod',
+      cpuSockets: 2,
+      coresPerSocket: 10,
+      totalCores: 20,
+      memoryGib: 96,
+      esxVersion: '7.0.3',
+      tpmPresent: false,
+      physicalNics: [{ name: 'vmnic0', speedMb: 10000, linkUp: true }],
+      storageDevices: [{ name: 'naa.003', type: 'SSD', capacityGib: 1920, isSsd: true }],
+    },
+  ],
+  vms: [
+    { name: 'vm-01', powerState: 'poweredOn', host: 'esx01.corp.local', vcpu: 4, memoryGib: 16, provisionedGib: 200, usedGib: 120 },
+  ],
+  datastores: [{ name: 'vsanDatastore', type: 'vsan', capacityGib: 40960, freeGib: 30000 }],
+  networks: [{ name: 'pg-mgmt', switchName: 'vds01', vlanId: '30', type: 'vds' }],
+});
+
+describe('importCollectorJson', () => {
+  it('imports the full host detail RVTools cannot provide', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const host = inventory.hosts.find((h) => h.name === 'esx01.corp.local');
+    expect(host?.physicalNics).toHaveLength(2);
+    expect(host?.physicalNics?.[0]?.speedMb).toBe(25000);
+    expect(host?.storageDevices?.[0]?.type).toBe('NVMe');
+    expect(host?.vmkernelAdapters).toHaveLength(2);
+    expect(host?.tpmPresent).toBe(true);
+    expect(host?.hbas).toHaveLength(1);
+  });
+
+  it('records the source as a PowerCLI collection', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    expect(inventory.source.kind).toBe('powercli');
+    expect(inventory.source.label).toBe('vcenter.corp.local');
+  });
+
+  it('notes when historical statistics are present', () => {
+    const { findings } = importCollectorJson(COLLECTOR_JSON);
+    expect(codes(findings)).toContain('inventory.collector.historical-stats');
+  });
+
+  it('reports malformed JSON as a finding rather than throwing', () => {
+    expect(codes(importCollectorJson('{ broken').findings)).toContain('inventory.collector.invalid-json');
+  });
+
+  it('rejects a top-level array', () => {
+    expect(codes(importCollectorJson('[]').findings)).toContain('inventory.collector.not-an-object');
+  });
+
+  it('warns about an empty collection', () => {
+    const empty = JSON.stringify({ schemaVersion: '1.0', hosts: [], vms: [] });
+    expect(codes(importCollectorJson(empty).findings)).toContain('inventory.collector.empty');
+  });
+
+  it('survives hosts missing optional fields', () => {
+    const sparse = JSON.stringify({ hosts: [{ name: 'esx99', cpuSockets: 2, coresPerSocket: 16 }] });
+    const { inventory } = importCollectorJson(sparse);
+    expect(inventory.hosts[0]?.totalCores).toBe(32);
+    expect(inventory.hosts[0]?.memoryGib).toBe(0);
+  });
+});
+
+describe('assessHost', () => {
+  it('passes a modern, well-specified host', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const host = inventory.hosts.find((h) => h.name === 'esx01.corp.local')!;
+    const result = assessHost(host);
+    expect(result.viable).toBe(true);
+    expect(result.blockers).toBe(0);
+  });
+
+  it('blocks a host on old ESX, low memory and no NVMe', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const host = inventory.hosts.find((h) => h.name === 'esx02.corp.local')!;
+    const result = assessHost(host);
+    expect(result.viable).toBe(false);
+    const failed = result.checks.filter((c) => c.status === 'fail').map((c) => c.id);
+    expect(failed).toContain('esx-version');
+    expect(failed).toContain('memory');
+    expect(failed).toContain('nvme');
+  });
+
+  it('warns rather than fails on 10GbE', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const host = inventory.hosts.find((h) => h.name === 'esx02.corp.local')!;
+    const nic = assessHost(host).checks.find((c) => c.id === 'nic-speed');
+    expect(nic?.status).toBe('warn');
+  });
+
+  it('warns about core density below the licensing floor', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const host = inventory.hosts.find((h) => h.name === 'esx02.corp.local')!;
+    const density = assessHost(host).checks.find((c) => c.id === 'core-density');
+    expect(density?.status).toBe('warn');
+  });
+
+  it('reports unknown rather than pass when hardware detail is absent', () => {
+    // An RVTools import carries no NVMe or NIC-speed data.
+    const { inventory } = importRvTools({ sheets: { vHost: V_HOST_CSV } });
+    const result = assessHost(inventory.hosts[0]!);
+    const nvme = result.checks.find((c) => c.id === 'nvme');
+    expect(nvme?.status).toBe('unknown');
+    expect(result.unknowns).toBeGreaterThan(0);
+  });
+});
+
+describe('assessEstate', () => {
+  it('rules out vSAN ESA when any host lacks NVMe', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const estate = assessEstate(inventory);
+    expect(estate.esaViable).toBe(false);
+    expect(codes(estate.findings)).toContain('readiness.esa.no-nvme');
+  });
+
+  it('counts ready and blocked hosts', () => {
+    const { inventory } = importCollectorJson(COLLECTOR_JSON);
+    const estate = assessEstate(inventory);
+    expect(estate.readyHosts).toBe(1);
+    expect(estate.blockedHosts).toBe(1);
+  });
+
+  it('flags incomplete source data instead of assuming a pass', () => {
+    const { inventory } = importRvTools({ sheets: { vHost: V_HOST_CSV } });
+    const estate = assessEstate(inventory);
+    expect(codes(estate.findings)).toContain('readiness.esa.unknown-storage');
+    expect(codes(estate.findings)).toContain('readiness.incomplete-data');
+    expect(estate.esaViable).toBe(false);
   });
 });

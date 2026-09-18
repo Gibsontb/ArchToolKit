@@ -14,6 +14,7 @@
 
 import {
   parseCidr,
+  parseIPv4,
   formatIPv4,
   allocateRange,
   usableRange,
@@ -47,6 +48,10 @@ import type {
   EvcMode,
   ResourcePoolSpec,
   SecuritySpec,
+  TeamingPolicy,
+  IPv4Pool,
+  IPv6Pool,
+  VcfManagementComponentsInfrastructureSpec,
 } from './spec-types.ts';
 
 
@@ -61,6 +66,40 @@ export interface NetworkPlan {
   /** Defaults to the first usable address in the CIDR. */
   readonly gateway?: string;
   readonly mtu?: number;
+  /**
+   * IPv6 prefix for a dual-stack or IPv6-only network.
+   *
+   * The API has no separate v6 fields on SddcNetworkSpec: an IPv6 network sets
+   * ipAddressVersion to IPv6 and reuses subnet/gateway with v6 values. Supplying
+   * this emits a second network entry for the same traffic type.
+   */
+  readonly ipv6Cidr?: string;
+  readonly ipv6Gateway?: string;
+  /** Per-traffic teaming, matching the wizard's per-traffic-type controls. */
+  readonly teamingPolicy?: TeamingPolicy;
+  readonly activeUplinks?: string[];
+  readonly standbyUplinks?: string[];
+  readonly assignmentMode?: 'STATIC' | 'DHCP' | 'SLAAC';
+}
+
+/**
+ * Flexible IP pool specification.
+ *
+ * VCF 9.1 accepts a contiguous range, a CIDR, or an explicit address list, and
+ * 9.1.0.400+ supports exclusions. Estates with fragmented free space need the
+ * list form, so all three are expressible rather than only the range.
+ */
+export interface PoolPlan {
+  readonly mode?: 'range' | 'cidr' | 'addresses';
+  /** Explicit addresses, for the non-contiguous case. */
+  readonly addresses?: string[];
+  /** Addresses to carve out of a range or CIDR. */
+  readonly excludedAddresses?: string[];
+  /** Override the CIDR the pool is allocated from. */
+  readonly cidr?: string;
+  /** Offset into the source subnet when auto-allocating a range. */
+  readonly offset?: number;
+  readonly count?: number;
 }
 
 export type DvsProfile =
@@ -117,9 +156,54 @@ export interface DeploymentPlan {
   readonly datastoreName?: string;
   readonly failuresToTolerate?: number;
   readonly vsanDedup?: boolean;
-  /** NFS export path, required when storage is nfs. */
+  /** Skip automatic disk claiming on an ESA cluster. */
+  readonly skipHclAutoDiskClaim?: boolean;
+  /** vSAN data-in-transit encryption. */
+  readonly vsanEncryptionInTransit?: boolean;
+  /** Rekey interval in minutes, when DIT encryption is enabled. */
+  readonly vsanRekeyIntervalMinutes?: number;
+
+  // NFS — the API takes an array of servers, a mount path and a read-only flag.
+  readonly nfsServers?: string[];
   readonly nfsPath?: string;
+  /** Kept for convenience; folded into nfsServers when that is absent. */
   readonly nfsServer?: string;
+  readonly nfsReadOnly?: boolean;
+  readonly nfsUserTag?: string;
+  readonly nfsBindToVmknic?: boolean;
+
+  /** VMFS-on-FC datastore names; one entry per LUN. */
+  readonly vmfsDatastoreNames?: string[];
+
+  // --- IP pools ------------------------------------------------------------
+  readonly vcfmsPool?: PoolPlan;
+  readonly automationPool?: PoolPlan;
+  readonly tepPool?: PoolPlan;
+
+  // --- dual stack ----------------------------------------------------------
+  /** Emit IPv6 alongside IPv4 where a network defines an ipv6Cidr. */
+  readonly dualStack?: boolean;
+  readonly internalClusterCidrIpv6?: string;
+  /** IPv6 pool for VCF Management Services. */
+  readonly vcfmsIpv6Pool?: PoolPlan;
+
+  /** Local and cross-region networks for VCF management components. */
+  readonly managementComponentNetworks?: {
+    readonly local?: {
+      networkName: string;
+      subnetMask: string;
+      gateway: string;
+      ipv6Gateway?: string;
+      ipv6Prefix?: number;
+    };
+    readonly xRegion?: {
+      networkName: string;
+      subnetMask: string;
+      gateway: string;
+      ipv6Gateway?: string;
+      ipv6Prefix?: number;
+    };
+  };
 
   // --- scale ---------------------------------------------------------------
   readonly profile?: 'simple' | 'ha';
@@ -246,14 +330,131 @@ function networkSpec(
     subnet: plan.cidr,
     gateway: gatewayFor(plan, cidr),
     ipAddressVersion: 'IPv4',
-    ipAddressAssignmentMode: 'STATIC',
-    teamingPolicy: 'loadbalance_loadbased',
-    activeUplinks: ['uplink1', 'uplink2'],
-    standbyUplinks: [],
+    ipAddressAssignmentMode: plan.assignmentMode ?? 'STATIC',
+    // Per-traffic-type teaming — the wizard exposes this per network, and the
+    // enum here is lowercase, unlike the uppercase NSX uplink-profile enum.
+    teamingPolicy: plan.teamingPolicy ?? 'loadbalance_loadbased',
+    activeUplinks: plan.activeUplinks ?? ['uplink1', 'uplink2'],
+    standbyUplinks: plan.standbyUplinks ?? [],
     ...(plan.mtu !== undefined ? { mtu: plan.mtu } : {}),
     ...extras,
   };
   return spec;
+}
+
+/**
+ * IPv6 counterpart of a network.
+ *
+ * The API carries no separate v6 fields: an IPv6 network sets
+ * `ipAddressVersion: "IPv6"` and puts v6 values in the same `subnet` and
+ * `gateway` fields.
+ */
+function networkSpecV6(
+  type: NetworkType,
+  plan: NetworkPlan,
+  extras: Partial<SddcNetworkSpec> = {},
+): SddcNetworkSpec | null {
+  if (!plan.ipv6Cidr) return null;
+  return {
+    networkType: type,
+    vlanId: plan.vlanId,
+    subnet: plan.ipv6Cidr,
+    ...(plan.ipv6Gateway ? { gateway: plan.ipv6Gateway } : {}),
+    ipAddressVersion: 'IPv6',
+    ipAddressAssignmentMode: plan.assignmentMode ?? 'STATIC',
+    teamingPolicy: plan.teamingPolicy ?? 'loadbalance_loadbased',
+    activeUplinks: plan.activeUplinks ?? ['uplink1', 'uplink2'],
+    standbyUplinks: plan.standbyUplinks ?? [],
+    ...(plan.mtu !== undefined ? { mtu: plan.mtu } : {}),
+    ...extras,
+  };
+}
+
+/**
+ * Build an IPv4 pool in whichever form the plan asks for.
+ *
+ * Exactly one of addresses / ipRange / cidr must be present, so the branches
+ * are mutually exclusive rather than merged.
+ */
+function buildPool(
+  plan: PoolPlan | undefined,
+  sourceCidr: Cidr | null,
+  defaultOffset: number,
+  defaultCount: number,
+): IPv4Pool | null {
+  const mode = plan?.mode ?? 'range';
+
+  if (mode === 'addresses') {
+    if (!plan?.addresses?.length) return null;
+    return { addresses: plan.addresses };
+  }
+
+  if (mode === 'cidr') {
+    const cidr = plan?.cidr;
+    if (!cidr) return null;
+    return {
+      cidr,
+      ...(plan?.excludedAddresses?.length ? { excludedAddresses: plan.excludedAddresses } : {}),
+    };
+  }
+
+  const cidr = plan?.cidr ? parseCidr(plan.cidr) : sourceCidr;
+  if (!cidr) return null;
+  const range = allocateRange(cidr, plan?.offset ?? defaultOffset, plan?.count ?? defaultCount);
+  if (!range) return null;
+
+  return {
+    ipRange: { startIpAddress: formatIPv4(range.start), endIpAddress: formatIPv4(range.end) },
+    ...(plan?.excludedAddresses?.length ? { excludedAddresses: plan.excludedAddresses } : {}),
+  };
+}
+
+/**
+ * Flatten a pool to a plain address list.
+ *
+ * `vcfAutomationSpec.ipPool` is a bare string array rather than an IPv4Pool, so
+ * whichever form the plan used has to be expanded here.
+ */
+function poolToAddresses(pool: IPv4Pool): string[] {
+  if (pool.addresses?.length) return pool.addresses;
+  if (pool.ipRange) {
+    const start = parseIPv4(pool.ipRange.startIpAddress);
+    const end = parseIPv4(pool.ipRange.endIpAddress);
+    if (start === null || end === null || end < start) return [];
+    const excluded = new Set(pool.excludedAddresses ?? []);
+    const out: string[] = [];
+    for (let addr = start; addr <= end; addr += 1) {
+      const text = formatIPv4(addr);
+      if (!excluded.has(text)) out.push(text);
+    }
+    return out;
+  }
+  if (pool.cidr) {
+    const cidr = parseCidr(pool.cidr);
+    if (!cidr) return [];
+    const { first, last } = usableRange(cidr);
+    const excluded = new Set(pool.excludedAddresses ?? []);
+    const out: string[] = [];
+    for (let addr = first; addr <= last && out.length < 256; addr += 1) {
+      const text = formatIPv4(addr);
+      if (!excluded.has(text)) out.push(text);
+    }
+    return out;
+  }
+  return [];
+}
+
+/** IPv6 pool. Only the explicit-address and CIDR forms are derivable offline. */
+function buildPoolV6(plan: PoolPlan | undefined): IPv6Pool | null {
+  if (!plan) return null;
+  if (plan.addresses?.length) return { addresses: plan.addresses };
+  if (plan.cidr) {
+    return {
+      cidr: plan.cidr,
+      ...(plan.excludedAddresses?.length ? { excludedAddresses: plan.excludedAddresses } : {}),
+    };
+  }
+  return null;
 }
 
 /**
@@ -425,30 +626,66 @@ function buildDatastoreSpec(plan: DeploymentPlan, findings: Finding[]): SddcData
     return {
       vsanSpec: {
         datastoreName: plan.datastoreName ?? 'vsanDatastore',
+        // Dedup and compression is an OSA-only feature and conflicts with ESA.
         vsanDedup: esa ? false : (plan.vsanDedup ?? false),
         failuresToTolerate: ftt,
-        esaConfig: { enabled: esa },
-        encryptionConfig: { dataInTransitConfig: { enable: false } },
-      },
-    };
-  }
-
-  if (plan.storage === 'nfs') {
-    return {
-      nfsDatastoreSpec: {
-        datastoreName: plan.datastoreName ?? 'nfsDatastore',
-        nasVolume: {
-          serverName: plan.nfsServer ? [plan.nfsServer] : [PLACEHOLDER_SECRET],
-          path: plan.nfsPath ?? '/export/vcf',
-          readOnly: false,
+        esaConfig: {
+          enabled: esa,
+          ...(esa && plan.skipHclAutoDiskClaim !== undefined
+            ? { skipHclAutoDiskClaim: plan.skipHclAutoDiskClaim }
+            : {}),
+        },
+        encryptionConfig: {
+          dataInTransitConfig: {
+            enable: plan.vsanEncryptionInTransit ?? false,
+            ...(plan.vsanEncryptionInTransit && plan.vsanRekeyIntervalMinutes !== undefined
+              ? { rekeyInterval: plan.vsanRekeyIntervalMinutes }
+              : {}),
+          },
         },
       },
     };
   }
 
+  if (plan.storage === 'nfs') {
+    const servers = plan.nfsServers?.length
+      ? plan.nfsServers
+      : plan.nfsServer
+        ? [plan.nfsServer]
+        : [];
+    if (servers.length === 0) {
+      findings.push(
+        warning('vcf.build.nfs-no-server', 'NFS storage selected but no server address was supplied.', {
+          path: 'nfsServers',
+          remediation: 'Add at least one NFS server address; the API requires a non-empty list.',
+          source: 'VCF Installer API — NasVolumeSpec',
+        }),
+      );
+    }
+    return {
+      nfsDatastoreSpec: {
+        datastoreName: plan.datastoreName ?? 'nfsDatastore',
+        nasVolume: {
+          serverName: servers.length > 0 ? servers : [PLACEHOLDER_SECRET],
+          path: plan.nfsPath ?? '/export/vcf',
+          // readOnly is REQUIRED by the API, so it is always emitted.
+          readOnly: plan.nfsReadOnly ?? false,
+          ...(plan.nfsUserTag ? { userTag: plan.nfsUserTag } : {}),
+          ...(plan.nfsBindToVmknic !== undefined
+            ? { enableBindToVmknic: plan.nfsBindToVmknic }
+            : {}),
+        },
+      },
+    };
+  }
+
+  const vmfsNames = plan.vmfsDatastoreNames?.length
+    ? plan.vmfsDatastoreNames
+    : [plan.datastoreName ?? 'vmfsDatastore'];
+
   return {
     vmfsDatastoreSpec: {
-      fcSpec: [{ datastoreName: plan.datastoreName ?? 'vmfsDatastore' }],
+      fcSpec: vmfsNames.map((datastoreName) => ({ datastoreName })),
     },
   };
 }
@@ -551,10 +788,56 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
     if (fleet) networkSpecs.push(fleet);
   }
 
+  // Dual stack: emit an IPv6 twin for every network that defines an ipv6Cidr.
+  // The API has no dual-stack field, so a network carrying both address
+  // families is expressed as two entries sharing a VLAN.
+  if (plan.dualStack) {
+    const v6Candidates: [NetworkType, NetworkPlan | undefined][] = [
+      ['MANAGEMENT', plan.management],
+      ['VM_MANAGEMENT', vmMgmtPlan],
+      ['VMOTION', plan.vmotion],
+      ['VSAN', plan.vsan],
+      ['NFS', plan.nfs],
+      ['FLEET_MANAGEMENT', plan.fleetManagement],
+    ];
+
+    let emitted = 0;
+    for (const [type, netPlan] of v6Candidates) {
+      if (!netPlan?.ipv6Cidr) continue;
+      const v6 = networkSpecV6(type, netPlan, {
+        portGroupKey: `${prefix}-pg-${type.toLowerCase().replace(/_/g, '-')}-v6`,
+      });
+      if (v6) {
+        networkSpecs.push(v6);
+        emitted += 1;
+      }
+    }
+
+    if (emitted === 0) {
+      findings.push(
+        warning(
+          'vcf.build.dual-stack-without-v6',
+          'Dual stack is enabled but no network defines an IPv6 prefix, so no IPv6 networks were emitted.',
+          { path: 'dualStack', remediation: 'Set ipv6Cidr on the networks that should carry IPv6.' },
+        ),
+      );
+    } else {
+      findings.push(
+        info(
+          'vcf.build.dual-stack',
+          `Emitted ${emitted} IPv6 network(s). Note the API declares maxLength 15 on gateway and 18 on subnet, sized for IPv4; whether those bounds are relaxed for IPv6 is not documented.`,
+          { source: 'VCF Installer API — SddcNetworkSpec' },
+        ),
+      );
+    }
+  }
+
   // --- NSX -----------------------------------------------------------------
   const tepCidr = parseCidr(plan.hostTep.cidr);
-  const tepCount = plan.hostCount * (plan.pnicsPerHost ?? 2);
-  const tepRange = tepCidr ? allocateRange(tepCidr, 9, Math.max(tepCount, 1)) : null;
+  const tepCount = plan.tepPool?.count ?? plan.hostCount * (plan.pnicsPerHost ?? 2);
+  const tepRange = tepCidr
+    ? allocateRange(tepCidr, plan.tepPool?.offset ?? 9, Math.max(tepCount, 1))
+    : null;
 
   const nsxtSpec: SddcNsxtSpec = {
     nsxtManagers: ha
@@ -638,18 +921,20 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
   // The VCFMS pool lives in the management subnet unless a dedicated fleet
   // management network was planned.
   const vcfmsHomeCidr = plan.fleetManagement ? parseCidr(plan.fleetManagement.cidr) : mgmtCidr;
-  const vcfmsRange = vcfmsHomeCidr
-    ? allocateRange(vcfmsHomeCidr, 31, VCFMS_RECOMMENDED_IPS)
-    : null;
+  const vcfmsPool = buildPool(plan.vcfmsPool, vcfmsHomeCidr, 31, VCFMS_RECOMMENDED_IPS);
+  const vcfmsRange = vcfmsPool;
+  const vcfmsIpv6 = buildPoolV6(plan.vcfmsIpv6Pool);
 
   const vspClusterSpec: SddcVspClusterSpec = {
     platformFqdn: name('vspPlatform', `${prefix}-msr01`),
     instanceFqdn: name('vspInstance', `${prefix}-int01`),
     // A secondary instance joins an existing fleet and must omit fleetFqdn.
     ...(secondary ? {} : { fleetFqdn: name('vspFleet', `${prefix}-flt01`) }),
-    ipv4Pool: vcfmsRange
-      ? { ipRange: { startIpAddress: formatIPv4(vcfmsRange.start), endIpAddress: formatIPv4(vcfmsRange.end) } }
-      : {},
+    ipv4Pool: vcfmsPool ?? {},
+    ...(vcfmsIpv6 ? { ipv6Pool: vcfmsIpv6 } : {}),
+    ...(plan.internalClusterCidrIpv6
+      ? { internalClusterCidrIpv6: plan.internalClusterCidrIpv6 }
+      : {}),
     systemUserPassword: secret('vspSystem', 'vspClusterSpec.systemUserPassword'),
     size: plan.vspSize ?? (ha ? 'small_ha' : 'small'),
     internalClusterCidrIpv4: plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0],
@@ -699,9 +984,12 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
 
   // --- Automation ----------------------------------------------------------
   const includeAutomation = plan.includeAutomation !== false;
-  const automationRange = vcfmsHomeCidr
-    ? allocateRange(vcfmsHomeCidr, 31 + VCFMS_RECOMMENDED_IPS, AUTOMATION_IP_COUNT)
-    : null;
+  const automationPool = buildPool(
+    plan.automationPool,
+    vcfmsHomeCidr,
+    31 + VCFMS_RECOMMENDED_IPS,
+    AUTOMATION_IP_COUNT,
+  );
 
   const vcfAutomationSpec: VcfAutomationSpec | undefined = includeAutomation
     ? {
@@ -710,19 +998,15 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
         internalClusterCidr: plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0],
         adminUserPassword: secret('automationAdmin', 'vcfAutomationSpec.adminUserPassword'),
         nodePrefix: `${prefix}-node-01`.toLowerCase(),
-        ...(automationRange
-          ? {
-              ipPool: Array.from({ length: AUTOMATION_IP_COUNT }, (_, i) =>
-                formatIPv4(automationRange.start + i),
-              ),
-            }
-          : {}),
+        // vcfAutomationSpec.ipPool is a plain string array, not an IPv4Pool,
+        // so whichever pool form was chosen is flattened to addresses here.
+        ...(automationPool ? { ipPool: poolToAddresses(automationPool) } : {}),
         size: plan.automationSize ?? (ha ? 'medium' : 'small'),
         ...(plan.existing?.automation ? { useExistingDeployment: true } : {}),
       }
     : undefined;
 
-  if (includeAutomation && !automationRange) {
+  if (includeAutomation && !automationPool) {
     findings.push(
       warning(
         'vcf.build.automation-pool-not-allocated',
@@ -753,6 +1037,18 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
       ),
     );
   }
+
+  // --- VCF management component networks -----------------------------------
+  // Community reporting says only xRegionNetwork is required now, and that the
+  // network must be VLAN-backed rather than NSX overlay.
+  const mc = plan.managementComponentNetworks;
+  const managementInfrastructure: VcfManagementComponentsInfrastructureSpec | undefined =
+    mc?.local || mc?.xRegion
+      ? {
+          ...(mc.local ? { localRegionNetwork: mc.local } : {}),
+          ...(mc.xRegion ? { xRegionNetwork: mc.xRegion } : {}),
+        }
+      : undefined;
 
   // --- assemble ------------------------------------------------------------
   const spec: SddcSpec = {
@@ -785,6 +1081,9 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
 
     ...(plan.managementPoolName ? { managementPoolName: plan.managementPoolName } : {}),
     ...(securitySpec ? { securitySpec } : {}),
+    ...(managementInfrastructure
+      ? { vcfManagementComponentsInfrastructureSpec: managementInfrastructure }
+      : {}),
 
     vcenterSpec: {
       vcenterHostname: name('vcenter', `${prefix}-vc01`),
