@@ -19,6 +19,7 @@
 import { el, append, replace, clear, downloadFile } from './dom.ts';
 import { card, findingsList } from './components.ts';
 import { getTarget, setTarget, type TargetId } from '../kit/target.ts';
+import { estateOptionsFor } from '../kit/estate.ts';
 import {
   defaultValues,
   isVisible,
@@ -42,6 +43,27 @@ export interface GeneratorOptions {
   readonly downloadExtension: string;
   /** Findings that always apply, e.g. catalog age. */
   readonly standingFindings?: () => readonly Finding[];
+}
+
+/**
+ * The input, with anything the imported estate can answer folded in.
+ *
+ * A blueprint cannot know your datastore names, but the inventory does. Where
+ * it has an answer the field becomes a dropdown you can still type into, so an
+ * estate that was imported after the blueprint was written is still offered.
+ */
+function withEstate(input: BlueprintInput, target: string): BlueprintInput {
+  const estate = estateOptionsFor(target, input.id);
+  if (!estate) return input;
+  const existing = (input.options ?? []).map((o) => o.value);
+  const added = estate.values.filter((v) => !existing.includes(v));
+  if (added.length === 0) return input;
+  return {
+    ...input,
+    control: 'combo',
+    hint: input.hint ? `${input.hint} · from ${estate.origin}` : `From ${estate.origin}`,
+    options: [...added.map((value) => ({ value, label: value })), ...(input.options ?? [])],
+  };
 }
 
 function control(input: BlueprintInput, value: unknown, onChange: () => void): HTMLElement {
@@ -266,8 +288,9 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
       ),
     );
 
-    for (const input of blueprint.inputs) {
-      if (!isVisible(input, values)) continue;
+    for (const raw of blueprint.inputs) {
+      if (!isVisible(raw, values)) continue;
+      const input = withEstate(raw, target);
       const node = control(input, values[input.id], () => {
         const field = (node.classList.contains('combo')
           ? node.querySelector('input')

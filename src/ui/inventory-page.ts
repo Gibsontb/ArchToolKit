@@ -26,6 +26,7 @@ import { analyzeEstate, toSizingInput } from '../vmware/analyze.ts';
 import { assessEstate, type HostReadiness, type CheckStatus } from '../vmware/readiness.ts';
 import { sizeDeployment } from '../vcf/sizing.ts';
 import { putHandoff } from './handoff.ts';
+import { saveEstate } from '../kit/estate.ts';
 
 const STATUS_MARK: Record<CheckStatus, string> = {
   pass: '✓',
@@ -84,6 +85,10 @@ export function mountInventoryPage(root: HTMLElement): void {
     }
 
     current = mergeInventories(inventories);
+    // The generators ask for datacenters, clusters, datastores, port groups and
+    // templates by name. Now that they are known, they should be offered rather
+    // than typed.
+    saveEstate(current);
     status.textContent = `Loaded ${loaded.length} file(s): ${current.hosts.length} hosts, ${current.vms.length} VMs.`;
     replace(results, ...buildResults(current, findings));
   }

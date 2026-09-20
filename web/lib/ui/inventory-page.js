@@ -26,6 +26,7 @@ import { analyzeEstate, toSizingInput } from '../vmware/analyze.js';
 import { assessEstate,                                      } from '../vmware/readiness.js';
 import { sizeDeployment } from '../vcf/sizing.js';
 import { putHandoff } from './handoff.js';
+import { saveEstate } from '../kit/estate.js';
 
 const STATUS_MARK                              = {
   pass: '✓',
@@ -84,6 +85,10 @@ export function mountInventoryPage(root             )       {
     }
 
     current = mergeInventories(inventories);
+    // The generators ask for datacenters, clusters, datastores, port groups and
+    // templates by name. Now that they are known, they should be offered rather
+    // than typed.
+    saveEstate(current);
     status.textContent = `Loaded ${loaded.length} file(s): ${current.hosts.length} hosts, ${current.vms.length} VMs.`;
     replace(results, ...buildResults(current, findings));
   }

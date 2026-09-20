@@ -440,6 +440,50 @@ for (const [kind, path, generateLabel, expect] of [
   await ctx.close();
 }
 
+// --- the imported estate fills the vSphere dropdowns ----------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+
+  // Import an estate, then ask a generator for vSphere. The blueprints should
+  // be offering these names rather than a box with "datastore1" in it.
+  await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[type=file]').setInputFiles(fixture);
+  await page.waitForTimeout(1200);
+
+  for (const [kind, path] of [
+    ['Terraform', '/app/terraform.html'],
+    ['Ansible', '/app/ansible.html'],
+  ]) {
+    await page.goto(BASE + path, { waitUntil: 'networkidle' });
+    await page.locator('select').first().selectOption('vsphere');
+    await page.waitForTimeout(400);
+
+    const offered = await page.evaluate(() => {
+      const out = {};
+      document.querySelectorAll('.field').forEach((f) => {
+        const label = (f.querySelector('label') || {}).textContent || '';
+        const input = f.querySelector('input[list]');
+        if (!input) return;
+        const list = document.getElementById(input.getAttribute('list'));
+        out[label.trim()] = Array.from(list ? list.options : []).map((o) => o.value);
+      });
+      return out;
+    });
+    const all = Object.values(offered).flat();
+    check(
+      `${kind}: vSphere fields offer the imported estate`,
+      all.includes('Check-Cluster'),
+      Object.keys(offered).join(', ').slice(0, 70),
+    );
+    check(
+      `${kind}: and say where the names came from`,
+      /browser-check/.test(await page.locator('body').innerText()),
+    );
+  }
+  await ctx.close();
+}
+
 await browser.close();
 stop();
 
