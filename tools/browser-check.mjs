@@ -67,6 +67,7 @@ for (const [name, path] of [
   ['inventory', '/app/inventory.html'],
   ['sizing', '/app/vcf-sizing.html'],
   ['spec', '/app/vcf-spec.html'],
+  ['terraform', '/app/terraform.html'],
 ]) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -200,6 +201,58 @@ for (const [name, path] of [
   check(
     'choosing NFS reveals the fields it needs',
     (await page.getByText('NFS servers', { exact: false }).count()) > 0,
+  );
+  await ctx.close();
+}
+
+// --- the Terraform kit generates for every cloud --------------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+
+  const boxes = page.locator('input[type=checkbox]');
+  const count = await boxes.count();
+  for (let i = 0; i < count; i += 1) {
+    if (!(await boxes.nth(i).isChecked())) await boxes.nth(i).check();
+  }
+  await page.waitForTimeout(600);
+  let body = await page.locator('body').innerText();
+
+  check('AWS emits a VPC', /aws_vpc/.test(body));
+  check('Azure emits a virtual network', /azurerm_virtual_network/.test(body));
+  check('Google builds a custom-mode VPC', /auto_create_subnetworks = false/.test(body));
+  check('vSphere emits a distributed switch', /vsphere_distributed_virtual_switch/.test(body));
+  // Every OCI resource needs a compartment, so it refuses until one is given.
+  check('OCI refuses without a compartment', /compartment OCID/i.test(body));
+  check(
+    'VCF points at the spec builder rather than doing nothing',
+    /specification rather than a network foundation/i.test(body),
+  );
+
+  await page
+    .locator('.field', { hasText: 'OCI compartment OCID' })
+    .locator('input')
+    .first()
+    .fill('ocid1.compartment.oc1..aaaa');
+  await page.waitForTimeout(600);
+  body = await page.locator('body').innerText();
+  check('OCI emits once a compartment is supplied', /oci_core_vcn/.test(body));
+  // OCI takes IP protocol numbers as strings; "tcp" is rejected.
+  check('OCI writes TCP as protocol 6', /protocol\s+= "6"/.test(body));
+
+  await page
+    .locator('.field', { hasText: 'Address space' })
+    .locator('input')
+    .first()
+    .fill('10.90.0.0/16');
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('a new address space reaches every cloud', /10\.90\.0\.0\/16/.test(body));
+  check('subnets are carved from it', /10\.90\.1\.0\/24/.test(body));
+  check(
+    'buttons survive an edit',
+    (await page.locator('button', { hasText: 'Download as one file' }).count()) > 0,
   );
   await ctx.close();
 }
