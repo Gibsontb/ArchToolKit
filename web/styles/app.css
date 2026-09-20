@@ -711,3 +711,118 @@ tbody tr:hover {
   font-size: 0.8rem;
   color: var(--text-muted);
 }
+
+/* --- Generator pages -----------------------------------------------------
+   Three columns, in the order the work happens: what to build, its
+   parameters, the result. Below a wide desktop they stack, because three
+   columns of form fields at tablet width is unreadable. */
+
+.generator-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1.6fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .generator-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.field-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.field-head .field-hint {
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+
+.blueprint-description {
+  margin: 0 0 var(--space-4);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Platform shortcuts. The dropdown above is authoritative; these are the
+   same choice, one click away. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft, transparent);
+}
+
+.status-line {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  padding: var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-3);
+}
+
+.status-line.is-good {
+  color: var(--ok, #1a7f4b);
+}
+
+.status-line.is-bad {
+  color: var(--danger, #b3261e);
+}
+
+.file-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.btn-small {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+}
+
+.code-block {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-4);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  max-height: 34rem;
+  overflow: auto;
+}
+
+.field textarea {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+}

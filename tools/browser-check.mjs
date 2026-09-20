@@ -211,135 +211,106 @@ for (const [name, path] of [
   await ctx.close();
 }
 
-// --- the Terraform kit generates for every cloud --------------------------
+// --- the generators: platform once, then what to build -------------------
+for (const [kind, path, generateLabel, expect] of [
+  ['Terraform', '/app/terraform.html', 'Generate Terraform', /resource "aws_instance"/],
+  ['Ansible', '/app/ansible.html', 'Generate Ansible', /amazon\.aws\.ec2_instance:/],
+]) {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(BASE + path, { waitUntil: 'networkidle' });
+
+  // Step 1 is a dropdown, not a checkbox per cloud.
+  const platform = page.locator('select').first();
+  const platforms = await platform.locator('option').count();
+  check(`${kind}: one platform dropdown, not a checkbox each`, platforms >= 7, `${platforms} options`);
+  check(
+    `${kind}: no cloud checkboxes`,
+    (await page.locator('input[type=checkbox]').count()) === 0,
+  );
+
+  await platform.selectOption('aws');
+  await page.waitForTimeout(400);
+  const blueprints = page.locator('select').nth(1);
+  const count = await blueprints.locator('option').count();
+  check(`${kind}: AWS offers several things to build`, count >= 4, `${count} blueprints`);
+
+  // Step 2 must use a dropdown for a one-of choice.
+  const region = page.locator('.field', { hasText: 'region' }).locator('select').first();
+  check(`${kind}: region is a dropdown`, (await region.count()) > 0);
+  const regionText = (await region.locator('option').allTextContents()).join(' ');
+  check(
+    `${kind}: with the Gov and ISO regions, not just the commercial ones`,
+    /us-gov-west-1/.test(regionText) && /us-iso-east-1/.test(regionText),
+  );
+
+  // Step 3 is empty until asked.
+  let body = await page.locator('body').innerText();
+  check(`${kind}: nothing is generated until Generate is pressed`, /Idle/.test(body));
+
+  await page.locator('button', { hasText: generateLabel }).click();
+  await page.waitForTimeout(600);
+  body = await page.locator('body').innerText();
+  check(`${kind}: generates what the blueprint says`, expect.test(body));
+  check(`${kind}: and reports no errors`, /No errors/.test(body));
+  check(
+    `${kind}: with Copy and Download`,
+    (await page.locator('button', { hasText: 'Copy' }).count()) > 0 &&
+      (await page.locator('button', { hasText: 'Download' }).count()) > 0,
+  );
+
+  // Changing the blueprint must change the parameters.
+  await blueprints.selectOption({ index: 1 });
+  await page.waitForTimeout(500);
+  const second = await page.locator('body').innerText();
+  check(`${kind}: choosing another blueprint changes the parameters`, second !== body);
+  await ctx.close();
+}
+
+// --- the platform is chosen once and carried ------------------------------
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  await page.locator('select').first().selectOption('oci');
+  await page.waitForTimeout(400);
 
-  const boxes = page.locator('input[type=checkbox]');
-  const count = await boxes.count();
-  for (let i = 0; i < count; i += 1) {
-    if (!(await boxes.nth(i).isChecked())) await boxes.nth(i).check();
-  }
-  await page.waitForTimeout(600);
-  let body = await page.locator('body').innerText();
-
-  check('AWS emits a VPC', /aws_vpc/.test(body));
-  check('Azure emits a virtual network', /azurerm_virtual_network/.test(body));
-  check('Google builds a custom-mode VPC', /auto_create_subnetworks = false/.test(body));
-  check('vSphere emits a distributed switch', /vsphere_distributed_virtual_switch/.test(body));
-  // Every OCI resource needs a compartment, so it refuses until one is given.
-  check('OCI refuses without a compartment', /compartment OCID/i.test(body));
-  check(
-    'VCF points at the spec builder rather than doing nothing',
-    /specification rather than a network foundation/i.test(body),
-  );
-
-  await page
-    .locator('.field', { hasText: 'OCI compartment OCID' })
-    .locator('input')
-    .first()
-    .fill('ocid1.compartment.oc1..aaaa');
-  await page.waitForTimeout(600);
-  body = await page.locator('body').innerText();
-  check('OCI emits once a compartment is supplied', /oci_core_vcn/.test(body));
-  // OCI takes IP protocol numbers as strings; "tcp" is rejected.
-  check('OCI writes TCP as protocol 6', /protocol\s+= "6"/.test(body));
-
-  await page
-    .locator('.field', { hasText: 'Address space' })
-    .locator('input')
-    .first()
-    .fill('10.90.0.0/16');
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('a new address space reaches every cloud', /10\.90\.0\.0\/16/.test(body));
-  check('subnets are carved from it', /10\.90\.1\.0\/24/.test(body));
-  check(
-    'buttons survive an edit',
-    (await page.locator('button', { hasText: 'Download as one file' }).count()) > 0,
-  );
-  await ctx.close();
-}
-
-// --- the resource catalog -------------------------------------------------
-{
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
-  const body0 = await page.locator('body').innerText();
-  // The catalog reports its own size and the date it was fetched, so a stale or
-  // half-fetched one is visible on the page rather than only in the file.
-  check('the catalog reports its size and age', /Catalog holds \d{3,} resources/.test(body0));
-
-  const q = page.locator('.field', { hasText: 'Search' }).locator('input').first();
-  await q.fill('distributed');
-  await page.waitForTimeout(700);
-  let body = await page.locator('body').innerText();
-  check('catalog search finds a known type', /vsphere_distributed_port_group/.test(body));
-
-  await q.fill('zzzznotathing');
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('a miss reports how much was searched', /Nothing matched/.test(body));
-  await ctx.close();
-}
-
-// --- the Ansible kit generates a real repository --------------------------
-{
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
+  // Same tab, other generator: it must already be on OCI.
   await page.goto(`${BASE}/app/ansible.html`, { waitUntil: 'networkidle' });
-  let body = await page.locator('body').innerText();
-
-  check('vSphere is selected by default and emits a scaffold', /requirements\.yml/.test(body));
-  check('collections are pinned to a major line', /vmware\.vmware/.test(body) && />=2\.10\.0,<3\.0\.0/.test(body));
-  check('host key checking is left on', /host_key_checking = True/.test(body));
-  check('the collection playbook uses a real module', /vmware\.vmware\.cluster_info:/.test(body));
-  check('cluster configuration is emitted from the typed clusters', /vmware\.vmware\.cluster_ha:/.test(body));
-  check('a recognised automation level is normalised', /drs_default_vm_behavior: fullyAutomated/.test(body));
-  check('credentials come from the environment, not the file', /VMWARE_PASSWORD/.test(body));
-
-  // The playbook itself must carry no password argument anywhere.
-  const playbookPasswords = (body.match(/^\s*password:/gm) ?? []).length;
-  check('no password argument is written into any playbook', playbookPasswords === 0);
-
-  // A blank field must stay genuinely unset rather than become a "no".
-  const clusters = page.locator('.field', { hasText: 'Clusters' }).locator('input').first();
-  await clusters.fill('mgmt-01:::');
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('an unrecorded setting produces no task', !/cluster_ha:/.test(body));
-  check('and says why', /does not record HA/.test(body));
-
-  await clusters.fill('mgmt-01:yes:yes:semi-automatic');
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('an invalid automation level is refused', /not a DRS automation level/.test(body));
-  check('and is not written into the playbook', !/semi-automatic\n/.test(body.replace(/"/g, '')));
-
-  // Selecting another platform must add its collection.
-  await page.locator('label', { hasText: 'Amazon Web Services' }).locator('input').first().check();
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('a second platform adds its collection', /amazon\.aws/.test(body));
-  check('ansible.builtin is never in requirements', !/name: ansible\.builtin/.test(body));
-
-  const q = page.locator('.field', { hasText: 'Search' }).locator('input').first();
-  await q.fill('esxi');
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('module search finds a known module', /vmware\.vmware\.esxi_info/.test(body));
-
-  await q.fill('zzzznotathing');
-  await page.waitForTimeout(700);
-  body = await page.locator('body').innerText();
-  check('a miss reports how much was searched', /Nothing matched/.test(body));
-
   check(
-    'buttons survive every edit',
-    (await page.locator('button', { hasText: 'Download as one file' }).count()) > 0,
+    'the platform carries from one generator to the other',
+    (await page.locator('select').first().inputValue()) === 'oci',
+  );
+  await ctx.close();
+}
+
+// --- the matrix decides the platform, and the generators follow -----------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/multicloud.html`, { waitUntil: 'networkidle' });
+  await page
+    .locator('.card', { hasText: 'Already committed to' })
+    .locator('label', { hasText: 'Azure' })
+    .locator('input')
+    .first()
+    .check();
+  await page
+    .locator('.card', { hasText: 'Team can operate' })
+    .locator('label', { hasText: 'Azure' })
+    .locator('input')
+    .first()
+    .check();
+  await page.waitForTimeout(700);
+
+  await page.goto(`${BASE}/app/ansible.html`, { waitUntil: 'networkidle' });
+  check(
+    'a decision reaches the generator without being retyped',
+    (await page.locator('select').first().inputValue()) === 'azure',
+  );
+  check(
+    'and the generator says where the platform came from',
+    /set by the decision matrix/.test(await page.locator('body').innerText()),
   );
   await ctx.close();
 }

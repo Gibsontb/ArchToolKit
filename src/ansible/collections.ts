@@ -157,6 +157,18 @@ export const COLLECTIONS: readonly CollectionInfo[] = [
     requires: 'pywinrm on the control node for the WinRM transport.',
   },
   {
+    name: 'microsoft.ad',
+    target: 'windows',
+    label: 'Active Directory',
+    version: '>=1.12.1,<2.0.0',
+    observedVersion: '1.12.1',
+    credentials:
+      'Domain credentials from the inventory or a vault, usually over WinRM with Kerberos. A domain join password never belongs in a playbook.',
+    requires: 'A Windows host; the modules run there, not on the control node.',
+    note:
+      'Where the Active Directory modules live now. ansible.windows 3.8.0 no longer carries win_domain_membership and the rest of the domain modules.',
+  },
+  {
     name: 'community.general',
     target: 'general',
     label: 'Community general',

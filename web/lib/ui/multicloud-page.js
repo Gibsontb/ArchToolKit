@@ -19,6 +19,7 @@
 import { el, append, replace } from './dom.js';
 import { card, field, findingsList, numberInput, select, checkbox, verificationBadge, table } from './components.js';
 import { takeHandoff } from './handoff.js';
+import { setTarget,               } from '../kit/target.js';
 import {
   decide,
   profileFromInventory,
@@ -217,6 +218,12 @@ export function mountMulticloudPage(root             )       {
     // --- what to do next ----------------------------------------------------
     if (decision.handoff) {
       const meta = platformInfo(decision.handoff.platform);
+      // The matrix is where the platform gets decided, so this is where it gets
+      // set. The generators read it, which is why they do not ask again.
+      setTarget(
+        (decision.handoff.platform === 'vmware' ? 'vsphere' : decision.handoff.platform)            ,
+        'set by the decision matrix',
+      );
       sections.push(
         card(
           'What to generate next',

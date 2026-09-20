@@ -25,16 +25,11 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>Terraform authoring</h1>
-        <p>
-          Describe a network once and read what each cloud wants it to look like. Provider versions
-          come from the Terraform Registry and every resource is written against that provider's
-          published schema — where a provider cannot express something, it is reported rather than
-          invented. Credentials are never written into the output.
-        </p>
+        <h1>Terraform script generator</h1>
+        <p>Pick a platform and a blueprint, feed it parameters, and get a ready-to-paste Terraform configuration. Every resource type is checked against the committed provider catalog before it reaches you.</p>
       </div>
 
-      <div id="terraform-root"></div>
+            <div id="terraform-root"></div>
     </main>
 
     <script type="module" src="../lib/ui/terraform-page.js"></script>

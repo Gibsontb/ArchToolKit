@@ -48,6 +48,7 @@ const COLLECTIONS = [
   'ansible.posix',
   'ansible.windows',
   'community.general',
+  'microsoft.ad',
 ];
 
 async function getJson(url) {
@@ -59,10 +60,15 @@ async function getJson(url) {
 /**
  * Module names for a collection's newest published version.
  *
- * Files under plugins/modules/ are the modules. Anything starting with an
- * underscore is a deprecated alias that Galaxy still ships, and `__init__` is
- * packaging rather than a module; neither should be offered as something to
- * write into a playbook.
+ * Files under plugins/modules/ are the modules. Three extensions count, not
+ * one: a Python module is `.py`, but a Windows module is a PowerShell `.ps1`
+ * with a `.yml` sidecar carrying its documentation. Counting only `.py` made
+ * ansible.windows look five modules smaller than it is and microsoft.ad look
+ * like it had one — which then reported real modules as not existing.
+ *
+ * Anything starting with an underscore is a deprecated alias that Galaxy still
+ * ships, and `__init__` is packaging rather than a module; neither should be
+ * offered as something to write into a playbook.
  */
 async function fetchCollection(fqcn) {
   const [namespace, name] = fqcn.split('.');
@@ -72,12 +78,15 @@ async function fetchCollection(fqcn) {
 
   const detail = await getJson(`${API}/${namespace}/${name}/versions/${version}/`);
   const files = detail.files?.files ?? [];
+  const PREFIX = 'plugins/modules/';
   const modules = [
     ...new Set(
       files
         .map((f) => String(f.name ?? ''))
-        .filter((n) => n.startsWith('plugins/modules/') && n.endsWith('.py'))
-        .map((n) => n.slice('plugins/modules/'.length, -'.py'.length))
+        .filter((n) => n.startsWith(PREFIX) && /\.(py|ps1|yml)$/.test(n))
+        // A Windows module is a .ps1 and a .yml with the same name, so the
+        // extension comes off and the set deduplicates the pair.
+        .map((n) => n.slice(PREFIX.length).replace(/\.(py|ps1|yml)$/, ''))
         .filter((n) => n && !n.startsWith('_') && n !== '__init__'),
     ),
   ].sort();

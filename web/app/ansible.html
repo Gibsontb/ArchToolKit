@@ -25,17 +25,11 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>Ansible authoring</h1>
-        <p>
-          Terraform builds an estate; Ansible reads one and reconfigures it. Generate the repository
-          spine — collections, configuration, inventory and an encrypted vault — then real vSphere
-          playbooks: one that collects an estate into JSON the inventory importer reads, and one that
-          renders the cluster settings an imported inventory already holds. Module names are checked
-          against the Galaxy catalog, and no credential is ever written into a generated file.
-        </p>
+        <h1>Ansible playbook generator</h1>
+        <p>Pick a platform and a playbook, feed it parameters, and get a ready-to-run playbook plus the requirements.yml derived from the modules it actually uses. Every module name is checked against the committed Galaxy catalog.</p>
       </div>
 
-      <div id="ansible-root"></div>
+            <div id="ansible-root"></div>
     </main>
 
     <script type="module" src="../lib/ui/ansible-page.js"></script>
