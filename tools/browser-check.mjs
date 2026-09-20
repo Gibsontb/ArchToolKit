@@ -257,6 +257,27 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- the resource catalog -------------------------------------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  const body0 = await page.locator('body').innerText();
+  check('the catalog says when it is incomplete', /catalog:update/i.test(body0));
+
+  const q = page.locator('.field', { hasText: 'Search' }).locator('input').first();
+  await q.fill('distributed');
+  await page.waitForTimeout(700);
+  let body = await page.locator('body').innerText();
+  check('catalog search finds a known type', /vsphere_distributed_port_group/.test(body));
+
+  await q.fill('zzzznotathing');
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('a miss reports how much was searched', /Nothing matched/.test(body));
+  await ctx.close();
+}
+
 await browser.close();
 stop();
 

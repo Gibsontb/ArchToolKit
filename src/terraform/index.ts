@@ -17,6 +17,8 @@ export * from './hcl.ts';
 export * from './providers.ts';
 export * from './foundation.ts';
 export * from './scaffold.ts';
+export * from './catalog.ts';
+export * from './resource.ts';
 export { emitTerraform } from './vcf.ts';
 export { emitAwsFoundation } from './aws.ts';
 export { emitAzureFoundation } from './azure.ts';

@@ -129,6 +129,23 @@ Credentials are never written into generated files. Each provider's own
 authentication method is described in a comment, and the VCF emitter turns every
 password into a `sensitive` variable.
 
+## Resource catalog
+
+The kit hand-writes the resources worth getting exactly right and consults a
+catalog for the rest — roughly 5,000 resources and 4,000 data sources across the
+six providers, far too many to maintain by hand and changing with every release.
+
+    npm run catalog:update
+
+fetches the lists from the Terraform Registry and rewrites
+`src/terraform/catalog-data.ts`, which is committed so the toolkit still works
+air-gapped. The catalog records the provider version each list came from and the
+date it was fetched, and reports when it is old, when providers are missing, and
+when the version it was built from no longer matches the one the kit pins.
+
+Not knowing a resource is kept distinct from knowing it is wrong: an uncatalogued
+provider produces a warning, not a rejection.
+
 ## Checks
 
     npm test            unit suite, no dependencies, runs anywhere

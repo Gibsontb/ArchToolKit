@@ -13,6 +13,10 @@ import { card, field, findingsList, numberInput, select, checkbox } from './comp
 import {
   scaffold,
   emitFoundation,
+  searchCatalog,
+  catalogFindings,
+  catalogTotals,
+  catalogued,
   PROVIDERS,
                    
                       
@@ -39,6 +43,7 @@ function textInput(value        , placeholder = '')                   {
                                
                             
                              
+                                 
                                                           
  
 
@@ -130,7 +135,8 @@ export function mountTerraformPage(root             )       {
     const { plan, exact } = currentPlan();
     const targets = selectedTargets();
     const backend = controls.backend.value               ;
-    const key = JSON.stringify({ plan, targets, backend });
+    const query = controls.catalogQuery.value.trim();
+    const key = JSON.stringify({ plan, targets, backend, query });
     if (key === lastRenderKey) return;
     lastRenderKey = key;
 
@@ -170,6 +176,44 @@ export function mountTerraformPage(root             )       {
       );
     }
 
+    // The catalog answers "does this resource exist", which is a different
+    // question from "what should I generate", so it gets its own section.
+    if (query.length > 1) {
+      // Searched across every catalogued provider rather than the current
+      // selection: this is a reference for looking a resource up, and scoping it
+      // to the selection made it answer "nothing" whenever the chosen cloud
+      // happened not to be catalogued yet, with no hint as to why.
+      const hits = searchCatalog(query, { limit: 60 });
+      const totals = catalogTotals();
+      const uncatalogued = targets.filter((t) => !catalogued().includes(t));
+      sections.push(
+        card(
+          `Catalog — ${hits.length} match${hits.length === 1 ? '' : 'es'}`,
+          hits.length === 0
+            ? el('p', {
+                text:
+                  `Nothing matched "${query}" in ${totals.resources} resources and ${totals.dataSources} data sources across ${catalogued().length} catalogued provider(s).` +
+                  (uncatalogued.length > 0
+                    ? ` ${uncatalogued.join(', ')} are not catalogued yet — run npm run catalog:update.`
+                    : ''),
+              })
+            : el(
+                'ul',
+                { class: 'finding-list' },
+                ...hits.map((hit) =>
+                  el(
+                    'li',
+                    {},
+                    el('code', { text: hit.type }),
+                    el('span', { class: 'muted', text: `  ${hit.kind}` }),
+                  ),
+                ),
+              ),
+        ),
+      );
+    }
+
+    allFindings.push(...catalogFindings());
     sections.push(card('Findings', findingsList(allFindings, 'Nothing to report.')));
     replace(outputPane, ...sections);
   }
@@ -236,6 +280,7 @@ function buildInputs(controls          , onChange            )              {
   controls.datacenter = bind(textInput('', 'vSphere datacenter'));
   controls.cluster = bind(textInput('', 'vSphere cluster'));
   controls.backend = bind(select(BACKENDS, 'local'));
+  controls.catalogQuery = bind(textInput('', 'Search every resource, e.g. "bucket" or "virtual switch"'));
 
   const targetBoxes = PROVIDERS.map((provider) => {
     const box = checkbox(provider.label, provider.target === 'aws');
@@ -275,6 +320,10 @@ function buildInputs(controls          , onChange            )              {
       ),
     ),
     card('State', field('Backend', controls.backend)),
+    card(
+      'Resource catalog',
+      field('Search', controls.catalogQuery, 'Names come from the Terraform Registry.'),
+    ),
   );
 }
 

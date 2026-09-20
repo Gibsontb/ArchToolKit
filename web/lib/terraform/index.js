@@ -17,6 +17,8 @@ export * from './hcl.js';
 export * from './providers.js';
 export * from './foundation.js';
 export * from './scaffold.js';
+export * from './catalog.js';
+export * from './resource.js';
 export { emitTerraform } from './vcf.js';
 export { emitAwsFoundation } from './aws.js';
 export { emitAzureFoundation } from './azure.js';

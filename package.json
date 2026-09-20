@@ -17,7 +17,8 @@
     "test": "node --test \"src/**/*.test.ts\"",
     "test:watch": "node --test --watch \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "test:browser": "node tools/browser-check.mjs"
+    "test:browser": "node tools/browser-check.mjs",
+    "catalog:update": "node tools/fetch-provider-catalog.mjs"
   },
   "comments": {
     "dependencies": "Intentionally none. The toolkit must run in air-gapped environments with no package registry. TypeScript is compiled by Node's built-in type stripper (tools/build.mjs); tests run on node:test. The only optional dev tool is tsc for full type checking, which is not required to build or run."
