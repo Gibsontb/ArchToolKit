@@ -213,6 +213,99 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- module blueprints: what most Terraform actually looks like ----------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  await page.locator('select').first().selectOption('aws');
+  await page.waitForTimeout(400);
+
+  const list = page.locator('select').nth(1);
+  const groups = await list.evaluate((s) =>
+    Array.from(s.querySelectorAll('optgroup')).map((g) => `${g.label}:${g.children.length}`),
+  );
+  check(
+    'Modules: the picker separates resources from module calls',
+    groups.length === 2 && groups.some((g) => g.startsWith('Registry modules')),
+    groups.join(' | '),
+  );
+
+  const labels = await list.locator('option').allTextContents();
+  const vpc = labels.findIndex((t) => /terraform-aws-modules\/vpc/.test(t));
+  check('Modules: the VPC module is offered', vpc >= 0);
+  await list.selectOption({ index: vpc });
+  await page.waitForTimeout(400);
+
+  // The answer sets apply to module inputs too, because a module input called
+  // `cidr` is the same question as a resource argument called `cidr`.
+  const cidr = page.locator('.field', { hasText: /VPC CIDR/i }).first();
+  check(
+    'Modules: an input with a known answer set still gets its dropdown',
+    (await cidr.locator('select option').count()) > 5,
+  );
+
+  await page.locator('button', { hasText: 'Generate Terraform' }).click();
+  await page.waitForTimeout(700);
+  const body = await page.locator('body').innerText();
+  check('Modules: it generates a module call', /module "vpc" \{/.test(body));
+  check(
+    'Modules: pinned to the version the catalog checked',
+    /source\s+= "terraform-aws-modules\/vpc\/aws"/.test(body) && /version\s+= "~> \d/.test(body),
+  );
+  check('Modules: and reports no errors', /No errors/.test(body));
+  check(
+    'Modules: the catalog says how many modules it holds',
+    /Module catalog holds \d+ registry modules/.test(body),
+  );
+
+  await ctx.close();
+}
+
+// --- the Terraform Map: the reference the generator does not replace ------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/terraform-map.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+
+  const sections = await page.locator('.map-section').count();
+  check('Map: AWS opens with its domains', sections >= 7, `${sections} sections`);
+  check(
+    'Map: and the AWS names all pass the catalog check',
+    (await page.locator('.map-name.is-unknown').count()) === 0,
+  );
+
+  // Every cloud must render, and the marks on the page must agree with the
+  // findings panel — a name flagged in one and not the other is the bug this
+  // page exists to avoid making.
+  for (const target of ['azure', 'google', 'oci']) {
+    await page.locator('select').first().selectOption(target);
+    await page.waitForTimeout(400);
+    const count = await page.locator('.map-section').count();
+    check(`Map: ${target} renders its domains`, count >= 7, `${count} sections`);
+
+    const marked = await page.locator('.map-name.is-unknown').count();
+    const warned = await page.locator('.finding.is-warning').count();
+    check(
+      `Map: ${target} marks exactly what it reports`,
+      marked === warned,
+      `${marked} marked, ${warned} reported`,
+    );
+  }
+
+  // The point of the check is the suggestion, not the complaint.
+  await page.locator('select').first().selectOption('azure');
+  await page.waitForTimeout(400);
+  const body = await page.locator('body').innerText();
+  check(
+    'Map: a stale name is told what replaced it',
+    /azurerm_app_service_plan/.test(body) && /closest catalogued name is azurerm_service_plan/.test(body),
+  );
+
+  await ctx.close();
+}
+
 // --- the generators: platform once, then what to build -------------------
 for (const [kind, path, generateLabel, expect] of [
   ['Terraform', '/app/terraform.html', 'Generate Terraform', /resource "aws_instance"/],

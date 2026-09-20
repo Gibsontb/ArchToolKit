@@ -279,11 +279,11 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     });
 
     const list = el('select') as HTMLSelectElement;
-    for (const item of available()) {
-      const opt = el('option', { text: item.label, attrs: { value: item.id } });
-      if (item.id === blueprint?.id) (opt as HTMLOptionElement).selected = true;
-      list.appendChild(opt);
-    }
+    fillOptions(
+      list,
+      available().map((item) => ({ value: item.id, label: item.label, group: item.group })),
+      blueprint?.id ?? '',
+    );
     list.addEventListener('change', () => {
       selectBlueprint(available().find((b) => b.id === list.value));
       renderTwo();

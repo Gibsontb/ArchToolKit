@@ -1,0 +1,166 @@
+/**
+ * Turning a registry module into something with a form in front of it.
+ *
+ * A module blueprint is a short declaration — which module, and which of its
+ * inputs to put on the page — and this turns that into an ordinary Blueprint,
+ * so the module generators and the resource generators are the same page and
+ * the same code path.
+ *
+ * Only some inputs go on the form, and that is the point rather than a
+ * shortcut. `terraform-aws-modules/vpc/aws` takes 236 of them; a form with 236
+ * fields is not a better answer than a text box, it is a worse one. The dozen
+ * listed per blueprint are the ones a call actually sets, and everything else
+ * keeps the module's own default — which is what calling a module is for.
+ *
+ * Every input named here is checked against the catalog at test time, so a
+ * blueprint that names an input a module dropped in a major version fails in
+ * the suite rather than at plan.
+ */
+
+                                                                                  
+import { moduleBySource, moduleCall, versionConstraint,                } from './modules.js';
+import { providerFor,                  } from './providers.js';
+
+/** One field on the form, naming an input the module really has. */
+                              
+                                                                              
+                                                                          
+                         
+                                                                 
+                          
+                         
+                            
+                                                                             
+                                               
+                                               
+ 
+
+                                      
+                      
+                         
+                               
+                                                               
+                          
+                                                       
+                        
+                                          
+                                                                         
+                              
+                                                                       
+                                       
+                                                   
+                          
+ 
+
+/** A variable's shape decides the control when the spec does not. */
+function controlFor(kind           )                            {
+  if (kind === 'bool') return 'select';
+  if (kind === 'number') return 'number';
+  return 'text';
+}
+
+function hintFor(kind           , required         )                     {
+  const shape =
+    kind === 'list' || kind === 'set' || kind === 'tuple'
+      ? 'Comma-separated'
+      : kind === 'map' || kind === 'object'
+        ? 'key=value, comma-separated'
+        : undefined;
+  if (required && shape) return `Required. ${shape}`;
+  if (required) return 'Required by the module';
+  return shape;
+}
+
+const BOOL_OPTIONS = [
+  { value: 'true', label: 'Yes' },
+  { value: 'false', label: 'No' },
+];
+
+/** `private_subnet_names` to "Private subnet names". */
+function labelFor(input        )         {
+  const words = input.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+export function moduleBlueprint(target             , spec                     )            {
+  const module = moduleBySource(spec.source);
+  if (!module) {
+    throw new Error(`No catalog entry for module ${spec.source}`);
+  }
+
+  const inputs                   = spec.fields.map((field) => {
+    const declared = module.inputs.find((i) => i.name === field.input);
+    if (!declared) {
+      throw new Error(`Module ${spec.source} has no input "${field.input}"`);
+    }
+    const control = field.control ?? controlFor(declared.kind);
+    return {
+      id: field.input,
+      label: field.label ?? labelFor(field.input),
+      control,
+      hint: field.hint ?? hintFor(declared.kind, declared.required),
+      default: field.default,
+      options: field.options ?? (control === 'select' && declared.kind === 'bool' ? BOOL_OPTIONS : undefined),
+    };
+  });
+
+  const provider = providerFor(target);
+
+  return {
+    id: spec.id,
+    label: spec.label,
+    description: spec.description,
+    inputs,
+    group: spec.group,
+    // What this emits is a call to one module. `emits` is documented as
+    // resource *or module* names, and recording the source here is what lets
+    // the test suite find the catalog entry to check the inputs against
+    // without parsing it back out of the label.
+    emits: [spec.source],
+    build: (values, name)              => {
+      const chosen = new Map                 ();
+      for (const field of spec.fields) chosen.set(field.input, values[field.input]);
+
+      const header = `# ${spec.label}
+#
+# Generated by ArchToolKit. Calls ${spec.source} ${versionConstraint(module.version)},
+# which is the module's own code — the inputs below were checked against
+# version ${module.version} of it, so this plans or it tells you why.
+
+terraform {
+  required_version = ">= 1.5"
+
+  required_providers {
+    ${provider.localName} = {
+      source  = "${provider.source}"
+      version = "${provider.version}"
+    }
+  }
+}`;
+
+      const call = moduleCall({
+        name: spec.name,
+        source: spec.source,
+        values: chosen,
+        tagsInput: spec.tagsInput,
+        tags: new Map([
+          ['ManagedBy', 'terraform'],
+          ['System', String(name || spec.id)],
+        ]),
+      });
+
+      const outputs = (spec.outputs ?? [])
+        .map(
+          (output) =>
+            `output "${output}" {\n  description = "From ${spec.source}."\n  value       = module.${spec.name}.${output}\n}`,
+        )
+        .join('\n\n');
+
+      return {
+        files: {
+          'main.tf': [header, call, outputs].filter(Boolean).join('\n\n') + '\n',
+        },
+      };
+    },
+  };
+}

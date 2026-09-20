@@ -11,6 +11,7 @@
 import { mountGeneratorPage } from './generator-page.ts';
 import { TERRAFORM_BLUEPRINTS } from '../terraform/blueprints/index.ts';
 import { catalogFindings } from '../terraform/catalog.ts';
+import { moduleFindings } from '../terraform/modules.ts';
 
 const root = document.getElementById('terraform-root');
 if (root) {
@@ -21,7 +22,7 @@ if (root) {
     idleHint:
       'Pick a platform and blueprint, adjust the parameters, then Generate. Save the result as main.tf and run terraform init && terraform plan.',
     downloadExtension: '.tf',
-    standingFindings: () => catalogFindings(),
+    standingFindings: () => [...catalogFindings(), ...moduleFindings()],
   });
 }
 

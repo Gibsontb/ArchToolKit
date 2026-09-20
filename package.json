@@ -21,6 +21,7 @@
     "catalog:update": "node tools/fetch-provider-catalog.mjs",
     "ansible:update": "node tools/fetch-ansible-catalog.mjs",
     "sizes:update": "node tools/fetch-compute-catalog.mjs",
+    "modules:update": "node tools/fetch-module-catalog.mjs",
     "verify:schemas": "node tools/verify-foundation-schemas.mjs"
   },
   "comments": {

@@ -96,6 +96,16 @@ export interface BuildResult {
 export interface Blueprint {
   readonly id: string;
   readonly label: string;
+  /**
+   * The heading this sits under in the picker, rendered as an `<optgroup>`.
+   *
+   * A platform now offers two kinds of thing — resources written out, and calls
+   * to a registry module — and they answer different questions. Listing them
+   * flat would make "VPC baseline (2 subnets + IGW)" and "VPC
+   * (terraform-aws-modules/vpc)" look like rivals rather than two levels of
+   * the same decision.
+   */
+  readonly group?: string;
   /** One sentence describing what gets built, shown above the parameters. */
   readonly description: string;
   readonly inputs: readonly BlueprintInput[];
