@@ -17,6 +17,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,6 +106,70 @@ for (const [name, path] of [
   check(
     'reloading does not re-apply a spent handoff',
     (await page.locator('text=Prefilled from your sizing').count()) === 0,
+  );
+  await ctx.close();
+}
+
+// --- the whole chain, from an imported estate to a document ---------------
+{
+  // Four hosts, one deliberately smaller: the weakest host is what sets the
+  // per-host profile, so seeing 512 downstream proves the estate really drove
+  // the sizing rather than a default coming through.
+  const estate = {
+    source: { kind: 'powercli', label: 'browser-check' },
+    hosts: [768, 768, 512, 768].map((memoryGib, i) => ({
+      name: `esx0${i + 1}.check.local`,
+      cluster: 'Check-Cluster',
+      cpuSockets: 2,
+      coresPerSocket: 24,
+      totalCores: 48,
+      threads: 96,
+      memoryGib,
+      nicCount: 4,
+      esxVersion: '8.0.3',
+    })),
+    vms: [
+      { name: 'app01', vcpu: 8, memoryGib: 32, provisionedGib: 300, usedGib: 180, powerState: 'PoweredOn' },
+      { name: 'db01', vcpu: 32, memoryGib: 256, provisionedGib: 2000, usedGib: 1600, powerState: 'PoweredOn' },
+    ],
+    clusters: [{ name: 'Check-Cluster', datacenter: 'DC1', haEnabled: true, drsEnabled: true, hostCount: 4 }],
+    datastores: [{ name: 'vsanDatastore', type: 'vsan', capacityGib: 40960, freeGib: 18000, hostCount: 4 }],
+    networks: [{ name: 'VM Network', switchName: 'DSwitch', vlanId: 100, type: 'DistributedPortgroup' }],
+  };
+  const fixture = join(mkdtempSync(join(tmpdir(), 'atk-')), 'estate.json');
+  writeFileSync(fixture, JSON.stringify(estate));
+
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[type=file]').setInputFiles(fixture);
+  await page.waitForTimeout(1200);
+
+  check(
+    'an imported estate produces a sizing bridge',
+    /As a VCF target/i.test(await page.locator('body').innerText()),
+  );
+
+  await page.locator('button', { hasText: 'Continue in sizing' }).click();
+  await page.waitForTimeout(1500);
+  check('inventory hands over to sizing', page.url().endsWith('/vcf-sizing.html'));
+  check(
+    'sizing says where its values came from',
+    (await page.locator('text=Prefilled from your inventory').count()) === 1,
+  );
+  const ram = await page
+    .locator('.field', { hasText: 'RAM (GiB)' })
+    .locator('input')
+    .first()
+    .inputValue();
+  check('the weakest host set the per-host profile', ram === '512', `got ${ram}`);
+
+  await page.locator('button', { hasText: 'Continue in the spec' }).click();
+  await page.waitForTimeout(1500);
+  check('sizing hands over to the spec builder', page.url().endsWith('/vcf-spec.html'));
+  check(
+    'a document comes out the far end',
+    /"sddcId"/.test(await page.locator('body').innerText()),
   );
   await ctx.close();
 }
