@@ -106,8 +106,28 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
 | Multi-cloud decision matrix | Planned |
 | Application migration and modernization | Planned |
-| Terraform authoring kit | Planned |
+| Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up |
 | Ansible authoring kit | Planned |
+
+## Terraform authoring
+
+The kit emits three kinds of output:
+
+- **Scaffold** — `required_providers`, a state backend, provider blocks and
+  variables, for any combination of AWS, Azure, Google, OCI, vSphere and VCF.
+- **Network foundation** — a private network, subnets, egress and ingress rules,
+  written in each cloud's own nouns from one description.
+- **VCF bring-up** — a `vcf_instance` resource generated from an `SddcSpec`.
+
+Provider source addresses and versions were read from the Terraform Registry,
+and every resource was written against that provider's published schema. Where a
+provider cannot express something, the kit reports it rather than inventing a
+block: the VCF provider's compatibility matrix stops at 9.0.0 and has no blocks
+for the components 9.1 added, and each of those is named in the findings.
+
+Credentials are never written into generated files. Each provider's own
+authentication method is described in a comment, and the VCF emitter turns every
+password into a `sensitive` variable.
 
 ## Checks
 
