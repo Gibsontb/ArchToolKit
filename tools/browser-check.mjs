@@ -240,6 +240,16 @@ for (const [kind, path, generateLabel, expect] of [
   // Step 2 must use a dropdown for a one-of choice.
   const region = page.locator('.field', { hasText: 'region' }).locator('select').first();
   check(`${kind}: region is a dropdown`, (await region.count()) > 0);
+
+  // The sized fields were a datalist once, which shows no arrow and no list
+  // until you type — indistinguishable from an empty text box.
+  const sized = page.locator('.field', { hasText: /instance type|machine type|vm size|shape/i }).first();
+  const sizedOptions = await sized.locator('select option').count();
+  check(`${kind}: the machine size is a dropdown with real choices`, sizedOptions > 5, `${sizedOptions} options`);
+  check(
+    `${kind}: and still lets you type one it has not heard of`,
+    (await sized.locator('select option[value="__custom__"]').count()) === 1,
+  );
   const regionText = (await region.locator('option').allTextContents()).join(' ');
   check(
     `${kind}: with the Gov and ISO regions, not just the commercial ones`,
@@ -463,10 +473,9 @@ for (const [kind, path, generateLabel, expect] of [
       const out = {};
       document.querySelectorAll('.field').forEach((f) => {
         const label = (f.querySelector('label') || {}).textContent || '';
-        const input = f.querySelector('input[list]');
-        if (!input) return;
-        const list = document.getElementById(input.getAttribute('list'));
-        out[label.trim()] = Array.from(list ? list.options : []).map((o) => o.value);
+        const select = f.querySelector('.combo select');
+        if (!select) return;
+        out[label.trim()] = Array.from(select.options).map((o) => o.value);
       });
       return out;
     });

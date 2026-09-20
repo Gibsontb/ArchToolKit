@@ -95,24 +95,53 @@ function control(input                , value         , onChange            )   
   }
 
   if (input.control === 'combo') {
-    // A native datalist: the field shows a dropdown of the usual answers and
-    // still accepts anything, which is what a long or partly-private list
-    // needs. No dependency and no custom widget to get wrong.
-    const listId = `dl-${input.id}`;
-    const node = el('input', {
-      attrs: {
-        type: 'text',
-        list: listId,
-        ...(input.placeholder ? { placeholder: input.placeholder } : {}),
-      },
-    })                    ;
-    node.value = String(value ?? '');
-    node.addEventListener('input', onChange);
-    const list = el('datalist', { attrs: { id: listId } });
-    for (const option of input.options ?? []) {
-      list.appendChild(el('option', { attrs: { value: option.value } }));
+    /*
+     * A real dropdown, with a way out.
+     *
+     * This was a datalist first, which was a mistake: a datalist shows no arrow
+     * and no list until you type into it, so a field with thirteen machine
+     * types in it looked exactly like an empty text box. A select shows what is
+     * on offer without being asked.
+     *
+     * The last entry swaps in a text box, because these sets are the common
+     * answers rather than the only ones — a machine type the list has not heard
+     * of still has to be typeable.
+     */
+    const CUSTOM = '__custom__';
+    const options = input.options ?? [];
+    const current = String(value ?? '');
+    const known = options.some((o) => o.value === current);
+
+    const select = el('select')                     ;
+    for (const option of options) {
+      const opt = el('option', { text: option.label, attrs: { value: option.value } });
+      if (option.value === current) (opt                     ).selected = true;
+      select.appendChild(opt);
     }
-    return el('div', { class: 'combo' }, node, list);
+    const customOption = el('option', {
+      text: 'Other — type a value…',
+      attrs: { value: CUSTOM },
+    })                     ;
+    if (!known && current !== '') customOption.selected = true;
+    select.appendChild(customOption);
+
+    const custom = el('input', {
+      attrs: { type: 'text', placeholder: input.placeholder ?? 'Type a value' },
+    })                    ;
+    custom.value = known ? '' : current;
+    custom.style.display = known || current === '' ? 'none' : '';
+    custom.style.marginTop = 'var(--space-2)';
+
+    const wrap = el('div', { class: 'combo' }, select, custom);
+
+    select.addEventListener('change', () => {
+      const picked = select.value === CUSTOM;
+      custom.style.display = picked ? '' : 'none';
+      if (picked) custom.focus();
+      onChange();
+    });
+    custom.addEventListener('input', onChange);
+    return wrap;
   }
 
   if (input.control === 'textarea') {
@@ -292,10 +321,14 @@ export function mountGeneratorPage(root             , options                  )
       if (!isVisible(raw, values)) continue;
       const input = withEstate(raw, target);
       const node = control(input, values[input.id], () => {
-        const field = (node.classList.contains('combo')
-          ? node.querySelector('input')
-          : node)                                        ;
-        const raw = field.value;
+        let raw        ;
+        if (node.classList.contains('combo')) {
+          const picker = node.querySelector('select')                     ;
+          const typed = node.querySelector('input')                    ;
+          raw = picker.value === '__custom__' ? typed.value : picker.value;
+        } else {
+          raw = (node                                        ).value;
+        }
         values = { ...values, [input.id]: raw };
         // A follow-up question may have appeared or gone away.
         if (blueprint?.inputs.some((i) => i.showWhen?.input === input.id)) renderTwo();

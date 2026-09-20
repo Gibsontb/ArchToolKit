@@ -211,10 +211,16 @@ function looksBoolean(input                )          {
   return value === 'true' || value === 'false';
 }
 
-export function applyChoices(input                , target        )                 {
-  // A blueprint that already declared a closed set knows better than a rule.
-  if (input.control === 'select') return input;
+/** Existing options first, then the ones the rule adds, without duplicates. */
+function merge(
+  existing                         ,
+  added                         ,
+)                          {
+  const seen = new Set(existing.map((o) => o.value));
+  return [...existing, ...added.filter((o) => !seen.has(o.value))];
+}
 
+export function applyChoices(input                , target        )                 {
   if (looksBoolean(input)) {
     return { ...input, control: 'select', options: YES_NO };
   }
@@ -222,6 +228,24 @@ export function applyChoices(input                , target        )             
   for (const rule of RULES) {
     if (rule.target !== undefined && rule.target !== target) continue;
     if (!rule.match.test(input.id)) continue;
+
+    /*
+     * A blueprint that already declared a closed set is not overruled, it is
+     * added to. The originals list a handful of instance types; the rule knows
+     * a couple of dozen. Replacing theirs would lose the ones they chose for a
+     * reason, and ignoring the rule leaves a field offering six machines out of
+     * hundreds. So both, theirs first.
+     *
+     * The one exception is a genuinely closed set the rule declares — a storage
+     * replication type is one of six things — where adding to it would offer a
+     * seventh that the provider rejects.
+     */
+    if (input.control === 'select') {
+      const existing = input.options ?? [];
+      if (rule.control === 'select' || existing.length === 0) return input;
+      return { ...input, control: 'combo', options: merge(existing, rule.options) };
+    }
+
     return {
       ...input,
       control: rule.control,
