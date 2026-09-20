@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Terraform · ArchToolKit</title>
+    <title>Terraform Map · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -20,21 +20,21 @@
         <a href="migration-portfolio.html">Portfolio</a>
         <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
-        <a href="terraform-map.html">Terraform Map</a>
-        <a href="terraform.html" aria-current="page">Terraform</a>
+        <a href="terraform-map.html" aria-current="page">Terraform Map</a>
+        <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
       </nav>
     </header>
 
     <main class="page">
       <div class="page-header">
-        <h1>Terraform script generator</h1>
-        <p>Pick a platform and a blueprint, feed it parameters, and get a ready-to-paste Terraform configuration. Every resource type is checked against the committed provider catalog before it reaches you.</p>
+        <h1>Terraform Map</h1>
+        <p>Which resource does which job, per cloud and per domain, with the pattern to put around it. Every name on the page is checked against the committed provider catalog, so one that has been renamed since the map was written says so here rather than at plan time.</p>
       </div>
 
-            <div id="terraform-root"></div>
+      <div id="terraform-map-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/terraform-page.js"></script>
+    <script type="module" src="../lib/ui/terraform-map-page.js"></script>
   </body>
 </html>
