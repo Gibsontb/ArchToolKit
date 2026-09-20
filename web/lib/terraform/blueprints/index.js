@@ -31,8 +31,8 @@ import { AZURE_TERRAFORM_MODULES } from './modules-azure.js';
 import { GOOGLE_TERRAFORM_MODULES } from './modules-google.js';
 import { OCI_TERRAFORM_MODULES } from './modules-oci.js';
 
-const RESOURCES = 'Written as resources';
-const MODULES = 'Registry modules';
+const RESOURCES = 'Plain Terraform resources';
+const MODULES = 'Terraform Registry modules';
 
 function labelled(blueprints                      , group        )                       {
   return blueprints.map((blueprint) => ({ ...blueprint, group }));

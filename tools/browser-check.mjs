@@ -227,7 +227,7 @@ for (const [name, path] of [
   );
   check(
     'Modules: the picker separates resources from module calls',
-    groups.length === 2 && groups.some((g) => g.startsWith('Registry modules')),
+    groups.length === 2 && groups.some((g) => g.startsWith('Terraform Registry modules')),
     groups.join(' | '),
   );
 

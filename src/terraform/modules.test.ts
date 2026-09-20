@@ -139,7 +139,7 @@ describe('a generated module call', () => {
 
 describe('the module blueprints', () => {
   const moduleBlueprints = TERRAFORM_BLUEPRINTS.flatMap((group) =>
-    group.blueprints.filter((b) => b.group === 'Registry modules').map((b) => ({ group, b })),
+    group.blueprints.filter((b) => b.group === 'Terraform Registry modules').map((b) => ({ group, b })),
   );
 
   it('exist on every cloud that has modules', () => {

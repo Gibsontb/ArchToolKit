@@ -31,8 +31,8 @@ import { AZURE_TERRAFORM_MODULES } from './modules-azure.ts';
 import { GOOGLE_TERRAFORM_MODULES } from './modules-google.ts';
 import { OCI_TERRAFORM_MODULES } from './modules-oci.ts';
 
-const RESOURCES = 'Written as resources';
-const MODULES = 'Registry modules';
+const RESOURCES = 'Plain Terraform resources';
+const MODULES = 'Terraform Registry modules';
 
 function labelled(blueprints: readonly Blueprint[], group: string): readonly Blueprint[] {
   return blueprints.map((blueprint) => ({ ...blueprint, group }));
