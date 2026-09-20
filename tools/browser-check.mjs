@@ -68,6 +68,7 @@ for (const [name, path] of [
   ['sizing', '/app/vcf-sizing.html'],
   ['spec', '/app/vcf-spec.html'],
   ['terraform', '/app/terraform.html'],
+  ['ansible', '/app/ansible.html'],
 ]) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -263,7 +264,9 @@ for (const [name, path] of [
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
   const body0 = await page.locator('body').innerText();
-  check('the catalog says when it is incomplete', /catalog:update/i.test(body0));
+  // The catalog reports its own size and the date it was fetched, so a stale or
+  // half-fetched one is visible on the page rather than only in the file.
+  check('the catalog reports its size and age', /Catalog holds \d{3,} resources/.test(body0));
 
   const q = page.locator('.field', { hasText: 'Search' }).locator('input').first();
   await q.fill('distributed');
@@ -275,6 +278,64 @@ for (const [name, path] of [
   await page.waitForTimeout(700);
   body = await page.locator('body').innerText();
   check('a miss reports how much was searched', /Nothing matched/.test(body));
+  await ctx.close();
+}
+
+// --- the Ansible kit generates a real repository --------------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/ansible.html`, { waitUntil: 'networkidle' });
+  let body = await page.locator('body').innerText();
+
+  check('vSphere is selected by default and emits a scaffold', /requirements\.yml/.test(body));
+  check('collections are pinned to a major line', /vmware\.vmware/.test(body) && />=2\.10\.0,<3\.0\.0/.test(body));
+  check('host key checking is left on', /host_key_checking = True/.test(body));
+  check('the collection playbook uses a real module', /vmware\.vmware\.cluster_info:/.test(body));
+  check('cluster configuration is emitted from the typed clusters', /vmware\.vmware\.cluster_ha:/.test(body));
+  check('a recognised automation level is normalised', /drs_default_vm_behavior: fullyAutomated/.test(body));
+  check('credentials come from the environment, not the file', /VMWARE_PASSWORD/.test(body));
+
+  // The playbook itself must carry no password argument anywhere.
+  const playbookPasswords = (body.match(/^\s*password:/gm) ?? []).length;
+  check('no password argument is written into any playbook', playbookPasswords === 0);
+
+  // A blank field must stay genuinely unset rather than become a "no".
+  const clusters = page.locator('.field', { hasText: 'Clusters' }).locator('input').first();
+  await clusters.fill('mgmt-01:::');
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('an unrecorded setting produces no task', !/cluster_ha:/.test(body));
+  check('and says why', /does not record HA/.test(body));
+
+  await clusters.fill('mgmt-01:yes:yes:semi-automatic');
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('an invalid automation level is refused', /not a DRS automation level/.test(body));
+  check('and is not written into the playbook', !/semi-automatic\n/.test(body.replace(/"/g, '')));
+
+  // Selecting another platform must add its collection.
+  await page.locator('label', { hasText: 'Amazon Web Services' }).locator('input').first().check();
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('a second platform adds its collection', /amazon\.aws/.test(body));
+  check('ansible.builtin is never in requirements', !/name: ansible\.builtin/.test(body));
+
+  const q = page.locator('.field', { hasText: 'Search' }).locator('input').first();
+  await q.fill('esxi');
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('module search finds a known module', /vmware\.vmware\.esxi_info/.test(body));
+
+  await q.fill('zzzznotathing');
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('a miss reports how much was searched', /Nothing matched/.test(body));
+
+  check(
+    'buttons survive every edit',
+    (await page.locator('button', { hasText: 'Download as one file' }).count()) > 0,
+  );
   await ctx.close();
 }
 

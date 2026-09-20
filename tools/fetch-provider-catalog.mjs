@@ -95,8 +95,11 @@ function existingEntries() {
     return {};
   }
   const found = {};
+  // The generated file is written with JSON.stringify, so every value is
+  // double-quoted. An earlier version of this pattern matched single quotes and
+  // therefore never recovered anything — the exact failure it exists to prevent.
   const pattern =
-    /(\w+):\s*\{\s*source:\s*'([^']*)',\s*version:\s*'([^']*)',\s*resources:\s*\n?\s*'([^']*)',\s*dataSources:\s*\n?\s*'([^']*)',/g;
+    /(\w+):\s*\{\s*source:\s*"([^"]*)",\s*version:\s*"([^"]*)",\s*resources:\s*"([^"]*)",\s*dataSources:\s*"([^"]*)",/g;
   for (const m of previous.matchAll(pattern)) {
     found[m[1]] = {
       source: m[2],

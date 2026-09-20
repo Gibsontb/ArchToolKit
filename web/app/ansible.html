@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ansible · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="../index.html">
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
+      </a>
+      <nav class="header-nav">
+        <a href="../index.html">Home</a>
+        <a href="inventory.html">Inventory</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
+        <a href="vcf-spec.html">VCF Spec Builder</a>
+        <a href="terraform.html">Terraform</a>
+        <a href="ansible.html" aria-current="page">Ansible</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <div class="page-header">
+        <h1>Ansible authoring</h1>
+        <p>
+          Terraform builds an estate; Ansible reads one and reconfigures it. Generate the repository
+          spine — collections, configuration, inventory and an encrypted vault — then real vSphere
+          playbooks: one that collects an estate into JSON the inventory importer reads, and one that
+          renders the cluster settings an imported inventory already holds. Module names are checked
+          against the Galaxy catalog, and no credential is ever written into a generated file.
+        </p>
+      </div>
+
+      <div id="ansible-root"></div>
+    </main>
+
+    <script type="module" src="../lib/ui/ansible-page.js"></script>
+  </body>
+</html>

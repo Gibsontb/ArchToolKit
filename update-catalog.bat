@@ -1,7 +1,15 @@
 @echo off
 setlocal EnableDelayedExpansion
-title ArchToolKit - update Terraform catalog
+title ArchToolKit - update catalogs
 cd /d "%~dp0"
+
+rem Refreshes both catalogs the toolkit consults:
+rem   Terraform resources and data sources, from registry.terraform.io
+rem   Ansible modules, from galaxy.ansible.com
+rem
+rem Both are committed to the repository so the toolkit still works offline.
+rem This is the only part of ArchToolKit that touches the network, and it
+rem sends nothing - it only reads the public provider and collection indexes.
 
 rem ---- Node present? -------------------------------------------------------
 where node >nul 2>&1
@@ -26,40 +34,50 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo.
-echo   Fetching the resource catalog from the Terraform Registry...
-echo   This needs internet access. Nothing else is sent.
-echo.
-
 set "NODE_NO_WARNINGS=1"
-node tools\fetch-provider-catalog.mjs
-set "RESULT=%errorlevel%"
+set "FAILED="
 
 echo.
-if "%RESULT%"=="0" (
-  echo   Done. src\terraform\catalog-data.ts has been rewritten.
+echo   [1/2] Terraform resources, from the Terraform Registry...
+echo.
+node tools\fetch-provider-catalog.mjs
+if errorlevel 1 set "FAILED=!FAILED! Terraform"
+
+echo.
+echo   [2/2] Ansible modules, from Ansible Galaxy...
+echo.
+node tools\fetch-ansible-catalog.mjs
+if errorlevel 1 set "FAILED=!FAILED! Ansible"
+
+echo.
+if defined FAILED (
+  echo   Could not update:!FAILED!
   echo.
-  echo   Two things worth doing now:
-  echo     1. Rebuild so the pages pick it up:   npm run build
-  echo     2. Commit the change, so the catalog travels with the repo.
+  echo   The most likely cause is no route to registry.terraform.io or
+  echo   galaxy.ansible.com - a proxy, a firewall, or simply being offline.
+  echo   Whatever could not be fetched has been left exactly as it was.
   echo.
-  choice /c YN /n /m "   Rebuild now? [Y/N] "
-  if errorlevel 2 goto :done
+  goto :done
+)
+
+echo   Done. Both catalogs have been rewritten:
+echo     src\terraform\catalog-data.ts
+echo     src\ansible\catalog-data.ts
+echo.
+echo   Two things worth doing now:
+echo     1. Rebuild so the pages pick it up:   npm run build
+echo     2. Commit the change, so the catalogs travel with the repo.
+echo.
+choice /c YN /n /m "   Rebuild now? [Y/N] "
+if errorlevel 2 goto :done
+echo.
+node tools\build.mjs
+if errorlevel 1 (
   echo.
-  node tools\build.mjs
-  if errorlevel 1 (
-    echo.
-    echo   The build failed - see the errors above.
-  ) else (
-    echo.
-    echo   Rebuilt. The catalog is live in the pages.
-  )
+  echo   The build failed - see the errors above.
 ) else (
-  echo   The catalog could not be updated.
   echo.
-  echo   The most likely cause is no route to registry.terraform.io -
-  echo   a proxy, a firewall, or simply being offline. The previous
-  echo   catalog has been left exactly as it was.
+  echo   Rebuilt. The catalogs are live in the pages.
 )
 
 :done

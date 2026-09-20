@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Batch files must keep CRLF. cmd.exe is unreliable with LF-only line endings,
+# particularly around goto and multi-line blocks.
+*.bat text eol=crlf
