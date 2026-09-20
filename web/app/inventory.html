@@ -9,30 +9,19 @@
   <body>
     <header class="app-header">
       <a class="brand" href="../index.html">
-        <span class="brand-mark">AT</span>
-        <span>ArchToolKit</span>
+        <span class="brand-mark"></span>
+        <span>
+          <span class="brand-title">VMware Inventory Import</span>
+          <span class="brand-sub">PowerCLI / RVTools ingest into one canonical inventory</span>
+        </span>
       </a>
-      <nav class="header-nav">
-        <a href="../index.html">Home</a>
-        <a href="inventory.html" aria-current="page">Inventory</a>
-        <a href="multicloud.html">Multi-Cloud</a>
-        <a href="vcf-sizing.html">VCF Sizing</a>
-        <a href="vcf-spec.html">VCF Spec Builder</a>
-        <a href="terraform.html">Terraform</a>
-        <a href="ansible.html">Ansible</a>
-      </nav>
+      <div class="header-right">
+        <button class="btn" type="button" onclick="window.location.href='../index.html'">← Main menu</button>
+        <span class="badge">ArchToolKit</span>
+      </div>
     </header>
 
     <main class="page">
-      <div class="page-header">
-        <h1>VMware inventory</h1>
-        <p>
-          Import an RVTools export or a PowerCLI collection and get the estate's capacity,
-          consolidation ratios, VCF licensing exposure and per-host VCF 9.1 readiness — then carry it
-          straight into sizing. Everything runs in this page; nothing is uploaded.
-        </p>
-      </div>
-
       <div id="inventory-root"></div>
     </main>
 

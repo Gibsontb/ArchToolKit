@@ -211,10 +211,37 @@ export function mountMulticloudPage(root: HTMLElement): void {
   const cloudBadge = el('span', { class: 'badge', attrs: { id: 'cloudBadge' } });
   const cloudSubtitle = el('p', { class: 'muted', attrs: { id: 'cloudSubtitle' } });
 
-  const fullViewBtn = el('button', { class: 'btn', text: 'Full view', attrs: { id: 'fullViewBtn' } });
-  const printBtn = el('button', { class: 'btn', text: 'Print', attrs: { id: 'printBtn' } });
-  const wordBtn = el('button', { class: 'btn', text: 'Save as Word', attrs: { id: 'exportWordBtn' } });
+  const fullViewBtn = el('button', {
+    class: 'btn',
+    text: 'Full view',
+    attrs: { id: 'fullViewBtn', disabled: 'disabled' },
+  });
+  const printBtn = el('button', {
+    class: 'btn',
+    text: 'Print',
+    attrs: { id: 'printBtn', disabled: 'disabled' },
+  });
+  const wordBtn = el('button', {
+    class: 'btn',
+    text: 'Save as Word',
+    attrs: { id: 'exportWordBtn', disabled: 'disabled' },
+  });
   const generateBtn = el('button', { class: 'btn btn-primary', text: 'Generate recommendation' });
+
+  // The cloud picker goes in the page header, where the original puts it: it
+  // governs everything below, so it should not look like another question.
+  const headerRight = document.querySelector('.header-right');
+  if (headerRight) {
+    headerRight.insertBefore(
+      el(
+        'label',
+        { class: 'cloud-picker' },
+        el('span', { text: 'Cloud:' }),
+        cloudPicker,
+      ),
+      headerRight.firstChild,
+    );
+  }
 
   append(
     root,
@@ -224,19 +251,6 @@ export function mountMulticloudPage(root: HTMLElement): void {
       el(
         'div',
         {},
-        card(
-          'Cloud',
-          el(
-            'div',
-            { class: 'field' },
-            el('div', { class: 'field-head' }, el('label', { text: 'Designing for' })),
-            cloudPicker,
-            el('div', {
-              class: 'field-hint',
-              text: 'Chosen once. It drives the services recommended here and the platform the generators open on.',
-            }),
-          ),
-        ),
         el(
           'div',
           { class: 'card' },
