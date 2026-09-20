@@ -20,7 +20,19 @@
 
 import type { Finding } from '../core/findings.ts';
 
-export type InputControl = 'select' | 'text' | 'number' | 'toggle' | 'textarea';
+export type InputControl =
+  /** A closed set: the provider accepts these and rejects everything else. */
+  | 'select'
+  /**
+   * A dropdown you can also type into. For sets that are long, change between
+   * releases, or are partly yours — instance types, images, CIDRs. The
+   * suggestions help without standing in the way of a value they do not list.
+   */
+  | 'combo'
+  | 'text'
+  | 'number'
+  | 'toggle'
+  | 'textarea';
 
 export interface SelectOption {
   readonly value: string;

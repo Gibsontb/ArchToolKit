@@ -72,6 +72,27 @@ function control(input: BlueprintInput, value: unknown, onChange: () => void): H
     return node;
   }
 
+  if (input.control === 'combo') {
+    // A native datalist: the field shows a dropdown of the usual answers and
+    // still accepts anything, which is what a long or partly-private list
+    // needs. No dependency and no custom widget to get wrong.
+    const listId = `dl-${input.id}`;
+    const node = el('input', {
+      attrs: {
+        type: 'text',
+        list: listId,
+        ...(input.placeholder ? { placeholder: input.placeholder } : {}),
+      },
+    }) as HTMLInputElement;
+    node.value = String(value ?? '');
+    node.addEventListener('input', onChange);
+    const list = el('datalist', { attrs: { id: listId } });
+    for (const option of input.options ?? []) {
+      list.appendChild(el('option', { attrs: { value: option.value } }));
+    }
+    return el('div', { class: 'combo' }, node, list);
+  }
+
   if (input.control === 'textarea') {
     const node = el('textarea', { attrs: { rows: '4' } }) as HTMLTextAreaElement;
     node.value = String(value ?? '');
@@ -184,28 +205,6 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
       renderThree();
     });
 
-    // The same platforms as chips, so the common ones are one click away.
-    const chips = el(
-      'div',
-      { class: 'chip-row' },
-      ...options.groups.map((group) =>
-        el('button', {
-          class: group.target === target ? 'chip is-on' : 'chip',
-          text: group.label,
-          on: {
-            click: () => {
-              target = group.target as TargetId;
-              setTarget(target, 'chosen on this page');
-              selectBlueprint(available()[0]);
-              renderOne();
-              renderTwo();
-              renderThree();
-            },
-          },
-        }),
-      ),
-    );
-
     const list = el('select') as HTMLSelectElement;
     for (const item of available()) {
       const opt = el('option', { text: item.label, attrs: { value: item.id } });
@@ -228,7 +227,6 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
           { id: 'platform', label: 'Platform', control: 'select', hint: 'Chosen once, used everywhere' },
           platform,
         ),
-        chips,
         labelledField(
           {
             id: 'blueprint',
@@ -271,7 +269,10 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     for (const input of blueprint.inputs) {
       if (!isVisible(input, values)) continue;
       const node = control(input, values[input.id], () => {
-        const raw = (node as HTMLInputElement | HTMLSelectElement).value;
+        const field = (node.classList.contains('combo')
+          ? node.querySelector('input')
+          : node) as HTMLInputElement | HTMLSelectElement;
+        const raw = field.value;
         values = { ...values, [input.id]: raw };
         // A follow-up question may have appeared or gone away.
         if (blueprint?.inputs.some((i) => i.showWhen?.input === input.id)) renderTwo();

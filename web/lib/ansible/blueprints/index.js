@@ -6,6 +6,7 @@
  */
 
                                                              
+import { withChoicesAll } from '../../kit/choices.js';
 import { AWS_ANSIBLE } from './aws.js';
 import { AZURE_ANSIBLE } from './azure.js';
 import { GCP_ANSIBLE } from './gcp.js';
@@ -14,7 +15,7 @@ import { VMWARE_ANSIBLE } from './vmware.js';
 import { LINUX_ANSIBLE } from './linux.js';
 import { WINDOWS_ANSIBLE } from './windows.js';
 
-export const ANSIBLE_BLUEPRINTS                            = [
+export const ANSIBLE_BLUEPRINTS                            = withChoicesAll([
   AWS_ANSIBLE,
   AZURE_ANSIBLE,
   GCP_ANSIBLE,
@@ -22,4 +23,4 @@ export const ANSIBLE_BLUEPRINTS                            = [
   VMWARE_ANSIBLE,
   LINUX_ANSIBLE,
   WINDOWS_ANSIBLE,
-];
+]);

@@ -6,6 +6,7 @@
  */
 
 import type { BlueprintGroup } from '../../kit/blueprint.ts';
+import { withChoicesAll } from '../../kit/choices.ts';
 import { AWS_TERRAFORM } from './aws.ts';
 import { AZURE_TERRAFORM } from './azure.ts';
 import { GCP_TERRAFORM } from './gcp.ts';
@@ -14,7 +15,7 @@ import { VMWARE_TERRAFORM } from './vmware.ts';
 import { LINUX_TERRAFORM } from './linux.ts';
 import { WINDOWS_TERRAFORM } from './windows.ts';
 
-export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = [
+export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withChoicesAll([
   AWS_TERRAFORM,
   AZURE_TERRAFORM,
   GCP_TERRAFORM,
@@ -22,4 +23,4 @@ export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = [
   VMWARE_TERRAFORM,
   LINUX_TERRAFORM,
   WINDOWS_TERRAFORM,
-];
+]);

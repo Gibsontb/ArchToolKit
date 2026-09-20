@@ -6,6 +6,7 @@
  */
 
 import type { BlueprintGroup } from '../../kit/blueprint.ts';
+import { withChoicesAll } from '../../kit/choices.ts';
 import { AWS_ANSIBLE } from './aws.ts';
 import { AZURE_ANSIBLE } from './azure.ts';
 import { GCP_ANSIBLE } from './gcp.ts';
@@ -14,7 +15,7 @@ import { VMWARE_ANSIBLE } from './vmware.ts';
 import { LINUX_ANSIBLE } from './linux.ts';
 import { WINDOWS_ANSIBLE } from './windows.ts';
 
-export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = [
+export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = withChoicesAll([
   AWS_ANSIBLE,
   AZURE_ANSIBLE,
   GCP_ANSIBLE,
@@ -22,4 +23,4 @@ export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = [
   VMWARE_ANSIBLE,
   LINUX_ANSIBLE,
   WINDOWS_ANSIBLE,
-];
+]);

@@ -6,6 +6,7 @@
  */
 
                                                              
+import { withChoicesAll } from '../../kit/choices.js';
 import { AWS_TERRAFORM } from './aws.js';
 import { AZURE_TERRAFORM } from './azure.js';
 import { GCP_TERRAFORM } from './gcp.js';
@@ -14,7 +15,7 @@ import { VMWARE_TERRAFORM } from './vmware.js';
 import { LINUX_TERRAFORM } from './linux.js';
 import { WINDOWS_TERRAFORM } from './windows.js';
 
-export const TERRAFORM_BLUEPRINTS                            = [
+export const TERRAFORM_BLUEPRINTS                            = withChoicesAll([
   AWS_TERRAFORM,
   AZURE_TERRAFORM,
   GCP_TERRAFORM,
@@ -22,4 +23,4 @@ export const TERRAFORM_BLUEPRINTS                            = [
   VMWARE_TERRAFORM,
   LINUX_TERRAFORM,
   WINDOWS_TERRAFORM,
-];
+]);
