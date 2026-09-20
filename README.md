@@ -68,10 +68,14 @@ npx tsc --noEmit      # only if you have TypeScript available
 
 ```
 src/
-  core/      IP/CIDR arithmetic, capacity units, findings
-  vcf/       VCF 9.1 sizing data, sizing engine, provenance tagging
-  ui/        DOM helpers, shared components, page controllers
-  testing/   minimal expect() shim over node:assert
+  core/       IP/CIDR arithmetic, capacity units, findings
+  vcf/        VCF 9.1 sizing data, sizing engine, provenance tagging
+  vmware/     inventory model, RVTools and PowerCLI import, analysis
+  multicloud/ platform routing, capability table, VMware-on-cloud services
+  terraform/  HCL writer, provider registry, foundations, resource catalog
+  ansible/    YAML writer, collection registry, playbooks, module catalog
+  ui/         DOM helpers, shared components, page controllers
+  testing/    minimal expect() shim over node:assert
 tools/       build, serve and dev scripts (zero dependencies)
 web/         static shell — HTML, CSS, and generated lib/
 docs/        design notes and research
@@ -104,10 +108,10 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | VCF 9.1 sizing | Working — greenfield, brownfield converge/import, fleet scale |
 | VCF 9.1 `SddcSpec` builder | Working — all 8 documented deployment scenarios |
 | VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
-| Multi-cloud decision matrix | Planned |
-| Application migration and modernization | Planned |
+| Multi-cloud decision matrix | Working — explainable routing across VCF, AWS, Azure, Google Cloud and OCI |
 | Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up |
-| Ansible authoring kit | Planned |
+| Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks |
+| Application migration and modernization | Planned |
 
 ## Terraform authoring
 
@@ -129,26 +133,84 @@ Credentials are never written into generated files. Each provider's own
 authentication method is described in a comment, and the VCF emitter turns every
 password into a `sensitive` variable.
 
-## Resource catalog
+## Ansible authoring
 
-The kit hand-writes the resources worth getting exactly right and consults a
-catalog for the rest — roughly 5,000 resources and 4,000 data sources across the
-six providers, far too many to maintain by hand and changing with every release.
+Terraform builds an estate; Ansible reads one and reconfigures it. The kit emits
+a repository scaffold — `requirements.yml` with collections pinned to the major
+line Galaxy reported, an `ansible.cfg` that leaves host key checking **on**, an
+inventory, and a vault template that is gitignored until it is encrypted — and,
+for vSphere, two real playbooks: one that collects an estate into JSON the
+inventory importer reads, and one that renders an imported cluster's settings
+back as the tasks that would produce them.
 
-    update-catalog.bat        (or: npm run catalog:update)
+Every module and argument name was read from `vmware.vmware` 2.10.0's own
+documentation. No credential is written into a generated file: every module in
+the collection falls back to `VMWARE_HOST`, `VMWARE_USER` and `VMWARE_PASSWORD`,
+so the playbooks name none of them. A literal-looking password is an error, and
+handling a secret without `no_log` is a warning.
 
-fetches the lists from the Terraform Registry and rewrites
-`src/terraform/catalog-data.ts`, which is committed so the toolkit still works
-air-gapped. The catalog records the provider version each list came from and the
-date it was fetched, and reports when it is old, when providers are missing, and
-when the version it was built from no longer matches the one the kit pins.
+Missing data is never a change. A cluster whose HA state the inventory did not
+record produces no HA task, because writing `enable: false` for a field nobody
+collected would turn a gap in the data into a change to the estate.
 
-The batch file checks Node, runs the fetch, and offers to rebuild so the pages
-pick the new catalog up. If it cannot reach the registry it says so and leaves
-the previous catalog exactly as it was — a failed refresh never empties it.
+Details in `docs/ansible-kit.md`.
+
+## Multi-cloud decision matrix
+
+Not "which cloud is best" — nobody can answer that. Given a set of constraints,
+which of the five platforms is left, and why. Every rule states what it looked
+at, which way it pushed and where the claim came from, so any of them can be
+read and disagreed with on its own, and a margin of one point is reported as too
+close to call rather than resolved.
+
+Rules that encode something structural score. Rules about region coverage,
+sovereign offerings and pricing only report, because those change constantly and
+cannot be checked from an offline toolkit.
+
+The capability table checks itself: every entry carries the Terraform resource
+type as well as the product name, and a test validates all of them against the
+committed provider catalog. A blank cell is a genuine gap, not an omission.
+
+Details in `docs/multicloud-matrix.md`.
+
+## Catalogs
+
+Both kits hand-write the parts worth getting exactly right and consult a catalog
+for the rest — roughly 5,000 Terraform resources and 4,000 data sources across
+six providers, and 3,929 Ansible modules across eleven collections. Far too many
+to maintain by hand, and changing with every release.
+
+    update-catalog.bat        (or: npm run catalog:update, npm run ansible:update)
+
+fetches both lists — from the Terraform Registry and from Ansible Galaxy — and
+rewrites `src/terraform/catalog-data.ts` and `src/ansible/catalog-data.ts`, both
+of which are committed so the toolkit still works air-gapped. Each catalog records the version every list came from and the date it was
+fetched, and reports when it is old, when entries are missing, and when the
+version it was built from no longer matches the one the kit pins.
+
+The batch file checks Node, runs both fetches, offers to check the generated
+Terraform against the provider schemas, and offers to rebuild so the pages pick
+the new catalogs up. If it cannot reach a registry it says so and leaves that
+catalog exactly as it was — a failed refresh never empties one.
 
 Not knowing a resource is kept distinct from knowing it is wrong: an uncatalogued
-provider produces a warning, not a rejection.
+provider or collection produces a warning, not a rejection.
+
+## Schema verification
+
+The catalog answers *does this type exist*. It does not answer *does this type
+take this argument*.
+
+    npm run verify:schemas
+
+runs the foundation emitters, parses the HCL they actually produce, and checks
+every argument name against that resource's own documentation in the Terraform
+Registry for the current provider version. Parsing the emitters' own output
+rather than a hand-kept list is deliberate — a list drifts the first time an
+emitter changes, and a check that drifts is worse than no check.
+
+As of 2026-09-20: zero undocumented arguments across 29 resources and five
+providers. See `docs/terraform-schema-verification.md`.
 
 ## Checks
 
@@ -175,12 +237,22 @@ rather than making you retype it:
     inventory  ->  sizing  ->  spec builder
     what is there   what it must become   the document that builds it
 
+    inventory  ->  multi-cloud  ->  Terraform / Ansible
+    what is there   where it goes    what builds it there
+
 Importing an RVTools or PowerCLI export gives a derived sizing input — host
 profile from the weakest host, workload figures from allocated rather than
 provisioned values — and **Continue in sizing** carries it over. From a sizing
 result, **Continue in the spec builder** carries the host count, storage type,
 failures to tolerate, deployment scenario and the IP pool counts, so the pools a
 specification emits match the sizing that justified them.
+
+The decision matrix takes the estate rather than the sizing result: it reads
+machine counts, guest OS families and the machines large enough to narrow the
+instance shapes, then says plainly that the databases, the latency tolerance and
+the deadline are in no export and move the answer more than anything that is.
+Once a platform leads by more than a point, it hands off to the Terraform and
+Ansible kits.
 
 A handoff applies once and lives only for the browser tab, so reloading a page
 never silently re-applies a decision that has since changed. Each step remains
