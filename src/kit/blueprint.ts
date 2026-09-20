@@ -37,6 +37,15 @@ export type InputControl =
 export interface SelectOption {
   readonly value: string;
   readonly label: string;
+  /**
+   * The heading this option sits under, rendered as an `<optgroup>`.
+   *
+   * Some of these sets are genuinely long — every EC2 instance type is 1,428
+   * entries — and a flat list that long is worse than the text box it replaced.
+   * Grouped the way the vendor groups them, it is a list you can find something
+   * in. Options without a group render loose, above the first heading.
+   */
+  readonly group?: string;
 }
 
 export interface BlueprintInput {

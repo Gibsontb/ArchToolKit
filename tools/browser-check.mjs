@@ -256,6 +256,39 @@ for (const [kind, path, generateLabel, expect] of [
     /us-gov-west-1/.test(regionText) && /us-iso-east-1/.test(regionText),
   );
 
+  // A machine catalogue is thousands of entries, so it has to arrive grouped or
+  // it is a scroll bar. The headings are the vendor's own categories.
+  const sizeGroups = await sized.locator('select optgroup').allTextContents();
+  const sizeLabels = await sized.evaluate((f) =>
+    Array.from(f.querySelectorAll('select optgroup')).map((g) => g.label),
+  );
+  check(
+    `${kind}: the machine list is grouped the way the vendor groups it`,
+    sizeLabels.length >= 5 && sizeLabels.includes('General purpose'),
+    sizeLabels.join(' | ').slice(0, 70),
+  );
+  check(
+    `${kind}: and holds the whole catalogue, not a shortlist`,
+    sizedOptions > 500,
+    `${sizedOptions} options`,
+  );
+  void sizeGroups;
+
+  // Credentials are references, not literals. The originals shipped CHANGEME as
+  // the default, which is how one ends up committed.
+  const secret = page.locator('.field', { hasText: /password/i }).first();
+  if ((await secret.count()) > 0) {
+    const secretValues = await secret.evaluate((f) =>
+      Array.from(f.querySelectorAll('select option')).map((o) => o.value),
+    );
+    const wanted = kind === 'Terraform' ? /^var\./ : /\{\{/;
+    check(
+      `${kind}: a password field offers references rather than a literal`,
+      secretValues.some((v) => wanted.test(v)) && !secretValues.some((v) => /CHANGEME/i.test(v)),
+      secretValues.slice(0, 2).join(', '),
+    );
+  }
+
   // Step 3 is empty until asked.
   let body = await page.locator('body').innerText();
   check(`${kind}: nothing is generated until Generate is pressed`, /Idle/.test(body));
@@ -265,6 +298,10 @@ for (const [kind, path, generateLabel, expect] of [
   body = await page.locator('body').innerText();
   check(`${kind}: generates what the blueprint says`, expect.test(body));
   check(`${kind}: and reports no errors`, /No errors/.test(body));
+  check(
+    `${kind}: no literal credential in the output`,
+    !/CHANGEME|ChangeMe123/.test(body),
+  );
   check(
     `${kind}: with Copy and Download`,
     (await page.locator('button', { hasText: 'Copy' }).count()) > 0 &&

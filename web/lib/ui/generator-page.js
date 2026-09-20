@@ -28,6 +28,7 @@ import {
                       
                       
                        
+                    
 } from '../kit/blueprint.js';
                                                    
 
@@ -66,14 +67,39 @@ function withEstate(input                , target        )                 {
   };
 }
 
+/**
+ * Fills a `<select>`, opening an `<optgroup>` whenever the group changes.
+ *
+ * The long sets carry a group on every option and arrive already sorted into
+ * them, so following the changes in order is enough — no regrouping, and an
+ * ungrouped set costs nothing.
+ */
+function fillOptions(
+  select                   ,
+  options                         ,
+  selected        ,
+)       {
+  let group                             = null;
+  let groupName                    ;
+  for (const option of options) {
+    const opt = el('option', { text: option.label, attrs: { value: option.value } });
+    if (option.value === selected) (opt                     ).selected = true;
+    if (option.group !== groupName) {
+      groupName = option.group;
+      group =
+        groupName === undefined
+          ? null
+          : (el('optgroup', { attrs: { label: groupName } })                       );
+      if (group) select.appendChild(group);
+    }
+    (group ?? select).appendChild(opt);
+  }
+}
+
 function control(input                , value         , onChange            )              {
   if (input.control === 'select') {
     const node = el('select')                     ;
-    for (const option of input.options ?? []) {
-      const opt = el('option', { text: option.label, attrs: { value: option.value } });
-      if (option.value === String(value)) (opt                     ).selected = true;
-      node.appendChild(opt);
-    }
+    fillOptions(node, input.options ?? [], String(value));
     node.addEventListener('change', onChange);
     return node;
   }
@@ -113,11 +139,7 @@ function control(input                , value         , onChange            )   
     const known = options.some((o) => o.value === current);
 
     const select = el('select')                     ;
-    for (const option of options) {
-      const opt = el('option', { text: option.label, attrs: { value: option.value } });
-      if (option.value === current) (opt                     ).selected = true;
-      select.appendChild(opt);
-    }
+    fillOptions(select, options, current);
     const customOption = el('option', {
       text: 'Other — type a value…',
       attrs: { value: CUSTOM },

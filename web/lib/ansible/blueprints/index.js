@@ -23,4 +23,4 @@ export const ANSIBLE_BLUEPRINTS                            = withChoicesAll([
   VMWARE_ANSIBLE,
   LINUX_ANSIBLE,
   WINDOWS_ANSIBLE,
-]);
+], 'ansible');
