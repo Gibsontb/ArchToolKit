@@ -74,6 +74,8 @@ for (const [name, path] of [
   ['terraform', '/app/terraform.html'],
   ['ansible', '/app/ansible.html'],
   ['multicloud', '/app/multicloud.html'],
+  ['migration', '/app/migration.html'],
+  ['portfolio', '/app/migration-portfolio.html'],
 ]) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -394,6 +396,47 @@ for (const [kind, path, generateLabel, expect] of [
     'and the generator says where that came from',
     /chosen in the decision wizard/.test(await page.locator('body').innerText()),
   );
+  await ctx.close();
+}
+
+// --- the 7R migration engine ---------------------------------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  await page.goto(`${BASE}/app/migration.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+
+  check('the migration workspace loads clean', errors.length === 0, errors[0] ?? '');
+  check(
+    'the shared service catalog loads with it',
+    (await page.evaluate(() => typeof window.CDK)) === 'object',
+  );
+  const tabs = (await page.locator('.tab').allTextContents()).join(' ');
+  check('it keeps its five tabs', /Manual.*Intake.*Ratings.*Results.*Playbooks/s.test(tabs), tabs);
+
+  await page.locator('.tab', { hasText: 'Intake' }).click();
+  await page.waitForTimeout(200);
+  await page.fill('#appName', 'Case Management System');
+  await page.fill('#appOwner', 'Courts IT');
+  await page.selectOption('#criticality', 'Mission Critical');
+  await page.fill('#rto', '4');
+  await page.fill('#rpo', '1');
+  await page.selectOption('#enterpriseCloud', 'Azure');
+
+  await page.locator('#btnRun').click();
+  await page.waitForTimeout(700);
+  await page.locator('.tab', { hasText: 'Results' }).click();
+  await page.waitForTimeout(300);
+
+  const results = await page.locator('#sec-results').innerText();
+  check('it routes the application to one of the 7 Rs', /Rehost|Replatform|Refactor|Repurchase|Retain|Retire|Relocate/.test(results), results.slice(0, 40).replace(/\n/g, ' '));
+  check('it scores readiness', /Readiness Score/.test(results));
+  check('it names the target cloud it planned for', /AZURE/i.test(results));
+  check('and produces a step-by-step plan for that cloud', /Azure Landing Zone|Entra ID/.test(results));
+  check('with a risk badge', (await page.locator('#sec-results .badge').count()) > 0);
   await ctx.close();
 }
 

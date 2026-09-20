@@ -9,98 +9,127 @@
   <body>
     <header class="app-header">
       <a class="brand" href="index.html">
-        <span class="brand-mark"></span>
-        <span>
-          <span class="brand-title">Architect's Toolkit</span>
-          <span class="brand-sub">
-            A single front door into your decision logic, reference maps, and working canvases for
-            multi-cloud architecture, governance and automation.
-          </span>
-        </span>
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
       </a>
-      <div class="header-right">
-        <span class="badge badge-verified">Cloud Architecture Workspace</span>
-      </div>
+      <nav class="header-nav">
+        <a href="index.html" aria-current="page">Home</a>
+        <a href="app/inventory.html">Inventory</a>
+        <a href="app/multicloud.html">Multi-Cloud</a>
+        <a href="app/vcf-sizing.html">VCF Sizing</a>
+        <a href="app/vcf-spec.html">VCF Spec Builder</a>
+        <a href="app/terraform.html">Terraform</a>
+        <a href="app/ansible.html">Ansible</a>
+      </nav>
     </header>
 
     <main class="page">
-      <div class="card">
-        <div class="card-title">
-          <h2>Your workspaces</h2>
-          <span class="badge">Offline · no server · no telemetry</span>
-        </div>
-        <p class="muted small" style="margin-top: 0">
-          Each opens a dedicated workspace. Start anywhere, come back here to pivot. The cloud you
-          pick in the wizard carries into the generators, so you choose it once.
+      <div class="page-header">
+        <h1>Architecture toolkit</h1>
+        <p>
+          Decision logic, migration planning and infrastructure authoring for multi-cloud and VMware
+          estates. Runs entirely in the browser with no server, no network calls and no telemetry —
+          designed to work from a laptop, an internal web server, or a zip carried into an air-gapped
+          environment.
         </p>
+      </div>
 
-        <div class="tool-grid">
-          <a class="tool-card" href="app/multicloud.html">
-            <h3>Multi-Cloud Decision &amp; Onboarding Wizard ↗</h3>
-            <p>
-              Pick the cloud once, answer four steps, and get a recommendation you can hand over:
-              suggested services, migration path, security and cyber controls, DR pattern, sizing
-              footprint and an onboarding playbook. Full view, Print, or Save as Word.
-            </p>
-            <span class="tag tag-ready">Ready</span>
-          </a>
+      <div class="tool-grid">
+        <a class="tool-card" href="app/vcf-sizing.html">
+          <h3>VCF 9.1 Sizing</h3>
+          <p>
+            Size a VCF fleet for greenfield or brownfield. Management-plane demand, host capacity,
+            vSAN overhead, IP and FQDN counts, and per-core licensing — with the provenance of every
+            figure.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
 
-          <a class="tool-card" href="app/terraform.html">
-            <h3>Terraform Script Generator ↗</h3>
-            <p>
-              Pick a platform and a blueprint — EC2 with a security group, a versioned S3 bucket, a
-              VPC baseline, RDS Postgres, a vSphere VM from a template — fill in its parameters and
-              get ready-to-paste HCL. Every resource type checked against the provider catalog.
-            </p>
-            <span class="tag tag-ready">Ready</span>
-          </a>
+        <a class="tool-card" href="app/vcf-spec.html">
+          <h3>VCF 9.1 Spec Builder</h3>
+          <p>
+            Generate a complete <code>SddcSpec</code> for the VCF Installer, covering all 31 top-level
+            keys including <code>vspClusterSpec</code>, VPC/DTGW, LACP and dual-stack.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
 
-          <a class="tool-card" href="app/ansible.html">
-            <h3>Ansible Playbook Generator ↗</h3>
-            <p>
-              Forty-nine playbooks across AWS, Azure, Google Cloud, OCI, vSphere, Linux and Windows.
-              Pick one, fill in its parameters, and get the playbook plus the requirements.yml
-              derived from the modules it actually uses.
-            </p>
-            <span class="tag tag-ready">Ready</span>
-          </a>
+        <a class="tool-card" href="app/terraform.html">
+          <h3>Terraform Script Generator</h3>
+          <p>
+            Pick a platform, pick what you are building — EC2 with a security group, a versioned S3
+            bucket, a VPC baseline, RDS Postgres, a vSphere VM from a template — fill in its
+            parameters and get ready-to-paste HCL. Every resource type is checked against the
+            committed provider catalog first.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
 
-          <a class="tool-card" href="app/inventory.html">
-            <h3>VMware Inventory Import ↗</h3>
-            <p>
-              Import RVTools exports, PowerCLI collections or live vCenter data into one canonical
-              inventory model, then analyse it for capacity, consolidation and VCF readiness.
-            </p>
-            <span class="tag tag-ready">Ready</span>
-          </a>
+        <a class="tool-card" href="app/ansible.html">
+          <h3>Ansible Playbook Generator</h3>
+          <p>
+            Forty-nine playbooks across AWS, Azure, Google Cloud, OCI, vSphere, Linux and Windows.
+            Pick one, fill in its parameters, and get the playbook plus a requirements.yml derived
+            from the modules it actually uses. Module names checked against the Galaxy catalog.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
 
-          <a class="tool-card" href="app/vcf-sizing.html">
-            <h3>VCF 9.1 Sizing ↗</h3>
-            <p>
-              Size a VCF fleet for greenfield or brownfield. Management-plane demand, host capacity,
-              vSAN overhead, IP and FQDN counts, and per-core licensing — with the provenance of
-              every figure.
-            </p>
-            <span class="tag tag-ready">Ready</span>
-          </a>
+        <a class="tool-card" href="app/migration.html">
+          <h3>Application Migration &amp; Modernization</h3>
+          <p>
+            Evaluate an on-premises application, route it across the 7 Rs, and get the readiness
+            score, risk badge and a step-by-step plan for the target cloud. Exports a JSON record
+            per application, which the portfolio dashboard reads.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
 
-          <a class="tool-card" href="app/vcf-spec.html">
-            <h3>VCF 9.1 Spec Builder ↗</h3>
-            <p>
-              Generate a complete <code>SddcSpec</code> for the VCF Installer, covering all 31
-              top-level keys including <code>vspClusterSpec</code>, VPC/DTGW, LACP and dual-stack.
-            </p>
-            <span class="tag tag-ready">Ready</span>
-          </a>
-        </div>
+        <a class="tool-card" href="app/migration-portfolio.html">
+          <h3>Migration Portfolio Dashboard</h3>
+          <p>
+            Load the evaluated applications, filter by cloud and disposition, see the wave split and
+            what is blocked, and export the portfolio as CSV or JSON.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
 
-        <div class="section-note" style="margin-top: var(--space-5)">
-          Sizing and specification data is tagged with how it was verified. Figures from a vendor's
-          own API reference, documentation or a real working deployment spec are marked
-          <span class="badge badge-verified">Verified</span>; figures from community sources are
-          marked <span class="badge badge-community">Community</span>. Nothing generated here should
-          reach a production deployment without validation against the real thing.
-        </div>
+        <a class="tool-card" href="app/inventory.html">
+          <h3>VMware Inventory</h3>
+          <p>
+            Import RVTools exports, PowerCLI collections or live vCenter data into one canonical
+            inventory model, then analyse it for capacity, consolidation and VCF readiness.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
+
+        <a class="tool-card" href="app/multicloud.html">
+          <h3>Multi-Cloud Decision &amp; Onboarding Wizard</h3>
+          <p>
+            Pick the cloud once, answer four steps, and get a full recommendation — compute pattern,
+            data and storage, integration, resilience, security controls, DR by cloud, sizing
+            footprint and an onboarding playbook. Full view, Print, or Save as Word.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
+
+        <span class="tool-card is-planned">
+          <h3>Application Migration</h3>
+          <p>
+            7R disposition routing, readiness scoring and wave planning across an application
+            portfolio.
+          </p>
+          <span class="tag">Planned</span>
+        </span>
+
+      </div>
+
+      <div class="section-note" style="margin-top: var(--space-6)">
+        Sizing and specification data is tagged with how it was verified. Figures from Broadcom's API
+        reference, TechDocs or a real working deployment spec are marked
+        <span class="badge badge-verified">Verified</span>; figures from community sources are marked
+        <span class="badge badge-community">Community</span>. Nothing generated here should reach a
+        production deployment without validation against a live VCF Installer.
       </div>
     </main>
   </body>

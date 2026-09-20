@@ -9,19 +9,28 @@
   <body>
     <header class="app-header">
       <a class="brand" href="../index.html">
-        <span class="brand-mark"></span>
-        <span>
-          <span class="brand-title">Terraform Script Generator</span>
-          <span class="brand-sub">Pick a platform and a blueprint, feed it parameters, get HCL</span>
-        </span>
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
       </a>
-      <div class="header-right">
-        <button class="btn" type="button" onclick="window.location.href='../index.html'">← Main menu</button>
-        <span class="badge">ArchToolKit</span>
-      </div>
+      <nav class="header-nav">
+        <a href="../index.html">Home</a>
+        <a href="inventory.html">Inventory</a>
+        <a href="multicloud.html">Multi-Cloud</a>
+        <a href="migration.html">Migration</a>
+        <a href="migration-portfolio.html">Portfolio</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
+        <a href="vcf-spec.html">VCF Spec Builder</a>
+        <a href="terraform.html" aria-current="page">Terraform</a>
+        <a href="ansible.html">Ansible</a>
+      </nav>
     </header>
 
     <main class="page">
+      <div class="page-header">
+        <h1>Terraform script generator</h1>
+        <p>Pick a platform and a blueprint, feed it parameters, and get a ready-to-paste Terraform configuration. Every resource type is checked against the committed provider catalog before it reaches you.</p>
+      </div>
+
             <div id="terraform-root"></div>
     </main>
 

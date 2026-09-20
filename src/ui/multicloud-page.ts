@@ -228,21 +228,6 @@ export function mountMulticloudPage(root: HTMLElement): void {
   });
   const generateBtn = el('button', { class: 'btn btn-primary', text: 'Generate recommendation' });
 
-  // The cloud picker goes in the page header, where the original puts it: it
-  // governs everything below, so it should not look like another question.
-  const headerRight = document.querySelector('.header-right');
-  if (headerRight) {
-    headerRight.insertBefore(
-      el(
-        'label',
-        { class: 'cloud-picker' },
-        el('span', { text: 'Cloud:' }),
-        cloudPicker,
-      ),
-      headerRight.firstChild,
-    );
-  }
-
   append(
     root,
     el(
@@ -251,6 +236,19 @@ export function mountMulticloudPage(root: HTMLElement): void {
       el(
         'div',
         {},
+        card(
+          'Cloud',
+          el(
+            'div',
+            { class: 'field' },
+            el('div', { class: 'field-head' }, el('label', { text: 'Designing for' })),
+            cloudPicker,
+            el('div', {
+              class: 'field-hint',
+              text: 'Chosen once. It drives the services recommended here and the platform the generators open on.',
+            }),
+          ),
+        ),
         el(
           'div',
           { class: 'card' },
