@@ -219,7 +219,9 @@ export function importCollectorJson(json: string): CollectorImportResult {
     .filter((v): v is InventoryVm => v !== null);
 
   const clusters: InventoryCluster[] = asArray(doc.clusters)
-    .map((raw) => {
+    // The explicit type argument stops the declared array type flowing into the
+    // callback: the intermediate is nullable, the result is not.
+    .map<InventoryCluster | null>((raw) => {
       const name = str(raw.name);
       if (!name) return null;
       return {
@@ -236,7 +238,7 @@ export function importCollectorJson(json: string): CollectorImportResult {
     .filter((c): c is InventoryCluster => c !== null);
 
   const datastores: InventoryDatastore[] = asArray(doc.datastores)
-    .map((raw) => {
+    .map<InventoryDatastore | null>((raw) => {
       const name = str(raw.name);
       if (!name) return null;
       return {
@@ -252,7 +254,7 @@ export function importCollectorJson(json: string): CollectorImportResult {
     .filter((d): d is InventoryDatastore => d !== null);
 
   const networks: InventoryNetwork[] = asArray(doc.networks)
-    .map((raw) => {
+    .map<InventoryNetwork | null>((raw) => {
       const name = str(raw.name);
       if (!name) return null;
       return {

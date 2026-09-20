@@ -102,11 +102,12 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | Tool | State |
 | --- | --- |
 | VCF 9.1 sizing | Working — greenfield, brownfield converge/import, fleet scale |
-| VCF 9.1 `SddcSpec` builder | In progress |
+| VCF 9.1 `SddcSpec` builder | Working — all 8 documented deployment scenarios |
 | VMware inventory import and analysis | Planned |
 | Multi-cloud decision matrix | Planned |
 | Application migration and modernization | Planned |
-| Terraform and Ansible authoring kit | Planned |
+| Terraform authoring kit | Planned |
+| Ansible authoring kit | Planned |
 
 ## A caution on VCF output
 

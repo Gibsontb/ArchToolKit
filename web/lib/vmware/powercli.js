@@ -219,7 +219,9 @@ export function importCollectorJson(json        )                        {
     .filter((v)                   => v !== null);
 
   const clusters                     = asArray(doc.clusters)
-    .map((raw) => {
+    // The explicit type argument stops the declared array type flowing into the
+    // callback: the intermediate is nullable, the result is not.
+    .map                         ((raw) => {
       const name = str(raw.name);
       if (!name) return null;
       return {
@@ -236,7 +238,7 @@ export function importCollectorJson(json        )                        {
     .filter((c)                        => c !== null);
 
   const datastores                       = asArray(doc.datastores)
-    .map((raw) => {
+    .map                           ((raw) => {
       const name = str(raw.name);
       if (!name) return null;
       return {
@@ -252,7 +254,7 @@ export function importCollectorJson(json        )                        {
     .filter((d)                          => d !== null);
 
   const networks                     = asArray(doc.networks)
-    .map((raw) => {
+    .map                         ((raw) => {
       const name = str(raw.name);
       if (!name) return null;
       return {

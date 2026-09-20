@@ -39,7 +39,7 @@ describe('conformance: what the real specs reveal', () => {
   it('confirms SddcHostSpec carries no per-host IP or disk selection', () => {
     // The recurring assumption is that hosts need IPs and device paths here.
     // A spec that deployed proves otherwise.
-    const host = ONE_NODE_VSAN_ESA.hostSpecs?.[0] as Record<string, unknown>;
+    const host = ONE_NODE_VSAN_ESA.hostSpecs?.[0] as unknown as Record<string, unknown>;
     expect(Object.keys(host).sort()).toEqual(['credentials', 'hostname']);
   });
 
@@ -64,7 +64,7 @@ describe('conformance: what the real specs reveal', () => {
   });
 
   it('confirms nsxTeamings spells standByUplinks with a capital B', () => {
-    const teaming = ONE_NODE_VSAN_ESA.dvsSpecs?.[0]?.nsxTeamings?.[0] as Record<string, unknown>;
+    const teaming = ONE_NODE_VSAN_ESA.dvsSpecs?.[0]?.nsxTeamings?.[0] as unknown as Record<string, unknown>;
     expect('standByUplinks' in teaming).toBe(true);
     expect('standbyUplinks' in teaming).toBe(false);
   });
@@ -76,7 +76,7 @@ describe('conformance: what the real specs reveal', () => {
   });
 
   it('confirms the undocumented vspClusterSpec.name is present', () => {
-    expect((ONE_NODE_VSAN_ESA.vspClusterSpec as Record<string, unknown>).name).toBe(
+    expect((ONE_NODE_VSAN_ESA.vspClusterSpec as unknown as Record<string, unknown>).name).toBe(
       'vcf-m01-vmsp-01',
     );
   });

@@ -24,9 +24,13 @@ import { warning, info,              } from '../core/findings.js';
 import {
   DEFAULT_MTU,
   VCFMS_RECOMMENDED_IPS,
-  AUTOMATION_IP_COUNT,
   INTERNAL_CLUSTER_CIDRS_V4,
 } from './sizing-data.js';
+import {
+  DEFAULT_VCF_VERSION,
+  automationIpCount,
+  defaultApplianceSize,
+} from './version.js';
 import { PLACEHOLDER_SECRET } from './spec-types.js';
              
            
@@ -53,6 +57,14 @@ import { PLACEHOLDER_SECRET } from './spec-types.js';
            
                                             
                          
+import {
+  SCENARIO_RULES,
+  scenarioRule,
+  resolveFlag,
+  componentTakesPart,
+  VVF_WITHOUT_MANAGEMENT_SERVICES_PREREQUISITE,
+                          
+} from './scenarios.js';
 
 
 
@@ -255,7 +267,8 @@ export { PLACEHOLDER_SECRET };
                           
                                  
                                          
-                                           
+                               
+                                            
     
 
                                                                               
@@ -307,8 +320,23 @@ export { PLACEHOLDER_SECRET };
     
 
                                                                               
+     
+                                                                      
+    
+                                                                               
+                                                                            
+                                                                          
+                                                                                
+                                           
+     
+                                         
+
+                                                                              
                                        
                                        
+                                                                  
+                                               
+                                           
                                  
                                         
 
@@ -720,6 +748,28 @@ function buildDatastoreSpec(plan                , findings           )          
 }
 
 /**
+ * Infer the scenario from a plan written before scenarios were modelled.
+ *
+ * Only the VCF rows are inferable: a vSphere Foundation platform and a
+ * deferred-component run look identical to a plain VCF plan apart from the
+ * workflowType, so those must be asked for explicitly.
+ */
+function deriveScenario(plan                )                     {
+  const converging = Boolean(
+    plan.existing?.vcenter || plan.existing?.nsx || plan.existing?.datastoreName,
+  );
+  const secondary = plan.instanceRole === 'secondary';
+
+  if (plan.workflowType === 'VVF') return converging ? 'converge-to-vvf' : 'new-vvf';
+  if (plan.workflowType === 'VCF_COMPLETE') return 'deferred-components';
+  if (secondary) return converging ? 'converge-to-vcf-instance' : 'new-vcf-instance';
+  return converging ? 'converge-to-vcf-fleet' : 'new-vcf-fleet';
+}
+
+/** Every scenario the builder can produce, for UI listing. */
+export const DEPLOYMENT_SCENARIOS = SCENARIO_RULES;
+
+/**
  * Build a complete VCF 9.1 SddcSpec from a deployment plan.
  */
 export function buildSddcSpec(plan                )              {
@@ -729,6 +779,132 @@ export function buildSddcSpec(plan                )              {
   const prefix = plan.namePrefix ?? plan.sddcId;
   const ha = plan.profile === 'ha';
   const secondary = plan.instanceRole === 'secondary';
+  // Several documented defaults move between patch releases, so they are
+  // resolved against the version actually being deployed.
+  const targetVersion = plan.version ?? DEFAULT_VCF_VERSION;
+
+  // --- deployment scenario -------------------------------------------------
+  // Broadcom's decision table fixes workflowType and which components take part
+  // for each supported scenario. Resolving it once here keeps every downstream
+  // choice consistent with a single published row, instead of each component
+  // deciding for itself and drifting out of agreement with the others.
+  const scenario                     = plan.scenario ?? deriveScenario(plan);
+  const rule = scenarioRule(scenario);
+
+  /** Presence of a component whose column is a presence column, not a flag. */
+  const includes = (
+    cell                                     ,
+    requested                     ,
+    column        ,
+  )          => {
+    const { value, conflict } = resolveFlag(cell, requested, true);
+    if (conflict) {
+      findings.push(
+        warning(
+          'vcf.build.scenario-conflict',
+          `The plan asks for ${column}, but "${rule.label}" does not include that component.`,
+          {
+            path: column,
+            remediation: `Choose a scenario that includes it, or drop ${column} from the plan.`,
+            source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+          },
+        ),
+      );
+    }
+    return value;
+  };
+
+  /** Warn when the plan's brownfield inputs disagree with the scenario's row. */
+  const checkExisting = (
+    cell                                  ,
+    supplied         ,
+    column        ,
+  )       => {
+    if (cell === 'either' || cell === 'na') return;
+    const expected = cell === 'true';
+    if (supplied !== expected) {
+      findings.push(
+        warning(
+          'vcf.build.scenario-existing-mismatch',
+          `"${rule.label}" expects ${column} useExistingDeployment to be ${expected}, but the plan ${supplied ? 'supplies' : 'does not supply'} an existing component.`,
+          {
+            path: column,
+            remediation: expected
+              ? `Add existing.${column} with its FQDN and SSL thumbprint, or pick a scenario that deploys it new.`
+              : `Remove existing.${column}, or pick a converge scenario.`,
+            source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+          },
+        ),
+      );
+    }
+  };
+
+  checkExisting(rule.vcenterExisting, plan.existing?.vcenter !== undefined, 'vcenter');
+  checkExisting(rule.nsxExisting, plan.existing?.nsx !== undefined, 'nsx');
+  checkExisting(
+    rule.operationsExisting,
+    secondary || plan.existing?.operations !== undefined,
+    'operations',
+  );
+  checkExisting(rule.automationExisting, plan.existing?.automation !== undefined, 'automation');
+
+  if (plan.workflowType && plan.workflowType !== rule.workflowType) {
+    findings.push(
+      warning(
+        'vcf.build.workflow-type-override',
+        `workflowType "${plan.workflowType}" was supplied, but "${rule.label}" is documented as "${rule.workflowType}". The plan's value is used.`,
+        {
+          path: 'workflowType',
+          source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+        },
+      ),
+    );
+  }
+
+  const includeNsx = componentTakesPart(rule, rule.nsxExisting);
+  const includeManagementServices = includes(
+    rule.managementServices,
+    plan.includeManagementServices,
+    'includeManagementServices',
+  );
+  const includeLicenseServer = includes(rule.licenseServer, undefined, 'licenseServerSpec');
+  const includeIdentityBroker = includes(
+    rule.identityBroker,
+    plan.includeIdentityBroker,
+    'includeIdentityBroker',
+  );
+
+  if (rule.workflowType === 'VVF' && !includeManagementServices) {
+    findings.push(
+      warning(
+        'vcf.build.vvf-without-management-services',
+        'A vSphere Foundation platform without VCF management services requires the VCF Installer appliance to be reconfigured before this spec is uploaded. No JSON field expresses this step.',
+        {
+          remediation: VVF_WITHOUT_MANAGEMENT_SERVICES_PREREQUISITE,
+          source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+        },
+      ),
+    );
+  }
+
+  findings.push(
+    info('vcf.build.scenario', `Built as "${rule.label}" (workflowType ${rule.workflowType}).`, {
+      source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+    }),
+  );
+  for (const override of rule.supersedesTable ?? []) {
+    findings.push(
+      info(
+        'vcf.build.scenario-table-superseded',
+        `${override.column} is set to ${override.used}, not the ${override.tableValue} in Broadcom's summary table. ${override.reason}`,
+        {
+          path: override.column,
+          source: 'VCF 9.1 Deployment — Deploy Deferred Components on NSX Overlay Segments',
+        },
+      ),
+    );
+  }
+
 
                                                                     
 
@@ -1046,7 +1222,7 @@ export function buildSddcSpec(plan                )              {
               },
             ],
         adminUserPassword: secret('opsAdmin', 'vcfOperationsSpec.adminUserPassword'),
-        applianceSize: plan.opsSize ?? (ha ? 'medium' : 'small'),
+        applianceSize: plan.opsSize ?? defaultApplianceSize(targetVersion, ha),
         ...(ha ? { loadBalancerFqdn: name('opsLoadBalancer', `${prefix}-ops`) } : {}),
         // A secondary instance attaches to the fleet's existing Operations.
         ...(secondary || plan.existing?.operations ? { useExistingDeployment: true } : {}),
@@ -1054,12 +1230,14 @@ export function buildSddcSpec(plan                )              {
     : undefined;
 
   // --- Automation ----------------------------------------------------------
-  const includeAutomation = plan.includeAutomation !== false;
+  // VVF has no VCF Automation at all, which the table records as n/a.
+  const includeAutomation =
+    componentTakesPart(rule, rule.automationExisting) && plan.includeAutomation !== false;
   const automationPool = buildPool(
     plan.automationPool,
     vcfmsHomeCidr,
     31 + VCFMS_RECOMMENDED_IPS,
-    AUTOMATION_IP_COUNT,
+    automationIpCount(targetVersion),
   );
 
   const vcfAutomationSpec                                = includeAutomation
@@ -1072,7 +1250,7 @@ export function buildSddcSpec(plan                )              {
         // vcfAutomationSpec.ipPool is a plain string array, not an IPv4Pool,
         // so whichever pool form was chosen is flattened to addresses here.
         ...(automationPool ? { ipPool: poolToAddresses(automationPool) } : {}),
-        size: plan.automationSize ?? (ha ? 'medium' : 'small'),
+        size: plan.automationSize ?? defaultApplianceSize(targetVersion, ha),
         ...(plan.existing?.automation ? { useExistingDeployment: true } : {}),
       }
     : undefined;
@@ -1081,7 +1259,7 @@ export function buildSddcSpec(plan                )              {
     findings.push(
       warning(
         'vcf.build.automation-pool-not-allocated',
-        `Could not allocate ${AUTOMATION_IP_COUNT} VCF Automation addresses after the VCFMS pool.`,
+        `Could not allocate ${automationIpCount(targetVersion)} VCF Automation addresses after the VCFMS pool.`,
         { path: 'vcfAutomationSpec.ipPool' },
       ),
     );
@@ -1124,12 +1302,13 @@ export function buildSddcSpec(plan                )              {
   // --- assemble ------------------------------------------------------------
   const spec           = {
     sddcId: plan.sddcId,
-    version: plan.version ?? '9.1.0.0',
+    version: targetVersion,
     vcfInstanceName: plan.vcfInstanceName ?? plan.sddcId,
-    // Broadcom documents this explicitly: a secondary instance joining an
-    // existing fleet must declare VCF_EXTEND, not VCF. Emitting VCF for a
-    // secondary is a silent misconfiguration.
-    workflowType: plan.workflowType ?? (secondary ? 'VCF_EXTEND' : 'VCF'),
+    // Taken from the scenario's own row. A secondary instance joining an
+    // existing fleet must declare VCF_EXTEND rather than VCF, and a vSphere
+    // Foundation platform must declare VVF; emitting the wrong one is a silent
+    // misconfiguration rather than a rejected document.
+    workflowType: plan.workflowType ?? rule.workflowType,
     ceipEnabled: plan.ceipEnabled ?? false,
     // Validation can only be enforced when every host carries a thumbprint.
     skipEsxThumbprintValidation: missingThumbprints > 0,
@@ -1173,7 +1352,7 @@ export function buildSddcSpec(plan                )              {
         : {}),
     },
 
-    nsxtSpec,
+    ...(includeNsx ? { nsxtSpec } : {}),
 
     datastoreSpec: buildDatastoreSpec(plan, findings),
 
@@ -1192,19 +1371,28 @@ export function buildSddcSpec(plan                )              {
         : {}),
     },
 
-    vspClusterSpec,
-
     // Fleet and lifecycle services. An empty object signals "deploy with
-    // defaults", which is how a real working 9.1 spec expresses them.
-    fleetLcmSpec: { hostname: name('vspFleet', `${prefix}-flt01`) },
-    sddcLcmSpec: { hostname: name('vspInstance', `${prefix}-int01`) },
+    // defaults", which is how a real working 9.1 spec expresses them. The LCM
+    // hostnames mirror the vsp FQDNs, so they travel with vspClusterSpec rather
+    // than being emitted on their own.
+    ...(includeManagementServices
+      ? {
+          vspClusterSpec,
+          fleetLcmSpec: { hostname: name('vspFleet', `${prefix}-flt01`) },
+          sddcLcmSpec: { hostname: name('vspInstance', `${prefix}-int01`) },
+        }
+      : {}),
     fleetDepotSpec: {},
     telemetryAcceptorSpec: {},
     saltSpec: {},
     saltRaasSpec: {},
 
-    vidbSpec: { hostname: name('identityBroker', `${prefix}-idb01`) },
-    licenseServerSpec: { hostname: name('licenseServer', `${prefix}-lic01`) },
+    ...(includeIdentityBroker
+      ? { vidbSpec: { hostname: name('identityBroker', `${prefix}-idb01`) } }
+      : {}),
+    ...(includeLicenseServer
+      ? { licenseServerSpec: { hostname: name('licenseServer', `${prefix}-lic01`) } }
+      : {}),
 
     ...(vcfOperationsSpec ? { vcfOperationsSpec } : {}),
     ...(includeOps
@@ -1229,16 +1417,17 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
-  // VCF_COMPLETE and VCF_BOOTSTRAP appear in the enum but Broadcom publishes no
-  // definition for either, so emitting one is a guess about deployment behaviour.
-  if (plan.workflowType === 'VCF_COMPLETE' || plan.workflowType === 'VCF_BOOTSTRAP') {
+  // VCF_BOOTSTRAP is the only workflowType left in the enum with no published
+  // definition. VCF_COMPLETE is documented as the deferred-components workflow.
+  if (plan.workflowType === 'VCF_BOOTSTRAP') {
     findings.push(
       warning(
         'vcf.build.undocumented-workflow-type',
-        `workflowType "${plan.workflowType}" appears in the API enum but Broadcom publishes no definition of what it does.`,
+        'workflowType "VCF_BOOTSTRAP" appears in the API enum but Broadcom publishes no definition of what it does.',
         {
           path: 'workflowType',
-          remediation: 'Use VCF for a primary instance, VCF_EXTEND for a secondary, or VVF for vSphere Foundation.',
+          remediation:
+            'Use VCF for a new fleet, VCF_EXTEND for a further instance, VCF_COMPLETE for deferred components, or VVF for vSphere Foundation.',
           source: 'VCF Installer API — SddcSpec',
         },
       ),

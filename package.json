@@ -2,7 +2,7 @@
   "name": "archtoolkit",
   "version": "2.0.0",
   "private": true,
-  "description": "Offline-first architecture toolkit: multi-cloud decision logic, application migration, VMware inventory, VCF 9.1 sizing and spec generation, Terraform and Ansible authoring.",
+  "description": "Offline-first architecture toolkit: multi-cloud decision logic, application migration, VMware inventory, VCF 9.1 sizing and spec generation, Terraform authoring, Ansible authoring.",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {

@@ -22,6 +22,7 @@ import {
   isPlaceholderSecret,
                 
                        
+                                          
 } from './spec-types.js';
 import {
   VLAN_MIN,
@@ -33,6 +34,7 @@ import {
   INTERNAL_CLUSTER_CIDRS_V4,
   VCFMS_MIN_IPS,
   AUTOMATION_IP_COUNT,
+  INTERNAL_CLUSTER_CIDRS_V6,
 } from './sizing-data.js';
 
 const SDDC_ID_PATTERN = /^[a-zA-Z0-9-]{3,20}$/;
@@ -662,6 +664,22 @@ export function validateSddcSpec(
       }
     }
 
+    // IPv6 has its own fixed list, including spelling variants of the same
+    // prefixes. Like the IPv4 list, these are routed internally by the runtime,
+    // so an unsupported value is rejected rather than merely unusual.
+    if (vsp.internalClusterCidrIpv6) {
+      const allowed6 = INTERNAL_CLUSTER_CIDRS_V6                     ;
+      if (!allowed6.includes(vsp.internalClusterCidrIpv6)) {
+        findings.push(
+          error(
+            'vcf.spec.invalid-internal-cidr-v6',
+            `internalClusterCidrIpv6 must be one of ${allowed6.join(', ')}; got "${vsp.internalClusterCidrIpv6}".`,
+            { path: 'vspClusterSpec.internalClusterCidrIpv6', source: 'VCF Installer API — SddcVspClusterSpec' },
+          ),
+        );
+      }
+    }
+
     const pool = vsp.ipv4Pool;
     if (pool) {
       const supplied = [pool.cidr, pool.ipRange, pool.addresses].filter((v) => v !== undefined);
@@ -812,14 +830,86 @@ export function validateSddcSpec(
     }
   }
 
-  if (spec.workflowType === 'VCF_COMPLETE' || spec.workflowType === 'VCF_BOOTSTRAP') {
+  if (spec.workflowType === 'VCF_COMPLETE') {
+    // Broadcom's JSON-spec decision table defines this one: it is the workflow
+    // for deploying deferred components. It used to be reported here as
+    // undocumented, which steered people away from a supported workflow.
+    findings.push(
+      info(
+        'vcf.spec.deferred-components-workflow',
+        'workflowType is VCF_COMPLETE, the workflow for deploying deferred components into an existing instance.',
+        {
+          path: 'workflowType',
+          source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+        },
+      ),
+    );
+    if (spec.vspClusterSpec) {
+      findings.push(
+        warning(
+          'vcf.spec.deferred-components-with-vsp',
+          'workflowType is VCF_COMPLETE, but the spec carries a vspClusterSpec. The deferred-components row of the decision table specifies no VCF management services.',
+          {
+            path: 'vspClusterSpec',
+            remediation: 'Remove vspClusterSpec, or use a workflowType that deploys VCF management services.',
+            source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+          },
+        ),
+      );
+    }
+  }
+
+  if (spec.workflowType === 'VCF_BOOTSTRAP') {
     findings.push(
       warning(
         'vcf.spec.undocumented-workflow-type',
-        `workflowType "${spec.workflowType}" is in the API enum but has no published definition.`,
+        'workflowType "VCF_BOOTSTRAP" is in the API enum but has no published definition.',
         { path: 'workflowType', source: 'VCF Installer API — SddcSpec' },
       ),
     );
+  }
+
+  // --- NFS datastore --------------------------------------------------------
+  const nasVolume = spec.datastoreSpec?.nfsDatastoreSpec?.nasVolume;
+  if (nasVolume && typeof nasVolume.readOnly !== 'boolean') {
+    findings.push(
+      error(
+        'vcf.spec.nfs-readonly-missing',
+        'nasVolume.readOnly is required and is absent. It reads like an optional flag but the API rejects a spec without it.',
+        {
+          path: 'datastoreSpec.nfsDatastoreSpec.nasVolume.readOnly',
+          remediation: 'Set readOnly to false for a read-write datastore, or true for read-only.',
+          source: 'VCF Installer API — NasVolumeSpec',
+        },
+      ),
+    );
+  }
+
+  // --- VCF management component networks ------------------------------------
+  const mcInfra = spec.vcfManagementComponentsInfrastructureSpec;
+  if (mcInfra) {
+    const networks                                                             = [
+      ['localRegionNetwork', mcInfra.localRegionNetwork],
+      ['xRegionNetwork', mcInfra.xRegionNetwork],
+    ];
+    for (const [key, network] of networks) {
+      if (!network) continue;
+      for (const field of ['networkName', 'subnetMask', 'gateway']         ) {
+        if (!network[field]) {
+          findings.push(
+            error(
+              'vcf.spec.management-network-incomplete',
+              `vcfManagementComponentsInfrastructureSpec.${key}.${field} is required and is absent.`,
+              {
+                path: `vcfManagementComponentsInfrastructureSpec.${key}.${field}`,
+                remediation: 'Supply networkName, subnetMask and gateway together; all three are required.',
+                source: 'VCF Installer API — VcfManagementComponentsNetworkSpec',
+              },
+            ),
+          );
+        }
+      }
+    }
   }
 
   // --- licensing -----------------------------------------------------------

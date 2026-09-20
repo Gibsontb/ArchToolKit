@@ -515,13 +515,22 @@ export const VSAN_SLACK_AUTO_RAID = 0.0;
 export const VCFMS_MIN_IPS = 12;
 export const VCFMS_RECOMMENDED_IPS = 30;
 
-/** VCF Automation node pool: 3 active + 2 buffer. [V-DOC] */
+/**
+ * VCF Automation node pool: 3 active + 2 buffer, for 9.1.0.0 - 9.1.0.300. [V-DOC]
+ *
+ * Prefer `automationIpCount(version)` in ./version.ts, which picks between this
+ * and the 9.1.0.400+ count. These constants remain for the sizing tables, which
+ * report both.
+ */
 export const AUTOMATION_IP_COUNT = 5;
 
 /**
- * A real working 9.1.0.0 spec supplies 6 addresses here rather than the
- * documented 5. Unresolved discrepancy — the builder emits 5 by default and
- * warns.
+ * From 9.1.0.400, the pool is 6 addresses and may be non-contiguous; the sixth
+ * is requested but not consumed. [V-DOC]
+ *
+ * This was previously recorded here as an unresolved discrepancy, because a real
+ * 9.1.0.0 spec was observed carrying 6 where the documentation then said 5. It
+ * is a version boundary rather than a contradiction.
  */
 export const AUTOMATION_IP_COUNT_OBSERVED = 6;
 
@@ -572,6 +581,10 @@ export const NSX_OVERLAY_MIN_MTU = 1600;
  */
 export const INTERNAL_CLUSTER_CIDRS_V4 = ['198.18.0.0/15', '240.0.0.0/15', '250.0.0.0/15']         ;
 
+/**
+ * Supported internal cluster CIDRs for IPv6, with the spelling variants the API
+ * reference lists. `fd00::/111` is the default. [V-API]
+ */
 export const INTERNAL_CLUSTER_CIDRS_V6 = [
   'fd00::/111',
   'fd00::0/111',

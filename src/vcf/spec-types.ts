@@ -222,7 +222,8 @@ export interface SddcClusterSpec {
 }
 
 export interface TransportZone {
-  name: string;
+  /** Optional; max 255 chars. */
+  name?: string;
   transportType: 'OVERLAY' | 'VLAN';
 }
 
@@ -297,7 +298,8 @@ export interface DtgwSpec {
   vlan: number | string;
   gatewayCidr: string;
   externalIpBlockCidr: string;
-  privateTgwIpBlockCidr: string;
+  /** Optional, unlike the two CIDRs above it. */
+  privateTgwIpBlockCidr?: string;
 }
 
 export interface VpcSpec {
@@ -310,7 +312,8 @@ export interface VpcSpec {
 }
 
 export interface NsxtManagerSpec {
-  hostname: string;
+  /** Optional in the API. The builder always supplies one. */
+  hostname?: string;
 }
 
 /** Only medium | large | xlarge are accepted for VCF bring-up. */
@@ -376,21 +379,27 @@ export interface VsanSpec {
   encryptionConfig?: EncryptionConfig;
 }
 
-export interface NasVolume {
+/** The API calls this `NasVolumeSpec`; `nasVolume` is the property that holds it. */
+export interface NasVolumeSpec {
   serverName: string[];
   path: string;
-  readOnly?: boolean;
+  /**
+   * Required, despite reading like a flag that could be left to a default.
+   * Omitting it is rejected.
+   */
+  readOnly: boolean;
   userTag?: string;
   enableBindToVmknic?: boolean;
 }
 
 export interface NfsDatastoreSpec {
   datastoreName: string;
-  nasVolume: NasVolume;
+  nasVolume: NasVolumeSpec;
 }
 
 export interface VmfsDatastoreSpec {
-  fcSpec: { datastoreName: string }[];
+  /** Optional in the API, even though a VMFS datastore spec without it is inert. */
+  fcSpec?: { datastoreName: string }[];
 }
 
 export interface SddcDatastoreSpec {
@@ -565,11 +574,15 @@ export interface LicenseServerSpec {
 }
 
 export interface VcfManagementComponentsNetworkSpec {
-  networkName?: string;
-  subnetMask?: string;
-  gateway?: string;
+  /** Required. */
+  networkName: string;
+  /** Required. */
+  subnetMask: string;
+  /** Required. */
+  gateway: string;
   ipv6Gateway?: string;
-  ipv6Prefix?: string;
+  /** int32 in the API, not a string. */
+  ipv6Prefix?: number;
 }
 
 export interface VcfManagementComponentsInfrastructureSpec {
@@ -588,7 +601,16 @@ export type WorkflowType = 'VCF' | 'VCF_COMPLETE' | 'VCF_EXTEND' | 'VVF' | 'VCF_
  *
  * Required: sddcId, vcenterSpec, networkSpecs, dnsSpec.
  */
-export interface SddcSpec {
+/**
+ * Declared as a type alias rather than an interface on purpose.
+ *
+ * TypeScript gives a type alias of an object type an implicit index signature
+ * but never gives one to an interface, so an interface here cannot be passed to
+ * anything typed `Record<string, unknown>` — which is exactly what the validator
+ * takes, because it also checks for keys the schema does not define. Declaring
+ * it as an interface made every validator call site a type error.
+ */
+export type SddcSpec = {
   /** 3-20 chars, alphanumeric and hyphens. */
   sddcId: string;
   vcenterSpec: SddcVcenterSpec;
@@ -625,7 +647,7 @@ export interface SddcSpec {
   vcfAutomationSpec?: VcfAutomationSpec;
   vcfManagementComponentsInfrastructureSpec?: VcfManagementComponentsInfrastructureSpec;
   licenseServerSpec?: LicenseServerSpec;
-}
+};
 
 /**
  * Every top-level key the 9.1 schema defines, for completeness checking.

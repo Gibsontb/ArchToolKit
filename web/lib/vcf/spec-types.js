@@ -222,7 +222,8 @@
  
 
                                 
-               
+                                 
+                
                                     
  
 
@@ -297,7 +298,8 @@
                         
                       
                               
-                                
+                                                 
+                                 
  
 
                           
@@ -310,7 +312,8 @@
  
 
                                   
-                   
+                                                              
+                    
  
 
 /** Only medium | large | xlarge are accepted for VCF bring-up. */
@@ -376,21 +379,27 @@
                                       
  
 
-                            
+/** The API calls this `NasVolumeSpec`; `nasVolume` is the property that holds it. */
+                                
                        
                
-                     
+     
+                                                                           
+                             
+     
+                    
                    
                                
  
 
                                    
                         
-                       
+                           
  
 
                                     
-                                      
+                                                                                    
+                                       
  
 
                                     
@@ -565,10 +574,14 @@
  
 
                                                      
-                       
+                  
                       
-                   
+                  
+                     
+                  
+                  
                        
+                                        
                       
  
 
@@ -588,7 +601,16 @@
  *
  * Required: sddcId, vcenterSpec, networkSpecs, dnsSpec.
  */
-                           
+/**
+ * Declared as a type alias rather than an interface on purpose.
+ *
+ * TypeScript gives a type alias of an object type an implicit index signature
+ * but never gives one to an interface, so an interface here cannot be passed to
+ * anything typed `Record<string, unknown>` — which is exactly what the validator
+ * takes, because it also checks for keys the schema does not define. Declaring
+ * it as an interface made every validator call site a type error.
+ */
+                        
                                               
                  
                                
@@ -625,7 +647,7 @@
                                         
                                                                                         
                                         
- 
+  
 
 /**
  * Every top-level key the 9.1 schema defines, for completeness checking.

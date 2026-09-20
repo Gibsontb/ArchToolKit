@@ -89,10 +89,10 @@ describe('prefixToMask / maskToPrefix', () => {
 
 describe('parseCidr', () => {
   it('parses and normalises to the network address', () => {
-    expect(formatCidr(parseCidr('10.0.0.0/24') as never)).toBe('10.0.0.0/24');
+    expect(formatCidr(parseCidr('10.0.0.0/24') as NonNullable<ReturnType<typeof parseCidr>>)).toBe('10.0.0.0/24');
     // Host bits are masked off.
-    expect(formatCidr(parseCidr('10.0.0.57/24') as never)).toBe('10.0.0.0/24');
-    expect(formatCidr(parseCidr('172.30.0.1/16') as never)).toBe('172.30.0.0/16');
+    expect(formatCidr(parseCidr('10.0.0.57/24') as NonNullable<ReturnType<typeof parseCidr>>)).toBe('10.0.0.0/24');
+    expect(formatCidr(parseCidr('172.30.0.1/16') as NonNullable<ReturnType<typeof parseCidr>>)).toBe('172.30.0.0/16');
   });
 
   it('rejects malformed input', () => {
@@ -105,7 +105,7 @@ describe('parseCidr', () => {
 });
 
 describe('block arithmetic', () => {
-  const slash24 = parseCidr('10.0.0.0/24') as never;
+  const slash24 = parseCidr('10.0.0.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
 
   it('computes the broadcast address', () => {
     expect(formatIPv4(broadcastAddress(slash24))).toBe('10.0.0.255');
@@ -117,8 +117,8 @@ describe('block arithmetic', () => {
   });
 
   it('treats /31 as RFC 3021 point-to-point and /32 as a single host', () => {
-    const slash31 = parseCidr('10.0.0.0/31') as never;
-    const slash32 = parseCidr('10.0.0.5/32') as never;
+    const slash31 = parseCidr('10.0.0.0/31') as NonNullable<ReturnType<typeof parseCidr>>;
+    const slash32 = parseCidr('10.0.0.5/32') as NonNullable<ReturnType<typeof parseCidr>>;
     expect(usableAddresses(slash31)).toBe(2);
     expect(usableAddresses(slash32)).toBe(1);
     expect(formatIPv4(usableRange(slash31).first)).toBe('10.0.0.0');
@@ -139,21 +139,21 @@ describe('block arithmetic', () => {
 
 describe('cidrsOverlap', () => {
   it('detects a subnet nested inside a supernet', () => {
-    const a = parseCidr('10.0.0.0/16') as never;
-    const b = parseCidr('10.0.5.0/24') as never;
+    const a = parseCidr('10.0.0.0/16') as NonNullable<ReturnType<typeof parseCidr>>;
+    const b = parseCidr('10.0.5.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
     expect(cidrsOverlap(a, b)).toBe(true);
     expect(cidrsOverlap(b, a)).toBe(true);
   });
 
   it('returns false for disjoint blocks', () => {
-    const a = parseCidr('10.0.0.0/24') as never;
-    const b = parseCidr('10.0.1.0/24') as never;
+    const a = parseCidr('10.0.0.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
+    const b = parseCidr('10.0.1.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
     expect(cidrsOverlap(a, b)).toBe(false);
   });
 
   it('detects adjacent blocks as non-overlapping', () => {
-    const a = parseCidr('172.30.0.0/24') as never;
-    const b = parseCidr('172.30.1.0/24') as never;
+    const a = parseCidr('172.30.0.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
+    const b = parseCidr('172.30.1.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
     expect(cidrsOverlap(a, b)).toBe(false);
   });
 });
@@ -175,16 +175,16 @@ describe('ranges', () => {
 });
 
 describe('allocateRange', () => {
-  const slash24 = parseCidr('172.30.0.0/24') as never;
+  const slash24 = parseCidr('172.30.0.0/24') as NonNullable<ReturnType<typeof parseCidr>>;
 
   it('carves a range at an offset into the usable space', () => {
-    const r = allocateRange(slash24, 0, 5) as never;
+    const r = allocateRange(slash24, 0, 5) as NonNullable<ReturnType<typeof allocateRange>>;
     expect(formatIPv4(r.start)).toBe('172.30.0.1');
     expect(formatIPv4(r.end)).toBe('172.30.0.5');
   });
 
   it('respects the offset', () => {
-    const r = allocateRange(slash24, 31, 14) as never;
+    const r = allocateRange(slash24, 31, 14) as NonNullable<ReturnType<typeof allocateRange>>;
     expect(formatIPv4(r.start)).toBe('172.30.0.32');
     expect(formatIPv4(r.end)).toBe('172.30.0.45');
   });
