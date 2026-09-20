@@ -25,6 +25,7 @@ import {
 import { analyzeEstate, toSizingInput } from '../vmware/analyze.js';
 import { assessEstate,                                      } from '../vmware/readiness.js';
 import { sizeDeployment } from '../vcf/sizing.js';
+import { putHandoff } from './handoff.js';
 
 const STATUS_MARK                              = {
   pass: '✓',
@@ -324,6 +325,21 @@ function buildResults(inventory           , importFindings           )          
           el(
             'div',
             { class: 'btn-row', style: { marginTop: 'var(--space-4)' } },
+            el('button', {
+              class: 'btn btn-primary',
+              text: 'Continue in sizing',
+              on: {
+                click: () => {
+                  const label = inventory.source.label ?? inventory.source.kind;
+                  putHandoff(
+                    'inventory-to-sizing',
+                    `${formatCount(inventory.hosts.length)} hosts and ${formatCount(inventory.vms.length)} VMs from ${label}`,
+                    sizingInput,
+                  );
+                  globalThis.location.assign('vcf-sizing.html');
+                },
+              },
+            }),
             el('button', {
               class: 'btn',
               text: 'Download sizing input (JSON)',

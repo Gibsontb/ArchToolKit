@@ -25,6 +25,7 @@ import {
 import { analyzeEstate, toSizingInput } from '../vmware/analyze.ts';
 import { assessEstate, type HostReadiness, type CheckStatus } from '../vmware/readiness.ts';
 import { sizeDeployment } from '../vcf/sizing.ts';
+import { putHandoff } from './handoff.ts';
 
 const STATUS_MARK: Record<CheckStatus, string> = {
   pass: '✓',
@@ -324,6 +325,21 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
           el(
             'div',
             { class: 'btn-row', style: { marginTop: 'var(--space-4)' } },
+            el('button', {
+              class: 'btn btn-primary',
+              text: 'Continue in sizing',
+              on: {
+                click: () => {
+                  const label = inventory.source.label ?? inventory.source.kind;
+                  putHandoff(
+                    'inventory-to-sizing',
+                    `${formatCount(inventory.hosts.length)} hosts and ${formatCount(inventory.vms.length)} VMs from ${label}`,
+                    sizingInput,
+                  );
+                  globalThis.location.assign('vcf-sizing.html');
+                },
+              },
+            }),
             el('button', {
               class: 'btn',
               text: 'Download sizing input (JSON)',

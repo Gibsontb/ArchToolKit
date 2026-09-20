@@ -109,6 +109,25 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | Terraform authoring kit | Planned |
 | Ansible authoring kit | Planned |
 
+## Working across the three tools
+
+The tools answer consecutive questions, and each hands its result to the next
+rather than making you retype it:
+
+    inventory  ->  sizing  ->  spec builder
+    what is there   what it must become   the document that builds it
+
+Importing an RVTools or PowerCLI export gives a derived sizing input — host
+profile from the weakest host, workload figures from allocated rather than
+provisioned values — and **Continue in sizing** carries it over. From a sizing
+result, **Continue in the spec builder** carries the host count, storage type,
+failures to tolerate, deployment scenario and the IP pool counts, so the pools a
+specification emits match the sizing that justified them.
+
+A handoff applies once and lives only for the browser tab, so reloading a page
+never silently re-applies a decision that has since changed. Each step remains
+usable on its own; nothing requires starting at the beginning.
+
 ## Spec builder inputs
 
 The form covers the fields a form can express. Structured and rarely-used parts

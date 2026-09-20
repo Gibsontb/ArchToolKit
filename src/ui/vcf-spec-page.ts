@@ -29,6 +29,7 @@ import {
 } from '../vcf/spec-builder.ts';
 import { validateSddcSpec, validateSddcSpecJson } from '../vcf/spec-validate.ts';
 import { SCENARIO_RULES, scenarioRule, type DeploymentScenario } from '../vcf/scenarios.ts';
+import { takeHandoff } from './handoff.ts';
 import {
   MANAGEMENT_NETWORK_MODELS,
   managementNetworkModel,
@@ -404,6 +405,32 @@ export function mountVcfSpecPage(root: HTMLElement): void {
   // Changing the host count adjusts the table without discarding typed detail.
   controls.hostCount.addEventListener('change', () => hostTable.syncCount());
 
+  /**
+   * Values a sizing result determined that no control represents.
+   *
+   * The IP pool counts are the reason this exists: sizing works out how many
+   * addresses each pool needs, the builder allocates them from the subnets, and
+   * there is no sensible form field in between. Keeping them here lets the
+   * emitted pools match the sizing that justified them.
+   */
+  let inherited: Partial<DeploymentPlan> = {};
+
+  const inbound = takeHandoff<Partial<DeploymentPlan>>('sizing-to-spec');
+  if (inbound) {
+    inherited = inbound.payload;
+    applySizingPlan(controls, inbound.payload);
+    hostTable.syncCount();
+    append(
+      root,
+      el(
+        'div',
+        { class: 'section-note', style: { marginBottom: 'var(--space-4)' } },
+        el('strong', { text: 'Prefilled from your sizing. ' }),
+        el('span', { text: `${inbound.origin}. Names, domains and VLANs still need filling in.` }),
+      ),
+    );
+  }
+
   append(inputsPane, hostTable.element);
   append(root, el('div', { class: 'split' }, el('div', {}, inputsPane), outputPane));
 
@@ -412,6 +439,9 @@ export function mountVcfSpecPage(root: HTMLElement): void {
       const parsed = Number(input.value);
       return Number.isFinite(parsed) ? parsed : fallback;
     };
+    // Controls win over anything inherited; what survives is only the fields no
+    // control represents.
+    const inheritedPlan = inherited;
     const list = (input: HTMLInputElement): string[] =>
       input.value
         .split(/[,\s]+/)
@@ -428,6 +458,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
     const overlaySegment = controls.overlaySegment.value.trim();
 
     return {
+      ...inheritedPlan,
       sddcId: controls.sddcId.value.trim() || 'vcf-m01',
       vcfInstanceName: controls.instanceName.value.trim() || undefined,
       domainSuffix: controls.domainSuffix.value.trim() || 'vcf.lab',
@@ -668,6 +699,28 @@ export function mountVcfSpecPage(root: HTMLElement): void {
  * `existing.vcenter` with an empty name, as this page did before, declared a
  * reuse the installer could not act on.
  */
+/**
+ * Push the sizing-determined part of a plan into the form.
+ *
+ * Only what sizing actually decides is written. Names, domains, VLANs and
+ * subnets are left alone: sizing has no view on them, and filling them with
+ * plausible-looking defaults would disguise a guess as a derivation.
+ */
+function applySizingPlan(controls: Controls, plan: Partial<DeploymentPlan>): void {
+  if (plan.hostCount !== undefined) controls.hostCount.value = String(plan.hostCount);
+  if (plan.storage) controls.storage.value = plan.storage;
+  if (plan.profile) controls.profile.value = plan.profile;
+  if (plan.failuresToTolerate !== undefined) {
+    controls.ftt.value = String(plan.failuresToTolerate);
+  }
+  if (plan.scenario) controls.scenario.value = plan.scenario;
+  if (plan.pnicsPerHost !== undefined) controls.pnicsPerHost.value = String(plan.pnicsPerHost);
+  if (plan.includeAutomation !== undefined) {
+    controls.includeAutomation.checked = plan.includeAutomation;
+  }
+  if (plan.automationSize) controls.automationSize.value = plan.automationSize;
+}
+
 function existingBlock(
   controls: Controls,
   rule: ReturnType<typeof scenarioRule>,

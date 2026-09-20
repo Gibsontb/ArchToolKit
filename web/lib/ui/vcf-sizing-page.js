@@ -29,6 +29,9 @@ import {
                    
 } from '../vcf/sizing-data.js';
                                                     
+                                                            
+import { putHandoff, takeHandoff } from './handoff.js';
+import { sizingToPlan, describeSizingHandoff } from '../vcf/bridge.js';
 
                     
                           
@@ -50,6 +53,7 @@ import {
                               
                                   
                                       
+                                    
                                        
                                    
  
@@ -91,6 +95,22 @@ export function mountVcfSizingPage(root             )       {
 
   const inputsPane = buildInputs(controls, () => render());
 
+  // An inventory import can hand its derived sizing input straight over, so the
+  // estate does not have to be described twice.
+  const inbound = takeHandoff             ('inventory-to-sizing');
+  if (inbound) {
+    applySizingInput(controls, inbound.payload);
+    append(
+      root,
+      el(
+        'div',
+        { class: 'section-note', style: { marginBottom: 'var(--space-4)' } },
+        el('strong', { text: 'Prefilled from your inventory. ' }),
+        el('span', { text: `${inbound.origin}. Every value below can still be changed.` }),
+      ),
+    );
+  }
+
   append(
     root,
     el('div', { class: 'split' }, el('div', {}, inputsPane), resultsPane),
@@ -124,6 +144,7 @@ export function mountVcfSizingPage(root             )       {
       edgeSize: controls.edgeSize.value               ,
       edgeNodeCount: Math.max(1, num(controls.edgeNodeCount, 2)),
       includeAutomation: controls.includeAutomation.checked,
+      automationSize: controls.automationSize.value                  ,
       reserveHostFailure: controls.reserveHostFailure.checked,
       targetCpuRatio: Math.max(0.1, num(controls.targetCpuRatio, 2)),
     };
@@ -171,6 +192,12 @@ function buildInputs(controls          , onChange            )              {
 
   const automation = checkbox('Include VCF Automation', true);
   controls.includeAutomation = bind(automation.input);
+  controls.automationSize = bind(
+    select(
+      (['small', 'medium', 'large']                    ).map((v) => ({ value: v, label: v })),
+      'small',
+    ),
+  );
   const reserve = checkbox('Reserve one host for failure (N+1)', true);
   controls.reserveHostFailure = bind(reserve.input);
   controls.targetCpuRatio = bind(numberInput(2, { min: 0.5, max: 16, step: 0.5 }));
@@ -226,6 +253,7 @@ function buildInputs(controls          , onChange            )              {
       'div',
       { class: 'field-row' },
       field('Edge size', controls.edgeSize),
+      field('VCF Automation size', controls.automationSize),
       field('Edge nodes', controls.edgeNodeCount),
     ),
     el('div', { class: 'field' }, reserve.wrap),
@@ -233,6 +261,40 @@ function buildInputs(controls          , onChange            )              {
   );
 
   return el('div', { class: 'stack' }, deployment, hardware, workload, options);
+}
+
+/**
+ * Push a derived sizing input into the form.
+ *
+ * Only the fields the estate actually determines are written; anything the
+ * inventory cannot know keeps the form's own default rather than being
+ * overwritten with a guess.
+ */
+function applySizingInput(controls          , input             )       {
+  controls.path.value = input.path;
+  controls.profile.value = input.profile;
+  controls.topology.value = input.topology;
+  controls.storage.value = input.storage;
+  controls.instanceCount.value = String(input.instanceCount);
+  controls.hostCount.value = String(input.hostCount);
+  controls.cpuSockets.value = String(input.host.cpuSockets);
+  controls.coresPerCpu.value = String(input.host.coresPerCpu);
+  controls.hyperthreading.checked = input.host.hyperthreading;
+  controls.ramGib.value = String(Math.round(input.host.ramGib));
+  controls.rawStorageGib.value = String(Math.round(input.host.rawStorageGib));
+  if (input.workloadVcpu !== undefined) {
+    controls.workloadVcpu.value = String(Math.round(input.workloadVcpu));
+  }
+  if (input.workloadRamGib !== undefined) {
+    controls.workloadRamGib.value = String(Math.round(input.workloadRamGib));
+  }
+  if (input.workloadCapacityGib !== undefined) {
+    controls.workloadCapacityGib.value = String(Math.round(input.workloadCapacityGib));
+  }
+  if (input.pnicsPerHost !== undefined) controls.pnicsPerHost.value = String(input.pnicsPerHost);
+  if (input.reserveHostFailure !== undefined) {
+    controls.reserveHostFailure.checked = input.reserveHostFailure;
+  }
 }
 
 function buildResults(result              )                {
@@ -392,6 +454,16 @@ function buildResults(result              )                {
               `vcf-sizing-${input.path}-${input.hostCount}host.json`,
               JSON.stringify(serializeResult(result), null, 2),
             ),
+        },
+      }),
+      el('button', {
+        class: 'btn',
+        text: 'Continue in the spec builder',
+        on: {
+          click: () => {
+            putHandoff('sizing-to-spec', describeSizingHandoff(result), sizingToPlan(result));
+            globalThis.location.assign('vcf-spec.html');
+          },
         },
       }),
     ),
