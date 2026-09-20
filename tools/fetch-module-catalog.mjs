@@ -189,12 +189,103 @@ function parseVariables(hcl) {
     }
 
     const body = hcl.slice(re.lastIndex, i - 1);
-    // A variable with no `default` must be supplied, which is the one thing
-    // about an input the kit has to get right when it generates a call.
-    found.push({ name, required: !/^\s*default\s*=/m.test(body), kind: kindOf(body) });
+    const defaultExpr = expressionAfter(body, 'default');
+    found.push({
+      name,
+      // A variable with no `default` must be supplied, which is the one thing
+      // about an input the kit has to get right when it generates a call.
+      required: defaultExpr === undefined,
+      kind: kindOf(body),
+      type: tidy(expressionAfter(body, 'type') ?? 'any', 900),
+      default: defaultExpr === undefined ? '' : tidy(defaultExpr, 600),
+      description: describe(expressionAfter(body, 'description')),
+    });
     re.lastIndex = i;
   }
   return found;
+}
+
+/**
+ * The expression assigned to `key` at the top level of a block body.
+ *
+ * Read by walking brackets rather than to the end of the line, because the
+ * interesting ones span lines: `type = object({ ... })` over twenty of them,
+ * a default map over ten. Strings and heredocs are skipped over whole so a
+ * bracket inside a description does not end the expression early. Only
+ * top-level assignments count — a `default` inside a nested object type is
+ * not the variable's default.
+ */
+function expressionAfter(body, key) {
+  const lines = body.split('\n');
+  let depth = 0;
+  let offset = 0;
+  for (const line of lines) {
+    const match = depth === 0 ? new RegExp(`^\\s*${key}\\s*=\\s*`).exec(line) : null;
+    if (match) return readExpression(body, offset + match[0].length);
+    for (const ch of line.replace(/"(?:[^"\\]|\\.)*"/g, '""')) {
+      if (ch === '{' || ch === '(' || ch === '[') depth += 1;
+      if (ch === '}' || ch === ')' || ch === ']') depth -= 1;
+    }
+    offset += line.length + 1;
+  }
+  return undefined;
+}
+
+function readExpression(text, start) {
+  const heredoc = /^<<-?([A-Za-z_][A-Za-z0-9_]*)\s*\n/.exec(text.slice(start));
+  if (heredoc) {
+    const bodyStart = start + heredoc[0].length;
+    const end = new RegExp(`^\\s*${heredoc[1]}\\s*$`, 'm').exec(text.slice(bodyStart));
+    const inner = end ? text.slice(bodyStart, bodyStart + end.index) : text.slice(bodyStart);
+    return `<<EOT\n${inner}EOT`;
+  }
+  let depth = 0;
+  let i = start;
+  let inString = false;
+  for (; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '(' || ch === '[') depth += 1;
+    else if (ch === '}' || ch === ')' || ch === ']') depth -= 1;
+    else if (ch === '\n' && depth <= 0) break;
+    else if (ch === '#' && depth <= 0) break;
+  }
+  return text.slice(start, i).trim();
+}
+
+/** Dedented, trailing comments off, and capped so one huge type cannot bloat the file. */
+function tidy(expr, max) {
+  const lines = expr.split('\n');
+  const indents = lines.slice(1).filter((l) => l.trim()).map((l) => /^\s*/.exec(l)[0].length);
+  const cut = indents.length ? Math.min(...indents) : 0;
+  const out = [lines[0], ...lines.slice(1).map((l) => l.slice(Math.min(cut, /^\s*/.exec(l)[0].length)))]
+    .map((l) => l.replace(/\s+#[^"]*$/, '').replace(/\s+$/, ''))
+    .join('\n')
+    .trim();
+  return out.length > max ? `${out.slice(0, max)}\n# … (truncated)` : out;
+}
+
+/** A description, as prose on one line. */
+function describe(expr) {
+  if (expr === undefined) return '';
+  let text = expr;
+  if (text.startsWith('<<EOT\n')) text = text.slice(6, -3);
+  else if (text.startsWith('"')) {
+    try {
+      text = JSON.parse(text.replace(/\$\{/g, '$${'));
+    } catch {
+      text = text.slice(1, -1);
+    }
+  }
+  // Markdown links read as noise in a form; keep the words, drop the URL.
+  text = text.replace(/\[([^\]]+)\]\((?:[^()]|\([^)]*\))+\)/g, '$1');
+  text = text.replace(/\s+/g, ' ').trim();
+  return text.length > 400 ? `${text.slice(0, 397)}…` : text;
 }
 
 /**
@@ -218,6 +309,57 @@ function kindOf(body) {
     : 'any';
 }
 
+/**
+ * The resources a module declares, and what switches each one on.
+ *
+ * This is the part of a registry page that answers "what will this actually
+ * build". Most modules gate their resources on an input — `count =
+ * var.create_eip ? 1 : 0` — so the condition is kept with the name and shown
+ * beside the generated call: tick create_eip, get an aws_eip.
+ */
+function parseResources(hcl) {
+  const found = [];
+  const re = /^(resource|data)\s+"([^"]+)"\s+"([^"]+)"\s*\{/gm;
+  let match;
+  while ((match = re.exec(hcl)) !== null) {
+    const rest = hcl.slice(re.lastIndex, re.lastIndex + 4000);
+    const gate = expressionAfter(rest.split(/\n\}/)[0] ?? '', 'count') ??
+      expressionAfter(rest.split(/\n\}/)[0] ?? '', 'for_each') ?? '';
+    found.push([match[1] === 'data' ? 'data' : 'resource', `${match[2]}.${match[3]}`, tidy(gate, 200).replace(/\n\s*/g, ' ')]);
+  }
+  return found;
+}
+
+/**
+ * `locals` entries short enough to be a condition.
+ *
+ * Kept so the kit can follow `count = local.create_security_group ? 1 : 0`
+ * back to the inputs it is made of. Long locals are data plumbing, not
+ * switches, and are left out.
+ */
+function parseLocals(hcl) {
+  const found = [];
+  const re = /^locals\s*\{/gm;
+  let match;
+  while ((match = re.exec(hcl)) !== null) {
+    let depth = 1;
+    let i = re.lastIndex;
+    for (; i < hcl.length && depth > 0; i += 1) {
+      if (hcl[i] === '{') depth += 1;
+      if (hcl[i] === '}') depth -= 1;
+    }
+    const body = hcl.slice(re.lastIndex, i - 1);
+    for (const line of body.split('\n')) {
+      const m = /^\s{2}([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(line);
+      if (!m) continue;
+      const expr = m[2].replace(/\s+#.*$/, '').trim();
+      if (expr.length > 200 || /[{[(]\s*$/.test(expr)) continue;
+      found.push([m[1], expr]);
+    }
+  }
+  return found;
+}
+
 function parseOutputs(hcl) {
   return [...hcl.matchAll(/^output\s+"([^"]+)"/gm)].map((m) => m[1]);
 }
@@ -233,12 +375,16 @@ function parseOutputs(hcl) {
 function readModule(dir) {
   const inputs = [];
   const outputs = [];
+  const resources = [];
+  const locals = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.tf')).sort()) {
     const text = readFileSync(join(dir, file), 'utf8');
     inputs.push(...parseVariables(text));
     outputs.push(...parseOutputs(text));
+    resources.push(...parseResources(text));
+    locals.push(...parseLocals(text));
   }
-  return { inputs, outputs };
+  return { inputs, outputs, resources, locals };
 }
 
 function main() {
@@ -258,7 +404,7 @@ function main() {
     try {
       const cloned = cloneAtVersion(namespace, name, provider, version);
       dir = cloned.dir;
-      const { inputs, outputs } = readModule(submodule ? join(dir, submodule) : dir);
+      const { inputs, outputs, resources, locals } = readModule(submodule ? join(dir, submodule) : dir);
       if (inputs.length === 0) {
         failures.push(`${source}: no variables at the module root`);
         continue;
@@ -270,6 +416,8 @@ function main() {
         inputs: [...inputs].sort((a, b) => a.name.localeCompare(b.name)),
         required: inputs.filter((i) => i.required).map((i) => i.name).sort(),
         outputs: outputs.sort(),
+        resources,
+        locals,
       });
       console.log(
         `  ${source.padEnd(52)} ${version.padStart(8)}  ` +
@@ -297,6 +445,9 @@ function main() {
     '/**',
     ' * Registry module catalog — GENERATED, do not edit by hand.',
     ' *',
+    ' * Every input of every module, with its type, default and description, the',
+    ' * same table the registry page shows — so the form can offer all of them.',
+    ' *',
     " * The modules the kit can generate a call to, with the inputs and outputs each",
     ' * one actually has at the version pinned here. Read from every module’s own',
     ' * `variables.tf` at that version’s tag, so a blueprint naming an input that a',
@@ -305,20 +456,26 @@ function main() {
     ' * Refresh with: npm run modules:update',
     ' */',
     '',
+    'export type ModuleInputRow = readonly [string, string, 0 | 1, string, string, string];',
+    '',
     'export interface ModuleCatalogEntry {',
     '  /** Platform id, matching the shared target vocabulary. */',
     '  readonly provider: string;',
     '  /** What goes in `source`, e.g. "terraform-aws-modules/vpc/aws". */',
     '  readonly source: string;',
     '  readonly version: string;',
-    '  /** Comma-joined input names. */',
-    '  readonly inputs: string;',
-    '  /** Comma-joined shapes, one per input in the same order. */',
-    '  readonly kinds: string;',
-    '  /** Comma-joined inputs with no default, which a call has to supply. */',
-    '  readonly required: string;',
+    '  /**',
+    '   * One row per input: name, shape, required (1 when it has no default),',
+    '   * the declared type expression, the default expression, the description —',
+    '   * the same columns the registry page shows.',
+    '   */',
+    '  readonly inputs: readonly ModuleInputRow[];',
     '  /** Comma-joined output names. */',
     '  readonly outputs: string;',
+    '  /** What the module declares: kind, address, and the count/for_each that gates it. */',
+    '  readonly resources: readonly (readonly [string, string, string])[];',
+    '  /** Short `locals` entries, name and expression, for following a condition back to its inputs. */',
+    '  readonly locals: readonly (readonly [string, string])[];',
     '}',
     '',
     '/** When this file was generated, ISO date. */',
@@ -332,10 +489,17 @@ function main() {
       `    provider: ${JSON.stringify(e.provider)},`,
       `    source: ${JSON.stringify(e.source)},`,
       `    version: ${JSON.stringify(e.version)},`,
-      `    inputs: ${JSON.stringify(e.inputs.map((i) => i.name).join(','))},`,
-      `    kinds: ${JSON.stringify(e.inputs.map((i) => i.kind).join(','))},`,
-      `    required: ${JSON.stringify(e.required.join(','))},`,
+      '    inputs: [',
+      ...e.inputs.map(
+        (i) =>
+          `      ${JSON.stringify([i.name, i.kind, i.required ? 1 : 0, i.type, i.default, i.description])},`,
+      ),
+      '    ],',
       `    outputs: ${JSON.stringify(e.outputs.join(','))},`,
+      '    resources: [',
+      ...e.resources.map((r) => `      ${JSON.stringify(r)},`),
+      '    ],',
+      `    locals: ${JSON.stringify(e.locals)},`,
       '  },',
     );
   }

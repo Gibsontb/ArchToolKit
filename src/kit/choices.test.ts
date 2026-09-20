@@ -89,6 +89,10 @@ describe('answer sets', () => {
       const found = inputsWithId(id);
       expect(found.length).toBeGreaterThan(0);
       for (const { input } of found) {
+        // A module's full input table reuses these names for other things —
+        // Cloud SQL's `instance_type` is a replica role, not a machine — and
+        // those rightly get no machine list. The headline fields must.
+        if (input.section !== undefined) continue;
         expect((input.options ?? []).length).toBeGreaterThan(atLeast);
       }
     }
@@ -148,6 +152,8 @@ describe('credentials', () => {
         for (const input of blueprint.inputs) {
           if (!secretIds.test(input.id)) continue;
           const values = (input.options ?? []).map((o) => o.value);
+          // `manage_master_user_password` is a switch, not a password.
+          if (values.length === 2 && values.includes('true') && values.includes('false')) continue;
           expect(values.length).toBeGreaterThan(0);
           const wanted = kind === 'terraform' ? /^var\./ : /\{\{/;
           for (const value of values) expect(wanted.test(value)).toBe(true);

@@ -18,7 +18,14 @@
  */
 
                                                                                   
-import { moduleBySource, moduleCall, versionConstraint,                } from './modules.js';
+import {
+  moduleBySource,
+  moduleCall,
+  versionConstraint,
+                 
+                   
+} from './modules.js';
+import { planModule } from './module-plan.js';
 import { providerFor,                  } from './providers.js';
 
 /** One field on the form, naming an input the module really has. */
@@ -82,13 +89,60 @@ function labelFor(input        )         {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** What an empty box stands for: the module's default, as the module writes it. */
+function placeholderFor(input             )                     {
+  const d = input.defaultExpr;
+  if (d === '' || d === 'null') {
+    return input.kind === 'list' || input.kind === 'map' || input.kind === 'object' || input.kind === 'set'
+      ? input.type
+      : undefined;
+  }
+  return d.startsWith('"') && d.endsWith('"') ? d.slice(1, -1) : d;
+}
+
+/** `bool · default null`, the two columns of the registry table that fit in a hint. */
+function typeHint(input             )         {
+  const type = input.type.includes('\n') || input.type.length > 32 ? input.kind : input.type;
+  const d = input.defaultExpr;
+  if (input.required) return `${type} · required`;
+  const shown = d.includes('\n') || d.length > 28 ? 'see box' : d || 'none';
+  return `${type} · default ${shown}`;
+}
+
+/** One input from the full table, as a form field that starts empty. */
+function everyInput(input             , section                    )                 {
+  const control                            =
+    input.kind === 'bool'
+      ? 'select'
+      : input.kind === 'number'
+        ? 'number'
+        : input.kind === 'string'
+          ? 'text'
+          : 'textarea';
+  return {
+    id: input.name,
+    // The module's own name, as the registry page and the module's README
+    // print it — these are looked up, not read like a form.
+    label: input.name,
+    control,
+    hint: typeHint(input),
+    help: input.description || undefined,
+    placeholder: placeholderFor(input),
+    options: control === 'select' ? BOOL_OPTIONS : undefined,
+    blankLabel: input.required
+      ? undefined
+      : `Module default (${input.defaultExpr === '' ? 'none' : input.defaultExpr})`,
+    section,
+  };
+}
+
 export function moduleBlueprint(target             , spec                     )            {
   const module = moduleBySource(spec.source);
   if (!module) {
     throw new Error(`No catalog entry for module ${spec.source}`);
   }
 
-  const inputs                   = spec.fields.map((field) => {
+  const headline                   = spec.fields.map((field) => {
     const declared = module.inputs.find((i) => i.name === field.input);
     if (!declared) {
       throw new Error(`Module ${spec.source} has no input "${field.input}"`);
@@ -99,10 +153,29 @@ export function moduleBlueprint(target             , spec                     ) 
       label: field.label ?? labelFor(field.input),
       control,
       hint: field.hint ?? hintFor(declared.kind, declared.required),
+      help: declared.description || undefined,
+      placeholder: placeholderFor(declared),
       default: field.default,
       options: field.options ?? (control === 'select' && declared.kind === 'bool' ? BOOL_OPTIONS : undefined),
     };
   });
+
+  /*
+   * Then every other input the module takes — the registry page's whole table.
+   *
+   * A required one the spec did not list goes up top with the headline
+   * questions, since a call without it does not plan. The rest sit in a
+   * collapsed section in the module's own order, each with its description,
+   * its type and its default, and each empty until touched: empty means the
+   * module's default, and only what is touched is written into the call.
+   */
+  const listed = new Set(spec.fields.map((f) => f.input));
+  const rest = module.inputs.filter((i) => !listed.has(i.name));
+  const promoted = rest.filter((i) => i.required).map((i) => everyInput(i, undefined));
+  const section = `All ${module.inputs.length} inputs of ${spec.source}`;
+  const everything = rest.filter((i) => !i.required).map((i) => everyInput(i, section));
+
+  const inputs = [...headline, ...promoted, ...everything];
 
   const provider = providerFor(target);
 
@@ -119,7 +192,7 @@ export function moduleBlueprint(target             , spec                     ) 
     emits: [spec.source],
     build: (values, name)              => {
       const chosen = new Map                 ();
-      for (const field of spec.fields) chosen.set(field.input, values[field.input]);
+      for (const input of inputs) chosen.set(input.id, values[input.id]);
 
       const header = `# ${spec.label}
 #
@@ -156,10 +229,15 @@ terraform {
         )
         .join('\n\n');
 
+      const builds = planModule(spec.source, Object.fromEntries(chosen))
+        .filter((r) => r.kind === 'resource')
+        .map(({ address, status, because, condition }) => ({ address, status, because, condition }));
+
       return {
         files: {
           'main.tf': [header, call, outputs].filter(Boolean).join('\n\n') + '\n',
         },
+        builds,
       };
     },
   };

@@ -28,6 +28,7 @@ import {
                       
                       
                        
+                   
                     
 } from '../kit/blueprint.js';
                                                    
@@ -96,10 +97,23 @@ function fillOptions(
   }
 }
 
+/**
+ * The options, led by an empty one when the input says what empty means.
+ *
+ * On an optional module input, empty is "leave it to the module". Without an
+ * empty option a dropdown cannot say that — and drawing it would quietly pick
+ * its first entry and write it into the call.
+ */
+function withBlank(input                )                          {
+  const options = input.options ?? [];
+  if (input.blankLabel === undefined || options.some((o) => o.value === '')) return options;
+  return [{ value: '', label: input.blankLabel }, ...options];
+}
+
 function control(input                , value         , onChange            )              {
   if (input.control === 'select') {
     const node = el('select')                     ;
-    fillOptions(node, input.options ?? [], String(value));
+    fillOptions(node, withBlank(input), String(value ?? ''));
     node.addEventListener('change', onChange);
     return node;
   }
@@ -134,7 +148,7 @@ function control(input                , value         , onChange            )   
      * of still has to be typeable.
      */
     const CUSTOM = '__custom__';
-    const options = input.options ?? [];
+    const options = withBlank(input);
     const current = String(value ?? '');
     const known = options.some((o) => o.value === current);
 
@@ -167,7 +181,13 @@ function control(input                , value         , onChange            )   
   }
 
   if (input.control === 'textarea') {
-    const node = el('textarea', { attrs: { rows: '4' } })                       ;
+    const node = el('textarea', {
+      attrs: {
+        rows: String(Math.min(8, Math.max(3, (input.placeholder ?? '').split('\n').length))),
+        spellcheck: 'false',
+        ...(input.placeholder ? { placeholder: input.placeholder } : {}),
+      },
+    })                       ;
     node.value = String(value ?? '');
     node.addEventListener('input', onChange);
     return node;
@@ -186,18 +206,128 @@ function control(input                , value         , onChange            )   
   return node;
 }
 
+/**
+ * What `terraform apply` will create from the generated call.
+ *
+ * The module block names one thing; the plan creates many, and which ones
+ * depends on the answers. This is the registry page's resource list with each
+ * row decided: created, not created, or depends — the last with the condition
+ * shown, because it could not be worked out without guessing.
+ */
+function buildsPanel(builds                                    )              {
+  const yes = builds.filter((b) => b.status === 'yes').length;
+  const maybe = builds.filter((b) => b.status === 'depends').length;
+  const rows = [...builds].sort((a, b) => order(a.status) - order(b.status));
+
+  const body = el('tbody');
+  for (const b of rows) {
+    body.appendChild(
+      el(
+        'tr',
+        { class: `build-${b.status}` },
+        el('td', {}, el('span', { class: `build-mark is-${b.status}`, text: MARK[b.status] })),
+        el(
+          'td',
+          {},
+          el('code', { class: 'build-address', text: b.address }),
+          // The reason sits under the name rather than in a third column: the
+          // generated-code card is narrow, and a condition beside the address
+          // was cut off exactly where it said why.
+          b.status === 'depends' && b.condition
+            ? el('div', { class: 'build-why' }, el('span', { text: 'When ' }), el('code', { text: b.condition }))
+            : b.because
+              ? el('div', { class: 'build-why', text: b.because })
+              : null,
+        ),
+      ),
+    );
+  }
+
+  return el(
+    'div',
+    { class: 'builds' },
+    el(
+      'div',
+      { class: 'builds-head' },
+      el('strong', { text: 'What this will create' }),
+      el('span', {
+        class: 'muted',
+        text: `${yes} resource${yes === 1 ? '' : 's'}${maybe > 0 ? `, ${maybe} depending on values outside the form` : ''}, of ${builds.length} the module can make`,
+      }),
+    ),
+    el(
+      'div',
+      { class: 'table-wrap' },
+      el(
+        'table',
+        { class: 'data-table builds-table' },
+        el('thead', {}, el('tr', {}, el('th', { text: '' }), el('th', { text: 'Resource, and what decided it' }))),
+        body,
+      ),
+    ),
+  );
+}
+
+const MARK = { yes: 'Created', no: 'Not created', depends: 'Depends' }         ;
+const order = (s                          )         => (s === 'yes' ? 0 : s === 'depends' ? 1 : 2);
+
 /** Label on the left, hint on the right, control underneath. */
 function labelledField(input                , node             )              {
   return el(
     'div',
-    { class: 'field' },
+    {
+      class: 'field',
+      attrs: { 'data-search': `${input.id} ${input.label} ${input.help ?? ''}`.toLowerCase() },
+    },
     el(
       'div',
       { class: 'field-head' },
       el('label', { text: input.label }),
-      input.hint ? el('span', { class: 'field-hint', text: input.hint }) : null,
+      input.hint ? el('span', { class: 'field-hint', text: input.hint, attrs: { title: input.hint } }) : null,
     ),
     node,
+    input.help ? el('div', { class: 'field-help', text: input.help }) : null,
+  );
+}
+
+/**
+ * A collapsed section of optional inputs, with a filter.
+ *
+ * A module can take two hundred inputs. Laid out flat they would bury the
+ * dozen that matter; hidden they would make the kit look like it only knew a
+ * dozen. So they are here, closed until opened, and searchable by name or by
+ * what the description says.
+ */
+function inputSection(title        , fields                        , touched        )              {
+  const filter = el('input', {
+    attrs: { type: 'search', placeholder: `Filter ${fields.length} inputs by name or description` },
+  })                    ;
+  const list = el('div', { class: 'input-section-list' }, ...fields);
+  const count = el('span', { class: 'muted', text: '' });
+
+  filter.addEventListener('input', () => {
+    const q = filter.value.trim().toLowerCase();
+    let shown = 0;
+    for (const field of fields) {
+      const hit = q === '' || (field.getAttribute('data-search') ?? '').includes(q);
+      field.style.display = hit ? '' : 'none';
+      if (hit) shown += 1;
+    }
+    count.textContent = q === '' ? '' : `${shown} match${shown === 1 ? '' : 'es'}`;
+  });
+
+  const summary = el(
+    'summary',
+    {},
+    el('span', { text: title }),
+    touched > 0 ? el('span', { class: 'pill', text: `${touched} set` }) : null,
+  );
+  return el(
+    'details',
+    { class: 'input-section' },
+    summary,
+    el('div', { class: 'input-section-filter' }, filter, count),
+    list,
   );
 }
 
@@ -209,6 +339,7 @@ export function mountGeneratorPage(root             , options                  )
   let blueprint                       ;
   let values                  = {};
   let generated                                          = null;
+  let builds                        = undefined;
   let findings                     = [];
 
   const stepOne = el('div', { class: 'stack' });
@@ -238,6 +369,7 @@ export function mountGeneratorPage(root             , options                  )
     blueprint = next;
     values = next ? defaultValues(next) : {};
     generated = null;
+    builds = undefined;
     findings = [];
   }
 
@@ -247,6 +379,7 @@ export function mountGeneratorPage(root             , options                  )
     try {
       const out = blueprint.build(values, name);
       generated = out.files;
+      builds = out.builds;
       findings = [...(out.findings ?? []), ...(options.standingFindings?.() ?? [])];
     } catch (err) {
       generated = null;
@@ -339,6 +472,9 @@ export function mountGeneratorPage(root             , options                  )
       ),
     );
 
+    const sectioned = new Map                       ();
+    const touchedIn = new Map                ();
+
     for (const raw of blueprint.inputs) {
       if (!isVisible(raw, values)) continue;
       const input = withEstate(raw, target);
@@ -355,7 +491,21 @@ export function mountGeneratorPage(root             , options                  )
         // A follow-up question may have appeared or gone away.
         if (blueprint?.inputs.some((i) => i.showWhen?.input === input.id)) renderTwo();
       });
-      fields.push(labelledField(input, node));
+      const field = labelledField(input, node);
+      if (input.section === undefined) {
+        fields.push(field);
+      } else {
+        const list = sectioned.get(input.section) ?? [];
+        list.push(field);
+        sectioned.set(input.section, list);
+        if (String(values[input.id] ?? '') !== '') {
+          touchedIn.set(input.section, (touchedIn.get(input.section) ?? 0) + 1);
+        }
+      }
+    }
+
+    for (const [title, list] of sectioned) {
+      fields.push(inputSection(title, list, touchedIn.get(title) ?? 0));
     }
 
     replace(
@@ -434,6 +584,8 @@ export function mountGeneratorPage(root             , options                  )
           el('pre', { class: 'mono code-block' }, body),
         );
       }
+
+      if (builds && builds.length > 0) children.push(buildsPanel(builds));
 
       if (Object.keys(generated).length > 1) {
         const all = generated;

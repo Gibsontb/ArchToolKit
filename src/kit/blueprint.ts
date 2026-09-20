@@ -65,6 +65,21 @@ export interface BlueprintInput {
    * blueprint can ask a follow-up question without a second blueprint.
    */
   readonly showWhen?: { readonly input: string; readonly equals: readonly string[] };
+  /**
+   * The collapsible section this input sits in, when it is not one of the
+   * blueprint's headline questions. A module blueprint puts the dozen inputs a
+   * call usually sets up top and every other input the module takes in here —
+   * the whole table the registry page shows, without it being in the way.
+   */
+  readonly section?: string;
+  /** Longer explanation under the control: a module input's own description. */
+  readonly help?: string;
+  /**
+   * A leading empty choice with this label. On an optional input, empty means
+   * "leave it to the module's default", which has to be a thing a dropdown can
+   * say — otherwise showing the dropdown would silently pick its first entry.
+   */
+  readonly blankLabel?: string;
 }
 
 /** Values as the page collects them, keyed by input id. */
@@ -87,10 +102,26 @@ export interface TemplateValues {
   readonly [id: string]: any;
 }
 
+/** One resource the generated configuration will, will not, or may create. */
+export interface PlannedBuild {
+  readonly address: string;
+  readonly status: 'yes' | 'no' | 'depends';
+  /** Which answers decided it, in the form's own names. */
+  readonly because: string;
+  /** The condition as the module writes it. */
+  readonly condition: string;
+}
+
 export interface BuildResult {
   /** Filename to contents. Most blueprints emit one file; some emit a few. */
   readonly files: Readonly<Record<string, string>>;
   readonly findings?: readonly Finding[];
+  /**
+   * What `terraform apply` will create from these files, when that is not
+   * simply what they say — a module call names one module and builds a dozen
+   * resources, and which dozen depends on the answers.
+   */
+  readonly builds?: readonly PlannedBuild[];
 }
 
 export interface Blueprint {
@@ -154,12 +185,19 @@ export function defaultValues(blueprint: Blueprint): BlueprintValues {
   for (const input of blueprint.inputs) {
     if (input.default !== undefined) {
       values[input.id] = input.default;
+    } else if (input.blankLabel !== undefined) {
+      // Empty is an answer here — "leave it to the module" — and the only
+      // right starting point. Taking the first option instead wrote
+      // `create_spot_instance = true` into every EC2 call nobody asked for.
+      values[input.id] = '';
     } else if (input.control === 'select' && input.options?.[0] !== undefined) {
       values[input.id] = input.options[0].value;
     } else if (input.control === 'toggle') {
       values[input.id] = false;
     } else if (input.control === 'number') {
-      values[input.id] = input.min ?? 0;
+      // A number with a section is an optional module input: empty means the
+      // module's default, where 0 would mean zero.
+      values[input.id] = input.section !== undefined ? '' : (input.min ?? 0);
     } else {
       values[input.id] = '';
     }

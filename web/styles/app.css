@@ -1424,3 +1424,147 @@ tbody tr:hover {
     max-height: none;
   }
 }
+
+/* --- module inputs and the build plan ------------------------------------ */
+
+/* A module input's own description, under its control, as the registry prints it. */
+.field-help {
+  margin-top: var(--space-1);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.field-head .field-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+textarea {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.82rem;
+}
+
+/*
+ * The full input table, closed until wanted. Two hundred inputs laid flat
+ * would bury the dozen that matter; this keeps them one click away.
+ */
+.input-section {
+  margin-top: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+
+.input-section > summary {
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.input-section > summary:hover {
+  color: var(--accent);
+}
+
+.input-section-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.input-section-filter input {
+  flex: 1;
+}
+
+.input-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* What `apply` will create, decided row by row from the answers. */
+.builds {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.builds-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.builds-table {
+  margin: 0;
+}
+
+.builds-table td {
+  vertical-align: top;
+  font-size: 0.85rem;
+}
+
+.builds-table tr.build-no td {
+  opacity: 0.55;
+}
+
+.build-mark {
+  display: inline-block;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.build-mark.is-yes {
+  background: var(--ok-dim);
+  color: var(--ok);
+}
+
+.build-mark.is-no {
+  background: var(--surface);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+}
+
+.build-mark.is-depends {
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+
+.builds-table td:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.build-address {
+  word-break: break-all;
+}
+
+.build-why {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.build-why code {
+  font-size: 0.74rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

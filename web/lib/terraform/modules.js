@@ -43,6 +43,11 @@ import { MODULE_CATALOG_DATA, MODULES_FETCHED_AT } from './module-catalog-data.j
                            
                                                               
                              
+                                                                
+                        
+                                                           
+                               
+                               
  
 
                                  
@@ -60,22 +65,20 @@ let cache                                       ;
 
 export function registryModules()                            {
   if (cache) return cache;
-  cache = MODULE_CATALOG_DATA.map((entry) => {
-    const names = split(entry.inputs);
-    const kinds = split(entry.kinds);
-    const required = new Set(split(entry.required));
-    return {
-      target: entry.provider               ,
-      source: entry.source,
-      version: entry.version,
-      inputs: names.map((name, i) => ({
-        name,
-        kind: (kinds[i] ?? 'any')             ,
-        required: required.has(name),
-      })),
-      outputs: split(entry.outputs),
-    };
-  });
+  cache = MODULE_CATALOG_DATA.map((entry) => ({
+    target: entry.provider               ,
+    source: entry.source,
+    version: entry.version,
+    inputs: entry.inputs.map(([name, kind, required, type, defaultExpr, description]) => ({
+      name,
+      kind: kind             ,
+      required: required === 1,
+      type,
+      defaultExpr,
+      description,
+    })),
+    outputs: split(entry.outputs),
+  }));
   return cache;
 }
 
@@ -251,7 +254,14 @@ export function moduleCall(options                   )         {
     if (group.length === 0) return;
     if (index > 0) lines.push('');
     const width = Math.max(...group.map(([k]) => k.length));
-    for (const [key, value] of group) lines.push(`  ${key.padEnd(width)} = ${value}`);
+    for (const [key, value] of group) {
+      // A literal typed over several lines keeps its shape, indented to sit
+      // inside the block rather than flush against the left margin.
+      const indented = value.includes('\n') && key !== tagsInput
+        ? value.split('\n').map((line, i) => (i === 0 ? line : `  ${line}`)).join('\n')
+        : value;
+      lines.push(`  ${key.padEnd(width)} = ${indented}`);
+    }
   });
   lines.push('}');
   return lines.join('\n');

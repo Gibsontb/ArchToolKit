@@ -514,11 +514,11 @@ const RULES                  = [
 
   // --- how big -----------------------------------------------------------
   { match: /instance_class/, target: 'aws', control: 'combo', options: AWS_DB_INSTANCE_CLASSES },
-  { match: /instance_type|machine_type/, target: 'aws', control: 'combo', options: AWS_INSTANCE_TYPES },
+  { match: /^(instance_type|node_instance_type|machine_type)$/, target: 'aws', control: 'combo', options: AWS_INSTANCE_TYPES },
   { match: /^sku$|service_plan_sku|app_service_sku|plan_sku/, target: 'azure', control: 'combo', options: AZURE_APP_SERVICE_SKUS },
-  { match: /vm_size|node_vm_size|machine_type|instance_type/, target: 'azure', control: 'combo', options: AZURE_VM_SIZES },
+  { match: /^(vm_size|node_vm_size|sku_size|agents_size|machine_type|instance_type)$/, target: 'azure', control: 'combo', options: AZURE_VM_SIZES },
   { match: /db_tier|^tier$/, target: 'google', control: 'combo', options: GCP_DB_TIERS },
-  { match: /machine_type|instance_type/, target: 'google', control: 'combo', options: GCP_MACHINE_TYPES },
+  { match: /^(machine_type|node_machine_type)$/, target: 'google', control: 'combo', options: GCP_MACHINE_TYPES },
   { match: /^shape$|shape_name/, target: 'oci', control: 'combo', options: OCI_SHAPES },
 
   // --- images ------------------------------------------------------------
@@ -532,6 +532,11 @@ const RULES                  = [
   { match: /^runtime$/, target: 'aws', control: 'combo', options: AWS_LAMBDA_RUNTIMES },
 
   // --- versions ----------------------------------------------------------
+  // Each service spells a Kubernetes version its own way, and a wrong spelling
+  // is rejected: EKS and AKS want "1.31", GKE also takes "latest", OKE wants "v1.31.1".
+  { match: /k8s_version|kubernetes_version|cluster_version/, target: 'aws', control: 'combo', options: opts(['1.33', '1.32', '1.31', '1.30', '1.29']) },
+  { match: /k8s_version|kubernetes_version/, target: 'azure', control: 'combo', options: opts(['1.33', '1.32', '1.31', '1.30']) },
+  { match: /k8s_version|kubernetes_version/, target: 'google', control: 'combo', options: opts(['latest', '1.33', '1.32', '1.31', '1.30']) },
   { match: /k8s_version|kubernetes_version/, control: 'combo', options: opts(KUBERNETES_VERSIONS) },
   { match: /db_version|database_version/, target: 'google', control: 'combo', options: GCP_DB_VERSIONS },
   { match: /^engine$/, target: 'aws', control: 'combo', options: opts(RDS_ENGINES) },
@@ -546,7 +551,7 @@ const RULES                  = [
   { match: /disk_type|boot_disk_type/, target: 'google', control: 'select', options: GCP_DISK_TYPES },
 
   // --- networks ----------------------------------------------------------
-  { match: /cidr|_prefix$|address_space/, control: 'combo', options: opts(COMMON_CIDRS) },
+  { match: /cidr|(^|_)address_prefix$|_subnet_prefix$|^address_space$/, control: 'combo', options: opts(COMMON_CIDRS) },
   { match: /network_name|subnet_name|subnetwork|^network$/, target: 'google', control: 'combo', options: opts(['default']) },
   { match: /vm_network|network_label|^portgroup$/, target: 'vsphere', control: 'combo', options: opts(['VM Network', 'Management Network']) },
 
@@ -635,6 +640,10 @@ export function applyChoices(
   if (looksBoolean(input)) {
     return { ...input, control: 'select', options: YES_NO };
   }
+
+  // A textarea is for a list, a map or an object — a structure, not a value,
+  // and no answer set of single values fits it.
+  if (input.control === 'textarea') return input;
 
   for (const rule of RULES) {
     if (rule.target !== undefined && rule.target !== target) continue;

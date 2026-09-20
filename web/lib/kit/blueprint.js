@@ -65,6 +65,21 @@
                                                                        
      
                                                                                      
+     
+                                                                          
+                                                                               
+                                                                              
+                                                                          
+     
+                            
+                                                                                
+                         
+     
+                                                                              
+                                                                               
+                                                                              
+     
+                               
  
 
 /** Values as the page collects them, keyed by input id. */
@@ -87,10 +102,26 @@
                              
  
 
+/** One resource the generated configuration will, will not, or may create. */
+                               
+                           
+                                            
+                                                           
+                           
+                                               
+                             
+ 
+
                               
                                                                               
                                                    
                                          
+     
+                                                                          
+                                                                             
+                                                       
+     
+                                            
  
 
                             
@@ -154,12 +185,19 @@ export function defaultValues(blueprint           )                  {
   for (const input of blueprint.inputs) {
     if (input.default !== undefined) {
       values[input.id] = input.default;
+    } else if (input.blankLabel !== undefined) {
+      // Empty is an answer here — "leave it to the module" — and the only
+      // right starting point. Taking the first option instead wrote
+      // `create_spot_instance = true` into every EC2 call nobody asked for.
+      values[input.id] = '';
     } else if (input.control === 'select' && input.options?.[0] !== undefined) {
       values[input.id] = input.options[0].value;
     } else if (input.control === 'toggle') {
       values[input.id] = false;
     } else if (input.control === 'number') {
-      values[input.id] = input.min ?? 0;
+      // A number with a section is an optional module input: empty means the
+      // module's default, where 0 would mean zero.
+      values[input.id] = input.section !== undefined ? '' : (input.min ?? 0);
     } else {
       values[input.id] = '';
     }

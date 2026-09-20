@@ -262,6 +262,64 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- a module's whole input table, and what the call will build ----------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  await page.locator('select').first().selectOption('aws');
+  await page.waitForTimeout(400);
+  const list = page.locator('select').nth(1);
+  const labels = await list.locator('option').allTextContents();
+  await list.selectOption({ index: labels.findIndex((t) => /ec2-instance/.test(t)) });
+  await page.waitForTimeout(400);
+
+  const summary = page.locator('.input-section > summary').first();
+  check(
+    'Module table: every input the module takes is offered',
+    /All 83 inputs of terraform-aws-modules\/ec2-instance\/aws/.test(await summary.innerText()),
+  );
+  await summary.click();
+
+  const help = await page.locator('.input-section .field-help').count();
+  check('Module table: each input carries the module’s own description', help > 60, `${help} described`);
+
+  await page.locator('.input-section-filter input').first().fill('spot');
+  await page.waitForTimeout(200);
+  const shown = await page.locator('.input-section .field:visible').count();
+  check('Module table: and can be filtered', shown > 3 && shown < 20, `${shown} shown for "spot"`);
+
+  // Untouched inputs must not end up in the file. Picking the first option of
+  // a dropdown nobody opened is how create_spot_instance = true got written
+  // into every call once.
+  await page.locator('button', { hasText: 'Generate Terraform' }).click();
+  await page.waitForTimeout(600);
+  let body = await page.locator('body').innerText();
+  const file = await page.locator('pre.code-block').first().innerText();
+  check(
+    'Module table: untouched inputs are left to the module',
+    !/create_spot_instance|hibernation\s*=/.test(file),
+  );
+  check('Build plan: shows what the call will create', /What this will create/.test(body));
+  check(
+    'Build plan: the instance is created',
+    (await page.locator('tr.build-yes', { hasText: 'aws_instance.this' }).count()) === 1,
+  );
+
+  await page.locator('.input-section .field', { hasText: 'create_spot_instance' }).locator('select').selectOption('true');
+  await page.locator('button', { hasText: 'Generate Terraform' }).click();
+  await page.waitForTimeout(600);
+  body = await page.locator('body').innerText();
+  check('Build plan: a touched input is written', /create_spot_instance\s*= true/.test(body));
+  check(
+    'Build plan: and changes what is built — a spot request instead of an instance',
+    (await page.locator('tr.build-yes', { hasText: 'aws_spot_instance_request.this' }).count()) === 1 &&
+      (await page.locator('tr.build-no', { hasText: 'aws_instance.this' }).count()) === 1,
+  );
+
+  await ctx.close();
+}
+
 // --- the Terraform Map: the reference the generator does not replace ------
 {
   const ctx = await browser.newContext();
