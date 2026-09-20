@@ -33,6 +33,13 @@ const EXCLUDED_DIRS = new Set(['testing', '__fixtures__']);
 const isTestFile = (name) => name.endsWith('.test.ts') || name.endsWith('.bench.ts');
 
 /**
+ * Declaration files describe other files; they have nothing to emit.
+ * Stripping one produces an empty module with a name that looks like a real
+ * one, which is confusing at best.
+ */
+const isDeclaration = (name) => name.endsWith('.d.ts');
+
+/**
  * Rewrite relative TypeScript specifiers to their emitted JavaScript names.
  *
  * Matches the specifier position of static imports/exports (`from '...'`) and
@@ -77,7 +84,7 @@ async function buildFile(absPath) {
     return { rel, kind: 'copy' };
   }
 
-  if (isTestFile(name)) return null;
+  if (isTestFile(name) || isDeclaration(name)) return null;
 
   const source = await readFile(absPath, 'utf8');
   let stripped;

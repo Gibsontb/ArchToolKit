@@ -16,17 +16,17 @@
  * the two, and it is why the field list lives in one file rather than two.
  */
 
-import { el, append, replace, must } from './dom.js';
-import { card } from './components.js';
-import { setTarget,               } from '../kit/target.js';
+import { el, append, replace, must } from './dom.ts';
+import { card } from './components.ts';
+import { setTarget, type TargetId } from '../kit/target.ts';
 import {
   WIZARD_STEPS,
   WIZARD_CLOUDS,
   WIZARD_CLOUD_TO_TARGET,
-                   
-                  
-                  
-} from '../multicloud/wizard/steps.js';
+  type WizardField,
+  type WizardItem,
+  type WizardStep,
+} from '../multicloud/wizard/steps.ts';
 import {
   setCurrentCloud,
   setCurrentStep,
@@ -37,9 +37,9 @@ import {
   exportRecommendationAsWord,
 } from '../multicloud/wizard/engine.js';
 
-function fieldControl(field             )              {
+function fieldControl(field: WizardField): HTMLElement {
   if (field.control === 'select') {
-    const node = el('select', { attrs: { id: field.id } })                     ;
+    const node = el('select', { attrs: { id: field.id } }) as HTMLSelectElement;
     // The originals open on an empty "Select..." so an unanswered question is
     // visibly unanswered rather than silently defaulted to the first option.
     node.appendChild(el('option', { text: 'Select...', attrs: { value: '' } }));
@@ -51,7 +51,7 @@ function fieldControl(field             )              {
 
   if (field.control === 'multiselect') {
     // Several answers at once; the engine reads it with getMultiSelectValues.
-    const node = el('select', { attrs: { id: field.id, multiple: 'multiple', size: '4' } })                     ;
+    const node = el('select', { attrs: { id: field.id, multiple: 'multiple', size: '4' } }) as HTMLSelectElement;
     for (const option of field.options ?? []) {
       node.appendChild(el('option', { text: option.label, attrs: { value: option.value } }));
     }
@@ -90,7 +90,7 @@ function fieldControl(field             )              {
   });
 }
 
-function fieldBlock(field             )              {
+function fieldBlock(field: WizardField): HTMLElement {
   return el(
     'div',
     { class: 'field' },
@@ -116,14 +116,14 @@ function fieldBlock(field             )              {
  * That is not cosmetic — it is what puts every question after it in the right
  * column.
  */
-function itemBlock(item            )              {
+function itemBlock(item: WizardItem): HTMLElement {
   if (item.kind === 'heading') {
     return el('div', { class: 'field-group-title', text: item.text });
   }
   return fieldBlock(item);
 }
 
-function stepBlock(step            )              {
+function stepBlock(step: WizardStep): HTMLElement {
   const groups = (step.groups ?? []).map((group) =>
     el(
       'div',
@@ -149,12 +149,12 @@ function stepBlock(step            )              {
  * order are the original's, not a choice. `notes` is the smaller print under
  * the main text; `extra` is the sizing matrix table.
  */
-const RESULT_SECTIONS            
-                         
-                        
-                          
-                          
-    = [
+const RESULT_SECTIONS: readonly {
+  readonly title: string;
+  readonly main: string;
+  readonly notes?: string;
+  readonly extra?: string;
+}[] = [
   { title: 'Compute pattern', main: 'computeMain', notes: 'computeNotes' },
   { title: 'Data & storage', main: 'dataMain', notes: 'dataNotes' },
   { title: 'Integration & messaging', main: 'integrationMain', notes: 'integrationNotes' },
@@ -168,7 +168,7 @@ const RESULT_SECTIONS
   { title: 'Implementation playbook · copy into Word', main: 'howToMain', notes: 'howToNotes' },
 ];
 
-function resultSection(section                                  )              {
+function resultSection(section: (typeof RESULT_SECTIONS)[number]): HTMLElement {
   return el(
     'div',
     { class: 'result-section' },
@@ -179,11 +179,11 @@ function resultSection(section                                  )              {
   );
 }
 
-export function mountMulticloudPage(root             )       {
+export function mountMulticloudPage(root: HTMLElement): void {
   // Declared before anything that can reach them.
   let step = 1;
 
-  const cloudPicker = el('select', { attrs: { id: 'cloudProvider' } })                     ;
+  const cloudPicker = el('select', { attrs: { id: 'cloudProvider' } }) as HTMLSelectElement;
   for (const cloud of WIZARD_CLOUDS) {
     cloudPicker.appendChild(el('option', { text: cloud.label, attrs: { value: cloud.value } }));
   }
@@ -268,7 +268,7 @@ export function mountMulticloudPage(root             )       {
     ),
   );
 
-  function showStep(next        )       {
+  function showStep(next: number): void {
     step = Math.min(WIZARD_STEPS.length, Math.max(1, next));
     setCurrentStep(step);
 
@@ -277,14 +277,14 @@ export function mountMulticloudPage(root             )       {
       node.classList.toggle('is-active', definition.number === step);
     }
 
-    const current = WIZARD_STEPS[step - 1]              ;
+    const current = WIZARD_STEPS[step - 1] as WizardStep;
     title.textContent = current.title;
     subtitle.textContent = current.subtitle;
     counter.textContent = `Step ${step} of ${WIZARD_STEPS.length}`;
     miniHint.textContent = `Step ${step} · ${current.hint}`;
 
     pathNote.style.display = step === 2 ? '' : 'none';
-    (backBtn                     ).disabled = step === 1;
+    (backBtn as HTMLButtonElement).disabled = step === 1;
     nextBtn.textContent = step === WIZARD_STEPS.length ? 'Finish' : 'Next →';
   }
 
@@ -293,9 +293,9 @@ export function mountMulticloudPage(root             )       {
    * matching group is shown. Everything else stays in the DOM: the engine reads
    * answers by id, and hiding is not the same as removing.
    */
-  function updatePathGroups()       {
-    const chosen = (document.getElementById('initiativeType')                            )?.value ?? '';
-    const human                         = {
+  function updatePathGroups(): void {
+    const chosen = (document.getElementById('initiativeType') as HTMLSelectElement | null)?.value ?? '';
+    const human: Record<string, string> = {
       'new-service': 'new service',
       'existing-service': 'existing service change',
       maintenance: 'maintenance / operations',
@@ -312,7 +312,7 @@ export function mountMulticloudPage(root             )       {
     }
   }
 
-  function applyCloud()       {
+  function applyCloud(): void {
     const cloud = cloudPicker.value;
     setCurrentCloud(cloud);
     const label = WIZARD_CLOUDS.find((c) => c.value === cloud)?.label ?? cloud;
@@ -322,13 +322,13 @@ export function mountMulticloudPage(root             )       {
     // The wizard is where the cloud is decided, so the generators learn it here
     // rather than asking a second time.
     const target = WIZARD_CLOUD_TO_TARGET[cloud];
-    if (target) setTarget(target            , 'chosen in the decision wizard');
+    if (target) setTarget(target as TargetId, 'chosen in the decision wizard');
   }
 
   cloudPicker.addEventListener('change', applyCloud);
 
   stepsPane.addEventListener('change', (event) => {
-    if ((event.target               ).id === 'initiativeType') updatePathGroups();
+    if ((event.target as HTMLElement).id === 'initiativeType') updatePathGroups();
   });
 
   nextBtn.addEventListener('click', () => {
@@ -340,7 +340,7 @@ export function mountMulticloudPage(root             )       {
     showStep(step + 1);
   });
   backBtn.addEventListener('click', () => showStep(step - 1));
-  function generate()       {
+  function generate(): void {
     generateRecommendation();
     emptyNote.remove();
   }

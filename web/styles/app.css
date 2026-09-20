@@ -795,3 +795,209 @@ tbody tr:hover {
   font-family: var(--font-mono, monospace);
   font-size: 0.82rem;
 }
+
+/* --- Decision wizard ------------------------------------------------------
+   Questions on the left, the recommendation on the right, so answering and
+   reading the result do not fight over the same space. */
+
+.wizard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .wizard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.wizard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.wizard-head h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 1.05rem;
+}
+
+.wizard-head p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.step-counter {
+  flex: none;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Only the current step is shown; the rest stay in the DOM because the engine
+   reads every answer by element id. */
+.wizard-step:not(.is-active) {
+  display: none;
+}
+
+.wizard-step.is-active {
+  display: block;
+}
+
+/* Specificity matters here: the groups also carry .field-grid, which sets
+   display: grid further down the file. A bare `.path-group { display: none }`
+   loses to it and every group shows at once. */
+.path-group:not(.is-active) {
+  display: none;
+}
+
+.path-group.is-active {
+  display: grid;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+  margin-top: var(--space-3);
+}
+
+.path-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding-bottom: var(--space-3);
+}
+
+/* Two questions across where there is room; one when there is not. */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-4);
+}
+
+@media (max-width: 700px) {
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.field-grid .field:has(textarea) {
+  grid-column: 1 / -1;
+}
+
+.wizard-nav {
+  justify-content: space-between;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.required {
+  color: var(--danger, #b3261e);
+}
+
+.error {
+  color: var(--danger, #b3261e);
+  font-size: 0.82rem;
+  min-height: 1.2em;
+  margin-top: var(--space-2);
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.pill-row span,
+.pill {
+  font-size: 0.74rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+#resultsContent {
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+#resultsContent h3 {
+  font-size: 0.95rem;
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+#resultsContent ul {
+  padding-left: 1.1rem;
+  margin: var(--space-2) 0;
+}
+
+#resultsContent table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin: var(--space-3) 0;
+}
+
+#resultsContent th,
+#resultsContent td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.result-section {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-4);
+}
+
+.result-section:first-child {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.result-section h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.95rem;
+}
+
+.result-notes {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: var(--space-2);
+}
+
+/* A sub-heading inside a step takes a grid cell, as it does in the original;
+   that is what keeps the questions after it in the right column. */
+.field-group-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  align-self: center;
+  padding-bottom: var(--space-3);
+}
+
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.checkbox-group .checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text);
+  margin: 0;
+}
+
+.field select[multiple] {
+  min-height: 5.5rem;
+}

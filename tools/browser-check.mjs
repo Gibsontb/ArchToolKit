@@ -290,30 +290,101 @@ for (const [kind, path, generateLabel, expect] of [
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   await page.goto(`${BASE}/app/multicloud.html`, { waitUntil: 'networkidle' });
 
-  check('the wizard loads without a script error', errors.length === 0, errors[0] ?? '');
+  check('the wizard mounts without a script error', errors.length === 0, errors[0] ?? '');
+  check('the cloud is chosen once, at the top', (await page.locator('#cloudProvider').count()) === 1);
+  check('it opens on step 1', await page.locator('#step-1').isVisible());
+  check('and only step 1', !(await page.locator('#step-2').isVisible()));
+
+  const selects = await page.locator('select').count();
+  check('the questions are dropdowns', selects > 30, `${selects} dropdowns`);
   check(
-    'the cloud is chosen once, at the top',
-    (await page.locator('#cloudProvider').count()) === 1,
+    'the F5 usage question is there, with all six answers',
+    (await page.locator('input[name=f5Usage]').count()) === 6,
+  );
+  check(
+    'the environments question is there, with all five',
+    (await page.locator('input[name=envScope]').count()) === 5,
+  );
+  const hints = await page.locator('.field-hint').count();
+  check('the questions keep their hints', hints > 20, `${hints} hints`);
+  check(
+    'and a step that has a sub-heading keeps it, which is what sets the field order',
+    (await page.locator('#step-4 .field-group-title').innerText()) === 'Sizing & environments',
   );
 
-  const body = await page.locator('body').innerText();
-  check('it opens on step 1', /Step 1/.test(body));
+  // Validation is advisory in the original — "soft validation only": it names
+  // what is missing and lets you carry on, because a generic recommendation is
+  // more use than a blocked form.
+  await page.locator('#nextBtn').click();
+  await page.waitForTimeout(300);
+  check('moving on with answers missing says what will suffer', /Missing:/.test(await page.locator('#error-step-1').innerText()));
+  check('and still lets you carry on', await page.locator('#step-2').isVisible());
 
-  // Nearly every question has a known answer set, and is a dropdown.
-  const selects = await page.locator('select').count();
-  const texts = await page.locator('input[type=text]').count();
-  check(`the questions are dropdowns`, selects > 20, `${selects} dropdowns, ${texts} text boxes`);
-
-  // Changing the cloud must change what the wizard offers.
-  const before = await page.locator('#cloudSubtitle').innerText();
-  await page.locator('#cloudProvider').selectOption('aws');
+  await page.locator('#backBtn').click();
+  await page.waitForTimeout(200);
+  await page.selectOption('#initiativeType', 'migration');
+  await page.fill('#workloadName', 'Case Management');
+  await page.locator('#nextBtn').click();
   await page.waitForTimeout(400);
-  const after = await page.locator('#cloudSubtitle').innerText();
-  check('changing the cloud changes the wizard', before !== after, after.slice(0, 60));
+  check('answering step 1 moves to step 2', await page.locator('#step-2').isVisible());
+  check('picking an initiative type selects its questions', await page.locator('#path-migration').isVisible());
+  check('and hides the others', !(await page.locator('#path-new-service').isVisible()));
 
-  // And it must reach the generators without being retyped.
+  // Answer everything, then generate.
+  await page.evaluate(() => {
+    document.querySelectorAll('select').forEach((s) => {
+      if (s.id === 'cloudProvider') return;
+      if (s.options.length > 1) {
+        s.selectedIndex = 1;
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    document.querySelectorAll('input[type=text]').forEach((i) => {
+      i.value = 'Case Management';
+    });
+    document.querySelectorAll('input[type=number]').forEach((i) => {
+      i.value = '500';
+    });
+    document.querySelectorAll('textarea').forEach((t) => {
+      t.value = 'Court case management system.';
+    });
+    document.querySelectorAll('input[name=envScope]').forEach((c) => {
+      c.checked = true;
+    });
+  });
+  await page.locator('button', { hasText: 'Generate recommendation' }).click();
+  await page.waitForTimeout(900);
+
+  const results = await page.locator('#resultsContent').innerText();
+  check('generating produces a real recommendation', results.length > 3000, `${results.length} chars`);
+  for (const [id, label] of [
+    ['computeMain', 'compute pattern'],
+    ['dataMain', 'data and storage'],
+    ['securityMain', 'security controls'],
+    ['controlsMain', 'the cyber checklist'],
+    ['drPatternMain', 'the DR pattern'],
+    ['sizingMatrix', 'the sizing matrix'],
+    ['howToMain', 'the onboarding playbook'],
+  ]) {
+    const filled = (await page.locator(`#${id}`).innerText()).trim().length;
+    check(`it fills in ${label}`, filled > 20, `${filled} chars`);
+  }
+  check(
+    'the export buttons are live once there is something to export',
+    !(await page.locator('#exportWordBtn').isDisabled()),
+  );
+
+  // Changing the cloud changes the recommendation.
+  await page.selectOption('#cloudProvider', 'aws');
+  await page.locator('button', { hasText: 'Generate recommendation' }).click();
+  await page.waitForTimeout(700);
+  const aws = await page.locator('#computeMain').innerText();
+  check('changing the cloud changes what is recommended', /EC2|AWS/i.test(aws), aws.slice(0, 60));
+
+  // And it reaches the generators without being retyped.
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
   check(
     'the wizard tells the generators which cloud to open on',
