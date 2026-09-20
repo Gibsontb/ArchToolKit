@@ -109,6 +109,23 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | Terraform authoring kit | Planned |
 | Ansible authoring kit | Planned |
 
+## Checks
+
+    npm test            unit suite, no dependencies, runs anywhere
+    npm run typecheck   full type check (tsc, optional)
+    npm run test:browser mounts every page in a real browser
+
+The browser check needs Playwright, which is deliberately not a dependency —
+the toolkit has to build and run air-gapped — so it skips with a note when
+Playwright is absent, and a skipped check is not a failure:
+
+    npm install --no-save playwright && npx playwright install chromium
+
+It exists because two defects passed a green unit suite and a clean typecheck:
+a redraw triggered by the blur of clicking a button destroyed that button
+mid-click, and a `let` declared below the code that reached it left a page dead
+on arrival. Neither is visible without a browser.
+
 ## Working across the three tools
 
 The tools answer consecutive questions, and each hands its result to the next

@@ -391,6 +391,18 @@ class HostTable {
 
 export function mountVcfSpecPage(root: HTMLElement): void {
   const controls = {} as Controls;
+  /**
+   * Serialized plan from the last render, so an unchanged form is not redrawn.
+   *
+   * See the sizing page for why: a redraw triggered by the blur of clicking a
+   * button destroys that button mid-click.
+   *
+   * Declared here, before anything that can reach `render`. A `let` is not
+   * hoisted the way a function declaration is, and applying an inbound handoff
+   * renders during mount — declaring this below that point left the whole page
+   * dead on arrival with a temporal-dead-zone error.
+   */
+  let lastRenderKey = '';
   const outputPane = el('div', { class: 'stack' });
   const inputsPane = buildInputs(controls, () => render());
 
@@ -681,6 +693,9 @@ export function mountVcfSpecPage(root: HTMLElement): void {
     syncNetworkModelControls();
     syncStorageControls();
     const plan = currentPlan();
+    const key = JSON.stringify(plan);
+    if (key === lastRenderKey) return;
+    lastRenderKey = key;
     const built = buildSddcSpec(plan);
     const validation = validateSddcSpec(built.spec, {
       secondaryInstance: plan.instanceRole === 'secondary',

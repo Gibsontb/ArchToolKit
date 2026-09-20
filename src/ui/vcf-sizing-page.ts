@@ -91,6 +91,18 @@ const EDGE_OPTIONS: { value: NsxEdgeSize; label: string }[] = [
 
 export function mountVcfSizingPage(root: HTMLElement): void {
   const controls = {} as Controls;
+  /**
+   * Serialized inputs from the last render, so an unchanged form is not redrawn.
+   *
+   * Controls fire both `input` and `change`, and `change` also fires on blur —
+   * including the blur caused by clicking a button in the results pane. Redrawing
+   * then destroys the very button being clicked, and the click is lost partway
+   * through. Skipping a redraw that would change nothing removes that entirely.
+   *
+   * Declared before anything that can reach `render`, since a `let` is not
+   * hoisted the way a function declaration is.
+   */
+  let lastRenderKey = '';
   const resultsPane = el('div', { class: 'stack' });
 
   const inputsPane = buildInputs(controls, () => render());
@@ -152,6 +164,9 @@ export function mountVcfSizingPage(root: HTMLElement): void {
 
   function render(): void {
     const input = currentInput();
+    const key = JSON.stringify(input);
+    if (key === lastRenderKey) return;
+    lastRenderKey = key;
     const result = sizeDeployment(input);
     replace(resultsPane, ...buildResults(result));
   }
