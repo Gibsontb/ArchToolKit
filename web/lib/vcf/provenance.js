@@ -1,5 +1,5 @@
 /**
- * Provenance tagging for VCF sizing and schema data.
+ * Provenance tagging for anything the toolkit states as fact.
  *
  * This toolkit generates real deployment configurations, so a number that came
  * from a blog post must never be indistinguishable from one that came from
@@ -11,7 +11,11 @@
                           
                                                                    
            
-                                                                     
+     
+                                                                             
+                                                                               
+                                                            
+     
            
                                                                   
             
@@ -67,7 +71,7 @@ export function weakestVerification(tags                         )              
 
 export const VERIFICATION_LABELS                               = {
   'V-API': 'Verified — VCF Installer API reference',
-  'V-DOC': 'Verified — Broadcom TechDocs / KB',
+  'V-DOC': "Verified — the vendor's own documentation",
   'V-SPEC': 'Verified — real working 9.1.0.0 spec',
   C: 'Community source — indicative only',
   I: 'Inferred — not directly documented',

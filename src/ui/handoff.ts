@@ -17,7 +17,10 @@
  * could not read an optional convenience would be a poor trade.
  */
 
-export type HandoffKind = 'inventory-to-sizing' | 'sizing-to-spec';
+export type HandoffKind =
+  | 'inventory-to-sizing'
+  | 'sizing-to-spec'
+  | 'inventory-to-multicloud';
 
 /** Bumped when a payload shape changes, so a stale entry is discarded. */
 const HANDOFF_VERSION = 1;

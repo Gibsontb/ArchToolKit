@@ -61,6 +61,10 @@ const check = (label, ok, detail = '') => {
 
 const browser = await chromium.launch();
 
+/** Shared estate fixture, built by the sizing-bridge block and reused after it. */
+let estate;
+let fixture;
+
 // --- every page mounts without a console error ----------------------------
 for (const [name, path] of [
   ['index', '/'],
@@ -69,6 +73,7 @@ for (const [name, path] of [
   ['spec', '/app/vcf-spec.html'],
   ['terraform', '/app/terraform.html'],
   ['ansible', '/app/ansible.html'],
+  ['multicloud', '/app/multicloud.html'],
 ]) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -117,7 +122,7 @@ for (const [name, path] of [
   // Four hosts, one deliberately smaller: the weakest host is what sets the
   // per-host profile, so seeing 512 downstream proves the estate really drove
   // the sizing rather than a default coming through.
-  const estate = {
+  estate = {
     source: { kind: 'powercli', label: 'browser-check' },
     hosts: [768, 768, 512, 768].map((memoryGib, i) => ({
       name: `esx0${i + 1}.check.local`,
@@ -138,7 +143,7 @@ for (const [name, path] of [
     datastores: [{ name: 'vsanDatastore', type: 'vsan', capacityGib: 40960, freeGib: 18000, hostCount: 4 }],
     networks: [{ name: 'VM Network', switchName: 'DSwitch', vlanId: 100, type: 'DistributedPortgroup' }],
   };
-  const fixture = join(mkdtempSync(join(tmpdir(), 'atk-')), 'estate.json');
+  fixture = join(mkdtempSync(join(tmpdir(), 'atk-')), 'estate.json');
   writeFileSync(fixture, JSON.stringify(estate));
 
   const ctx = await browser.newContext();
@@ -336,6 +341,94 @@ for (const [name, path] of [
     'buttons survive every edit',
     (await page.locator('button', { hasText: 'Download as one file' }).count()) > 0,
   );
+  await ctx.close();
+}
+
+// --- the multi-cloud matrix ranks, explains, and hands off ----------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/multicloud.html`, { waitUntil: 'networkidle' });
+  let body = await page.locator('body').innerText();
+
+  check('every platform is ranked', /VMware Cloud Foundation/.test(body) && /Oracle Cloud Infrastructure/.test(body));
+  check('the capability matrix renders', /Object storage/.test(body) && /Amazon S3/.test(body));
+  check('the VMware services carry provenance', /Amazon EVS/.test(body) && /Azure VMware Solution/.test(body));
+  check('an unconfirmed claim says so', /not confirmed/i.test(body));
+
+  // A latency-critical workload must not leave the data centre.
+  const latency = page.locator('.field', { hasText: 'Latency to what stays behind' }).locator('select').first();
+  await latency.selectOption({ index: 2 });
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('latency-critical keeps the workload on owned hardware', /recommended/.test(body));
+  check('and says to measure it rather than assume', /Measure the actual round trip/.test(body));
+
+  await latency.selectOption({ index: 0 });
+  await page.waitForTimeout(500);
+
+  // A physical dongle rules out every cloud, and the page must show that.
+  const dongle = page.locator('label', { hasText: 'Physical licence dongle' }).locator('input').first();
+  await dongle.check();
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  const ruledOut = (body.match(/ruled out/g) ?? []).length;
+  check('a physical dongle rules out all four clouds', ruledOut >= 4, `${ruledOut} ruled out`);
+  await dongle.uncheck();
+  await page.waitForTimeout(500);
+
+  // Oracle must not simply route to OCI any more.
+  await page.locator('label', { hasText: 'Oracle Database' }).locator('input').first().check();
+  await page.waitForTimeout(700);
+  body = await page.locator('body').innerText();
+  check('Oracle no longer forces OCI', /no longer forces OCI/.test(body));
+  check('and the region constraint is reported', /available only in specific regions/.test(body));
+
+  // A decision has to become something.
+  const commitAws = page
+    .locator('.card', { hasText: 'Already committed to' })
+    .locator('label', { hasText: 'AWS' })
+    .locator('input')
+    .first();
+  await commitAws.check();
+  const skillAws = page
+    .locator('.card', { hasText: 'Team can operate' })
+    .locator('label', { hasText: 'AWS' })
+    .locator('input')
+    .first();
+  await skillAws.check();
+  await page.waitForTimeout(800);
+  body = await page.locator('body').innerText();
+  check('a clear winner produces a handoff', /What to generate next/.test(body));
+  check('and names its VMware service for a rehost', /Amazon EVS/.test(body));
+
+  await page.locator('button', { hasText: 'Terraform for AWS' }).click();
+  await page.waitForTimeout(1200);
+  check('the handoff button reaches the Terraform page', page.url().endsWith('/terraform.html'));
+  await ctx.close();
+}
+
+// --- the inventory hands an estate to the decision matrix ------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[type=file]').setInputFiles(fixture);
+  await page.waitForTimeout(1200);
+  const decide = page.locator('button', { hasText: 'Decide where it goes' });
+  check('the inventory page offers the decision matrix', (await decide.count()) === 1);
+  if ((await decide.count()) === 1) {
+    await decide.click();
+    await page.waitForTimeout(1500);
+    check('it reaches the matrix', page.url().endsWith('/multicloud.html'));
+    const body = await page.locator('body').innerText();
+    check('the estate arrives prefilled', /Prefilled from your inventory/.test(body));
+    check('and the counts come with it', /virtual machines:/.test(body));
+
+    await page.reload({ waitUntil: 'networkidle' });
+    const after = await page.locator('body').innerText();
+    check('reloading does not re-apply a spent handoff', !/Prefilled from your inventory/.test(after));
+  }
   await ctx.close();
 }
 

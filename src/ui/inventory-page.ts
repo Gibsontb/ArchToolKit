@@ -342,6 +342,23 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
             }),
             el('button', {
               class: 'btn',
+              text: 'Decide where it goes',
+              on: {
+                click: () => {
+                  const label = inventory.source.label ?? inventory.source.kind;
+                  // The decision page needs the estate, not the sizing result:
+                  // guest OS families and machine sizes are what it reads.
+                  putHandoff(
+                    'inventory-to-multicloud',
+                    `${formatCount(inventory.vms.length)} VMs from ${label}`,
+                    inventory,
+                  );
+                  globalThis.location.assign('multicloud.html');
+                },
+              },
+            }),
+            el('button', {
+              class: 'btn',
               text: 'Download sizing input (JSON)',
               on: {
                 click: () =>

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VMware Inventory · ArchToolKit</title>
+    <title>Multi-Cloud · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -14,8 +14,8 @@
       </a>
       <nav class="header-nav">
         <a href="../index.html">Home</a>
-        <a href="inventory.html" aria-current="page">Inventory</a>
-        <a href="multicloud.html">Multi-Cloud</a>
+        <a href="inventory.html">Inventory</a>
+        <a href="multicloud.html" aria-current="page">Multi-Cloud</a>
         <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
         <a href="terraform.html">Terraform</a>
@@ -25,17 +25,19 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>VMware inventory</h1>
+        <h1>Multi-cloud decision matrix</h1>
         <p>
-          Import an RVTools export or a PowerCLI collection and get the estate's capacity,
-          consolidation ratios, VCF licensing exposure and per-host VCF 9.1 readiness — then carry it
-          straight into sizing. Everything runs in this page; nothing is uploaded.
+          Not "which cloud is best" — nobody can answer that. Given these constraints, which of the
+          five is left, and why. Every rule states what it looked at, which way it pushed and where
+          the claim came from, so any of them can be read and disagreed with on its own. Region
+          coverage, sovereign offerings and pricing change constantly and cannot be checked from an
+          offline toolkit, so those are reported rather than scored.
         </p>
       </div>
 
-      <div id="inventory-root"></div>
+      <div id="multicloud-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/inventory-page.js"></script>
+    <script type="module" src="../lib/ui/multicloud-page.js"></script>
   </body>
 </html>
