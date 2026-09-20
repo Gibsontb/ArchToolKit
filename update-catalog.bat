@@ -64,6 +64,12 @@ echo   Done. Both catalogs have been rewritten:
 echo     src\terraform\catalog-data.ts
 echo     src\ansible\catalog-data.ts
 echo.
+choice /c YN /n /m "   Also check the generated Terraform against the provider schemas? [Y/N] "
+if errorlevel 2 goto :afterverify
+echo.
+node tools\verify-foundation-schemas.mjs
+echo.
+:afterverify
 echo   Two things worth doing now:
 echo     1. Rebuild so the pages pick it up:   npm run build
 echo     2. Commit the change, so the catalogs travel with the repo.

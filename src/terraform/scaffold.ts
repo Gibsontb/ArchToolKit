@@ -13,7 +13,9 @@
  * plausible-looking blocks that no one has checked would produce configurations
  * that fail at plan time, or worse, apply and build the wrong thing. Where this
  * kit does emit resources, it is because the shape was read from that provider's
- * schema — as with VCF in `./vcf.ts`.
+ * schema — as with VCF in `./vcf.ts`, and as with the network foundations, whose
+ * every argument name is checked against the provider's published documentation
+ * by tools/verify-foundation-schemas.mjs.
  */
 
 import { info, warning, type Finding } from '../core/findings.ts';
