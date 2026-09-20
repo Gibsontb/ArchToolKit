@@ -1346,6 +1346,25 @@ export function buildSddcSpec(plan                )              {
         }
       : undefined;
 
+  // --- deferred components reuse the instance they are added to -------------
+  // Broadcom's worked example for this workflow marks both vCenter and SDDC
+  // Manager as existing. The summary table has no SDDC Manager column at all,
+  // so this is reported rather than assumed.
+  if (scenario === 'deferred-components' && !plan.existing?.sddcManager) {
+    findings.push(
+      warning(
+        'vcf.build.deferred-without-existing-sddc-manager',
+        'Deferred components are added to an instance that already exists, but no existing SDDC Manager was supplied, so sddcManagerSpec will not declare useExistingDeployment.',
+        {
+          path: 'existing.sddcManager',
+          remediation:
+            'Supply the existing SDDC Manager FQDN and SSL thumbprint, as Broadcom\u2019s worked example does.',
+          source: 'VCF 9.1 Deployment — Deploy Deferred Components on NSX Overlay Segments',
+        },
+      ),
+    );
+  }
+
   // --- target version -------------------------------------------------------
   // The version drives the Automation pool size and the appliance size
   // defaults, so a typo here changes the document rather than being cosmetic.

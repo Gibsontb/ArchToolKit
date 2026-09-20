@@ -125,6 +125,18 @@ interface Controls {
   includeManagementServices: HTMLInputElement;
   includeIdentityBroker: HTMLInputElement;
   brownfield: HTMLInputElement;
+  existingVcenterFqdn: HTMLInputElement;
+  existingVcenterThumbprint: HTMLInputElement;
+  existingNsxFqdn: HTMLInputElement;
+  existingNsxThumbprint: HTMLInputElement;
+  existingSddcManagerFqdn: HTMLInputElement;
+  existingSddcManagerThumbprint: HTMLInputElement;
+  existingOpsFqdn: HTMLInputElement;
+  existingOpsThumbprint: HTMLInputElement;
+  existingAutomationFqdn: HTMLInputElement;
+  existingAutomationThumbprint: HTMLInputElement;
+  existingDatastoreName: HTMLInputElement;
+  existingFields: HTMLElement;
   redact: HTMLInputElement;
 }
 
@@ -563,13 +575,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
       includeIdentityBroker: controls.includeIdentityBroker.checked,
       // A converge scenario reuses an existing vCenter by definition, so the
       // checkbox only has to cover the greenfield rows.
-      ...(controls.brownfield.checked || rule.vcenterExisting === 'true'
-        ? {
-            existing: {
-              vcenter: { fqdn: '', sslThumbprint: undefined },
-            },
-          }
-        : {}),
+      ...(existingBlock(controls, rule) ?? {}),
     };
   }
 
@@ -625,6 +631,14 @@ export function mountVcfSpecPage(root: HTMLElement): void {
     apply(controls.includeManagementServices, rule.managementServices);
     apply(controls.includeIdentityBroker, rule.identityBroker);
 
+    // Reused components only need naming when the scenario actually reuses any.
+    const reuses =
+      rule.vcenterExisting === 'true' ||
+      rule.nsxExisting !== 'false' ||
+      rule.operationsExisting === 'true' ||
+      rule.automationExisting === 'true';
+    controls.existingFields.hidden = !reuses && !controls.brownfield.checked;
+
     // NSX and Automation are absent from vSphere Foundation entirely.
     const automationFixed = rule.automationExisting === 'na' && rule.workflowType === 'VVF';
     controls.includeAutomation.disabled = automationFixed;
@@ -644,6 +658,59 @@ export function mountVcfSpecPage(root: HTMLElement): void {
   }
 
   render();
+}
+
+/**
+ * Assemble the brownfield `existing` block.
+ *
+ * A converge or deferred-component scenario is defined by what it reuses, so the
+ * FQDN and thumbprint of each reused component have to be collectable. Emitting
+ * `existing.vcenter` with an empty name, as this page did before, declared a
+ * reuse the installer could not act on.
+ */
+function existingBlock(
+  controls: Controls,
+  rule: ReturnType<typeof scenarioRule>,
+): Pick<DeploymentPlan, 'existing'> | undefined {
+  const part = (fqdnInput: HTMLInputElement, thumbInput: HTMLInputElement) => {
+    const fqdn = fqdnInput.value.trim();
+    if (!fqdn) return undefined;
+    const sslThumbprint = thumbInput.value.trim();
+    return { fqdn, ...(sslThumbprint ? { sslThumbprint } : {}) };
+  };
+
+  const vcenter =
+    part(controls.existingVcenterFqdn, controls.existingVcenterThumbprint) ??
+    // The scenario fixes vCenter as existing even when no detail was typed;
+    // keep declaring it so the mismatch finding stays accurate.
+    (controls.brownfield.checked || rule.vcenterExisting === 'true'
+      ? { fqdn: controls.existingVcenterFqdn.value.trim() }
+      : undefined);
+  const nsx = part(controls.existingNsxFqdn, controls.existingNsxThumbprint);
+  const sddcManager = part(
+    controls.existingSddcManagerFqdn,
+    controls.existingSddcManagerThumbprint,
+  );
+  const operations = part(controls.existingOpsFqdn, controls.existingOpsThumbprint);
+  const automation = part(
+    controls.existingAutomationFqdn,
+    controls.existingAutomationThumbprint,
+  );
+  const datastoreName = controls.existingDatastoreName.value.trim();
+
+  if (!vcenter && !nsx && !sddcManager && !operations && !automation && !datastoreName) {
+    return undefined;
+  }
+  return {
+    existing: {
+      ...(vcenter ? { vcenter } : {}),
+      ...(nsx ? { nsx } : {}),
+      ...(sddcManager ? { sddcManager } : {}),
+      ...(operations ? { operations } : {}),
+      ...(automation ? { automation } : {}),
+      ...(datastoreName ? { datastoreName } : {}),
+    },
+  };
 }
 
 function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
@@ -811,6 +878,20 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
   controls.includeIdentityBroker = bind(identityBroker.input);
   const brownfield = checkbox('Reuse an existing vCenter (brownfield)', false);
   controls.brownfield = bind(brownfield.input);
+
+  const existingPair = (placeholder: string): [HTMLInputElement, HTMLInputElement] => [
+    bind(textInput('', placeholder)),
+    bind(textInput('', 'SHA256 thumbprint')),
+  ];
+  [controls.existingVcenterFqdn, controls.existingVcenterThumbprint] =
+    existingPair('vcenter.example.com');
+  [controls.existingNsxFqdn, controls.existingNsxThumbprint] = existingPair('nsx.example.com');
+  [controls.existingSddcManagerFqdn, controls.existingSddcManagerThumbprint] =
+    existingPair('sddc-manager.example.com');
+  [controls.existingOpsFqdn, controls.existingOpsThumbprint] = existingPair('ops.example.com');
+  [controls.existingAutomationFqdn, controls.existingAutomationThumbprint] =
+    existingPair('automation.example.com');
+  controls.existingDatastoreName = bind(textInput('', 'Existing datastore to reuse'));
   const redact = checkbox('Redact secrets in output', false);
   controls.redact = bind(redact.input);
 
@@ -830,6 +911,37 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
     { class: 'stack' },
     field('VMFS datastore names', controls.vmfsDatastoreNames, 'One entry per FC LUN.'),
   );
+  const existingRow = (
+    label: string,
+    fqdnInput: HTMLInputElement,
+    thumbInput: HTMLInputElement,
+  ): HTMLElement =>
+    el(
+      'div',
+      { class: 'field-row' },
+      field(`${label} FQDN`, fqdnInput),
+      field('SSL thumbprint', thumbInput),
+    );
+
+  controls.existingFields = el(
+    'div',
+    { class: 'stack' },
+    existingRow('vCenter', controls.existingVcenterFqdn, controls.existingVcenterThumbprint),
+    existingRow('NSX Manager', controls.existingNsxFqdn, controls.existingNsxThumbprint),
+    existingRow(
+      'SDDC Manager',
+      controls.existingSddcManagerFqdn,
+      controls.existingSddcManagerThumbprint,
+    ),
+    existingRow('VCF Operations', controls.existingOpsFqdn, controls.existingOpsThumbprint),
+    existingRow(
+      'VCF Automation',
+      controls.existingAutomationFqdn,
+      controls.existingAutomationThumbprint,
+    ),
+    field('Existing datastore', controls.existingDatastoreName),
+  );
+
   controls.localRegionFields = el(
     'div',
     { class: 'stack' },
@@ -1020,6 +1132,7 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
       el('div', { class: 'field' }, managementServices.wrap),
       el('div', { class: 'field' }, identityBroker.wrap),
       el('div', { class: 'field' }, brownfield.wrap),
+      controls.existingFields,
       el('div', { class: 'field' }, redact.wrap),
     ),
   );

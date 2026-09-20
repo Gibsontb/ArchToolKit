@@ -124,6 +124,28 @@ describe('deployment scenarios: deferred components', () => {
   });
 });
 
+describe('deployment scenarios: deferred components reuse the instance', () => {
+  it('reports a missing existing SDDC Manager', () => {
+    const { findings } = buildSddcSpec(basePlan({ scenario: 'deferred-components' }));
+    expect(codes(findings)).toContain('vcf.build.deferred-without-existing-sddc-manager');
+  });
+
+  it('is quiet once the existing SDDC Manager is supplied', () => {
+    const { spec, findings } = buildSddcSpec(
+      basePlan({
+        scenario: 'deferred-components',
+        existing: {
+          vcenter: { fqdn: 'vcenter.vcf.lab', sslThumbprint: 'AA:BB' },
+          sddcManager: { fqdn: 'sddcm.vcf.lab', sslThumbprint: 'CC:DD' },
+        },
+      }),
+    );
+    expect(codes(findings)).not.toContain('vcf.build.deferred-without-existing-sddc-manager');
+    expect(spec.sddcManagerSpec?.useExistingDeployment).toBe(true);
+    expect(spec.vcenterSpec.useExistingDeployment).toBe(true);
+  });
+});
+
 describe('deployment scenarios: identity broker', () => {
   it('is emitted for a primary instance', () => {
     const { spec } = buildSddcSpec(basePlan());
