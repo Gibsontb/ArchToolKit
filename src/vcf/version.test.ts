@@ -45,6 +45,26 @@ describe('VCF version comparison', () => {
   it('defaults to the GA release the JSON spec workflow requires', () => {
     expect(DEFAULT_VCF_VERSION).toBe('9.1.1.0');
   });
+
+  it('treats Broadcom\u2019s two spellings of a patch release as the same version', () => {
+    // The deployment guide writes "9.1.0.400" while the release notes are titled
+    // "9.1.0.0400". Parsing each part as a number makes them equal, which is
+    // what stops the Automation pool size flipping on a spelling difference.
+    expect(compareVcfVersion('9.1.0.400', '9.1.0.0400')).toBe(0);
+    expect(automationIpCount('9.1.0.0400')).toBe(6);
+  });
+});
+
+describe('target version sanity', () => {
+  it('warns when the target predates the schema being emitted', () => {
+    const { findings } = buildSddcSpec(basePlan({ version: '9.0.0.0' }));
+    expect(findings.map((f) => f.code)).toContain('vcf.build.version-below-9-1');
+  });
+
+  it('is quiet for a 9.1 target', () => {
+    const { findings } = buildSddcSpec(basePlan({ version: '9.1.0.0' }));
+    expect(findings.map((f) => f.code)).not.toContain('vcf.build.version-below-9-1');
+  });
 });
 
 describe('version-dependent rules', () => {

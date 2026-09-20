@@ -194,6 +194,38 @@ export type EvcMode =
   | 'AMD_ZEN4'
   | (string & {});
 
+/**
+ * The EVC baselines as a runtime list, for offering them in a UI.
+ *
+ * Order and spelling match the published enum exactly, including Broadcom's own
+ * `INTEL_NEALEM` and `AMD_STREAMROLLER`.
+ */
+export const EVC_MODES: readonly EvcMode[] = [
+  'INTEL_MEROM',
+  'INTEL_PENRYN',
+  'INTEL_NEALEM',
+  'INTEL_WESTMERE',
+  'INTEL_SANDYBRIDGE',
+  'INTEL_IVYBRIDGE',
+  'INTEL_HASWELL',
+  'INTEL_BROADWELL',
+  'INTEL_SKYLAKE',
+  'INTEL_CASCADELAKE',
+  'INTEL_ICELAKE',
+  'INTEL_SAPPHIRERAPIDS',
+  'AMD_REV_E',
+  'AMD_REV_F',
+  'AMD_GREYHOUND_NO3DNOW',
+  'AMD_GREYHOUND',
+  'AMD_BULLDOZER',
+  'AMD_PILEDRIVER',
+  'AMD_STREAMROLLER',
+  'AMD_ZEN',
+  'AMD_ZEN2',
+  'AMD_ZEN3',
+  'AMD_ZEN4',
+];
+
 export interface ResourcePoolSpec {
   /** Max 80 chars. */
   name?: string;

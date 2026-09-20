@@ -29,6 +29,7 @@ import {
 import {
   DEFAULT_VCF_VERSION,
   automationIpCount,
+  compareVcfVersion,
   defaultApplianceSize,
 } from './version.js';
 import { PLACEHOLDER_SECRET } from './spec-types.js';
@@ -57,6 +58,12 @@ import { PLACEHOLDER_SECRET } from './spec-types.js';
            
                                             
                          
+import {
+  MANAGEMENT_NETWORK_MODELS,
+  managementNetworkModel,
+  CLOUD_PROXY_ALWAYS_VM_MANAGEMENT,
+                              
+} from './management-network.js';
 import {
   SCENARIO_RULES,
   scenarioRule,
@@ -187,7 +194,17 @@ export { PLACEHOLDER_SECRET };
                                 
                               
                              
+     
+                                                                   
+                                                                              
+     
                                          
+
+     
+                                                                           
+                                                                
+     
+                                                           
                                   
                                 
                                  
@@ -766,6 +783,23 @@ function deriveScenario(plan                )                     {
   return converging ? 'converge-to-vcf-fleet' : 'new-vcf-fleet';
 }
 
+/**
+ * Infer the management network model from the networks a plan supplies.
+ *
+ * Naming an overlay segment is the strongest signal, then a dedicated network;
+ * with neither, the components share the Instance-level port group. Stretched
+ * cannot be inferred — a second region is a deliberate choice, not a side
+ * effect of the networks present.
+ */
+function deriveManagementNetworkModel(plan                )                         {
+  if (plan.managementComponentNetworks?.xRegion) return 'dedicated-vlan-overlay';
+  if (plan.fleetManagement) return 'dedicated-vlan';
+  return 'shared-vlan';
+}
+
+/** Every management network model, for UI listing. */
+export const VCF_MANAGEMENT_NETWORK_MODELS = MANAGEMENT_NETWORK_MODELS;
+
 /** Every scenario the builder can produce, for UI listing. */
 export const DEPLOYMENT_SCENARIOS = SCENARIO_RULES;
 
@@ -790,6 +824,12 @@ export function buildSddcSpec(plan                )              {
   // deciding for itself and drifting out of agreement with the others.
   const scenario                     = plan.scenario ?? deriveScenario(plan);
   const rule = scenarioRule(scenario);
+
+  // Where the fleet-level components live is a named model, so a spec can state
+  // which one it represents instead of landing in one by accident.
+  const networkModel = managementNetworkModel(
+    plan.managementNetworkModel ?? deriveManagementNetworkModel(plan),
+  );
 
   /** Presence of a component whose column is a presence column, not a flag. */
   const includes = (
@@ -1167,7 +1207,14 @@ export function buildSddcSpec(plan                )              {
   // --- VCF Management Services (vSphere Supervisor) ------------------------
   // The VCFMS pool lives in the management subnet unless a dedicated fleet
   // management network was planned.
-  const vcfmsHomeCidr = plan.fleetManagement ? parseCidr(plan.fleetManagement.cidr) : mgmtCidr;
+  // The shared model puts fleet-level components on the port group the
+  // Instance-level components already use, which is the VM management network
+  // when one is planned separately from management.
+  const sharedHomeCidr = plan.vmManagement ? parseCidr(plan.vmManagement.cidr) : mgmtCidr;
+  const vcfmsHomeCidr =
+    networkModel.requiresDedicatedNetwork && plan.fleetManagement
+      ? parseCidr(plan.fleetManagement.cidr)
+      : sharedHomeCidr;
   const vcfmsPool = buildPool(plan.vcfmsPool, vcfmsHomeCidr, 31, VCFMS_RECOMMENDED_IPS);
   const vcfmsRange = vcfmsPool;
   const vcfmsIpv6 = buildPoolV6(plan.vcfmsIpv6Pool);
@@ -1298,6 +1345,100 @@ export function buildSddcSpec(plan                )              {
           ...(mc.xRegion ? { xRegionNetwork: mc.xRegion } : {}),
         }
       : undefined;
+
+  // --- target version -------------------------------------------------------
+  // The version drives the Automation pool size and the appliance size
+  // defaults, so a typo here changes the document rather than being cosmetic.
+  if (compareVcfVersion(targetVersion, '9.1.0.0') < 0) {
+    findings.push(
+      warning(
+        'vcf.build.version-below-9-1',
+        `version "${targetVersion}" is below 9.1.0.0. This builder emits the 9.1 schema, which earlier releases do not accept.`,
+        {
+          path: 'version',
+          remediation: `Target ${DEFAULT_VCF_VERSION} unless a specific earlier 9.1 patch is required.`,
+          source: 'VCF Installer API — SddcSpec',
+        },
+      ),
+    );
+  }
+
+  // --- management network model --------------------------------------------
+  findings.push(
+    info(
+      'vcf.build.management-network-model',
+      `Fleet-level components follow the ${networkModel.label}. ${networkModel.summary}`,
+      { source: 'VCF 9.1 Design Library — VCF Management Network Detailed Design' },
+    ),
+  );
+
+  if (networkModel.requiresDedicatedNetwork && !plan.fleetManagement) {
+    findings.push(
+      warning(
+        'vcf.build.management-network-missing-dedicated',
+        `${networkModel.label} requires a dedicated network for the fleet-level components, but none was planned. They fall back to the shared port group, which is a different model.`,
+        {
+          path: 'fleetManagement',
+          remediation:
+            'Add a fleetManagement network, or choose the VCF Management Shared VLAN Network Model.',
+          source: 'VCF 9.1 Design Library — VCF Management Network Detailed Design',
+        },
+      ),
+    );
+  }
+
+  if (!networkModel.requiresDedicatedNetwork && plan.fleetManagement) {
+    findings.push(
+      warning(
+        'vcf.build.management-network-unused-dedicated',
+        `${networkModel.label} shares the Instance-level port group, but a dedicated fleetManagement network was planned. It is emitted but the model does not place components on it.`,
+        {
+          path: 'fleetManagement',
+          remediation: 'Choose a dedicated model, or drop the fleetManagement network.',
+          source: 'VCF 9.1 Design Library — VCF Management Network Detailed Design',
+        },
+      ),
+    );
+  }
+
+  if (networkModel.requiresOverlaySegment && !plan.managementComponentNetworks?.xRegion) {
+    findings.push(
+      warning(
+        'vcf.build.management-network-missing-overlay',
+        `${networkModel.label} places the remaining fleet-level components on an NSX overlay segment, but no segment was named.`,
+        {
+          path: 'managementComponentNetworks.xRegion',
+          remediation:
+            'Name the overlay segment with its networkName, subnetMask and gateway; all three are required.',
+          source: 'VCF 9.1 Design Library — VCF Management Network Detailed Design',
+        },
+      ),
+    );
+  }
+
+  if (networkModel.stretched && !plan.managementComponentNetworks?.local) {
+    findings.push(
+      warning(
+        'vcf.build.management-network-missing-local-region',
+        'A stretched overlay segment provides fleet disaster recovery across two regions, so a local region network is expected alongside the cross-region one.',
+        {
+          path: 'managementComponentNetworks.local',
+          remediation:
+            'Add the local region network, or choose the non-stretched overlay model.',
+          source: 'VCF 9.1 Design Library — VCF Management Network Detailed Design',
+        },
+      ),
+    );
+  }
+
+  if (includeOps) {
+    findings.push(
+      info('vcf.build.cloud-proxy-network', CLOUD_PROXY_ALWAYS_VM_MANAGEMENT, {
+        path: 'vcfOperationsCollectorSpec',
+        source: 'VCF 9.1 Design Library — VCF Management Dedicated VLAN Network Model',
+      }),
+    );
+  }
 
   // --- assemble ------------------------------------------------------------
   const spec           = {

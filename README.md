@@ -103,11 +103,20 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | --- | --- |
 | VCF 9.1 sizing | Working — greenfield, brownfield converge/import, fleet scale |
 | VCF 9.1 `SddcSpec` builder | Working — all 8 documented deployment scenarios |
-| VMware inventory import and analysis | Planned |
+| VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
 | Multi-cloud decision matrix | Planned |
 | Application migration and modernization | Planned |
 | Terraform authoring kit | Planned |
 | Ansible authoring kit | Planned |
+
+## Spec builder inputs
+
+The form covers the fields a form can express. Structured and rarely-used parts
+of `SddcSpec` — resource pools, root CA chains, explicit IP pool ranges and
+per-component FQDN overrides — are reached by pasting a specification into the
+import panel, which validates it the same way. Credentials are deliberately not
+collected in the browser: the builder emits `<REQUIRED>` placeholders and reports
+them, and VCF 9.1 can generate complex passwords during installation.
 
 ## A caution on VCF output
 
