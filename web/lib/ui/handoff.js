@@ -115,3 +115,73 @@ export function clearHandoff(kind             )       {
     // Nothing to do; an unreadable store is already effectively empty.
   }
 }
+
+// ---------------------------------------------------------------------------
+// The latest result, for a page that should follow it without being sent
+// ---------------------------------------------------------------------------
+
+/*
+ * A handoff is sent by a button and consumed once. Some pages should also just
+ * follow along: once sizing has an estate, the spec builder should open on it
+ * without anyone pressing Continue. So sizing also records its latest result
+ * here, and the spec builder applies it — once per result, so reloading the
+ * spec builder does not overwrite edits made since with the same values.
+ */
+
+function latestKey(kind             )         {
+  return `archtoolkit.latest.${kind}`;
+}
+
+function appliedKey(kind        )         {
+  return `archtoolkit.applied.${kind}`;
+}
+
+/** Record the latest result of a page, replacing the previous one. */
+export function rememberLatest   (kind             , origin        , payload   )       {
+  const s = store();
+  if (!s) return;
+  const entry             = {
+    kind,
+    version: HANDOFF_VERSION,
+    createdAt: new Date().toISOString(),
+    origin,
+    payload,
+  };
+  try {
+    s.setItem(latestKey(kind), JSON.stringify(entry));
+  } catch {
+    // Following along is a convenience; losing it loses nothing else.
+  }
+}
+
+/** The latest result, if there is one this page has not applied yet. */
+export function unappliedLatest   (kind             )                    {
+  const s = store();
+  if (!s) return null;
+  try {
+    const raw = s.getItem(latestKey(kind));
+    if (!raw) return null;
+    const entry = JSON.parse(raw)              ;
+    if (entry?.version !== HANDOFF_VERSION || entry.kind !== kind) return null;
+    return wasApplied(kind, entry.createdAt) ? null : entry;
+  } catch {
+    return null;
+  }
+}
+
+/** Remember that a result — identified by a stamp — has been applied. */
+export function markApplied(kind        , stamp        )       {
+  try {
+    store()?.setItem(appliedKey(kind), stamp);
+  } catch {
+    // As above.
+  }
+}
+
+export function wasApplied(kind        , stamp        )          {
+  try {
+    return store()?.getItem(appliedKey(kind)) === stamp;
+  } catch {
+    return false;
+  }
+}

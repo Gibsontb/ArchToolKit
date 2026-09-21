@@ -30,7 +30,7 @@ import {
 } from '../vcf/sizing-data.ts';
 import type { StorageType } from '../vcf/sizing.ts';
 import type { AutomationSize } from '../vcf/sizing-data.ts';
-import { putHandoff, takeHandoff } from './handoff.ts';
+import { putHandoff, takeHandoff, rememberLatest } from './handoff.ts';
 import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.ts';
 import { mountEstateBar } from './estate-bar.ts';
 import { buildEstatePlanner, fleetCard, type EstatePlanner } from './estate-planner.ts';
@@ -38,7 +38,7 @@ import type { EstatePlan } from '../vcf/estate-plan.ts';
 import type { Inventory } from '../vmware/inventory.ts';
 
 /** The estate the page is planning from, for the spec builder handoff. */
-let estate: { inventory: Inventory; planner: EstatePlanner } | null = null;
+let estate: { inventory: Inventory; planner: EstatePlanner; origin: string } | null = null;
 
 interface Controls {
   path: HTMLSelectElement;
@@ -188,6 +188,14 @@ export function mountVcfSizingPage(root: HTMLElement): void {
     lastRenderKey = key;
     const result = sizeDeployment(input);
     replace(resultsPane, ...(plan ? [fleetCard(plan)] : []), ...buildResults(result));
+    // With an estate loaded, the spec builder follows this page: whatever was
+    // sized last is what it opens on, without Continue having to be pressed.
+    if (estate) {
+      rememberLatest('sizing-to-spec', `${describeSizingHandoff(result)} — from ${estate.origin}`, {
+        ...sizingToPlan(result),
+        ...estateToPlan(estate.inventory, estate.planner.managementCluster()?.key),
+      });
+    }
   }
 
   render();
@@ -200,7 +208,7 @@ export function mountVcfSizingPage(root: HTMLElement): void {
     onEstate: (entry) => {
       if (entry) {
         const planner = buildEstatePlanner(entry.inventory, onPlanChange);
-        estate = { inventory: entry.inventory, planner };
+        estate = { inventory: entry.inventory, planner, origin: entry.origin };
         replace(estateSlot, planner.panel);
         onPlanChange();
       } else {

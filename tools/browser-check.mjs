@@ -159,13 +159,23 @@ for (const [name, path] of [
   await mgmt.selectOption({ index: 1 });
   await page.waitForTimeout(500);
 
-  await page.locator('button', { hasText: 'Continue in the spec' }).click();
-  await page.waitForTimeout(1500);
-  check('sizing hands over to the spec builder', page.url().endsWith('/vcf-spec.html'));
+  // No Continue: opening the spec builder is enough once sizing has an estate.
+  await page.goto(`${BASE}/app/vcf-spec.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1200);
   const specText = await page.locator('body').innerText();
+  check('the spec builder follows sizing without Continue', /Prefilled from your sizing/.test(specText));
   check('a document comes out the far end', /"sddcId"/.test(specText));
   check('with the converged hosts in it', /"esx01/.test(specText) && /"esx04/.test(specText));
   check('and the estate’s DNS and management network', /10\.0\.0\.2/.test(specText) && /10\.0\.0\.0\/24/.test(specText));
+
+  // A fresh tab has no sizing, only the stored estate: the spec builder sizes
+  // it on the defaults and fills itself in anyway.
+  const fresh = await ctx.newPage();
+  await fresh.goto(`${BASE}/app/vcf-spec.html`, { waitUntil: 'networkidle' });
+  await fresh.waitForFunction(() => /Prefilled from your estate/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => undefined);
+  const freshText = await fresh.locator('body').innerText();
+  check('a new tab’s spec builder fills itself from the estate', /Prefilled from your estate/.test(freshText) && /"esx01/.test(freshText));
+  await fresh.close();
 
   // The generators build from the same estate.
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });

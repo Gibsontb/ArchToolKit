@@ -30,7 +30,11 @@ import {
 } from '../vcf/spec-builder.ts';
 import { validateSddcSpec, validateSddcSpecJson } from '../vcf/spec-validate.ts';
 import { SCENARIO_RULES, scenarioRule, type DeploymentScenario } from '../vcf/scenarios.ts';
-import { takeHandoff } from './handoff.ts';
+import { takeHandoff, unappliedLatest, markApplied, wasApplied } from './handoff.ts';
+import { mountEstateBar } from './estate-bar.ts';
+import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.ts';
+import { sizeDeployment } from '../vcf/sizing.ts';
+import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.ts';
 import {
   MANAGEMENT_NETWORK_MODELS,
   managementNetworkModel,
@@ -434,26 +438,38 @@ export function mountVcfSpecPage(root: HTMLElement): void {
    */
   let inherited: Partial<DeploymentPlan> = {};
 
-  const inbound = takeHandoff<Partial<DeploymentPlan>>('sizing-to-spec');
-  if (inbound) {
-    inherited = inbound.payload;
-    applySizingPlan(controls, inbound.payload);
+  // Where the prefill came from, above the form.
+  const notice = el('div', {});
+  append(root, notice);
+
+  /** Fill the form from a sizing result or an estate, and say so. */
+  function applyInbound(origin: string, payload: Partial<DeploymentPlan>, from: 'sizing' | 'estate'): void {
+    inherited = payload;
+    applySizingPlan(controls, payload);
     hostTable.syncCount();
-    if (inbound.payload.hosts && inbound.payload.hosts.length > 0) hostTable.load(inbound.payload.hosts);
-    append(
-      root,
+    if (payload.hosts && payload.hosts.length > 0) hostTable.load(payload.hosts);
+    replace(
+      notice,
       el(
         'div',
         { class: 'section-note', style: { marginBottom: 'var(--space-4)' } },
-        el('strong', { text: 'Prefilled from your sizing. ' }),
+        el('strong', { text: from === 'sizing' ? 'Prefilled from your sizing. ' : 'Prefilled from your estate. ' }),
         el('span', {
-          text: inbound.payload.hosts
-            ? `${inbound.origin}. Hosts, DNS, NTP, domain and the management, vMotion and vSAN networks were read from the estate — check them, then fill in the component names.`
-            : `${inbound.origin}. Names, domains and VLANs still need filling in.`,
+          text: payload.hosts
+            ? `${origin}. Hosts, DNS, NTP, domain and the management, vMotion and vSAN networks were read from the estate — check them, then fill in the component names.`
+            : `${origin}. Names, domains and VLANs still need filling in.`,
         }),
       ),
     );
   }
+
+  // A result sent with Continue wins; otherwise the latest sizing this tab
+  // has not applied yet. Either way the latest is then marked applied, so a
+  // reload keeps whatever has been edited here since.
+  const latest = unappliedLatest<Partial<DeploymentPlan>>('sizing-to-spec');
+  const inbound = takeHandoff<Partial<DeploymentPlan>>('sizing-to-spec') ?? latest;
+  if (latest) markApplied('sizing-to-spec', latest.createdAt);
+  if (inbound) applyInbound(inbound.origin, inbound.payload, 'sizing');
 
   append(inputsPane, hostTable.element);
   append(root, el('div', { class: 'split' }, el('div', {}, inputsPane), outputPane));
@@ -717,6 +733,31 @@ export function mountVcfSpecPage(root: HTMLElement): void {
   }
 
   render();
+
+  // No sizing in this tab, but an estate imported: size it on the defaults the
+  // sizing page opens with, and fill the form from that — once per estate.
+  void mountEstateBar(root, {
+    purpose: 'fill this specification from its management cluster',
+    onEstate: (entry) => {
+      if (!entry || inbound || wasApplied('estate-to-spec', entry.savedAt)) return;
+      const clusters = sourceClusters(entry.inventory);
+      const host = commonHostProfile(entry.inventory.hosts);
+      if (!host || clusters.length === 0) return;
+      const managementSource = suggestManagementSource(clusters);
+      const plan = planEstate(entry.inventory, { host, managementSource });
+      const result = sizeDeployment(plan.management);
+      applyInbound(
+        `${describeSizingHandoff(result)} — ${entry.origin}, on the sizing page's defaults`,
+        {
+          ...sizingToPlan(result),
+          ...estateToPlan(entry.inventory, managementSource === 'new' ? undefined : managementSource),
+        },
+        'estate',
+      );
+      markApplied('estate-to-spec', entry.savedAt);
+      render();
+    },
+  });
 }
 
 /**

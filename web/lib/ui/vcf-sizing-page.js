@@ -30,7 +30,7 @@ import {
 } from '../vcf/sizing-data.js';
                                                     
                                                             
-import { putHandoff, takeHandoff } from './handoff.js';
+import { putHandoff, takeHandoff, rememberLatest } from './handoff.js';
 import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.js';
 import { mountEstateBar } from './estate-bar.js';
 import { buildEstatePlanner, fleetCard,                    } from './estate-planner.js';
@@ -38,7 +38,7 @@ import { buildEstatePlanner, fleetCard,                    } from './estate-plan
                                                         
 
 /** The estate the page is planning from, for the spec builder handoff. */
-let estate                                                          = null;
+let estate                                                                          = null;
 
                     
                           
@@ -188,6 +188,14 @@ export function mountVcfSizingPage(root             )       {
     lastRenderKey = key;
     const result = sizeDeployment(input);
     replace(resultsPane, ...(plan ? [fleetCard(plan)] : []), ...buildResults(result));
+    // With an estate loaded, the spec builder follows this page: whatever was
+    // sized last is what it opens on, without Continue having to be pressed.
+    if (estate) {
+      rememberLatest('sizing-to-spec', `${describeSizingHandoff(result)} — from ${estate.origin}`, {
+        ...sizingToPlan(result),
+        ...estateToPlan(estate.inventory, estate.planner.managementCluster()?.key),
+      });
+    }
   }
 
   render();
@@ -200,7 +208,7 @@ export function mountVcfSizingPage(root             )       {
     onEstate: (entry) => {
       if (entry) {
         const planner = buildEstatePlanner(entry.inventory, onPlanChange);
-        estate = { inventory: entry.inventory, planner };
+        estate = { inventory: entry.inventory, planner, origin: entry.origin };
         replace(estateSlot, planner.panel);
         onPlanChange();
       } else {
