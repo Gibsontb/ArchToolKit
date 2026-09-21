@@ -60,7 +60,7 @@ describe('version constraints', () => {
 
 describe('writing a value into HCL', () => {
   it('quotes a string and does not quote a number or a bool', () => {
-    expect(hclValue('court-vpc', 'string')).toBe('"court-vpc"');
+    expect(hclValue('app-vpc', 'string')).toBe('"app-vpc"');
     expect(hclValue('100', 'number')).toBe('100');
     expect(hclValue('true', 'bool')).toBe('true');
   });
@@ -90,14 +90,14 @@ describe('a generated module call', () => {
       name: 'vpc',
       source: 'terraform-aws-modules/vpc/aws',
       values: new Map([
-        ['name', 'court-vpc'],
+        ['name', 'app-vpc'],
         ['cidr', '10.0.0.0/16'],
       ]),
     });
     expect(out).toContain('module "vpc" {');
     expect(out).toContain('source  = "terraform-aws-modules/vpc/aws"');
     expect(out).toContain('version = "~> 6.7"');
-    expect(out).toContain('name = "court-vpc"');
+    expect(out).toContain('name = "app-vpc"');
   });
 
   it('leaves out an input that was left blank rather than writing an empty one', () => {
@@ -105,7 +105,7 @@ describe('a generated module call', () => {
       name: 'vpc',
       source: 'terraform-aws-modules/vpc/aws',
       values: new Map([
-        ['name', 'court-vpc'],
+        ['name', 'app-vpc'],
         ['database_subnets', ''],
       ]),
     });

@@ -243,7 +243,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-network", hint: "Resource group" },
-            { id: "vnet_name", label: "VNet name", control: 'text', default: "court-vnet", hint: "Virtual network name" },
+            { id: "vnet_name", label: "VNet name", control: 'text', default: "app-vnet", hint: "Virtual network name" },
             { id: "address_prefix", label: "VNet address prefix", control: 'text', default: "10.30.0.0/16", hint: "CIDR" },
             { id: "public_subnet_prefix", label: "Public subnet prefix", control: 'text', default: "10.30.1.0/24", hint: "CIDR" },
             { id: "private_subnet_prefix", label: "Private subnet prefix", control: 'text', default: "10.30.2.0/24", hint: "CIDR" }
@@ -324,7 +324,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-storage", hint: "Resource group" },
-            { id: "account_name", label: "Storage account name", control: 'text', default: "courtarchive001", hint: "Globally unique" },
+            { id: "account_name", label: "Storage account name", control: 'text', default: "apparchive001", hint: "Globally unique" },
             { id: "container_name", label: "Container name", control: 'text', default: "documents", hint: "Blob container" }
           ],
     emits: [],
@@ -393,10 +393,10 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-sql", hint: "Resource group name" },
-            { id: "sql_server_name", label: "SQL server name", control: 'text', default: "court-sql-srv", hint: "Globally unique DNS name" },
+            { id: "sql_server_name", label: "SQL server name", control: 'text', default: "app-sql-srv", hint: "Globally unique DNS name" },
             { id: "admin_username", label: "Admin login", control: 'text', default: "sqladmin", hint: "SQL admin login" },
             { id: "admin_password", label: "Admin password", control: 'text', default: "CHANGE_ME!", hint: "Use secret in production" },
-            { id: "db_name", label: "Database name", control: 'text', default: "court", hint: "DB name" }
+            { id: "db_name", label: "Database name", control: 'text', default: "app", hint: "DB name" }
           ],
     emits: [],
     build: (values: BlueprintValues, name: string) =>
@@ -468,9 +468,9 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-apps", hint: "Resource group" },
-            { id: "plan_name", label: "App Service plan name", control: 'text', default: "court-plan", hint: "Plan name" },
+            { id: "plan_name", label: "App Service plan name", control: 'text', default: "app-plan", hint: "Plan name" },
             { id: "sku", label: "SKU", control: 'text', default: "B1", hint: "e.g. F1, B1, P1v3" },
-            { id: "webapp_name", label: "Web app name", control: 'text', default: "court-webapp", hint: "Unique webapp name" },
+            { id: "webapp_name", label: "Web app name", control: 'text', default: "app-webapp", hint: "Unique webapp name" },
             { id: "runtime_stack", label: "Runtime stack", control: 'text', default: "DOTNETCORE|6.0", hint: "Linux runtime (e.g. DOTNETCORE|6.0)" }
           ],
     emits: [],
@@ -543,7 +543,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-aks", hint: "Resource group" },
-            { id: "aks_name", label: "AKS cluster name", control: 'text', default: "court-aks", hint: "Cluster name" },
+            { id: "aks_name", label: "AKS cluster name", control: 'text', default: "app-aks", hint: "Cluster name" },
             {
               id: "node_count",
               label: "Node count",
@@ -620,7 +620,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-monitor", hint: "Resource group" },
-            { id: "workspace_name", label: "Workspace name", control: 'text', default: "court-laworkspace", hint: "Log Analytics workspace" }
+            { id: "workspace_name", label: "Workspace name", control: 'text', default: "app-laworkspace", hint: "Log Analytics workspace" }
           ],
     emits: [],
     build: (values: BlueprintValues, name: string) =>
@@ -677,7 +677,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               hint: "Region"
             },
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-secrets", hint: "Resource group" },
-            { id: "vault_name", label: "Key Vault name", control: 'text', default: "court-kv", hint: "Vault name (globally unique DNS)" },
+            { id: "vault_name", label: "Key Vault name", control: 'text', default: "app-kv", hint: "Vault name (globally unique DNS)" },
             { id: "secret_name", label: "Secret name", control: 'text', default: "db-password", hint: "Secret name" },
             { id: "secret_value", label: "Secret value", control: 'text', default: "ChangeMe!", hint: "Use a secure value / vault" }
           ],

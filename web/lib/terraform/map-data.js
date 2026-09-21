@@ -28,7 +28,7 @@ export const AZURE_MAP           = {
       "id": "az-overview",
       "title": "Azure Terraform Overview",
       "badge": "Azure",
-      "tagline": "Azure + Terraform = subscriptions, resource groups, VNets, workloads, and guardrails expressed as repeatable blueprints for every court, tenant, or environment.",
+      "tagline": "Azure + Terraform = subscriptions, resource groups, VNets, workloads, and guardrails expressed as repeatable blueprints for every tenant or environment.",
       "notes": [
         "Provider: azurerm for Azure resources, azuread for identities.",
         "Scope: Tenant → Management Group → Subscription → Resource Group.",
@@ -107,7 +107,7 @@ export const AZURE_MAP           = {
       "examples": [
         {
           "title": "Example: RBAC matrix with for_each",
-          "code": "locals {\n  # CCoE-approved RBAC mapping\n  rbac = {\n    \"court-admins\" = {\n      principal_id = azuread_group.court_admins.object_id\n      role_name    = \"Owner\"\n      scope        = \"/subscriptions/${var.subscription_id}\"\n    }\n    \"app-ops\" = {\n      principal_id = azuread_group.app_ops.object_id\n      role_name    = \"Contributor\"\n      scope        = \"/subscriptions/${var.subscription_id}/resourceGroups/${var.app_rg}\"\n    }\n  }\n}\n\ndata \"azurerm_role_definition\" \"by_name\" {\n  for_each = { for k, v in local.rbac : k => v.role_name }\n\n  name  = each.value\n  scope = local.rbac[each.key].scope\n}\n\nresource \"azurerm_role_assignment\" \"rbac\" {\n  for_each = local.rbac\n\n  principal_id         = each.value.principal_id\n  role_definition_id   = data.azurerm_role_definition.by_name[each.key].role_definition_resource_id\n  scope                = each.value.scope\n  skip_service_principal_aad_check = true\n}"
+          "code": "locals {\n  # CCoE-approved RBAC mapping\n  rbac = {\n    \"platform-admins\" = {\n      principal_id = azuread_group.platform_admins.object_id\n      role_name    = \"Owner\"\n      scope        = \"/subscriptions/${var.subscription_id}\"\n    }\n    \"app-ops\" = {\n      principal_id = azuread_group.app_ops.object_id\n      role_name    = \"Contributor\"\n      scope        = \"/subscriptions/${var.subscription_id}/resourceGroups/${var.app_rg}\"\n    }\n  }\n}\n\ndata \"azurerm_role_definition\" \"by_name\" {\n  for_each = { for k, v in local.rbac : k => v.role_name }\n\n  name  = each.value\n  scope = local.rbac[each.key].scope\n}\n\nresource \"azurerm_role_assignment\" \"rbac\" {\n  for_each = local.rbac\n\n  principal_id         = each.value.principal_id\n  role_definition_id   = data.azurerm_role_definition.by_name[each.key].role_definition_resource_id\n  scope                = each.value.scope\n  skip_service_principal_aad_check = true\n}"
         }
       ]
     },
@@ -157,7 +157,7 @@ export const AZURE_MAP           = {
                 "Hybrid Connectivity",
                 "VPN, ExpressRoute",
                 "azurerm_virtual_network_gateway , azurerm_local_network_gateway , azurerm_virtual_network_gateway_connection , azurerm_express_route_circuit",
-                "“Court-to-court / court-to-datacenter” connectivity modules; depends_on for ordering."
+                "“Site-to-site / site-to-datacenter” connectivity modules; depends_on for ordering."
               ],
               "resources": [
                 "azurerm_virtual_network_gateway",
@@ -483,9 +483,9 @@ export const AZURE_MAP           = {
             },
             {
               "cells": [
-                "Court-Isolated Subscription",
+                "Isolated Subscription",
                 "Subscription + core resource groups + VNets",
-                "“Court subscription bootstrap” module calling RG, VNet, RBAC, logging modules",
+                "“Subscription bootstrap” module calling RG, VNet, RBAC, logging modules",
                 "locals for RG names, for_each for RBAC entries, validation for allowed regions."
               ],
               "resources": [
@@ -494,7 +494,7 @@ export const AZURE_MAP           = {
             },
             {
               "cells": [
-                "Court-to-Court Secure Link (Azure-only)",
+                "Site-to-Site Secure Link (Azure-only)",
                 "VNets between subscriptions",
                 "VNet peering module, shared firewall module",
                 "depends_on between VNets, for_each over peering pairs."
@@ -506,7 +506,7 @@ export const AZURE_MAP           = {
             },
             {
               "cells": [
-                "Court-to-Datacenter Hybrid Link",
+                "Site-to-Datacenter Hybrid Link",
                 "On-prem ↔ Azure",
                 "VPN/ExpressRoute connectivity module + standard routes + NSGs",
                 "resource for gateways, data for remote networks, locals for allowed prefixes."
@@ -527,7 +527,7 @@ export const AZURE_MAP           = {
                 "Evidence & Log Enclave",
                 "Storage + Log Analytics + Policy",
                 "Evidence storage module, central logs module, policy assignments",
-                "prevent_destroy in lifecycle, for_each over courts, cidr* for private endpoints."
+                "prevent_destroy in lifecycle, for_each over tenants, cidr* for private endpoints."
               ],
               "resources": [
                 "prevent_destroy",
@@ -555,7 +555,7 @@ export const GOOGLE_MAP           = {
       "notes": [
         "Provider: google , optionally google-beta .",
         "State: usually in a GCS bucket.",
-        "Isolation: projects per environment or per court/tenant."
+        "Isolation: projects per environment or per tenant."
       ],
       "code": [
         "terraform {\n  required_providers {\n    google = {\n      source  = \"hashicorp/google\"\n      version = \"~> 5.0\"\n    }\n  }\n\n  backend \"gcs\" {\n    bucket = \"tfstate-central\"\n    prefix = \"gcp/global\"\n  }\n}\n\nprovider \"google\" {\n  project = var.project_id\n  region  = var.region\n}"
@@ -827,9 +827,9 @@ export const GOOGLE_MAP           = {
             },
             {
               "cells": [
-                "Secure Court Project",
+                "Secure Tenant Project",
                 "One project per tenant",
-                "Project module, VPC module, logging sink module; object inputs for court metadata."
+                "Project module, VPC module, logging sink module; object inputs for tenant metadata."
               ],
               "resources": []
             },
@@ -933,7 +933,7 @@ export const OCI_MAP           = {
       "examples": [
         {
           "title": "Example: Compartment Layout with for_each",
-          "code": "data \"oci_identity_tenancy\" \"root\" {\n  tenancy_id = var.tenancy_ocid\n}\n\nlocals {\n  compartments = {\n    \"security\" = {\n      description = \"Central security & audit\"\n      parent_ocid = data.oci_identity_tenancy.root.id\n    }\n    \"shared-services\" = {\n      description = \"Shared court services\"\n      parent_ocid = data.oci_identity_tenancy.root.id\n    }\n    \"court-a\" = {\n      description = \"Court A workloads\"\n      parent_ocid = data.oci_identity_tenancy.root.id\n    }\n  }\n}\n\nresource \"oci_identity_compartment\" \"comp\" {\n  for_each                = local.compartments\n  compartment_id          = each.value.parent_ocid\n  description             = each.value.description\n  name                    = each.key\n  enable_delete           = false\n  freeform_tags           = var.common_tags\n}"
+          "code": "data \"oci_identity_tenancy\" \"root\" {\n  tenancy_id = var.tenancy_ocid\n}\n\nlocals {\n  compartments = {\n    \"security\" = {\n      description = \"Central security & audit\"\n      parent_ocid = data.oci_identity_tenancy.root.id\n    }\n    \"shared-services\" = {\n      description = \"Shared app services\"\n      parent_ocid = data.oci_identity_tenancy.root.id\n    }\n    \"app-a\" = {\n      description = \"App A workloads\"\n      parent_ocid = data.oci_identity_tenancy.root.id\n    }\n  }\n}\n\nresource \"oci_identity_compartment\" \"comp\" {\n  for_each                = local.compartments\n  compartment_id          = each.value.parent_ocid\n  description             = each.value.description\n  name                    = each.key\n  enable_delete           = false\n  freeform_tags           = var.common_tags\n}"
         }
       ]
     },
@@ -1193,9 +1193,9 @@ export const OCI_MAP           = {
           "rows": [
             {
               "cells": [
-                "Court Landing Zone in OCI",
+                "Landing Zone in OCI",
                 "Tenancy + compartments + VCN",
-                "Compartment module ( for_each over courts), VCN module per court with cidrsubnet -driven subnets."
+                "Compartment module ( for_each over tenants), VCN module per tenant with cidrsubnet -driven subnets."
               ],
               "resources": [
                 "for_each"
@@ -1214,7 +1214,7 @@ export const OCI_MAP           = {
             },
             {
               "cells": [
-                "Hybrid Court Connectivity",
+                "Hybrid Connectivity",
                 "On-prem ↔ OCI",
                 "VCN + DRG + IPsec/FastConnect modules, network security defined with for_each over rule sets."
               ],

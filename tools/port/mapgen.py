@@ -32,7 +32,11 @@ from __future__ import annotations
 import html
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scrub import scrub  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 OLD = ROOT / "_old" / "13_Web" / "static" / "terraform"
@@ -239,7 +243,7 @@ def main() -> None:
             f"{len(names):3} resources, {examples} worked example(s)"
         )
 
-    OUT.write_text("\n".join(parts), encoding="utf-8", newline="\n")
+    OUT.write_text(scrub("\n".join(parts)), encoding="utf-8", newline="\n")
     print(f"\nWrote {OUT.relative_to(ROOT)}")
 
 

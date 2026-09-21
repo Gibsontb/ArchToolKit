@@ -102,7 +102,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
 
             { id: "compartment_ocid", label: "Compartment OCID", control: 'text', default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
             { id: "namespace", label: "Object storage namespace", control: 'text', default: "mytenancy", hint: "From OCI console" },
-            { id: "bucket_name", label: "Bucket name", control: 'text', default: "court-archive-oci", hint: "Bucket name" },
+            { id: "bucket_name", label: "Bucket name", control: 'text', default: "app-archive-oci", hint: "Bucket name" },
             {
               id: "storage_tier",
               label: "Storage tier",
@@ -158,7 +158,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
 
             { id: "compartment_ocid", label: "Compartment OCID", control: 'text', default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
             { id: "vcn_cidr", label: "VCN CIDR", control: 'text', default: "10.50.0.0/16", hint: "VCN CIDR block" },
-            { id: "vcn_display_name", label: "VCN display name", control: 'text', default: "court-vcn", hint: "VCN name" },
+            { id: "vcn_display_name", label: "VCN display name", control: 'text', default: "app-vcn", hint: "VCN name" },
             { id: "public_subnet_cidr", label: "Public subnet CIDR", control: 'text', default: "10.50.1.0/24", hint: "Public subnet" },
             { id: "private_subnet_cidr", label: "Private subnet CIDR", control: 'text', default: "10.50.2.0/24", hint: "Private subnet" }
           ],
@@ -261,7 +261,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
             { id: "compartment_ocid", label: "Compartment OCID", control: 'text', default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
             { id: "subnet1_ocid", label: "Subnet 1 OCID", control: 'text', default: "ocid1.subnet.oc1..subnet1", hint: "Subnet for LB" },
             { id: "subnet2_ocid", label: "Subnet 2 OCID", control: 'text', default: "ocid1.subnet.oc1..subnet2", hint: "Second subnet (HA)" },
-            { id: "lb_display_name", label: "LB display name", control: 'text', default: "court-lb", hint: "Load balancer name" },
+            { id: "lb_display_name", label: "LB display name", control: 'text', default: "app-lb", hint: "Load balancer name" },
             { id: "backend_ip", label: "Backend IP (comma-separated)", control: 'text', default: "10.50.1.10,10.50.1.11", hint: "Backend server IPs" },
             {
               id: "port",
@@ -353,8 +353,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "compartment_ocid", label: "Compartment OCID", control: 'text', default: "ocid1.compartment.oc1..xxxxx", hint: "Target compartment" },
-            { id: "db_name", label: "Database name", control: 'text', default: "COURTATP", hint: "DB name" },
-            { id: "display_name", label: "Display name", control: 'text', default: "court-atp-db", hint: "Friendly name" },
+            { id: "db_name", label: "Database name", control: 'text', default: "APPATP", hint: "DB name" },
+            { id: "display_name", label: "Display name", control: 'text', default: "app-atp-db", hint: "Friendly name" },
             {
               id: "db_workload",
               label: "Workload type",
@@ -419,7 +419,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
 
             { id: "compartment_ocid", label: "Compartment OCID", control: 'text', default: "ocid1.compartment.oc1..xxxxx", hint: "Cluster compartment" },
             { id: "vcn_ocid", label: "VCN OCID", control: 'text', default: "ocid1.vcn.oc1..xxxxx", hint: "VCN for the cluster" },
-            { id: "cluster_name", label: "Cluster name", control: 'text', default: "court-oke", hint: "OKE cluster name" },
+            { id: "cluster_name", label: "Cluster name", control: 'text', default: "app-oke", hint: "OKE cluster name" },
             { id: "k8s_version", label: "Kubernetes version", control: 'text', default: "v1.29.1", hint: "K8s version string" }
           ],
     emits: [],
@@ -465,7 +465,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
 
             { id: "compartment_ocid", label: "Compartment OCID", control: 'text', default: "ocid1.compartment.oc1..xxxxx", hint: "Key compartment" },
             { id: "vault_ocid", label: "Vault OCID", control: 'text', default: "ocid1.vault.oc1..xxxxx", hint: "Existing Vault OCID" },
-            { id: "key_display_name", label: "Key display name", control: 'text', default: "court-data-key", hint: "Friendly key name" }
+            { id: "key_display_name", label: "Key display name", control: 'text', default: "app-data-key", hint: "Friendly key name" }
           ],
     emits: [],
     build: (values: BlueprintValues, name: string) =>

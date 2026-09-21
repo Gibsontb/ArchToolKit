@@ -95,8 +95,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
-            { id: "network_name", label: "VPC network name", control: 'text', default: "court-vpc", hint: "Custom VPC" },
-            { id: "subnet_name", label: "Subnet name", control: 'text', default: "court-subnet", hint: "Subnet" },
+            { id: "network_name", label: "VPC network name", control: 'text', default: "app-vpc", hint: "Custom VPC" },
+            { id: "subnet_name", label: "Subnet name", control: 'text', default: "app-subnet", hint: "Subnet" },
             { id: "subnet_cidr", label: "Subnet CIDR", control: 'text', default: "10.40.0.0/24", hint: "CIDR block" },
             { id: "region", label: "Subnet region", control: 'select', options: GCP_REGIONS.map((r: string) => ({ value: r, label: r })), default: "us-central1", hint: "Region, e.g. us-central1" }
           ],
@@ -172,7 +172,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
-            { id: "bucket_name", label: "Bucket name", control: 'text', default: "court-archive-gcs", hint: "Globally unique" },
+            { id: "bucket_name", label: "Bucket name", control: 'text', default: "app-archive-gcs", hint: "Globally unique" },
             { id: "location", label: "Location", control: 'select', options: [{ value: 'US', label: 'US (multi-region)' }, { value: 'EU', label: 'EU (multi-region)' }, { value: 'ASIA', label: 'ASIA (multi-region)' }, ...GCP_REGIONS.map((r: string) => ({ value: r, label: r }))], default: "US", hint: "US, EU, regional code, etc." }
           ],
     emits: [],
@@ -215,8 +215,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
-            { id: "topic_name", label: "Topic name", control: 'text', default: "court-events", hint: "Topic ID" },
-            { id: "subscription_name", label: "Subscription name", control: 'text', default: "court-events-sub", hint: "Subscription ID" }
+            { id: "topic_name", label: "Topic name", control: 'text', default: "app-events", hint: "Topic ID" },
+            { id: "subscription_name", label: "Subscription name", control: 'text', default: "app-events-sub", hint: "Subscription ID" }
           ],
     emits: [],
     build: (values: BlueprintValues, name: string) =>
@@ -285,8 +285,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
               default: "POSTGRES_15",
               hint: "Engine & version"
             },
-            { id: "instance_name", label: "Instance name", control: 'text', default: "court-sql-01", hint: "Cloud SQL instance ID" },
-            { id: "db_name", label: "Database name", control: 'text', default: "court", hint: "Initial database" },
+            { id: "instance_name", label: "Instance name", control: 'text', default: "app-sql-01", hint: "Cloud SQL instance ID" },
+            { id: "db_name", label: "Database name", control: 'text', default: "app", hint: "Initial database" },
             { id: "root_password", label: "Root password", control: 'text', default: "ChangeMe123!", hint: "Use secret manager in real life" },
             { id: "region", label: "Region", control: 'select', options: GCP_REGIONS.map((r: string) => ({ value: r, label: r })), default: "us-central1", hint: "Region (e.g. us-central1)" }
           ],
@@ -347,7 +347,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
-            { id: "cluster_name", label: "Cluster name", control: 'text', default: "court-gke", hint: "Cluster ID" },
+            { id: "cluster_name", label: "Cluster name", control: 'text', default: "app-gke", hint: "Cluster ID" },
             { id: "location", label: "Location (zone or region)", control: 'select', options: GCP_ZONES.map((z: string) => ({ value: z, label: z })), default: "us-central1-a", hint: "e.g. us-central1-a or us-central1" },
             { id: "node_count", label: "Node count", control: 'number', default: 3, hint: "Number of nodes" },
             { id: "node_machine_type", label: "Node machine type", control: 'text', default: "e2-standard-4", hint: "e2-standard-4, n2-standard-4, etc." }
@@ -398,8 +398,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
-            { id: "sa_name", label: "Service account name (ID)", control: 'text', default: "court-automation", hint: "Service account ID" },
-            { id: "sa_display_name", label: "Display name", control: 'text', default: "Court Automation SA", hint: "Friendly name" }
+            { id: "sa_name", label: "Service account name (ID)", control: 'text', default: "app-automation", hint: "Service account ID" },
+            { id: "sa_display_name", label: "Display name", control: 'text', default: "App Automation SA", hint: "Friendly name" }
           ],
     emits: [],
     build: (values: BlueprintValues, name: string) =>
@@ -458,11 +458,11 @@ const BLUEPRINTS: readonly Blueprint[] = [
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
             { id: "location", label: "Location", control: 'select', options: GCP_REGIONS.map((r: string) => ({ value: r, label: r })), default: "us-central1", hint: "Function region" },
-            { id: "function_name", label: "Function name", control: 'text', default: "court-function", hint: "Function ID" },
+            { id: "function_name", label: "Function name", control: 'text', default: "app-function", hint: "Function ID" },
             { id: "entry_point", label: "Entry point", control: 'text', default: "hello_http", hint: "Handler name" },
             { id: "runtime", label: "Runtime", control: 'text', default: "python310", hint: "e.g. python310, nodejs20" },
             { id: "source_archive_bucket", label: "Source bucket", control: 'text', default: "cf-source-bucket", hint: "GCS bucket containing source" },
-            { id: "source_archive_object", label: "Source object", control: 'text', default: "court-function.zip", hint: "Zip object" }
+            { id: "source_archive_object", label: "Source object", control: 'text', default: "app-function.zip", hint: "Zip object" }
           ],
     emits: [],
     build: (values: BlueprintValues, name: string) =>
@@ -513,9 +513,9 @@ const BLUEPRINTS: readonly Blueprint[] = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
-            { id: "service_name", label: "Service name", control: 'text', default: "court-api", hint: "Cloud Run service" },
+            { id: "service_name", label: "Service name", control: 'text', default: "app-api", hint: "Cloud Run service" },
             { id: "location", label: "Location (region)", control: 'select', options: GCP_REGIONS.map((r: string) => ({ value: r, label: r })), default: "us-central1", hint: "e.g. us-central1" },
-            { id: "image", label: "Container image", control: 'text', default: "gcr.io/my-gcp-project/court-api:latest", hint: "Container image URI" },
+            { id: "image", label: "Container image", control: 'text', default: "gcr.io/my-gcp-project/app-api:latest", hint: "Container image URI" },
             {
               id: "allow_unauth",
               label: "Allow unauthenticated",

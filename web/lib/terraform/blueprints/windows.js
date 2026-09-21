@@ -18,7 +18,7 @@ const BLUEPRINTS                       = [
     description: 'Terraform null_resource using WinRM to run a bootstrap PowerShell script on Windows.',
     inputs: [
             { id: "host", label: "Target host (IP / DNS)", control: 'text', default: "10.0.0.20", hint: "Windows host address" },
-            { id: "user", label: "WinRM username", control: 'text', default: "COURT\\administrator", hint: "Domain or local user" },
+            { id: "user", label: "WinRM username", control: 'text', default: "CORP\\administrator", hint: "Domain or local user" },
             { id: "password", label: "WinRM password", control: 'text', default: "CHANGEME", hint: "Secure with env vars / cloud secrets" },
             { id: "inline_command", label: "PowerShell command", control: 'text', default: "Install-WindowsFeature -Name Web-Server", hint: "Bootstrap command" }
           ],

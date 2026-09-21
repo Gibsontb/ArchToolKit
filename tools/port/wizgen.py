@@ -1,4 +1,8 @@
 import io,re,json
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from scrub import scrub
+
 
 SRC='_old/13_Web/static/cloud-decision-logic-kit/multi-cloud-decision-matrix.html'
 s=io.open(SRC,encoding='utf-8',errors='replace').read()
@@ -256,7 +260,7 @@ export function allFields(): readonly WizardField[] {
   return out;
 }
 """)
-io.open('src/multicloud/wizard/steps.ts','w',encoding='utf-8',newline='\n').write('\n'.join(out))
+io.open('src/multicloud/wizard/steps.ts','w',encoding='utf-8',newline='\n').write(scrub('\n'.join(out)))
 
 tot=0
 for st in steps:

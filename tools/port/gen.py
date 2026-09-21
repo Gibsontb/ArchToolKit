@@ -1,4 +1,8 @@
 import io,re,json,os
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from scrub import scrub
+
 
 tf=json.load(io.open('/tmp/port/tf.json',encoding='utf-8'))
 an=json.load(io.open('/tmp/port/an.json',encoding='utf-8'))
@@ -305,14 +309,12 @@ os.makedirs('src/ansible/blueprints', exist_ok=True)
 
 # Region lists are canonical now (src/kit/regions.ts); these are re-export
 # shims so the ported templates keep their import names.
-io.open('src/terraform/blueprints/regions.ts','w',encoding='utf-8',newline='\n').write(
-"/**\n * Region and zone lists for the Terraform blueprints.\n *\n * Re-exported from the canonical lists so the two generators cannot drift apart\n * about which regions exist. See src/kit/regions.ts for why that matters.\n */\n\nexport {\n  AWS_REGIONS,\n  AZURE_REGIONS,\n  GCP_REGIONS,\n  GCP_ZONES,\n  OCI_REGIONS,\n} from '../../kit/regions.ts';\n")
-io.open('src/ansible/blueprints/regions.ts','w',encoding='utf-8',newline='\n').write(
-"/**\n * Region, zone and boolean option lists for the Ansible blueprints.\n *\n * Re-exported from the canonical lists so the two generators cannot drift apart\n * about which regions exist. See src/kit/regions.ts for why that matters.\n *\n * AZURE_LOCATIONS is the same list as AZURE_REGIONS; the previous toolkit used\n * Azure's own word for it here, and the templates still do.\n */\n\nexport { AWS_REGIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from '../../kit/regions.ts';\nexport { AZURE_REGIONS as AZURE_LOCATIONS, OCI_REGIONS } from '../../kit/regions.ts';\n")
+io.open('src/terraform/blueprints/regions.ts','w',encoding='utf-8',newline='\n').write(scrub("/**\n * Region and zone lists for the Terraform blueprints.\n *\n * Re-exported from the canonical lists so the two generators cannot drift apart\n * about which regions exist. See src/kit/regions.ts for why that matters.\n */\n\nexport {\n  AWS_REGIONS,\n  AZURE_REGIONS,\n  GCP_REGIONS,\n  GCP_ZONES,\n  OCI_REGIONS,\n} from '../../kit/regions.ts';\n"))
+io.open('src/ansible/blueprints/regions.ts','w',encoding='utf-8',newline='\n').write(scrub("/**\n * Region, zone and boolean option lists for the Ansible blueprints.\n *\n * Re-exported from the canonical lists so the two generators cannot drift apart\n * about which regions exist. See src/kit/regions.ts for why that matters.\n *\n * AZURE_LOCATIONS is the same list as AZURE_REGIONS; the previous toolkit used\n * Azure's own word for it here, and the templates still do.\n */\n\nexport { AWS_REGIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from '../../kit/regions.ts';\nexport { AZURE_REGIONS as AZURE_LOCATIONS, OCI_REGIONS } from '../../kit/regions.ts';\n"))
 
 for pid,pdef in tf.items():
-    io.open('src/terraform/blueprints/%s.ts'%pid,'w',encoding='utf-8',newline='\n').write(gen_tf(pid,pdef))
+    io.open('src/terraform/blueprints/%s.ts'%pid,'w',encoding='utf-8',newline='\n').write(scrub(gen_tf(pid,pdef)))
 for pid,pdef in an.items():
-    io.open('src/ansible/blueprints/%s.ts'%pid,'w',encoding='utf-8',newline='\n').write(gen_an(pid,pdef))
+    io.open('src/ansible/blueprints/%s.ts'%pid,'w',encoding='utf-8',newline='\n').write(scrub(gen_an(pid,pdef)))
 print('terraform:', sorted(tf.keys()))
 print('ansible:', sorted(an.keys()))

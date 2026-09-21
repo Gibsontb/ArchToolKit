@@ -20,11 +20,11 @@ const BLUEPRINTS                       = [
             { id: "vsphere_user", label: "vSphere username", control: 'text', default: "administrator@vsphere.local", hint: "User with clone rights" },
             { id: "vsphere_password", label: "vSphere password", control: 'text', default: "CHANGEME", hint: "Use environment variables in real use" },
             { id: "vsphere_server", label: "vSphere server", control: 'text', default: "vcenter.example.com", hint: "vCenter hostname" },
-            { id: "datacenter", label: "Datacenter name", control: 'text', default: "Court-DC1", hint: "Datacenter" },
+            { id: "datacenter", label: "Datacenter name", control: 'text', default: "DC1", hint: "Datacenter" },
             { id: "cluster", label: "Cluster name", control: 'text', default: "Cluster1", hint: "Target cluster" },
             { id: "datastore", label: "Datastore", control: 'text', default: "vsanDatastore", hint: "Datastore for VM" },
             { id: "template", label: "Template name", control: 'text', default: "rhel8-template", hint: "Existing template name" },
-            { id: "vm_name", label: "VM name", control: 'text', default: "court-vsphere-01", hint: "New VM name" },
+            { id: "vm_name", label: "VM name", control: 'text', default: "app-vsphere-01", hint: "New VM name" },
             { id: "network_label", label: "Network label", control: 'text', default: "VM Network", hint: "Portgroup name" }
           ],
     emits: [],
@@ -113,13 +113,13 @@ resource "vsphere_virtual_machine" "this" {
             { id: "vsphere_user", label: "vSphere username", control: 'text', default: "administrator@vsphere.local", hint: "User with tag/folder rights" },
             { id: "vsphere_password", label: "vSphere password", control: 'text', default: "CHANGEME", hint: "Use env vars in real use" },
             { id: "vsphere_server", label: "vSphere server", control: 'text', default: "vcenter.example.com", hint: "vCenter hostname" },
-            { id: "datacenter", label: "Datacenter name", control: 'text', default: "Court-DC1", hint: "Datacenter" },
-            { id: "vm_name", label: "Existing VM name", control: 'text', default: "court-vsphere-01", hint: "Target VM" },
-            { id: "folder_path", label: "Folder path", control: 'text', default: "Court/Prod/IL5", hint: "Folder path under datacenter" },
+            { id: "datacenter", label: "Datacenter name", control: 'text', default: "DC1", hint: "Datacenter" },
+            { id: "vm_name", label: "Existing VM name", control: 'text', default: "app-vsphere-01", hint: "Target VM" },
+            { id: "folder_path", label: "Folder path", control: 'text', default: "Prod/Restricted", hint: "Folder path under datacenter" },
             { id: "tag_category_name", label: "Tag category name", control: 'text', default: "DataClassification", hint: "e.g. DataClassification" },
             { id: "tag_category_description", label: "Tag category description", control: 'text', default: "Data classification level", hint: "Category description" },
-            { id: "tag_name", label: "Tag name", control: 'text', default: "CJIS", hint: "e.g. CJIS, PHI, FOUO" },
-            { id: "tag_description", label: "Tag description", control: 'text', default: "CJIS-controlled workload", hint: "Tag description" }
+            { id: "tag_name", label: "Tag name", control: 'text', default: "Restricted", hint: "e.g. Restricted, PHI, FOUO" },
+            { id: "tag_description", label: "Tag description", control: 'text', default: "Restricted workload", hint: "Tag description" }
           ],
     emits: [],
     build: (values                 , name        ) => ({

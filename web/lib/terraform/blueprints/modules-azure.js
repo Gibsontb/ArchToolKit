@@ -25,7 +25,7 @@ const SPECS                                 = [
     source: 'Azure/avm-res-resources-resourcegroup/azurerm',
     name: 'resource_group',
     fields: [
-      { input: 'name', default: 'rg-court-prod' },
+      { input: 'name', default: 'rg-app-prod' },
       { input: 'location', default: 'eastus' },
       { input: 'enable_telemetry', default: 'false', hint: 'Microsoft’s module usage telemetry' },
     ],
@@ -39,7 +39,7 @@ const SPECS                                 = [
     source: 'Azure/avm-res-network-virtualnetwork/azurerm',
     name: 'vnet',
     fields: [
-      { input: 'name', default: 'vnet-court-prod' },
+      { input: 'name', default: 'vnet-app-prod' },
       { input: 'location', default: 'eastus' },
       {
         input: 'parent_id',
@@ -64,9 +64,9 @@ const SPECS                                 = [
     source: 'Azure/avm-res-network-networksecuritygroup/azurerm',
     name: 'nsg',
     fields: [
-      { input: 'name', default: 'nsg-court-app' },
+      { input: 'name', default: 'nsg-app' },
       { input: 'location', default: 'eastus' },
-      { input: 'resource_group_name', default: 'rg-court-prod' },
+      { input: 'resource_group_name', default: 'rg-app-prod' },
       { input: 'security_rules', default: '', hint: 'key=value, comma-separated' },
       { input: 'enable_telemetry', default: 'false' },
     ],
@@ -80,9 +80,9 @@ const SPECS                                 = [
     source: 'Azure/avm-res-compute-virtualmachine/azurerm',
     name: 'vm',
     fields: [
-      { input: 'name', default: 'vm-court-app-01' },
+      { input: 'name', default: 'vm-app-01' },
       { input: 'location', default: 'eastus' },
-      { input: 'resource_group_name', default: 'rg-court-prod' },
+      { input: 'resource_group_name', default: 'rg-app-prod' },
       { input: 'zone', default: '1', hint: 'Availability zone. Required by this module' },
       { input: 'sku_size', label: 'VM size', default: 'Standard_D2s_v5' },
       { input: 'os_type', default: 'Linux' },
@@ -102,7 +102,7 @@ const SPECS                                 = [
     source: 'Azure/avm-res-storage-storageaccount/azurerm',
     name: 'storage',
     fields: [
-      { input: 'name', default: 'stcourtprod001', hint: 'Lowercase letters and digits, 3–24 characters' },
+      { input: 'name', default: 'stappprod001', hint: 'Lowercase letters and digits, 3–24 characters' },
       { input: 'location', default: 'eastus' },
       { input: 'parent_id', label: 'Resource group id', default: '' },
       { input: 'account_tier', default: 'Standard' },
@@ -123,9 +123,9 @@ const SPECS                                 = [
     source: 'Azure/avm-res-keyvault-vault/azurerm',
     name: 'key_vault',
     fields: [
-      { input: 'name', default: 'kv-court-prod' },
+      { input: 'name', default: 'kv-app-prod' },
       { input: 'location', default: 'eastus' },
-      { input: 'resource_group_name', default: 'rg-court-prod' },
+      { input: 'resource_group_name', default: 'rg-app-prod' },
       { input: 'tenant_id', default: '', hint: 'Or data.azurerm_client_config.current.tenant_id' },
       { input: 'sku_name', default: 'standard' },
       { input: 'purge_protection_enabled', default: 'true' },
@@ -142,11 +142,11 @@ const SPECS                                 = [
     source: 'Azure/avm-res-containerservice-managedcluster/azurerm',
     name: 'aks',
     fields: [
-      { input: 'name', default: 'aks-court-prod' },
+      { input: 'name', default: 'aks-app-prod' },
       { input: 'location', default: 'eastus' },
       { input: 'parent_id', label: 'Resource group id', default: '' },
       { input: 'kubernetes_version', default: '1.31' },
-      { input: 'dns_prefix', default: 'court-prod' },
+      { input: 'dns_prefix', default: 'app-prod' },
       { input: 'enable_rbac', label: 'Kubernetes RBAC', default: 'true' },
       { input: 'disable_local_accounts', default: 'true', hint: 'Entra ID only, no local kubeconfig' },
       {
@@ -165,7 +165,7 @@ const SPECS                                 = [
     source: 'Azure/avm-res-web-site/azurerm',
     name: 'web_app',
     fields: [
-      { input: 'name', default: 'app-court-prod' },
+      { input: 'name', default: 'app-prod' },
       { input: 'location', default: 'eastus' },
       { input: 'parent_id', label: 'Resource group id', default: '' },
       { input: 'service_plan_resource_id', default: '', hint: 'An existing App Service plan' },
@@ -185,9 +185,9 @@ const SPECS                                 = [
     source: 'Azure/aks/azurerm',
     name: 'aks',
     fields: [
-      { input: 'cluster_name', default: 'aks-court-prod' },
+      { input: 'cluster_name', default: 'aks-app-prod' },
       { input: 'location', default: 'eastus' },
-      { input: 'resource_group_name', default: 'rg-court-prod' },
+      { input: 'resource_group_name', default: 'rg-app-prod' },
       { input: 'kubernetes_version', default: '1.31' },
       { input: 'sku_tier', default: 'Standard' },
       { input: 'agents_size', label: 'Node size', default: 'Standard_D2s_v5' },
@@ -206,7 +206,7 @@ const SPECS                                 = [
     source: 'Azure/naming/azurerm',
     name: 'naming',
     fields: [
-      { input: 'prefix', default: 'court', hint: 'Comma-separated parts' },
+      { input: 'prefix', default: 'app', hint: 'Comma-separated parts' },
       { input: 'suffix', default: 'prod', hint: 'Comma-separated parts' },
       { input: 'unique-length', label: 'Unique suffix length', default: '4' },
       { input: 'unique-include-numbers', label: 'Digits in the unique suffix', default: 'true' },

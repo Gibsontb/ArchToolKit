@@ -76,7 +76,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               id: "vm_name",
               label: "New VM name",
               control: 'text',
-              default: "court-app-01",
+              default: "app-01",
               hint: "Resulting VM object name"
             },
             {
@@ -246,7 +246,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               id: "vm_name",
               label: "Target VM name",
               control: 'text',
-              default: "court-app-01",
+              default: "app-01",
               hint: "Existing VM"
             },
             {
@@ -410,14 +410,14 @@ const BLUEPRINTS: readonly Blueprint[] = [
               id: "datacenter_name",
               label: "Datacenter name",
               control: 'text',
-              default: "Court-DC1",
+              default: "DC1",
               hint: "Datacenter containing the VM"
             },
             {
               id: "vm_name",
               label: "VM name",
               control: 'text',
-              default: "court-db-01",
+              default: "app-db-01",
               hint: "Target VM to attach extra disk"
             },
             {
@@ -531,28 +531,28 @@ const BLUEPRINTS: readonly Blueprint[] = [
               id: "datacenter_name",
               label: "Datacenter name",
               control: 'text',
-              default: "Court-DC1",
+              default: "DC1",
               hint: "Datacenter containing the VM"
             },
             {
               id: "vm_name",
               label: "VM name",
               control: 'text',
-              default: "court-app-01",
+              default: "app-01",
               hint: "VM to move and annotate"
             },
             {
               id: "folder_path",
               label: "Destination folder path",
               control: 'text',
-              default: "/Court/Prod/IL5",
-              hint: "Full folder path, e.g. /Court/Prod/IL5"
+              default: "/Prod/Restricted",
+              hint: "Full folder path, e.g. /Prod/Restricted"
             },
             {
               id: "annotation",
               label: "VM annotation",
               control: 'text',
-              default: "System of record: CourtCaseMgmt; Data class: CJIS",
+              default: "System of record: AppSystem; Data class: Restricted",
               hint: "Free text used for tagging / classification"
             }
           ],
@@ -656,7 +656,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
               id: "vm_name",
               label: "VM name",
               control: 'text',
-              default: "court-app-01",
+              default: "app-01",
               hint: "Existing VM"
             },
             {

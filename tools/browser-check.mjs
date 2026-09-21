@@ -549,7 +549,7 @@ for (const [kind, path, generateLabel, expect] of [
       i.value = '500';
     });
     document.querySelectorAll('textarea').forEach((t) => {
-      t.value = 'Court case management system.';
+      t.value = 'Line-of-business application.';
     });
     document.querySelectorAll('input[name=envScope]').forEach((c) => {
       c.checked = true;
@@ -618,7 +618,7 @@ for (const [kind, path, generateLabel, expect] of [
   await page.locator('.tab', { hasText: 'Intake' }).click();
   await page.waitForTimeout(200);
   await page.fill('#appName', 'Case Management System');
-  await page.fill('#appOwner', 'Courts IT');
+  await page.fill('#appOwner', 'Platform Team');
   await page.selectOption('#criticality', 'Mission Critical');
   await page.fill('#rto', '4');
   await page.fill('#rpo', '1');

@@ -113,7 +113,7 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Bucket region"
             },
-            { id: "bucket_name", label: "Bucket name", control: 'text', default: "court-archive-bucket", hint: "Globally unique" },
+            { id: "bucket_name", label: "Bucket name", control: 'text', default: "app-archive-bucket", hint: "Globally unique" },
             {
               id: "enable_versioning",
               label: "Enable versioning",
@@ -207,7 +207,7 @@ const BLUEPRINTS                       = [
             { id: "vpc_cidr", label: "VPC CIDR", control: 'text', default: "10.0.0.0/16", hint: "CIDR block" },
             { id: "public_cidr", label: "Public subnet CIDR", control: 'text', default: "10.0.1.0/24", hint: "Public subnet" },
             { id: "private_cidr", label: "Private subnet CIDR", control: 'text', default: "10.0.2.0/24", hint: "Private subnet" },
-            { id: "name_prefix", label: "Name prefix", control: 'text', default: "court-vpc", hint: "Tag prefix" }
+            { id: "name_prefix", label: "Name prefix", control: 'text', default: "app-vpc", hint: "Tag prefix" }
           ],
     emits: [],
     build: (values                 , name        ) =>
@@ -303,7 +303,7 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Region"
             },
-            { id: "db_identifier", label: "DB identifier", control: 'text', default: "court-rds-01", hint: "Instance ID" },
+            { id: "db_identifier", label: "DB identifier", control: 'text', default: "app-rds-01", hint: "Instance ID" },
             {
               id: "engine",
               label: "Engine",
@@ -409,7 +409,7 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Region"
             },
-            { id: "table_name", label: "Table name", control: 'text', default: "CourtSessions", hint: "DynamoDB table name" },
+            { id: "table_name", label: "Table name", control: 'text', default: "AppSessions", hint: "DynamoDB table name" },
             { id: "hash_key_name", label: "Partition key name", control: 'text', default: "CaseId", hint: "Hash key" },
             {
               id: "billing_mode",
@@ -471,7 +471,7 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Region"
             },
-            { id: "topic_name", label: "Topic name", control: 'text', default: "court-notifications", hint: "Topic name" },
+            { id: "topic_name", label: "Topic name", control: 'text', default: "app-notifications", hint: "Topic name" },
             { id: "subscription_email", label: "Subscriber email", control: 'text', default: "alerts@example.org", hint: "Email endpoint" }
           ],
     emits: [],
@@ -524,7 +524,7 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Region"
             },
-            { id: "queue_name", label: "Queue name", control: 'text', default: "court-jobs-queue", hint: "Queue name" },
+            { id: "queue_name", label: "Queue name", control: 'text', default: "app-jobs-queue", hint: "Queue name" },
             {
               id: "visibility_timeout",
               label: "Visibility timeout (sec)",
@@ -566,7 +566,7 @@ const BLUEPRINTS                       = [
   {
     id: 'kms_key',
     label: 'KMS – Customer managed key',
-    description: 'Create a KMS CMK for encrypting court workloads.',
+    description: 'Create a KMS CMK for encrypting app workloads.',
     inputs: [
     HOSTS_INPUT,
 
@@ -578,8 +578,8 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Region"
             },
-            { id: "key_alias", label: "Key alias", control: 'text', default: "alias/court-data-key", hint: "Alias name" },
-            { id: "description", label: "Key description", control: 'text', default: "Court data encryption key", hint: "Description" }
+            { id: "key_alias", label: "Key alias", control: 'text', default: "alias/app-data-key", hint: "Alias name" },
+            { id: "description", label: "Key description", control: 'text', default: "App data encryption key", hint: "Description" }
           ],
     emits: [],
     build: (values                 , name        ) =>
@@ -702,7 +702,7 @@ const BLUEPRINTS                       = [
               hint: "Trail home region"
             },
             { id: "trail_name", label: "Trail name", control: 'text', default: "org-audit-trail", hint: "CloudTrail name" },
-            { id: "s3_bucket_name", label: "S3 bucket for logs", control: 'text', default: "court-cloudtrail-logs", hint: "Bucket must exist or be created" },
+            { id: "s3_bucket_name", label: "S3 bucket for logs", control: 'text', default: "app-cloudtrail-logs", hint: "Bucket must exist or be created" },
             {
               id: "is_multi_region",
               label: "Multi-region",

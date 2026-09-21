@@ -25,11 +25,11 @@ const BLUEPRINTS                       = [
               default: "us-east-1",
               hint: "Commercial + Gov / ISO regions"
             },
-            { id: "instance_name", label: "Instance Name tag", control: 'text', default: "court-app-01", hint: "Name tag / logical name" },
+            { id: "instance_name", label: "Instance Name tag", control: 'text', default: "app-01", hint: "Name tag / logical name" },
             { id: "instance_type", label: "Instance type", control: 'text', default: "t3.small", hint: "e.g. t3.small, m5.large" },
             { id: "ami_id", label: "AMI ID", control: 'text', default: "ami-xxxxxxxx", hint: "Hardened AMI" },
             { id: "subnet_id", label: "Subnet ID", control: 'text', default: "subnet-xxxxxxx", hint: "Existing subnet" },
-            { id: "vpc_security_group_name", label: "Security group name", control: 'text', default: "sg-court-app", hint: "SG created in this module" },
+            { id: "vpc_security_group_name", label: "Security group name", control: 'text', default: "sg-app", hint: "SG created in this module" },
             { id: "allow_ssh_cidr", label: "Allowed SSH CIDR", control: 'text', default: "10.0.0.0/16", hint: "Lock down in prod" }
           ],
     emits: [],
@@ -119,7 +119,7 @@ variable "environment" {
               default: "us-east-1",
               hint: "Region for bucket"
             },
-            { id: "bucket_name", label: "Bucket name", control: 'text', default: "court-records-archive", hint: "Globally unique" },
+            { id: "bucket_name", label: "Bucket name", control: 'text', default: "app-records-archive", hint: "Globally unique" },
             { id: "sse_algorithm", label: "SSE algorithm", control: 'text', default: "aws:kms", hint: "AES256 or aws:kms" }
           ],
     emits: [],
@@ -190,7 +190,7 @@ variable "environment" {
             { id: "vpc_cidr", label: "VPC CIDR block", control: 'text', default: "10.20.0.0/16", hint: "Top-level CIDR (non-overlapping)" },
             { id: "subnet1_cidr", label: "Public subnet 1 CIDR", control: 'text', default: "10.20.1.0/24", hint: "AZ A" },
             { id: "subnet2_cidr", label: "Public subnet 2 CIDR", control: 'text', default: "10.20.2.0/24", hint: "AZ B" },
-            { id: "name_prefix", label: "Name prefix", control: 'text', default: "court-vpc", hint: "Prefix for tags/names" }
+            { id: "name_prefix", label: "Name prefix", control: 'text', default: "app-vpc", hint: "Prefix for tags/names" }
           ],
     emits: [],
     build: (values                 , name        ) => ({
@@ -293,9 +293,9 @@ resource "aws_route_table_association" "public_b" {
               default: "us-east-1",
               hint: "Region for RDS"
             },
-            { id: "db_identifier", label: "DB identifier", control: 'text', default: "court-pgsql-01", hint: "Unique DB identifier" },
-            { id: "db_name", label: "Database name", control: 'text', default: "court", hint: "Initial database name" },
-            { id: "username", label: "Master username", control: 'text', default: "courtadmin", hint: "Master user (use secrets in prod)" },
+            { id: "db_identifier", label: "DB identifier", control: 'text', default: "app-pgsql-01", hint: "Unique DB identifier" },
+            { id: "db_name", label: "Database name", control: 'text', default: "app", hint: "Initial database name" },
+            { id: "username", label: "Master username", control: 'text', default: "dbadmin", hint: "Master user (use secrets in prod)" },
             { id: "password", label: "Master password", control: 'text', default: "CHANGEME", hint: "Use secrets manager in prod" },
             { id: "subnet_ids_csv", label: "Subnet IDs (comma-separated)", control: 'text', default: "subnet-1,subnet-2", hint: "At least two subnets" },
             { id: "vpc_security_group_ids_csv", label: "VPC security group IDs (comma-separated)", control: 'text', default: "sg-xxxx", hint: "Existing SG(s)" },

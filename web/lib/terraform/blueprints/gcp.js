@@ -17,7 +17,7 @@ const BLUEPRINTS                       = [
     label: 'Compute Engine VM',
     description: 'Simple Compute Engine VM in an existing subnet.',
     inputs: [
-            { id: "project_id", label: "Project ID", control: 'text', default: "court-project", hint: "GCP project ID" },
+            { id: "project_id", label: "Project ID", control: 'text', default: "app-project", hint: "GCP project ID" },
             {
               id: "region",
               label: "Region",
@@ -34,7 +34,7 @@ const BLUEPRINTS                       = [
               default: "us-central1-a",
               hint: "Zone within region"
             },
-            { id: "instance_name", label: "Instance name", control: 'text', default: "court-gce-01", hint: "GCE VM name" },
+            { id: "instance_name", label: "Instance name", control: 'text', default: "app-gce-01", hint: "GCE VM name" },
             { id: "machine_type", label: "Machine type", control: 'text', default: "e2-medium", hint: "e.g. e2-medium" },
             { id: "subnetwork", label: "Subnetwork", control: 'text', default: "default", hint: "Existing subnetwork name" }
           ],
@@ -89,7 +89,7 @@ resource "google_compute_instance" "this" {
     label: 'GCS bucket (secure)',
     description: 'Creates a private, versioned GCS bucket with uniform bucket-level access.',
     inputs: [
-            { id: "project_id", label: "Project ID", control: 'text', default: "court-project", hint: "GCP project ID" },
+            { id: "project_id", label: "Project ID", control: 'text', default: "app-project", hint: "GCP project ID" },
             {
               id: "location",
               label: "Location",
@@ -98,7 +98,7 @@ resource "google_compute_instance" "this" {
               default: "us-central1",
               hint: "Regional bucket location"
             },
-            { id: "bucket_name", label: "Bucket name", control: 'text', default: "court-gcs-archive", hint: "Globally unique" }
+            { id: "bucket_name", label: "Bucket name", control: 'text', default: "app-gcs-archive", hint: "Globally unique" }
           ],
     emits: [],
     build: (values                 , name        ) => ({

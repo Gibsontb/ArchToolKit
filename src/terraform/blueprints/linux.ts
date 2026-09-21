@@ -18,7 +18,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
     description: 'Terraform null_resource with remote-exec provisioner for Linux (for bootstrapping configs).',
     inputs: [
             { id: "host", label: "Target host (IP / DNS)", control: 'text', default: "10.0.0.10", hint: "Linux host address" },
-            { id: "user", label: "SSH username", control: 'text', default: "courtadmin", hint: "Remote user" },
+            { id: "user", label: "SSH username", control: 'text', default: "dbadmin", hint: "Remote user" },
             { id: "private_key_path", label: "Private key path", control: 'text', default: "~/.ssh/id_rsa", hint: "Path on Terraform runner" },
             { id: "inline_command", label: "Inline command", control: 'text', default: "sudo apt-get update && sudo apt-get -y upgrade", hint: "Bootstrap command" }
           ],

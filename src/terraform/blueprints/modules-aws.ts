@@ -26,7 +26,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/vpc/aws',
     name: 'vpc',
     fields: [
-      { input: 'name', default: 'court-vpc', hint: 'Prefix for everything the module names' },
+      { input: 'name', default: 'app-vpc', hint: 'Prefix for everything the module names' },
       { input: 'cidr', label: 'VPC CIDR', default: '10.0.0.0/16' },
       { input: 'azs', label: 'Availability zones', default: 'us-east-1a,us-east-1b,us-east-1c' },
       { input: 'private_subnets', default: '10.0.1.0/24,10.0.2.0/24,10.0.3.0/24' },
@@ -51,7 +51,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/ec2-instance/aws',
     name: 'ec2',
     fields: [
-      { input: 'name', default: 'court-app-01' },
+      { input: 'name', default: 'app-01' },
       { input: 'instance_type', default: 't3.small' },
       {
         input: 'ami_ssm_parameter',
@@ -75,7 +75,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/security-group/aws',
     name: 'security_group',
     fields: [
-      { input: 'name', default: 'court-app-sg' },
+      { input: 'name', default: 'app-sg' },
       { input: 'description', default: 'Managed by Terraform' },
       { input: 'vpc_id', default: '', hint: 'Or module.vpc.vpc_id' },
       {
@@ -96,7 +96,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/s3-bucket/aws',
     name: 's3',
     fields: [
-      { input: 'bucket', default: 'court-records-archive' },
+      { input: 'bucket', default: 'app-records-archive' },
       { input: 'versioning', default: 'status=Enabled', hint: 'key=value. status=Enabled turns it on' },
       { input: 'block_public_acls', default: 'true' },
       { input: 'block_public_policy', default: 'true' },
@@ -114,12 +114,12 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/rds/aws',
     name: 'rds',
     fields: [
-      { input: 'identifier', default: 'court-pgsql-01' },
+      { input: 'identifier', default: 'app-pgsql-01' },
       { input: 'engine', default: 'postgres' },
       { input: 'engine_version', default: '16' },
       { input: 'instance_class', default: 'db.t3.medium' },
       { input: 'allocated_storage', default: '100' },
-      { input: 'db_name', default: 'court' },
+      { input: 'db_name', default: 'app' },
       { input: 'username', default: 'dbadmin' },
       { input: 'multi_az', default: 'true' },
       { input: 'subnet_ids', default: '', hint: 'Or module.vpc.database_subnets' },
@@ -136,7 +136,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/rds-aurora/aws',
     name: 'aurora',
     fields: [
-      { input: 'name', default: 'court-aurora' },
+      { input: 'name', default: 'app-aurora' },
       { input: 'engine', default: 'aurora-postgresql' },
       { input: 'engine_version', default: '16.4' },
       { input: 'engine_mode', default: 'provisioned' },
@@ -156,7 +156,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/eks/aws',
     name: 'eks',
     fields: [
-      { input: 'name', label: 'Cluster name', default: 'court-eks' },
+      { input: 'name', label: 'Cluster name', default: 'app-eks' },
       { input: 'kubernetes_version', default: '1.31' },
       { input: 'vpc_id', default: '', hint: 'Or module.vpc.vpc_id' },
       { input: 'subnet_ids', default: '', hint: 'Or module.vpc.private_subnets' },
@@ -173,7 +173,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/alb/aws',
     name: 'alb',
     fields: [
-      { input: 'name', default: 'court-alb' },
+      { input: 'name', default: 'app-alb' },
       { input: 'load_balancer_type', default: 'application' },
       { input: 'vpc_id', default: '' },
       { input: 'subnets', default: '', hint: 'Or module.vpc.public_subnets' },
@@ -190,7 +190,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/lambda/aws',
     name: 'lambda',
     fields: [
-      { input: 'function_name', default: 'court-function' },
+      { input: 'function_name', default: 'app-function' },
       { input: 'description', default: 'Managed by Terraform' },
       { input: 'handler', default: 'index.handler' },
       { input: 'runtime', default: 'python3.12' },
@@ -209,8 +209,8 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/kms/aws',
     name: 'kms',
     fields: [
-      { input: 'description', default: 'Court data encryption key' },
-      { input: 'aliases', default: 'court-data-key', hint: 'Comma-separated, without the alias/ prefix' },
+      { input: 'description', default: 'App data encryption key' },
+      { input: 'aliases', default: 'app-data-key', hint: 'Comma-separated, without the alias/ prefix' },
       { input: 'enable_key_rotation', default: 'true' },
       { input: 'deletion_window_in_days', default: '30' },
       { input: 'multi_region', default: 'false' },
@@ -224,7 +224,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/dynamodb-table/aws',
     name: 'dynamodb',
     fields: [
-      { input: 'name', default: 'CourtSessions' },
+      { input: 'name', default: 'AppSessions' },
       { input: 'billing_mode', default: 'PAY_PER_REQUEST' },
       { input: 'hash_key', default: 'CaseId' },
       { input: 'range_key', default: '', hint: 'Sort key. Blank for none' },
@@ -240,7 +240,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/autoscaling/aws',
     name: 'asg',
     fields: [
-      { input: 'name', default: 'court-web-asg' },
+      { input: 'name', default: 'app-web-asg' },
       { input: 'image_id', default: '', hint: 'An AMI id, or wire it to an SSM lookup' },
       { input: 'instance_type', default: 't3.small' },
       { input: 'min_size', default: '2' },
@@ -258,7 +258,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/ecs/aws',
     name: 'ecs',
     fields: [
-      { input: 'cluster_name', default: 'court-ecs' },
+      { input: 'cluster_name', default: 'app-ecs' },
       { input: 'create_cloudwatch_log_group', default: 'true' },
       { input: 'create_task_exec_iam_role', default: 'true' },
       { input: 'vpc_id', default: '' },
@@ -272,7 +272,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
     source: 'terraform-aws-modules/acm/aws',
     name: 'acm',
     fields: [
-      { input: 'domain_name', default: 'courts.example.gov' },
+      { input: 'domain_name', default: 'app.example.com' },
       { input: 'subject_alternative_names', default: '', hint: 'Comma-separated. Blank for none' },
       { input: 'validation_method', default: 'DNS' },
       { input: 'zone_id', default: '', hint: 'The Route 53 zone that holds the domain' },

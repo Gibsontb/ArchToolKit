@@ -64,7 +64,7 @@ const BLUEPRINTS                       = [
               id: "vcn_display_name",
               label: "VCN display name",
               control: 'text',
-              default: "court-vcn",
+              default: "app-vcn",
               hint: "Friendly VCN name"
             },
             {
@@ -251,7 +251,7 @@ resource "oci_core_subnet" "private" {
               id: "instance_display_name",
               label: "Instance display name",
               control: 'text',
-              default: "court-oci-linux-01",
+              default: "app-oci-linux-01",
               hint: "Friendly name"
             },
             {
@@ -301,7 +301,7 @@ resource "oci_core_instance" "this" {
     subnet_id              = "${vals.subnet_ocid}"
     assign_public_ip       = true
     display_name           = "${vals.instance_display_name}-vnic"
-    hostname_label         = "courtlinux01"
+    hostname_label         = "applinux01"
     skip_source_dest_check = false
   }
 
@@ -371,7 +371,7 @@ resource "oci_core_instance" "this" {
               id: "bucket_name",
               label: "Bucket name",
               control: 'text',
-              default: "court-oci-archive",
+              default: "app-oci-archive",
               hint: "Unique within namespace"
             }
           ],

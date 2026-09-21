@@ -18,11 +18,11 @@ function fakeStorage(): void {
 }
 
 const estate: Inventory = {
-  ...emptyInventory({ kind: 'rvtools', label: 'vcenter-prod.court.local' }),
+  ...emptyInventory({ kind: 'rvtools', label: 'vcenter-prod.example.local' }),
   clusters: [
-    { name: 'Compute-Cluster', datacenter: 'Court-DC1' },
-    { name: 'Mgmt-Cluster', datacenter: 'Court-DC1' },
-    { name: 'Edge-Cluster', datacenter: 'Court-DC2' },
+    { name: 'Compute-Cluster', datacenter: 'DC1' },
+    { name: 'Mgmt-Cluster', datacenter: 'DC1' },
+    { name: 'Edge-Cluster', datacenter: 'DC2' },
   ],
   datastores: [
     { name: 'vsanDatastore', type: 'vsan', capacityGib: 40960, freeGib: 18000 },
@@ -30,8 +30,8 @@ const estate: Inventory = {
   ],
   networks: [{ name: 'VM Network' }, { name: 'dvpg-prod-100' }],
   hosts: [
-    { name: 'esx01.court.local', cpuSockets: 2, coresPerSocket: 24, totalCores: 48, memoryGib: 768, datacenter: 'Court-DC1' },
-    { name: 'esx02.court.local', cpuSockets: 2, coresPerSocket: 24, totalCores: 48, memoryGib: 768, datacenter: 'Court-DC1' },
+    { name: 'esx01.example.local', cpuSockets: 2, coresPerSocket: 24, totalCores: 48, memoryGib: 768, datacenter: 'DC1' },
+    { name: 'esx02.example.local', cpuSockets: 2, coresPerSocket: 24, totalCores: 48, memoryGib: 768, datacenter: 'DC1' },
   ],
   vms: [
     { name: 'app01', powerState: 'poweredOn', vcpu: 4, memoryGib: 16, provisionedGib: 100 },
@@ -65,7 +65,7 @@ describe('kit/estate: offering what the inventory already knows', () => {
       expect(estateOptionsFor('vsphere', id)?.values).toContain('Compute-Cluster');
     }
     for (const id of ['datacenter', 'datacenter_name']) {
-      expect(estateOptionsFor('vsphere', id)?.values).toEqual(['Court-DC1', 'Court-DC2']);
+      expect(estateOptionsFor('vsphere', id)?.values).toEqual(['DC1', 'DC2']);
     }
     for (const id of ['vm_network', 'network_label']) {
       expect(estateOptionsFor('vsphere', id)?.values).toContain('dvpg-prod-100');
@@ -83,7 +83,7 @@ describe('kit/estate: offering what the inventory already knows', () => {
   it('says where the suggestions came from', () => {
     fakeStorage();
     saveEstate(estate);
-    expect(estateOptionsFor('vsphere', 'cluster')?.origin).toBe('vcenter-prod.court.local');
+    expect(estateOptionsFor('vsphere', 'cluster')?.origin).toBe('vcenter-prod.example.local');
   });
 
   it('offers nothing for a cloud, whose names it cannot know', () => {

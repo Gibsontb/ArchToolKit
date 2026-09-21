@@ -25,10 +25,10 @@ const BLUEPRINTS                       = [
               default: "eastus",
               hint: "Commercial + US Gov / DoD / Secret"
             },
-            { id: "rg_name", label: "Resource group name", control: 'text', default: "rg-court-app", hint: "New RG" },
-            { id: "vm_name", label: "VM name", control: 'text', default: "court-az-linux-01", hint: "Linux VM name" },
+            { id: "rg_name", label: "Resource group name", control: 'text', default: "rg-app", hint: "New RG" },
+            { id: "vm_name", label: "VM name", control: 'text', default: "app-az-linux-01", hint: "Linux VM name" },
             { id: "vm_size", label: "VM size", control: 'text', default: "Standard_B2s", hint: "Size / SKU" },
-            { id: "admin_username", label: "Admin username", control: 'text', default: "courtadmin", hint: "SSH login user" }
+            { id: "admin_username", label: "Admin username", control: 'text', default: "dbadmin", hint: "SSH login user" }
           ],
     emits: [],
     build: (values                 , name        ) => ({
@@ -161,8 +161,8 @@ variable "admin_ssh_public_key" {
               default: "eastus",
               hint: "Region for storage account"
             },
-            { id: "rg_name", label: "Resource group name", control: 'text', default: "rg-court-storage", hint: "Existing or new RG" },
-            { id: "storage_account_name", label: "Storage account name", control: 'text', default: "courtstoracct01", hint: "Globally unique" },
+            { id: "rg_name", label: "Resource group name", control: 'text', default: "rg-app-storage", hint: "Existing or new RG" },
+            { id: "storage_account_name", label: "Storage account name", control: 'text', default: "appstoracct01", hint: "Globally unique" },
             { id: "account_tier", label: "Account tier", control: 'select', options: [{ value: 'Standard', label: 'Standard' }, { value: 'Premium', label: 'Premium' }], default: "Standard", hint: "Standard or Premium" },
             { id: "replication_type", label: "Replication type", control: 'select', options: [{ value: 'LRS', label: 'LRS — locally redundant' }, { value: 'ZRS', label: 'ZRS — zone redundant' }, { value: 'GRS', label: 'GRS — geo redundant' }, { value: 'RAGRS', label: 'RAGRS — geo redundant, read access' }, { value: 'GZRS', label: 'GZRS — geo-zone redundant' }, { value: 'RAGZRS', label: 'RAGZRS — geo-zone redundant, read access' }], default: "LRS", hint: "LRS, GRS, RAGRS, ZRS..." }
           ],

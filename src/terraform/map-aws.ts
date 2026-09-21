@@ -32,7 +32,7 @@ export const AWS_MAP: CloudMap = {
       notes: [
         'Provider: aws, with a second aliased provider per region where a stack spans regions.',
         'State: an S3 bucket with versioning on, locking via the bucket’s own conditional writes or a DynamoDB table.',
-        'Isolation: an account per environment, or per court or tenant, assumed into by role.',
+        'Isolation: an account per environment, or per tenant, assumed into by role.',
       ],
       code: [
         `terraform {
@@ -83,7 +83,7 @@ provider "aws" {
                 'Organization tree',
                 'Organizations, OUs, accounts',
                 'aws_organizations_organization, aws_organizations_organizational_unit, aws_organizations_account',
-                'One module for the tree; accounts from a map with for_each so adding a court is a map entry.',
+                'One module for the tree; accounts from a map with for_each so adding a tenant is a map entry.',
               ],
               resources: [
                 'aws_organizations_organization',
@@ -155,7 +155,7 @@ provider "aws" {
           code: `locals {
   # CCoE-approved access matrix
   access = {
-    "court-admins" = { permission_set = "AdministratorAccess", accounts = ["prod", "nonprod"] }
+    "platform-admins" = { permission_set = "AdministratorAccess", accounts = ["prod", "nonprod"] }
     "app-ops"      = { permission_set = "PowerUserAccess", accounts = ["nonprod"] }
     "auditors"     = { permission_set = "ReadOnlyAccess", accounts = ["prod", "nonprod", "security"] }
   }
@@ -228,7 +228,7 @@ resource "aws_ssoadmin_account_assignment" "this" {
                 'Hybrid connectivity',
                 'Site-to-Site VPN, Direct Connect',
                 'aws_vpn_gateway, aws_customer_gateway, aws_vpn_connection, aws_dx_gateway',
-                'Court-to-court and court-to-datacenter links. Direct Connect for steady volume, VPN for everything else and as the failover.',
+                'Site-to-site and site-to-datacenter links. Direct Connect for steady volume, VPN for everything else and as the failover.',
               ],
               resources: [
                 'aws_vpn_gateway',
