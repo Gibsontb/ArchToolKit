@@ -39,6 +39,9 @@
                                                                               
                                
                           
+                            
+                          
+                         
  
 
                                                                    
@@ -123,6 +126,86 @@
                                             
                                    
                              
+
+                                                                             
+                                                                
+                            
+                             
+                         
+                                 
+                                    
+                                      
+                                    
+                                             
+                                      
+                             
+                                                                         
+                            
+                                 
+                               
+                                 
+                                    
+                                 
+                                   
+                                      
+                                             
+                                   
+                               
+                                  
+                                
+                                   
+                                    
+                             
+                                 
+                          
+                           
+                                       
+                                 
+                                
+                             
+                               
+                              
+                               
+                             
+                                         
+                                                                    
+                                               
+                                                                               
+                                           
+                                                               
+                                             
+ 
+
+                                  
+                           
+                            
+                              
+                            
+                           
+ 
+
+                                 
+                        
+                          
+                              
+                        
+                                 
+                                
+                                     
+                                  
+                              
+ 
+
+                                     
+                                      
+                           
+                                                                       
+                                     
+                                                 
+                             
+                                                                        
+                                            
+                             
  
 
                               
@@ -148,6 +231,194 @@
                                
                                   
                                 
+
+                                                                             
+                            
+                                                                       
+                         
+                               
+                                                                                 
+                              
+                                                                              
+                                    
+                                 
+                                    
+                               
+                              
+                                         
+                            
+                              
+                                
+                                                            
+                                
+                                                                             
+                                    
+                             
+                              
+                                 
+                                                                             
+                                
+                                                                                    
+                           
+                                        
+                               
+                                       
+                                
+                                          
+                             
+                                
+                                 
+                           
+                             
+                         
+                                 
+                                      
+                                        
+                                   
+                            
+                           
+                                                      
+                                   
+                                       
+                                
+                             
+                                   
+                                    
+                                    
+                            
+                               
+     
+                                                                              
+                                                                               
+     
+                                                     
+                                                                           
+                                 
+                                                                          
+                                                
+                                      
+                                                          
+                                  
+                             
+                                   
+                            
+                                      
+                          
+                               
+                                   
+                                    
+                                 
+ 
+
+                              
+                            
+                                   
+                                                        
+                           
+                               
+                                
+                           
+                                   
+                                                               
+                             
+                                   
+                            
+                               
+                                       
+ 
+
+                                 
+                            
+                                 
+                                
+                                
+                               
+                              
+                               
+                                 
+                              
+                                   
+                                
+                                   
+                             
+                            
+ 
+
+                         
+                         
+                        
+                         
+                               
+                        
+                                                 
+                                         
+                             
+                         
+                                                                               
+                            
+                          
+                                  
+                           
+                                  
+                                
+                              
+                               
+                         
+                              
+                              
+                         
+ 
+
+                              
+                         
+                            
+                               
+                               
+                           
+ 
+
+                        
+                         
+                            
+                            
+                               
+                               
+                                     
+                        
+                            
+                           
+                           
+                                  
+ 
+
+                           
+                        
+                         
+                               
+                                     
+ 
+
+                             
+                        
+                                
+                              
+                            
+                              
+                          
+ 
+
+                                
+                           
+                            
+                                    
+                                 
+                                  
+                              
+                              
+                                    
+                                     
+                                    
+                                           
  
 
                                    
@@ -159,6 +430,31 @@
                             
                                  
                               
+
+                            
+                             
+                                 
+                                  
+                                       
+                                
+                          
+                            
+                                    
+                                   
+                                       
+                             
+                                       
+                                    
+                                        
+                                     
+                                               
+                                        
+                                      
+                                   
+                               
+                                   
+                                
+                                
  
 
                                      
@@ -169,6 +465,30 @@
                                    
                               
                             
+
+                            
+                             
+                                                                             
+                               
+                                 
+                                       
+                            
+                                
+                            
+                                 
+                             
+                                 
+                                  
+                            
+                                                   
+                                                
+                                            
+                                
+                            
+                                 
+                            
+                                     
+                        
  
 
                                    
@@ -176,6 +496,97 @@
                                
                                     
                          
+
+                            
+                                                                  
+                                             
+                         
+                               
+                          
+                                    
+                                     
+                                  
+                                 
+                                
+                                     
+                             
+                             
+ 
+
+                                   
+                        
+                         
+                             
+                            
+                          
+                               
+                           
+                                
+ 
+
+                                        
+                        
+                         
+                            
+                           
+                            
+                                 
+                          
+                                      
+                                
+                                   
+                                   
+                                
+                                        
+                                         
+                                   
+                                      
+                                      
+                                   
+                             
+ 
+
+                                             
+                        
+                            
+                               
+                           
+                            
+                                  
+                             
+                          
+                            
+                           
+                                      
+                         
+                             
+ 
+
+                                   
+                        
+                                                                      
+                            
+                            
+                             
+                          
+                         
+                            
+                             
+ 
+
+                                         
+                           
+                           
+                         
+                            
+ 
+
+                                
+                        
+                        
+                         
+                              
+                            
  
 
                                   
@@ -188,6 +599,12 @@
                               
                                                                   
                             
+                                                             
+                                
+                                                                           
+                                                        
+                                          
+                                         
  
 
                             
@@ -197,7 +614,30 @@
                                         
                                             
                                         
+                                         
+                                                   
+                                                              
+                                         
+                                             
+                                   
  
+
+/**
+ * A key that is unique across vCenters.
+ *
+ * An estate collected from thirteen vCenters has thirteen clusters that could be
+ * called "Cluster01" and managed-object ids that restart in each one, so a name
+ * alone is not an identity. Anything that joins or de-duplicates goes through
+ * this.
+ */
+export function scopedKey(vcenter                    , name        )         {
+  return `${(vcenter ?? '').toLowerCase()}|${name}`;
+}
+
+/** VMs that are workloads: not templates and not SRM placeholders. */
+export function isWorkload(vm             )          {
+  return !vm.template && !vm.srmPlaceholder;
+}
 
 export function emptyInventory(source                           = {})            {
   return {
@@ -227,11 +667,29 @@ export function mergeInventories(inventories                      )            {
       importedAt: new Date().toISOString(),
       notes,
     },
-    hosts: dedupeBy(inventories.flatMap((i) => i.hosts), (h) => h.name),
-    vms: dedupeBy(inventories.flatMap((i) => i.vms), (v) => v.uuid ?? v.name),
-    clusters: dedupeBy(inventories.flatMap((i) => i.clusters), (c) => c.name),
-    datastores: dedupeBy(inventories.flatMap((i) => i.datastores), (d) => d.name),
-    networks: dedupeBy(inventories.flatMap((i) => i.networks), (n) => n.name),
+    hosts: dedupeBy(inventories.flatMap((i) => i.hosts), (h) => scopedKey(h.vcenter, h.name)),
+    vms: dedupeBy(inventories.flatMap((i) => i.vms), (v) => scopedKey(v.vcenter, v.uuid ?? v.name)),
+    clusters: dedupeBy(inventories.flatMap((i) => i.clusters), (c) => scopedKey(c.vcenter, c.name)),
+    datastores: dedupeBy(inventories.flatMap((i) => i.datastores), (d) => scopedKey(d.vcenter, d.name)),
+    networks: dedupeBy(
+      inventories.flatMap((i) => i.networks),
+      (n) => scopedKey(n.vcenter, `${n.host ?? ''}/${n.switchName ?? ''}/${n.name}`),
+    ),
+    vcenters: dedupeBy(inventories.flatMap((i) => i.vcenters ?? []), (v) => v.name.toLowerCase()),
+    resourcePools: dedupeBy(
+      inventories.flatMap((i) => i.resourcePools ?? []),
+      (p) => scopedKey(p.vcenter, p.path ?? p.name),
+    ),
+    distributedSwitches: dedupeBy(
+      inventories.flatMap((i) => i.distributedSwitches ?? []),
+      (d) => scopedKey(d.vcenter, d.name),
+    ),
+    licenses: dedupeBy(
+      inventories.flatMap((i) => i.licenses ?? []),
+      (l) => scopedKey(l.vcenter, `${l.name}/${l.keyTail ?? ''}`),
+    ),
+    health: inventories.flatMap((i) => i.health ?? []),
+    files: inventories.flatMap((i) => i.files ?? []),
   };
 }
 
@@ -250,16 +708,24 @@ function dedupeBy   (items     , key                     )      {
 
                                   
                              
+                                                                              
                            
                                     
+                                 
+                                
                                 
                                  
                                    
                                      
                                  
                                       
+                                                               
+                                   
                                          
+                                                                             
                                   
+                                                                      
+                          
                                         
                                     
                                           
@@ -271,11 +737,44 @@ function dedupeBy   (items     , key                     )      {
  
 
 /**
+ * The VMDK storage a VM consumes.
+ *
+ * RVTools' "In Use" includes the full size of a physical-mode RDM, so a VM
+ * with a 1.2 PB GPFS LUN mapped reports 1.2 PB in use — and seven such VMs
+ * report 8.4 PB for one LUN. The RDM is taken out here and counted once, by
+ * LUN, in `rdmCapacityGib`.
+ */
+export function vmdkUsedGib(vm             )         {
+  const used = vm.usedGib ?? vm.provisionedGib;
+  return Math.max(0, used - (vm.rdmGib ?? 0));
+}
+
+export function vmdkProvisionedGib(vm             )         {
+  return Math.max(0, vm.provisionedGib - (vm.rdmGib ?? 0));
+}
+
+/** RDM capacity across a set of VMs, each LUN counted once. */
+export function rdmCapacityGib(vms                        )         {
+  const luns = new Map                ();
+  let unidentified = 0;
+  for (const vm of vms) {
+    for (const disk of vm.disks ?? []) {
+      if (!disk.raw) continue;
+      if (disk.rawLunId) luns.set(scopedKey(vm.vcenter, disk.rawLunId), disk.capacityGib);
+      else unidentified += disk.capacityGib;
+    }
+    // A VM imported without its disks still knows its RDM total.
+    if (!vm.disks && vm.rdmGib) unidentified += vm.rdmGib;
+  }
+  return [...luns.values()].reduce((a, b) => a + b, 0) + unidentified;
+}
+
+/**
  * Totals across the estate.
  *
- * Powered-off VMs are counted in provisioned capacity (they still occupy disk)
- * but excluded from vCPU and memory allocation, which only matters for running
- * workloads.
+ * Powered-off VMs and templates are counted in storage (they still occupy
+ * disk) but excluded from vCPU and memory allocation, which only matters for
+ * running workloads.
  */
 export function computeTotals(inventory           )                  {
   const { hosts, vms, clusters, datastores } = inventory;
@@ -284,28 +783,42 @@ export function computeTotals(inventory           )                  {
   const physicalSockets = hosts.reduce((sum, h) => sum + h.cpuSockets, 0);
   const physicalMemoryGib = hosts.reduce((sum, h) => sum + h.memoryGib, 0);
 
-  const running = vms.filter((v) => v.powerState === 'poweredOn');
+  const workloads = vms.filter(isWorkload);
+  const running = workloads.filter((v) => v.powerState === 'poweredOn');
   const allocatedVcpu = running.reduce((sum, v) => sum + v.vcpu, 0);
   const allocatedMemoryGib = running.reduce((sum, v) => sum + v.memoryGib, 0);
+  const activeMemoryGib = running.reduce((sum, v) => sum + (v.activeMemoryGib ?? v.memoryGib), 0);
 
-  const provisionedStorageGib = vms.reduce((sum, v) => sum + v.provisionedGib, 0);
-  const usedStorageGib = vms.reduce((sum, v) => sum + (v.usedGib ?? v.provisionedGib), 0);
+  const onDisk = vms.filter((v) => !v.srmPlaceholder);
+  const provisionedStorageGib = onDisk.reduce((sum, v) => sum + vmdkProvisionedGib(v), 0);
+  const usedStorageGib = onDisk.reduce((sum, v) => sum + vmdkUsedGib(v), 0);
+  const rdmGib = rdmCapacityGib(onDisk);
 
   const datastoreCapacityGib = datastores.reduce((sum, d) => sum + d.capacityGib, 0);
   const datastoreFreeGib = datastores.reduce((sum, d) => sum + d.freeGib, 0);
 
+  const vcenters = new Set(
+    [...hosts.map((h) => h.vcenter), ...vms.map((v) => v.vcenter), ...(inventory.vcenters ?? []).map((v) => v.name)]
+      .filter(Boolean)
+      .map((v) => (v          ).toLowerCase()),
+  );
+
   return {
     hostCount: hosts.length,
-    vmCount: vms.length,
+    vmCount: workloads.length,
     poweredOnVmCount: running.length,
+    templateCount: vms.filter((v) => v.template).length,
     clusterCount: clusters.length,
+    vcenterCount: vcenters.size,
     physicalCores,
     physicalSockets,
     physicalMemoryGib,
     allocatedVcpu,
     allocatedMemoryGib,
+    activeMemoryGib,
     provisionedStorageGib,
     usedStorageGib,
+    rdmGib,
     datastoreCapacityGib,
     datastoreFreeGib,
     cpuOvercommit: physicalCores > 0 ? allocatedVcpu / physicalCores : 0,
@@ -315,57 +828,100 @@ export function computeTotals(inventory           )                  {
 }
 
                                 
+                                                                
+                       
                         
+                            
+                               
                              
                            
+                                    
                                  
                              
                                  
                                       
+                                   
+                                  
+                                         
+                          
                                  
                                     
                                                                               
                                
+                                                            
+                             
+                                
  
 
-export function rollupByCluster(inventory           )                  {
-  const groups = new Map                                                        ();
+/** Which cluster a VM belongs to, as a scoped key. */
+export function clusterKeyOf(inventory           , vm             , hostIndex                             )         {
+  if (vm.cluster) return scopedKey(vm.vcenter, vm.cluster);
+  const index = hostIndex ?? new Map(inventory.hosts.map((h) => [scopedKey(h.vcenter, h.name), h]));
+  const host = vm.host ? index.get(scopedKey(vm.vcenter, vm.host)) : undefined;
+  return scopedKey(vm.vcenter, host?.cluster ?? '(standalone)');
+}
 
-  const ensure = (name        ) => {
-    let group = groups.get(name);
+export function rollupByCluster(inventory           )                  {
+  const groups = new Map                                                                                                             ();
+
+  const ensure = (vcenter                    , name        ) => {
+    const key = scopedKey(vcenter, name);
+    let group = groups.get(key);
     if (!group) {
-      group = { hosts: [], vms: [] };
-      groups.set(name, group);
+      group = { name, ...(vcenter ? { vcenter } : {}), hosts: [], vms: [] };
+      groups.set(key, group);
     }
     return group;
   };
 
-  for (const host of inventory.hosts) ensure(host.cluster ?? '(standalone)').hosts.push(host);
+  const hostIndex = new Map(inventory.hosts.map((h) => [scopedKey(h.vcenter, h.name), h]));
+  for (const host of inventory.hosts) {
+    const group = ensure(host.vcenter, host.cluster ?? '(standalone)');
+    group.hosts.push(host);
+    group.datacenter ??= host.datacenter;
+  }
   for (const vm of inventory.vms) {
-    const cluster = vm.cluster ?? inventory.hosts.find((h) => h.name === vm.host)?.cluster;
-    ensure(cluster ?? '(standalone)').vms.push(vm);
+    if (vm.srmPlaceholder) continue;
+    const host = vm.host ? hostIndex.get(scopedKey(vm.vcenter, vm.host)) : undefined;
+    ensure(vm.vcenter, vm.cluster ?? host?.cluster ?? '(standalone)').vms.push(vm);
   }
 
   return [...groups.entries()]
-    .map(([name, group]) => {
+    .map(([key, group])                => {
       const physicalCores = group.hosts.reduce((s, h) => s + h.totalCores, 0);
       const memoryGib = group.hosts.reduce((s, h) => s + h.memoryGib, 0);
-      const running = group.vms.filter((v) => v.powerState === 'poweredOn');
+      const workloads = group.vms.filter(isWorkload);
+      const running = workloads.filter((v) => v.powerState === 'poweredOn');
       const allocatedVcpu = running.reduce((s, v) => s + v.vcpu, 0);
       const allocatedMemoryGib = running.reduce((s, v) => s + v.memoryGib, 0);
+      const activeMemoryGib = running.reduce((s, v) => s + (v.activeMemoryGib ?? v.memoryGib), 0);
       const cpuModels = [...new Set(group.hosts.map((h) => h.cpuModel).filter(Boolean))]            ;
+      const withCpu = group.hosts.filter((h) => h.cpuUsage !== undefined && h.totalCores > 0);
+      const withMem = group.hosts.filter((h) => h.memoryUsage !== undefined && h.memoryGib > 0);
+      const coreSum = withCpu.reduce((s, h) => s + h.totalCores, 0);
+      const memSum = withMem.reduce((s, h) => s + h.memoryGib, 0);
 
       return {
-        name,
+        key,
+        name: group.name,
+        ...(group.vcenter ? { vcenter: group.vcenter } : {}),
+        ...(group.datacenter ? { datacenter: group.datacenter } : {}),
         hostCount: group.hosts.length,
-        vmCount: group.vms.length,
+        vmCount: workloads.length,
+        poweredOnVmCount: running.length,
         physicalCores,
         memoryGib,
         allocatedVcpu,
         allocatedMemoryGib,
+        activeMemoryGib,
+        usedStorageGib: group.vms.reduce((s, v) => s + vmdkUsedGib(v), 0),
+        provisionedStorageGib: group.vms.reduce((s, v) => s + vmdkProvisionedGib(v), 0),
+        rdmGib: rdmCapacityGib(group.vms),
         cpuOvercommit: physicalCores > 0 ? allocatedVcpu / physicalCores : 0,
         memoryOvercommit: memoryGib > 0 ? allocatedMemoryGib / memoryGib : 0,
         cpuModels,
+        ...(coreSum > 0 ? { cpuUsage: withCpu.reduce((s, h) => s + (h.cpuUsage ?? 0) * h.totalCores, 0) / coreSum } : {}),
+        ...(memSum > 0 ? { memoryUsage: withMem.reduce((s, h) => s + (h.memoryUsage ?? 0) * h.memoryGib, 0) / memSum } : {}),
       };
     })
     .sort((a, b) => b.hostCount - a.hostCount || a.name.localeCompare(b.name));

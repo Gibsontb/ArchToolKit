@@ -30,6 +30,9 @@ import { AWS_TERRAFORM_MODULES } from './modules-aws.js';
 import { AZURE_TERRAFORM_MODULES } from './modules-azure.js';
 import { GOOGLE_TERRAFORM_MODULES } from './modules-google.js';
 import { OCI_TERRAFORM_MODULES } from './modules-oci.js';
+import { ESTATE_GROUP, rehostBlueprint, VSPHERE_LANDING } from './estate.js';
+
+export { ESTATE_GROUP };
 
 const RESOURCES = 'Plain Terraform resources';
 const MODULES = 'Terraform Registry modules';
@@ -48,13 +51,17 @@ function labelled(blueprints                      , group        )              
 function combine(
   resources                ,
   modules                            ,
+  estate                       = [],
 )                 {
-  if (!modules) return { ...resources, blueprints: labelled(resources.blueprints, RESOURCES) };
+  // The estate blueprints come last in the list, and the page opens on them
+  // when an estate is loaded: with one, they answer "what does Terraform do to
+  // move this"; without one, they have nothing to build from.
   return {
     ...resources,
     blueprints: [
       ...labelled(resources.blueprints, RESOURCES),
-      ...labelled(modules.blueprints, MODULES),
+      ...(modules ? labelled(modules.blueprints, MODULES) : []),
+      ...labelled(estate, ESTATE_GROUP),
     ],
   };
 }
@@ -68,11 +75,11 @@ function combine(
 export const TERRAFORM_BLUEPRINTS                            = withSecretLiftingAll(
   withChoicesAll(
     [
-      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES),
-      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES),
-      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES),
-      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES),
-      combine(VMWARE_TERRAFORM, undefined),
+      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')]),
+      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')]),
+      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')]),
+      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')]),
+      combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING]),
       combine(LINUX_TERRAFORM, undefined),
       combine(WINDOWS_TERRAFORM, undefined),
     ],

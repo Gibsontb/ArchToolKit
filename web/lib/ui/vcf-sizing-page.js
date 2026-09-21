@@ -31,7 +31,14 @@ import {
                                                     
                                                             
 import { putHandoff, takeHandoff } from './handoff.js';
-import { sizingToPlan, describeSizingHandoff } from '../vcf/bridge.js';
+import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.js';
+import { mountEstateBar } from './estate-bar.js';
+import { buildEstatePlanner, fleetCard,                    } from './estate-planner.js';
+                                                        
+                                                        
+
+/** The estate the page is planning from, for the spec builder handoff. */
+let estate                                                          = null;
 
                     
                           
@@ -106,6 +113,18 @@ export function mountVcfSizingPage(root             )       {
   const resultsPane = el('div', { class: 'stack' });
 
   const inputsPane = buildInputs(controls, () => render());
+  const estateSlot = el('div', {});
+  inputsPane.prepend(estateSlot);
+  let plan                    = null;
+  let planVersion = 0;
+
+  function onPlanChange()       {
+    if (!estate) return;
+    plan = estate.planner.plan();
+    planVersion += 1;
+    applySizingInput(controls, plan.management);
+    render();
+  }
 
   // An inventory import can hand its derived sizing input straight over, so the
   // estate does not have to be described twice.
@@ -164,14 +183,35 @@ export function mountVcfSizingPage(root             )       {
 
   function render()       {
     const input = currentInput();
-    const key = JSON.stringify(input);
+    const key = `${planVersion}|${JSON.stringify(input)}`;
     if (key === lastRenderKey) return;
     lastRenderKey = key;
     const result = sizeDeployment(input);
-    replace(resultsPane, ...buildResults(result));
+    replace(resultsPane, ...(plan ? [fleetCard(plan)] : []), ...buildResults(result));
   }
 
   render();
+
+  // The estate, when one has been imported — here or on any other page —
+  // fills the form in: the management domain below, the workload domains in
+  // the results.
+  void mountEstateBar(root, {
+    purpose: 'size the VCF fleet from it, cluster by cluster',
+    onEstate: (entry) => {
+      if (entry) {
+        const planner = buildEstatePlanner(entry.inventory, onPlanChange);
+        estate = { inventory: entry.inventory, planner };
+        replace(estateSlot, planner.panel);
+        onPlanChange();
+      } else {
+        estate = null;
+        plan = null;
+        planVersion += 1;
+        replace(estateSlot);
+        render();
+      }
+    },
+  });
 }
 
 function buildInputs(controls          , onChange            )              {
@@ -476,7 +516,10 @@ function buildResults(result              )                {
         text: 'Continue in the spec builder',
         on: {
           click: () => {
-            putHandoff('sizing-to-spec', describeSizingHandoff(result), sizingToPlan(result));
+            const fromEstate = estate
+              ? estateToPlan(estate.inventory, estate.planner.managementCluster()?.key)
+              : {};
+            putHandoff('sizing-to-spec', describeSizingHandoff(result), { ...sizingToPlan(result), ...fromEstate });
             globalThis.location.assign('vcf-spec.html');
           },
         },

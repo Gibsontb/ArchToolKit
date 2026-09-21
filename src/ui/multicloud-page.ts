@@ -17,7 +17,11 @@
  */
 
 import { el, append, replace, must } from './dom.ts';
-import { card } from './components.ts';
+import { card, field, select, stat, statGrid } from './components.ts';
+import { formatCount } from '../core/units.ts';
+import { mountEstateBar } from './estate-bar.ts';
+import { answersFromEstate, type EstateAnswers } from '../multicloud/estate-answers.ts';
+import type { Inventory } from '../vmware/inventory.ts';
 import { setTarget, type TargetId } from '../kit/target.ts';
 import {
   WIZARD_STEPS,
@@ -371,5 +375,88 @@ export function mountMulticloudPage(root: HTMLElement): void {
   showStep(1);
 }
 
+/**
+ * The estate, when one is imported: its facts, and a button that answers the
+ * questions it can answer.
+ */
+function estateCard(inventory: Inventory): HTMLElement {
+  const clusters = [...new Set(inventory.vms.map((v) => v.cluster).filter((c): c is string => !!c))].sort();
+  const scope = select(
+    [{ value: '', label: 'The whole estate' }, ...clusters.map((c) => ({ value: c, label: c }))],
+    '',
+  );
+  const factsBox = el('div', {});
+  const status = el('div', { class: 'field-hint' });
+
+  const show = (): EstateAnswers => {
+    const result = answersFromEstate(inventory, scope.value || undefined);
+    const f = result.facts;
+    const tib = (g: number) => `${(g / 1024).toFixed(1)} TiB`;
+    replace(
+      factsBox,
+      statGrid(
+        stat({ label: 'VMs', value: formatCount(f.vms), sub: `${formatCount(f.windows)} Windows · ${formatCount(f.linux)} Linux` }),
+        stat({ label: 'Running demand', value: `${formatCount(Math.round(f.vcpu))} vCPU`, sub: `${formatCount(Math.round(f.ramGib))} GiB memory` }),
+        stat({ label: 'Storage', value: tib(f.usedGib), sub: f.rdmGib > 0 ? `plus ${tib(f.rdmGib)} raw LUNs` : 'consumed VMDK' }),
+        stat({
+          label: 'Cannot replicate',
+          value: formatCount(f.cloudBlocked),
+          sub: `${formatCount(f.cloudCautions)} more need changes`,
+          tone: f.cloudBlocked > 0 ? 'warn' : 'ok',
+        }),
+      ),
+    );
+    return result;
+  };
+  scope.addEventListener('change', () => void show());
+  show();
+
+  const prefill = el('button', {
+    class: 'btn btn-primary',
+    text: 'Answer from the estate',
+    on: {
+      click: () => {
+        const { answers } = show();
+        let filled = 0;
+        for (const [id, value] of Object.entries(answers)) {
+          if (Array.isArray(value)) {
+            for (const box of document.querySelectorAll<HTMLInputElement>(`input[name="${id}"]`)) {
+              box.checked = value.includes(box.value);
+            }
+            filled += 1;
+            continue;
+          }
+          const node = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+          if (!node) continue;
+          node.value = String(value);
+          node.dispatchEvent(new Event('change', { bubbles: true }));
+          filled += 1;
+        }
+        status.textContent = `${filled} answers filled in from the estate. Criticality, uptime, data sensitivity and deadlines are still yours to give.`;
+      },
+    },
+  });
+
+  return card(
+    'From your estate',
+    field('Scope', scope, 'One cluster, or everything imported.'),
+    factsBox,
+    el('div', { class: 'btn-row', style: { marginTop: 'var(--space-4)' } }, prefill),
+    status,
+    el('div', {
+      class: 'section-note',
+      text: 'Fills in what an inventory can know — a migration from on-premises VMware, of VM-centric workloads, this much data, these environments — and writes the rest of what it found into the description, so the recommendation carries it. A large share of VMs that replication cannot move steers the approach to relocating onto VMware in the cloud.',
+    }),
+  );
+}
+
 const root = document.getElementById('multicloud-root');
-if (root) mountMulticloudPage(root);
+if (root) {
+  const slot = el('div', { style: { marginBottom: 'var(--space-4)' } });
+  root.appendChild(slot);
+  mountMulticloudPage(root);
+  void mountEstateBar(root, {
+    purpose: 'start the decision from its workloads',
+    onEstate: (entry) => replace(slot, ...(entry ? [estateCard(entry.inventory)] : [])),
+  });
+}

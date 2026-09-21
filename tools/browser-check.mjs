@@ -61,8 +61,7 @@ const check = (label, ok, detail = '') => {
 
 const browser = await chromium.launch();
 
-/** Shared estate fixture, built by the sizing-bridge block and reused after it. */
-let estate;
+/** The synthetic RVTools workbook, written by the chain block and reused after it. */
 let fixture;
 
 // --- every page mounts without a console error ----------------------------
@@ -119,67 +118,87 @@ for (const [name, path] of [
   await ctx.close();
 }
 
-// --- the whole chain, from an imported estate to a document ---------------
+// --- the whole chain, from an RVTools workbook to a document --------------
 {
-  // Four hosts, one deliberately smaller: the weakest host is what sets the
-  // per-host profile, so seeing 512 downstream proves the estate really drove
-  // the sizing rather than a default coming through.
-  estate = {
-    source: { kind: 'powercli', label: 'browser-check' },
-    hosts: [768, 768, 512, 768].map((memoryGib, i) => ({
-      name: `esx0${i + 1}.check.local`,
-      cluster: 'Check-Cluster',
-      cpuSockets: 2,
-      coresPerSocket: 24,
-      totalCores: 48,
-      threads: 96,
-      memoryGib,
-      nicCount: 4,
-      esxVersion: '8.0.3',
-    })),
-    vms: [
-      { name: 'app01', vcpu: 8, memoryGib: 32, provisionedGib: 300, usedGib: 180, powerState: 'PoweredOn' },
-      { name: 'db01', vcpu: 32, memoryGib: 256, provisionedGib: 2000, usedGib: 1600, powerState: 'PoweredOn' },
-    ],
-    clusters: [{ name: 'Check-Cluster', datacenter: 'DC1', haEnabled: true, drsEnabled: true, hostCount: 4 }],
-    datastores: [{ name: 'vsanDatastore', type: 'vsan', capacityGib: 40960, freeGib: 18000, hostCount: 4 }],
-    networks: [{ name: 'VM Network', switchName: 'DSwitch', vlanId: 100, type: 'DistributedPortgroup' }],
-  };
-  fixture = join(mkdtempSync(join(tmpdir(), 'atk-')), 'estate.json');
-  writeFileSync(fixture, JSON.stringify(estate));
+  // A synthetic RVTools workbook (src/testing/estate-fixture.ts): two vCenters,
+  // a four-host vSAN management cluster, and clusters that share a name. It
+  // goes in as the .xlsx RVTools writes, and has to come out the far end as a
+  // spec with the management cluster's own hosts, DNS and networks in it.
+  const { estateWorkbook } = await import('../src/testing/estate-fixture.ts');
+  fixture = join(mkdtempSync(join(tmpdir(), 'atk-')), 'estate.xlsx');
+  writeFileSync(fixture, await estateWorkbook());
 
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
-  await page.locator('input[type=file]').setInputFiles(fixture);
-  await page.waitForTimeout(1200);
+  await page.locator('.estate-bar input[type=file]').setInputFiles(fixture);
+  await page.waitForFunction(() => /As a VCF fleet/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => undefined);
+  const inventoryText = await page.locator('body').innerText();
 
-  check(
-    'an imported estate produces a sizing bridge',
-    /As a VCF target/i.test(await page.locator('body').innerText()),
-  );
+  check('the workbook imports as it is', /Estate:\s*estate\.xlsx/.test(inventoryText));
+  check('the estate becomes a VCF fleet plan', /As a VCF fleet/.test(inventoryText));
+  check('every VM is checked for a move', /Moving the VMs/.test(inventoryText) && /Physical-mode raw device mapping/.test(inventoryText));
+  check('both vCenters are listed', /vc01\.example\.com/.test(inventoryText) && /vc02\.example\.com/.test(inventoryText));
 
-  await page.locator('button', { hasText: 'Continue in sizing' }).click();
-  await page.waitForTimeout(1500);
-  check('inventory hands over to sizing', page.url().endsWith('/vcf-sizing.html'));
-  check(
-    'sizing says where its values came from',
-    (await page.locator('text=Prefilled from your inventory').count()) === 1,
-  );
-  const ram = await page
-    .locator('.field', { hasText: 'RAM (GiB)' })
-    .locator('input')
-    .first()
-    .inputValue();
-  check('the weakest host set the per-host profile', ram === '512', `got ${ram}`);
+  await page.locator('a', { hasText: 'Open in sizing' }).click();
+  await page.waitForFunction(() => /VCF fleet from the estate/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => undefined);
+  const sizingText = await page.locator('body').innerText();
+  check('sizing reads the estate without being handed it', /VCF fleet from the estate/.test(sizingText));
+  check('sizing lays out a workload domain per vCenter', /wld-vc01/.test(sizingText) && /wld-vc02/.test(sizingText));
+  const mgmtHosts = await page.locator('.field', { hasText: 'Hosts in mgmt cluster' }).locator('input').first().inputValue();
+  check('the management cluster is converged with its own hosts', mgmtHosts === '4', `got ${mgmtHosts}`);
+  const ram = await page.locator('.field', { hasText: 'RAM (GiB)' }).locator('input').first().inputValue();
+  check('its hosts set the per-host profile', ram === '1024', `got ${ram}`);
+
+  // Starting on new hosts instead rewrites the form.
+  const mgmt = page.getByLabel('Management domain', { exact: true });
+  await mgmt.selectOption('new');
+  await page.waitForTimeout(500);
+  const path = await page.locator('.field', { hasText: 'Deployment path' }).locator('select').inputValue();
+  check('choosing new hosts makes it a greenfield management domain', path === 'greenfield', `got ${path}`);
+  await mgmt.selectOption({ index: 1 });
+  await page.waitForTimeout(500);
 
   await page.locator('button', { hasText: 'Continue in the spec' }).click();
   await page.waitForTimeout(1500);
   check('sizing hands over to the spec builder', page.url().endsWith('/vcf-spec.html'));
+  const specText = await page.locator('body').innerText();
+  check('a document comes out the far end', /"sddcId"/.test(specText));
+  check('with the converged hosts in it', /"esx01/.test(specText) && /"esx04/.test(specText));
+  check('and the estate’s DNS and management network', /10\.0\.0\.2/.test(specText) && /10\.0\.0\.0\/24/.test(specText));
+
+  // The generators build from the same estate.
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(800);
+  await page.locator('select').first().selectOption('vsphere');
+  await page.waitForTimeout(300);
+  const tfList = page.locator('select').nth(1);
+  const tfLabels = await tfList.locator('option').allInnerTexts();
+  await tfList.selectOption({ index: tfLabels.findIndex((t) => /landing zone/i.test(t)) });
+  await page.waitForTimeout(300);
+  const cluster = page.locator('.field', { hasText: 'Source cluster' }).locator('select');
+  const clusterOptions = await cluster.locator('option').allInnerTexts();
+  check('the estate’s clusters are offered', clusterOptions.includes('Cluster01'), clusterOptions.join(', '));
+  await cluster.selectOption('Cluster01');
+  await page.locator('button', { hasText: 'Generate Terraform' }).click();
+  await page.waitForTimeout(800);
+  const tf = (await page.locator('pre.code-block').allInnerTexts()).join('\n');
+  check('Terraform builds the landing zone from the estate', /vsphere_distributed_port_group/.test(tf) && /vlan_id\s+= 110/.test(tf), tf.slice(0, 120));
+
+  await page.goto(`${BASE}/app/multicloud.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(800);
+  await page.locator('button', { hasText: 'Answer from the estate' }).click();
+  await page.waitForTimeout(300);
   check(
-    'a document comes out the far end',
-    /"sddcId"/.test(await page.locator('body').innerText()),
+    'the decision wizard answers from the estate',
+    (await page.locator('#sourceEnv').inputValue()) === 'onprem-vmware' &&
+      (await page.locator('#initiativeType').inputValue()) === 'migration',
   );
+
+  await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
+  await page.locator('.estate-bar button', { hasText: 'Forget' }).click();
+  await page.waitForTimeout(500);
+  check('forgetting the estate clears it', /No estate loaded/.test(await page.locator('body').innerText()));
   await ctx.close();
 }
 
@@ -227,7 +246,8 @@ for (const [name, path] of [
   );
   check(
     'Modules: the picker separates resources from module calls',
-    groups.length === 2 && groups.some((g) => g.startsWith('Terraform Registry modules')),
+    groups.filter((g) => !g.startsWith('From your estate')).length === 2 &&
+      groups.some((g) => g.startsWith('Terraform Registry modules')),
     groups.join(' | '),
   );
 
@@ -646,8 +666,8 @@ for (const [kind, path, generateLabel, expect] of [
   // Import an estate, then ask a generator for vSphere. The blueprints should
   // be offering these names rather than a box with "datastore1" in it.
   await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
-  await page.locator('input[type=file]').setInputFiles(fixture);
-  await page.waitForTimeout(1200);
+  await page.locator('.estate-bar input[type=file]').setInputFiles(fixture);
+  await page.waitForFunction(() => /Estate:/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => undefined);
 
   for (const [kind, path] of [
     ['Terraform', '/app/terraform.html'],
@@ -670,12 +690,12 @@ for (const [kind, path, generateLabel, expect] of [
     const all = Object.values(offered).flat();
     check(
       `${kind}: vSphere fields offer the imported estate`,
-      all.includes('Check-Cluster'),
+      all.includes('Cluster01'),
       Object.keys(offered).join(', ').slice(0, 70),
     );
     check(
       `${kind}: and say where the names came from`,
-      /browser-check/.test(await page.locator('body').innerText()),
+      /From estate\.xlsx/.test(await page.locator('body').innerText()),
     );
   }
   await ctx.close();

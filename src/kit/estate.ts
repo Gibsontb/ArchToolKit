@@ -21,7 +21,7 @@
 import type { Inventory } from '../vmware/inventory.ts';
 
 const KEY = 'archtoolkit.estate';
-const VERSION = 1;
+const VERSION = 2;
 
 export interface EstateNames {
   readonly version: number;
@@ -39,6 +39,10 @@ export interface EstateNames {
    * full VM list rather than instead of it.
    */
   readonly templates: readonly string[];
+  readonly vcenters: readonly string[];
+  readonly folders: readonly string[];
+  readonly resourcePools: readonly string[];
+  readonly switches: readonly string[];
 }
 
 function store(): Storage | null {
@@ -70,14 +74,41 @@ export function saveEstate(inventory: Inventory): void {
         ...inventory.hosts.map((h) => h.datacenter),
         ...inventory.vms.map((v) => v.datacenter),
       ]),
-      clusters: names(inventory.clusters.map((c) => c.name)),
+      clusters: names([...inventory.clusters.map((c) => c.name), ...inventory.hosts.map((h) => h.cluster)]),
       datastores: names(inventory.datastores.map((d) => d.name)),
       networks: names(inventory.networks.map((n) => n.name)),
       hosts: names(inventory.hosts.map((h) => h.name)),
-      vms: names(inventory.vms.map((v) => v.name)),
-      templates: names(
-        inventory.vms.filter((v) => /template|golden|gold-|-tmpl/i.test(v.name)).map((v) => v.name),
+      vms: names(
+        inventory.vms.filter((v) => !v.template).map((v) => v.name),
+        25000,
       ),
+      // RVTools marks templates; older sources do not, so fall back to names.
+      templates: names(
+        inventory.vms.some((v) => v.template)
+          ? inventory.vms.filter((v) => v.template).map((v) => v.name)
+          : inventory.vms.filter((v) => /template|golden|gold-|-tmpl/i.test(v.name)).map((v) => v.name),
+        2000,
+      ),
+      vcenters: names([
+        ...(inventory.vcenters ?? []).map((v) => v.name),
+        ...inventory.hosts.map((h) => h.vcenter),
+      ]),
+      // A folder path's leaf is what vSphere modules ask for, relative to the datacenter.
+      folders: names(
+        inventory.vms.map((v) => v.folder?.split('/').slice(2).join('/')),
+        2000,
+      ),
+      resourcePools: names(
+        [
+          ...(inventory.resourcePools ?? []).map((p) => p.name),
+          ...inventory.vms.map((v) => v.resourcePool?.split('/').pop()),
+        ],
+        2000,
+      ),
+      switches: names([
+        ...(inventory.distributedSwitches ?? []).map((d) => d.name),
+        ...inventory.networks.map((n) => n.switchName),
+      ]),
     };
     store()?.setItem(KEY, JSON.stringify(payload));
   } catch {
@@ -115,9 +146,19 @@ export function estateOptionsFor(
   target: string,
   inputId: string,
 ): { readonly values: readonly string[]; readonly origin: string } | null {
-  if (target !== 'vsphere') return null;
   const estate = loadEstate();
   if (!estate) return null;
+  // Inputs that choose part of the estate to build from exist on every
+  // platform's estate blueprints, not only vSphere's.
+  const scopeId = inputId.toLowerCase();
+  if (scopeId === 'source_cluster') {
+    return estate.clusters.length > 0 ? { values: estate.clusters, origin: estate.origin } : null;
+  }
+  if (scopeId === 'source_folder') {
+    return (estate.folders ?? []).length > 0 ? { values: estate.folders, origin: estate.origin } : null;
+  }
+  if (target !== 'vsphere') return null;
+  const optional = (values: readonly string[] | undefined): readonly string[] => values ?? [];
 
   const id = inputId.toLowerCase();
   const pick = (values: readonly string[]) =>
@@ -128,6 +169,10 @@ export function estateOptionsFor(
   if (/template/.test(id)) {
     return pick(estate.templates.length > 0 ? estate.templates : estate.vms);
   }
+  if (/vcenter|vsphere_server|^server$/.test(id)) return pick(optional(estate.vcenters));
+  if (/resource_pool|resourcepool/.test(id)) return pick(optional(estate.resourcePools));
+  if (/folder/.test(id)) return pick(optional(estate.folders));
+  if (/dvs|distributed_switch|vswitch|switch_name/.test(id)) return pick(optional(estate.switches));
   if (/datacenter/.test(id)) return pick(estate.datacenters);
   if (/datastore/.test(id)) return pick(estate.datastores);
   if (/cluster/.test(id)) return pick(estate.clusters);

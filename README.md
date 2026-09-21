@@ -240,9 +240,27 @@ rather than making you retype it:
     inventory  ->  multi-cloud  ->  Terraform / Ansible
     what is there   where it goes    what builds it there
 
-Importing an RVTools or PowerCLI export gives a derived sizing input — host
-profile from the weakest host, workload figures from allocated rather than
-provisioned values — and **Continue in sizing** carries it over. From a sizing
+Import the RVTools `.xlsx` once, on any page — it is read in the browser with
+no library (the zip is inflated by `DecompressionStream`, the sheets streamed),
+all 27 tabs, scoped by vCenter — and it is kept in this browser's IndexedDB
+until **Forget** is pressed. Every page reads it:
+
+- **Inventory** — totals, clusters with their demand and RDMs counted once per
+  LUN, VCF host readiness, and a per-VM check of what blocks or complicates a
+  move (physical RDMs, shared disks, mounted ISOs, snapshots, unsupported OSes).
+- **Sizing** — plans the fleet: a management domain (a converged cluster or new
+  hosts) and a workload domain per source vCenter, each source cluster resized
+  onto the chosen target host, then sizes the management domain as before.
+- **Spec builder** — takes the converged cluster's hosts, DNS, NTP, domain and
+  its management, vMotion and vSAN networks with their VLANs and MTUs.
+- **Terraform** — a VCF landing zone for a cluster (port groups with VLANs,
+  folders, resource pools, custom attributes, DRS rules) or a cloud rehost with
+  every VM sized onto a real instance type and a disk per VMDK.
+- **Ansible** — an inventory of a cluster's VMs, and plays for before the move
+  (snapshots, the readiness worklist) and after it (DRS rules, attributes).
+- **Multi-cloud** — answers the wizard's questions the estate can answer.
+
+From a sizing
 result, **Continue in the spec builder** carries the host count, storage type,
 failures to tolerate, deployment scenario and the IP pool counts, so the pools a
 specification emits match the sizing that justified them.

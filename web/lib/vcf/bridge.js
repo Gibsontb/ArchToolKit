@@ -13,7 +13,9 @@
  */
 
                                                              
-                                                        
+                                                                                
+import { scopedKey,                                                          } from '../vmware/inventory.js';
+import { parseIPv4, formatIPv4, maskToPrefix } from '../core/net.js';
                                                          
 
 /** The deployment scenario a sizing path implies, where one does. */
@@ -69,4 +71,110 @@ export function describeSizingHandoff(result              )         {
   const { input } = result;
   const profile = input.profile === 'simple' ? 'simple' : 'HA';
   return `${input.hostCount} hosts, ${input.storage}, ${profile} profile, FTT ${result.storage.ftt}, ${result.ips.totalRecommended} addresses recommended`;
+}
+
+// ---------------------------------------------------------------------------
+// From the imported estate
+// ---------------------------------------------------------------------------
+
+/**
+ * What the estate itself says about a VCF bring-up.
+ *
+ * The hosts already know their DNS servers, NTP sources and domain, and the
+ * cluster being converged already has a management, vMotion and vSAN network
+ * with addresses, masks, gateways, MTUs and VLANs. RVTools recorded all of it
+ * (vHost, vSC_VMK, vPort, dvPort), so the spec builder should start from it
+ * rather than from example values.
+ *
+ * vMotion and vSAN VMkernel adapters are recognised by their port group's
+ * name, because RVTools does not record which services a VMkernel adapter
+ * carries. One that cannot be recognised is left for the person to fill in
+ * rather than guessed.
+ */
+export function estateToPlan(inventory           , managementClusterKey         )                          {
+  const hosts = managementClusterKey
+    ? inventory.hosts.filter((h) => scopedKey(h.vcenter, h.cluster ?? '(standalone)') === managementClusterKey)
+    : [];
+  const pool = hosts.length > 0 ? hosts : inventory.hosts;
+  const plan                          = {};
+
+  const dns = mostCommon(pool.map((h) => (h.dnsServers ?? []).slice(0, 2).join(',')).filter(Boolean));
+  if (dns) plan.dnsServers = dns.split(',');
+  const ntp = mostCommon(pool.map((h) => (h.ntpServers ?? []).join(',')).filter(Boolean));
+  if (ntp) plan.ntpServers = ntp.split(',');
+  const domain = mostCommon(pool.map((h) => (h.domain ?? '').toLowerCase()).filter(Boolean));
+  if (domain) plan.domainSuffix = domain;
+
+  if (hosts.length === 0) return plan                           ;
+
+  plan.hostCount = hosts.length;
+  plan.hosts = hosts
+    .map((h) => h.name.split('.')[0] ?? h.name)
+    .sort()
+    .map((hostname)            => ({ hostname }));
+
+  const vlanOf = (host               , portGroup                    )                     => {
+    if (!portGroup) return undefined;
+    const standard = host.portGroups?.find((p) => p.name === portGroup);
+    const distributed = inventory.networks.find(
+      (n) => n.kind === 'distributed' && n.name === portGroup && (n.vcenter ?? '') === (host.vcenter ?? ''),
+    );
+    const vlan = Number((standard ?? distributed)?.vlanId);
+    return Number.isFinite(vlan) ? vlan : undefined;
+  };
+
+  const network = (match                                   )                          => {
+    const found                                                                    = [];
+    for (const host of hosts) {
+      const vmk = (host.vmkernelAdapters ?? []).find(match);
+      if (!vmk?.ip || !vmk.subnetMask) continue;
+      const ip = parseIPv4(vmk.ip);
+      const mask = parseIPv4(vmk.subnetMask);
+      const prefix = mask === null ? null : maskToPrefix(mask);
+      if (ip === null || mask === null || prefix === null) continue;
+      // RVTools records the host's default gateway against every adapter; it
+      // belongs to this network only when it sits inside it.
+      const gw = vmk.gateway ? parseIPv4(vmk.gateway) : null;
+      const inside = gw !== null && ((gw & mask) >>> 0) === ((ip & mask) >>> 0);
+      found.push({
+        cidr: `${formatIPv4((ip & mask) >>> 0)}/${prefix}`,
+        ...(inside && vmk.gateway ? { gateway: vmk.gateway } : {}),
+        ...(vmk.mtu ? { mtu: vmk.mtu } : {}),
+        ...(vlanOf(host, vmk.portGroup) !== undefined ? { vlan: vlanOf(host, vmk.portGroup) } : {}),
+      });
+    }
+    const cidr = mostCommon(found.map((f) => f.cidr));
+    if (!cidr) return undefined;
+    const same = found.filter((f) => f.cidr === cidr);
+    const gateway = mostCommon(same.map((f) => f.gateway ?? '').filter(Boolean));
+    const mtu = Number(mostCommon(same.map((f) => String(f.mtu ?? '')).filter(Boolean)));
+    const vlan = Number(mostCommon(same.map((f) => String(f.vlan ?? '')).filter((v) => v !== '')));
+    return {
+      cidr,
+      vlanId: Number.isFinite(vlan) ? vlan : 0,
+      ...(gateway ? { gateway } : {}),
+      ...(Number.isFinite(mtu) && mtu > 0 ? { mtu } : {}),
+    };
+  };
+
+  // Named management port groups first — VxRail puts its own discovery
+  // network on vmk0 — then vmk0 itself.
+  const management =
+    network((v) => /management network|(^|[_\-\s*])(mgmt|mgt)([_\-\s]|$)/i.test(v.portGroup ?? '') && !/vxrail|bmc/i.test(v.portGroup ?? '')) ??
+    network((v) => v.name === 'vmk0');
+  if (management) plan.management = management;
+  const vmotion = network((v) => /vmotion|(^|[_\-\s.])vm[ot]($|[_\-\s.])/i.test(v.portGroup ?? ''));
+  if (vmotion) plan.vmotion = vmotion;
+  const vsan = network((v) => /vsan|virtual san/i.test(v.portGroup ?? ''));
+  if (vsan) plan.vsan = vsan;
+  const uplinks = mostCommon(hosts.map((h) => String((h.physicalNics ?? []).filter((n) => n.linkUp !== false).length)));
+  if (uplinks && Number(uplinks) > 0) plan.pnicsPerHost = Number(uplinks);
+
+  return plan                           ;
+}
+
+function mostCommon(values                   )                     {
+  const counts = new Map                ();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 }

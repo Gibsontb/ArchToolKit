@@ -15,6 +15,7 @@ declare module 'node:test' {
   type TestFn = () => void | Promise<void>;
   export function describe(name: string, fn: () => void): void;
   export function it(name: string, fn: TestFn): void;
+  export function before(fn: TestFn): void;
 }
 
 declare module 'node:assert/strict' {

@@ -1568,3 +1568,56 @@ textarea {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* --- Estate strip: the imported estate every page works from -------------- */
+.estate-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius, 8px);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.estate-bar.dragging {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.estate-bar .estate-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.estate-bar .estate-status {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.estate-bar .estate-status:empty {
+  display: none;
+}
+.scope-list {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-2);
+}
+.scope-list .scope-vcenter {
+  font-weight: 600;
+  margin-top: var(--space-2);
+}
+.scope-list label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: 0.85rem;
+  padding: 1px 0;
+}
+.scope-list label .muted {
+  margin-left: auto;
+  white-space: nowrap;
+}

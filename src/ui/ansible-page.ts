@@ -14,18 +14,35 @@
  */
 
 import { mountGeneratorPage } from './generator-page.ts';
+import { mountEstateBar } from './estate-bar.ts';
+import { currentEstate } from '../kit/estate-store.ts';
 import { ANSIBLE_BLUEPRINTS } from '../ansible/blueprints/index.ts';
 import { catalogFindings } from '../ansible/catalog.ts';
 
 const root = document.getElementById('ansible-root');
 if (root) {
-  mountGeneratorPage(root, {
-    groups: ANSIBLE_BLUEPRINTS,
-    kindLabel: 'Ansible (YAML)',
-    noun: 'playbook',
-    idleHint:
-      'Pick a platform and playbook, adjust the parameters, then Generate. Install the collections from requirements.yml, then run ansible-playbook -i inventory <file> --check --diff.',
-    downloadExtension: '.yml',
-    standingFindings: () => catalogFindings(),
+  // The estate is read before the form is built, so the estate blueprints and
+  // the dropdowns that list its clusters, datastores and port groups have it.
+  // Importing or forgetting one afterwards rebuilds the page around the new one.
+  let mounted = false;
+  void mountEstateBar(root, {
+    purpose: 'generate Ansible from it: an inventory of its VMs, and the plays before and after a move',
+    onEstate: () => {
+      if (mounted) {
+        globalThis.location.reload();
+        return;
+      }
+      mounted = true;
+      mountGeneratorPage(root, {
+        groups: ANSIBLE_BLUEPRINTS,
+        kindLabel: 'Ansible (YAML)',
+        noun: 'playbook',
+        idleHint:
+          'Pick a platform and playbook, adjust the parameters, then Generate. Install the collections from requirements.yml, then run ansible-playbook -i inventory <file> --check --diff.',
+        preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
+        downloadExtension: '.yml',
+        standingFindings: () => catalogFindings(),
+      });
+    },
   });
 }

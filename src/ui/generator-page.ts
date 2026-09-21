@@ -43,6 +43,11 @@ export interface GeneratorOptions {
   readonly idleHint: string;
   /** Extension for the combined download. */
   readonly downloadExtension: string;
+  /**
+   * The blueprint group to open on when the platform has one — the estate
+   * blueprints, once an estate is loaded. Otherwise the first blueprint.
+   */
+  readonly preferGroup?: () => string | undefined;
   /** Findings that always apply, e.g. catalog age. */
   readonly standingFindings?: () => readonly Finding[];
 }
@@ -365,6 +370,11 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     return blueprintsFor(options.groups, target);
   }
 
+  function first(): Blueprint | undefined {
+    const preferred = options.preferGroup?.();
+    return (preferred ? available().find((b) => b.group === preferred) : undefined) ?? available()[0];
+  }
+
   function selectBlueprint(next: Blueprint | undefined): void {
     blueprint = next;
     values = next ? defaultValues(next) : {};
@@ -405,7 +415,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     platform.addEventListener('change', () => {
       target = platform.value as TargetId;
       setTarget(target, 'chosen on this page');
-      selectBlueprint(available()[0]);
+      selectBlueprint(first());
       renderOne();
       renderTwo();
       renderThree();
@@ -635,7 +645,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     );
   }
 
-  selectBlueprint(available()[0]);
+  selectBlueprint(first());
   renderOne();
   renderTwo();
   renderThree();

@@ -43,6 +43,11 @@ import {
                             
                                              
                                      
+     
+                                                                          
+                                                                         
+     
+                                                  
                                                       
                                                        
  
@@ -365,6 +370,11 @@ export function mountGeneratorPage(root             , options                  )
     return blueprintsFor(options.groups, target);
   }
 
+  function first()                        {
+    const preferred = options.preferGroup?.();
+    return (preferred ? available().find((b) => b.group === preferred) : undefined) ?? available()[0];
+  }
+
   function selectBlueprint(next                       )       {
     blueprint = next;
     values = next ? defaultValues(next) : {};
@@ -405,7 +415,7 @@ export function mountGeneratorPage(root             , options                  )
     platform.addEventListener('change', () => {
       target = platform.value            ;
       setTarget(target, 'chosen on this page');
-      selectBlueprint(available()[0]);
+      selectBlueprint(first());
       renderOne();
       renderTwo();
       renderThree();
@@ -635,7 +645,7 @@ export function mountGeneratorPage(root             , options                  )
     );
   }
 
-  selectBlueprint(available()[0]);
+  selectBlueprint(first());
   renderOne();
   renderTwo();
   renderThree();

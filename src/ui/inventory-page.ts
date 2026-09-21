@@ -9,24 +9,22 @@
  * never uploaded anywhere.
  */
 
-import { el, append, replace, downloadFile, readFileAsText } from './dom.ts';
+import { el, append, replace, downloadFile } from './dom.ts';
 import { card, findingsList, stat, statGrid, table, type Column } from './components.ts';
 import { formatCapacityGib, formatCount, roundTo } from '../core/units.ts';
 import { countBySeverity, type Finding } from '../core/findings.ts';
-import { importRvToolsFiles } from '../vmware/rvtools.ts';
-import { importCollectorJson } from '../vmware/powercli.ts';
 import {
   computeTotals,
   rollupByCluster,
-  mergeInventories,
   type Inventory,
   type ClusterRollup,
 } from '../vmware/inventory.ts';
-import { analyzeEstate, toSizingInput } from '../vmware/analyze.ts';
+import { assessMoves, type MoveSeverity } from '../vmware/vm-readiness.ts';
+import { mountEstateBar } from './estate-bar.ts';
+import { analyzeEstate } from '../vmware/analyze.ts';
+import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.ts';
 import { assessEstate, type HostReadiness, type CheckStatus } from '../vmware/readiness.ts';
 import { sizeDeployment } from '../vcf/sizing.ts';
-import { putHandoff } from './handoff.ts';
-import { saveEstate } from '../kit/estate.ts';
 
 const STATUS_MARK: Record<CheckStatus, string> = {
   pass: '✓',
@@ -44,96 +42,27 @@ const STATUS_TONE: Record<CheckStatus, string> = {
 
 export function mountInventoryPage(root: HTMLElement): void {
   const results = el('div', { class: 'stack' });
-  let current: Inventory | null = null;
+  append(root, results);
+  append(results, el('div', { class: 'empty', text: 'No estate loaded yet.' }));
 
-  const fileInput = el('input', {
-    attrs: { type: 'file', accept: '.csv,.json,text/csv,application/json', multiple: true },
-  }) as HTMLInputElement;
-
-  const status = el('div', { class: 'field-hint' });
-
-  async function handleFiles(files: FileList | null): Promise<void> {
-    if (!files || files.length === 0) return;
-
-    const loaded = await Promise.all(
-      Array.from(files).map(async (file) => ({
-        name: file.name,
-        content: await readFileAsText(file),
-      })),
-    );
-
-    const findings: Finding[] = [];
-    const inventories: Inventory[] = [];
-
-    // A collector JSON and a set of RVTools CSVs are both valid inputs, so
-    // each file is routed by what it actually contains.
-    const jsonFiles = loaded.filter(
-      (f) => f.name.toLowerCase().endsWith('.json') || f.content.trimStart().startsWith('{'),
-    );
-    const csvFiles = loaded.filter((f) => !jsonFiles.includes(f));
-
-    for (const file of jsonFiles) {
-      const result = importCollectorJson(file.content);
-      inventories.push(result.inventory);
-      findings.push(...result.findings);
-    }
-
-    if (csvFiles.length > 0) {
-      const result = importRvToolsFiles(csvFiles);
-      inventories.push(result.inventory);
-      findings.push(...result.findings);
-    }
-
-    current = mergeInventories(inventories);
-    // The generators ask for datacenters, clusters, datastores, port groups and
-    // templates by name. Now that they are known, they should be offered rather
-    // than typed.
-    saveEstate(current);
-    status.textContent = `Loaded ${loaded.length} file(s): ${current.hosts.length} hosts, ${current.vms.length} VMs.`;
-    replace(results, ...buildResults(current, findings));
-  }
-
-  fileInput.addEventListener('change', () => void handleFiles(fileInput.files));
-
-  const dropZone = el(
-    'div',
-    {
-      class: 'card',
-      style: {
-        border: '1px dashed var(--border-strong)',
-        textAlign: 'center',
-        padding: 'var(--space-6)',
-      },
+  void mountEstateBar(root, {
+    purpose: 'see its totals, clusters, VCF readiness and what stands in the way of moving each VM',
+    onEstate: (entry) => {
+      if (!entry) {
+        replace(results, el('div', { class: 'empty', text: 'No estate loaded yet.' }));
+        return;
+      }
+      replace(results, ...buildResults(entry.inventory, [...entry.findings]));
     },
-    el('h2', { text: 'Load an estate', style: { marginBottom: 'var(--space-2)' } }),
-    el('p', {
-      class: 'muted small',
-      text: 'Drop RVTools CSV exports (vInfo, vHost, vCluster, vDatastore) or a JSON file from the PowerCLI collector. Sheets are identified by their contents, so filenames do not matter.',
-    }),
-    el('div', { style: { marginTop: 'var(--space-4)' } }, fileInput),
-    status,
+  });
+
+  append(
+    root,
     el('div', {
       class: 'section-note',
-      style: { textAlign: 'left', marginTop: 'var(--space-4)' },
-      text: 'Nothing leaves this page. For the hardware facts that decide vSAN ESA eligibility — NVMe devices and NIC link speeds — use tools/collector/Export-AtkInventory.ps1; RVTools does not capture them.',
+      text: 'Nothing leaves this page: the estate is read in the browser and kept in this browser only, until you forget it. For the hardware facts that decide vSAN ESA eligibility — NVMe devices and NIC firmware — also run tools/collector/Export-AtkInventory.ps1; RVTools does not capture them.',
     }),
   );
-
-  dropZone.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    dropZone.style.borderColor = 'var(--accent)';
-  });
-  dropZone.addEventListener('dragleave', () => {
-    dropZone.style.borderColor = 'var(--border-strong)';
-  });
-  dropZone.addEventListener('drop', (event) => {
-    event.preventDefault();
-    dropZone.style.borderColor = 'var(--border-strong)';
-    void handleFiles((event as DragEvent).dataTransfer?.files ?? null);
-  });
-
-  append(root, dropZone, results);
-  append(results, el('div', { class: 'empty', text: 'No estate loaded yet.' }));
 }
 
 function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElement[] {
@@ -147,11 +76,15 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
   const overview = card(
     'Estate',
     statGrid(
-      stat({ label: 'Hosts', value: totals.hostCount, sub: `${totals.clusterCount} clusters` }),
+      stat({
+        label: 'Hosts',
+        value: formatCount(totals.hostCount),
+        sub: `${totals.clusterCount} clusters${totals.vcenterCount > 1 ? `, ${totals.vcenterCount} vCenters` : ''}`,
+      }),
       stat({
         label: 'Virtual machines',
-        value: totals.vmCount,
-        sub: `${totals.poweredOnVmCount} powered on`,
+        value: formatCount(totals.vmCount),
+        sub: `${formatCount(totals.poweredOnVmCount)} powered on${totals.templateCount ? `, ${formatCount(totals.templateCount)} templates` : ''}`,
       }),
       stat({
         label: 'Physical cores',
@@ -191,6 +124,21 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
         label: 'Thin provisioning gap',
         value: formatCapacityGib(totals.thinProvisioningGib),
         sub: 'unconsumed but allocated',
+      }),
+      ...(totals.rdmGib > 0
+        ? [
+            stat({
+              label: 'Raw device mappings',
+              value: formatCapacityGib(totals.rdmGib),
+              sub: 'each LUN once, not in the figures above',
+              tone: 'warn',
+            }),
+          ]
+        : []),
+      stat({
+        label: 'Active memory',
+        value: formatCapacityGib(totals.activeMemoryGib),
+        sub: 'at the moment of capture',
       }),
     ),
     el('div', {
@@ -232,13 +180,27 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
       : null,
   );
 
+  const multiVcenter = totals.vcenterCount > 1;
   const clusterColumns: Column<ClusterRollup>[] = [
     { header: 'Cluster', render: (c) => c.name },
+    ...(multiVcenter
+      ? [{ header: 'vCenter', render: (c: ClusterRollup) => (c.vcenter ?? '—').split('.')[0] ?? '—' }]
+      : []),
     { header: 'Hosts', numeric: true, render: (c) => String(c.hostCount) },
-    { header: 'VMs', numeric: true, render: (c) => String(c.vmCount) },
+    { header: 'VMs', numeric: true, render: (c) => `${c.poweredOnVmCount} / ${c.vmCount}` },
     { header: 'Cores', numeric: true, render: (c) => formatCount(c.physicalCores) },
     { header: 'Memory', numeric: true, render: (c) => formatCapacityGib(c.memoryGib) },
+    { header: 'vCPU', numeric: true, render: (c) => formatCount(c.allocatedVcpu) },
+    { header: 'vRAM', numeric: true, render: (c) => formatCapacityGib(c.allocatedMemoryGib) },
+    { header: 'Used storage', numeric: true, render: (c) => formatCapacityGib(c.usedStorageGib) },
+    { header: 'RDM', numeric: true, render: (c) => (c.rdmGib > 0 ? formatCapacityGib(c.rdmGib) : '—') },
     { header: 'vCPU:pCPU', numeric: true, render: (c) => `${roundTo(c.cpuOvercommit, 2)}:1` },
+    {
+      header: 'CPU / mem use',
+      numeric: true,
+      render: (c) =>
+        c.cpuUsage === undefined ? '—' : `${Math.round(c.cpuUsage * 100)}% / ${Math.round((c.memoryUsage ?? 0) * 100)}%`,
+    },
     {
       header: 'CPU models',
       render: (c) =>
@@ -248,7 +210,138 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
     },
   ];
 
-  const clustersCard = card('Clusters', table(clusterColumns, clusters));
+  const clustersCard = card(
+    'Clusters',
+    table(clusterColumns, clusters),
+    el('div', {
+      class: 'section-note',
+      text: 'VMs are running / all workloads (templates apart). Storage is consumed VMDK; raw device mappings are counted once per LUN in their own column. CPU and memory use are what the hosts reported at capture.',
+    }),
+  );
+
+  // --- where it came from -----------------------------------------------------
+  const source = inventory.source;
+  const vcenters = inventory.vcenters ?? [];
+  const sourceCard = card(
+    'Source',
+    el('p', {
+      class: 'small',
+      text: `${source.label ?? source.kind}${source.toolVersion ? ` · ${source.toolVersion}` : ''}${source.tabs ? ` · ${Object.keys(source.tabs).length} tabs read` : ''}`,
+    }),
+    vcenters.length > 0
+      ? table(
+          [
+            { header: 'vCenter', render: (v) => v.name },
+            { header: 'Version', render: (v) => [v.version, v.build ? `build ${v.build}` : ''].filter(Boolean).join(' ') || '—' },
+            { header: 'Collected', render: (v) => (source.collectedPerVcenter?.[v.name] ?? '—').replace('T', ' ').slice(0, 16) },
+          ],
+          vcenters,
+        )
+      : null,
+    source.tabs
+      ? el('div', {
+          class: 'section-note',
+          text: Object.entries(source.tabs)
+            .map(([tab, rows]) => `${tab} ${formatCount(rows)}`)
+            .join(' · '),
+        })
+      : null,
+  );
+
+  // --- moving the VMs ---------------------------------------------------------
+  const moves = assessMoves(inventory, 'vcf');
+  const cloudMoves = assessMoves(inventory, 'cloud');
+  const TONE: Record<MoveSeverity, string> = {
+    blocker: 'badge badge-inferred',
+    caution: 'badge badge-community',
+    note: 'badge',
+  };
+  const movesCard =
+    moves.vms.length > 0
+      ? card(
+          'Moving the VMs',
+          statGrid(
+            stat({ label: 'Ready as they are', value: formatCount(moves.ready + moves.withNotes), sub: `of ${formatCount(moves.vms.length)}`, tone: 'ok' }),
+            stat({ label: 'Need attention', value: formatCount(moves.withCautions), sub: 'change how they move', tone: moves.withCautions > 0 ? 'warn' : 'ok' }),
+            stat({ label: 'Blocked', value: formatCount(moves.blocked), sub: 'as things stand', tone: moves.blocked > 0 ? 'danger' : 'ok' }),
+            stat({ label: 'Blocked for a cloud', value: formatCount(cloudMoves.blocked), sub: `${formatCount(cloudMoves.withCautions)} more need attention` }),
+          ),
+          el(
+            'div',
+            { style: { marginTop: 'var(--space-4)' } },
+            table(
+              [
+                { header: '', render: (r) => el('span', { class: TONE[r.check.severity], text: r.check.severity }) },
+                { header: 'What', render: (r) => r.check.title + (r.check.cloudOnly ? ' (cloud only)' : '') },
+                { header: 'VMs', numeric: true, render: (r) => formatCount(r.count) },
+                { header: 'What to do', render: (r) => el('span', { class: 'small', text: r.check.action }) },
+                { header: 'For example', render: (r) => el('span', { class: 'small muted', text: r.examples.slice(0, 3).join(', ') }) },
+              ],
+              cloudMoves.byCheck,
+            ),
+          ),
+          el('div', {
+            class: 'section-note',
+            text: 'Counts are for a move to VCF by vMotion or HCX; the "cloud only" rows apply only to moving off vSphere. Every VM\'s findings are in the canonical inventory export below.',
+          }),
+        )
+      : null;
+
+  // --- health and licences ------------------------------------------------------
+  const health = inventory.health ?? [];
+  const healthByType = new Map<string, number>();
+  for (const h of health) healthByType.set(h.type ?? 'Other', (healthByType.get(h.type ?? 'Other') ?? 0) + 1);
+  const licenses = inventory.licenses ?? [];
+  const healthCard =
+    health.length > 0 || licenses.length > 0
+      ? card(
+          'Health and licences',
+          health.length > 0
+            ? table(
+                [
+                  { header: 'RVTools health check', render: (r: [string, number]) => r[0] },
+                  { header: 'Messages', numeric: true, render: (r: [string, number]) => formatCount(r[1]) },
+                ],
+                [...healthByType.entries()].sort((a, b) => b[1] - a[1]),
+              )
+            : null,
+          licenses.length > 0
+            ? el(
+                'div',
+                { style: { marginTop: 'var(--space-4)' } },
+                table(
+                  [
+                    { header: 'Licence', render: (l) => l.name },
+                    { header: 'Key', render: (l) => (l.keyTail ? `…${l.keyTail}` : '—') },
+                    { header: 'Used / total', numeric: true, render: (l) => `${formatCount(l.used ?? 0)} / ${formatCount(l.total ?? 0)} ${l.costUnit ?? ''}` },
+                    { header: 'Expires', render: (l) => (l.expires ?? '—').slice(0, 10) },
+                  ],
+                  dedupeLicenses(licenses),
+                ),
+              )
+            : null,
+          el('div', {
+            class: 'section-note',
+            text: 'Zombie VMDKs are files on a datastore that no VM references — capacity to reclaim before sizing the target. Licence keys are kept to their last five characters.',
+          }),
+        )
+      : null;
+
+  const nextCard = card(
+    'Take it further',
+    el(
+      'div',
+      { class: 'btn-row' },
+      el('a', { class: 'btn btn-primary', text: 'Size VCF from this estate', attrs: { href: 'vcf-sizing.html' } }),
+      el('a', { class: 'btn', text: 'Decide where it goes', attrs: { href: 'multicloud.html' } }),
+      el('a', { class: 'btn', text: 'Terraform from the estate', attrs: { href: 'terraform.html' } }),
+      el('a', { class: 'btn', text: 'Ansible from the estate', attrs: { href: 'ansible.html' } }),
+    ),
+    el('div', {
+      class: 'section-note',
+      text: 'Every page reads this estate: sizing fills itself in per cluster, the spec builder takes the management cluster\'s hosts, DNS, NTP and networks, the generators offer its names and build from its VMs, and the decision matrix starts from its workloads.',
+    }),
+  );
 
   // --- readiness -----------------------------------------------------------
   const checkIds = readiness.hosts[0]?.checks.map((c) => c.id) ?? [];
@@ -301,66 +394,58 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
     }),
   );
 
-  // --- sizing bridge -------------------------------------------------------
-  const sizingInput = toSizingInput(inventory);
-  const sizingCard = sizingInput
-    ? (() => {
-        const result = sizeDeployment(sizingInput);
-        return card(
-          'As a VCF target',
-          statGrid(
-            stat({
-              label: 'Management plane',
-              value: `${Math.round(result.managementFootprint.vcpu)} vCPU`,
-              sub: formatCapacityGib(result.managementFootprint.ramGib),
-            }),
-            stat({
-              label: 'Total demand',
-              value: `${Math.round(result.totalDemand.vcpu)} vCPU`,
-              sub: `${formatCapacityGib(result.totalDemand.ramGib)} including workloads`,
-            }),
-            stat({
-              label: 'vSAN raw needed',
-              value: formatCapacityGib(result.storage.rawRequiredGib),
-              sub: `${result.storage.raid}, ${Math.round(result.storage.slackFraction * 100)}% slack`,
-              tone: result.storage.sufficient ? 'ok' : 'danger',
-            }),
-          ),
-          el('div', { style: { marginTop: 'var(--space-4)' } }, findingsList(result.findings, 'No sizing constraints violated.')),
-          el(
-            'div',
-            { class: 'btn-row', style: { marginTop: 'var(--space-4)' } },
-            el('button', {
-              class: 'btn btn-primary',
-              text: 'Continue in sizing',
-              on: {
-                click: () => {
-                  const label = inventory.source.label ?? inventory.source.kind;
-                  putHandoff(
-                    'inventory-to-sizing',
-                    `${formatCount(inventory.hosts.length)} hosts and ${formatCount(inventory.vms.length)} VMs from ${label}`,
-                    sizingInput,
-                  );
-                  globalThis.location.assign('vcf-sizing.html');
+  // --- as a VCF fleet ------------------------------------------------------
+  const sources = sourceClusters(inventory);
+  const target = commonHostProfile(inventory.hosts);
+  const sizingCard =
+    target && sources.length > 0
+      ? (() => {
+          const plan = planEstate(inventory, { host: target, managementSource: suggestManagementSource(sources) });
+          const mgmt = sizeDeployment(plan.management);
+          const workloadDomains = plan.domains.filter((d) => d.kind === 'workload');
+          return card(
+            'As a VCF fleet',
+            statGrid(
+              stat({
+                label: 'Workload domains',
+                value: workloadDomains.length,
+                sub: `${workloadDomains.reduce((n, d) => n + d.clusters.length, 0)} clusters`,
+              }),
+              stat({
+                label: 'Target hosts',
+                value: formatCount(plan.workloadHosts + (plan.management.path === 'greenfield' ? plan.management.hostCount : 0)),
+                sub: `against ${formatCount(plan.sourceHosts)} today`,
+              }),
+              stat({
+                label: 'Billable cores',
+                value: formatCount(plan.billableCores),
+                sub: target.label,
+              }),
+              stat({
+                label: 'Management domain',
+                value: plan.management.path === 'greenfield' ? 'New hosts' : 'Converged',
+                sub: `${plan.management.hostCount} hosts · ${mgmt.findings.filter((f) => f.severity === 'error').length} blocking`,
+              }),
+            ),
+            el(
+              'div',
+              { class: 'btn-row', style: { marginTop: 'var(--space-4)' } },
+              el('a', { class: 'btn btn-primary', text: 'Open in sizing', attrs: { href: 'vcf-sizing.html' } }),
+              el('button', {
+                class: 'btn',
+                text: 'Download sizing input (JSON)',
+                on: {
+                  click: () => downloadFile('vcf-estate-plan.json', JSON.stringify(plan, null, 2)),
                 },
-              },
+              }),
+            ),
+            el('div', {
+              class: 'section-note',
+              text: 'A first pass on defaults: the most common host in the estate as the target, each source cluster resized onto it at 4:1 vCPU per core and 90% memory with 20% growth and N+1, one workload domain per vCenter. The sizing page lets you change every one of those.',
             }),
-            el('button', {
-              class: 'btn',
-              text: 'Download sizing input (JSON)',
-              on: {
-                click: () =>
-                  downloadFile('vcf-sizing-input.json', JSON.stringify(sizingInput, null, 2)),
-              },
-            }),
-          ),
-          el('div', {
-            class: 'section-note',
-            text: 'Derived by treating the estate as a brownfield conversion: the weakest host sets the per-host profile, and workload capacity uses consumed rather than provisioned storage.',
-          }),
-        );
-      })()
-    : null;
+          );
+        })()
+      : null;
 
   const findingsCard = card(
     `Findings (${counts.error} errors, ${counts.warning} warnings)`,
@@ -388,14 +473,28 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
 
   return [
     overview,
+    nextCard,
+    sourceCard,
     consolidation,
     clustersCard,
+    ...(movesCard ? [movesCard] : []),
+    ...(healthCard ? [healthCard] : []),
     readinessCard,
     licensingCard,
     ...(sizingCard ? [sizingCard] : []),
     findingsCard,
     exportCard,
   ];
+}
+
+/** One row per licence and key: every vCenter in a linked group lists the same ones. */
+function dedupeLicenses<T extends { name: string; keyTail?: string }>(licenses: readonly T[]): T[] {
+  const seen = new Map<string, T>();
+  for (const l of licenses) {
+    const key = `${l.name}|${l.keyTail ?? ''}`;
+    if (!seen.has(key)) seen.set(key, l);
+  }
+  return [...seen.values()];
 }
 
 const target = typeof document !== 'undefined' ? document.getElementById('inventory-root') : null;

@@ -24,6 +24,7 @@ import {
   serializeSpec,
   redactSpec,
                       
+                   
                   
                  
 } from '../vcf/spec-builder.js';
@@ -298,6 +299,12 @@ class HostTable {
     if (count !== this.rows.length) this.seed(false);
   }
 
+  /** Replace the rows with known hosts — the cluster being converged. */
+  load(rows                      )       {
+    this.rows = rows.map((r) => ({ ...r }));
+    this.render();
+  }
+
   get entries()              {
     return this.rows.filter((row) => row.hostname.trim().length > 0);
   }
@@ -432,13 +439,18 @@ export function mountVcfSpecPage(root             )       {
     inherited = inbound.payload;
     applySizingPlan(controls, inbound.payload);
     hostTable.syncCount();
+    if (inbound.payload.hosts && inbound.payload.hosts.length > 0) hostTable.load(inbound.payload.hosts);
     append(
       root,
       el(
         'div',
         { class: 'section-note', style: { marginBottom: 'var(--space-4)' } },
         el('strong', { text: 'Prefilled from your sizing. ' }),
-        el('span', { text: `${inbound.origin}. Names, domains and VLANs still need filling in.` }),
+        el('span', {
+          text: inbound.payload.hosts
+            ? `${inbound.origin}. Hosts, DNS, NTP, domain and the management, vMotion and vSAN networks were read from the estate — check them, then fill in the component names.`
+            : `${inbound.origin}. Names, domains and VLANs still need filling in.`,
+        }),
       ),
     );
   }
@@ -484,10 +496,11 @@ export function mountVcfSpecPage(root             )       {
       hosts: hostTable.entries,
       dnsServers: [controls.dns1.value.trim(), controls.dns2.value.trim()].filter(Boolean),
       ntpServers: [controls.ntp1.value.trim(), controls.ntp2.value.trim()].filter(Boolean),
-      management: { cidr: controls.mgmtCidr.value.trim(), vlanId: num(controls.mgmtVlan, 30) },
-      vmotion: { cidr: controls.vmotionCidr.value.trim(), vlanId: num(controls.vmotionVlan, 40) },
+      // A gateway or MTU the estate supplied survives while the subnet is unchanged.
+      management: keep(inheritedPlan.management, controls.mgmtCidr.value.trim(), num(controls.mgmtVlan, 30)),
+      vmotion: keep(inheritedPlan.vmotion, controls.vmotionCidr.value.trim(), num(controls.vmotionVlan, 40)),
       ...(vsanSelected
-        ? { vsan: { cidr: controls.vsanCidr.value.trim(), vlanId: num(controls.vsanVlan, 50) } }
+        ? { vsan: keep(inheritedPlan.vsan, controls.vsanCidr.value.trim(), num(controls.vsanVlan, 50)) }
         : {}),
       hostTep: { cidr: controls.tepCidr.value.trim(), vlanId: num(controls.tepVlan, 60) },
       ...(controls.vmMgmtCidr.value.trim()
@@ -721,6 +734,10 @@ export function mountVcfSpecPage(root             )       {
  * subnets are left alone: sizing has no view on them, and filling them with
  * plausible-looking defaults would disguise a guess as a derivation.
  */
+function keep(from                         , cidr        , vlanId        )              {
+  return from && from.cidr === cidr ? { ...from, cidr, vlanId } : { cidr, vlanId };
+}
+
 function applySizingPlan(controls          , plan                         )       {
   if (plan.hostCount !== undefined) controls.hostCount.value = String(plan.hostCount);
   if (plan.storage) controls.storage.value = plan.storage;
@@ -734,6 +751,25 @@ function applySizingPlan(controls          , plan                         )     
     controls.includeAutomation.checked = plan.includeAutomation;
   }
   if (plan.automationSize) controls.automationSize.value = plan.automationSize;
+  // What the imported estate knows: the hosts' own DNS, NTP and domain, and the
+  // converged cluster's networks.
+  if (plan.domainSuffix) controls.domainSuffix.value = plan.domainSuffix;
+  if (plan.dnsServers) {
+    controls.dns1.value = plan.dnsServers[0] ?? '';
+    controls.dns2.value = plan.dnsServers[1] ?? '';
+  }
+  if (plan.ntpServers) {
+    controls.ntp1.value = plan.ntpServers[0] ?? '';
+    controls.ntp2.value = plan.ntpServers[1] ?? '';
+  }
+  const net = (n                         , cidr                  , vlan                  )       => {
+    if (!n) return;
+    cidr.value = n.cidr;
+    vlan.value = String(n.vlanId);
+  };
+  net(plan.management, controls.mgmtCidr, controls.mgmtVlan);
+  net(plan.vmotion, controls.vmotionCidr, controls.vmotionVlan);
+  net(plan.vsan, controls.vsanCidr, controls.vsanVlan);
 }
 
 function existingBlock(
