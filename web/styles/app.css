@@ -1621,3 +1621,72 @@ textarea {
   margin-left: auto;
   white-space: nowrap;
 }
+
+/* --- The VCF path: inventory, sizing, spec builder -------------------------- */
+.flow-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+.flow-steps ol {
+  display: flex;
+  flex: 1;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: none;
+}
+.flow-steps li {
+  flex: 1;
+  min-width: 160px;
+}
+.flow-steps li a {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+.flow-steps li a:hover {
+  background: var(--surface-hover);
+}
+.flow-steps .flow-number {
+  grid-row: span 2;
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.flow-steps .flow-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.flow-steps .flow-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.flow-steps li.is-current a {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.flow-steps li.is-current .flow-number {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.flow-steps li.is-done .flow-number {
+  border-color: var(--ok);
+  color: var(--ok);
+}

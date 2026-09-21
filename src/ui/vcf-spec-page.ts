@@ -32,6 +32,7 @@ import { validateSddcSpec, validateSddcSpecJson } from '../vcf/spec-validate.ts'
 import { SCENARIO_RULES, scenarioRule, type DeploymentScenario } from '../vcf/scenarios.ts';
 import { takeHandoff, unappliedLatest, markApplied, wasApplied } from './handoff.ts';
 import { mountEstateBar } from './estate-bar.ts';
+import { mountFlowSteps } from './flow-steps.ts';
 import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.ts';
 import { sizeDeployment } from '../vcf/sizing.ts';
 import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.ts';
@@ -758,6 +759,8 @@ export function mountVcfSpecPage(root: HTMLElement): void {
       render();
     },
   });
+  // Above the estate strip: where this page sits on the VCF path.
+  mountFlowSteps(root, 'spec');
 }
 
 /**

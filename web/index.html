@@ -14,10 +14,12 @@
       </a>
       <nav class="header-nav">
         <a href="index.html" aria-current="page">Home</a>
-        <a href="app/inventory.html">Inventory</a>
-        <a href="app/multicloud.html">Multi-Cloud</a>
+        <a href="app/inventory.html">VMware Inventory</a>
         <a href="app/vcf-sizing.html">VCF Sizing</a>
         <a href="app/vcf-spec.html">VCF Spec Builder</a>
+        <a href="app/multicloud.html">Multi-Cloud</a>
+        <a href="app/migration.html">Migration</a>
+        <a href="app/migration-portfolio.html">Portfolio</a>
         <a href="app/terraform-map.html">Terraform Map</a>
         <a href="app/terraform.html">Terraform</a>
         <a href="app/ansible.html">Ansible</a>
@@ -36,8 +38,16 @@
       </div>
 
       <div class="tool-grid">
+        <a class="tool-card" href="app/inventory.html">
+          <h3>1 · VMware Inventory</h3>
+          <p>
+            Start here. Import the RVTools workbook as it is — every tab, every vCenter — and see the
+            estate's capacity, clusters, VCF readiness and what stands in the way of moving each VM.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
         <a class="tool-card" href="app/vcf-sizing.html">
-          <h3>VCF 9.1 Sizing</h3>
+          <h3>2 · VCF 9.1 Sizing</h3>
           <p>
             Size a VCF fleet for greenfield or brownfield. Management-plane demand, host capacity,
             vSAN overhead, IP and FQDN counts, and per-core licensing — with the provenance of every
@@ -47,7 +57,7 @@
         </a>
 
         <a class="tool-card" href="app/vcf-spec.html">
-          <h3>VCF 9.1 Spec Builder</h3>
+          <h3>3 · VCF 9.1 Spec Builder</h3>
           <p>
             Generate a complete <code>SddcSpec</code> for the VCF Installer, covering all 31 top-level
             keys including <code>vspClusterSpec</code>, VPC/DTGW, LACP and dual-stack.
@@ -95,14 +105,7 @@
           <span class="tag tag-ready">Ready</span>
         </a>
 
-        <a class="tool-card" href="app/inventory.html">
-          <h3>VMware Inventory</h3>
-          <p>
-            Import RVTools exports, PowerCLI collections or live vCenter data into one canonical
-            inventory model, then analyse it for capacity, consolidation and VCF readiness.
-          </p>
-          <span class="tag tag-ready">Ready</span>
-        </a>
+
 
         <a class="tool-card" href="app/multicloud.html">
           <h3>Multi-Cloud Decision &amp; Onboarding Wizard</h3>
