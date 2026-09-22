@@ -14,6 +14,7 @@
  */
 
 import { mountGeneratorPage } from './generator-page.ts';
+import { buildSite } from '../ansible/site.ts';
 import { mountEstateBar } from './estate-bar.ts';
 import { currentEstate } from '../kit/estate-store.ts';
 import { ANSIBLE_BLUEPRINTS } from '../ansible/blueprints/index.ts';
@@ -41,6 +42,13 @@ if (root) {
           'Pick a platform and playbook, adjust the parameters, then Generate. Install the collections from requirements.yml, then run ansible-playbook -i inventory <file> --check --diff.',
         preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
         settingsKind: 'archtoolkit.ansible-generator',
+        stack: {
+          noun: 'site playbook',
+          // Two plays cannot hand values to each other; group_vars/all.yml can.
+          referenceLabel: 'a shared variable',
+          wrap: (name) => `{{ ${name} }}`,
+          build: (items, blueprintFor, opts) => buildSite(items, blueprintFor, { stackName: opts.stackName }),
+        },
         downloadExtension: '.yml',
         standingFindings: () => catalogFindings(),
       });

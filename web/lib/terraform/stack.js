@@ -29,35 +29,16 @@
  */
 
 import { error, info, warning,              } from '../core/findings.js';
-import { defaultValues,                                      } from '../kit/blueprint.js';
+import { defaultValues,                } from '../kit/blueprint.js';
+import { numbered, slug,                                                                            } from '../kit/stack.js';
 import { moduleBySource } from './modules.js';
                                                   
 
-                            
-                                                                           
-                      
-                               
+export { slug } from '../kit/stack.js';
                                                                              
-                         
-                                   
- 
 
-                                 
-                                                                   
-                              
-                                  
-                        
-                                                                    
-                           
-                             
- 
 
-                             
-                                                   
-                                        
-                                                    
-                                                 
- 
+
 
 // ---------------------------------------------------------------------------
 // A very small HCL reader
@@ -179,15 +160,6 @@ function skipHeredoc(text        , start        )         {
 // Building
 // ---------------------------------------------------------------------------
 
-/** A file name and an identifier prefix from an item's label. */
-export function slug(label        , fallback        )         {
-  const s = label
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return s || fallback;
-}
 
                             
                           
@@ -237,9 +209,8 @@ function readRequiredProviders(terraformBlock        , item        , into       
   }
 }
 
-function fileNameFor(index        , name        )         {
-  return `${String(index + 1).padStart(2, '0')}-${name}.tf`;
-}
+const fileNameFor = (index        , name        )         => numbered(index, name, '.tf');
+
 
 /**
  * Rename an item's own resources, data sources and modules, declaration and
@@ -271,7 +242,7 @@ function applyRenames(hcl        , renames                             )        
  */
 export function buildStack(
   items                      ,
-  blueprintFor                                       ,
+  blueprintFor                 ,
   options                                                                 = {},
 )             {
   const findings            = [];

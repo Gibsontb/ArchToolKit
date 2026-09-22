@@ -29,35 +29,16 @@
  */
 
 import { error, info, warning, type Finding } from '../core/findings.ts';
-import { defaultValues, type Blueprint, type BlueprintValues } from '../kit/blueprint.ts';
+import { defaultValues, type Blueprint } from '../kit/blueprint.ts';
+import { numbered, slug, type BlueprintLookup, type StackBuild, type StackItem, type StackReference } from '../kit/stack.ts';
 import { moduleBySource } from './modules.ts';
 import type { CloudTarget } from './providers.ts';
 
-export interface StackItem {
-  /** Stable id, so the list can be reordered without losing references. */
-  readonly id: string;
-  readonly blueprintId: string;
-  /** What this item is called in the stack: the file name and the prefix. */
-  readonly label: string;
-  readonly values: BlueprintValues;
-}
+export { slug } from '../kit/stack.ts';
+export type { StackBuild, StackItem, StackReference } from '../kit/stack.ts';
 
-export interface StackReference {
-  /** The expression as it goes into a field: `aws_vpc.this.id`. */
-  readonly expression: string;
-  /** Which item it comes from. */
-  readonly item: string;
-  /** What it is, for the picker: `aws_vpc.this` or `module.vpc`. */
-  readonly address: string;
-  readonly attribute: string;
-}
 
-export interface StackBuild {
-  readonly files: Readonly<Record<string, string>>;
-  readonly findings: readonly Finding[];
-  /** Every value an item exposes, in list order. */
-  readonly references: readonly StackReference[];
-}
+
 
 // ---------------------------------------------------------------------------
 // A very small HCL reader
@@ -179,15 +160,6 @@ function skipHeredoc(text: string, start: number): number {
 // Building
 // ---------------------------------------------------------------------------
 
-/** A file name and an identifier prefix from an item's label. */
-export function slug(label: string, fallback: string): string {
-  const s = label
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return s || fallback;
-}
 
 interface RequiredProvider {
   readonly source: string;
@@ -237,9 +209,8 @@ function readRequiredProviders(terraformBlock: string, item: string, into: Map<s
   }
 }
 
-function fileNameFor(index: number, name: string): string {
-  return `${String(index + 1).padStart(2, '0')}-${name}.tf`;
-}
+const fileNameFor = (index: number, name: string): string => numbered(index, name, '.tf');
+
 
 /**
  * Rename an item's own resources, data sources and modules, declaration and
@@ -271,7 +242,7 @@ function applyRenames(hcl: string, renames: ReadonlyMap<string, string>): string
  */
 export function buildStack(
   items: readonly StackItem[],
-  blueprintFor: (id: string) => Blueprint | undefined,
+  blueprintFor: BlueprintLookup,
   options: { readonly target?: CloudTarget; readonly stackName?: string } = {},
 ): StackBuild {
   const findings: Finding[] = [];

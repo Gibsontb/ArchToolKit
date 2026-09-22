@@ -435,6 +435,43 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- the Ansible build list: several playbooks into one site --------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${BASE}/app/ansible.html`, { waitUntil: 'networkidle' });
+  const pick = (n) => page.locator('select:not([data-control])').nth(n);
+  await pick(0).selectOption('vsphere');
+  await page.waitForTimeout(400);
+  const playbooks = await pick(1).locator('option').allInnerTexts();
+
+  await pick(1).selectOption({ index: playbooks.findIndex((t) => /from template/i.test(t)) });
+  await page.getByPlaceholder('Used in comments, tags and the filename').fill('build the VMs');
+  await page.locator('[data-control="add-to-build"]').click();
+  await page.waitForTimeout(300);
+  await pick(1).selectOption({ index: playbooks.findIndex((t) => /power/i.test(t)) });
+  await page.getByPlaceholder('Used in comments, tags and the filename').fill('power off');
+  await page.locator('[data-control="add-to-build"]').click();
+  await page.waitForTimeout(300);
+  check('Site: both playbooks are in the build list', (await page.locator('.build-item').count()) === 2);
+
+  await page.locator('[data-control="stack-name"]').fill('wave-1');
+  await page.locator('[data-control="generate-stack"]').click();
+  await page.waitForTimeout(600);
+  const files = await page.locator('.file-head strong').allInnerTexts();
+  check('Site: a site.yml, a file per playbook, and the shared files', ['site.yml', '01-build-the-vms.yml', '02-power-off.yml', 'requirements.yml', 'README.md'].every((f) => files.includes(f)), files.join(', '));
+  const code = (await page.locator('pre.code-block').allInnerTexts()).join('\n');
+  check('Site: site.yml imports them in order', /import_playbook: 01-build-the-vms\.yml[\s\S]*import_playbook: 02-power-off\.yml/.test(code));
+  check('Site: the answers both playbooks share became one variable', /vcenter_hostname/.test(code) && code.includes('{{ vcenter_hostname }}'));
+  const collections = [...code.matchAll(/- name: ([a-z_]+\.[a-z_]+)/g)].map((m) => m[1]);
+  check('Site: every collection is listed once, pinned', collections.length > 0 && collections.length === new Set(collections).size && /version: '>=/.test(code), collections.join(', '));
+  check('Site: it generated without errors', /Generated\. No errors\./.test(await page.locator('body').innerText()));
+  check('Site: no script errors', errors.length === 0, errors[0] ?? '');
+  await ctx.close();
+}
+
 // --- clear all: every page has it, and it empties the toolkit ---------------
 {
   const ctx = await browser.newContext();

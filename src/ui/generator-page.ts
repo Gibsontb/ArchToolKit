@@ -65,8 +65,12 @@ export interface GeneratorOptions {
    * page behaves as it always has, one blueprint at a time.
    */
   readonly stack?: {
-    /** "stack" for Terraform; what a composed set is called here. */
+    /** "stack" for Terraform, "site playbook" for Ansible. */
     readonly noun: string;
+    /** What the picker offers, in words: "a shared variable". */
+    readonly referenceLabel?: string;
+    /** How a reference is written into a field. Terraform's `${…}` by default. */
+    readonly wrap?: (expression: string) => string;
     readonly build: (items: readonly StackItem[], blueprintFor: (id: string) => Blueprint | undefined, options: { target?: string; stackName?: string }) => StackBuild;
   };
 }
@@ -599,7 +603,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
         `Build list (${stackItems.length})`,
         el('p', {
           class: 'muted small',
-          text: `Add each piece, then generate the whole ${options.stack.noun} as one project: shared provider and version files, one file per item, and a README. Fields can take a value from an item already in the list.`,
+          text: `Add each piece, then generate the whole ${options.stack.noun} as one project: one file per item, the shared files around them, and a README. A field can take ${options.stack.referenceLabel ?? 'a value from an item already in the list'}.`,
         }),
         stackItems.length === 0
           ? el('div', { class: 'empty', text: `Nothing added yet. Fill in step 2 and press "Add to build".` })
@@ -638,7 +642,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     if (stackRefs.length === 0) return null;
     const picker = el('select', { class: 'ref-picker', attrs: { 'aria-label': 'Use a value from the build list' } }) as HTMLSelectElement;
     picker.appendChild(el('option', { text: '⇢', attrs: { value: '' } }));
-    picker.title = 'Use a value from an item in the build list';
+    picker.title = `Use ${options.stack?.referenceLabel ?? 'a value from an item in the build list'}`;
     let group: HTMLOptGroupElement | null = null;
     let groupName: string | undefined;
     for (const reference of stackRefs) {
@@ -651,7 +655,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     }
     picker.addEventListener('change', () => {
       if (!picker.value) return;
-      set(`\${${picker.value}}`);
+      set(options.stack?.wrap ? options.stack.wrap(picker.value) : `\${${picker.value}}`);
       picker.value = '';
     });
     return picker;

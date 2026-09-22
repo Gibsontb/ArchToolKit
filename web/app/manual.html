@@ -356,6 +356,32 @@
             <tr><td>Linux</td><td>NGINX, security updates, users and groups, cron job, SSH hardening.</td></tr>
             <tr><td>Windows</td><td>AD domain join, IIS, Windows Updates, local user.</td></tr>
           </table>
+          <h3>Building a whole site playbook</h3>
+          <p>
+            The same <strong>Build list</strong> as the Terraform page, for Ansible. Add each playbook
+            with <strong>Add to build</strong>, then <strong>Generate site playbook</strong> writes a
+            repository you can run in one go:
+          </p>
+          <table>
+            <tr><th>File</th><th>What it holds</th></tr>
+            <tr><td><code>site.yml</code></td><td>Imports each playbook, in list order.</td></tr>
+            <tr><td><code>01-…yml</code>, <code>02-…yml</code></td><td>One playbook per item.</td></tr>
+            <tr><td><code>group_vars/all.yml</code></td><td>The answers more than one playbook gave the same way, as variables every play can see.</td></tr>
+            <tr><td><code>requirements.yml</code></td><td>Every collection the playbooks use, merged and pinned once.</td></tr>
+            <tr><td><code>inventory/hosts.yml</code></td><td>A starting inventory with the groups the plays name.</td></tr>
+            <tr><td><code>README.md</code></td><td>What it runs and how.</td></tr>
+          </table>
+          <p>
+            Two plays cannot hand values to each other the way two Terraform resources can — a
+            registered variable belongs to its play. What every play can see is
+            <code>group_vars/all.yml</code>, so that is what the <strong>⇢</strong> picker offers and
+            where shared answers go: give two playbooks the same vCenter and it becomes one
+            <code>vcenter_hostname</code> that both reference, changed in one place. A
+            <code>{{ variable }}</code> nothing sets is declared there empty, so the run fails clearly
+            rather than acting on a blank. Anything that looks like a password is deliberately left
+            out, with a note to supply it through <code>ansible-vault</code> or <code>-e</code>.
+          </p>
+
           <h3>From your estate</h3>
           <ul>
             <li><strong>Inventory of a cluster's VMs</strong> (all, Linux or Windows): a <code>hosts.yml</code> grouped by OS, cluster and folder.</li>
