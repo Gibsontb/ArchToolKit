@@ -40,6 +40,7 @@ if (root) {
         idleHint:
           'Pick a platform and playbook, adjust the parameters, then Generate. Install the collections from requirements.yml, then run ansible-playbook -i inventory <file> --check --diff.',
         preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
+        settingsKind: 'archtoolkit.ansible-generator',
         downloadExtension: '.yml',
         standingFindings: () => catalogFindings(),
       });

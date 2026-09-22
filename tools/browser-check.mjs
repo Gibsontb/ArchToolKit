@@ -180,9 +180,9 @@ for (const [name, path] of [
   // The generators build from the same estate.
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(800);
-  await page.locator('select').first().selectOption('vsphere');
+  await page.locator('select:not([data-control])').first().selectOption('vsphere');
   await page.waitForTimeout(300);
-  const tfList = page.locator('select').nth(1);
+  const tfList = page.locator('select:not([data-control])').nth(1);
   const tfLabels = await tfList.locator('option').allInnerTexts();
   await tfList.selectOption({ index: tfLabels.findIndex((t) => /landing zone/i.test(t)) });
   await page.waitForTimeout(300);
@@ -310,6 +310,77 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- Load, Save and Clear on the builder and both generators ---------------
+{
+  const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
+  const { readFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const ctx = await browser.newContext({ acceptDownloads: true });
+  const page = await ctx.newPage();
+  const save = async (format) => {
+    await page.locator('[data-control="settings-format"]').selectOption(format);
+    const [download] = await Promise.all([page.waitForEvent('download'), page.locator('[data-control="settings-save"]').click()]);
+    const path = join(dir, download.suggestedFilename());
+    await download.saveAs(path);
+    return { path, text: readFileSync(path, 'utf8'), name: download.suggestedFilename() };
+  };
+  const clearForm = async () => {
+    await page.locator('[data-control="settings-clear"]').click();
+    await page.locator('[data-control="settings-clear"]').click();
+    await page.waitForTimeout(300);
+  };
+  const load = async (path) => {
+    await page.locator('[data-control="settings-file"]').setInputFiles(path);
+    await page.waitForTimeout(500);
+    return page.locator('[data-control="settings-status"]').innerText();
+  };
+
+  // The spec builder.
+  await page.goto(`${BASE}/app/vcf-spec.html`, { waitUntil: 'networkidle' });
+  const sddc = page.getByLabel('SDDC ID', { exact: true });
+  await sddc.fill('lab-m42');
+  await page.waitForTimeout(300);
+  const yaml = await save('yaml');
+  check('Builder: Save writes YAML settings', yaml.name === 'lab-m42-builder-settings.yaml' && /sddcId: lab-m42/.test(yaml.text), yaml.name);
+  check('Builder: and no passwords', !/password/i.test(yaml.text.replace(/Passwords are not saved/, '')));
+  const txt = await save('txt');
+  check('Builder: TXT is one field per line', /^fields\.sddcId = lab-m42$/m.test(txt.text));
+  await clearForm();
+  check('Builder: Clear puts the form back', (await sddc.inputValue()) === 'vcf-m01', await sddc.inputValue());
+  const status = await load(txt.path);
+  check('Builder: Load brings it back from TXT', (await sddc.inputValue()) === 'lab-m42' && /Loaded/.test(status), status);
+  check('Builder: and the document follows', /"sddcId": "lab-m42"/.test(await page.locator('body').innerText()));
+  const labFile = join(dir, 'lab.json');
+  writeFileSync(labFile, JSON.stringify(LAB_911_THREE_HOST_FC));
+  check('Builder: a deployment spec is sent to the Data editor', /Data editor/.test(await load(labFile)));
+
+  // Terraform, then the same file offered to Ansible.
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  const label = page.getByPlaceholder('Used in comments, tags and the filename');
+  await label.fill('prod-landing');
+  const tf = await save('json');
+  const tfJson = JSON.parse(tf.text);
+  check('Terraform: Save writes the platform, blueprint and values', tfJson.kind === 'archtoolkit.terraform-generator' && tfJson.values.__name === 'prod-landing' && typeof tfJson.blueprint === 'string');
+  await clearForm();
+  check('Terraform: Clear empties the parameters', (await label.inputValue()) === '');
+  const tfStatus = await load(tf.path);
+  check('Terraform: Load restores them', (await label.inputValue()) === 'prod-landing', tfStatus);
+  const tfYaml = await save('yaml');
+  await clearForm();
+  await load(tfYaml.path);
+  check('Terraform: and from YAML', (await page.getByPlaceholder('Used in comments, tags and the filename').inputValue()) === 'prod-landing');
+
+  await page.goto(`${BASE}/app/ansible.html`, { waitUntil: 'networkidle' });
+  check('Ansible: has Load, Save and Clear', (await page.locator('[data-control="settings-load"]').count()) === 1 && (await page.locator('[data-control="settings-clear"]').count()) === 1);
+  check('Ansible: a Terraform file is refused, and says why', /Terraform page/.test(await load(tf.path)));
+  await page.getByPlaceholder('Used in comments, tags and the filename').fill('patching');
+  const an = await save('txt');
+  await clearForm();
+  await load(an.path);
+  check('Ansible: Load restores its own TXT', (await page.getByPlaceholder('Used in comments, tags and the filename').inputValue()) === 'patching');
+  await ctx.close();
+}
+
 // --- clear all: every page has it, and it empties the toolkit ---------------
 {
   const ctx = await browser.newContext();
@@ -372,10 +443,10 @@ for (const [name, path] of [
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
-  await page.locator('select').first().selectOption('aws');
+  await page.locator('select:not([data-control])').first().selectOption('aws');
   await page.waitForTimeout(400);
 
-  const list = page.locator('select').nth(1);
+  const list = page.locator('select:not([data-control])').nth(1);
   const groups = await list.evaluate((s) =>
     Array.from(s.querySelectorAll('optgroup')).map((g) => `${g.label}:${g.children.length}`),
   );
@@ -422,9 +493,9 @@ for (const [name, path] of [
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
-  await page.locator('select').first().selectOption('aws');
+  await page.locator('select:not([data-control])').first().selectOption('aws');
   await page.waitForTimeout(400);
-  const list = page.locator('select').nth(1);
+  const list = page.locator('select:not([data-control])').nth(1);
   const labels = await list.locator('option').allTextContents();
   await list.selectOption({ index: labels.findIndex((t) => /ec2-instance/.test(t)) });
   await page.waitForTimeout(400);
@@ -493,7 +564,7 @@ for (const [name, path] of [
   // findings panel — a name flagged in one and not the other is the bug this
   // page exists to avoid making.
   for (const target of ['azure', 'google', 'oci']) {
-    await page.locator('select').first().selectOption(target);
+    await page.locator('select:not([data-control])').first().selectOption(target);
     await page.waitForTimeout(400);
     const count = await page.locator('.map-section').count();
     check(`Map: ${target} renders its domains`, count >= 7, `${count} sections`);
@@ -508,7 +579,7 @@ for (const [name, path] of [
   }
 
   // The point of the check is the suggestion, not the complaint.
-  await page.locator('select').first().selectOption('azure');
+  await page.locator('select:not([data-control])').first().selectOption('azure');
   await page.waitForTimeout(400);
   const body = await page.locator('body').innerText();
   check(
@@ -529,7 +600,7 @@ for (const [kind, path, generateLabel, expect] of [
   await page.goto(BASE + path, { waitUntil: 'networkidle' });
 
   // Step 1 is a dropdown, not a checkbox per cloud.
-  const platform = page.locator('select').first();
+  const platform = page.locator('select:not([data-control])').first();
   const platforms = await platform.locator('option').count();
   check(`${kind}: one platform dropdown, not a checkbox each`, platforms >= 7, `${platforms} options`);
   check(
@@ -539,7 +610,7 @@ for (const [kind, path, generateLabel, expect] of [
 
   await platform.selectOption('aws');
   await page.waitForTimeout(400);
-  const blueprints = page.locator('select').nth(1);
+  const blueprints = page.locator('select:not([data-control])').nth(1);
   const count = await blueprints.locator('option').count();
   check(`${kind}: AWS offers several things to build`, count >= 4, `${count} blueprints`);
 
@@ -627,14 +698,14 @@ for (const [kind, path, generateLabel, expect] of [
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
-  await page.locator('select').first().selectOption('oci');
+  await page.locator('select:not([data-control])').first().selectOption('oci');
   await page.waitForTimeout(400);
 
   // Same tab, other generator: it must already be on OCI.
   await page.goto(`${BASE}/app/ansible.html`, { waitUntil: 'networkidle' });
   check(
     'the platform carries from one generator to the other',
-    (await page.locator('select').first().inputValue()) === 'oci',
+    (await page.locator('select:not([data-control])').first().inputValue()) === 'oci',
   );
   await ctx.close();
 }
@@ -743,7 +814,7 @@ for (const [kind, path, generateLabel, expect] of [
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
   check(
     'the wizard tells the generators which cloud to open on',
-    (await page.locator('select').first().inputValue()) === 'aws',
+    (await page.locator('select:not([data-control])').first().inputValue()) === 'aws',
   );
   check(
     'and the generator says where that came from',
@@ -809,7 +880,7 @@ for (const [kind, path, generateLabel, expect] of [
     ['Ansible', '/app/ansible.html'],
   ]) {
     await page.goto(BASE + path, { waitUntil: 'networkidle' });
-    await page.locator('select').first().selectOption('vsphere');
+    await page.locator('select:not([data-control])').first().selectOption('vsphere');
     await page.waitForTimeout(400);
 
     const offered = await page.evaluate(() => {

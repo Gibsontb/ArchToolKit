@@ -8,6 +8,9 @@
  */
 
 import { el, append, replace, downloadFile, readFileAsText } from './dom.ts';
+import { fileBar } from './file-bar.ts';
+import { envelope, openEnvelope, SETTINGS_KINDS, stripSecrets } from '../kit/settings-file.ts';
+import { isRecord, type Json } from '../editor/doc.ts';
 import {
   card,
   field,
@@ -441,7 +444,83 @@ export function mountVcfSpecPage(root: HTMLElement): void {
 
   // Where the prefill came from, above the form.
   const notice = el('div', {});
-  append(root, notice);
+
+  /** Every form control's value, by its name in `controls`. */
+  function snapshot(): Record<string, Json> {
+    const out: Record<string, Json> = {};
+    for (const [key, node] of Object.entries(controls)) {
+      if (node instanceof HTMLInputElement) out[key] = node.type === 'checkbox' ? node.checked : node.value;
+      else if (node instanceof HTMLSelectElement) out[key] = node.value;
+    }
+    return out;
+  }
+
+  /** Put saved values back into the form. Returns the names that could not be. */
+  function restore(fields: Record<string, Json>): string[] {
+    const skipped: string[] = [];
+    for (const [key, value] of Object.entries(fields)) {
+      const node = (controls as unknown as Record<string, HTMLElement | undefined>)[key];
+      if (node instanceof HTMLInputElement) {
+        if (node.type === 'checkbox') node.checked = value === true;
+        else node.value = value === null ? '' : String(value);
+      } else if (node instanceof HTMLSelectElement) {
+        const v = String(value ?? '');
+        if ([...node.options].some((o) => o.value === v)) node.value = v;
+        else skipped.push(key);
+      } else skipped.push(key);
+    }
+    return skipped;
+  }
+
+  // Where Clear goes back to: the form as the page draws it, before any prefill.
+  const defaults = snapshot();
+  const defaultHosts = hostTable.entries;
+
+  append(
+    root,
+    fileBar({
+      noun: 'the builder settings',
+      fileName: () => `${controls.sddcId.value.trim() || 'vcf'}-builder-settings`,
+      header: () => [
+        `ArchToolKit VCF spec builder settings for ${controls.sddcId.value.trim() || 'vcf'}`,
+        'Load this file on the VCF spec builder to carry on. Passwords are not saved.',
+      ],
+      save: () =>
+        envelope('archtoolkit.vcf-spec-builder', {
+          fields: snapshot(),
+          hosts: stripSecrets(hostTable.entries as unknown as Json),
+          inherited: stripSecrets(inherited as unknown as Json),
+        }) as unknown as Json,
+      load: (value, name) => {
+        if (isRecord(value) && 'hostSpecs' in value && ('sddcId' in value || 'workflowType' in value)) {
+          throw new Error('that is a deployment specification, not builder settings. Open it in the Data editor to change it.');
+        }
+        const opened = openEnvelope(value, 'archtoolkit.vcf-spec-builder', SETTINGS_KINDS);
+        if ('error' in opened) throw new Error(opened.error);
+        const file = opened.ok;
+        restore(defaults);
+        const skipped = isRecord(file.fields) ? restore(file.fields) : [];
+        inherited = isRecord(file.inherited) ? (file.inherited as unknown as Partial<DeploymentPlan>) : {};
+        hostTable.syncCount();
+        if (Array.isArray(file.hosts)) hostTable.load(file.hosts as unknown as HostEntry[]);
+        replace(notice);
+        lastRenderKey = '';
+        render();
+        const passwords = Array.isArray(file.hosts) && file.hosts.length > 0 ? ' Host passwords are not kept in the file; type them again.' : '';
+        return `Loaded ${name}.${skipped.length ? ` ${skipped.length} field${skipped.length === 1 ? '' : 's'} could not be set (${skipped.slice(0, 4).join(', ')}).` : ''}${passwords}`;
+      },
+      clear: () => {
+        restore(defaults);
+        inherited = {};
+        hostTable.syncCount();
+        hostTable.load(defaultHosts);
+        replace(notice);
+        lastRenderKey = '';
+        render();
+      },
+    }),
+    notice,
+  );
 
   /** Fill the form from a sizing result or an estate, and say so. */
   function applyInbound(origin: string, payload: Partial<DeploymentPlan>, from: 'sizing' | 'estate'): void {

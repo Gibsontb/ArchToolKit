@@ -116,6 +116,8 @@ function unescapeDouble(body: string, line: number): string {
 
 /** Fold the line breaks of a multi-line flow scalar: single breaks become spaces. */
 function foldLines(parts: readonly string[]): string {
+  // One line has no breaks to fold, and its own spaces are content.
+  if (parts.length === 1) return parts[0] as string;
   let out = '';
   let blank = 0;
   parts.forEach((p, i) => {

@@ -32,6 +32,9 @@ import {
   type SelectOption,
 } from '../kit/blueprint.ts';
 import type { Finding } from '../core/findings.ts';
+import { fileBar } from './file-bar.ts';
+import { envelope, openEnvelope, SETTINGS_KINDS, stripSecrets } from '../kit/settings-file.ts';
+import { isRecord, type Json } from '../editor/doc.ts';
 
 export interface GeneratorOptions {
   readonly groups: readonly BlueprintGroup[];
@@ -50,6 +53,8 @@ export interface GeneratorOptions {
   readonly preferGroup?: () => string | undefined;
   /** Findings that always apply, e.g. catalog age. */
   readonly standingFindings?: () => readonly Finding[];
+  /** The `kind` written into saved settings, e.g. `archtoolkit.terraform-generator`. */
+  readonly settingsKind: string;
 }
 
 /**
@@ -353,6 +358,48 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 
   append(
     root,
+    fileBar({
+      noun: `the ${options.noun} and its parameters`,
+      fileName: () => `${String(values.__name ?? '').trim() || blueprint?.id || options.noun}-settings`,
+      header: () => [
+        `ArchToolKit ${options.kindLabel} settings: ${blueprint?.label ?? ''}`,
+        'Load this file on the same page to carry on. Passwords and keys are not saved.',
+      ],
+      save: () =>
+        envelope(options.settingsKind, {
+          target,
+          blueprint: blueprint?.id ?? null,
+          values: stripSecrets(values as unknown as Json),
+        }) as unknown as Json,
+      load: (value, name) => {
+        const opened = openEnvelope(value, options.settingsKind, SETTINGS_KINDS);
+        if ('error' in opened) throw new Error(opened.error);
+        const file = opened.ok;
+        const group = options.groups.find((g) => g.target === file.target);
+        if (!group) throw new Error(`the platform ${String(file.target)} is not one this page builds for.`);
+        target = group.target as TargetId;
+        setTarget(target, `loaded from ${name}`);
+        const next = available().find((b) => b.id === file.blueprint);
+        if (!next) throw new Error(`there is no ${options.noun} called ${String(file.blueprint)} for ${group.label}.`);
+        selectBlueprint(next);
+        const loaded = isRecord(file.values) ? file.values : {};
+        const known = new Set(['__name', ...next.inputs.map((i) => i.id)]);
+        const ignored = Object.keys(loaded).filter((k) => !known.has(k));
+        const kept: BlueprintValues = {};
+        for (const [k, v] of Object.entries(loaded)) if (known.has(k)) (kept as Record<string, unknown>)[k] = v;
+        values = { ...values, ...kept };
+        renderOne();
+        renderTwo();
+        renderThree();
+        return `Loaded ${next.label} from ${name}${ignored.length ? `; ${ignored.length} field${ignored.length === 1 ? '' : 's'} this ${options.noun} no longer has were skipped (${ignored.slice(0, 4).join(', ')})` : ''}.`;
+      },
+      clear: () => {
+        selectBlueprint(first());
+        renderOne();
+        renderTwo();
+        renderThree();
+      },
+    }),
     el(
       'div',
       { class: 'generator-grid' },

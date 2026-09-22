@@ -32,6 +32,9 @@ import {
                     
 } from '../kit/blueprint.js';
                                                    
+import { fileBar } from './file-bar.js';
+import { envelope, openEnvelope, SETTINGS_KINDS, stripSecrets } from '../kit/settings-file.js';
+import { isRecord,           } from '../editor/doc.js';
 
                                    
                                              
@@ -50,6 +53,8 @@ import {
                                                   
                                                       
                                                        
+                                                                                        
+                                
  
 
 /**
@@ -353,6 +358,48 @@ export function mountGeneratorPage(root             , options                  )
 
   append(
     root,
+    fileBar({
+      noun: `the ${options.noun} and its parameters`,
+      fileName: () => `${String(values.__name ?? '').trim() || blueprint?.id || options.noun}-settings`,
+      header: () => [
+        `ArchToolKit ${options.kindLabel} settings: ${blueprint?.label ?? ''}`,
+        'Load this file on the same page to carry on. Passwords and keys are not saved.',
+      ],
+      save: () =>
+        envelope(options.settingsKind, {
+          target,
+          blueprint: blueprint?.id ?? null,
+          values: stripSecrets(values                   ),
+        })                   ,
+      load: (value, name) => {
+        const opened = openEnvelope(value, options.settingsKind, SETTINGS_KINDS);
+        if ('error' in opened) throw new Error(opened.error);
+        const file = opened.ok;
+        const group = options.groups.find((g) => g.target === file.target);
+        if (!group) throw new Error(`the platform ${String(file.target)} is not one this page builds for.`);
+        target = group.target            ;
+        setTarget(target, `loaded from ${name}`);
+        const next = available().find((b) => b.id === file.blueprint);
+        if (!next) throw new Error(`there is no ${options.noun} called ${String(file.blueprint)} for ${group.label}.`);
+        selectBlueprint(next);
+        const loaded = isRecord(file.values) ? file.values : {};
+        const known = new Set(['__name', ...next.inputs.map((i) => i.id)]);
+        const ignored = Object.keys(loaded).filter((k) => !known.has(k));
+        const kept                  = {};
+        for (const [k, v] of Object.entries(loaded)) if (known.has(k)) (kept                           )[k] = v;
+        values = { ...values, ...kept };
+        renderOne();
+        renderTwo();
+        renderThree();
+        return `Loaded ${next.label} from ${name}${ignored.length ? `; ${ignored.length} field${ignored.length === 1 ? '' : 's'} this ${options.noun} no longer has were skipped (${ignored.slice(0, 4).join(', ')})` : ''}.`;
+      },
+      clear: () => {
+        selectBlueprint(first());
+        renderOne();
+        renderTwo();
+        renderThree();
+      },
+    }),
     el(
       'div',
       { class: 'generator-grid' },

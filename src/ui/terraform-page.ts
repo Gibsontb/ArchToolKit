@@ -36,6 +36,7 @@ if (root) {
         idleHint:
           'Pick a platform and blueprint, adjust the parameters, then Generate. Save the result as main.tf and run terraform init && terraform plan.',
         preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
+        settingsKind: 'archtoolkit.terraform-generator',
         downloadExtension: '.tf',
         standingFindings: () => [...catalogFindings(), ...moduleFindings()],
       });
