@@ -1333,7 +1333,7 @@ function buildOutput(
         on: {
           click: () => {
             putHandoff('spec-to-editor', `${spec.sddcId}-sddcspec-9.1.json`, spec);
-            globalThis.location.assign('vcf-spec-editor.html');
+            globalThis.location.assign('data-editor.html?profile=vcf-spec');
           },
         },
       }),

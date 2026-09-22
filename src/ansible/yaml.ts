@@ -66,12 +66,16 @@ function scalar(value: string | number | boolean | null): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
   if (value.includes('\n')) {
-    // A block scalar keeps newlines without escaping; the trailing dash strips
-    // the final newline that would otherwise be added.
-    return `|-\n${value
-      .split('\n')
-      .map((line) => `  ${line}`)
-      .join('\n')}`;
+    // A block scalar keeps newlines without escaping. The chomping indicator
+    // says what happens to the final newlines: `|-` strips, `|` keeps one,
+    // `|+` keeps them all. A first line that starts with a space needs its
+    // indentation stated, or the reader would take that space as indentation.
+    const body = value.replace(/\n+$/, '');
+    const trailing = value.length - body.length;
+    const chomp = trailing === 0 ? '-' : trailing === 1 ? '' : '+';
+    const indicator = /^[ \t]/.test(body) ? '2' : '';
+    const lines = trailing > 1 ? [...body.split('\n'), ...Array(trailing - 1).fill('')] : body.split('\n');
+    return `|${indicator}${chomp}\n${lines.map((line) => (line === '' ? '' : `  ${line}`)).join('\n')}`;
   }
   return needsQuoting(value) ? quoteScalar(value) : value;
 }
@@ -88,7 +92,7 @@ function render(value: YamlValue, indent: string): string[] {
   if (isScalar(value)) {
     const text = scalar(value);
     // A block scalar is already multi-line and indented relative to its key.
-    return text.startsWith('|-') ? text.split('\n') : [text];
+    return text.startsWith('|') ? text.split('\n') : [text];
   }
 
   if (Array.isArray(value)) {
@@ -96,7 +100,9 @@ function render(value: YamlValue, indent: string): string[] {
     const lines: string[] = [];
     for (const item of value) {
       if (isScalar(item)) {
-        lines.push(`${indent}- ${scalar(item)}`);
+        const [head, ...rest] = scalar(item).split('\n');
+        lines.push(`${indent}- ${head}`);
+        lines.push(...rest.map((line) => `${indent}${line}`.trimEnd()));
         continue;
       }
       const nested = render(item, `${indent}  `);
@@ -115,10 +121,10 @@ function render(value: YamlValue, indent: string): string[] {
     const name = needsQuoting(key) ? quoteScalar(key) : key;
     if (isScalar(child)) {
       const text = scalar(child);
-      if (text.startsWith('|-')) {
+      if (text.startsWith('|')) {
         const [head, ...rest] = text.split('\n');
         lines.push(`${indent}${name}: ${head}`);
-        lines.push(...rest.map((line) => `${indent}${line}`));
+        lines.push(...rest.map((line) => `${indent}${line}`.trimEnd()));
       } else {
         lines.push(`${indent}${name}: ${text}`);
       }

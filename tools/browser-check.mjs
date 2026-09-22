@@ -212,22 +212,27 @@ for (const [name, path] of [
   await ctx.close();
 }
 
-// --- the spec editor: open a real export, change what changed ---------------
+// --- the data editor: a VCF export, then the other kinds of file -----------
 {
   const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
-  const labFile = join(mkdtempSync(join(tmpdir(), 'atk-')), 'VCF-deployment-spec-9.1.1.0.json');
+  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const labFile = join(dir, 'VCF-deployment-spec-9.1.1.0.json');
   writeFileSync(labFile, JSON.stringify(LAB_911_THREE_HOST_FC));
 
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
+  // The old address still works.
   await page.goto(`${BASE}/app/vcf-spec-editor.html`, { waitUntil: 'networkidle' });
+  check('Editor: the old spec editor address lands on the data editor', /\/data-editor\.html\?profile=vcf-spec$/.test(page.url()), page.url());
+  check('Editor: no 1-2-3 steps, just the file to open', (await page.locator('.flow-steps').count()) === 0 && /Open a file/i.test(await page.locator('body').innerText()));
   await page.locator('input[type=file]').first().setInputFiles(labFile);
   await page.waitForTimeout(600);
   const opened = await page.locator('body').innerText();
   check('Editor: an installer export opens field by field', /Distributed switches/.test(opened) && (await page.locator('[data-path="hostSpecs[0].hostname"]').count()) === 1);
-  check('Editor: the export checks clean against 9.1', /\bValid\b/.test(opened), opened.match(/Against the 9\.1 schema\s+\S+/)?.[0] ?? '');
+  check('Editor: it is recognised as a VCF spec', (await page.locator('[data-control="profile"]').inputValue()) === 'vcf-spec');
+  check('Editor: the export checks clean against 9.1', /\bValid\b/.test(opened));
   check('Editor: sizes are dropdowns', (await page.locator('select[data-path="vcenterSpec.storageSize"]').count()) === 1);
-  check('Editor: it says it is holding passwords', /Passwords held\s+3/i.test(opened));
+  check('Editor: it says it is holding passwords', /Secrets held\s+3/i.test(opened));
 
   await page.locator('[data-path="hostSpecs[2].hostname"]').fill('esx05.example.com');
   await page.waitForTimeout(200);
@@ -240,20 +245,95 @@ for (const [name, path] of [
   const gw = await page.locator('[data-path="networkSpecs[0].gateway"]').inputValue();
   check('Editor: find and replace re-addresses every field', gw === '10.30.7.1', gw);
 
-  // A bad edit is caught, and the finding goes to its field.
   await page.locator('[data-path="networkSpecs[3].subnet"]').fill('10.30.7.0/26');
   await page.waitForTimeout(300);
-  check('Editor: a bad edit is rejected', /Rejected/.test(await page.locator('body').innerText()));
-
-  await page.locator('button', { hasText: 'Undo' }).click();
+  check('Editor: a bad edit is caught', /\bErrors\b/.test(await page.locator('body').innerText()));
+  await page.locator('[data-control="undo"]').click();
   await page.waitForTimeout(300);
-  check('Editor: undo puts it back', !/Rejected/.test(await page.locator('body').innerText()));
+  check('Editor: undo puts it back', !/\bErrors\b/.test(await page.locator('body').innerText()));
+
+  // The text view shows the same document, with its line numbers.
+  await page.locator('[data-view="text"]').click();
+  await page.waitForTimeout(200);
+  const text = await page.locator('.de-textarea').inputValue();
+  check('Editor: the text view holds the edited JSON', text.includes('esx05.example.com') && (await page.locator('.de-gutter span').count()) > 50);
 
   // And the builder hands its own spec over.
   await page.goto(`${BASE}/app/vcf-spec.html`, { waitUntil: 'networkidle' });
   await page.locator('button', { hasText: 'Edit as JSON' }).click();
   await page.waitForTimeout(800);
-  check('Editor: the builder opens its spec in the editor', page.url().endsWith('/vcf-spec-editor.html') && (await page.locator('[data-path="sddcId"]').count()) === 1);
+  check('Editor: the builder opens its spec in the editor', /data-editor\.html/.test(page.url()) && (await page.locator('[data-path="sddcId"]').count()) === 1);
+  await ctx.close();
+}
+
+{
+  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const playbook = join(dir, 'site.yml');
+  writeFileSync(
+    playbook,
+    `---\n# Web tier\n- name: Web\n  hosts: web\n  tasks:\n  - name: Install\n    ansible.builtin.package:\n      name: nginx\n      state: present\n  - name: Typo\n    community.vmware.vmware_gest:\n      name: web01\n`,
+  );
+  const cfn = join(dir, 'stack.yaml');
+  writeFileSync(cfn, `Resources:\n  Logs:\n    Type: AWS::S3::Bucket\nOutputs:\n  Arn:\n    Value: !GetAtt Log.Arn\n`);
+  const k8s = join(dir, 'app.yaml');
+  writeFileSync(k8s, `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: shop\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx:1.27\n          imagePullPolicy: Always\n`);
+
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/data-editor.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[type=file]').first().setInputFiles(playbook);
+  await page.waitForTimeout(500);
+  check('Editor: a playbook is recognised', (await page.locator('[data-control="profile"]').inputValue()) === 'ansible-playbook');
+  check('Editor: a misspelt module is found', (await page.locator('[data-finding="ansible.module.unknown"]').count()) === 1);
+  check('Editor: module state is a dropdown', (await page.locator('select[data-path="[0].tasks[0][\\"ansible.builtin.package\\"].state"]').count()) === 1);
+  check('Editor: it warns that a form edit drops comments', (await page.locator('[data-note="comments"]').count()) === 1);
+  await page.locator('[data-view="text"]').click();
+  await page.locator('[data-finding="ansible.module.unknown"]').click();
+  const sel = await page.locator('.de-textarea').evaluate((t) => t.value.slice(t.selectionStart, t.selectionEnd));
+  check('Editor: a finding goes to its line in the text', /vmware_gest/.test(sel), sel);
+  await page.locator('.de-textarea').fill((await page.locator('.de-textarea').inputValue()).replace('vmware_gest', 'vmware_guest'));
+  await page.waitForTimeout(600);
+  check('Editor: fixing the text clears the finding and keeps the comment', (await page.locator('[data-finding="ansible.module.unknown"]').count()) === 0 && (await page.locator('.de-textarea').inputValue()).includes('# Web tier'));
+
+  await page.locator('input[type=file]').first().setInputFiles(cfn);
+  await page.waitForTimeout(500);
+  check('Editor: CloudFormation is recognised, with the bad GetAtt found', (await page.locator('[data-control="profile"]').inputValue()) === 'aws-cloudformation' && (await page.locator('[data-finding="cfn.getatt"]').count()) === 1);
+
+  await page.locator('input[type=file]').first().setInputFiles(k8s);
+  await page.waitForTimeout(500);
+  check('Editor: a two-document manifest opens as two documents', (await page.locator('[data-control="profile"]').inputValue()) === 'kubernetes' && /Document 2/.test(await page.locator('.je-tree').innerText()));
+  await page.locator('select[data-path="[1].spec.template.spec.containers[0].imagePullPolicy"]').selectOption('IfNotPresent');
+  await page.waitForTimeout(200);
+  await page.locator('[data-view="text"]').click();
+  const k8sText = await page.locator('.de-textarea').inputValue();
+  check('Editor: a form edit writes both documents back', (k8sText.match(/^---$/gm) ?? []).length === 2 && k8sText.includes('IfNotPresent'));
+  await ctx.close();
+}
+
+// --- clear all: every page has it, and it empties the toolkit ---------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/migration-portfolio.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html'];
+  const missing = [];
+  for (const p of pages) {
+    await page.goto(`${BASE}/${p}`, { waitUntil: 'networkidle' });
+    if ((await page.locator('[data-control="clear-all"]').count()) !== 1) missing.push(p);
+  }
+  check('Clear all: every page has the button', missing.length === 0, missing.join(', '));
+
+  await page.goto(`${BASE}/app/data-editor.html`, { waitUntil: 'networkidle' });
+  await page.locator('[data-control="paste"]').fill('{"a": 1}');
+  await page.locator('button', { hasText: 'Open pasted text' }).click();
+  await page.waitForTimeout(300);
+  await page.evaluate(() => sessionStorage.setItem('archtoolkit.test', 'x'));
+  await page.locator('[data-control="clear-all"]').click();
+  check('Clear all: the first press only arms it', /Click again/.test(await page.locator('[data-control="clear-all"]').innerText()));
+  await page.locator('[data-control="clear-all"]').click();
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(500);
+  const left = await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('archtoolkit.')).length);
+  check('Clear all: the second press empties the page and the saved work', left === 0 && (await page.locator('[data-path="a"]').count()) === 0, `left ${left}`);
   await ctx.close();
 }
 

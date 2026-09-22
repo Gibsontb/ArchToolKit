@@ -1806,3 +1806,126 @@ textarea {
     max-height: none;
   }
 }
+
+/* --- Data editor ------------------------------------------------------------- */
+.de-tabs {
+  display: flex;
+  gap: var(--space-2);
+}
+.de-editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  height: min(75vh, 900px);
+  overflow: hidden;
+}
+.de-gutter,
+.de-textarea {
+  margin: 0;
+  padding: var(--space-2);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+.de-gutter {
+  overflow: hidden;
+  text-align: right;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  min-width: 3.5em;
+}
+.de-gutter .de-line-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+.de-gutter .de-line-finding {
+  color: var(--warn);
+  font-weight: 700;
+}
+.de-textarea {
+  border: 0;
+  resize: none;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  color: inherit;
+  white-space: pre;
+  overflow: auto;
+}
+.de-textarea:focus {
+  outline: none;
+}
+.de-multiline {
+  width: 100%;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+}
+.de-value {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+.de-value > input,
+.de-value > select,
+.de-value > textarea,
+.de-value > .je-secret {
+  flex: 1;
+  min-width: 0;
+}
+.de-field-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.de-field-actions .btn {
+  opacity: 0.55;
+}
+.de-field-actions .btn:hover,
+.de-field-actions .btn:focus-visible {
+  opacity: 1;
+}
+.je-group > summary,
+.je-section > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.de-add-field {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.de-add-field input {
+  flex: 1;
+  min-width: 10em;
+}
+.callout {
+  border-left: 3px solid var(--accent);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+}
+.callout-warn {
+  border-left-color: var(--warn);
+}
+
+/* --- Clear all (every page header) ----------------------------------------- */
+.btn-clear-all {
+  flex: none;
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+.btn-clear-all:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.btn-clear-all.is-armed {
+  background: var(--danger);
+  color: #fff;
+}
