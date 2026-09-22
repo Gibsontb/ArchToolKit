@@ -21,7 +21,6 @@ import {
 } from '../vmware/inventory.js';
 import { assessMoves,                   } from '../vmware/vm-readiness.js';
 import { mountEstateBar } from './estate-bar.js';
-import { mountFlowSteps } from './flow-steps.js';
 import { analyzeEstate } from '../vmware/analyze.js';
 import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.js';
 import { assessEstate,                                      } from '../vmware/readiness.js';
@@ -56,8 +55,6 @@ export function mountInventoryPage(root             )       {
       replace(results, ...buildResults(entry.inventory, [...entry.findings]));
     },
   });
-  // Above the estate strip: where this page sits on the VCF path.
-  mountFlowSteps(root, 'inventory');
 
   append(
     root,

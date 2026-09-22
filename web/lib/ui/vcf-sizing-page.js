@@ -33,7 +33,6 @@ import {
 import { putHandoff, takeHandoff, rememberLatest } from './handoff.js';
 import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.js';
 import { mountEstateBar } from './estate-bar.js';
-import { mountFlowSteps } from './flow-steps.js';
 import { buildEstatePlanner, fleetCard,                    } from './estate-planner.js';
                                                         
                                                         
@@ -221,8 +220,6 @@ export function mountVcfSizingPage(root             )       {
       }
     },
   });
-  // Above the estate strip: where this page sits on the VCF path.
-  mountFlowSteps(root, 'sizing');
 }
 
 function buildInputs(controls          , onChange            )              {

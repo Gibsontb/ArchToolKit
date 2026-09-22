@@ -21,7 +21,6 @@ import {
 } from '../vmware/inventory.ts';
 import { assessMoves, type MoveSeverity } from '../vmware/vm-readiness.ts';
 import { mountEstateBar } from './estate-bar.ts';
-import { mountFlowSteps } from './flow-steps.ts';
 import { analyzeEstate } from '../vmware/analyze.ts';
 import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.ts';
 import { assessEstate, type HostReadiness, type CheckStatus } from '../vmware/readiness.ts';
@@ -56,8 +55,6 @@ export function mountInventoryPage(root: HTMLElement): void {
       replace(results, ...buildResults(entry.inventory, [...entry.findings]));
     },
   });
-  // Above the estate strip: where this page sits on the VCF path.
-  mountFlowSteps(root, 'inventory');
 
   append(
     root,

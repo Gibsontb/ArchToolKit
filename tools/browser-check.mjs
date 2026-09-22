@@ -224,7 +224,7 @@ for (const [name, path] of [
   // The old address still works.
   await page.goto(`${BASE}/app/vcf-spec-editor.html`, { waitUntil: 'networkidle' });
   check('Editor: the old spec editor address lands on the data editor', /\/data-editor\.html\?profile=vcf-spec$/.test(page.url()), page.url());
-  check('Editor: no 1-2-3 steps, just the file to open', (await page.locator('.flow-steps').count()) === 0 && /Open a file/i.test(await page.locator('body').innerText()));
+  check('No page carries the old 1-2-3 step strip', (await page.locator('.flow-steps').count()) === 0 && /Open a file/i.test(await page.locator('body').innerText()));
   await page.locator('input[type=file]').first().setInputFiles(labFile);
   await page.waitForTimeout(600);
   const opened = await page.locator('body').innerText();

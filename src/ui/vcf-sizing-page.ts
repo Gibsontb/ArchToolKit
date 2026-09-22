@@ -33,7 +33,6 @@ import type { AutomationSize } from '../vcf/sizing-data.ts';
 import { putHandoff, takeHandoff, rememberLatest } from './handoff.ts';
 import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge.ts';
 import { mountEstateBar } from './estate-bar.ts';
-import { mountFlowSteps } from './flow-steps.ts';
 import { buildEstatePlanner, fleetCard, type EstatePlanner } from './estate-planner.ts';
 import type { EstatePlan } from '../vcf/estate-plan.ts';
 import type { Inventory } from '../vmware/inventory.ts';
@@ -221,8 +220,6 @@ export function mountVcfSizingPage(root: HTMLElement): void {
       }
     },
   });
-  // Above the estate strip: where this page sits on the VCF path.
-  mountFlowSteps(root, 'sizing');
 }
 
 function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
