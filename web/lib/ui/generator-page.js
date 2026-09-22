@@ -35,6 +35,7 @@ import {
 import { fileBar } from './file-bar.js';
 import { envelope, openEnvelope, SETTINGS_KINDS, stripSecrets } from '../kit/settings-file.js';
 import { isRecord,           } from '../editor/doc.js';
+                                                                                   
 
                                    
                                              
@@ -55,6 +56,19 @@ import { isRecord,           } from '../editor/doc.js';
                                                        
                                                                                         
                                 
+     
+                                                        
+    
+                                                                          
+                                                                          
+                                                                          
+                                                            
+     
+                    
+                                                                     
+                          
+                                                                                                                                                                       
+    
  
 
 /**
@@ -349,13 +363,18 @@ export function mountGeneratorPage(root             , options                  )
   let blueprint                       ;
   let values                  = {};
   let generated                                          = null;
+  let stackItems              = [];
+  let stackRefs                            = [];
+  let editing                = null;
   let builds                        = undefined;
   let findings                     = [];
 
   const stepOne = el('div', { class: 'stack' });
+  const buildList = el('div', { class: 'stack' });
   const stepTwo = el('div', { class: 'stack' });
   const stepThree = el('div', { class: 'stack' });
 
+  append(root, buildList);
   append(
     root,
     fileBar({
@@ -370,6 +389,12 @@ export function mountGeneratorPage(root             , options                  )
           target,
           blueprint: blueprint?.id ?? null,
           values: stripSecrets(values                   ),
+          ...(options.stack
+            ? {
+                stackName: stackName.value.trim(),
+                stack: stripSecrets(stackItems.map((i) => ({ id: i.id, blueprintId: i.blueprintId, label: i.label, values: i.values }))                   ),
+              }
+            : {}),
         })                   ,
       load: (value, name) => {
         const opened = openEnvelope(value, options.settingsKind, SETTINGS_KINDS);
@@ -388,13 +413,34 @@ export function mountGeneratorPage(root             , options                  )
         const kept                  = {};
         for (const [k, v] of Object.entries(loaded)) if (known.has(k)) (kept                           )[k] = v;
         values = { ...values, ...kept };
+        if (options.stack) {
+          const saved = Array.isArray(file.stack) ? file.stack : [];
+          stackItems = saved
+            .filter((entry)                                => isRecord(entry) && typeof entry.blueprintId === 'string')
+            .map((entry, i) => ({
+              id: typeof entry.id === 'string' ? entry.id : `i${i}`,
+              blueprintId: String(entry.blueprintId),
+              label: typeof entry.label === 'string' ? entry.label : `Item ${i + 1}`,
+              values: isRecord(entry.values) ? (entry.values                              ) : {},
+            }));
+          stackName.value = typeof file.stackName === 'string' ? file.stackName : '';
+          editing = null;
+          refreshStack();
+          renderBuildList();
+        }
         renderOne();
         renderTwo();
         renderThree();
-        return `Loaded ${next.label} from ${name}${ignored.length ? `; ${ignored.length} field${ignored.length === 1 ? '' : 's'} this ${options.noun} no longer has were skipped (${ignored.slice(0, 4).join(', ')})` : ''}.`;
+        const inList = options.stack && stackItems.length > 0 ? ` The build list has ${stackItems.length} item${stackItems.length === 1 ? '' : 's'}.` : '';
+        return `Loaded ${next.label} from ${name}${ignored.length ? `; ${ignored.length} field${ignored.length === 1 ? '' : 's'} this ${options.noun} no longer has were skipped (${ignored.slice(0, 4).join(', ')})` : ''}.${inList}`;
       },
       clear: () => {
         selectBlueprint(first());
+        stackItems = [];
+        editing = null;
+        stackName.value = '';
+        refreshStack();
+        renderBuildList();
         renderOne();
         renderTwo();
         renderThree();
@@ -449,6 +495,166 @@ export function mountGeneratorPage(root             , options                  )
       ];
     }
     renderThree();
+  }
+
+  // --- the build list ------------------------------------------------------
+  const blueprintById = (id        )                        =>
+    options.groups.flatMap((g) => g.blueprints).find((b) => b.id === id);
+
+  /** What the items expose, recalculated whenever the list changes. */
+  function refreshStack()       {
+    if (!options.stack || stackItems.length === 0) {
+      stackRefs = [];
+      return;
+    }
+    stackRefs = options.stack.build(stackItems, blueprintById, { target }).references;
+  }
+
+  function addToBuild()       {
+    if (!blueprint || !options.stack) return;
+    const label = String(values.__name ?? '').trim() || blueprint.label;
+    const entry            = { id: editing ?? `i${Date.now().toString(36)}`, blueprintId: blueprint.id, label, values: { ...values } };
+    const at = stackItems.findIndex((i) => i.id === entry.id);
+    if (at >= 0) stackItems[at] = entry;
+    else stackItems.push(entry);
+    editing = null;
+    refreshStack();
+    renderBuildList();
+    renderTwo();
+  }
+
+  function generateStack()       {
+    if (!options.stack) return;
+    const result = options.stack.build(stackItems, blueprintById, { target, stackName: stackName.value.trim() || undefined });
+    generated = result.files;
+    builds = undefined;
+    findings = [...result.findings, ...(options.standingFindings?.() ?? [])];
+    stackRefs = result.references;
+    renderThree();
+  }
+
+  const stackName = el('input', {
+    attrs: { type: 'text', placeholder: 'Name for the whole stack, e.g. prod-landing-zone', 'data-control': 'stack-name' },
+  })                    ;
+
+  function renderBuildList()       {
+    if (!options.stack) return;
+    const rows = stackItems.map((entry, index) => {
+      const blueprintOf = blueprintById(entry.blueprintId);
+      const move = (by        ) => {
+        const to = index + by;
+        if (to < 0 || to >= stackItems.length) return;
+        const copy = [...stackItems];
+        [copy[index], copy[to]] = [copy[to]             , copy[index]             ];
+        stackItems = copy;
+        refreshStack();
+        renderBuildList();
+      };
+      const small = (text        , title        , act            , disabled = false) =>
+        el('button', {
+          class: 'btn btn-small',
+          text,
+          attrs: { type: 'button', title, ...(disabled ? { disabled: 'disabled' } : {}) },
+          on: { click: act },
+        });
+      return el(
+        'div',
+        { class: `build-item${editing === entry.id ? ' is-editing' : ''}`, attrs: { 'data-item': entry.label } },
+        el('span', { class: 'build-order', text: String(index + 1) }),
+        el(
+          'span',
+          { class: 'build-what' },
+          el('strong', { text: entry.label }),
+          el('span', { class: 'muted small', text: blueprintOf?.label ?? entry.blueprintId }),
+        ),
+        el(
+          'span',
+          { class: 'je-actions' },
+          small('↑', 'Move up', () => move(-1), index === 0),
+          small('↓', 'Move down', () => move(1), index === stackItems.length - 1),
+          small('Edit', 'Load this item back into the form', () => {
+            const loaded = blueprintById(entry.blueprintId);
+            if (!loaded) return;
+            blueprint = loaded;
+            values = { ...defaultValues(loaded), ...entry.values };
+            editing = entry.id;
+            renderOne();
+            renderTwo();
+            renderBuildList();
+          }),
+          small('Remove', 'Take this out of the build', () => {
+            stackItems = stackItems.filter((i) => i.id !== entry.id);
+            if (editing === entry.id) editing = null;
+            refreshStack();
+            renderBuildList();
+            renderTwo();
+          }),
+        ),
+      );
+    });
+
+    replace(
+      buildList,
+      card(
+        `Build list (${stackItems.length})`,
+        el('p', {
+          class: 'muted small',
+          text: `Add each piece, then generate the whole ${options.stack.noun} as one project: shared provider and version files, one file per item, and a README. Fields can take a value from an item already in the list.`,
+        }),
+        stackItems.length === 0
+          ? el('div', { class: 'empty', text: `Nothing added yet. Fill in step 2 and press "Add to build".` })
+          : el('div', { class: 'build-list' }, ...rows),
+        el('div', { class: 'field' }, el('label', { text: `Name for this ${options.stack.noun}` }), stackName),
+        el(
+          'div',
+          { class: 'btn-row' },
+          el('button', {
+            class: 'btn btn-primary btn-small',
+            text: `Generate ${options.stack.noun}`,
+            attrs: { type: 'button', 'data-control': 'generate-stack', ...(stackItems.length === 0 ? { disabled: 'disabled' } : {}) },
+            on: { click: generateStack },
+          }),
+          el('button', {
+            class: 'btn btn-small',
+            text: 'Clear list',
+            attrs: { type: 'button', 'data-control': 'clear-stack', ...(stackItems.length === 0 ? { disabled: 'disabled' } : {}) },
+            on: {
+              click: () => {
+                stackItems = [];
+                editing = null;
+                refreshStack();
+                renderBuildList();
+                renderTwo();
+              },
+            },
+          }),
+        ),
+      ),
+    );
+  }
+
+  /** A button that drops a reference to another item's value into a field. */
+  function referenceButton(set                              )                     {
+    if (stackRefs.length === 0) return null;
+    const picker = el('select', { class: 'ref-picker', attrs: { 'aria-label': 'Use a value from the build list' } })                     ;
+    picker.appendChild(el('option', { text: '⇢', attrs: { value: '' } }));
+    picker.title = 'Use a value from an item in the build list';
+    let group                             = null;
+    let groupName                    ;
+    for (const reference of stackRefs) {
+      if (reference.item !== groupName) {
+        groupName = reference.item;
+        group = el('optgroup', { attrs: { label: groupName } })                       ;
+        picker.appendChild(group);
+      }
+      (group ?? picker).appendChild(el('option', { text: reference.expression, attrs: { value: reference.expression } }));
+    }
+    picker.addEventListener('change', () => {
+      if (!picker.value) return;
+      set(`\${${picker.value}}`);
+      picker.value = '';
+    });
+    return picker;
   }
 
   // --- step 1 --------------------------------------------------------------
@@ -548,7 +754,21 @@ export function mountGeneratorPage(root             , options                  )
         // A follow-up question may have appeared or gone away.
         if (blueprint?.inputs.some((i) => i.showWhen?.input === input.id)) renderTwo();
       });
-      const field = labelledField(input, node);
+      const setValue = (text        ) => {
+        const box = (node.classList.contains('combo') ? node.querySelector('input') : node)                                                 ;
+        if (!box) return;
+        if (node.classList.contains('combo')) {
+          const picker = node.querySelector('select')                     ;
+          picker.value = '__custom__';
+          (box                    ).style.display = '';
+        }
+        box.value = text;
+        box.dispatchEvent(new Event('input'));
+        box.focus();
+      };
+      const reference =
+        input.control === 'select' || input.control === 'toggle' ? null : referenceButton(setValue);
+      const field = labelledField(input, reference ? el('div', { class: 'with-ref' }, node, reference) : node);
       if (input.section === undefined) {
         fields.push(field);
       } else {
@@ -579,6 +799,14 @@ export function mountGeneratorPage(root             , options                  )
             text: `Generate ${options.kindLabel}`,
             on: { click: generate },
           }),
+          options.stack
+            ? el('button', {
+                class: 'btn',
+                text: editing ? 'Update in build list' : 'Add to build',
+                attrs: { type: 'button', title: `Put this in the build list, to generate with the rest of the ${options.stack.noun}`, 'data-control': 'add-to-build' },
+                on: { click: addToBuild },
+              })
+            : null,
           el('button', {
             class: 'btn',
             text: 'Reset',
@@ -696,4 +924,5 @@ export function mountGeneratorPage(root             , options                  )
   renderOne();
   renderTwo();
   renderThree();
+  renderBuildList();
 }

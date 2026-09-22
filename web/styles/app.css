@@ -1886,3 +1886,61 @@ textarea {
 .file-bar-status.is-bad {
   color: var(--danger);
 }
+
+/* --- Build list (Terraform stack) ------------------------------------------ */
+.build-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-2);
+}
+.build-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+.build-item.is-editing {
+  border-color: var(--accent);
+}
+.build-order {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.build-what {
+  display: grid;
+  min-width: 0;
+}
+.build-what strong {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.build-item .je-actions {
+  grid-column: 2;
+  margin-left: 0;
+}
+.with-ref {
+  display: flex;
+  gap: var(--space-2);
+  align-items: start;
+}
+.with-ref > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.ref-picker {
+  width: auto;
+  max-width: 4.2em;
+  flex: none;
+  font-size: 0.8rem;
+}

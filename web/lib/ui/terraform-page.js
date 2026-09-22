@@ -14,6 +14,7 @@ import { currentEstate } from '../kit/estate-store.js';
 import { TERRAFORM_BLUEPRINTS } from '../terraform/blueprints/index.js';
 import { catalogFindings } from '../terraform/catalog.js';
 import { moduleFindings } from '../terraform/modules.js';
+import { buildStack } from '../terraform/stack.js';
 
 const root = document.getElementById('terraform-root');
 if (root) {
@@ -37,6 +38,10 @@ if (root) {
           'Pick a platform and blueprint, adjust the parameters, then Generate. Save the result as main.tf and run terraform init && terraform plan.',
         preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
         settingsKind: 'archtoolkit.terraform-generator',
+        stack: {
+          noun: 'stack',
+          build: (items, blueprintFor, opts) => buildStack(items, blueprintFor, { target: opts.target         , stackName: opts.stackName }),
+        },
         downloadExtension: '.tf',
         standingFindings: () => [...catalogFindings(), ...moduleFindings()],
       });

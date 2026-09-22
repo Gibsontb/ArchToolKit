@@ -298,6 +298,34 @@
             <li><strong>Step 2</strong>: fill in the parameters. Dropdowns you can type into have <em>Other — type a value…</em>. Registry modules keep their less common inputs in collapsed, searchable sections. Press <strong>Generate Terraform (HCL)</strong>.</li>
             <li><strong>Step 3</strong>: the generated files, each with <strong>Copy</strong> and <strong>Download</strong>, and <strong>Download all as one file</strong>. For a registry module, <em>What this will create</em> lists each resource as Created, Not created or Depends. Save the result as <code>main.tf</code> and run <code>terraform init</code> and <code>terraform plan</code>.</li>
           </ol>
+          <h3>Building a whole stack</h3>
+          <p>
+            One blueprint writes one thing; a migration or a landing zone is a dozen of them. The
+            <strong>Build list</strong> above the steps assembles them into one project:
+          </p>
+          <ol>
+            <li>Pick a blueprint, fill it in, name it in <strong>Module / file label</strong>, and press <strong>Add to build</strong> instead of Generate.</li>
+            <li>Repeat for each piece. In any text field, the <strong>⇢</strong> box beside it offers what the items already in the list create — a VPC's id, a module's outputs — so the next item references them instead of a typed-in id.</li>
+            <li>Name the stack and press <strong>Generate stack</strong>.</li>
+          </ol>
+          <p>What comes out is a Terraform root module, ready for <code>terraform init</code>:</p>
+          <table>
+            <tr><th>File</th><th>What it holds</th></tr>
+            <tr><td><code>versions.tf</code></td><td>One terraform block, with every provider the items need merged into it.</td></tr>
+            <tr><td><code>providers.tf</code></td><td>One block per provider. Add an alias here if two items need different regions or accounts.</td></tr>
+            <tr><td><code>variables.tf</code></td><td>Every variable the items declare, plus a declaration for anything they used without declaring.</td></tr>
+            <tr><td><code>01-…tf</code>, <code>02-…tf</code></td><td>One file per item, numbered in list order.</td></tr>
+            <tr><td><code>outputs.tf</code></td><td>Each item's outputs, prefixed with the item's name.</td></tr>
+            <tr><td><code>README.md</code></td><td>What is in the stack and how to apply it.</td></tr>
+          </table>
+          <p>
+            Items in the list can be reordered, edited (it loads back into the form) and removed. Two
+            copies of the same blueprint are fine: the second one's resources are renamed after the
+            item, declaration and references together, and the page says so. Save and Load carry the
+            whole list, so a stack is one file you can keep, share or come back to.
+          </p>
+          <p class="muted small">The file numbers are for reading. Terraform works out the real order from the references between items.</p>
+
           <h3>Blueprints</h3>
           <table>
             <tr><th>Platform</th><th>Blueprints</th></tr>

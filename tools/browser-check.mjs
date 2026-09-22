@@ -381,6 +381,60 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- the Terraform build list: several blueprints into one stack -----------
+{
+  const ctx = await browser.newContext({ acceptDownloads: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
+  const pick = (n) => page.locator('select:not([data-control])').nth(n);
+  const label = () => page.getByPlaceholder('Used in comments, tags and the filename');
+
+  await pick(1).selectOption({ label: 'VPC baseline (2 subnets + IGW)' });
+  await label().fill('network');
+  await page.locator('[data-control="add-to-build"]').click();
+  await page.waitForTimeout(300);
+  check('Stack: an item goes into the build list', (await page.locator('.build-item').count()) === 1);
+
+  await pick(1).selectOption({ label: 'EC2 instance + security group' });
+  await label().fill('web');
+  await page.waitForTimeout(200);
+  const subnet = page.locator('.field', { hasText: 'Subnet ID' });
+  const offered = await subnet.locator('.ref-picker option').allInnerTexts();
+  check('Stack: a field offers what the first item creates', offered.includes('aws_subnet.public_a.id'), offered.slice(0, 4).join(', '));
+  await subnet.locator('.ref-picker').selectOption('aws_subnet.public_a.id');
+  await page.waitForTimeout(200);
+  check('Stack: picking one fills the field in', (await subnet.locator('input').inputValue()).includes('${aws_subnet.public_a.id}'));
+  await page.locator('[data-control="add-to-build"]').click();
+  await page.waitForTimeout(300);
+
+  await page.locator('[data-control="stack-name"]').fill('prod-landing-zone');
+  await page.locator('[data-control="generate-stack"]').click();
+  await page.waitForTimeout(600);
+  const files = await page.locator('.file-head strong').allInnerTexts();
+  check('Stack: one file per item, plus the shared files', ['01-network.tf', '02-web.tf', 'versions.tf', 'providers.tf', 'variables.tf', 'README.md'].every((f) => files.includes(f)), files.join(', '));
+  const code = (await page.locator('pre.code-block').allInnerTexts()).join('\n');
+  check('Stack: the reference survives into the configuration', code.includes('aws_subnet.public_a.id'));
+  check('Stack: one terraform block for the whole stack', (code.match(/required_providers/g) ?? []).length === 1);
+  check('Stack: it generated without errors', /Generated\. No errors\./.test(await page.locator('body').innerText()));
+
+  // The list saves and loads with the rest of the form.
+  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('[data-control="settings-save"]').click()]);
+  const path = join(dir, download.suggestedFilename());
+  await download.saveAs(path);
+  await page.locator('[data-control="settings-clear"]').click();
+  await page.locator('[data-control="settings-clear"]').click();
+  await page.waitForTimeout(300);
+  check('Stack: Clear empties the build list', (await page.locator('.build-item').count()) === 0);
+  await page.locator('[data-control="settings-file"]').setInputFiles(path);
+  await page.waitForTimeout(500);
+  check('Stack: Load brings the whole list back', (await page.locator('.build-item').count()) === 2, await page.locator('[data-control="settings-status"]').innerText());
+  check('Stack: no script errors', errors.length === 0, errors[0] ?? '');
+  await ctx.close();
+}
+
 // --- clear all: every page has it, and it empties the toolkit ---------------
 {
   const ctx = await browser.newContext();
