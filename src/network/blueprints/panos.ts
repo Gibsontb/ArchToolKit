@@ -15,6 +15,7 @@
 import { bool, num, str, type BlueprintValues, type BlueprintGroup } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
+import { PANOS_EXTRA } from './panos-extra.ts';
 import { listOf, parseCidr, type DeviceChange } from '../device.ts';
 
 const PLATFORM = 'panos' as const;
@@ -347,5 +348,8 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
   }),
 ];
 
-export const PANOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Palo Alto PAN-OS', blueprints: BLUEPRINTS };
-export const PANOS_CHANGES: readonly ChangeBlueprint[] = BLUEPRINTS;
+/** The rest of the platform's changes live in panos-extra.ts. */
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...PANOS_EXTRA];
+
+export const PANOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Palo Alto PAN-OS', blueprints: ALL };
+export const PANOS_CHANGES: readonly ChangeBlueprint[] = ALL;

@@ -19,6 +19,7 @@
 import { bool, num, str,                                           } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
+import { F5_EXTRA } from './f5-extra.js';
 import { isIpv4, listOf,                   } from '../device.js';
 
 const PLATFORM = 'f5'         ;
@@ -382,5 +383,8 @@ const BLUEPRINTS                             = [
   }),
 ];
 
-export const F5_NETWORK                 = { target: PLATFORM, label: 'F5 BIG-IP (AS3)', blueprints: BLUEPRINTS };
-export const F5_CHANGES                             = BLUEPRINTS;
+/** The rest of the platform's changes live in f5-extra.ts. */
+const ALL                             = [...BLUEPRINTS, ...F5_EXTRA];
+
+export const F5_NETWORK                 = { target: PLATFORM, label: 'F5 BIG-IP (AS3)', blueprints: ALL };
+export const F5_CHANGES                             = ALL;

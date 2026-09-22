@@ -11,6 +11,7 @@
 import { bool, num, str,                                           } from '../../kit/blueprint.js';
 import { error,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
+import { EOS_EXTRA } from './eos-extra.js';
 import { description, listOf, parseCidr, vlanIds, vlanRange,                   } from '../device.js';
 
 const PLATFORM = 'arista_eos'         ;
@@ -229,5 +230,8 @@ const BLUEPRINTS                             = [
   }),
 ];
 
-export const EOS_NETWORK                 = { target: PLATFORM, label: 'Arista EOS', blueprints: BLUEPRINTS };
-export const EOS_CHANGES                             = BLUEPRINTS;
+/** The rest — the domain-level and operational changes — live in eos-extra.ts. */
+const ALL                             = [...BLUEPRINTS, ...EOS_EXTRA];
+
+export const EOS_NETWORK                 = { target: PLATFORM, label: 'Arista EOS', blueprints: ALL };
+export const EOS_CHANGES                             = ALL;

@@ -15,7 +15,7 @@
 
                                                                                    
 import { slug } from '../kit/blueprint.js';
-                                                   
+import { info,              } from '../core/findings.js';
 import { playbookFiles } from '../ansible/from-plays.js';
 import { PLATFORMS, renderChange, renderRecord, standingFindings,                                  } from './device.js';
 import { playFor } from './push.js';
@@ -27,6 +27,19 @@ import { playFor } from './push.js';
                                                                            
  
 
+/**
+ * The same blueprint, with the Ansible module that applies it attached.
+ *
+ * Some changes are written as CLI because that is how they are usually made,
+ * but a real module exists for them. Rather than restate the whole change
+ * inside the blueprint literal, the module is attached here, beside the list,
+ * where it can be read against the collection's documentation in one place.
+ */
+export function withPush(blueprint                 , push                                                                 )                  {
+  const change = (values                 , name        )               => ({ ...blueprint.change(values, name), push: push(values, name) });
+  return { ...blueprint, change, build: (values, name) => changeFiles(change(values, name), name) };
+}
+
 export function changeFiles(change              , name        )              {
   const platform = PLATFORMS[change.platform];
   const base = slug(name, 'change').replace(/_/g, '-');
@@ -36,6 +49,13 @@ export function changeFiles(change              , name        )              {
   files[`${base}${platform.extension}`] = renderChange(change, name);
 
   const play = playFor(change, name);
+  if (!play) {
+    findings.push(
+      info('network.change.cli-only', 'No Ansible module covers this change, so no playbook is generated. Apply it from the CLI or the API, and keep the record with it.', {
+        source: 'ArchToolKit',
+      }),
+    );
+  }
   if (play) {
     const playbook = playbookFiles(play, base, `${change.title} (${platform.label})`);
     for (const [file, contents] of Object.entries(playbook.files)) files[file] = contents;

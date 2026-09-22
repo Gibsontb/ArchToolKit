@@ -15,6 +15,7 @@ import { bool, num, str,                                           } from '../..
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { description, listOf, netmask, parseCidr, vlanIds, vlanRange, wildcard,                   } from '../device.js';
+import { IOS_EXTRA } from './ios-extra.js';
 
 const PLATFORM = 'cisco_ios'         ;
 
@@ -741,10 +742,18 @@ const BLUEPRINTS                             = [
   }),
 ];
 
+/**
+ * The campus basics are above; the rest — routed ports, VRFs, EIGRP, FHRP,
+ * NAT, DHCP, 802.1X, SPAN, NetFlow, QoS, tunnels, VPN, AAA, NETCONF and the
+ * archive — are in ios-extra.ts, because one file of thirty changes is a file
+ * nobody can find anything in.
+ */
+const ALL                             = [...BLUEPRINTS, ...IOS_EXTRA];
+
 export const IOS_NETWORK                 = {
   target: PLATFORM,
   label: 'Cisco IOS / IOS-XE',
-  blueprints: BLUEPRINTS,
+  blueprints: ALL,
 };
 
-export const IOS_CHANGES                             = BLUEPRINTS;
+export const IOS_CHANGES                             = ALL;

@@ -19,6 +19,7 @@
 import { bool, num, str, type BlueprintValues, type BlueprintGroup } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
+import { F5_EXTRA } from './f5-extra.ts';
 import { isIpv4, listOf, type DeviceChange } from '../device.ts';
 
 const PLATFORM = 'f5' as const;
@@ -382,5 +383,8 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
   }),
 ];
 
-export const F5_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'F5 BIG-IP (AS3)', blueprints: BLUEPRINTS };
-export const F5_CHANGES: readonly ChangeBlueprint[] = BLUEPRINTS;
+/** The rest of the platform's changes live in f5-extra.ts. */
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...F5_EXTRA];
+
+export const F5_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'F5 BIG-IP (AS3)', blueprints: ALL };
+export const F5_CHANGES: readonly ChangeBlueprint[] = ALL;

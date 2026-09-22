@@ -15,6 +15,7 @@
 import { bool, num, str,                                           } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
+import { PANOS_EXTRA } from './panos-extra.js';
 import { listOf, parseCidr,                   } from '../device.js';
 
 const PLATFORM = 'panos'         ;
@@ -347,5 +348,8 @@ const BLUEPRINTS                             = [
   }),
 ];
 
-export const PANOS_NETWORK                 = { target: PLATFORM, label: 'Palo Alto PAN-OS', blueprints: BLUEPRINTS };
-export const PANOS_CHANGES                             = BLUEPRINTS;
+/** The rest of the platform's changes live in panos-extra.ts. */
+const ALL                             = [...BLUEPRINTS, ...PANOS_EXTRA];
+
+export const PANOS_NETWORK                 = { target: PLATFORM, label: 'Palo Alto PAN-OS', blueprints: ALL };
+export const PANOS_CHANGES                             = ALL;

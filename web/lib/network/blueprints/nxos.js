@@ -10,6 +10,7 @@
 import { bool, num, str,                                           } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
+import { NXOS_EXTRA } from './nxos-extra.js';
 import { description, listOf, parseCidr, vlanIds, vlanRange,                   } from '../device.js';
 
 const PLATFORM = 'cisco_nxos'         ;
@@ -284,5 +285,8 @@ const BLUEPRINTS                             = [
   }),
 ];
 
-export const NXOS_NETWORK                 = { target: PLATFORM, label: 'Cisco NX-OS', blueprints: BLUEPRINTS };
-export const NXOS_CHANGES                             = BLUEPRINTS;
+/** The rest — the domain-level and operational changes — live in nxos-extra.ts. */
+const ALL                             = [...BLUEPRINTS, ...NXOS_EXTRA];
+
+export const NXOS_NETWORK                 = { target: PLATFORM, label: 'Cisco NX-OS', blueprints: ALL };
+export const NXOS_CHANGES                             = ALL;

@@ -89,14 +89,26 @@ describe('every blueprint', () => {
     }
   });
 
-  it('builds files with a config, a record, and a playbook where one is possible', () => {
+  it('builds a configuration and a record, always', () => {
     for (const blueprint of NETWORK_CHANGES) {
       const result = blueprint.build(defaultValues(blueprint), blueprint.id);
       const names = Object.keys(result.files);
       const platform = PLATFORMS[blueprint.platform];
       expect([blueprint.id, names.some((n) => n.endsWith(platform.extension))]).toEqual([blueprint.id, true]);
       expect([blueprint.id, names.includes('change-record.md')]).toEqual([blueprint.id, true]);
-      expect([blueprint.id, names.some((n) => n.endsWith('.yml'))]).toEqual([blueprint.id, true]);
+    }
+  });
+
+  it('builds a playbook too, or says why it did not', () => {
+    // Some changes have no Ansible module — PAN-OS decryption and log
+    // forwarding, FortiOS SD-WAN — and the honest answer is to say so rather
+    // than to leave a person wondering where the playbook went.
+    for (const blueprint of NETWORK_CHANGES) {
+      const result = blueprint.build(defaultValues(blueprint), blueprint.id);
+      const hasPlaybook = Object.keys(result.files).some((n) => n.endsWith('.yml'));
+      const saidSo = (result.findings ?? []).some((f) => f.code === 'network.change.cli-only');
+      expect([blueprint.id, hasPlaybook || saidSo]).toEqual([blueprint.id, true]);
+      expect([blueprint.id, hasPlaybook && saidSo]).toEqual([blueprint.id, false]);
     }
   });
 
@@ -225,10 +237,23 @@ describe('pushing a change with Ansible', () => {
     expect(change.push?.after?.some((task) => task.module.includes('commit'))).toBe(true);
   });
 
-  it('writes a playbook that reads back as YAML, for every blueprint', () => {
+  it('writes a playbook that reads back as YAML, wherever it writes one', () => {
     for (const blueprint of NETWORK_CHANGES) {
       const text = pushPlaybook(blueprint.change(defaultValues(blueprint), blueprint.id), blueprint.id);
-      expect([blueprint.id, text === null ? 0 : readYaml(text).documents.length]).toEqual([blueprint.id, 1]);
+      if (text === null) continue;
+      expect([blueprint.id, readYaml(text).documents.length]).toEqual([blueprint.id, 1]);
+    }
+  });
+
+  it('names a module in a collection the kit knows how to install', () => {
+    const known = ['cisco.ios', 'cisco.nxos', 'arista.eos', 'paloaltonetworks.panos', 'fortinet.fortios', 'f5networks.f5_modules', 'ansible.builtin'];
+    for (const blueprint of NETWORK_CHANGES) {
+      const change = blueprint.change(defaultValues(blueprint), blueprint.id);
+      const modules = [change.push?.module, ...(change.push?.after ?? []).map((t) => t.module)].filter((m): m is string => typeof m === 'string');
+      for (const module of modules) {
+        const collection = module.split('.').slice(0, 2).join('.');
+        expect([blueprint.id, module, known.includes(collection)]).toEqual([blueprint.id, module, true]);
+      }
     }
   });
 
@@ -238,7 +263,9 @@ describe('pushing a change with Ansible', () => {
       // Everything that looks like a credential must be a variable or a placeholder.
       for (const match of text.matchAll(/(password|api_key|token|secret):\s*(\S+)/gi)) {
         const value = String(match[2]);
-        expect([blueprint.id, value.startsWith('"{{') || value.startsWith('{{') || value.includes('REQUIRED')]).toEqual([blueprint.id, true]);
+        // A variable, however the YAML writer quoted it, or a placeholder.
+        const variable = /^["']?\{\{/.test(value) || value.includes('REQUIRED');
+        expect([blueprint.id, value, variable]).toEqual([blueprint.id, value, true]);
       }
     }
   });

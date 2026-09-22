@@ -564,14 +564,24 @@
           </p>
 
           <h3>What it can configure</h3>
+          <p>97 changes across six platforms. Each one is grouped in the picker by what it touches.</p>
           <table>
             <tr><th>Platform</th><th>Changes</th></tr>
-            <tr><td>Cisco IOS / IOS-XE</td><td>VLAN and SVI (with HSRP and a DHCP helper), access ports, trunk, LACP port-channel, static route, OSPF, BGP neighbour with prefix lists and a maximum-prefix limit, named access list, management baseline (NTP, syslog, SNMPv3, SSH), spanning-tree hardening.</td></tr>
-            <tr><td>Cisco NX-OS</td><td>VLAN and SVI in a VRF, vPC member port-channel, VRF, OSPF underlay with BFD, management baseline on the management VRF.</td></tr>
-            <tr><td>Arista EOS</td><td>VLAN and SVI with VARP, MLAG member port-channel, BGP EVPN leaf, management baseline with eAPI.</td></tr>
-            <tr><td>Palo Alto PAN-OS</td><td>Address objects and groups, security rule (App-ID based), source and destination NAT, layer 3 interface and zone. Emitted as <code>set</code> commands.</td></tr>
-            <tr><td>Fortinet FortiOS</td><td>Address objects and groups, firewall policy with inspection profiles, VIP to publish a server, static route.</td></tr>
-            <tr><td>F5 BIG-IP</td><td>HTTP/HTTPS virtual server with pool and monitor, TCP virtual server, HTTPS with an Advanced WAF policy — all as AS3 declarations, which the <a href="data-editor.html">Data Editor</a> can open and check against the AS3 schema.</td></tr>
+            <tr><td>Cisco IOS / IOS-XE <em>(30)</em></td><td>
+              <strong>Switching:</strong> VLAN and SVI (HSRP, DHCP helper), access ports, trunk, LACP port-channel, spanning-tree hardening.<br/>
+              <strong>Interfaces:</strong> routed port, loopback.<br/>
+              <strong>Routing:</strong> static route, OSPF, EIGRP (named mode), BGP neighbour with prefix lists and a maximum-prefix limit, VRF, HSRP/VRRP on an existing interface, IP SLA and a tracked object, redistribution through a route map.<br/>
+              <strong>Services:</strong> NAT (PAT and static), DHCP pool.<br/>
+              <strong>Security:</strong> named access list, DHCP snooping with ARP inspection and source guard, 802.1X and MAB.<br/>
+              <strong>Operations:</strong> SPAN and RSPAN, Flexible NetFlow, QoS priority queue for voice.<br/>
+              <strong>WAN and VPN:</strong> GRE tunnel, IKEv2 site-to-site VPN.<br/>
+              <strong>Baseline:</strong> management baseline (NTP, syslog, SNMPv3, SSH), AAA with TACACS+, NETCONF and RESTCONF, config archive with an EEM rollback timer, device hardening.
+            </td></tr>
+            <tr><td>Cisco NX-OS <em>(15)</em></td><td>VLAN and SVI in a VRF, vPC domain with its peer-link, vPC member, plain port-channel, routed interface, VRF, OSPF underlay with BFD, BGP neighbour (underlay, EVPN or in a VRF), static route, VXLAN EVPN VNI with an anycast gateway, IP access list, SPAN, AAA with TACACS+, jumbo MTU network-qos policy, management baseline.</td></tr>
+            <tr><td>Arista EOS <em>(14)</em></td><td>VLAN and SVI with VARP, MLAG domain and peer-link, MLAG member, routed port, loopback, static route, BGP underlay with ECMP and BFD, BGP EVPN leaf, VXLAN VTEP and VNI, IP access list, sFlow, monitor session, AAA with TACACS+, management baseline with eAPI.</td></tr>
+            <tr><td>Palo Alto PAN-OS <em>(14)</em></td><td>Address objects and groups, tag-based dynamic address groups, service objects, security rule (App-ID), source and destination NAT, layer 3 interface and zone, static route with path monitoring, security profile group with URL filtering, zone protection, decryption policy, site-to-site IPsec tunnel, log forwarding and syslog, management access and update schedule, HA pair. Emitted as <code>set</code> commands.</td></tr>
+            <tr><td>Fortinet FortiOS <em>(13)</em></td><td>Interfaces and VLAN sub-interfaces, address objects and groups, service objects, firewall policy with inspection profiles, VIP, IP pool, static route, DHCP server, site-to-site IPsec VPN, SD-WAN with health checks, administrative access and trusted hosts, logging and SNMP, HA cluster.</td></tr>
+            <tr><td>F5 BIG-IP <em>(11)</em></td><td>HTTP/HTTPS virtual server with pool and monitor, TCP virtual server, UDP virtual server (DNS, RADIUS, syslog), HTTPS with an Advanced WAF policy, HTTP-to-HTTPS redirect listener, custom health monitors, SNAT pool, client SSL with SNI, HTTP profile with compression and caching, take a pool member out of service, remove a tenant. All AS3 declarations, which the <a href="data-editor.html">Data Editor</a> validates against the AS3 schema.</td></tr>
           </table>
 
           <h3>Two ways to apply it</h3>
@@ -617,6 +627,11 @@
             build needs. Both are generated every time; use the one that matches what you are doing.
             When a full configuration is missing something a build should have (a hostname, NTP,
             spanning tree), the page says so rather than pretending it is complete.
+          </div>
+          <div class="tip">
+            Most changes also generate a playbook. A few have no Ansible module at all — PAN-OS log
+            forwarding, zone protection and decryption, for instance — and those say so in their
+            findings rather than quietly producing nothing.
           </div>
           <div class="tip">
             The vendor Ansible collections (<code>cisco.ios</code>, <code>paloaltonetworks.panos</code>,

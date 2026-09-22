@@ -15,6 +15,7 @@ import { bool, num, str, type BlueprintValues, type BlueprintGroup } from '../..
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { description, listOf, netmask, parseCidr, vlanIds, vlanRange, wildcard, type DeviceChange } from '../device.ts';
+import { IOS_EXTRA } from './ios-extra.ts';
 
 const PLATFORM = 'cisco_ios' as const;
 
@@ -741,10 +742,18 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
   }),
 ];
 
+/**
+ * The campus basics are above; the rest — routed ports, VRFs, EIGRP, FHRP,
+ * NAT, DHCP, 802.1X, SPAN, NetFlow, QoS, tunnels, VPN, AAA, NETCONF and the
+ * archive — are in ios-extra.ts, because one file of thirty changes is a file
+ * nobody can find anything in.
+ */
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...IOS_EXTRA];
+
 export const IOS_NETWORK: BlueprintGroup = {
   target: PLATFORM,
   label: 'Cisco IOS / IOS-XE',
-  blueprints: BLUEPRINTS,
+  blueprints: ALL,
 };
 
-export const IOS_CHANGES: readonly ChangeBlueprint[] = BLUEPRINTS;
+export const IOS_CHANGES: readonly ChangeBlueprint[] = ALL;
