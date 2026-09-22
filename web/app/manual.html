@@ -451,10 +451,26 @@
           <ul>
             <li><strong>Intake</strong>: name, owner, criticality, RTO, RPO, workload type, enterprise standard cloud, stack, OS, database, hosting, integration types, architecture pattern, vendor, identity, integration count, data size, notes; the compliance scopes (FedRAMP, CJIS, HIPAA, PCI DSS, SOX, GDPR, ITAR, CMMC and the rest); and the hard constraints — obsolete, a SaaS replacement exists, must stay on-premises, hardware-bound, mainframe-bound, data sovereignty required.</li>
             <li><strong>Ratings</strong>: the six factors, 1 to 5. Every one reads the same way — <strong>1 is the worst case for a move and 5 the best</strong> — so raising any rating always raises readiness. The score updates as you move the sliders, and each factor says what 1 and 5 mean and how much of the score it carries.</li>
-            <li><strong>Results</strong>: readiness, course of action, target cloud, risk band and wave, each with the sentence that explains it; the plan; and the services that cover each capability on that cloud. <em>Save to portfolio</em>, <em>Download record (JSON)</em> and <em>Copy the plan</em> are here.</li>
-            <li><strong>Portfolio</strong>: everything evaluated, the wave planning mode, the filters, the counts, and the files in and out.</li>
+            <li><strong>Results</strong>: readiness, course of action, target cloud, risk band and wave, each with the sentence that explains it; the plan; and the services that cover each capability on that cloud. <em>Next application →</em> clears the form for the next one, and <em>Update the portfolio</em>, <em>Download record (JSON)</em> and <em>Copy the plan</em> are here too.</li>
+            <li><strong>Portfolio</strong>: the compiled list of every application you have been through, the wave planning mode, the filters, the counts, and the files in and out.</li>
             <li><strong>How it works</strong>: the framework itself — the order the verdict is reached in, the seven routes and what each wave means.</li>
           </ul>
+
+          <h3>Working through a list of applications</h3>
+          <p>
+            <strong>Evaluate &amp; add to portfolio</strong> is one action, on both the Intake and the
+            Ratings tab: it scores the application, routes it, and puts it in the portfolio in the same
+            press. An application needs a name first — that is what its row is called, and evaluating
+            the same name again replaces that row rather than adding a second. From the Results tab,
+            <strong>Next application →</strong> empties the form for the next one; the portfolio keeps
+            everything you have already been through, and says how many that is.
+          </p>
+          <p>
+            In the Portfolio table, the application's name is a toggle: it opens the row out into the
+            whole record — the intake exactly as it was answered, the six ratings, the verdict with its
+            reasons, the wave, the services for that cloud, your notes, and when it was evaluated.
+            That is what makes the portfolio a compiled list of the work rather than eight columns.
+          </p>
 
           <h3>How the route is decided</h3>
           <table>
@@ -501,6 +517,7 @@
             <tr><td>Export JSON</td><td>The whole portfolio, to carry to another browser or keep with the design.</td></tr>
             <tr><td>Re-evaluate all</td><td>Runs every held application through the rules again — after ratings have been revised, or after a toolkit update.</td></tr>
             <tr><td>Empty the portfolio</td><td>Removes every row. The header's <em>Clear all</em> does this along with everything else in the toolkit.</td></tr>
+            <tr><td>Remove (on a row)</td><td>Takes one application out of the portfolio. It does not touch the form.</td></tr>
           </table>
           <p>
             A row's <strong>Open</strong> button loads that application back into the Intake tab, which is how

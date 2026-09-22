@@ -943,7 +943,7 @@ for (const [kind, path, generateLabel, expect] of [
   check('it names services for that cloud', /Azure Monitor|Microsoft Entra ID|Azure Virtual Machines/.test(results));
   check('it bands the risk and puts it in a wave', /migration risk/i.test(results) && /wave|blocked/i.test(results));
 
-  // Evaluating saved it: the portfolio tab should be holding it.
+  // Evaluating is what adds it: the portfolio tab should be holding it.
   await page.locator('.tab', { hasText: 'Portfolio' }).click();
   await page.waitForTimeout(300);
   const portfolio = await page.locator('#sec-portfolio').innerText();
@@ -961,6 +961,36 @@ for (const [kind, path, generateLabel, expect] of [
   await page.locator('.tab', { hasText: 'Portfolio' }).click();
   await page.waitForTimeout(300);
   check('the portfolio is still there after a reload', /Case Management System/.test(await page.locator('#sec-portfolio').innerText()));
+
+  // A row opens out into the whole record, which is what makes the portfolio a
+  // compiled list rather than eight columns.
+  await page.locator('.row-toggle').first().click();
+  await page.waitForTimeout(300);
+  const detail = await page.locator('.entry-detail').first().innerText();
+  check('a row opens into the full record', /INTAKE/i.test(detail) && /RATINGS/i.test(detail) && /VERDICT/i.test(detail), detail.slice(0, 60).replace(/\n/g, ' '));
+  check('the record carries the answers given', /Platform Team/.test(detail) && /Mission Critical/.test(detail));
+
+  // A second application: the portfolio is what accumulates as you work through
+  // a list. (The page was reloaded above, so open the held row to get a result
+  // back on screen first — a reload keeps the portfolio, not the open form.)
+  await page.locator('button', { hasText: 'Open' }).first().click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-control="evaluate"]').first().click();
+  await page.waitForTimeout(400);
+  await page.locator('button', { hasText: 'Next application' }).click();
+  await page.waitForTimeout(300);
+  check('starting the next application clears the form', (await page.inputValue('#app-name')) === '');
+
+  await page.locator('[data-control="evaluate"]').first().click();
+  await page.waitForTimeout(300);
+  check('and it will not evaluate an application with no name', /name/i.test(await page.locator('body').innerText()));
+
+  await page.fill('#app-name', 'Payroll');
+  await page.locator('[data-control="evaluate"]').first().click();
+  await page.waitForTimeout(400);
+  await page.locator('.tab', { hasText: 'Portfolio' }).click();
+  await page.waitForTimeout(300);
+  check('the portfolio now holds both', (await page.locator('#sec-portfolio tbody tr:not(.detail-row)').count()) === 2);
 
   // The old dashboard address lands on the tab.
   await page.goto(`${BASE}/app/migration-portfolio.html`, { waitUntil: 'networkidle' });

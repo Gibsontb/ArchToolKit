@@ -59,6 +59,17 @@ export interface GeneratorOptions {
   /** The `kind` written into saved settings, e.g. `archtoolkit.terraform-generator`. */
   readonly settingsKind: string;
   /**
+   * Whether the platform picker is the toolkit-wide cloud.
+   *
+   * True for Terraform and Ansible: the cloud is chosen once and every page
+   * agrees. False for a page whose platforms are not clouds at all — a network
+   * kit picks between Cisco IOS and PAN-OS — where writing the choice into the
+   * shared target would tell the other pages the cloud had changed to something
+   * they have never heard of. Such a page remembers its own platform instead,
+   * under its settings kind. Defaults to true.
+   */
+  readonly sharedPlatform?: boolean;
+  /**
    * Assemble several blueprints into one configuration.
    *
    * With this, the page grows a build list: add what you are building one
@@ -362,10 +373,35 @@ function inputSection(title: string, fields: readonly HTMLElement[], touched: nu
 }
 
 export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions): void {
+  const shared = options.sharedPlatform !== false;
+  const ownKey = `${options.settingsKind}.platform`;
+
+  /** The platform this page is on, for a page that does not share the cloud. */
+  const recallOwn = (): string | null => {
+    try {
+      return globalThis.sessionStorage?.getItem(ownKey) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const rememberPlatform = (next: string, origin: string): void => {
+    if (shared) {
+      setTarget(next as TargetId, origin);
+      return;
+    }
+    try {
+      globalThis.sessionStorage?.setItem(ownKey, next);
+    } catch {
+      // Not remembering the platform is survivable; failing to render is not.
+    }
+  };
+  const known = (value: string | null | undefined): string | undefined =>
+    options.groups.some((g) => g.target === value) ? (value as string) : undefined;
+
   // Declared above everything that can reach them: a `let` below the code that
   // uses it left a page dead on arrival once already, and neither the tests nor
   // the typechecker noticed.
-  let target: TargetId = (getTarget()?.target ?? options.groups[0]?.target ?? 'aws') as TargetId;
+  let target: TargetId = ((shared ? known(getTarget()?.target) : known(recallOwn())) ?? options.groups[0]?.target ?? 'aws') as TargetId;
   let blueprint: Blueprint | undefined;
   let values: BlueprintValues = {};
   let generated: Readonly<Record<string, string>> | null = null;
@@ -409,7 +445,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
         const group = options.groups.find((g) => g.target === file.target);
         if (!group) throw new Error(`the platform ${String(file.target)} is not one this page builds for.`);
         target = group.target as TargetId;
-        setTarget(target, `loaded from ${name}`);
+        rememberPlatform(target, `loaded from ${name}`);
         const next = available().find((b) => b.id === file.blueprint);
         if (!next) throw new Error(`there is no ${options.noun} called ${String(file.blueprint)} for ${group.label}.`);
         selectBlueprint(next);
@@ -463,7 +499,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 
   // If the tab has no target yet, record the one being shown so the other pages
   // agree with this one rather than each defaulting on their own.
-  if (getTarget() === null) setTarget(target, 'chosen on this page');
+  if (shared ? getTarget() === null : recallOwn() === null) rememberPlatform(target, 'chosen on this page');
 
   function available(): readonly Blueprint[] {
     return blueprintsFor(options.groups, target);
@@ -673,7 +709,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     }
     platform.addEventListener('change', () => {
       target = platform.value as TargetId;
-      setTarget(target, 'chosen on this page');
+      rememberPlatform(target, 'chosen on this page');
       selectBlueprint(first());
       renderOne();
       renderTwo();

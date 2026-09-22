@@ -67,6 +67,8 @@ interface State {
   filterCloud: Cloud | '';
   filterRoute: string;
   filterWave: string;
+  /** Rows opened out to their full record. */
+  expanded: Set<string>;
   notes: Finding[];
 }
 
@@ -78,6 +80,7 @@ const state: State = {
   filterCloud: '',
   filterRoute: '',
   filterWave: '',
+  expanded: new Set<string>(),
   notes: [],
 };
 
@@ -248,7 +251,13 @@ function intakeSection(rerender: () => void): HTMLElement {
     'div',
     { class: 'btn-row' },
     el('button', { class: 'btn btn-primary', text: 'Next: ratings →', on: { click: () => showTab('ratings') } }),
-    el('button', { class: 'btn', text: 'Evaluate now', dataset: { control: 'evaluate' }, on: { click: () => runEvaluation(rerender) } }),
+    el('button', {
+      class: 'btn',
+      text: 'Evaluate & add to portfolio',
+      dataset: { control: 'evaluate' },
+      attrs: { title: 'Score it, route it, and put it in the portfolio' },
+      on: { click: () => runEvaluation(rerender) },
+    }),
   );
 
   return el('div', {}, identity, service, technology, context, next);
@@ -304,7 +313,7 @@ function ratingsSection(rerender: () => void): HTMLElement {
     el(
       'div',
       { class: 'btn-row' },
-      el('button', { class: 'btn btn-primary', text: 'Evaluate', dataset: { control: 'evaluate' }, on: { click: () => runEvaluation(rerender) } }),
+      el('button', { class: 'btn btn-primary', text: 'Evaluate & add to portfolio', dataset: { control: 'evaluate' }, on: { click: () => runEvaluation(rerender) } }),
       el('button', { class: 'btn', text: '← Back to intake', on: { click: () => showTab('intake') } }),
       el('button', {
         class: 'btn',
@@ -424,9 +433,17 @@ function resultsSection(rerender: () => void): HTMLElement {
     { class: 'btn-row' },
     el('button', {
       class: 'btn btn-primary',
-      text: 'Save to portfolio',
+      text: 'Next application →',
+      attrs: { title: 'Clear the form for the next one. This application is already in the portfolio.' },
+      on: { click: () => startAnother(rerender) },
+    }),
+    el('button', {
+      class: 'btn',
+      text: 'Update the portfolio',
+      attrs: { title: 'Save this application again, after changing an answer' },
       on: { click: () => void saveCurrent(rerender) },
     }),
+    el('button', { class: 'btn', text: 'Open the portfolio', on: { click: () => showTab('portfolio') } }),
     el('button', {
       class: 'btn',
       text: 'Download record (JSON)',
@@ -460,6 +477,83 @@ function resultsSection(rerender: () => void): HTMLElement {
 
 function waveOf(entry: PortfolioEntry): Wave {
   return wavePlan(entry.evaluation.route, entry.evaluation.readiness, entry.evaluation.risk, state.mode).wave;
+}
+
+/** One labelled fact in a record. Blank answers are left out rather than shown empty. */
+function fact(label: string, value: string | number | undefined | null): HTMLElement | null {
+  const text = value === undefined || value === null ? '' : String(value).trim();
+  if (text === '') return null;
+  return el('div', { class: 'fact' }, el('span', { class: 'fact-label', text: label }), el('span', { class: 'fact-value', text }));
+}
+
+/**
+ * Everything recorded for one application, opened out under its row.
+ *
+ * The portfolio is the compiled record of the work: each row is the whole
+ * intake as it was answered, the verdict and why, the wave, and the plan —
+ * not just the five columns that fit across the table. An application from a
+ * CSV shows what the spreadsheet could answer and says plainly that its
+ * ratings are still the defaults.
+ */
+function entryDetail(entry: PortfolioEntry, wave: Wave): HTMLElement {
+  const app = entry.application;
+  const result = entry.evaluation;
+  const when = new Date(entry.evaluatedAt);
+  const evaluatedAt = Number.isNaN(when.getTime()) ? entry.evaluatedAt : when.toLocaleString();
+
+  const intake = el(
+    'div',
+    { class: 'fact-grid' },
+    fact('Owner', app.owner),
+    fact('Criticality', app.criticality),
+    fact('Workload', app.workloadType),
+    fact('RTO', `${app.rtoHours} h`),
+    fact('RPO', `${app.rpoHours} h`),
+    fact('Integrations', app.integrationCount),
+    fact('Data size', `${app.dataSizeGb} GB`),
+    fact('Enterprise standard', app.enterpriseStandardCloud ? CLOUD_LABELS[app.enterpriseStandardCloud] : ''),
+    fact('Stack', app.primaryStack),
+    fact('OS / runtime', app.osRuntime),
+    fact('Database', app.database),
+    fact('Hosting', app.hostingPlatform),
+    fact('Integration types', app.integrationTypes),
+    fact('Pattern', app.architecturePattern),
+    fact('Vendor', app.vendor),
+    fact('Identity', app.identity),
+    fact('Compliance', app.compliance.join(', ')),
+    fact('Constraints', GATES.filter((g) => app.gates[g.id as keyof typeof app.gates]).map((g) => g.label).join(', ')),
+  );
+
+  const ratings = el(
+    'div',
+    { class: 'fact-grid' },
+    ...(Object.keys(WEIGHTS) as (keyof Ratings)[]).map((key) => fact(RATING_MEANING[key].label, `${app.ratings[key]} / 5`)),
+  );
+
+  const why = el(
+    'ul',
+    { class: 'list small' },
+    el('li', {}, el('strong', { text: `${result.route}. ` }), result.rationale),
+    el('li', {}, el('strong', { text: `${CLOUD_LABELS[result.cloud]}. ` }), result.cloudRationale),
+    el('li', {}, el('strong', { text: `${result.risk} risk. ` }), result.riskBecause.length > 0 ? `From ${result.riskBecause.join(', ')}.` : 'Nothing in the answers raises it.'),
+    el('li', {}, el('strong', { text: `${wave}. ` }), WAVE_MEANING[wave]),
+  );
+
+  const services = el('div', { class: 'fact-grid' }, ...result.services.map((s) => fact(s.label, [s.primary, ...s.related].join(', '))));
+
+  return el(
+    'div',
+    { class: 'entry-detail' },
+    entry.draft
+      ? el('div', { class: 'section-note', text: 'Imported from a spreadsheet: the six ratings and the hard constraints are still at their defaults. Open it to answer them.' })
+      : null,
+    el('div', { class: 'detail-block' }, el('h4', { text: 'Intake' }), intake),
+    el('div', { class: 'detail-block' }, el('h4', { text: 'Ratings' }), ratings),
+    el('div', { class: 'detail-block' }, el('h4', { text: 'Verdict' }), why),
+    result.services.length > 0 ? el('div', { class: 'detail-block' }, el('h4', { text: `Services on ${CLOUD_LABELS[result.cloud]}` }), services) : null,
+    app.notes ? el('div', { class: 'detail-block' }, el('h4', { text: 'Notes' }), el('p', { class: 'small', text: app.notes })) : null,
+    el('div', { class: 'small muted', text: `Evaluated ${evaluatedAt}${entry.draft ? ' · draft' : ''}` }),
+  );
 }
 
 function visibleEntries(): PortfolioEntry[] {
@@ -497,17 +591,56 @@ async function saveCurrent(rerender: () => void): Promise<void> {
   await persist(rerender);
 }
 
+/**
+ * Evaluate the application and put it in the portfolio: one action, because
+ * they are one intention. Going through a list of applications means doing
+ * this once per application, and an evaluation that had to be saved separately
+ * afterwards is an evaluation someone will lose.
+ *
+ * A name is what a portfolio row is identified by, so that is the one thing
+ * this insists on.
+ */
 function runEvaluation(rerender: () => void): void {
-  state.evaluation = evaluate(state.app, catalog);
-  if (state.app.name.trim()) {
-    state.entries = upsert(state.entries, entryFor(state.app, catalog));
-    void savePortfolio(state.entries);
+  const named = state.app.name.trim();
+  if (!named) {
+    state.notes = [
+      {
+        severity: 'error',
+        code: 'migration.no-name',
+        message: 'Give the application a name first — it is what its row in the portfolio is called.',
+        source: 'portfolio',
+      },
+    ];
+    rerender();
+    showTab('intake');
+    document.getElementById('app-name')?.focus();
+    return;
   }
-  state.notes = state.app.name.trim()
-    ? []
-    : [{ severity: 'info', code: 'migration.unnamed', message: 'Evaluated, but not saved: an application needs a name to go in the portfolio.', source: 'portfolio' }];
-  rerender();
+
+  state.evaluation = evaluate(state.app, catalog);
+  const before = state.entries.length;
+  state.entries = upsert(state.entries, entryFor(state.app, catalog));
+  const added = state.entries.length > before;
+  state.notes = [
+    {
+      severity: 'info',
+      code: 'migration.saved',
+      message: `"${named}" evaluated and ${added ? 'added to' : 'updated in'} the portfolio — ${state.entries.length} application${state.entries.length === 1 ? '' : 's'} so far.`,
+      source: 'portfolio',
+    },
+  ];
+  void persist(rerender);
   showTab('results');
+}
+
+/** Empty the form for the next application, keeping the portfolio. */
+function startAnother(rerender: () => void): void {
+  state.app = { ...EMPTY_APPLICATION, gates: { ...NO_GATES }, ratings: { ...DEFAULT_RATINGS } };
+  state.evaluation = null;
+  state.notes = [];
+  rerender();
+  showTab('intake');
+  document.getElementById('app-name')?.focus();
 }
 
 function portfolioSection(rerender: () => void): HTMLElement {
@@ -550,7 +683,7 @@ function portfolioSection(rerender: () => void): HTMLElement {
       'div',
       { class: 'field-grid' },
       field('Planning mode', modeSelect, WAVE_MODES.find((m) => m.id === state.mode)?.description),
-      field('Show', el('div', { class: 'btn-row' }, cloudFilter, routeFilter, waveFilter), 'Filters the table below; the counts are for the whole portfolio.'),
+      field('Show', el('div', { class: 'filter-row' }, cloudFilter, routeFilter, waveFilter), 'Filters the table below; the counts are for the whole portfolio.'),
     ),
     statGrid(
       stat({ label: 'Applications', value: String(counts.total) }),
@@ -565,12 +698,25 @@ function portfolioSection(rerender: () => void): HTMLElement {
   const body = el('tbody', {});
   for (const entry of rows) {
     const wave = waveOf(entry);
+    const open = state.expanded.has(entry.id);
+    const toggle = el('button', {
+      class: 'btn-link row-toggle',
+      text: `${open ? '▾' : '▸'} ${entry.application.name}`,
+      attrs: { type: 'button', 'aria-expanded': open ? 'true' : 'false', title: 'Show everything recorded for this application' },
+      on: {
+        click: () => {
+          if (open) state.expanded.delete(entry.id);
+          else state.expanded.add(entry.id);
+          rerender();
+        },
+      },
+    });
     append(
       body,
       el(
         'tr',
         {},
-        el('td', {}, el('strong', { text: entry.application.name }), entry.draft ? el('span', { class: 'badge badge-community', text: 'draft' }) : null),
+        el('td', {}, toggle, entry.draft ? el('span', { class: 'badge badge-community', text: 'draft' }) : null),
         el('td', { class: 'muted small', text: entry.application.owner || '—' }),
         el('td', { text: entry.application.criticality }),
         el('td', { text: entry.evaluation.route }),
@@ -598,6 +744,7 @@ function portfolioSection(rerender: () => void): HTMLElement {
             text: 'Remove',
             on: {
               click: () => {
+                state.expanded.delete(entry.id);
                 state.entries = removeEntry(state.entries, entry.id);
                 void persist(rerender);
               },
@@ -606,6 +753,7 @@ function portfolioSection(rerender: () => void): HTMLElement {
         ),
       ),
     );
+    if (open) append(body, el('tr', { class: 'detail-row' }, el('td', { attrs: { colspan: '9' } }, entryDetail(entry, wave))));
   }
 
   const table = el(

@@ -2126,3 +2126,71 @@ textarea {
   border-color: color-mix(in srgb, var(--danger) 35%, transparent);
   background: var(--danger-dim);
 }
+
+/* --- Portfolio rows opened out ------------------------------------------
+   A row in the portfolio table opens into the whole record: the intake as it
+   was answered, the ratings, the verdict and the services. */
+
+.btn-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.btn-link:hover {
+  color: var(--accent);
+}
+.row-toggle {
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-row > td {
+  background: var(--bg-sunken);
+}
+.entry-detail {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.detail-block h4 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-1) var(--space-4);
+}
+.fact {
+  display: flex;
+  gap: var(--space-2);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.fact-label {
+  flex: 0 0 9.5rem;
+  color: var(--text-muted);
+}
+.fact-value {
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* Three filters on one line: cloud, route, wave. */
+.filter-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.filter-row > select {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
