@@ -17,9 +17,9 @@
  */
 
 import { forgetInventory, resetEstateCache } from '../kit/estate-store.js';
+import { DB_NAME } from '../kit/idb.js';
 
 const PREFIX = 'archtoolkit.';
-const DB_NAME = 'archtoolkit';
 
 function sweep(store                     )         {
   if (!store) return 0;

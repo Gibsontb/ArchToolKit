@@ -20,7 +20,6 @@
         <a href="app/data-editor.html">Data Editor</a>
         <a href="app/multicloud.html">Multi-Cloud</a>
         <a href="app/migration.html">Migration</a>
-        <a href="app/migration-portfolio.html">Portfolio</a>
         <a href="app/terraform-map.html">Terraform Map</a>
         <a href="app/terraform.html">Terraform</a>
         <a href="app/ansible.html">Ansible</a>
@@ -41,7 +40,7 @@
 
       <div class="tool-grid">
         <a class="tool-card" href="app/inventory.html">
-          <h3>1 · VMware Inventory</h3>
+          <h3>VMware Inventory</h3>
           <p>
             Start here. Import the RVTools workbook as it is — every tab, every vCenter — and see the
             estate's capacity, clusters, VCF readiness and what stands in the way of moving each VM.
@@ -49,7 +48,7 @@
           <span class="tag tag-ready">Ready</span>
         </a>
         <a class="tool-card" href="app/vcf-sizing.html">
-          <h3>2 · VCF 9.1 Sizing</h3>
+          <h3>VCF 9.1 Sizing</h3>
           <p>
             Size a VCF fleet for greenfield or brownfield. Management-plane demand, host capacity,
             vSAN overhead, IP and FQDN counts, and per-core licensing — with the provenance of every
@@ -59,7 +58,7 @@
         </a>
 
         <a class="tool-card" href="app/vcf-spec.html">
-          <h3>3 · VCF 9.1 Spec Builder</h3>
+          <h3>VCF 9.1 Spec Builder</h3>
           <p>
             Generate a complete <code>SddcSpec</code> for the VCF Installer, covering all 31 top-level
             keys including <code>vspClusterSpec</code>, VPC/DTGW, LACP and dual-stack.
@@ -98,20 +97,12 @@
         </a>
 
         <a class="tool-card" href="app/migration.html">
-          <h3>Application Migration &amp; Modernization</h3>
+          <h3>Application Migration</h3>
           <p>
-            Evaluate an on-premises application, route it across the 7 Rs, and get the readiness
-            score, risk badge and a step-by-step plan for the target cloud. Exports a JSON record
-            per application, which the portfolio dashboard reads.
-          </p>
-          <span class="tag tag-ready">Ready</span>
-        </a>
-
-        <a class="tool-card" href="app/migration-portfolio.html">
-          <h3>Migration Portfolio Dashboard</h3>
-          <p>
-            Load the evaluated applications, filter by cloud and disposition, see the wave split and
-            what is blocked, and export the portfolio as CSV or JSON.
+            Evaluate an application, route it across the seven Rs, and get the readiness score, the
+            risk band, the target cloud, the services that cover it and a step-by-step plan. Every
+            application evaluated is kept in the Portfolio tab, where the waves are planned and the
+            whole backlog exports as CSV or JSON.
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
@@ -156,5 +147,6 @@
       </div>
     </main>
     <script type="module" src="lib/ui/clear-all.js"></script>
+    <script type="module" src="lib/ui/site-footer.js"></script>
   </body>
 </html>

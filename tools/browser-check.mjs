@@ -74,7 +74,6 @@ for (const [name, path] of [
   ['ansible', '/app/ansible.html'],
   ['multicloud', '/app/multicloud.html'],
   ['migration', '/app/migration.html'],
-  ['portfolio', '/app/migration-portfolio.html'],
 ]) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -476,7 +475,7 @@ for (const [name, path] of [
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/migration-portfolio.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html', 'app/manual.html'];
+  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html', 'app/manual.html'];
   const missing = [];
   for (const p of pages) {
     await page.goto(`${BASE}/${p}`, { waitUntil: 'networkidle' });
@@ -914,7 +913,7 @@ for (const [kind, path, generateLabel, expect] of [
   await ctx.close();
 }
 
-// --- the 7R migration engine ---------------------------------------------
+// --- migration: evaluate, then the portfolio that holds it ----------------
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -924,34 +923,89 @@ for (const [kind, path, generateLabel, expect] of [
   await page.goto(`${BASE}/app/migration.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(400);
 
-  check('the migration workspace loads clean', errors.length === 0, errors[0] ?? '');
-  check(
-    'the shared service catalog loads with it',
-    (await page.evaluate(() => typeof window.CDK)) === 'object',
-  );
+  check('the migration page loads clean', errors.length === 0, errors[0] ?? '');
   const tabs = (await page.locator('.tab').allTextContents()).join(' ');
-  check('it keeps its five tabs', /Manual.*Intake.*Ratings.*Results.*Playbooks/s.test(tabs), tabs);
+  check('it offers the portfolio as a tab', /Intake.*Ratings.*Results.*Portfolio.*How it works/s.test(tabs), tabs);
 
-  await page.locator('.tab', { hasText: 'Intake' }).click();
-  await page.waitForTimeout(200);
-  await page.fill('#appName', 'Case Management System');
-  await page.fill('#appOwner', 'Platform Team');
-  await page.selectOption('#criticality', 'Mission Critical');
-  await page.fill('#rto', '4');
-  await page.fill('#rpo', '1');
-  await page.selectOption('#enterpriseCloud', 'Azure');
-
-  await page.locator('#btnRun').click();
-  await page.waitForTimeout(700);
-  await page.locator('.tab', { hasText: 'Results' }).click();
-  await page.waitForTimeout(300);
+  await page.fill('#app-name', 'Case Management System');
+  await page.fill('#app-owner', 'Platform Team');
+  await page.selectOption('#app-criticality', 'Mission Critical');
+  await page.fill('#app-rto', '4');
+  await page.fill('#app-rpo', '1');
+  await page.selectOption('#app-standard-cloud', 'azure');
+  await page.locator('[data-control="evaluate"]').first().click();
+  await page.waitForTimeout(500);
 
   const results = await page.locator('#sec-results').innerText();
-  check('it routes the application to one of the 7 Rs', /Rehost|Replatform|Refactor|Repurchase|Retain|Retire|Relocate/.test(results), results.slice(0, 40).replace(/\n/g, ' '));
-  check('it scores readiness', /Readiness Score/.test(results));
-  check('it names the target cloud it planned for', /AZURE/i.test(results));
-  check('and produces a step-by-step plan for that cloud', /Azure Landing Zone|Entra ID/.test(results));
-  check('with a risk badge', (await page.locator('#sec-results .badge').count()) > 0);
+  check('it routes the application to one of the seven Rs', /Rehost|Replatform|Refactor|Repurchase|Retain|Retire/.test(results), results.slice(0, 40).replace(/\n/g, ' '));
+  check('it scores readiness out of 100', /readiness[\s\S]{0,40}out of 100/i.test(results));
+  check('it plans for the cloud the enterprise standardised on', /Azure/.test(results) && /standardised/.test(results));
+  check('it names services for that cloud', /Azure Monitor|Microsoft Entra ID|Azure Virtual Machines/.test(results));
+  check('it bands the risk and puts it in a wave', /migration risk/i.test(results) && /wave|blocked/i.test(results));
+
+  // Evaluating saved it: the portfolio tab should be holding it.
+  await page.locator('.tab', { hasText: 'Portfolio' }).click();
+  await page.waitForTimeout(300);
+  const portfolio = await page.locator('#sec-portfolio').innerText();
+  check('the evaluated application is in the portfolio', /Case Management System/.test(portfolio));
+  check('and the portfolio counts it as one row', (await page.locator('#sec-portfolio tbody tr').count()) === 1);
+
+  // The wave mode is the programme's choice, and it recalculates in place.
+  await page.selectOption('#sec-portfolio select', { index: 1 });
+  await page.waitForTimeout(300);
+  check('changing the planning mode recalculates without an error', errors.length === 0, errors[0] ?? '');
+
+  // It survives a reload, because the portfolio is kept in this browser.
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(600);
+  await page.locator('.tab', { hasText: 'Portfolio' }).click();
+  await page.waitForTimeout(300);
+  check('the portfolio is still there after a reload', /Case Management System/.test(await page.locator('#sec-portfolio').innerText()));
+
+  // The old dashboard address lands on the tab.
+  await page.goto(`${BASE}/app/migration-portfolio.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(600);
+  check('the old portfolio address redirects to the tab', /migration\.html/.test(page.url()) && /Case Management System/.test(await page.locator('body').innerText()), page.url());
+
+  check('no script errors through any of it', errors.length === 0, errors[0] ?? '');
+  await ctx.close();
+}
+
+// --- migration: importing an inventory as a backlog -----------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  await page.goto(`${BASE}/app/migration.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  await page.locator('.tab', { hasText: 'Portfolio' }).click();
+  await page.waitForTimeout(200);
+
+  const csv = [
+    'name,owner,criticality,rtoHours,rpoHours,primaryStack,database,compliance',
+    'Claims,Ops,High,4,1,Java 17 (Spring Boot),PostgreSQL 15,pci',
+    'Payroll,Finance,Mission Critical,2,0.5,C# / .NET 8,Microsoft SQL Server 2019,sox',
+    'Archive,IT,Low,72,24,,,'
+  ].join('\n');
+  const csvPath = join(tmpdir(), 'atk-portfolio.csv');
+  writeFileSync(csvPath, csv, 'utf8');
+  await page.locator('[data-control="portfolio-import"]').setInputFiles(csvPath);
+  await page.waitForTimeout(600);
+
+  const portfolio = await page.locator('#sec-portfolio').innerText();
+  check('a CSV inventory imports as a backlog', /Claims/.test(portfolio) && /Payroll/.test(portfolio) && /Archive/.test(portfolio));
+  check('the imported rows are marked as drafts', /draft/i.test(portfolio));
+  check('and each one is routed to a cloud', /Azure/.test(portfolio) && /AWS/.test(portfolio), portfolio.slice(0, 120).replace(/\n/g, ' '));
+  check('the import says what it did', /imported/i.test(portfolio));
+
+  // Opening a row puts it back in the intake, where its ratings can be answered.
+  await page.locator('button', { hasText: 'Open' }).first().click();
+  await page.waitForTimeout(400);
+  check('opening a row loads it into the intake', (await page.inputValue('#app-name')).length > 0);
+
+  check('no script errors through the import', errors.length === 0, errors[0] ?? '');
   await ctx.close();
 }
 

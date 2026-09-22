@@ -18,6 +18,7 @@
     "test:watch": "node --test --watch \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "test:browser": "node tools/browser-check.mjs",
+    "manual:pdf": "node tools/manual-pdf.mjs",
     "catalog:update": "node tools/fetch-provider-catalog.mjs",
     "ansible:update": "node tools/fetch-ansible-catalog.mjs",
     "sizes:update": "node tools/fetch-compute-catalog.mjs",

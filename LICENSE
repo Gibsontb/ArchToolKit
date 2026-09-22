@@ -1,0 +1,59 @@
+ArchToolKit
+Copyright (c) 2026 Theodore Gibson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+ADDITIONAL DISCLAIMER
+
+ArchToolKit produces candidate designs, sizing figures, specifications,
+configuration files and automation code. Every one of them is a starting point
+for a human review, not a finished artefact and not professional advice.
+
+  * Sizing and capacity figures are estimates. Validate them against the
+    vendor's current documentation and a live installer before you commit to
+    hardware, licensing or a deployment window.
+
+  * Generated Terraform, Ansible, device configuration and declarations are
+    unreviewed code. Read them, plan or dry-run them, and test them in a
+    non-production environment first. Applying them can create billable cloud
+    resources, change running systems or interrupt service.
+
+  * Migration routes, risk bands, wave placement and service recommendations
+    are decision support. They do not replace the judgement of the people
+    accountable for the applications concerned.
+
+  * Nothing here is legal, regulatory, security-certification, financial or
+    licensing advice. Compliance mappings and regulatory references are
+    informational and may be out of date; confirm them with your own auditors,
+    legal counsel and the relevant authority.
+
+  * The Software is offline and stores its data in your own browser. You are
+    responsible for what you enter into it and for where you send what comes
+    out of it.
+
+Use of the Software is entirely at your own risk, and the limitation of
+liability above applies to all of it.
+
+The vendor and product names used here — including VMware, VMware Cloud
+Foundation, Amazon Web Services, Microsoft Azure, Google Cloud, Oracle Cloud
+Infrastructure, F5, Splunk, Cisco, Red Hat, Ansible, Terraform and HashiCorp —
+are the trademarks of their respective owners. They are used only to describe
+what the Software builds for and interoperates with. This Software is not
+affiliated with, endorsed by or sponsored by any of them.

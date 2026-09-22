@@ -42,7 +42,6 @@
         <a href="data-editor.html">Data Editor</a>
         <a href="multicloud.html">Multi-Cloud</a>
         <a href="migration.html">Migration</a>
-        <a href="migration-portfolio.html">Portfolio</a>
         <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
@@ -75,13 +74,13 @@
             <li><a href="#ansible">Ansible generator</a></li>
             <li><a href="#tfmap">Terraform Map</a></li>
             <li><a href="#multicloud">Multi-Cloud wizard</a></li>
-            <li><a href="#migration">Application Migration</a></li>
-            <li><a href="#portfolio">Migration Portfolio</a></li>
+            <li><a href="#migration">Application Migration and Portfolio</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
             <li><a href="#trouble">Troubleshooting</a></li>
             <li><a href="#limits">Known limits</a></li>
+            <li><a href="#licence">Licence and disclaimer</a></li>
           </ol>
         </nav>
 
@@ -123,8 +122,7 @@
             <tr><td><a href="ansible.html">Ansible</a></td><td>Generate Ansible playbooks plus their <code>requirements.yml</code>, including inventories built from the estate.</td></tr>
             <tr><td><a href="terraform-map.html">Terraform Map</a></td><td>A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
             <tr><td><a href="multicloud.html">Multi-Cloud</a></td><td>A four-step wizard that produces a cloud recommendation and onboarding playbook, ready for Word.</td></tr>
-            <tr><td><a href="migration.html">Migration</a></td><td>Evaluate one application: 7R route, readiness score, risk, target cloud, plan.</td></tr>
-            <tr><td><a href="migration-portfolio.html">Portfolio</a></td><td>Combine many evaluated applications into migration waves.</td></tr>
+            <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
           </table>
 
           <!-- ================================================================ -->
@@ -133,6 +131,7 @@
           <table>
             <tr><th>What</th><th>Where</th><th>How long</th></tr>
             <tr><td>The imported estate (the inventory)</td><td>Browser IndexedDB</td><td>Until you press <strong>Forget</strong> or <strong>Clear all</strong>. It survives closing the browser.</td></tr>
+            <tr><td>The migration portfolio (every application evaluated)</td><td>Browser IndexedDB</td><td>Until you empty it on the Portfolio tab, or press <strong>Clear all</strong>. It survives closing the browser.</td></tr>
             <tr><td>Work passed between pages (sizing → spec builder, spec → editor), the chosen cloud, the Data Editor's open file</td><td>Browser session storage</td><td>Until the tab is closed.</td></tr>
             <tr><td>Settings files you <strong>Save</strong></td><td>Your Downloads folder</td><td>Yours to keep. Passwords and keys are never written into them.</td></tr>
           </table>
@@ -424,38 +423,80 @@
           <p>With an estate imported, <strong>Answer from the estate</strong> fills in what the inventory can answer (the migration approach, data volume, environments, regions and a description of the estate) for the whole estate or one cluster. Criticality, uptime, sensitivity and deadlines stay yours.</p>
 
           <!-- ================================================================ -->
-          <h2 id="migration">12. Application Migration</h2>
-          <p>Evaluates one application. Tabs:</p>
+          <h2 id="migration">12. Application Migration and Portfolio</h2>
+          <p>
+            One page for both halves of the job: evaluating an application, and holding the portfolio
+            of everything evaluated so far. They used to be two pages that only met through an
+            exported file, so the dashboard was always out of date. Evaluating an application now
+            adds or replaces its row straight away, and the old portfolio address redirects to the
+            Portfolio tab.
+          </p>
+
+          <h3>The tabs</h3>
           <ul>
-            <li><strong>Manual</strong>: the decision framework and readiness bands.</li>
-            <li><strong>Intake</strong>: name, owner, criticality, RTO, RPO, workload type, enterprise standard cloud, stack, OS, database, hosting, integrations, vendor, identity, data size, compliance scope (FedRAMP, CJIS, HIPAA, PCI DSS, SOX, GDPR and more) and hard gates (obsolete, SaaS replacement exists, must stay on-prem, hardware-bound, mainframe, data sovereignty).</li>
-            <li><strong>Ratings</strong>: six factors from 1 to 5: cloud compatibility, technical debt, vendor lock risk, compliance complexity, modularity, refactor effort.</li>
-            <li><strong>Results</strong> and <strong>Playbooks</strong>.</li>
+            <li><strong>Intake</strong>: name, owner, criticality, RTO, RPO, workload type, enterprise standard cloud, stack, OS, database, hosting, integration types, architecture pattern, vendor, identity, integration count, data size, notes; the compliance scopes (FedRAMP, CJIS, HIPAA, PCI DSS, SOX, GDPR, ITAR, CMMC and the rest); and the hard constraints — obsolete, a SaaS replacement exists, must stay on-premises, hardware-bound, mainframe-bound, data sovereignty required.</li>
+            <li><strong>Ratings</strong>: the six factors, 1 to 5. Every one reads the same way — <strong>1 is the worst case for a move and 5 the best</strong> — so raising any rating always raises readiness. The score updates as you move the sliders, and each factor says what 1 and 5 mean and how much of the score it carries.</li>
+            <li><strong>Results</strong>: readiness, course of action, target cloud, risk band and wave, each with the sentence that explains it; the plan; and the services that cover each capability on that cloud. <em>Save to portfolio</em>, <em>Download record (JSON)</em> and <em>Copy the plan</em> are here.</li>
+            <li><strong>Portfolio</strong>: everything evaluated, the wave planning mode, the filters, the counts, and the files in and out.</li>
+            <li><strong>How it works</strong>: the framework itself — the order the verdict is reached in, the seven routes and what each wave means.</li>
           </ul>
-          <p><strong>Run Evaluation</strong> gives a readiness score (0–100), a course of action, a target cloud, a risk badge, a step-by-step plan and recommended services.</p>
+
+          <h3>How the route is decided</h3>
           <table>
             <tr><th>Rule, in order</th><th>Route</th></tr>
             <tr><td>Marked obsolete</td><td>Retire</td></tr>
-            <tr><td>A SaaS replacement exists (and it need not stay on-prem)</td><td>Repurchase</td></tr>
-            <tr><td>Must stay on-prem, hardware-bound or mainframe</td><td>Retain</td></tr>
+            <tr><td>A SaaS replacement exists, and nothing requires it to stay on-premises</td><td>Repurchase</td></tr>
+            <tr><td>Must stay on-premises, hardware-bound or mainframe-bound</td><td>Retain</td></tr>
             <tr><td>Readiness 80–100 / 60–79 / 40–59 / 20–39 / 0–19</td><td>Refactor / Replatform / Rehost / Retain / Retire</td></tr>
           </table>
-          <p>The target cloud is the enterprise standard if one is set; otherwise sovereignty or regulated compliance leads to Azure (Microsoft-heavy) or AWS, Oracle to OCI, Microsoft stacks to Azure, analytics and AI to Google Cloud, and AWS by default.</p>
-          <p><strong>Export JSON</strong> saves <code>app-migration-&lt;name&gt;.json</code> for the Portfolio. Nothing is kept on the page: export before you reload.</p>
+          <p>
+            The six factors are weighted: cloud compatibility 20, technical debt 20, refactor effort 20,
+            compliance 15, modularity 15, vendor lock-in 10. The target cloud is the enterprise standard
+            when one is set; otherwise regulated or sovereign data goes to Azure on a Microsoft-heavy
+            stack and AWS otherwise, an Oracle estate to OCI, a Microsoft estate to Azure, analytics and
+            AI to Google Cloud, and AWS when nothing else speaks up. The risk band comes from criticality,
+            RTO, RPO, integration count and compliance scope; it changes the wave, never the route.
+          </p>
+          <div class="tip">
+            <strong>A correction from the page this was ported from.</strong> The old scoring inverted four
+            of the six factors, so rating technical debt, vendor lock-in, compliance complexity or refactor
+            effort at 5 — the best case, by the label beside it — lowered readiness. The labels were right and
+            the arithmetic was wrong, so the inversions are gone. A portfolio carried over from the old page
+            will score differently, and more sensibly, for those four.
+          </div>
 
-          <!-- ================================================================ -->
-          <h2 id="portfolio">13. Migration Portfolio</h2>
-          <ul>
-            <li><strong>Load App Records</strong>: the JSON files exported from the Migration page (several at once).</li>
-            <li><strong>Import Inventory (CSV)</strong>: create draft entries from a spreadsheet, with the columns shown on the page (compliance values separated by <code>;</code>).</li>
-            <li><strong>Wave Planning Mode</strong>: Default (risk and readiness), Fast Exit, Modernize First; filters by cloud and course of action.</li>
-            <li>Counts per wave and blocked, and the portfolio table.</li>
-            <li><strong>Export Portfolio CSV</strong> and <strong>Export Portfolio JSON</strong> (always every record, whatever the filters).</li>
-          </ul>
-          <p>Retain is blocked; Retire and Repurchase go in wave 1; otherwise low risk with readiness 55 or more is wave 1, low or medium risk with readiness 40 or more is wave 2, and the rest wave 3. Fast Exit also puts low- and medium-risk rehosts and replatforms in wave 1; Modernize First does the same for refactors with readiness 70 or more. Loading adds to what is there; reload the page to start again.</p>
+          <h3>The waves</h3>
+          <p>
+            Wave 0 is the landing zone — identity, network, logging, guardrails, tooling — and comes before
+            any application moves, so nothing is placed in it. Retain is <strong>Blocked</strong>. Retire and
+            Repurchase go in wave 1, because they remove footprint immediately. Otherwise low risk with
+            readiness 55 or more is wave 1, low or medium risk with readiness 40 or more is wave 2, and the
+            rest is wave 3. <em>Fast exit</em> also puts low- and medium-risk rehosts and replatforms in wave 1;
+            <em>Modernise first</em> does the same for refactors at readiness 70 or more. The mode changes the
+            table in place — nothing is recalculated on disk — and never rescues a high-risk application from
+            its own discovery.
+          </p>
 
-          <!-- ================================================================ -->
-          <h2 id="collector">14. The inventory collector</h2>
+          <h3>Files in and out</h3>
+          <table>
+            <tr><th>Action</th><th>What it does</th></tr>
+            <tr><td>Import CSV</td><td>An inventory spreadsheet becomes draft rows, evaluated with default ratings. Columns: <code>name, owner, criticality, rtoHours, rpoHours, workloadType, enterpriseStandardCloud, primaryStack, osRuntime, database, vendor, integrationCount, dataSizeGb, identity, compliance, dataSovereigntyRequired, notes</code>, with compliance scopes separated by <code>;</code>. Only <code>name</code> is required; a row without one is skipped and said so.</td></tr>
+            <tr><td>Import JSON</td><td>A portfolio exported here, a single record, or a bare list of applications — including the files the old pages wrote. Every record is evaluated again on the way in, so an import reflects today's rules rather than a stored verdict.</td></tr>
+            <tr><td>Export CSV</td><td>The intake and the verdict together, including the wave under the mode currently selected. Always the whole portfolio, whatever the filters show.</td></tr>
+            <tr><td>Export JSON</td><td>The whole portfolio, to carry to another browser or keep with the design.</td></tr>
+            <tr><td>Re-evaluate all</td><td>Runs every held application through the rules again — after ratings have been revised, or after a toolkit update.</td></tr>
+            <tr><td>Empty the portfolio</td><td>Removes every row. The header's <em>Clear all</em> does this along with everything else in the toolkit.</td></tr>
+          </table>
+          <p>
+            A row's <strong>Open</strong> button loads that application back into the Intake tab, which is how
+            a draft imported from a spreadsheet gets its ratings answered. An application's name is its
+            identity: evaluating the same name again replaces the row rather than adding a second one.
+            The portfolio is kept in this browser (IndexedDB) and survives a reload; the <em>Load</em>,
+            <em>Save</em> and <em>Clear</em> strip at the top of the page is for one application's intake, not the
+            portfolio.
+          </p>
+
+          <h2 id="collector">13. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -463,7 +504,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">15. Keeping catalogs current</h2>
+          <h2 id="updates">14. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -478,7 +519,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">16. Common workflows</h2>
+          <h2 id="workflows">15. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -508,12 +549,14 @@
 
           <h3>Plan a portfolio of applications</h3>
           <ol>
-            <li>Migration: evaluate each application and Export JSON.</li>
-            <li>Portfolio: Load App Records (or import a CSV), choose the wave mode, and export.</li>
+            <li>Migration → Portfolio: import the inventory CSV, which creates a draft row per application.</li>
+            <li>Open each row, answer its ratings and hard constraints on the Intake and Ratings tabs, and evaluate. The row updates in place.</li>
+            <li>Back on Portfolio, choose the wave planning mode and read the counts and the table.</li>
+            <li>Export the portfolio as CSV for the programme, or as JSON to carry it to another browser.</li>
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">17. Troubleshooting</h2>
+          <h2 id="trouble">16. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -529,21 +572,51 @@
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">18. Known limits</h2>
+          <h2 id="limits">17. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
             <li>RVTools has no NVMe or NIC-speed data; those readiness columns show <em>?</em> unless the collector's JSON is imported too.</li>
-            <li>The Migration and Portfolio pages keep nothing between visits: export what you want to keep.</li>
+            <li>A CSV import cannot answer the six ratings or the hard constraints, so its rows are drafts scored at the defaults until you open each one.</li>
+            <li>The portfolio lives in one browser on one machine. Export the JSON to move it anywhere else.</li>
             <li>Multi-Cloud's <em>Save as Word</em> writes a Word-readable <code>.doc</code> (HTML), not a native <code>.docx</code>.</li>
             <li>Editing YAML in the Data Editor's form drops comments; the Text view keeps them.</li>
             <li>In a Terraform stack, a resource offers only its <code>.id</code> to other items, because that is the one attribute every resource has. Module items offer their real outputs. Anything else you write yourself.</li>
             <li>An Ansible site playbook shares an answer only when two playbooks give it identically; anything named like a password is left out of <code>group_vars/all.yml</code> on purpose.</li>
             <li>Checks confirm names, structure and references. They do not confirm that a deployment will succeed in your environment.</li>
           </ul>
+
+          <!-- ================================================================ -->
+          <h2 id="licence">18. Licence and disclaimer</h2>
+          <p>
+            ArchToolKit © 2026 Theodore Gibson. This version is free to use, copy, modify and
+            distribute, including inside a commercial organisation, under the terms in the
+            <code>LICENSE</code> file at the root of the repository (MIT). The only condition is that
+            the copyright notice and the licence text travel with it.
+          </p>
+          <p>
+            <strong>It comes with no warranty of any kind, and the author accepts no liability</strong>
+            for any claim, damage, loss or cost arising from the software or from anything it
+            produces — in contract, tort or otherwise. You use it at your own risk.
+          </p>
+          <p>What that means in practice, page by page:</p>
+          <ul>
+            <li><strong>Sizing and specifications are estimates.</strong> Validate them against Broadcom's current documentation and a live VCF Installer before you commit to hardware, licensing or a deployment window.</li>
+            <li><strong>Generated Terraform, Ansible and declarations are unreviewed code.</strong> Read them, run <code>terraform plan</code> or <code>--check --diff</code>, and test them somewhere that does not matter first. Applying them can create billable cloud resources, change running systems or interrupt service.</li>
+            <li><strong>Migration routes, risk bands, waves and service recommendations are decision support.</strong> They are a weighted reading of the answers you gave, and they do not replace the judgement of the people accountable for the applications.</li>
+            <li><strong>Nothing here is legal, regulatory, certification, financial or licensing advice.</strong> Compliance scopes and regulatory references are informational and may be out of date. Confirm them with your own auditors, legal counsel and the relevant authority.</li>
+            <li><strong>Your data is yours.</strong> The toolkit is offline and stores everything in your own browser (see <a href="#privacy">Where your data goes</a>). What you enter, and where you send what comes out, is your responsibility.</li>
+          </ul>
+          <p>
+            Vendor and product names — VMware, VMware Cloud Foundation, AWS, Microsoft Azure, Google
+            Cloud, Oracle Cloud Infrastructure, F5, Cisco, Red Hat, Ansible, Terraform, HashiCorp and
+            the rest — are the trademarks of their owners, used here only to describe what the toolkit
+            builds for. ArchToolKit is not affiliated with, endorsed by or sponsored by any of them.
+          </p>
         </article>
       </div>
     </main>
     <script type="module" src="../lib/ui/clear-all.js"></script>
+    <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 /**
- * Minimal ambient declarations for the two Node built-ins the suite imports.
+ * Minimal ambient declarations for the Node built-ins the suite imports.
  *
  * The alternative is `@types/node`, which this project deliberately does not
  * take: package.json states there are no dependencies so the toolkit builds and
@@ -43,4 +43,21 @@ declare module 'node:assert/strict' {
   }
   const assert: StrictAssert;
   export default assert;
+}
+
+/* The manual-coverage test reads the shipped pages off disk, which is the only
+   place in `src/` that touches the file system. */
+
+declare module 'node:fs' {
+  export function readFileSync(path: string, encoding: 'utf8'): string;
+  export function readdirSync(path: string): string[];
+}
+
+declare module 'node:path' {
+  export function join(...parts: string[]): string;
+  export function dirname(path: string): string;
+}
+
+declare module 'node:url' {
+  export function fileURLToPath(url: string | URL): string;
 }

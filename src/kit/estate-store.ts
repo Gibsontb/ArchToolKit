@@ -22,10 +22,10 @@
 import type { Finding } from '../core/findings.ts';
 import type { Inventory } from '../vmware/inventory.ts';
 import { saveEstate, clearEstate } from './estate.ts';
+import { run as runStore } from './idb.ts';
 
-const DB_NAME = 'archtoolkit';
-const STORE = 'estate';
 const KEY = 'current';
+/** The shape this module writes; bumped only when the stored estate changes. */
 const VERSION = 1;
 
 export interface StoredEstate {
@@ -46,59 +46,7 @@ export interface EstateSummary {
   readonly vcenters: number;
 }
 
-function open(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    let request: IDBOpenDBRequest;
-    try {
-      const idb = (globalThis as { indexedDB?: IDBFactory }).indexedDB;
-      if (!idb) {
-        resolve(null);
-        return;
-      }
-      request = idb.open(DB_NAME, VERSION);
-    } catch {
-      resolve(null);
-      return;
-    }
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
-  });
-}
-
-function run<T>(mode: IDBTransactionMode, act: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
-  return open().then(
-    (db) =>
-      new Promise<T | null>((resolve) => {
-        if (!db) {
-          resolve(null);
-          return;
-        }
-        try {
-          const tx = db.transaction(STORE, mode);
-          const request = act(tx.objectStore(STORE));
-          tx.oncomplete = () => {
-            db.close();
-            resolve(request.result ?? null);
-          };
-          tx.onerror = () => {
-            db.close();
-            resolve(null);
-          };
-          tx.onabort = () => {
-            db.close();
-            resolve(null);
-          };
-        } catch {
-          db.close();
-          resolve(null);
-        }
-      }),
-  );
-}
+const run = <T>(mode: IDBTransactionMode, act: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | null> => runStore('estate', mode, act);
 
 let cached: StoredEstate | null | undefined;
 

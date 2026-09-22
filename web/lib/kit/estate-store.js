@@ -22,10 +22,10 @@
                                                    
                                                         
 import { saveEstate, clearEstate } from './estate.js';
+import { run as runStore } from './idb.js';
 
-const DB_NAME = 'archtoolkit';
-const STORE = 'estate';
 const KEY = 'current';
+/** The shape this module writes; bumped only when the stored estate changes. */
 const VERSION = 1;
 
                                
@@ -46,59 +46,7 @@ const VERSION = 1;
                             
  
 
-function open()                              {
-  return new Promise((resolve) => {
-    let request                  ;
-    try {
-      const idb = (globalThis                              ).indexedDB;
-      if (!idb) {
-        resolve(null);
-        return;
-      }
-      request = idb.open(DB_NAME, VERSION);
-    } catch {
-      resolve(null);
-      return;
-    }
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
-  });
-}
-
-function run   (mode                    , act                                          )                    {
-  return open().then(
-    (db) =>
-      new Promise          ((resolve) => {
-        if (!db) {
-          resolve(null);
-          return;
-        }
-        try {
-          const tx = db.transaction(STORE, mode);
-          const request = act(tx.objectStore(STORE));
-          tx.oncomplete = () => {
-            db.close();
-            resolve(request.result ?? null);
-          };
-          tx.onerror = () => {
-            db.close();
-            resolve(null);
-          };
-          tx.onabort = () => {
-            db.close();
-            resolve(null);
-          };
-        } catch {
-          db.close();
-          resolve(null);
-        }
-      }),
-  );
-}
+const run =    (mode                    , act                                          )                    => runStore('estate', mode, act);
 
 let cached                                 ;
 

@@ -297,3 +297,16 @@ against a live VCF Installer:
 
 See `docs/vcf-91-groundtruth.md` for the researched schema and sizing data, including an explicit
 list of figures that could not be verified.
+
+## Licence and disclaimer
+
+ArchToolKit © 2026 Theodore Gibson. Free to use, copy, modify and distribute under the MIT terms in
+[`LICENSE`](LICENSE), with the copyright notice carried along.
+
+**No warranty, no liability.** Everything the toolkit produces — sizing figures, specifications,
+Terraform, Ansible, declarations, migration routes and risk bands — is a draft for a human to
+review, not a finished artefact and not professional advice. Generated code is unreviewed code:
+plan or dry-run it, and test it somewhere that does not matter before it touches production.
+Compliance and regulatory references are informational only. Use is at your own risk. The full
+wording, including the trademark note, is in [`LICENSE`](LICENSE) and in the
+[manual](web/app/manual.html).
