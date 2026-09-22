@@ -20,7 +20,8 @@
                          
                          
                     
-                              
+                             
+                     
 
 /** Bumped when a payload shape changes, so a stale entry is discarded. */
 const HANDOFF_VERSION = 1;

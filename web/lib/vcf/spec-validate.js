@@ -320,15 +320,20 @@ export function validateSddcSpec(
   hosts.forEach((host, i) => {
     const at = `hostSpecs[${i}]`;
     if (typeof host.hostname === 'string') {
-      if (host.hostname.includes('.')) {
+      const subdomain = (spec.dnsSpec?.subdomain ?? '').toLowerCase();
+      // The installer's own export writes hosts as FQDNs in the DNS subdomain,
+      // so that form is native, not a mistake. An FQDN in some other domain is
+      // still worth a look.
+      const inSubdomain = subdomain !== '' && host.hostname.toLowerCase().endsWith(`.${subdomain}`);
+      if (host.hostname.includes('.') && !inSubdomain) {
         findings.push(
           warning(
             'vcf.spec.host-fqdn-not-short-name',
-            `hostSpecs expects a short name; "${host.hostname}" looks like an FQDN and the subdomain is appended automatically.`,
+            `"${host.hostname}" is an FQDN outside the DNS subdomain "${subdomain || '(none)'}". Use a short name, or the FQDN in that subdomain.`,
             { path: `${at}.hostname`, source: 'VCF Installer API — SddcHostSpec' },
           ),
         );
-      } else if (!RFC1123_LABEL.test(host.hostname)) {
+      } else if (!host.hostname.includes('.') && !RFC1123_LABEL.test(host.hostname)) {
         findings.push(
           error('vcf.spec.invalid-hostname', `"${host.hostname}" is not a valid RFC1123 hostname.`, {
             path: `${at}.hostname`,

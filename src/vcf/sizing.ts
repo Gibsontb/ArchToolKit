@@ -171,7 +171,12 @@ export function minimumHosts(input: Pick<SizingInput, 'path' | 'storage' | 'topo
   const external = input.storage === 'nfs' || input.storage === 'vmfs-fc';
 
   if (input.path === 'greenfield') {
-    const key = input.topology === 'stretched' ? 'greenfield-vsan-stretched' : 'greenfield-vsan-single-az';
+    const key =
+      input.topology === 'stretched'
+        ? 'greenfield-vsan-stretched'
+        : external
+          ? 'greenfield-external-storage'
+          : 'greenfield-vsan-single-az';
     const entry = MGMT_HOST_MINIMUMS[key];
     return { hosts: entry.hosts, source: entry.source, ...('note' in entry ? { note: entry.note } : {}) };
   }
@@ -402,13 +407,13 @@ export function sizeDeployment(input: SizingInput): SizingResult {
 
   if (input.path === 'greenfield' && (input.storage === 'nfs' || input.storage === 'vmfs-fc')) {
     findings.push(
-      error(
-        'vcf.storage.greenfield-requires-vsan',
-        'Greenfield management domains must use vSAN; NFS and VMFS-on-FC are not supported for initial deployment.',
+      info(
+        'vcf.storage.greenfield-external',
+        `A new management domain on ${input.storage === 'nfs' ? 'NFS v3' : 'VMFS on FC'} is supported in VCF 9. The datastore must exist and be presented to every host before the installer runs.`,
         {
           path: 'storage',
-          remediation: 'Use vSAN ESA or OSA for the management domain, or place this workload in a VI workload domain.',
-          source: 'Broadcom KB 392993',
+          remediation: 'iSCSI, NFS 4.1, FCoE and NVMe over Fabrics are not available to a new deployment; for those, converge an existing cluster instead.',
+          source: 'Broadcom KB 416270',
         },
       ),
     );
@@ -559,8 +564,7 @@ export function recommendHostCount(input: SizingInput, ceiling = 64): number | n
         f.severity === 'error' &&
         // Per-host constraints do not improve by adding hosts.
         f.code !== 'vcf.vsan.esa-host-ram' &&
-        f.code !== 'vcf.automation.host-too-small' &&
-        f.code !== 'vcf.storage.greenfield-requires-vsan',
+        f.code !== 'vcf.automation.host-too-small',
     );
     if (blocking.length === 0) return hosts;
   }

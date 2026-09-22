@@ -212,6 +212,51 @@ for (const [name, path] of [
   await ctx.close();
 }
 
+// --- the spec editor: open a real export, change what changed ---------------
+{
+  const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
+  const labFile = join(mkdtempSync(join(tmpdir(), 'atk-')), 'VCF-deployment-spec-9.1.1.0.json');
+  writeFileSync(labFile, JSON.stringify(LAB_911_THREE_HOST_FC));
+
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/app/vcf-spec-editor.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[type=file]').first().setInputFiles(labFile);
+  await page.waitForTimeout(600);
+  const opened = await page.locator('body').innerText();
+  check('Editor: an installer export opens field by field', /Distributed switches/.test(opened) && (await page.locator('[data-path="hostSpecs[0].hostname"]').count()) === 1);
+  check('Editor: the export checks clean against 9.1', /\bValid\b/.test(opened), opened.match(/Against the 9\.1 schema\s+\S+/)?.[0] ?? '');
+  check('Editor: sizes are dropdowns', (await page.locator('select[data-path="vcenterSpec.storageSize"]').count()) === 1);
+  check('Editor: it says it is holding passwords', /Passwords held\s+3/i.test(opened));
+
+  await page.locator('[data-path="hostSpecs[2].hostname"]').fill('esx05.example.com');
+  await page.waitForTimeout(200);
+  check('Editor: a change is listed', /hostSpecs\[2\]\.hostname/.test(await page.locator('.je-changes').innerText()));
+
+  await page.getByPlaceholder('Find, e.g.').fill('10.20.1.');
+  await page.getByPlaceholder('Replace with').fill('10.30.7.');
+  await page.locator('button', { hasText: 'Replace all' }).click();
+  await page.waitForTimeout(300);
+  const gw = await page.locator('[data-path="networkSpecs[0].gateway"]').inputValue();
+  check('Editor: find and replace re-addresses every field', gw === '10.30.7.1', gw);
+
+  // A bad edit is caught, and the finding goes to its field.
+  await page.locator('[data-path="networkSpecs[3].subnet"]').fill('10.30.7.0/26');
+  await page.waitForTimeout(300);
+  check('Editor: a bad edit is rejected', /Rejected/.test(await page.locator('body').innerText()));
+
+  await page.locator('button', { hasText: 'Undo' }).click();
+  await page.waitForTimeout(300);
+  check('Editor: undo puts it back', !/Rejected/.test(await page.locator('body').innerText()));
+
+  // And the builder hands its own spec over.
+  await page.goto(`${BASE}/app/vcf-spec.html`, { waitUntil: 'networkidle' });
+  await page.locator('button', { hasText: 'Edit as JSON' }).click();
+  await page.waitForTimeout(800);
+  check('Editor: the builder opens its spec in the editor', page.url().endsWith('/vcf-spec-editor.html') && (await page.locator('[data-path="sddcId"]').count()) === 1);
+  await ctx.close();
+}
+
 // --- the pickers actually change the document -----------------------------
 {
   const ctx = await browser.newContext();

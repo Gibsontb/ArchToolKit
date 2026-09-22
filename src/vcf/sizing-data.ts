@@ -430,6 +430,12 @@ export const MGMT_HOST_MINIMUMS = {
     source: 'Broadcom KB 392993',
     note: '4 per availability zone',
   },
+  'greenfield-external-storage': {
+    hosts: 3,
+    verification: 'V-SPEC',
+    source: 'VCF Installer 9.1.1.0 deployment spec from a lab: three hosts on VMFS on FC',
+    note: 'Broadcom supports NFS v3 and VMFS on FC for a new management domain (KB 416270) but publishes no separate minimum; three is what a real deployment used',
+  },
   'converge-vsan': {
     hosts: 3,
     verification: 'V-DOC',
@@ -454,10 +460,13 @@ export const MGMT_HOST_MINIMUMS = {
 export const VSAN_ESA_MIN_HOST_RAM_GIB = 128;
 
 /**
- * Greenfield management domains must use vSAN — external storage is not
- * supported for initial deployment. Brownfield convergence relaxes this.
+ * Principal storage a NEW management domain can use besides vSAN. VCF 9 added
+ * NFS v3 and VMFS on FC to the greenfield workflow; iSCSI, NFS 4.1, FCoE and
+ * NVMe over Fabrics still need the converge path. [V-DOC — Broadcom KB 416270]
+ * The rule this replaces ("greenfield must be vSAN", KB 392993) described the
+ * Cloud Builder bring-up of VCF 5 and was wrong for 9.
  */
-export const GREENFIELD_REQUIRES_VSAN = true;
+export const GREENFIELD_EXTERNAL_STORAGE = ['nfs', 'vmfs-fc'] as const;
 
 // ---------------------------------------------------------------------------
 // vSAN capacity overhead

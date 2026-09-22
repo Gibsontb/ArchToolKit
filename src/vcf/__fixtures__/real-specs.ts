@@ -1,5 +1,5 @@
 /**
- * Real, working VCF 9.1.0.0 deployment specifications.
+ * Real, working VCF 9.1 deployment specifications.
  *
  * Source: github.com/lamw/vcf-91-in-box (William Lam), config/*.json. These
  * specs were used to deploy actual 9.1.0.0 instances, which makes them the
@@ -222,7 +222,294 @@ export const THREE_NODE_VSAN_ESA = {
   ],
 } as unknown as SddcSpec;
 
+/**
+ * A VCF Installer 9.1.1.0 export — the JSON the installer itself writes — from
+ * a three-host lab management domain on VMFS over Fibre Channel.
+ *
+ * Every name, address, VLAN and thumbprint is replaced and the password is a
+ * placeholder; the shape is exactly as exported. It is the evidence for three
+ * things the other fixtures cannot show: a new management domain on FC, on
+ * three hosts, and host FQDNs written by the installer rather than short names.
+ */
+export const LAB_911_THREE_HOST_FC = {
+  "version": "9.1.1.0",
+  "vcfInstanceName": "site1",
+  "sddcId": "site1-m01",
+  "ceipEnabled": true,
+  "workflowType": "VCF",
+  "dnsSpec": {
+    "subdomain": "example.com",
+    "nameservers": [
+      "10.0.0.53",
+      "10.0.0.54"
+    ]
+  },
+  "ntpServers": [
+    "ntp.example.com"
+  ],
+  "hostSpecs": [
+    {
+      "hostname": "esx01.example.com",
+      "sslThumbprint": "AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB",
+      "credentials": {
+        "username": "root",
+        "password": "VMware1!VMware1!"
+      }
+    },
+    {
+      "hostname": "esx03.example.com",
+      "sslThumbprint": "AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB",
+      "credentials": {
+        "username": "root",
+        "password": "VMware1!VMware1!"
+      }
+    },
+    {
+      "hostname": "esx04.example.com",
+      "sslThumbprint": "AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB",
+      "credentials": {
+        "username": "root",
+        "password": "VMware1!VMware1!"
+      }
+    }
+  ],
+  "networkSpecs": [
+    {
+      "networkType": "MANAGEMENT",
+      "ipAddressVersion": "IPv4",
+      "subnet": "10.20.1.0/26",
+      "gateway": "10.20.1.1",
+      "vlanId": "1303",
+      "activeUplinks": [
+        "uplink1",
+        "uplink2"
+      ],
+      "portGroupKey": "site1-m01-cl01-vds01-pg-esx-mgmt",
+      "standbyUplinks": [],
+      "teamingPolicy": "loadbalance_loadbased"
+    },
+    {
+      "networkType": "VM_MANAGEMENT",
+      "ipAddressVersion": "IPv4",
+      "subnet": "10.20.1.128/26",
+      "gateway": "10.20.1.129",
+      "vlanId": "1305",
+      "activeUplinks": [
+        "uplink1",
+        "uplink2"
+      ],
+      "portGroupKey": "site1-m01-cl01-vds01-pg-vm-mgmt",
+      "standbyUplinks": [],
+      "teamingPolicy": "loadbalance_loadbased"
+    },
+    {
+      "networkType": "FLEET_MANAGEMENT",
+      "ipAddressVersion": "IPv4",
+      "subnet": "10.20.1.192/26",
+      "gateway": "10.20.1.193",
+      "vlanId": "1306",
+      "activeUplinks": [
+        "uplink1",
+        "uplink2"
+      ],
+      "portGroupKey": "site1-m01-cl01-vds01-pg-vcf-mgmt",
+      "standbyUplinks": [],
+      "teamingPolicy": "loadbalance_loadbased"
+    },
+    {
+      "networkType": "VMOTION",
+      "ipAddressVersion": "IPv4",
+      "subnet": "10.20.1.64/26",
+      "gateway": "10.20.1.65",
+      "vlanId": "1304",
+      "mtu": 9000,
+      "includeIpAddressRanges": [
+        {
+          "startIpAddress": "10.20.1.66",
+          "endIpAddress": "10.20.1.75"
+        }
+      ],
+      "activeUplinks": [
+        "uplink1",
+        "uplink2"
+      ],
+      "portGroupKey": "site1-m01-cl01-vds01-pg-vmotion",
+      "standbyUplinks": [],
+      "teamingPolicy": "loadbalance_loadbased"
+    }
+  ],
+  "vspClusterSpec": {
+    "ipv4Pool": {
+      "ipRange": {
+        "startIpAddress": "10.20.1.230",
+        "endIpAddress": "10.20.1.250"
+      }
+    },
+    "platformFqdn": "s1vmsr2000.example.com",
+    "instanceFqdn": "s1vins2000.example.com",
+    "fleetFqdn": "s1vflt2000.example.com",
+    "size": "large",
+    "name": "vmsp-01",
+    "internalClusterCidrIpv4": "198.18.0.0/15"
+  },
+  "vcfAutomationSpec": {
+    "ipPool": [
+      "10.20.1.215",
+      "10.20.1.216",
+      "10.20.1.217",
+      "10.20.1.218",
+      "10.20.1.219",
+      "10.20.1.220"
+    ],
+    "hostname": "s1vcfa.example.com",
+    "platformFqdn": "s1vcfart.example.com",
+    "nodePrefix": "site1-m01-node-01",
+    "internalClusterCidr": "198.18.0.0/15",
+    "useExistingDeployment": false,
+    "size": "large"
+  },
+  "nsxtSpec": {
+    "vipFqdn": "s1nsxmmgt.example.com",
+    "transportVlanId": "1307",
+    "ipAddressPoolSpec": {
+      "name": "site1-m01-cl01-tep01",
+      "description": "site1-m01-cl01-tep01 descr",
+      "subnets": [
+        {
+          "cidr": "100.64.16.0/25",
+          "gateway": "100.64.16.1",
+          "ipAddressPoolRanges": [
+            {
+              "start": "100.64.16.2",
+              "end": "100.64.16.21"
+            }
+          ]
+        }
+      ]
+    },
+    "nsxtManagerSize": "large",
+    "useExistingDeployment": false,
+    "nsxtManagers": [
+      {
+        "hostname": "s1nsxm2000.example.com"
+      },
+      {
+        "hostname": "s1nsxm2001.example.com"
+      },
+      {
+        "hostname": "s1nsxm2002.example.com"
+      }
+    ]
+  },
+  "vcfOperationsSpec": {
+    "applianceSize": "large",
+    "loadBalancerFqdn": "",
+    "useExistingDeployment": false,
+    "nodes": [
+      {
+        "hostname": "s1vcfo2000.example.com",
+        "type": "master"
+      },
+      {
+        "hostname": "s1vcfo2001.example.com",
+        "type": "replica"
+      },
+      {
+        "hostname": "s1vcfo2002.example.com",
+        "type": "data"
+      }
+    ]
+  },
+  "vcfOperationsCollectorSpec": {
+    "applianceSize": "standard",
+    "hostname": "s1vocp2000.example.com",
+    "useExistingDeployment": false
+  },
+  "licenseServerSpec": {
+    "hostname": "s1vcfl2000.example.com"
+  },
+  "vidbSpec": {
+    "hostname": "s1vidb2000.example.com"
+  },
+  "saltSpec": {},
+  "saltRaasSpec": {},
+  "telemetryAcceptorSpec": {},
+  "fleetLcmSpec": {
+    "hostname": "s1vflt2000.example.com"
+  },
+  "sddcLcmSpec": {
+    "hostname": "s1vins2000.example.com"
+  },
+  "fleetDepotSpec": {},
+  "vcenterSpec": {
+    "vcenterHostname": "s1vcen2000.example.com",
+    "vmSize": "large",
+    "storageSize": "xlstorage",
+    "ssoDomain": "vsphere.local",
+    "useExistingDeployment": false
+  },
+  "clusterSpec": {
+    "datacenterName": "site1-m01-dc01",
+    "clusterName": "site1-m01-cl01"
+  },
+  "datastoreSpec": {
+    "vmfsDatastoreSpec": {
+      "fcSpec": [
+        {
+          "datastoreName": "site1-m01-cl01-ds-vmfs01"
+        }
+      ]
+    }
+  },
+  "dvsSpecs": [
+    {
+      "dvsName": "site1-m01-cl01-vds01",
+      "networks": [
+        "MANAGEMENT",
+        "VM_MANAGEMENT",
+        "FLEET_MANAGEMENT",
+        "VMOTION"
+      ],
+      "mtu": 9000,
+      "nsxtSwitchConfig": {
+        "transportZones": [
+          {
+            "name": "overlay-tz-mgmt-nsxt",
+            "transportType": "OVERLAY"
+          }
+        ]
+      },
+      "vmnicsToUplinks": [
+        {
+          "id": "vmnic0",
+          "uplink": "uplink1"
+        },
+        {
+          "id": "vmnic1",
+          "uplink": "uplink2"
+        }
+      ],
+      "nsxTeamings": [
+        {
+          "policy": "LOADBALANCE_SRCID",
+          "activeUplinks": [
+            "uplink1",
+            "uplink2"
+          ],
+          "standByUplinks": null
+        }
+      ],
+      "lagSpecs": null
+    }
+  ],
+  "sddcManagerSpec": {
+    "hostname": "s1sddc2000.example.com",
+    "useExistingDeployment": false
+  }
+} as unknown as SddcSpec;
+
 export const REAL_SPECS: { name: string; spec: SddcSpec }[] = [
   { name: 'one-node-vsan-esa', spec: ONE_NODE_VSAN_ESA },
   { name: 'three-node-vsan-esa', spec: THREE_NODE_VSAN_ESA },
+  { name: 'lab-9.1.1.0-three-host-fc', spec: LAB_911_THREE_HOST_FC },
 ];

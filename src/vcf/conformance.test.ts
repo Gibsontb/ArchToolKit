@@ -116,13 +116,22 @@ describe('conformance: what the real specs reveal', () => {
 });
 
 describe('conformance: warnings the real specs legitimately trigger', () => {
-  it('warns that host names are FQDNs rather than short names', () => {
-    // The schema says the subdomain is appended to a short name, yet these
-    // working specs pass full FQDNs. A warning is correct; an error would not be.
-    const findings = validateSddcSpec(ONE_NODE_VSAN_ESA);
-    const fqdnWarning = findings.find((f) => f.code === 'vcf.spec.host-fqdn-not-short-name');
-    expect(fqdnWarning).toBeDefined();
-    expect(fqdnWarning?.severity).toBe('warning');
+  it('accepts host FQDNs in the DNS subdomain, which is how the installer itself writes them', () => {
+    // The API reference describes a short name, but every working spec — and
+    // the VCF Installer's own 9.1.1.0 export — passes full FQDNs.
+    for (const { spec } of REAL_SPECS) {
+      const codes = validateSddcSpec(spec).map((f) => f.code);
+      expect(codes).not.toContain('vcf.spec.host-fqdn-not-short-name');
+    }
+  });
+
+  it('still warns about a host FQDN in some other domain', () => {
+    const spec = {
+      ...ONE_NODE_VSAN_ESA,
+      hostSpecs: [{ hostname: 'esx01.elsewhere.test', credentials: { username: 'root', password: 'VMware1!VMware1!' } }],
+    };
+    const warning = validateSddcSpec(spec).find((f) => f.code === 'vcf.spec.host-fqdn-not-short-name');
+    expect(warning?.severity).toBe('warning');
   });
 
   it('warns about a single DNS server without failing the spec', () => {

@@ -30,7 +30,7 @@ import {
 } from '../vcf/spec-builder.ts';
 import { validateSddcSpec, validateSddcSpecJson } from '../vcf/spec-validate.ts';
 import { SCENARIO_RULES, scenarioRule, type DeploymentScenario } from '../vcf/scenarios.ts';
-import { takeHandoff, unappliedLatest, markApplied, wasApplied } from './handoff.ts';
+import { putHandoff, takeHandoff, unappliedLatest, markApplied, wasApplied } from './handoff.ts';
 import { mountEstateBar } from './estate-bar.ts';
 import { mountFlowSteps } from './flow-steps.ts';
 import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.ts';
@@ -1325,6 +1325,17 @@ function buildOutput(
         class: 'btn btn-primary',
         text: 'Download SddcSpec',
         on: { click: () => downloadFile(`${spec.sddcId}-sddcspec-9.1.json`, json) },
+      }),
+      el('button', {
+        class: 'btn',
+        text: 'Edit as JSON',
+        attrs: { title: 'Open this specification in the editor, field by field' },
+        on: {
+          click: () => {
+            putHandoff('spec-to-editor', `${spec.sddcId}-sddcspec-9.1.json`, spec);
+            globalThis.location.assign('vcf-spec-editor.html');
+          },
+        },
       }),
       el('button', {
         class: 'btn',

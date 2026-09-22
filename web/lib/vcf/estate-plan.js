@@ -467,14 +467,19 @@ export function planEstate(inventory           , options                   )    
       reserveHostFailure: o.reserveHostFailure,
     };
   } else {
+    // New management hosts store on what the estate already runs: VCF 9 takes
+    // NFS v3 or VMFS on FC for a new management domain as well as vSAN.
+    const byStorage = new Map                     ();
+    for (const c of inScope) byStorage.set(c.storage, (byStorage.get(c.storage) ?? 0) + c.hostCount);
+    const storage = [...byStorage.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'vsan-esa';
     management = {
       path: 'greenfield',
       profile: 'simple',
       instanceCount: 1,
       topology: 'standard',
-      storage: 'vsan-esa',
-      hostCount: minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'standard' }).hosts,
-      host: o.host,
+      storage,
+      hostCount: minimumHosts({ path: 'greenfield', storage, topology: 'standard' }).hosts,
+      host: isVsan(storage) ? o.host : { ...o.host, rawStorageGib: 0 },
       reserveHostFailure: o.reserveHostFailure,
     };
   }

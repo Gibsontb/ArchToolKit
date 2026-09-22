@@ -196,16 +196,27 @@ describe('sizeDeployment', () => {
     expect(codes).toContain('vcf.hosts.below-minimum');
   });
 
-  it('rejects external storage for a greenfield management domain', () => {
-    const result = sizeDeployment(baseInput({ storage: 'nfs' }));
-    expect(result.findings.map((f) => f.code)).toContain('vcf.storage.greenfield-requires-vsan');
+  it('accepts NFS or VMFS on FC for a new management domain, as VCF 9 does', () => {
+    for (const storage of ['nfs', 'vmfs-fc'] as const) {
+      const result = sizeDeployment(baseInput({ storage, hostCount: 3 }));
+      const codes = result.findings.map((f) => f.code);
+      expect(codes).toContain('vcf.storage.greenfield-external');
+      expect(result.findings.some((f) => f.severity === 'error' && f.path === 'storage')).toBe(false);
+      // A real 9.1.1.0 lab deployment ran on three FC hosts.
+      expect(codes).not.toContain('vcf.hosts.below-minimum');
+    }
+  });
+
+  it('still wants four hosts for a new vSAN management domain', () => {
+    const codes = sizeDeployment(baseInput({ storage: 'vsan-esa', hostCount: 3 })).findings.map((f) => f.code);
+    expect(codes).toContain('vcf.hosts.below-minimum');
   });
 
   it('accepts external storage on the converge path', () => {
     const result = sizeDeployment(
       baseInput({ path: 'brownfield-converge', storage: 'nfs', hostCount: 2 }),
     );
-    expect(result.findings.map((f) => f.code)).not.toContain('vcf.storage.greenfield-requires-vsan');
+    expect(result.findings.some((f) => f.severity === 'error' && f.path === 'storage')).toBe(false);
   });
 
   it('enforces the vSAN ESA 128 GiB per-host memory floor', () => {
