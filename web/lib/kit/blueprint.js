@@ -63,8 +63,16 @@
      
                                                                           
                                                                        
+    
+                                                                                
+                                                                              
+                                                                    
      
-                                                                                     
+                       
+                           
+                                        
+                                           
+    
      
                                                                           
                                                                                
@@ -205,11 +213,22 @@ export function defaultValues(blueprint           )                  {
   return values;
 }
 
-/** Whether an input should be shown, given what has been filled in so far. */
+/**
+ * Whether an input should be shown, given what has been filled in so far.
+ *
+ * `equals` is the common case — show the VLAN list when the port is a trunk.
+ * `notEquals` exists for the inputs whose controlling answer is "none", which a
+ * list of the values that are not none cannot express: an OSPF process number
+ * where 0 means "do not add this interface to OSPF" has four billion values
+ * that are not 0.
+ */
 export function isVisible(input                , values                 )          {
   if (!input.showWhen) return true;
   const current = String(values[input.showWhen.input] ?? '');
-  return input.showWhen.equals.includes(current);
+  const { equals, notEquals } = input.showWhen;
+  if (notEquals && notEquals.includes(current)) return false;
+  if (!equals || equals.length === 0) return notEquals !== undefined;
+  return equals.includes(current);
 }
 
 export function blueprintsFor(groups                           , target        )                       {

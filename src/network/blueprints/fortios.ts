@@ -15,6 +15,7 @@ import { bool, num, str, type BlueprintValues, type BlueprintGroup } from '../..
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { FORTIOS_EXTRA } from './fortios-extra.ts';
+import { FORTIOS_EXTRA_2 } from './fortios-extra2.ts';
 import { listOf, netmask, parseCidr, type DeviceChange } from '../device.ts';
 
 const PLATFORM = 'fortios' as const;
@@ -338,7 +339,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest of the platform's changes live in fortios-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...FORTIOS_EXTRA];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...FORTIOS_EXTRA, ...FORTIOS_EXTRA_2];
 
 export const FORTIOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Fortinet FortiOS', blueprints: ALL };
 export const FORTIOS_CHANGES: readonly ChangeBlueprint[] = ALL;

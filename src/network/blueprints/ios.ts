@@ -16,6 +16,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { description, listOf, netmask, parseCidr, vlanIds, vlanRange, wildcard, type DeviceChange } from '../device.ts';
 import { IOS_EXTRA } from './ios-extra.ts';
+import { IOS_EXTRA_2 } from './ios-extra2.ts';
 
 const PLATFORM = 'cisco_ios' as const;
 
@@ -748,7 +749,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
  * archive — are in ios-extra.ts, because one file of thirty changes is a file
  * nobody can find anything in.
  */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...IOS_EXTRA];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...IOS_EXTRA, ...IOS_EXTRA_2];
 
 export const IOS_NETWORK: BlueprintGroup = {
   target: PLATFORM,

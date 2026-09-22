@@ -4,6 +4,7 @@ import { hasErrors } from '../core/findings.ts';
 import { defaultValues, isVisible, blueprintsFor, findBlueprint, slug, str, num, bool } from './blueprint.ts';
 import { TERRAFORM_BLUEPRINTS } from '../terraform/blueprints/index.ts';
 import { ANSIBLE_BLUEPRINTS } from '../ansible/blueprints/index.ts';
+import { NETWORK_BLUEPRINTS } from '../network/blueprints/index.ts';
 import { CATALOG_DATA } from '../terraform/catalog-data.ts';
 import { collectModules } from '../ansible/from-plays.ts';
 
@@ -49,6 +50,15 @@ describe('kit/blueprint: the model', () => {
     expect(isVisible(input, { mode: 'advanced' })).toBe(true);
   });
 
+  it('shows a follow-up to anything but the off answer', () => {
+    // An OSPF process of 0 means "not in OSPF", so the area question only makes
+    // sense for every other value — which `equals` cannot list.
+    const area = { id: 'area', label: 'Area', control: 'text' as const, showWhen: { input: 'process', notEquals: ['0', ''] } };
+    expect(isVisible(area, { process: 0 })).toBe(false);
+    expect(isVisible(area, {})).toBe(false);
+    expect(isVisible(area, { process: 10 })).toBe(true);
+  });
+
   it('finds blueprints by platform', () => {
     expect(blueprintsFor(TERRAFORM_BLUEPRINTS, 'aws').length).toBeGreaterThan(0);
     expect(blueprintsFor(TERRAFORM_BLUEPRINTS, 'nonexistent')).toEqual([]);
@@ -87,6 +97,30 @@ describe('kit/blueprint: every blueprint is well formed', () => {
         const ids = blueprint.inputs.map((i) => i.id);
         if (new Set(ids).size !== ids.length) {
           throw new Error(`${group.target}/${blueprint.id} has a duplicate input id`);
+        }
+      }
+    }
+  });
+
+  it('asks every follow-up question of an input that exists, on a condition that can come true', () => {
+    // A `showWhen` naming an input the blueprint does not have, or one with an
+    // empty `equals`, hides the field for ever. The blueprint still compiles,
+    // still builds, and quietly never asks the question — so the only place
+    // this can be caught is here. Every kit is swept, not just this file's two.
+    for (const group of [...ALL, ...NETWORK_BLUEPRINTS]) {
+      for (const blueprint of group.blueprints) {
+        const ids = new Set(blueprint.inputs.map((i) => i.id));
+        for (const input of blueprint.inputs) {
+          const when = input.showWhen;
+          if (!when) continue;
+          const where = `${group.target}/${blueprint.id}: "${input.id}"`;
+          if (!ids.has(when.input)) {
+            throw new Error(`${where} depends on "${when.input}", which is not an input of this blueprint`);
+          }
+          if (when.input === input.id) throw new Error(`${where} depends on itself`);
+          if ((when.equals?.length ?? 0) === 0 && (when.notEquals?.length ?? 0) === 0) {
+            throw new Error(`${where} has a condition that can never be true, so it is never shown`);
+          }
         }
       }
     }

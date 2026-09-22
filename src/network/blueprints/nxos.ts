@@ -11,6 +11,7 @@ import { bool, num, str, type BlueprintValues, type BlueprintGroup } from '../..
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { NXOS_EXTRA } from './nxos-extra.ts';
+import { NXOS_EXTRA_2 } from './nxos-extra2.ts';
 import { description, listOf, parseCidr, vlanIds, vlanRange, type DeviceChange } from '../device.ts';
 
 const PLATFORM = 'cisco_nxos' as const;
@@ -286,7 +287,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest — the domain-level and operational changes — live in nxos-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...NXOS_EXTRA];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...NXOS_EXTRA, ...NXOS_EXTRA_2];
 
 export const NXOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Cisco NX-OS', blueprints: ALL };
 export const NXOS_CHANGES: readonly ChangeBlueprint[] = ALL;

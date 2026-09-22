@@ -12,6 +12,7 @@ import { bool, num, str, type BlueprintValues, type BlueprintGroup } from '../..
 import { error, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { EOS_EXTRA } from './eos-extra.ts';
+import { EOS_EXTRA_2 } from './eos-extra2.ts';
 import { description, listOf, parseCidr, vlanIds, vlanRange, type DeviceChange } from '../device.ts';
 
 const PLATFORM = 'arista_eos' as const;
@@ -231,7 +232,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest — the domain-level and operational changes — live in eos-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...EOS_EXTRA];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...EOS_EXTRA, ...EOS_EXTRA_2];
 
 export const EOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Arista EOS', blueprints: ALL };
 export const EOS_CHANGES: readonly ChangeBlueprint[] = ALL;

@@ -16,6 +16,7 @@ import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { description, listOf, netmask, parseCidr, vlanIds, vlanRange, wildcard,                   } from '../device.js';
 import { IOS_EXTRA } from './ios-extra.js';
+import { IOS_EXTRA_2 } from './ios-extra2.js';
 
 const PLATFORM = 'cisco_ios'         ;
 
@@ -748,7 +749,7 @@ const BLUEPRINTS                             = [
  * archive — are in ios-extra.ts, because one file of thirty changes is a file
  * nobody can find anything in.
  */
-const ALL                             = [...BLUEPRINTS, ...IOS_EXTRA];
+const ALL                             = [...BLUEPRINTS, ...IOS_EXTRA, ...IOS_EXTRA_2];
 
 export const IOS_NETWORK                 = {
   target: PLATFORM,

@@ -191,7 +191,7 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'nve_interface', label: 'NVE interface', control: 'number', default: 1, min: 1, max: 1 },
       { id: 'multicast_group', label: 'Multicast group', control: 'text', default: '', hint: 'Leave empty for ingress replication (BGP EVPN), which is the usual answer' },
       { id: 'anycast_gateway', label: 'Anycast gateway address', control: 'text', default: '10.100.0.1/24', hint: 'The same on every leaf; empty for layer 2 only' },
-      { id: 'vrf', label: 'Tenant VRF', control: 'text', default: 'TENANT-1', showWhen: { input: 'anycast_gateway', equals: [] } },
+      { id: 'vrf', label: 'Tenant VRF', control: 'text', default: 'TENANT-1', showWhen: { input: 'anycast_gateway', notEquals: [''] } },
       { id: 'l3_vni', label: 'L3 VNI for the VRF', control: 'number', default: 50001, min: 0, max: 16777214, hint: '0 if the VRF is already configured' },
       { id: 'route_target', label: 'Route target', control: 'text', default: 'auto' },
     ],

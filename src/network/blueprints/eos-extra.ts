@@ -103,7 +103,7 @@ export const EOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'route_distinguisher', label: 'Route distinguisher', control: 'text', default: '10.255.0.11:10100' },
       { id: 'route_target', label: 'Route target', control: 'text', default: '10100:10100' },
       { id: 'anycast_gateway', label: 'Anycast gateway address', control: 'text', default: '', hint: 'VARP address for the SVI; empty for layer 2 only' },
-      { id: 'vrf', label: 'Tenant VRF', control: 'text', default: '', showWhen: { input: 'anycast_gateway', equals: [] } },
+      { id: 'vrf', label: 'Tenant VRF', control: 'text', default: '', showWhen: { input: 'anycast_gateway', notEquals: [''] } },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const vlan = num(values, 'vlan_id', 100);

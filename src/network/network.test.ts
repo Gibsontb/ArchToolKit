@@ -79,11 +79,16 @@ describe('every blueprint', () => {
     // variable, never a value. The safe list is for lines that use one of these
     // words for something that is not a credential at all.
     const credential = /\b(password|secret|community|pre-shared|psk)\b/i;
-    const safe = /send-community|password-encryption|password 7 <REQUIRED>/i;
+    // `security wpa akm psk` selects the key-management method and names no
+    // key; the key itself is a separate line and is checked like any other.
+    const safe = /send-community|password-encryption|password 7 <REQUIRED>|akm psk|akm dot1x|no security wpa/i;
     for (const { id, change } of everyChange()) {
       for (const line of change.config) {
         if (!credential.test(line)) continue;
-        const ok = line.includes('<REQUIRED>') || line.includes('{{') || safe.test(line);
+        // A placeholder in angle brackets — `<REQUIRED>`, `<name>` — is a gap for
+      // someone to fill, never a value. A vault reference is the same thing for
+      // a playbook. Anything else beside a credential word is a value.
+      const ok = /<[A-Za-z][A-Za-z0-9 _-]*>/.test(line) || line.includes('{{') || safe.test(line);
         expect([id, line, ok]).toEqual([id, line, true]);
       }
     }

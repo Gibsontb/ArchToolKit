@@ -25,6 +25,10 @@ export function defaultHosts(platform: Platform): string {
       return 'ios';
     case 'cisco_nxos':
       return 'nxos';
+    case 'cisco_wlc':
+      return 'wlc';
+    case 'cisco_asa':
+      return 'asa';
     case 'arista_eos':
       return 'eos';
     case 'panos':
@@ -48,13 +52,15 @@ export function defaultHosts(platform: Platform): string {
  */
 export function configPush(change: DeviceChange): { module: string; args: Record<string, unknown> } | null {
   const module =
-    change.platform === 'cisco_ios'
+    change.platform === 'cisco_ios' || change.platform === 'cisco_wlc'
       ? 'cisco.ios.ios_config'
       : change.platform === 'cisco_nxos'
         ? 'cisco.nxos.nxos_config'
-        : change.platform === 'arista_eos'
-          ? 'arista.eos.eos_config'
-          : null;
+        : change.platform === 'cisco_asa'
+          ? 'cisco.asa.asa_config'
+          : change.platform === 'arista_eos'
+            ? 'arista.eos.eos_config'
+            : null;
   if (!module) return null;
   return {
     module,
@@ -136,6 +142,8 @@ export function inventoryHint(platform: Platform): string[] {
   switch (platform) {
     case 'cisco_ios':
     case 'cisco_nxos':
+    case 'cisco_wlc':
+    case 'cisco_asa':
     case 'arista_eos':
       return [
         'ansible_connection: ansible.netcommon.network_cli',

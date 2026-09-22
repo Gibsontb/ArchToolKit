@@ -37,7 +37,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'mtu', label: 'MTU', control: 'number', default: 1500, min: 1500, max: 9216 },
       { id: 'vrf', label: 'VRF', control: 'text', default: '', hint: 'Leave empty for the global table' },
       { id: 'ospf_process', label: 'Add to OSPF process', control: 'number', default: 0, min: 0, hint: '0 for none' },
-      { id: 'ospf_area', label: 'OSPF area', control: 'text', default: '0', showWhen: { input: 'ospf_process', equals: [] } },
+      { id: 'ospf_area', label: 'OSPF area', control: 'text', default: '0', showWhen: { input: 'ospf_process', notEquals: ['0', ''] } },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const iface = str(values, 'interface', '');

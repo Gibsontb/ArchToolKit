@@ -63,8 +63,16 @@ export interface BlueprintInput {
   /**
    * Show this input only when another input has one of these values, so a
    * blueprint can ask a follow-up question without a second blueprint.
+   *
+   * Give `equals`, or `notEquals` for a follow-up to an input whose "off" value
+   * is the only one worth naming — an empty `equals` with no `notEquals` is a
+   * condition that can never be true, which the test suite rejects.
    */
-  readonly showWhen?: { readonly input: string; readonly equals: readonly string[] };
+  readonly showWhen?: {
+    readonly input: string;
+    readonly equals?: readonly string[];
+    readonly notEquals?: readonly string[];
+  };
   /**
    * The collapsible section this input sits in, when it is not one of the
    * blueprint's headline questions. A module blueprint puts the dozen inputs a
@@ -205,11 +213,22 @@ export function defaultValues(blueprint: Blueprint): BlueprintValues {
   return values;
 }
 
-/** Whether an input should be shown, given what has been filled in so far. */
+/**
+ * Whether an input should be shown, given what has been filled in so far.
+ *
+ * `equals` is the common case — show the VLAN list when the port is a trunk.
+ * `notEquals` exists for the inputs whose controlling answer is "none", which a
+ * list of the values that are not none cannot express: an OSPF process number
+ * where 0 means "do not add this interface to OSPF" has four billion values
+ * that are not 0.
+ */
 export function isVisible(input: BlueprintInput, values: BlueprintValues): boolean {
   if (!input.showWhen) return true;
   const current = String(values[input.showWhen.input] ?? '');
-  return input.showWhen.equals.includes(current);
+  const { equals, notEquals } = input.showWhen;
+  if (notEquals && notEquals.includes(current)) return false;
+  if (!equals || equals.length === 0) return notEquals !== undefined;
+  return equals.includes(current);
 }
 
 export function blueprintsFor(groups: readonly BlueprintGroup[], target: string): readonly Blueprint[] {

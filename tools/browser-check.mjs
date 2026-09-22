@@ -1052,7 +1052,7 @@ for (const [kind, path, generateLabel, expect] of [
   check('the network page loads clean', errors.length === 0, errors[0] ?? '');
 
   const platforms = await page.locator('select:not([data-control])').first().evaluate((s) => Array.from(s.options).map((o) => o.value));
-  check('it offers every platform', ['cisco_ios', 'cisco_nxos', 'arista_eos', 'panos', 'fortios', 'f5'].every((p) => platforms.includes(p)), platforms.join(', '));
+  check('it offers every platform', ['cisco_ios', 'cisco_nxos', 'cisco_wlc', 'cisco_asa', 'arista_eos', 'panos', 'fortios', 'f5'].every((p) => platforms.includes(p)), platforms.join(', '));
 
   // Generate one change and read what came out.
   await page.locator('[data-control="generate"]').click();

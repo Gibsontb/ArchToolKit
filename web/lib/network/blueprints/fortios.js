@@ -15,6 +15,7 @@ import { bool, num, str,                                           } from '../..
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { FORTIOS_EXTRA } from './fortios-extra.js';
+import { FORTIOS_EXTRA_2 } from './fortios-extra2.js';
 import { listOf, netmask, parseCidr,                   } from '../device.js';
 
 const PLATFORM = 'fortios'         ;
@@ -338,7 +339,7 @@ const BLUEPRINTS                             = [
 ];
 
 /** The rest of the platform's changes live in fortios-extra.ts. */
-const ALL                             = [...BLUEPRINTS, ...FORTIOS_EXTRA];
+const ALL                             = [...BLUEPRINTS, ...FORTIOS_EXTRA, ...FORTIOS_EXTRA_2];
 
 export const FORTIOS_NETWORK                 = { target: PLATFORM, label: 'Fortinet FortiOS', blueprints: ALL };
 export const FORTIOS_CHANGES                             = ALL;

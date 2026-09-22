@@ -211,6 +211,16 @@ export const COLLECTIONS                            = [
     requires: 'ansible.netcommon on the control node.',
   },
   {
+    name: 'cisco.asa',
+    target: 'network',
+    label: 'Cisco ASA',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials: 'SSH from the inventory, with ansible_network_os=cisco.asa.asa. The enable secret belongs in a vault.',
+    requires: 'ansible.netcommon on the control node.',
+  },
+  {
     name: 'arista.eos',
     target: 'network',
     label: 'Arista EOS',

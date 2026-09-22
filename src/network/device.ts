@@ -22,7 +22,7 @@
 import type { Finding } from '../core/findings.ts';
 import { info, warning } from '../core/findings.ts';
 
-export type Platform = 'cisco_ios' | 'cisco_nxos' | 'arista_eos' | 'panos' | 'fortios' | 'f5';
+export type Platform = 'cisco_ios' | 'cisco_nxos' | 'cisco_wlc' | 'cisco_asa' | 'arista_eos' | 'panos' | 'fortios' | 'f5';
 
 export interface PlatformInfo {
   readonly id: Platform;
@@ -60,6 +60,27 @@ export const PLATFORMS: Readonly<Record<Platform, PlatformInfo>> = {
     collection: 'cisco.nxos',
     networkOs: 'cisco.nxos.nxos',
     save: 'copy running-config startup-config',
+    extension: '.cfg',
+  },
+  cisco_wlc: {
+    id: 'cisco_wlc',
+    label: 'Cisco Catalyst 9800 (wireless)',
+    device: 'wireless LAN controller',
+    comment: '!',
+    // The 9800 is IOS-XE, so the IOS collection drives it.
+    collection: 'cisco.ios',
+    networkOs: 'cisco.ios.ios',
+    save: 'write memory',
+    extension: '.cfg',
+  },
+  cisco_asa: {
+    id: 'cisco_asa',
+    label: 'Cisco ASA (firewall)',
+    device: 'firewall',
+    comment: '!',
+    collection: 'cisco.asa',
+    networkOs: 'cisco.asa.asa',
+    save: 'write memory',
     extension: '.cfg',
   },
   arista_eos: {
