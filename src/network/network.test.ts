@@ -14,6 +14,7 @@ import { NETWORK_BLUEPRINTS, NETWORK_CHANGES, networkChange } from './blueprints
 import { buildChange } from './change.ts';
 import { IMPACT_MEANING, PLATFORMS, netmask, parseCidr, renderChange, vlanIds, vlanRange, wildcard, isIpv4, type DeviceChange } from './device.ts';
 import { configPush, inventoryHint, playFor, pushPlaybook } from './push.ts';
+import { fullConfig } from './full-config.ts';
 import type { StackItem } from '../kit/stack.ts';
 
 const byId = (id: string) => NETWORK_CHANGES.find((b) => b.id === id);
@@ -271,11 +272,12 @@ describe('a change list', () => {
     expect(configs).toEqual(['01-build-the-vlan.cfg', '02-carry-it-on-the-uplink.cfg', '03-publish-the-application.json']);
   });
 
-  it('collects the steps for one device into a file that can be pasted in one session', () => {
-    const combined = change.files['all-cisco-ios.cfg'] as string;
-    expect(combined.includes('build the VLAN')).toBe(true);
-    expect(combined.includes('carry it on the uplink')).toBe(true);
-    expect(combined.indexOf('build the VLAN') < combined.indexOf('carry it on the uplink')).toBe(true);
+  it('assembles the steps for one device into a complete configuration', () => {
+    const combined = change.files['full-cisco-ios.cfg'] as string;
+    expect(combined.includes('vlan 30')).toBe(true);
+    expect(combined.includes('switchport mode trunk')).toBe(true);
+    // In running-configuration order: VLANs before the interfaces that carry them.
+    expect(combined.indexOf('VLANs') < combined.indexOf('Physical interfaces')).toBe(true);
     // The F5 step is a different device, so it is not in there.
     expect(combined.includes('AS3')).toBe(false);
   });
@@ -370,5 +372,108 @@ describe('every platform', () => {
     for (const platform of Object.keys(PLATFORMS)) {
       expect([platform, targets.includes(platform)]).toEqual([platform, true]);
     }
+  });
+});
+
+describe('the complete configuration', () => {
+  const ios = (ids: [string, string, Record<string, string | number | boolean>][]) =>
+    ids.map(([id, label, values]) => ({ label, change: byId(id)!.change({ ...defaultValues(byId(id)!), ...values }, label) }));
+
+  it('merges two steps that touch the same interface into one block', () => {
+    const steps = ios([
+      ['ios_access_port', 'access ports', { ports: 'GigabitEthernet1/0/1', vlan_id: 10 }],
+      ['ios_spanning_tree', 'harden stp', { edge_ports: 'GigabitEthernet1/0/1', role: 'leaf' }],
+    ]);
+    const whole = fullConfig('cisco_ios', steps, 'rack build');
+    const occurrences = whole.text.split('\n').filter((line) => line.trim() === 'interface GigabitEthernet1/0/1').length;
+    expect(occurrences).toBe(1);
+    // and the block carries what both steps set
+    expect(whole.text.includes('switchport access vlan 10')).toBe(true);
+    expect(whole.text.includes('spanning-tree bpduguard enable')).toBe(true);
+    expect(whole.findings.some((f) => f.code === 'network.full.merged')).toBe(true);
+  });
+
+  it('drops a line two steps both set, rather than writing it twice', () => {
+    const steps = ios([
+      ['ios_access_port', 'first', { ports: 'GigabitEthernet1/0/1', vlan_id: 10 }],
+      ['ios_access_port', 'second', { ports: 'GigabitEthernet1/0/1', vlan_id: 10 }],
+    ]);
+    const whole = fullConfig('cisco_ios', steps, 'build');
+    expect(whole.text.split('switchport access vlan 10').length - 1).toBe(1);
+  });
+
+  it('writes the sections in running-configuration order', () => {
+    const steps = ios([
+      ['ios_management_baseline', 'baseline', {}],
+      ['ios_vlan_svi', 'vlan', {}],
+      ['ios_access_port', 'ports', {}],
+      ['ios_ospf', 'ospf', {}],
+      ['ios_acl', 'acl', {}],
+    ]);
+    const text = fullConfig('cisco_ios', steps, 'switch build').text;
+    const at = (needle: string) => text.indexOf(needle);
+    expect(at('System and features') < at('VLANs')).toBe(true);
+    expect(at('VLANs') < at('Physical interfaces')).toBe(true);
+    expect(at('Physical interfaces') < at('Routing')).toBe(true);
+    expect(at('Access lists') > 0).toBe(true);
+  });
+
+  it('says what a build is still missing', () => {
+    const steps = ios([['ios_access_port', 'ports', {}]]);
+    const codes = fullConfig('cisco_ios', steps, 'build').findings.map((f) => f.code);
+    expect(codes.includes('network.full.no-hostname')).toBe(true);
+    expect(codes.includes('network.full.no-stp')).toBe(true);
+  });
+
+  it('keeps the per-step files unchanged: they still carry the checks and the back-out', () => {
+    const built = buildChange([item('ios_vlan_svi', 'one'), item('ios_access_port', 'two')], byId, { stackName: 'build' });
+    const step = built.files['01-one.cfg'] as string;
+    expect(step.includes('back out')).toBe(true);
+    expect((built.files['full-cisco-ios.cfg'] as string).includes('back out')).toBe(false);
+  });
+
+  it('merges PAN-OS into one set of commands, in the order the firewall needs, ending in a commit', () => {
+    const steps = [
+      { label: 'interface', change: byId('panos_interface_zone')!.change(defaultValues(byId('panos_interface_zone')!), 'interface') },
+      { label: 'objects', change: byId('panos_address_objects')!.change(defaultValues(byId('panos_address_objects')!), 'objects') },
+      { label: 'rule', change: byId('panos_security_rule')!.change(defaultValues(byId('panos_security_rule')!), 'rule') },
+    ];
+    const text = fullConfig('panos', steps, 'dmz build').text;
+    expect(text.indexOf('Network: interfaces') < text.indexOf('Objects:')).toBe(true);
+    expect(text.indexOf('Objects:') < text.indexOf('Security rules')).toBe(true);
+    expect(text.trimEnd().endsWith('commit description "dmz build"')).toBe(true);
+  });
+
+  it('merges FortiOS sections rather than repeating config blocks', () => {
+    const steps = [
+      { label: 'addresses', change: byId('fortios_address_objects')!.change(defaultValues(byId('fortios_address_objects')!), 'addresses') },
+      { label: 'policy', change: byId('fortios_firewall_policy')!.change(defaultValues(byId('fortios_firewall_policy')!), 'policy') },
+      { label: 'route', change: byId('fortios_static_route')!.change(defaultValues(byId('fortios_static_route')!), 'route') },
+    ];
+    const text = fullConfig('fortios', steps, 'edge build').text;
+    expect(text.split('config firewall address\n').length - 1).toBe(1);
+    expect(text.indexOf('config router static') < text.indexOf('config firewall policy')).toBe(true);
+  });
+
+  it('merges F5 declarations into one, because AS3 replaces a tenant wholesale', () => {
+    const steps = [
+      { label: 'web', change: byId('f5_http_virtual')!.change({ ...defaultValues(byId('f5_http_virtual')!), application: 'web_app' }, 'web') },
+      { label: 'db', change: byId('f5_tcp_virtual')!.change({ ...defaultValues(byId('f5_tcp_virtual')!), application: 'db_service' }, 'db') },
+    ];
+    const whole = fullConfig('f5', steps, 'prod apps');
+    const declaration = JSON.parse(whole.text) as Record<string, unknown>;
+    const adc = declaration['declaration'] as Record<string, unknown>;
+    const tenant = adc['Prod'] as Record<string, unknown>;
+    expect(Object.keys(tenant).sort()).toEqual(['class', 'db_service', 'web_app']);
+    expect(whole.findings.some((f) => f.code === 'network.full.as3-combined')).toBe(true);
+  });
+
+  it('warns when two F5 steps would define the same application', () => {
+    const blueprint = byId('f5_http_virtual')!;
+    const steps = [
+      { label: 'one', change: blueprint.change({ ...defaultValues(blueprint), application: 'web_app' }, 'one') },
+      { label: 'two', change: blueprint.change({ ...defaultValues(blueprint), application: 'web_app' }, 'two') },
+    ];
+    expect(fullConfig('f5', steps, 'apps').findings.some((f) => f.code === 'network.full.duplicate-application')).toBe(true);
   });
 });

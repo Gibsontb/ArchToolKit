@@ -1094,6 +1094,7 @@ for (const [kind, path, generateLabel, expect] of [
   const stack = await page.locator('body').innerText();
   check('a change list generates numbered steps', /01-/.test(stack) && /02-/.test(stack), stack.slice(0, 80).replace(/\n/g, ' '));
   check('with a playbook and a record', /apply\.yml/.test(stack) && /change-record\.md/.test(stack));
+  check('and the whole device configuration, merged', /full-cisco-ios\.cfg/.test(stack));
 
   check('no script errors through any of it', errors.length === 0, errors[0] ?? '');
   await ctx.close();

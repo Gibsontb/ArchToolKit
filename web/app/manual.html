@@ -600,8 +600,8 @@
             zone. Generating the change writes:
           </p>
           <ul>
-            <li>one numbered configuration file per step;</li>
-            <li>one file per device platform with all of that platform's steps in order, for a single session;</li>
+            <li>one numbered configuration file per step, each with its own capture, verify and back-out;</li>
+            <li><code>full-&lt;platform&gt;.cfg</code> — the <strong>complete configuration</strong> for that device: every step <em>merged</em>, not stacked. Two steps that touch the same interface become one interface block carrying everything they set, repeated lines are dropped, and the whole thing is written in the order the platform's own running configuration uses (system, management, VLANs, interfaces, spanning tree, routing, policy). It is what you paste into a device you are building, rather than one you are changing. For F5 it is one AS3 declaration per tenant, which is the only correct way to combine them: AS3 replaces a tenant wholesale, so two declarations for one tenant would delete each other. For PAN-OS it ends with the commit;</li>
             <li><code>apply.yml</code>, the same steps as one playbook, plus <code>requirements.yml</code> and an <code>inventory/hosts.yml</code> with the connection variables;</li>
             <li><code>change-record.md</code> — the pre-checks, every step with its verification, the back-out <strong>in reverse order</strong>, and a sign-off table;</li>
             <li><code>README.md</code>, which says how to apply it both ways.</li>
@@ -610,6 +610,14 @@
             Two platforms in one change stay in separate files, because that is two sessions on two
             devices. The back-out reverses: the last thing built is the first thing removed.
           </p>
+          <div class="tip">
+            <strong>Per-step files and the full configuration are for different jobs.</strong> The step
+            files carry the checks and the back-out and are what a change window needs. The full
+            configuration carries neither — it is the destination, not the journey — and is what a
+            build needs. Both are generated every time; use the one that matches what you are doing.
+            When a full configuration is missing something a build should have (a hostname, NTP,
+            spanning tree), the page says so rather than pretending it is complete.
+          </div>
           <div class="tip">
             The vendor Ansible collections (<code>cisco.ios</code>, <code>paloaltonetworks.panos</code>,
             <code>fortinet.fortios</code>, <code>f5networks.f5_modules</code> and the rest) were added in a
