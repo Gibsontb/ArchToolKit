@@ -19,7 +19,7 @@
  * Verification: V-DOC (galaxy.ansible.com API v3, retrieved 2026-09-20).
  */
 
-                                                                                                            
+                                                                                                                        
 
                                  
                                                             
@@ -41,6 +41,18 @@
                                                      
      
                              
+     
+                                                                               
+                                                       
+    
+                                                                              
+                                                                              
+                                                                           
+                                                                               
+                                                                           
+                                                                          
+     
+                          
  
 
 export const COLLECTIONS                            = [
@@ -176,6 +188,78 @@ export const COLLECTIONS                            = [
     observedVersion: '13.4.0',
     credentials: 'Varies by module; most take their own arguments.',
     note: 'Large and broad. Pull it in for a specific module, not as a default.',
+  },
+  {
+    name: 'cisco.ios',
+    target: 'network',
+    label: 'Cisco IOS and IOS-XE',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials:
+      'SSH from the inventory: ansible_user, ansible_password or an SSH key, with ansible_connection=ansible.netcommon.network_cli and ansible_network_os=cisco.ios.ios. Enable secrets belong in a vault, never in a playbook.',
+    requires: 'ansible.netcommon on the control node for the network_cli connection.',
+  },
+  {
+    name: 'cisco.nxos',
+    target: 'network',
+    label: 'Cisco NX-OS',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials: 'SSH or NX-API from the inventory, with ansible_network_os=cisco.nxos.nxos.',
+    requires: 'ansible.netcommon on the control node.',
+  },
+  {
+    name: 'arista.eos',
+    target: 'network',
+    label: 'Arista EOS',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials: 'SSH or eAPI from the inventory, with ansible_network_os=arista.eos.eos.',
+    requires: 'ansible.netcommon on the control node.',
+  },
+  {
+    name: 'ansible.netcommon',
+    target: 'network',
+    label: 'Network connection plugins',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials: 'None of its own; it provides the network_cli and httpapi connections the vendor collections use.',
+  },
+  {
+    name: 'paloaltonetworks.panos',
+    target: 'network',
+    label: 'Palo Alto PAN-OS',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials:
+      'An API key or username and password for the firewall or Panorama, supplied as a provider dictionary from a vault or the environment.',
+    requires: 'pan-os-python on the control node.',
+  },
+  {
+    name: 'fortinet.fortios',
+    target: 'network',
+    label: 'Fortinet FortiOS',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials: 'A FortiGate API token (ansible_httpapi_*) from a vault, over the httpapi connection.',
+    requires: 'ansible.netcommon on the control node.',
+  },
+  {
+    name: 'f5networks.f5_modules',
+    target: 'network',
+    label: 'F5 BIG-IP',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials:
+      'BIG-IP credentials as a provider dictionary from a vault or the environment. An AS3 declaration is posted to the management API; it carries no passwords of its own here.',
+    requires: 'A BIG-IP reachable from the control node.',
   },
 ];
 

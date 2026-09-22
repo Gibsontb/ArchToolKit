@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Terraform Map · ArchToolKit</title>
+    <title>Network Devices · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -20,8 +20,8 @@
         <a href="data-editor.html">Data Editor</a>
         <a href="multicloud.html">Multi-Cloud</a>
         <a href="migration.html">Migration</a>
-        <a href="network.html">Network</a>
-        <a href="terraform-map.html" aria-current="page">Terraform Map</a>
+        <a href="network.html" aria-current="page">Network</a>
+        <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
         <a href="manual.html">Manual</a>
@@ -30,14 +30,20 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>Terraform Map</h1>
-        <p>Which resource does which job, per cloud and per domain, with the pattern to put around it. Every name on the page is checked against the committed provider catalog, so one that has been renamed since the map was written says so here rather than at plan time.</p>
+        <h1>Network device configuration</h1>
+        <p>
+          Switches, routers, firewalls and load balancers: Cisco IOS and NX-OS, Arista EOS, Palo Alto
+          PAN-OS, Fortinet FortiOS, and F5 BIG-IP as AS3 declarations. Every change comes with what to
+          capture before you start, the commands that prove it worked, and the ones that put it back —
+          plus a playbook that applies the same change to many devices, and a change record for the
+          ticket.
+        </p>
       </div>
 
-      <div id="terraform-map-root"></div>
+      <div id="network-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/terraform-map-page.js"></script>
+    <script type="module" src="../lib/ui/network-page.js"></script>
     <script type="module" src="../lib/ui/clear-all.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>

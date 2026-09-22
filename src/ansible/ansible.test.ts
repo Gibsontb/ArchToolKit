@@ -14,12 +14,20 @@ import {
 import type { InventoryCluster } from '../vmware/inventory.ts';
 
 describe('ansible/collections', () => {
-  it('pins every collection to the major line Galaxy reported', () => {
+  it('pins every collection whose version Galaxy gave us to that major line', () => {
     for (const collection of COLLECTIONS) {
-      if (collection.builtin) continue;
+      if (collection.builtin || collection.pinned === false) continue;
       const major = collection.observedVersion.split('.')[0];
       expect(collection.version).toContain(`>=${collection.observedVersion}`);
       expect(collection.version).toContain(`<${Number(major) + 1}.0.0`);
+    }
+  });
+
+  it('says plainly when a version was never read, rather than inventing a pin', () => {
+    for (const collection of COLLECTIONS) {
+      if (collection.pinned !== false) continue;
+      expect(collection.observedVersion.includes('not read from Galaxy')).toBe(true);
+      expect(/^\d/.test(collection.version)).toBe(false);
     }
   });
 
@@ -56,9 +64,13 @@ describe('ansible/collections', () => {
 });
 
 describe('ansible/catalog', () => {
-  it('holds every collection the kit can install', () => {
-    expect(notCatalogued()).toEqual([]);
-    expect(catalogued().length).toBe(COLLECTIONS.filter((c) => !c.builtin).length);
+  it('holds every collection whose version this build could read', () => {
+    // The network vendor collections were added in a build with no Galaxy
+    // access, so they are knowingly absent until `npm run ansible:update` runs
+    // on a connected machine. Everything else must be there.
+    const expected = COLLECTIONS.filter((c) => !c.builtin && c.pinned === false).map((c) => c.name);
+    expect([...notCatalogued()].sort()).toEqual([...expected].sort());
+    expect(catalogued().length).toBe(COLLECTIONS.filter((c) => !c.builtin && c.pinned !== false).length);
   });
 
   it('holds a real number of modules', () => {
@@ -87,7 +99,14 @@ describe('ansible/catalog', () => {
 
   it('never reports ansible.builtin as missing, since it cannot be fetched', () => {
     expect(notCatalogued()).not.toContain('ansible.builtin');
-    expect(catalogFindings().map((f) => f.code)).not.toContain('ansible.catalog.incomplete');
+    const incomplete = catalogFindings().find((f) => f.code === 'ansible.catalog.incomplete');
+    expect(incomplete?.message.includes('ansible.builtin') ?? false).toBe(false);
+  });
+
+  it('does say which collections are missing, so the refresh has a reason', () => {
+    const incomplete = catalogFindings().find((f) => f.code === 'ansible.catalog.incomplete');
+    expect(incomplete?.message.includes('cisco.ios') ?? false).toBe(true);
+    expect(incomplete?.remediation?.includes('ansible:update') ?? false).toBe(true);
   });
 
   it('searches on every term, across collections', () => {

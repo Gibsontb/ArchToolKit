@@ -80,6 +80,8 @@ export interface GeneratorOptions {
   readonly stack?: {
     /** "stack" for Terraform, "site playbook" for Ansible. */
     readonly noun: string;
+    /** The button that adds to the list, when "Add to build" is not the words. */
+    readonly addLabel?: string;
     /** What the picker offers, in words: "a shared variable". */
     readonly referenceLabel?: string;
     /** How a reference is written into a field. Terraform's `${…}` by default. */
@@ -644,7 +646,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
           text: `Add each piece, then generate the whole ${options.stack.noun} as one project: one file per item, the shared files around them, and a README. A field can take ${options.stack.referenceLabel ?? 'a value from an item already in the list'}.`,
         }),
         stackItems.length === 0
-          ? el('div', { class: 'empty', text: `Nothing added yet. Fill in step 2 and press "Add to build".` })
+          ? el('div', { class: 'empty', text: `Nothing added yet. Fill in the parameters and press "${options.stack?.addLabel ?? 'Add to build'}".` })
           : el('div', { class: 'build-list' }, ...rows),
         el('div', { class: 'field' }, el('label', { text: `Name for this ${options.stack.noun}` }), stackName),
         el(
@@ -735,7 +737,14 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
       card(
         'Step 1 — Platform and what to build',
         labelledField(
-          { id: 'platform', label: 'Platform', control: 'select', hint: 'Chosen once, used everywhere' },
+          {
+            id: 'platform',
+            label: 'Platform',
+            control: 'select',
+            // A page whose platforms are device operating systems keeps its own
+            // selection, so saying "used everywhere" there would be a lie.
+            hint: shared ? 'Chosen once, used everywhere' : 'This page only',
+          },
           platform,
         ),
         labelledField(
@@ -781,7 +790,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     });
     fields.push(
       labelledField(
-        { id: '__name', label: 'Module / file label', control: 'text', hint: 'Optional' },
+        { id: '__name', label: 'Name for the files and comments', control: 'text', hint: 'Optional' },
         nameInput,
       ),
     );
@@ -848,12 +857,13 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
           el('button', {
             class: 'btn btn-primary',
             text: `Generate ${options.kindLabel}`,
+            attrs: { type: 'button', 'data-control': 'generate' },
             on: { click: generate },
           }),
           options.stack
             ? el('button', {
                 class: 'btn',
-                text: editing ? 'Update in build list' : 'Add to build',
+                text: editing ? 'Update in the list' : (options.stack.addLabel ?? 'Add to build'),
                 attrs: { type: 'button', title: `Put this in the build list, to generate with the rest of the ${options.stack.noun}`, 'data-control': 'add-to-build' },
                 on: { click: addToBuild },
               })

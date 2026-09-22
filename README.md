@@ -1,6 +1,7 @@
 # ArchToolKit
 
-Offline-first architecture toolkit for multi-cloud, VMware and VMware Cloud Foundation work.
+Offline-first architecture toolkit for multi-cloud, VMware, VMware Cloud Foundation and network
+device work.
 
 Runs entirely in the browser. No server, no network calls, no telemetry, and **no dependencies** —
 there is no `node_modules`, no bundler and no package registry involved at any point. It is designed

@@ -74,6 +74,7 @@ for (const [name, path] of [
   ['ansible', '/app/ansible.html'],
   ['multicloud', '/app/multicloud.html'],
   ['migration', '/app/migration.html'],
+  ['network', '/app/network.html'],
 ]) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -475,7 +476,7 @@ for (const [name, path] of [
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html', 'app/manual.html'];
+  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/network.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html', 'app/manual.html'];
   const missing = [];
   for (const p of pages) {
     await page.goto(`${BASE}/${p}`, { waitUntil: 'networkidle' });
@@ -1036,6 +1037,65 @@ for (const [kind, path, generateLabel, expect] of [
   check('opening a row loads it into the intake', (await page.inputValue('#app-name')).length > 0);
 
   check('no script errors through the import', errors.length === 0, errors[0] ?? '');
+  await ctx.close();
+}
+
+// --- network devices: a change, and a change list -------------------------
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  await page.goto(`${BASE}/app/network.html`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(500);
+  check('the network page loads clean', errors.length === 0, errors[0] ?? '');
+
+  const platforms = await page.locator('select:not([data-control])').first().evaluate((s) => Array.from(s.options).map((o) => o.value));
+  check('it offers every platform', ['cisco_ios', 'cisco_nxos', 'arista_eos', 'panos', 'fortios', 'f5'].every((p) => platforms.includes(p)), platforms.join(', '));
+
+  // Generate one change and read what came out.
+  await page.locator('[data-control="generate"]').click();
+  await page.waitForTimeout(600);
+  const body = await page.locator('body').innerText();
+  check('generating a change produces a configuration', /vlan 10/i.test(body), body.slice(0, 80).replace(/\n/g, ' '));
+  check('with what to capture first, what to verify, and the back-out', /capture first/i.test(body) && /verify/i.test(body) && /back out/i.test(body));
+  check('and a change record beside it', /change-record\.md/.test(body));
+  check('it warns about impact rather than hiding it', /impact/i.test(body));
+
+  // The platform picker here must not change the toolkit-wide cloud.
+  await page.locator('select:not([data-control])').first().selectOption('panos');
+  await page.waitForTimeout(400);
+  const cloud = await page.evaluate(() => sessionStorage.getItem('archtoolkit.target'));
+  check('choosing a device platform leaves the cloud selection alone', cloud === null || !/panos/.test(cloud), String(cloud));
+
+  const panBody = await page.locator('body').innerText();
+  check('PAN-OS offers its own changes', /security rule/i.test(panBody), panBody.slice(0, 60).replace(/\n/g, ' '));
+
+  // F5 emits an AS3 declaration.
+  await page.locator('select:not([data-control])').first().selectOption('f5');
+  await page.waitForTimeout(400);
+  await page.locator('[data-control="generate"]').click();
+  await page.waitForTimeout(600);
+  const f5 = await page.locator('body').innerText();
+  check('F5 generates an AS3 declaration', /"class": "AS3"/.test(f5) || /AS3/.test(f5), f5.slice(0, 60).replace(/\n/g, ' '));
+
+  // A change list of two steps on one platform.
+  await page.locator('select:not([data-control])').first().selectOption('cisco_ios');
+  await page.waitForTimeout(400);
+  await page.locator('[data-control="add-to-build"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('select:not([data-control])').nth(1).selectOption('ios_trunk_port');
+  await page.waitForTimeout(300);
+  await page.locator('[data-control="add-to-build"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-control="generate-stack"]').click();
+  await page.waitForTimeout(800);
+  const stack = await page.locator('body').innerText();
+  check('a change list generates numbered steps', /01-/.test(stack) && /02-/.test(stack), stack.slice(0, 80).replace(/\n/g, ' '));
+  check('with a playbook and a record', /apply\.yml/.test(stack) && /change-record\.md/.test(stack));
+
+  check('no script errors through any of it', errors.length === 0, errors[0] ?? '');
   await ctx.close();
 }
 

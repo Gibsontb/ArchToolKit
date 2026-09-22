@@ -42,6 +42,7 @@
         <a href="data-editor.html">Data Editor</a>
         <a href="multicloud.html">Multi-Cloud</a>
         <a href="migration.html">Migration</a>
+        <a href="network.html">Network</a>
         <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
@@ -75,6 +76,7 @@
             <li><a href="#tfmap">Terraform Map</a></li>
             <li><a href="#multicloud">Multi-Cloud wizard</a></li>
             <li><a href="#migration">Application Migration and Portfolio</a></li>
+            <li><a href="#network">Network devices</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -122,6 +124,7 @@
             <tr><td><a href="ansible.html">Ansible</a></td><td>Generate Ansible playbooks plus their <code>requirements.yml</code>, including inventories built from the estate.</td></tr>
             <tr><td><a href="terraform-map.html">Terraform Map</a></td><td>A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
             <tr><td><a href="multicloud.html">Multi-Cloud</a></td><td>A four-step wizard that produces a cloud recommendation and onboarding playbook, ready for Word.</td></tr>
+            <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
           </table>
 
@@ -527,8 +530,96 @@
             <em>Save</em> and <em>Clear</em> strip at the top of the page is for one application's intake, not the
             portfolio.
           </p>
+          <!-- ================================================================ -->
+          <h2 id="network">13. Network devices</h2>
+          <p>
+            Configuration for the things between the servers: Cisco IOS and IOS-XE, Cisco NX-OS,
+            Arista EOS, Palo Alto PAN-OS, Fortinet FortiOS, and F5 BIG-IP as AS3 declarations. It works
+            like the Terraform and Ansible pages — pick the platform, pick the change, fill in the
+            parameters, generate — with one difference: the platform here is a device operating system,
+            not a cloud, so this page keeps its own selection and does not change what the other pages
+            are working on.
+          </p>
 
-          <h2 id="collector">13. The inventory collector</h2>
+          <h3>What every change carries</h3>
+          <p>
+            A Terraform plan can be read before it runs and a playbook has <code>--check</code>. A router
+            has neither: the moment a line is pasted it is live. So nothing here emits configuration on
+            its own. Every change has four parts, and they are all in the file:
+          </p>
+          <table>
+            <tr><th>Part</th><th>What it is for</th></tr>
+            <tr><td>Capture first</td><td>The show commands to run before you touch anything, so there is something to compare against and to restore from.</td></tr>
+            <tr><td>Configuration</td><td>The change itself, in the device's own syntax.</td></tr>
+            <tr><td>Verify</td><td>What proves it worked, run after.</td></tr>
+            <tr><td>Back out</td><td>The exact commands that put it back.</td></tr>
+          </table>
+          <p>
+            Everything that is not configuration is commented out in the device's own comment character,
+            so the file can be pasted whole and only the configuration takes effect — because someone
+            will select all and paste. Each change also declares its <strong>impact</strong>: none
+            (nothing in the traffic path changes), brief (traffic can move or drop for a moment), or
+            outage (something stops passing traffic until it is complete). The page warns on anything
+            above none.
+          </p>
+
+          <h3>What it can configure</h3>
+          <table>
+            <tr><th>Platform</th><th>Changes</th></tr>
+            <tr><td>Cisco IOS / IOS-XE</td><td>VLAN and SVI (with HSRP and a DHCP helper), access ports, trunk, LACP port-channel, static route, OSPF, BGP neighbour with prefix lists and a maximum-prefix limit, named access list, management baseline (NTP, syslog, SNMPv3, SSH), spanning-tree hardening.</td></tr>
+            <tr><td>Cisco NX-OS</td><td>VLAN and SVI in a VRF, vPC member port-channel, VRF, OSPF underlay with BFD, management baseline on the management VRF.</td></tr>
+            <tr><td>Arista EOS</td><td>VLAN and SVI with VARP, MLAG member port-channel, BGP EVPN leaf, management baseline with eAPI.</td></tr>
+            <tr><td>Palo Alto PAN-OS</td><td>Address objects and groups, security rule (App-ID based), source and destination NAT, layer 3 interface and zone. Emitted as <code>set</code> commands.</td></tr>
+            <tr><td>Fortinet FortiOS</td><td>Address objects and groups, firewall policy with inspection profiles, VIP to publish a server, static route.</td></tr>
+            <tr><td>F5 BIG-IP</td><td>HTTP/HTTPS virtual server with pool and monitor, TCP virtual server, HTTPS with an Advanced WAF policy — all as AS3 declarations, which the <a href="data-editor.html">Data Editor</a> can open and check against the AS3 schema.</td></tr>
+          </table>
+
+          <h3>Two ways to apply it</h3>
+          <p>
+            Every change generates both. The <strong>configuration file</strong> is what you paste into a
+            session or hand to whoever has the console. The <strong>playbook</strong> applies the same
+            change to many devices, and it is generated for a dry run first —
+            <code>--check --diff</code> is the closest a network device has to a plan. The two come from
+            one structure, so they cannot say different things. Cisco and Arista changes push through the
+            platform's <code>*_config</code> module; PAN-OS, FortiOS and F5 use their own object modules
+            (<code>panos_security_rule</code>, <code>fortios_firewall_policy</code>,
+            <code>bigip_as3_deploy</code>), and PAN-OS changes include the commit.
+          </p>
+          <div class="tip warn">
+            <strong>No credentials, anywhere.</strong> Enable secrets, SNMPv3 keys, BGP session passwords
+            and API tokens are written as <code>&lt;REQUIRED&gt;</code> in configuration and as vault
+            variables in playbooks. The generated inventory says which variables each platform expects.
+            An F5 declaration references a certificate that already exists on the device; none is created
+            or uploaded.
+          </div>
+
+          <h3>Building a whole change</h3>
+          <p>
+            <strong>Add to change</strong> collects steps in order — the VLAN before the trunk that
+            carries it, the pool before the virtual server, the interface before the rule that uses its
+            zone. Generating the change writes:
+          </p>
+          <ul>
+            <li>one numbered configuration file per step;</li>
+            <li>one file per device platform with all of that platform's steps in order, for a single session;</li>
+            <li><code>apply.yml</code>, the same steps as one playbook, plus <code>requirements.yml</code> and an <code>inventory/hosts.yml</code> with the connection variables;</li>
+            <li><code>change-record.md</code> — the pre-checks, every step with its verification, the back-out <strong>in reverse order</strong>, and a sign-off table;</li>
+            <li><code>README.md</code>, which says how to apply it both ways.</li>
+          </ul>
+          <p>
+            Two platforms in one change stay in separate files, because that is two sessions on two
+            devices. The back-out reverses: the last thing built is the first thing removed.
+          </p>
+          <div class="tip">
+            The vendor Ansible collections (<code>cisco.ios</code>, <code>paloaltonetworks.panos</code>,
+            <code>fortinet.fortios</code>, <code>f5networks.f5_modules</code> and the rest) were added in a
+            build with no access to Ansible Galaxy, so their versions are not pinned and their module
+            names are not yet catalog-checked. Run <code>npm run ansible:update</code> on a machine with
+            internet access and both are fixed. The page says so in its findings until you do.
+          </div>
+
+
+          <h2 id="collector">14. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -536,7 +627,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">14. Keeping catalogs current</h2>
+          <h2 id="updates">15. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -551,7 +642,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">15. Common workflows</h2>
+          <h2 id="workflows">16. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -588,7 +679,7 @@
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">16. Troubleshooting</h2>
+          <h2 id="trouble">17. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -600,11 +691,13 @@
             <tr><td>A build list item says its blueprint is gone</td><td>The list was saved on another platform. Switch the platform back, or remove that item.</td></tr>
             <tr><td>A stack renamed a resource</td><td>Two items declared the same address, so the second was renamed after its item, declaration and references together. Rename the item if you want a different name.</td></tr>
             <tr><td>A site playbook says a variable is not set</td><td>A playbook uses <code>{{ something }}</code> that nothing supplies. Fill it in in <code>group_vars/all.yml</code>, or pass it with <code>-e</code>.</td></tr>
+            <tr><td>A network change warns about its impact</td><td>That is the point: it is saying what the change does to traffic. Read the impact line, confirm the window, and have the back-out open before you start.</td></tr>
+            <tr><td>A network playbook says a module does not exist</td><td>The vendor collection is not installed, or not catalogued yet. Run <code>ansible-galaxy collection install -r requirements.yml</code>, and <code>npm run ansible:update</code> to catalog it.</td></tr>
             <tr><td>The Data Editor won't show the form</td><td>The file uses a tag the form cannot carry (such as <code>!vault</code>), or the text does not read as JSON/YAML. The Text view shows the line at fault.</td></tr>
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">17. Known limits</h2>
+          <h2 id="limits">18. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
@@ -615,11 +708,13 @@
             <li>Editing YAML in the Data Editor's form drops comments; the Text view keeps them.</li>
             <li>In a Terraform stack, a resource offers only its <code>.id</code> to other items, because that is the one attribute every resource has. Module items offer their real outputs. Anything else you write yourself.</li>
             <li>An Ansible site playbook shares an answer only when two playbooks give it identically; anything named like a password is left out of <code>group_vars/all.yml</code> on purpose.</li>
+            <li>Network changes are written for the platforms listed and checked for structure, not simulated. Diff every one against the running configuration before it is applied.</li>
+            <li>The network vendor Ansible collections are unpinned and un-catalogued until <code>npm run ansible:update</code> runs on a connected machine.</li>
             <li>Checks confirm names, structure and references. They do not confirm that a deployment will succeed in your environment.</li>
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">18. Licence and disclaimer</h2>
+          <h2 id="licence">19. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.

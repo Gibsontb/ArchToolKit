@@ -16,7 +16,7 @@
 
 import { error, info, warning, type Finding } from '../core/findings.ts';
 import { renderYaml, type YamlValue } from './yaml.ts';
-import { classifyModule } from './catalog.ts';
+import { catalogueFor, classifyModule } from './catalog.ts';
 import { collectionFor, collectionOfModule, installable } from './collections.ts';
 
 /** namespace.collection.module — three dot-separated segments, lowercase. */
@@ -54,19 +54,44 @@ export interface PlaybookFiles {
 function requirementsYml(collections: readonly string[]): string | null {
   const infos = installable(collections);
   if (infos.length === 0) return null;
-  return renderYaml(
-    { collections: infos.map((c) => ({ name: c.name, version: c.version })) },
-    {
-      header: [
-        'Collections this playbook needs.',
-        '',
-        'Install with:  ansible-galaxy collection install -r requirements.yml',
-        '',
-        'Derived from the modules the playbook actually uses, and pinned to the',
-        'major line Galaxy reported when this toolkit was built.',
-      ].join('\n'),
-    },
-  );
+
+  /*
+   * A collection whose version this build never read from Galaxy takes its
+   * constraint from the committed module catalog when that holds one, and is
+   * otherwise left unpinned. An invented pin is worse than none: to a release
+   * that does not exist it fails the install, and to the wrong major line it
+   * installs modules that have since been renamed.
+   */
+  const unpinned: string[] = [];
+  const entries = infos.map((c) => {
+    if (c.pinned !== false) return { name: c.name, version: c.version };
+    const catalogued = catalogueFor(c.name);
+    if (catalogued) {
+      const major = catalogued.version.split('.')[0] ?? '0';
+      return { name: c.name, version: `>=${catalogued.version},<${Number(major) + 1}.0.0` };
+    }
+    unpinned.push(c.name);
+    return { name: c.name };
+  });
+
+  const header = [
+    'Collections this playbook needs.',
+    '',
+    'Install with:  ansible-galaxy collection install -r requirements.yml',
+    '',
+    'Derived from the modules the playbook actually uses, and pinned to the',
+    'major line Galaxy reported when this toolkit was built.',
+  ];
+  if (unpinned.length > 0) {
+    header.push(
+      '',
+      `Unpinned here, because this build had no Galaxy version for them: ${unpinned.join(', ')}.`,
+      'Run npm run ansible:update on a machine with network access to pin them,',
+      'or write the version your estate is standardised on.',
+    );
+  }
+
+  return renderYaml({ collections: entries }, { header: header.join('\n') });
 }
 
 export function playbookFiles(
