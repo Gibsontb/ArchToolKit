@@ -170,7 +170,18 @@
             <li><strong>Save</strong>: download the form as a settings file, in the format picked beside it: <strong>JSON</strong>, <strong>YAML</strong>, or <strong>Text (field = value)</strong>, one answer per line, easy to read in an email and safe to edit in Notepad. All three load back identically.</li>
             <li><strong>Clear</strong>: reset this page's form to its defaults (press twice). Unlike Clear all, it touches nothing else.</li>
           </ul>
-          <p>Passwords and keys are never saved. A file from another page is refused with a message saying which page it came from.</p>
+          <p>Passwords and keys are never saved. A file from another page is refused with a message saying which page it came from. On Terraform and Ansible the file also carries the whole <strong>build list</strong>, so a stack or a site playbook is one file you keep, share or come back to; <strong>Clear</strong> empties the list as well as the form.</p>
+
+          <h3>The build list</h3>
+          <p>
+            On Terraform and Ansible, above the steps. One blueprint writes one thing; a migration or a
+            landing zone is a dozen of them, so the build list assembles them into a single project —
+            a Terraform <em>stack</em> (<a href="#terraform">section 8</a>) or an Ansible <em>site
+            playbook</em> (<a href="#ansible">section 9</a>). Add each piece with <strong>Add to
+            build</strong>, reorder, edit or remove items, then generate the lot. A field can take a
+            value from what the other items in the list already make, through the <strong>⇢</strong>
+            box beside it.
+          </p>
 
           <h3>The cloud is chosen once</h3>
           <p>The platform picked on the Multi-Cloud wizard, Terraform, Terraform Map or Ansible is shared by all four for the rest of the tab. Change it on any of them and the others follow.</p>
@@ -295,7 +306,7 @@
           <h2 id="terraform">8. Terraform generator</h2>
           <ol>
             <li><strong>Step 1</strong>: pick the <strong>Platform</strong> and the <strong>Blueprint</strong>.</li>
-            <li><strong>Step 2</strong>: fill in the parameters. Dropdowns you can type into have <em>Other — type a value…</em>. Registry modules keep their less common inputs in collapsed, searchable sections. Press <strong>Generate Terraform (HCL)</strong>.</li>
+            <li><strong>Step 2</strong>: fill in the parameters. Dropdowns you can type into have <em>Other — type a value…</em>. Registry modules keep their less common inputs in collapsed, searchable sections. Press <strong>Generate Terraform (HCL)</strong> for this one thing, or <strong>Add to build</strong> to put it in the build list and generate the whole stack later.</li>
             <li><strong>Step 3</strong>: the generated files, each with <strong>Copy</strong> and <strong>Download</strong>, and <strong>Download all as one file</strong>. For a registry module, <em>What this will create</em> lists each resource as Created, Not created or Depends. Save the result as <code>main.tf</code> and run <code>terraform init</code> and <code>terraform plan</code>.</li>
           </ol>
           <h3>Building a whole stack</h3>
@@ -345,7 +356,7 @@
 
           <!-- ================================================================ -->
           <h2 id="ansible">9. Ansible generator</h2>
-          <p>The same three steps as Terraform. The output is the playbook plus a <code>requirements.yml</code> listing only the collections its modules use, pinned to the current major version. Install them with <code>ansible-galaxy collection install -r requirements.yml</code>, then test with <code>ansible-playbook -i inventory &lt;file&gt; --check --diff</code>.</p>
+          <p>The same three steps as Terraform, and the same build list: <strong>Add to build</strong> collects playbooks, <strong>Generate site playbook</strong> writes the lot. The output is the playbook plus a <code>requirements.yml</code> listing only the collections its modules use, pinned to the current major version. Install them with <code>ansible-galaxy collection install -r requirements.yml</code>, then test with <code>ansible-playbook -i inventory &lt;file&gt; --check --diff</code>.</p>
           <table>
             <tr><th>Platform</th><th>Playbooks</th></tr>
             <tr><td>AWS</td><td>EC2, S3, VPC + subnets, RDS, DynamoDB, SNS, SQS, KMS, CloudWatch alarm, CloudTrail.</td></tr>
@@ -393,6 +404,12 @@
           <!-- ================================================================ -->
           <h2 id="tfmap">10. Terraform Map</h2>
           <p>A reference for AWS, Azure, Google Cloud and OCI: for each domain (identity, networking, compute, storage, databases, security, landing-zone patterns), which Terraform resources do the job and the pattern around them, with examples. Every resource name is checked against the provider catalog; one renamed since the map was written is marked, with the closest current name in the Findings card.</p>
+          <p>
+            It answers a different question from the generator — <em>what should I use for this?</em>
+            rather than <em>write it for me</em> — so it stays its own page, and the two link to each
+            other: <strong>Which resource does what →</strong> in the generator's step 1, and
+            <strong>Write some of this →</strong> on the map. Both follow the platform you picked.
+          </p>
 
           <!-- ================================================================ -->
           <h2 id="multicloud">11. Multi-Cloud wizard</h2>
@@ -481,6 +498,14 @@
             <li>Multi-Cloud: <strong>Answer from the estate</strong> for the cluster, complete the rest, and save the recommendation as Word.</li>
             <li>Terraform: <em>Rehost a cluster's VMs</em> for the chosen cloud; Ansible: the inventory and before/after playbooks.</li>
           </ol>
+          <h3>Build a landing zone or a migration as one project</h3>
+          <ol>
+            <li>Terraform: add each piece to the build list — network first, then what sits on it. Use the <strong>⇢</strong> box to point each item at what the earlier ones create rather than typing ids.</li>
+            <li>Name the stack, <strong>Generate stack</strong>, and download the files into one folder. <code>terraform init</code>, <code>validate</code>, <code>plan</code>.</li>
+            <li>Ansible: build the matching site playbook the same way, for what has to be configured once the machines exist.</li>
+            <li><strong>Save</strong> both lists. That file is the design: load it to change one value and generate again.</li>
+          </ol>
+
           <h3>Plan a portfolio of applications</h3>
           <ol>
             <li>Migration: evaluate each application and Export JSON.</li>
@@ -497,6 +522,9 @@
             <tr><td>Full view or Print does nothing on the Multi-Cloud page</td><td>A pop-up blocker stopped the new window. Allow pop-ups for the toolkit's address.</td></tr>
             <tr><td>"That file was saved from … page, not this one"</td><td>Settings files belong to the page that saved them. Open it on that page.</td></tr>
             <tr><td>A finding says a catalog is more than 90 days old</td><td>Run the update in <a href="#updates">section 15</a>, or carry on; the names are just less certain.</td></tr>
+            <tr><td>A build list item says its blueprint is gone</td><td>The list was saved on another platform. Switch the platform back, or remove that item.</td></tr>
+            <tr><td>A stack renamed a resource</td><td>Two items declared the same address, so the second was renamed after its item, declaration and references together. Rename the item if you want a different name.</td></tr>
+            <tr><td>A site playbook says a variable is not set</td><td>A playbook uses <code>{{ something }}</code> that nothing supplies. Fill it in in <code>group_vars/all.yml</code>, or pass it with <code>-e</code>.</td></tr>
             <tr><td>The Data Editor won't show the form</td><td>The file uses a tag the form cannot carry (such as <code>!vault</code>), or the text does not read as JSON/YAML. The Text view shows the line at fault.</td></tr>
           </table>
 
@@ -509,6 +537,8 @@
             <li>The Migration and Portfolio pages keep nothing between visits: export what you want to keep.</li>
             <li>Multi-Cloud's <em>Save as Word</em> writes a Word-readable <code>.doc</code> (HTML), not a native <code>.docx</code>.</li>
             <li>Editing YAML in the Data Editor's form drops comments; the Text view keeps them.</li>
+            <li>In a Terraform stack, a resource offers only its <code>.id</code> to other items, because that is the one attribute every resource has. Module items offer their real outputs. Anything else you write yourself.</li>
+            <li>An Ansible site playbook shares an answer only when two playbooks give it identically; anything named like a password is left out of <code>group_vars/all.yml</code> on purpose.</li>
             <li>Checks confirm names, structure and references. They do not confirm that a deployment will succeed in your environment.</li>
           </ul>
         </article>

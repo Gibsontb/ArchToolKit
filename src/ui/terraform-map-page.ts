@@ -165,6 +165,12 @@ export function mountTerraformMapPage(root: HTMLElement): void {
       picker,
     ),
     el('div', { class: 'map-origin muted' }),
+    // The map says which resource does the job; the generator writes it.
+    el(
+      'div',
+      { class: 'btn-row', style: { marginTop: 'var(--space-3)' } },
+      el('a', { class: 'btn btn-small', text: 'Write some of this →', attrs: { href: 'terraform.html', title: 'Open the Terraform generator on this platform' } }),
+    ),
   );
 
   const contents = el('nav', { class: 'map-contents' });

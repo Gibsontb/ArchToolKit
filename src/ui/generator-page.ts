@@ -54,6 +54,8 @@ export interface GeneratorOptions {
   readonly preferGroup?: () => string | undefined;
   /** Findings that always apply, e.g. catalog age. */
   readonly standingFindings?: () => readonly Finding[];
+  /** A reference page for this platform's resources, linked from step 1. */
+  readonly mapHref?: string;
   /** The `kind` written into saved settings, e.g. `archtoolkit.terraform-generator`. */
   readonly settingsKind: string;
   /**
@@ -709,8 +711,17 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
           },
           list,
         ),
-        origin
-          ? el('div', { class: 'section-note', text: `Platform ${origin}.` })
+        origin ? el('div', { class: 'section-note', text: `Platform ${origin}.` }) : null,
+        options.mapHref
+          ? el(
+              'div',
+              { class: 'btn-row' },
+              el('a', {
+                class: 'btn btn-small',
+                text: 'Which resource does what →',
+                attrs: { href: options.mapHref, title: 'The map of resources for this platform, by domain' },
+              }),
+            )
           : null,
       ),
     );
