@@ -1,26 +1,60 @@
 ArchToolKit
-Copyright (c) 2026 Theodore Gibson
+Copyright (c) 2026 Theodore Gibson. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+LICENCE — free to use, this version
+
+Permission is granted, free of charge, to use this version of the Software as
+it was supplied to you, for your own work, whether personal or inside the
+organisation you work for. That permission covers running it and reading it,
+and nothing more. It applies to the version you received; a later version may
+be supplied under different terms, and this permission may be withdrawn by the
+author at any time.
+
+Except as stated above, and without the prior written permission of the author,
+you may NOT:
+
+  * copy, publish, distribute, share or otherwise make the Software, or any
+    part of it, available to anyone outside your own organisation;
+
+  * modify, adapt, translate, port or build anything derived from the
+    Software, or from any part of it;
+
+  * sell, rent, lease, sublicense or otherwise charge for the Software, or
+    include it — or anything derived from it — in a product, service or
+    deliverable that you charge for;
+
+  * reuse its source code, data files, catalogs, wording or page designs in
+    other software, whether or not that software is distributed;
+
+  * remove, obscure or alter this licence, the copyright notice, or the
+    attribution shown inside the application.
+
+Output you produce with the Software — a sizing, a specification, a generated
+configuration, a migration plan — is yours to use as you see fit. This licence
+governs the Software itself, not what you build with it.
+
+All rights not expressly granted here are reserved by the author.
+
+
+NO WARRANTY
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE, ACCURACY AND NONINFRINGEMENT.
 
 
-ADDITIONAL DISCLAIMER
+NO LIABILITY
+
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, LOSS OR OTHER
+LIABILITY — INCLUDING DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY OR
+CONSEQUENTIAL DAMAGES, LOST PROFITS, LOST DATA, BUSINESS INTERRUPTION OR
+SERVICE OUTAGE — WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS OUTPUT, OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+
+WHAT THE OUTPUT IS
 
 ArchToolKit produces candidate designs, sizing figures, specifications,
 configuration files and automation code. Every one of them is a starting point
@@ -50,6 +84,9 @@ for a human review, not a finished artefact and not professional advice.
 
 Use of the Software is entirely at your own risk, and the limitation of
 liability above applies to all of it.
+
+
+TRADEMARKS
 
 The vendor and product names used here — including VMware, VMware Cloud
 Foundation, Amazon Web Services, Microsoft Azure, Google Cloud, Oracle Cloud

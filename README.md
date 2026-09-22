@@ -300,13 +300,16 @@ list of figures that could not be verified.
 
 ## Licence and disclaimer
 
-ArchToolKit © 2026 Theodore Gibson. Free to use, copy, modify and distribute under the MIT terms in
-[`LICENSE`](LICENSE), with the copyright notice carried along.
+ArchToolKit © 2026 Theodore Gibson. **All rights reserved.**
+
+This version is free to use as supplied, for your own work or inside your organisation. Copying it
+to anyone outside your organisation, modifying it, deriving anything from it, reusing its code or
+data elsewhere, and selling it or charging for it are **not** permitted without the author's written
+permission. The full terms are in [`LICENSE`](LICENSE). Output you produce with the toolkit is
+yours; the licence governs the toolkit itself.
 
 **No warranty, no liability.** Everything the toolkit produces — sizing figures, specifications,
 Terraform, Ansible, declarations, migration routes and risk bands — is a draft for a human to
 review, not a finished artefact and not professional advice. Generated code is unreviewed code:
 plan or dry-run it, and test it somewhere that does not matter before it touches production.
-Compliance and regulatory references are informational only. Use is at your own risk. The full
-wording, including the trademark note, is in [`LICENSE`](LICENSE) and in the
-[manual](web/app/manual.html).
+Compliance and regulatory references are informational only. Use is at your own risk.

@@ -230,10 +230,10 @@ code,
 }
 
 .header-nav a {
-  padding: var(--space-2) 8px;
+  padding: var(--space-2) 6px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
 }
 .header-nav a:hover {
   background: var(--surface-hover);
@@ -1945,28 +1945,58 @@ textarea {
   font-size: 0.8rem;
 }
 
-/* --- Site footer ---------------------------------------------------------
-   One quiet line on every page: the licence, and the reminder that what the
-   toolkit produces is a draft. Mounted by lib/ui/site-footer.js. */
+/* --- Version badge and site footer --------------------------------------
+   The version beside the brand, and one line across the bottom carrying the
+   licence. Both are mounted by lib/ui/site-footer.js, on every page. */
+
+/* Under the name, not beside it: the brand keeps its width, so the eleven
+   navigation links still fit on one row. */
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.version-badge {
+  font-size: 0.62rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 .site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.8rem;
   margin-top: var(--space-8, var(--space-6));
-  padding-top: var(--space-4);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border);
   color: var(--text-faint);
-  font-size: 0.75rem;
-  line-height: 1.6;
+  font-size: 0.7rem;
+  line-height: 1.5;
 }
-.site-footer p {
-  margin: 0;
-  max-width: 90ch;
+
+/* The separator trails its own part, so a wrap never starts a line with a dot. */
+.site-footer > span:not(:last-child)::after {
+  content: ' ·';
+  color: var(--border-strong);
 }
+
 .site-footer a {
   color: inherit;
   text-decoration: underline;
 }
 .site-footer a:hover {
   color: var(--text-muted);
+}
+
+@media (max-width: 700px) {
+  .site-footer > span:not(:last-child)::after {
+    content: none;
+  }
 }
 
 /* --- Migration page ------------------------------------------------------
@@ -1976,9 +2006,32 @@ textarea {
 
 .checkbox-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: var(--space-2) var(--space-4);
   margin-top: var(--space-2);
+}
+
+/* A checkbox inside a .field is a row — box, then its words — not the block
+   label that `.field label` makes of every other label in a field. That rule
+   is more specific than `.checkbox`, which is why this restates it. */
+.field .checkbox,
+.checkbox-grid .checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: 0;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1.35;
+}
+.field .checkbox input,
+.checkbox-grid .checkbox input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  margin: 1px 0 0;
 }
 
 .rating-row {

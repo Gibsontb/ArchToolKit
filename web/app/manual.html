@@ -144,6 +144,21 @@
           <!-- ================================================================ -->
           <h2 id="common">3. Things every page shares</h2>
 
+          <h3>The version, top left</h3>
+          <p>
+            Under the ArchToolKit name, in the form <em>Version 2.1.0</em>. It is the toolkit's own
+            version, not the version of anything it generates. Quote it if you report a problem, and
+            check it when you are handed a copy — a zip carried into an air-gapped environment months
+            ago will say so here.
+          </p>
+
+          <h3>The licence line, bottom</h3>
+          <p>
+            One line across the foot of every page: the version, the copyright, what you may do with
+            this version, and the reminder that everything the toolkit produces is a draft for review.
+            It links to <a href="#licence">Licence and disclaimer</a> for the full terms.
+          </p>
+
           <h3>Clear all (top right, red)</h3>
           <p>
             Empties the whole toolkit in this browser: the imported estate, everything passed between
@@ -589,17 +604,42 @@
           <!-- ================================================================ -->
           <h2 id="licence">18. Licence and disclaimer</h2>
           <p>
-            ArchToolKit © 2026 Theodore Gibson. This version is free to use, copy, modify and
-            distribute, including inside a commercial organisation, under the terms in the
-            <code>LICENSE</code> file at the root of the repository (MIT). The only condition is that
-            the copyright notice and the licence text travel with it.
+            ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
+            in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.
+          </p>
+
+          <h3>What you may do</h3>
+          <p>
+            Use this version, as it was supplied to you, for your own work — personal or inside the
+            organisation you work for. Running it and reading it are covered. The permission applies to
+            the version you have; a later version may come under different terms, and the author may
+            withdraw it at any time.
           </p>
           <p>
-            <strong>It comes with no warranty of any kind, and the author accepts no liability</strong>
-            for any claim, damage, loss or cost arising from the software or from anything it
-            produces — in contract, tort or otherwise. You use it at your own risk.
+            What you produce with it — a sizing, a specification, a generated configuration, a migration
+            plan — is yours to use as you see fit. The licence governs the toolkit, not your output.
           </p>
-          <p>What that means in practice, page by page:</p>
+
+          <h3>What you may not do, without the author's written permission</h3>
+          <ul>
+            <li>Copy, publish, distribute or share the toolkit, or any part of it, outside your own organisation.</li>
+            <li>Modify, adapt, port or build anything derived from it.</li>
+            <li>Sell, rent, sublicense or charge for it, or include it — or anything derived from it — in something you charge for.</li>
+            <li>Reuse its source, data files, catalogs, wording or page designs in other software.</li>
+            <li>Remove or alter the licence, the copyright notice, or the attribution shown in the application.</li>
+          </ul>
+          <p>All rights not expressly granted are reserved by the author.</p>
+
+          <h3>No warranty, no liability</h3>
+          <p>
+            The toolkit is provided <strong>as is</strong>, with no warranty of any kind — including
+            merchantability, fitness for a purpose, accuracy and noninfringement — and
+            <strong>the author accepts no liability</strong> for any claim, damage, loss or cost arising
+            from it or from anything it produces, in contract, tort or otherwise. You use it at your own
+            risk.
+          </p>
+
+          <h3>What that means in practice, page by page</h3>
           <ul>
             <li><strong>Sizing and specifications are estimates.</strong> Validate them against Broadcom's current documentation and a live VCF Installer before you commit to hardware, licensing or a deployment window.</li>
             <li><strong>Generated Terraform, Ansible and declarations are unreviewed code.</strong> Read them, run <code>terraform plan</code> or <code>--check --diff</code>, and test them somewhere that does not matter first. Applying them can create billable cloud resources, change running systems or interrupt service.</li>
@@ -607,11 +647,14 @@
             <li><strong>Nothing here is legal, regulatory, certification, financial or licensing advice.</strong> Compliance scopes and regulatory references are informational and may be out of date. Confirm them with your own auditors, legal counsel and the relevant authority.</li>
             <li><strong>Your data is yours.</strong> The toolkit is offline and stores everything in your own browser (see <a href="#privacy">Where your data goes</a>). What you enter, and where you send what comes out, is your responsibility.</li>
           </ul>
+
+          <h3>Trademarks</h3>
           <p>
             Vendor and product names — VMware, VMware Cloud Foundation, AWS, Microsoft Azure, Google
-            Cloud, Oracle Cloud Infrastructure, F5, Cisco, Red Hat, Ansible, Terraform, HashiCorp and
-            the rest — are the trademarks of their owners, used here only to describe what the toolkit
-            builds for. ArchToolKit is not affiliated with, endorsed by or sponsored by any of them.
+            Cloud, Oracle Cloud Infrastructure, F5, Splunk, Cisco, Red Hat, Ansible, Terraform,
+            HashiCorp and the rest — are the trademarks of their owners, used here only to describe what
+            the toolkit builds for. ArchToolKit is not affiliated with, endorsed by or sponsored by any
+            of them.
           </p>
         </article>
       </div>
