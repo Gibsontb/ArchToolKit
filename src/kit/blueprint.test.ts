@@ -5,10 +5,14 @@ import { defaultValues, isVisible, blueprintsFor, findBlueprint, slug, str, num,
 import { TERRAFORM_BLUEPRINTS } from '../terraform/blueprints/index.ts';
 import { ANSIBLE_BLUEPRINTS } from '../ansible/blueprints/index.ts';
 import { NETWORK_BLUEPRINTS } from '../network/blueprints/index.ts';
+import { SCRIPT_BLUEPRINTS } from '../scripts/blueprints/index.ts';
 import { CATALOG_DATA } from '../terraform/catalog-data.ts';
 import { collectModules } from '../ansible/from-plays.ts';
 
 const ALL = [...TERRAFORM_BLUEPRINTS, ...ANSIBLE_BLUEPRINTS];
+
+/** The kits whose platforms are not clouds, swept for structure but not for target names. */
+const OTHER_KITS = [...NETWORK_BLUEPRINTS, ...SCRIPT_BLUEPRINTS];
 
 describe('kit/blueprint: the model', () => {
   it('reads a value, falling back to the default rather than emitting a blank', () => {
@@ -107,7 +111,7 @@ describe('kit/blueprint: every blueprint is well formed', () => {
     // empty `equals`, hides the field for ever. The blueprint still compiles,
     // still builds, and quietly never asks the question — so the only place
     // this can be caught is here. Every kit is swept, not just this file's two.
-    for (const group of [...ALL, ...NETWORK_BLUEPRINTS]) {
+    for (const group of [...ALL, ...OTHER_KITS]) {
       for (const blueprint of group.blueprints) {
         const ids = new Set(blueprint.inputs.map((i) => i.id));
         for (const input of blueprint.inputs) {
@@ -121,6 +125,30 @@ describe('kit/blueprint: every blueprint is well formed', () => {
           if ((when.equals?.length ?? 0) === 0 && (when.notEquals?.length ?? 0) === 0) {
             throw new Error(`${where} has a condition that can never be true, so it is never shown`);
           }
+        }
+      }
+    }
+  });
+
+  it('gives every select in every kit its options', () => {
+    for (const group of OTHER_KITS) {
+      for (const blueprint of group.blueprints) {
+        for (const input of blueprint.inputs) {
+          if (input.control !== 'select') continue;
+          if ((input.options?.length ?? 0) === 0) {
+            throw new Error(`${group.target}/${blueprint.id}: select "${input.id}" has no options`);
+          }
+        }
+      }
+    }
+  });
+
+  it('uses unique input ids within a blueprint, in every kit', () => {
+    for (const group of OTHER_KITS) {
+      for (const blueprint of group.blueprints) {
+        const ids = blueprint.inputs.map((i) => i.id);
+        if (new Set(ids).size !== ids.length) {
+          throw new Error(`${group.target}/${blueprint.id} has a duplicate input id`);
         }
       }
     }

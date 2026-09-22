@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VCF 9.1 Sizing · ArchToolKit</title>
+    <title>Scripts · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -15,13 +15,13 @@
       <nav class="header-nav">
         <a href="../index.html">Home</a>
         <a href="inventory.html">VMware Inventory</a>
-        <a href="vcf-sizing.html" aria-current="page">VCF Sizing</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
         <a href="data-editor.html">Data Editor</a>
         <a href="multicloud.html">Multi-Cloud</a>
         <a href="migration.html">Migration</a>
         <a href="network.html">Network</a>
-        <a href="scripts.html">Scripts</a>
+        <a href="scripts.html" aria-current="page">Scripts</a>
         <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
@@ -31,18 +31,14 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>VCF 9.1 sizing</h1>
-        <p>
-          Size a VMware Cloud Foundation 9.1 deployment for a greenfield build or a brownfield
-          converge/import, at single-instance or fleet scale. Every constraint that is checked is
-          reported with its source, so a result can be challenged rather than taken on faith.
-        </p>
+        <h1>Script generator</h1>
+        <p>PowerShell, Python, Bash and Windows batch. Every script comes with its requirements, a way to make it report instead of act, and the commands that undo it — written into the file's own header, where they cannot get separated from the script.</p>
       </div>
 
-      <div id="vcf-sizing-root"></div>
+      <div id="scripts-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/vcf-sizing-page.js"></script>
+    <script type="module" src="../lib/ui/scripts-page.js"></script>
     <script type="module" src="../lib/ui/clear-all.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>

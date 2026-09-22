@@ -43,6 +43,7 @@
         <a href="multicloud.html">Multi-Cloud</a>
         <a href="migration.html">Migration</a>
         <a href="network.html">Network</a>
+        <a href="scripts.html">Scripts</a>
         <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
@@ -77,6 +78,7 @@
             <li><a href="#multicloud">Multi-Cloud wizard</a></li>
             <li><a href="#migration">Application Migration and Portfolio</a></li>
             <li><a href="#network">Network devices</a></li>
+            <li><a href="#scripts">Scripts</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -685,7 +687,80 @@
           </div>
 
 
-          <h2 id="collector">14. The inventory collector</h2>
+          <h2 id="scripts">14. Scripts</h2>
+          <p>
+            <a href="scripts.html">Scripts</a> writes PowerShell, Python, Bash and Windows batch. It
+            works like the other generators — pick the language, pick the script, fill in the
+            parameters, generate — and, like the network page, the language is this page's own choice
+            rather than the toolkit-wide cloud.
+          </p>
+
+          <h3>What every script carries</h3>
+          <p>
+            A script runs once, on someone's machine, usually with more privilege than they realise
+            and usually while something is already going wrong. So the header of every generated file
+            answers the questions that get asked at that moment:
+          </p>
+          <table>
+            <tr><th>Part</th><th>What it is for</th></tr>
+            <tr><td>Needs</td><td>The modules, packages, rights and files that have to exist before it will run, with the command that installs each one.</td></tr>
+            <tr><td>Parameters</td><td>What it takes, which are required, and an example of each.</td></tr>
+            <tr><td>Running it</td><td>The dry run first, then the real one.</td></tr>
+            <tr><td>Undoing it</td><td>The exact commands that put it back — or a plain statement that it cannot be undone.</td></tr>
+            <tr><td>Before you run it</td><td>The things that will surprise you: replication lag, what a mirror deletes, what a migration does to a rollback.</td></tr>
+          </table>
+          <p>
+            All of it is in the script's own comment syntax, so the file runs as written and the
+            explanation cannot be separated from it. The same content is written again as a
+            <code>README.md</code> for the ticket or the repository.
+          </p>
+          <p>
+            Each script also declares its <strong>effect</strong>: <em>read</em> (changes nothing),
+            <em>idempotent</em> (safe to run again), <em>repeat-unsafe</em> (a second run does the work
+            twice) or <em>destructive</em> (deletes, overwrites or disables something). Anything that
+            is not <em>read</em> has a dry run — <code>-WhatIf</code>, <code>--dry-run</code> or
+            <code>/WHATIF</code> — and the page says so.
+          </p>
+
+          <h3>What it can write</h3>
+          <table>
+            <tr><th>Language</th><th>Scripts</th></tr>
+            <tr><td>PowerShell</td><td>
+              <strong>Active Directory:</strong> create accounts from a CSV, find and disable stale user and computer accounts, audit privileged group membership with a comparison against the last run.<br/>
+              <strong>Windows servers:</strong> service health check and restart across a list of machines, certificate expiry from the store and from live TLS endpoints, event log summary grouped by id and source, disk pressure with the largest files and a safe cache cleanup, and the pattern for running one command across an estate in parallel with the failures collected.<br/>
+              <strong>Scaffolding:</strong> an advanced function with comment-based help, pipeline input, <code>ShouldProcess</code> and a Pester test; and installing a script as a scheduled task under a group managed service account.
+            </td></tr>
+            <tr><td>Python</td><td>
+              <strong>Scaffolding:</strong> a command line tool with subcommands, layered configuration, logging to stderr and results to stdout, and exit codes a pipeline understands.<br/>
+              <strong>Data:</strong> read, validate, transform and write a CSV — clean, join, split or aggregate — never overwriting the input; and a log parser that reads a line at a time so file size does not matter.<br/>
+              <strong>Integration:</strong> a REST client with authentication from the environment, exponential backoff on the failures worth retrying, <code>Retry-After</code> honoured, and paging by offset, cursor or Link header.<br/>
+              <strong>Files:</strong> find duplicates by content in two passes, the largest files, the oldest, or a breakdown by type — then report, move to a holding folder, or hard link.
+            </td></tr>
+            <tr><td>Bash</td><td>
+              <strong>Scaffolding:</strong> the opening every shell script should have — <code>set -euo pipefail</code>, a trap, usage, argument parsing, a lock held on a file descriptor, and a dry run.<br/>
+              <strong>Operations:</strong> a backup with verification and rotation that runs only after the backup succeeds; a health check of services, disks, inodes, endpoints, load and certificates that exits with a monitoring code; and a deployment that switches a symlink, polls a health endpoint and rolls itself back when that fails.<br/>
+              <strong>Configuration:</strong> create users, install and validate their keys, set groups and sudo — refusing to disable password logins until at least one key works.
+            </td></tr>
+            <tr><td>Windows batch</td><td>
+              <strong>Scaffolding:</strong> <code>setlocal</code>, delayed expansion, argument parsing, <code>errorlevel</code> checked immediately, and a single exit path.<br/>
+              <strong>Operations:</strong> robocopy backup or mirror with its exit codes read properly — anything below 8 is success — and a refusal to mirror an empty source over a destination; and stopping and starting services in dependency order, polling <code>sc query</code> rather than trusting <code>net stop</code>.<br/>
+              <strong>Configuration:</strong> a logon script mapping drives and printers by group, reading membership once, never stopping the logon on a failure.
+            </td></tr>
+          </table>
+          <div class="tip warn">
+            <strong>No credentials, anywhere.</strong> Nothing generated here writes a password, a token
+            or a key. A script prompts, reads from SecretManagement, an environment variable,
+            <code>~/.my.cnf</code> or <code>~/.pgpass</code>, or leaves a <code>&lt;REQUIRED&gt;</code>
+            gap — and says which in its header. A test refuses any generated script that assigns a
+            credential to a literal.
+          </div>
+          <div class="tip">
+            <strong>Read it before you run it.</strong> These are starting points that get the
+            structure, the error handling and the safety right. The part that does your specific work
+            is still yours to write and yours to check.
+          </div>
+
+          <h2 id="collector">15. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -693,7 +768,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">15. Keeping catalogs current</h2>
+          <h2 id="updates">16. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -708,7 +783,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">16. Common workflows</h2>
+          <h2 id="workflows">17. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -745,7 +820,7 @@
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">17. Troubleshooting</h2>
+          <h2 id="trouble">18. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -763,7 +838,7 @@
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">18. Known limits</h2>
+          <h2 id="limits">19. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
@@ -780,7 +855,7 @@
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">19. Licence and disclaimer</h2>
+          <h2 id="licence">20. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.
