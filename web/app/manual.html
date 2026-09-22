@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manual · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+    <style>
+      .manual { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+      .manual-toc { position: sticky; top: 90px; max-height: calc(100vh - 100px); overflow: auto; font-size: 0.88rem; }
+      .manual-toc ol { margin: 0; padding-left: 1.2em; }
+      .manual-toc li { margin: 4px 0; }
+      .manual-toc a { color: var(--text-muted); }
+      .manual-toc a:hover { color: var(--accent); }
+      .manual-body { max-width: 860px; line-height: 1.6; }
+      .manual-body h2 { margin-top: var(--space-8, 3rem); padding-top: var(--space-4); border-top: 1px solid var(--border); scroll-margin-top: 120px; }
+      .manual-body h2:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+      .manual-body h3 { margin-top: var(--space-6); scroll-margin-top: 120px; }
+      .manual-body table { border-collapse: collapse; width: 100%; margin: var(--space-3) 0; font-size: 0.9rem; }
+      .manual-body th, .manual-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+      .manual-body th { background: var(--bg-raised); }
+      .manual-body code { font-size: 0.85em; }
+      .manual-body pre { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-3); overflow: auto; }
+      .manual-body .tip { border-left: 3px solid var(--accent); background: var(--bg-raised); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); margin: var(--space-3) 0; }
+      .manual-body .warn { border-left-color: var(--warn); }
+      .manual-body kbd { border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 0.85em; background: var(--bg-raised); }
+      @media (max-width: 900px) { .manual { grid-template-columns: 1fr; } .manual-toc { position: static; max-height: none; } }
+      @media print { .app-header, .manual-toc { display: none; } .manual { display: block; } .manual-body { max-width: none; } }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="../index.html">
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
+      </a>
+      <nav class="header-nav">
+        <a href="../index.html">Home</a>
+        <a href="inventory.html">VMware Inventory</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
+        <a href="vcf-spec.html">VCF Spec Builder</a>
+        <a href="data-editor.html">Data Editor</a>
+        <a href="multicloud.html">Multi-Cloud</a>
+        <a href="migration.html">Migration</a>
+        <a href="migration-portfolio.html">Portfolio</a>
+        <a href="terraform-map.html">Terraform Map</a>
+        <a href="terraform.html">Terraform</a>
+        <a href="ansible.html">Ansible</a>
+        <a href="manual.html" aria-current="page">Manual</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <div class="page-header">
+        <h1>ArchToolKit manual</h1>
+        <p>
+          Everything the toolkit does, page by page: what goes in, what comes out, and what it checks.
+          To print it or save it as a PDF, use your browser's Print (<kbd>Ctrl</kbd>+<kbd>P</kbd>); the
+          navigation is left off the printout.
+        </p>
+      </div>
+
+      <div class="manual">
+        <nav class="manual-toc card" aria-label="Contents">
+          <strong>Contents</strong>
+          <ol>
+            <li><a href="#start">Getting started</a></li>
+            <li><a href="#privacy">Where your data goes</a></li>
+            <li><a href="#common">Things every page shares</a></li>
+            <li><a href="#inventory">VMware Inventory</a></li>
+            <li><a href="#sizing">VCF Sizing</a></li>
+            <li><a href="#spec">VCF Spec Builder</a></li>
+            <li><a href="#editor">Data Editor</a></li>
+            <li><a href="#terraform">Terraform generator</a></li>
+            <li><a href="#ansible">Ansible generator</a></li>
+            <li><a href="#tfmap">Terraform Map</a></li>
+            <li><a href="#multicloud">Multi-Cloud wizard</a></li>
+            <li><a href="#migration">Application Migration</a></li>
+            <li><a href="#portfolio">Migration Portfolio</a></li>
+            <li><a href="#collector">The inventory collector</a></li>
+            <li><a href="#updates">Keeping catalogs current</a></li>
+            <li><a href="#workflows">Common workflows</a></li>
+            <li><a href="#trouble">Troubleshooting</a></li>
+            <li><a href="#limits">Known limits</a></li>
+          </ol>
+        </nav>
+
+        <article class="manual-body">
+          <!-- ================================================================ -->
+          <h2 id="start">1. Getting started</h2>
+          <p>
+            ArchToolKit is a set of web pages for architecture work on VMware and multi-cloud estates:
+            reading a VMware inventory, sizing and writing a VMware Cloud Foundation (VCF) 9.1
+            deployment, generating Terraform and Ansible, editing infrastructure files, and planning
+            application migrations. It runs entirely in your browser. There is no server-side
+            component, no account, and no network call from the pages.
+          </p>
+
+          <h3>Running it</h3>
+          <p>The pages have to be opened through a small local web server, not by double-clicking the files. Browsers block the pages' code when they are opened straight from disk.</p>
+          <table>
+            <tr><th>You have</th><th>Do this</th></tr>
+            <tr><td>Node.js 22.6 or newer, on Windows</td><td>Double-click <code>start.bat</code> in the toolkit folder. It builds, finds a free port between 8080 and 8091, starts the server and opens your browser. Options: <code>--dev</code> (rebuild on every change), <code>--port N</code>, <code>--no-open</code>.</td></tr>
+            <tr><td>Node.js, any system</td><td><code>npm run build</code> then <code>npm run serve</code>, and open the address it prints. <code>npm run dev</code> does both and rebuilds as files change.</td></tr>
+            <tr><td>Python but no Node</td><td>The built pages are already in the folder. From <code>web\</code>, run <code>python -m http.server 8080</code> and open <code>http://localhost:8080</code>.</td></tr>
+            <tr><td>An internal web server</td><td>Copy the <code>web</code> folder to it as static files. Nothing else is needed.</td></tr>
+          </table>
+          <div class="tip">
+            <strong>On a work laptop without admin rights:</strong> use the Node.js <em>.zip</em> download,
+            extract it to a folder of your own, and add that folder to your account's PATH ("Edit
+            environment variables for your account"). Or ask IT; Node.js LTS is often in Company Portal or
+            Software Center. There is no <code>npm install</code> step: the toolkit has no dependencies.
+          </div>
+
+          <h3>The pages</h3>
+          <table>
+            <tr><th>Page</th><th>What it is for</th></tr>
+            <tr><td><a href="inventory.html">VMware Inventory</a></td><td>Import RVTools (or the collector's JSON). Capacity, clusters, VCF 9.1 host readiness, and what blocks each VM from moving. <strong>Start here</strong>: the other pages work from what you import.</td></tr>
+            <tr><td><a href="vcf-sizing.html">VCF Sizing</a></td><td>Size a VCF 9.1 fleet: management domain, workload domains, hosts, storage, licensing, IPs.</td></tr>
+            <tr><td><a href="vcf-spec.html">VCF Spec Builder</a></td><td>Write the VCF Installer's deployment specification (SddcSpec JSON), checked against the 9.1 schema.</td></tr>
+            <tr><td><a href="data-editor.html">Data Editor</a></td><td>Open and change JSON or YAML files: VCF specs, playbooks, Terraform JSON, CloudFormation, ARM, cloud IAM policies, F5, Kubernetes.</td></tr>
+            <tr><td><a href="terraform.html">Terraform</a></td><td>Generate Terraform for AWS, Azure, Google Cloud, OCI and vSphere, including rehosting an imported cluster.</td></tr>
+            <tr><td><a href="ansible.html">Ansible</a></td><td>Generate Ansible playbooks plus their <code>requirements.yml</code>, including inventories built from the estate.</td></tr>
+            <tr><td><a href="terraform-map.html">Terraform Map</a></td><td>A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
+            <tr><td><a href="multicloud.html">Multi-Cloud</a></td><td>A four-step wizard that produces a cloud recommendation and onboarding playbook, ready for Word.</td></tr>
+            <tr><td><a href="migration.html">Migration</a></td><td>Evaluate one application: 7R route, readiness score, risk, target cloud, plan.</td></tr>
+            <tr><td><a href="migration-portfolio.html">Portfolio</a></td><td>Combine many evaluated applications into migration waves.</td></tr>
+          </table>
+
+          <!-- ================================================================ -->
+          <h2 id="privacy">2. Where your data goes</h2>
+          <p>Nowhere. Files you open are read by the page in your browser and never uploaded. What the toolkit keeps, it keeps in your browser:</p>
+          <table>
+            <tr><th>What</th><th>Where</th><th>How long</th></tr>
+            <tr><td>The imported estate (the inventory)</td><td>Browser IndexedDB</td><td>Until you press <strong>Forget</strong> or <strong>Clear all</strong>. It survives closing the browser.</td></tr>
+            <tr><td>Work passed between pages (sizing → spec builder, spec → editor), the chosen cloud, the Data Editor's open file</td><td>Browser session storage</td><td>Until the tab is closed.</td></tr>
+            <tr><td>Settings files you <strong>Save</strong></td><td>Your Downloads folder</td><td>Yours to keep. Passwords and keys are never written into them.</td></tr>
+          </table>
+          <div class="tip warn">
+            A VCF Installer export carries the ESX root password in clear text. The Data Editor counts
+            secrets like this and has <strong>Download without secrets</strong>; the spec builder has
+            <strong>Redact secrets in output</strong>. Use them before sending a file to anyone.
+          </div>
+
+          <!-- ================================================================ -->
+          <h2 id="common">3. Things every page shares</h2>
+
+          <h3>Clear all (top right, red)</h3>
+          <p>
+            Empties the whole toolkit in this browser: the imported estate, everything passed between
+            pages, every page's saved state, and whatever the page is showing. Press it once to arm it
+            (it reads <em>Click again to clear everything</em>), then again within five seconds. It
+            clears every page, not just the one you are on, because the pages feed each other: clearing
+            one page alone would be refilled from the estate by the next.
+          </p>
+
+          <h3>The estate strip</h3>
+          <p>Under the heading of most pages. With nothing imported it reads <em>No estate loaded</em> and offers <strong>Import RVTools…</strong> (you can also drag files onto it). Once imported it shows the source, VM, host, cluster and vCenter counts, with:</p>
+          <ul>
+            <li><strong>Open</strong>: go to the inventory page.</li>
+            <li><strong>Import RVTools…</strong>: replace the estate.</li>
+            <li><strong>Forget</strong>: delete the estate from this browser.</li>
+          </ul>
+          <p>It accepts an RVTools <code>.xlsx</code> as RVTools wrote it, individual RVTools tabs saved as <code>.csv</code>, the collector's <code>.json</code>, or several of these at once (they are merged).</p>
+
+          <h3>The 1-2-3 path</h3>
+          <p>On Inventory, Sizing and the Spec Builder: a strip showing <em>1 VMware inventory → 2 VCF sizing → 3 VCF spec builder</em>, where you are, and a <strong>Next</strong> button.</p>
+
+          <h3>Load, Save, Clear</h3>
+          <p>On the Spec Builder, Terraform and Ansible pages, a strip above the form:</p>
+          <ul>
+            <li><strong>Load…</strong>: fill the form from a settings file saved earlier (JSON, YAML or TXT).</li>
+            <li><strong>Save</strong>: download the form as a settings file, in the format picked beside it: <strong>JSON</strong>, <strong>YAML</strong>, or <strong>Text (field = value)</strong>, one answer per line, easy to read in an email and safe to edit in Notepad. All three load back identically.</li>
+            <li><strong>Clear</strong>: reset this page's form to its defaults (press twice). Unlike Clear all, it touches nothing else.</li>
+          </ul>
+          <p>Passwords and keys are never saved. A file from another page is refused with a message saying which page it came from.</p>
+
+          <h3>The cloud is chosen once</h3>
+          <p>The platform picked on the Multi-Cloud wizard, Terraform, Terraform Map or Ansible is shared by all four for the rest of the tab. Change it on any of them and the others follow.</p>
+
+          <h3>Findings</h3>
+          <p>Checks are reported as findings: <strong>error</strong> (it will fail or be refused), <strong>warning</strong> (it will work but probably is not what you want) and <strong>info</strong>. Most carry what to do about it and where the rule comes from. Figures marked <span class="badge badge-verified">Verified</span> come from Broadcom's API reference, TechDocs or a real deployment spec; <span class="badge badge-community">Community</span> ones from community sources.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="inventory">4. VMware Inventory</h2>
+          <p>Import once; every other page then works from it.</p>
+          <h3>What it reads</h3>
+          <p>Every tab RVTools 4.x writes: vInfo, vCPU, vMemory, vDisk, vPartition, vNetwork, vCD, vUSB, vSnapshot, vTools, vSource, vRP, vCluster, vHost, vHBA, vNIC, vSwitch, vPort, dvSwitch, dvPort, vSC_VMK, vDatastore, vMultiPath, vLicense, vFileInfo, vHealth and vMetaData, across any number of vCenters. The <a href="#collector">collector</a>'s JSON adds what RVTools does not capture, such as NVMe devices and NIC speeds.</p>
+          <h3>What it shows</h3>
+          <ul>
+            <li><strong>Estate</strong>: hosts, VMs, physical cores and sockets, physical and allocated memory.</li>
+            <li><strong>Take it further</strong>: buttons to size VCF, decide where it goes, and generate Terraform or Ansible from it.</li>
+            <li><strong>Source</strong>: the vCenters, their versions and collection times, and rows read per tab.</li>
+            <li><strong>Consolidation</strong>: vCPU:pCPU (warns above 4:1), memory commitment (amber above 80%, red above 100%), provisioned vs consumed storage, the thin-provisioning gap, RDMs.</li>
+            <li><strong>Clusters</strong>: per cluster hosts, VMs, cores, memory, vCPU, vRAM, storage, ratios and CPU models (mixed models flagged).</li>
+            <li><strong>Moving the VMs</strong>: every VM sorted into <em>Ready as they are</em>, <em>Need attention</em>, <em>Blocked</em> and <em>Blocked for a cloud</em>, with the reason, what to do, and example VMs.
+              <ul>
+                <li>Blockers: disconnected, orphaned or inaccessible VMs; physical-mode RDMs; disks shared between VMs; PCI passthrough.</li>
+                <li>Cautions: virtual-mode RDMs, USB, connected CD/DVD, Fault Tolerance, high latency sensitivity, snapshots, disks needing consolidation, VMware Tools not running, guest OS past support.</li>
+                <li>Notes: independent disks, old virtual hardware, E1000 NICs, large VMs, DRS rules, vApps, SRM protection, BIOS firmware, powered off over 90 days.</li>
+              </ul>
+            </li>
+            <li><strong>Health and licences</strong>: RVTools health messages and licence use (keys shown by their last five characters only).</li>
+            <li><strong>VCF 9.1 host readiness</strong>: per host, ESX version (8.0 U3a minimum), memory (128 GiB for vSAN ESA), NVMe, NIC speed (25 GbE), NIC redundancy, cores per CPU (16) and TPM, with ✓ ✗ ! and ? (? means the source does not have that fact).</li>
+            <li><strong>VCF licensing exposure</strong>: billable cores under the 16-cores-per-CPU minimum, and the hosts paying for cores they do not have.</li>
+            <li><strong>As a VCF fleet</strong>: a first-pass sizing on default assumptions, with <strong>Open in sizing</strong> and <strong>Download sizing input (JSON)</strong>.</li>
+            <li><strong>Findings</strong>: overcommit, full datastores, ESX too old to converge, mixed CPUs, hosts in maintenance mode and more.</li>
+          </ul>
+          <p><strong>Download canonical inventory (JSON)</strong> saves the merged estate as <code>atk-inventory.json</code>, which can be imported again later on any machine.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="sizing">5. VCF Sizing</h2>
+          <p>Inputs on the left; results recalculate on every change.</p>
+          <h3>From your estate</h3>
+          <p>With an estate imported, a panel above the form sizes it for you. Choose:</p>
+          <ul>
+            <li>the <strong>management domain</strong>: new hosts, or converge an existing cluster (one that looks like management is suggested);</li>
+            <li>the <strong>target host</strong> profile, raw vSAN capacity per host, how to split <strong>workload domains</strong> (per vCenter, per datacenter, or one);</li>
+            <li>vCPU per core (default 4:1), memory to use (90%), growth (20%), storage basis (consumed or provisioned), workload storage type, whether powered-off VMs count, and which source clusters are in scope.</li>
+          </ul>
+          <p>It shows a table per domain and cluster with the hosts needed and what set the number (CPU, memory, storage or the minimum).</p>
+          <h3>The form</h3>
+          <ul>
+            <li><strong>Deployment</strong>: path (greenfield, converge to management domain, import as workload domain), profile, instances in the fleet, management hosts, topology (standard, stretched, two-node) and principal storage (vSAN ESA, vSAN OSA, NFS v3, VMFS on FC).</li>
+            <li><strong>Per-host hardware</strong>: sockets, cores, hyperthreading, RAM, raw storage, NICs.</li>
+            <li><strong>Tenant workload</strong>: vCPU, RAM and capacity to host.</li>
+            <li><strong>Options</strong>: VCF Automation and size, NSX Edge cluster, edge size and nodes, N+1, target vCPU:pCPU.</li>
+          </ul>
+          <h3>Minimum management hosts</h3>
+          <table>
+            <tr><th>Scenario</th><th>Minimum</th></tr>
+            <tr><td>Greenfield, vSAN, single site</td><td>4</td></tr>
+            <tr><td>Greenfield, vSAN, stretched</td><td>8</td></tr>
+            <tr><td>Greenfield, external storage (NFS or FC)</td><td>3</td></tr>
+            <tr><td>Converge, vSAN</td><td>3</td></tr>
+            <tr><td>Converge, external storage</td><td>2</td></tr>
+            <tr><td>Converge, stretched</td><td>4</td></tr>
+          </table>
+          <h3>Results</h3>
+          <p>A verdict (<em>Viable</em>, <em>Review</em> or <em>Blocked</em>), management-plane demand per component, storage with RAID and failures-to-tolerate overhead, licensing, IP and FQDN counts per network, and findings. <strong>Download sizing report (JSON)</strong> saves the lot. <strong>Continue in the spec builder</strong> carries the result forward; with an estate loaded the spec builder also picks up the latest sizing on its own.</p>
+          <div class="tip">The management-plane figures are Broadcom's published aggregates. The live installer's resource calculation (<code>POST /v1/sddcs/resources-calculation</code>) is the authority.</div>
+
+          <!-- ================================================================ -->
+          <h2 id="spec">6. VCF Spec Builder</h2>
+          <p>Writes the complete VCF 9.1 deployment specification (<code>SddcSpec</code>) the VCF Installer takes, including the parts other builders leave out: <code>vspClusterSpec</code>, fleet services, VPC/DTGW, LACP and dual-stack.</p>
+          <h3>How it fills itself in</h3>
+          <p>From your sizing (<em>Prefilled from your sizing</em>) or, with only an estate imported, from the estate sized on default settings (<em>Prefilled from your estate</em>): hosts, DNS, NTP, domain, and the management, vMotion and vSAN networks. Check them, then name the components.</p>
+          <h3>The form</h3>
+          <ul>
+            <li><strong>Instance</strong>: SDDC ID, instance name, domain suffix, name prefix, target version, and the <strong>deployment scenario</strong>, one of Broadcom's eight: new VCF fleet, new VCF instance, deferred components, converge to a new fleet, converge to a new instance, new vSphere Foundation, converge to VVF, and management services plus license server for VVF.</li>
+            <li><strong>Hosts</strong>, <strong>Services</strong> (DNS, NTP), <strong>Networks</strong> (management, VM management, vMotion, vSAN, host TEP).</li>
+            <li><strong>Fleet-level components</strong>: management network model (shared VLAN, dedicated VLAN, with NSX overlay, with stretched overlay), fleet network, pool name, services runtime CIDR, dual stack.</li>
+            <li><strong>Storage and scale</strong>: storage type and its details (vSAN options, NFS servers and path, FC datastore names), FTT, HA profile, appliance sizes, EVC, datacenter and cluster names.</li>
+            <li><strong>Switching and NSX</strong>: vDS profile and MTU, TEP-less (9.1.1+), LACP, VPC with distributed transit gateway.</li>
+            <li><strong>Components</strong>: certificate mode, CEIP, which of Operations, Automation, management services and Identity Broker to include (the scenario fixes some), reusing an existing vCenter and other components (brownfield), and <strong>Redact secrets in output</strong>.</li>
+            <li><strong>ESX hosts</strong>: hostname, root password and thumbprints per host; <strong>Add host</strong>, <strong>Regenerate from name base</strong>. Without thumbprints, the spec skips thumbprint validation.</li>
+          </ul>
+          <h3>Output</h3>
+          <p>The status (<em>Valid</em>, <em>Review</em>, <em>Invalid</em>), the generated JSON, and findings from the 9.1 validator. Buttons: <strong>Download SddcSpec</strong>, <strong>Edit as JSON</strong> (opens it in the Data Editor) and <strong>Copy JSON</strong>.</p>
+          <p><strong>Validate an existing specification</strong> at the bottom checks a spec made anywhere else. Specs written for 9.0 are rejected, because they reference the fleet management appliance 9.1 removed.</p>
+          <p><strong>Load / Save / Clear</strong> keep the builder's settings in a file (see <a href="#common">section 3</a>). A deployment spec itself cannot be loaded into the form; open it in the Data Editor instead.</p>
+          <div class="tip warn">This page checks every documented rule it knows. Before deploying, validate on the live installer with <code>POST /v1/sddcs/validations</code>; that check is authoritative, this one is not.</div>
+
+          <!-- ================================================================ -->
+          <h2 id="editor">7. Data Editor</h2>
+          <p>Open a JSON or YAML file, change it as a form or as text, and have it checked for its kind of file as you go.</p>
+          <h3>Opening</h3>
+          <p>Pick a file or paste text and press <strong>Open pasted text</strong>. The kind of file is detected; change it in <strong>Kind of file</strong> if the guess is wrong.</p>
+          <table>
+            <tr><th>Family</th><th>Files it knows</th><th>What it checks</th></tr>
+            <tr><td>VMware Cloud Foundation</td><td>VCF 9.1 deployment spec</td><td>The spec builder's full 9.1 validator.</td></tr>
+            <tr><td>Ansible</td><td>Playbooks and task lists; YAML inventories</td><td>One module per task, fully-qualified names, modules that exist in their collection (with "did you mean"), play keywords, inventory structure.</td></tr>
+            <tr><td>Terraform</td><td><code>.tf.json</code>, <code>.tfvars.json</code></td><td>Resource and data source types exist in the provider, secret variables marked sensitive, no credentials in provider blocks.</td></tr>
+            <tr><td>AWS</td><td>CloudFormation (JSON or YAML, SAM too); IAM policies</td><td>Sections and attributes, Ref/GetAtt/Sub/DependsOn/Condition targets exist; IAM grammar, condition operators, full-admin and public-access warnings.</td></tr>
+            <tr><td>Google Cloud</td><td>IAM policies; Deployment Manager configs</td><td>Role and member formats, public members, version 3 for conditions. Deployment Manager is flagged as retired (support ended 1 April 2026; the service is turned down after 30 June 2027).</td></tr>
+            <tr><td>Azure</td><td>ARM templates, parameter files, Azure Policy</td><td>Sections, resource type and API version formats, <code>parameters()</code>/<code>variables()</code> references, secure parameter types; policy conditions, operators and effects.</td></tr>
+            <tr><td>Oracle Cloud</td><td>IAM policies</td><td>Each statement against OCI's policy grammar; tenancy-wide admin and any-user warnings.</td></tr>
+            <tr><td>F5 BIG-IP</td><td>AS3 and Declarative Onboarding declarations</td><td>Classes, required properties and allowed values from F5's own schemas; every pointer names something declared.</td></tr>
+            <tr><td>Kubernetes</td><td>Manifests, including several documents in one file</td><td>Names, removed API versions, secrets written in the manifest, unpinned images.</td></tr>
+            <tr><td>Anything else</td><td>Any JSON or YAML</td><td>Readable, and secrets counted.</td></tr>
+          </table>
+          <h3>Two views</h3>
+          <ul>
+            <li><strong>Form</strong>: every field as a control. Fields with a fixed set of answers are dropdowns (with <em>Other…</em> for a value outside the list). Lists have add, copy, move and remove; fields can be added, renamed and removed.</li>
+            <li><strong>Text</strong>: the file as written, with line numbers. Click a finding and it jumps to its line.</li>
+          </ul>
+          <div class="tip warn">A form edit writes the file again from its data, so <strong>YAML comments are lost</strong>. The page warns you first; edit in the Text view to keep them. A file using a tag a form cannot carry (such as Ansible's <code>!vault</code>) opens in Text only.</div>
+          <h3>The side panel</h3>
+          <ul>
+            <li><strong>Kind of file</strong> and <strong>Format</strong> (JSON or YAML; switching converts the file).</li>
+            <li>Checks, Changed (from the file as opened) and Secrets held.</li>
+            <li><strong>Download</strong>, <strong>Download without secrets</strong> (every clear-text secret replaced by <code>&lt;REQUIRED&gt;</code>), <strong>Undo</strong>, <strong>Back to as opened</strong>, <strong>Close</strong>.</li>
+            <li><strong>Find and replace</strong> across every value (never field names), for a new domain, a re-addressed subnet or a new site code.</li>
+            <li>The list of changes; click one to go to it.</li>
+          </ul>
+
+          <!-- ================================================================ -->
+          <h2 id="terraform">8. Terraform generator</h2>
+          <ol>
+            <li><strong>Step 1</strong>: pick the <strong>Platform</strong> and the <strong>Blueprint</strong>.</li>
+            <li><strong>Step 2</strong>: fill in the parameters. Dropdowns you can type into have <em>Other — type a value…</em>. Registry modules keep their less common inputs in collapsed, searchable sections. Press <strong>Generate Terraform (HCL)</strong>.</li>
+            <li><strong>Step 3</strong>: the generated files, each with <strong>Copy</strong> and <strong>Download</strong>, and <strong>Download all as one file</strong>. For a registry module, <em>What this will create</em> lists each resource as Created, Not created or Depends. Save the result as <code>main.tf</code> and run <code>terraform init</code> and <code>terraform plan</code>.</li>
+          </ol>
+          <h3>Blueprints</h3>
+          <table>
+            <tr><th>Platform</th><th>Blueprints</th></tr>
+            <tr><td>AWS</td><td>EC2 + security group, S3 bucket, VPC baseline, RDS PostgreSQL; modules: VPC, EC2, security group, S3, RDS, Aurora, EKS, ALB, Lambda, KMS, DynamoDB, Auto Scaling, ECS, ACM.</td></tr>
+            <tr><td>Azure</td><td>Linux VM + NIC + NSG, secure storage account; modules: resource group, VNet, NSG, VM, storage, Key Vault, AKS (two), web app, naming.</td></tr>
+            <tr><td>Google Cloud</td><td>Compute Engine VM, GCS bucket; modules: VPC, GKE, project factory, buckets, Cloud SQL (PostgreSQL, MySQL), service accounts, Cloud NAT, Cloud Router, Cloud DNS, KMS, log export, BigQuery.</td></tr>
+            <tr><td>OCI</td><td>VCN baseline, compute instance, Object Storage bucket; modules: VCN, OKE, compute, bastion, DRG, operator host.</td></tr>
+            <tr><td>vSphere</td><td>VM from template, tag and folder an existing VM.</td></tr>
+            <tr><td>Linux / Windows</td><td>Remote-exec on a host (SSH or WinRM).</td></tr>
+          </table>
+          <h3>From your estate</h3>
+          <ul>
+            <li><strong>Rehost a cluster's VMs</strong> (each cloud): a target instance per VM, sized from its vCPU and memory with a disk per VMDK, plus <code>rehost-plan.csv</code>. The data itself moves with the cloud's replication service (AWS MGN, Azure Migrate, Migrate to VMs, OCI Cloud Migrations).</li>
+            <li><strong>VCF landing zone for a cluster</strong> (vSphere): port groups and VLANs, folders, resource pools, custom attributes and DRS rules copied from the source cluster.</li>
+          </ul>
+          <p>Every resource type is checked against the committed provider catalog (AWS 6.65.0, AzureRM 5.6.0, Google 8.3.0, OCI 9.2.0, vSphere 2.17.1, VCF 0.18.2, fetched 20 September 2026), so a renamed resource fails here rather than at <code>terraform plan</code>. No credentials are written: providers read them from the environment (for example <code>VSPHERE_USER</code> and <code>VSPHERE_PASSWORD</code>).</p>
+
+          <!-- ================================================================ -->
+          <h2 id="ansible">9. Ansible generator</h2>
+          <p>The same three steps as Terraform. The output is the playbook plus a <code>requirements.yml</code> listing only the collections its modules use, pinned to the current major version. Install them with <code>ansible-galaxy collection install -r requirements.yml</code>, then test with <code>ansible-playbook -i inventory &lt;file&gt; --check --diff</code>.</p>
+          <table>
+            <tr><th>Platform</th><th>Playbooks</th></tr>
+            <tr><td>AWS</td><td>EC2, S3, VPC + subnets, RDS, DynamoDB, SNS, SQS, KMS, CloudWatch alarm, CloudTrail.</td></tr>
+            <tr><td>Azure</td><td>Linux VM, Windows VM, VNet, storage, SQL, App Service, AKS, Log Analytics, Key Vault.</td></tr>
+            <tr><td>Google Cloud</td><td>VM, VPC + firewall, GCS, Pub/Sub, Cloud SQL, GKE, service account, Cloud Functions, Cloud Run.</td></tr>
+            <tr><td>OCI</td><td>VM, Object Storage, VCN, load balancer, Autonomous DB, OKE, KMS vault key.</td></tr>
+            <tr><td>vSphere</td><td>VM from template, power and snapshots, extra disk, folder and annotation, reconfigure.</td></tr>
+            <tr><td>Linux</td><td>NGINX, security updates, users and groups, cron job, SSH hardening.</td></tr>
+            <tr><td>Windows</td><td>AD domain join, IIS, Windows Updates, local user.</td></tr>
+          </table>
+          <h3>From your estate</h3>
+          <ul>
+            <li><strong>Inventory of a cluster's VMs</strong> (all, Linux or Windows): a <code>hosts.yml</code> grouped by OS, cluster and folder.</li>
+            <li><strong>Before the move: snapshots and worklist</strong>: reports the VMs the readiness checks flagged; removes snapshots only with <code>remove_snapshots=true</code>.</li>
+            <li><strong>After the move: DRS rules and attributes</strong>: recreates affinity rules and custom attributes on the target vCenter.</li>
+          </ul>
+          <p>Module names are checked against the committed Galaxy catalog: amazon.aws, community.aws, azure.azcollection, google.cloud, oracle.oci, vmware.vmware, vmware.vmware_rest, community.vmware, ansible.posix, ansible.windows, microsoft.ad and community.general.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="tfmap">10. Terraform Map</h2>
+          <p>A reference for AWS, Azure, Google Cloud and OCI: for each domain (identity, networking, compute, storage, databases, security, landing-zone patterns), which Terraform resources do the job and the pattern around them, with examples. Every resource name is checked against the provider catalog; one renamed since the map was written is marked, with the closest current name in the Findings card.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="multicloud">11. Multi-Cloud wizard</h2>
+          <p>Choose the cloud once in <strong>Designing for</strong> (Azure, AWS, Google Cloud, OCI), then four steps:</p>
+          <ol>
+            <li><strong>Initiative &amp; basics</strong>: type (new service, change, maintenance, migration), name, architecture, traffic, latency, team strengths.</li>
+            <li><strong>Path details &amp; data</strong>: data pattern and sensitivity, geography, integration, source environment, 7R approach, tooling, compliance; plus questions for the initiative type chosen.</li>
+            <li><strong>Non-functional, security &amp; migration tooling</strong>: criticality, uptime, RTO, RPO, ops maturity, security baseline, identity, secrets, data protection, perimeter, F5 usage, security operations.</li>
+            <li><strong>Sizing &amp; environments</strong>: users, requests per second, data volume, ingest, retention, environments, non-prod scale, regions.</li>
+          </ol>
+          <p>Missing answers are pointed out but never stop you. <strong>Generate recommendation</strong> (or <strong>Finish</strong>) produces eleven sections: compute, data and storage, integration, operations and governance, security and network, controls and cyber checklist, migration focus, DR, assumptions and gaps, sizing footprint, and an implementation playbook. <strong>Full view</strong>, <strong>Print</strong> (or save as PDF) and <strong>Save as Word</strong>.</p>
+          <p>With an estate imported, <strong>Answer from the estate</strong> fills in what the inventory can answer (the migration approach, data volume, environments, regions and a description of the estate) for the whole estate or one cluster. Criticality, uptime, sensitivity and deadlines stay yours.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="migration">12. Application Migration</h2>
+          <p>Evaluates one application. Tabs:</p>
+          <ul>
+            <li><strong>Manual</strong>: the decision framework and readiness bands.</li>
+            <li><strong>Intake</strong>: name, owner, criticality, RTO, RPO, workload type, enterprise standard cloud, stack, OS, database, hosting, integrations, vendor, identity, data size, compliance scope (FedRAMP, CJIS, HIPAA, PCI DSS, SOX, GDPR and more) and hard gates (obsolete, SaaS replacement exists, must stay on-prem, hardware-bound, mainframe, data sovereignty).</li>
+            <li><strong>Ratings</strong>: six factors from 1 to 5: cloud compatibility, technical debt, vendor lock risk, compliance complexity, modularity, refactor effort.</li>
+            <li><strong>Results</strong> and <strong>Playbooks</strong>.</li>
+          </ul>
+          <p><strong>Run Evaluation</strong> gives a readiness score (0–100), a course of action, a target cloud, a risk badge, a step-by-step plan and recommended services.</p>
+          <table>
+            <tr><th>Rule, in order</th><th>Route</th></tr>
+            <tr><td>Marked obsolete</td><td>Retire</td></tr>
+            <tr><td>A SaaS replacement exists (and it need not stay on-prem)</td><td>Repurchase</td></tr>
+            <tr><td>Must stay on-prem, hardware-bound or mainframe</td><td>Retain</td></tr>
+            <tr><td>Readiness 80–100 / 60–79 / 40–59 / 20–39 / 0–19</td><td>Refactor / Replatform / Rehost / Retain / Retire</td></tr>
+          </table>
+          <p>The target cloud is the enterprise standard if one is set; otherwise sovereignty or regulated compliance leads to Azure (Microsoft-heavy) or AWS, Oracle to OCI, Microsoft stacks to Azure, analytics and AI to Google Cloud, and AWS by default.</p>
+          <p><strong>Export JSON</strong> saves <code>app-migration-&lt;name&gt;.json</code> for the Portfolio. Nothing is kept on the page: export before you reload.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="portfolio">13. Migration Portfolio</h2>
+          <ul>
+            <li><strong>Load App Records</strong>: the JSON files exported from the Migration page (several at once).</li>
+            <li><strong>Import Inventory (CSV)</strong>: create draft entries from a spreadsheet, with the columns shown on the page (compliance values separated by <code>;</code>).</li>
+            <li><strong>Wave Planning Mode</strong>: Default (risk and readiness), Fast Exit, Modernize First; filters by cloud and course of action.</li>
+            <li>Counts per wave and blocked, and the portfolio table.</li>
+            <li><strong>Export Portfolio CSV</strong> and <strong>Export Portfolio JSON</strong> (always every record, whatever the filters).</li>
+          </ul>
+          <p>Retain is blocked; Retire and Repurchase go in wave 1; otherwise low risk with readiness 55 or more is wave 1, low or medium risk with readiness 40 or more is wave 2, and the rest wave 3. Fast Exit also puts low- and medium-risk rehosts and replatforms in wave 1; Modernize First does the same for refactors with readiness 70 or more. Loading adds to what is there; reload the page to start again.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="collector">14. The inventory collector</h2>
+          <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
+          <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
+.\Export-AtkInventory.ps1 -Server vcenter.corp.local
+.\Export-AtkInventory.ps1 -Server vcenter.corp.local -StatDays 0 -OutputPath C:\temp\estate.json</pre>
+          <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
+
+          <!-- ================================================================ -->
+          <h2 id="updates">15. Keeping catalogs current</h2>
+          <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
+          <table>
+            <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
+            <tr><td><code>update-catalog.bat</code></td><td>Terraform and Ansible catalogs together, then offers to verify and rebuild</td><td>registry.terraform.io, galaxy.ansible.com</td></tr>
+            <tr><td><code>npm run catalog:update</code></td><td>Terraform provider resource names</td><td>registry.terraform.io</td></tr>
+            <tr><td><code>npm run modules:update</code></td><td>Terraform registry modules and their inputs</td><td>git, github.com</td></tr>
+            <tr><td><code>npm run ansible:update</code></td><td>Ansible module catalog</td><td>galaxy.ansible.com</td></tr>
+            <tr><td><code>npm run sizes:update</code></td><td>Cloud machine sizes used for rehosting</td><td>github.com for AWS (optional)</td></tr>
+            <tr><td><code>npm run editor:update</code></td><td>F5 AS3 and DO schemas for the Data Editor</td><td>git, github.com</td></tr>
+            <tr><td><code>npm run verify:schemas</code></td><td>Checks generated Terraform arguments against the provider docs</td><td>registry.terraform.io</td></tr>
+          </table>
+          <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
+
+          <!-- ================================================================ -->
+          <h2 id="workflows">16. Common workflows</h2>
+          <h3>From an RVTools export to a VCF deployment spec</h3>
+          <ol>
+            <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
+            <li>VCF Sizing: in <em>From your estate</em>, choose the management domain, host profile and domain split. Check the verdict.</li>
+            <li>Continue in the spec builder: check the prefilled hosts and networks, choose the scenario, name the components, add host passwords. <strong>Save</strong> the settings.</li>
+            <li>Download the SddcSpec, then validate it on the live installer.</li>
+          </ol>
+          <h3>Change a deployed VCF spec</h3>
+          <ol>
+            <li>Data Editor: open the installer export (<code>VCF-deployment-spec-….json</code>).</li>
+            <li>Edit fields in the form, or use Find and replace for a new subnet or domain. Watch the checks.</li>
+            <li><strong>Download</strong>, or <strong>Download without secrets</strong> to share it.</li>
+          </ol>
+          <h3>Rehost a cluster to a cloud</h3>
+          <ol>
+            <li>Import the estate; on the inventory page, fix or note the blocked VMs.</li>
+            <li>Multi-Cloud: <strong>Answer from the estate</strong> for the cluster, complete the rest, and save the recommendation as Word.</li>
+            <li>Terraform: <em>Rehost a cluster's VMs</em> for the chosen cloud; Ansible: the inventory and before/after playbooks.</li>
+          </ol>
+          <h3>Plan a portfolio of applications</h3>
+          <ol>
+            <li>Migration: evaluate each application and Export JSON.</li>
+            <li>Portfolio: Load App Records (or import a CSV), choose the wave mode, and export.</li>
+          </ol>
+
+          <!-- ================================================================ -->
+          <h2 id="trouble">17. Troubleshooting</h2>
+          <table>
+            <tr><th>What you see</th><th>Why, and what to do</th></tr>
+            <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
+            <tr><td><code>node</code> is not recognised</td><td>Node is not installed or not on PATH. Open a new terminal after installing; see the work-laptop tip in section 1.</td></tr>
+            <tr><td>A page fills itself in with an old estate</td><td>The estate stays until forgotten. Press <strong>Forget</strong> on the estate strip, or <strong>Clear all</strong>.</td></tr>
+            <tr><td>Full view or Print does nothing on the Multi-Cloud page</td><td>A pop-up blocker stopped the new window. Allow pop-ups for the toolkit's address.</td></tr>
+            <tr><td>"That file was saved from … page, not this one"</td><td>Settings files belong to the page that saved them. Open it on that page.</td></tr>
+            <tr><td>A finding says a catalog is more than 90 days old</td><td>Run the update in <a href="#updates">section 15</a>, or carry on; the names are just less certain.</td></tr>
+            <tr><td>The Data Editor won't show the form</td><td>The file uses a tag the form cannot carry (such as <code>!vault</code>), or the text does not read as JSON/YAML. The Text view shows the line at fault.</td></tr>
+          </table>
+
+          <!-- ================================================================ -->
+          <h2 id="limits">18. Known limits</h2>
+          <ul>
+            <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
+            <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
+            <li>RVTools has no NVMe or NIC-speed data; those readiness columns show <em>?</em> unless the collector's JSON is imported too.</li>
+            <li>The Migration and Portfolio pages keep nothing between visits: export what you want to keep.</li>
+            <li>Multi-Cloud's <em>Save as Word</em> writes a Word-readable <code>.doc</code> (HTML), not a native <code>.docx</code>.</li>
+            <li>Editing YAML in the Data Editor's form drops comments; the Text view keeps them.</li>
+            <li>Checks confirm names, structure and references. They do not confirm that a deployment will succeed in your environment.</li>
+          </ul>
+        </article>
+      </div>
+    </main>
+    <script type="module" src="../lib/ui/clear-all.js"></script>
+  </body>
+</html>

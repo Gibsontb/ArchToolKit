@@ -230,7 +230,7 @@ code,
 }
 
 .header-nav a {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 8px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 0.88rem;

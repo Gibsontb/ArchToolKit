@@ -111,7 +111,8 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | Multi-cloud decision matrix | Working — explainable routing across VCF, AWS, Azure, Google Cloud and OCI |
 | Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up |
 | Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks |
-| Application migration and modernization | Planned |
+| Application migration and modernization | Working — single-application evaluation and portfolio wave planning |
+| Data editor | Working — JSON and YAML for VCF, Ansible, Terraform, AWS, Google, Azure, Oracle, F5 and Kubernetes |
 
 ## Terraform authoring
 

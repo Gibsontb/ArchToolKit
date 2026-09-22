@@ -385,7 +385,7 @@ for (const [name, path] of [
 {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/migration-portfolio.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html'];
+  const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/migration-portfolio.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html', 'app/manual.html'];
   const missing = [];
   for (const p of pages) {
     await page.goto(`${BASE}/${p}`, { waitUntil: 'networkidle' });
