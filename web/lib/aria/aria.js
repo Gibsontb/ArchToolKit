@@ -143,12 +143,6 @@
                                        
                                                                                 
                                  
-                                                                              
-                                              
-                  
-                                            
-                          
-                            
  
 
                                   
@@ -224,46 +218,13 @@ export function widgetFamily(type        )               {
   return WIDGET_FAMILIES[type] ?? 'other';
 }
 
-/** One column of a list view, or one series of a chart. */
-                             
-                                                      
-                       
-                                                         
-                         
-                                                                    
-                         
- 
-
                                  
                       
                         
                                 
                                        
-                                                                                   
+                                                                  
                                  
-     
-                                              
-    
-                                                                               
-                                                                               
-                             
-     
-                                          
-                                                                             
-                                     
-                                                      
-                              
-                                                 
-                             
- 
-
-/** One block of a report: a view, a dashboard, a cover page, contents. */
-                                
-                                                     
-                               
-                                                  
-                               
-                                
  
 
                             

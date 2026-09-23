@@ -40,10 +40,8 @@ import {
   type PolicySummary,
   type Recommendation,
   type ReportDefinition,
-  type ReportSection,
   type SuperMetric,
   type SymptomDefinition,
-  type ViewColumn,
   type ViewDefinition,
 } from './aria.ts';
 
@@ -321,12 +319,6 @@ function readReport(record: Record<string, Json>): ReportDefinition {
     description: str(record['description']) || undefined,
     subjects: strings(record['subject']),
     scheduleCount: 0,
-    // The API inventory says who owns a report and whether it is active; the
-    // XML says what is in it. Neither has both, which is why they merge.
-    sections: [],
-    outputFormats: [],
-    owner: str(record['owner']) || undefined,
-    active: typeof record['active'] === 'boolean' ? record['active'] : undefined,
   };
 }
 
@@ -463,62 +455,14 @@ function policiesFromXml(name: string, xml: string): AriaContent {
   return { ...EMPTY_CONTENT, policies, sources: [source(name, 'Policies', policies.length)] };
 }
 
-/**
- * The columns a view shows, in order.
- *
- * They live several levels down — a `Control` of type `attributes-selector`,
- * holding a `Property` named `attributeInfos`, holding a `List` of `Item`s,
- * each with a `Value` of `Property` elements. The ones that matter are
- * `attributeKey` (the metric) and `displayName` (the heading someone reads).
- * Nested properties such as `transformations` carry a list rather than a value,
- * which is how they are told apart.
- */
-function viewColumns(inner: string): ViewColumn[] {
-  const selector = elements(inner, 'Control').find((control) => control.attrs['type'] === 'attributes-selector');
-  if (!selector) return [];
-
-  const columns: ViewColumn[] = [];
-  for (const item of elements(selector.inner, 'Item')) {
-    const properties: Record<string, string> = {};
-    for (const property of elements(item.inner, 'Property')) {
-      const key = property.attrs['name'];
-      const value = property.attrs['value'];
-      if (key && value !== undefined) properties[key] = value;
-    }
-    const key = properties['attributeKey'] ?? '';
-    if (!key) continue;
-    columns.push({
-      key,
-      label: properties['displayName'] || key,
-      text: properties['isStringAttribute'] === 'true',
-    });
-  }
-  return columns;
-}
-
-function controlProperty(inner: string, controlType: string, propertyName: string): string | undefined {
-  const control = elements(inner, 'Control').find((candidate) => candidate.attrs['type'] === controlType);
-  if (!control) return undefined;
-  return elements(control.inner, 'Property').find((property) => property.attrs['name'] === propertyName)?.attrs['value'];
-}
-
 function viewsFromXml(name: string, xml: string): AriaContent {
-  const views = elements(xml, 'ViewDef').map((element): ViewDefinition => {
-    const count = controlProperty(element.inner, 'time-interval-selector', 'count');
-    const unit = controlProperty(element.inner, 'time-interval-selector', 'unit');
-    const size = controlProperty(element.inner, 'pagination-control', 'size');
-    return {
-      id: str(element.attrs['id']),
-      name: textOf(element.inner, 'Title') ?? '',
-      description: textOf(element.inner, 'Description') || undefined,
-      subjects: elements(element.inner, 'SubjectType').map((subject) => str(subject.attrs['resourceKind'])).filter(Boolean),
-      presentation: elements(element.inner, 'Presentation')[0]?.attrs['type'],
-      columns: viewColumns(element.inner),
-      usages: [...new Set(elements(element.inner, 'Usage').map((usage) => usage.inner.trim()).filter(Boolean))],
-      timeRange: count && unit ? `${count} ${unit.toLowerCase()}` : undefined,
-      pageSize: size ? Number(size) : undefined,
-    };
-  });
+  const views = elements(xml, 'ViewDef').map((element): ViewDefinition => ({
+    id: str(element.attrs['id']),
+    name: textOf(element.inner, 'Title') ?? '',
+    description: textOf(element.inner, 'Description') || undefined,
+    subjects: elements(element.inner, 'SubjectType').map((subject) => str(subject.attrs['resourceKind'])).filter(Boolean),
+    presentation: elements(element.inner, 'Presentation')[0]?.attrs['type'],
+  }));
   return { ...EMPTY_CONTENT, views, sources: [source(name, 'View definitions', views.length)] };
 }
 
@@ -529,13 +473,6 @@ function reportsFromXml(name: string, xml: string): AriaContent {
     description: textOf(element.inner, 'Description') || undefined,
     subjects: elements(element.inner, 'SubjectType').map((subject) => str(subject.attrs['resourceKind'])).filter(Boolean),
     scheduleCount: 0,
-    // What the report is made of, in the order it is printed.
-    sections: elements(element.inner, 'Section').map((section): ReportSection => ({
-      contentType: textOf(section.inner, 'ContentType') ?? 'Unknown',
-      contentKey: textOf(section.inner, 'ContentKey') || undefined,
-      orientation: textOf(section.inner, 'ContentOrientation') || undefined,
-    })),
-    outputFormats: [...new Set(elements(element.inner, 'OutputFormat').map((format) => format.inner.trim()).filter(Boolean))],
   }));
   return { ...EMPTY_CONTENT, reports, sources: [source(name, 'Report definitions', reports.length)] };
 }
