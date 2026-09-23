@@ -15,9 +15,10 @@
  * rectangle pretending to be a graph.
  */
 
-import { el, append, clear, replace, downloadFile } from './dom.ts';
+import { el, append, clear, downloadFile } from './dom.ts';
 import { card } from './components.ts';
 import { dashboardSheet } from '../aria/contact-sheet.ts';
+import { oneOfMany, type OneOfMany } from './one-of-many.ts';
 import { DASHBOARD_COLUMNS, dashboardRows, widgetFamily, type Dashboard, type ViewDefinition } from '../aria/aria.ts';
 
 /** Row height in pixels. Aria's rows are short; this reads at a glance. */
@@ -103,94 +104,41 @@ export function canvasKey(): HTMLElement {
 /**
  * The viewer: one dashboard at a time, with a way to get to any other.
  *
- * The picker is grouped by shared and private, because that is the division
- * people care about when they are deciding what to keep.
+ * Grouped into shared and not shared, because that is the division people care
+ * about when they are deciding what to keep.
  */
-export interface DashboardViewer {
-  readonly element: HTMLElement;
-  /** Open a particular dashboard by id, and scroll it into view. */
-  show(id: string): void;
-}
-
-export function dashboardViewer(dashboards: readonly Dashboard[], views: readonly ViewDefinition[]): DashboardViewer {
+export function dashboardViewer(dashboards: readonly Dashboard[], views: readonly ViewDefinition[]): OneOfMany {
   const viewNames = new Map(views.map((view) => [view.id, view.name]));
-  const ordered = [...dashboards].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-  let at = 0;
 
-  const picker = el('select', { attrs: { 'aria-label': 'Dashboard' } }) as HTMLSelectElement;
-  const shared = el('optgroup', { attrs: { label: 'Shared' } });
-  const priv = el('optgroup', { attrs: { label: 'Not shared' } });
-  ordered.forEach((dashboard, index) => {
-    const option = el('option', {
-      text: `${dashboard.name || '(unnamed)'} — ${dashboard.widgets.length} widget${dashboard.widgets.length === 1 ? '' : 's'}`,
-      attrs: { value: String(index) },
-    });
-    append(dashboard.shared ? shared : priv, option);
-  });
-  if (shared.children.length > 0) append(picker, shared);
-  if (priv.children.length > 0) append(picker, priv);
-
-  const heading = el('div', { class: 'dash-heading' });
-  const canvas = el('div', {});
-  const position = el('span', { class: 'muted' });
-
-  function show(index: number): void {
-    at = Math.min(Math.max(index, 0), ordered.length - 1);
-    const dashboard = ordered[at];
-    if (!dashboard) return;
-    picker.value = String(at);
-    position.textContent = `${at + 1} of ${ordered.length}`;
-
-    const widgetKinds = [...new Set(dashboard.widgets.map((widget) => widget.type))];
-    replace(
-      heading,
+  return oneOfMany<Dashboard>({
+    items: dashboards,
+    noun: 'Dashboard',
+    idOf: (dashboard) => dashboard.id,
+    sort: (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+    group: (dashboard) => (dashboard.shared ? 'Shared' : 'Not shared'),
+    label: (dashboard) => `${dashboard.name || '(unnamed)'} — ${dashboard.widgets.length} widget${dashboard.widgets.length === 1 ? '' : 's'}`,
+    heading: (dashboard) => [
       el('h3', { text: dashboard.name || '(unnamed)' }),
       el(
         'p',
         { class: 'muted' },
         el('span', { text: dashboard.shared ? 'Shared. ' : 'Not shared — it lives in one account. ' }),
-        el('span', { text: `${dashboard.widgets.length} widget${dashboard.widgets.length === 1 ? '' : 's'}: ${widgetKinds.join(', ')}.` }),
+        el('span', { text: `${dashboard.widgets.length} widget${dashboard.widgets.length === 1 ? '' : 's'}: ${[...new Set(dashboard.widgets.map((widget) => widget.type))].join(', ')}.` }),
         dashboard.created ? el('span', { text: ` Created ${new Date(dashboard.created).toISOString().slice(0, 10)}.` }) : el('span', {}),
       ),
-    );
-    replace(canvas, dashboardCanvas(dashboard, viewNames));
-  }
-
-  picker.addEventListener('change', () => show(Number(picker.value)));
-
-  const controls = el(
-    'div',
-    { class: 'field-row dash-controls' },
-    el('div', { class: 'field' }, el('div', { class: 'field-head' }, el('label', { text: 'Dashboard' })), picker),
-    el(
-      'div',
-      { class: 'btn-row' },
-      el('button', { class: 'btn btn-small', text: '← Previous', on: { click: () => show(at - 1) } }),
-      el('button', { class: 'btn btn-small', text: 'Next →', on: { click: () => show(at + 1) } }),
-      position,
-      // The whole set as one file: no toolkit, no login, prints to PDF. It is
-      // one button rather than a card because it is one thing you do once.
+    ],
+    render: (dashboard) => el('div', { class: 'stack' }, dashboardCanvas(dashboard, viewNames), canvasKey()),
+    actions: [
+      // The whole set as one file: no toolkit, no login, prints to PDF. One
+      // button rather than a card, because it is one thing you do once.
       el('button', {
         class: 'btn btn-small',
         text: 'Save all as one page…',
-        attrs: { title: `One self-contained HTML file with all ${ordered.length} drawn in it. It carries estate names — treat it like the export.` },
-        on: { click: () => downloadFile('aria-dashboards.html', dashboardSheet(ordered, views), 'text/html') },
+        attrs: { type: 'button', title: `One self-contained HTML file with all ${dashboards.length} drawn in it. It carries estate names — treat it like the export.` },
+        on: { click: () => downloadFile('aria-dashboards.html', dashboardSheet(dashboards, views), 'text/html') },
       }),
-    ),
-  );
-
-  const wrap = el('div', { class: 'stack' }, controls, heading, canvas, canvasKey());
-  show(0);
-
-  return {
-    element: wrap,
-    show(id: string): void {
-      const index = ordered.findIndex((dashboard) => dashboard.id === id);
-      if (index < 0) return;
-      show(index);
-      wrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    },
-  };
+    ],
+  });
 }
 
 /** The Dashboards tab: the viewer, and nothing else. */
@@ -198,7 +146,7 @@ export function mountDashboardView(
   container: HTMLElement,
   dashboards: readonly Dashboard[],
   views: readonly ViewDefinition[],
-): DashboardViewer {
+): OneOfMany {
   const viewer = dashboardViewer(dashboards, views);
   clear(container);
   append(container, card('Dashboard', viewer.element));

@@ -543,7 +543,7 @@ describe('aria: a dashboard as a drawing', () => {
 
   it('writes one self-contained page with every dashboard on it', async () => {
     const content = await read('dash-3.json', laidOut);
-    const html = dashboardSheet(content.dashboards, [{ id: 'view-1', name: 'Cluster capacity table', subjects: [] }]);
+    const html = dashboardSheet(content.dashboards, [{ id: 'view-1', name: 'Cluster capacity table', subjects: [], columns: [], usages: [] }]);
 
     expect(html.startsWith('<!doctype html>')).toBe(true);
     // Self-contained: no script, and nothing fetched from anywhere.
@@ -561,5 +561,102 @@ describe('aria: a dashboard as a drawing', () => {
     // Column 30 span 40 would otherwise push the whole row sideways.
     expect(html.includes('grid-column:30')).toBe(false);
     expect(html.includes(`grid-column:${DASHBOARD_COLUMNS} / span 1`)).toBe(true);
+  });
+});
+
+// --- views and reports ------------------------------------------------------
+
+const VIEWS_DETAIL_XML = `<?xml version="1.0" encoding="UTF-8"?><Content><Views>
+  <ViewDef id="view-list">
+    <Title>Virtual machine capacity</Title>
+    <Description>What each VM is using.</Description>
+    <SubjectType adapterKind="VMWARE" resourceKind="VirtualMachine" type="self"/>
+    <Usage>dashboard</Usage>
+    <Usage>report</Usage>
+    <Controls>
+      <Control id="time-interval-selector_id_1" type="time-interval-selector" visible="false">
+        <Property name="unit" value="DAYS"/>
+        <Property name="count" value="7"/>
+      </Control>
+      <Control id="attributes-selector_id_2" type="attributes-selector" visible="false">
+        <Property name="attributeInfos">
+          <List>
+            <Item><Value>
+              <Property name="attributeKey" value="summary|guest|fullName"/>
+              <Property name="isStringAttribute" value="true"/>
+              <Property name="displayName" value="Guest OS"/>
+              <Property name="transformations"><List><Item value="CURRENT"/></List></Property>
+            </Value></Item>
+            <Item><Value>
+              <Property name="attributeKey" value="cpu|demandmhz"/>
+              <Property name="isStringAttribute" value="false"/>
+              <Property name="displayName" value="CPU demand"/>
+            </Value></Item>
+          </List>
+        </Property>
+      </Control>
+      <Control id="pagination-control_id_3" type="pagination-control" visible="true">
+        <Property name="size" value="50"/>
+      </Control>
+    </Controls>
+    <Presentation type="list"/>
+  </ViewDef>
+</Views></Content>`;
+
+const REPORTS_XML = `<?xml version="1.0" encoding="UTF-8"?><Content><Reports>
+  <ReportDef id="report-1">
+    <Title>Monthly capacity</Title>
+    <Description/>
+    <SubjectType adapterKind="VMWARE" resourceKind="ClusterComputeResource" type="self"/>
+    <Sections>
+      <Section><ContentType>CoverPage</ContentType><ContentKey>cover</ContentKey></Section>
+      <Section><ContentType>View</ContentType><ContentKey>view-list</ContentKey><ContentOrientation>Landscape</ContentOrientation></Section>
+      <Section><ContentType>View</ContentType><ContentKey>view-gone</ContentKey><ContentOrientation>Portrait</ContentOrientation></Section>
+    </Sections>
+    <Settings><OutputFormat>pdf</OutputFormat><OutputFormat>csv</OutputFormat></Settings>
+  </ReportDef>
+</Reports></Content>`;
+
+describe('aria/parse: views and reports in detail', () => {
+  it('reads the columns a view shows, in order, with the headings people read', async () => {
+    const content = await read('views.xml', VIEWS_DETAIL_XML);
+    const view = content.views[0];
+    expect(view?.presentation).toBe('list');
+    expect(view?.columns.map((column) => column.label)).toEqual(['Guest OS', 'CPU demand']);
+    expect(view?.columns[0]?.key).toBe('summary|guest|fullName');
+    // A string attribute is a label; everything else lines up as a number.
+    expect(view?.columns[0]?.text).toBe(true);
+    expect(view?.columns[1]?.text).toBe(false);
+    expect(view?.timeRange).toBe('7 days');
+    expect(view?.pageSize).toBe(50);
+    expect(view?.usages).toEqual(['dashboard', 'report']);
+  });
+
+  it('does not mistake a nested property for a column', async () => {
+    const content = await read('views.xml', VIEWS_DETAIL_XML);
+    // `transformations` holds a list rather than a value, and the item inside
+    // it has no attributeKey — counting it would invent a third column.
+    expect(content.views[0]?.columns.length).toBe(2);
+  });
+
+  it('reads what a report is made of, in the order it prints', async () => {
+    const content = await read('reports.xml', REPORTS_XML);
+    const report = content.reports[0];
+    expect(report?.sections.map((section) => section.contentType)).toEqual(['CoverPage', 'View', 'View']);
+    expect(report?.sections[1]?.contentKey).toBe('view-list');
+    expect(report?.sections[1]?.orientation).toBe('Landscape');
+    expect(report?.outputFormats).toEqual(['pdf', 'csv']);
+  });
+
+  it('keeps the owner from the inventory and the sections from the package', async () => {
+    const fromXml = await read('reports.xml', REPORTS_XML);
+    const fromJson = await read('reports.json', JSON.stringify([{ id: 'report-1', name: 'Monthly capacity', subject: ['Cluster'], owner: 'someone@example.com', active: true }]));
+
+    for (const merged of [merge(fromXml, fromJson), merge(fromJson, fromXml)]) {
+      const report = merged.reports[0];
+      expect(report?.owner).toBe('someone@example.com');
+      expect(report?.sections.length).toBe(3);
+      expect(report?.outputFormats).toEqual(['pdf', 'csv']);
+    }
   });
 });

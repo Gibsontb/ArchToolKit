@@ -22,6 +22,7 @@ import { countBy, isEmpty, merge, EMPTY_CONTENT, SEVERITY_MEANING, type AriaCont
 import { readAriaFile } from '../aria/parse.ts';
 import { ariaFindings, ariaSummary, unnotifiedAlerts } from '../aria/findings.ts';
 import { mountDashboardView } from './aria-dashboard.ts';
+import { mountReportsView, mountViewsView } from './aria-content-view.ts';
 
 // ---------------------------------------------------------------------------
 // Small shared pieces
@@ -387,49 +388,23 @@ function panesFor(content: AriaContent): Pane[] {
     });
   }
 
-  if (content.reports.length > 0 || content.views.length > 0) {
+  // Views and reports get the same treatment as dashboards: one at a time,
+  // with a dropdown and Previous and Next. They are separate tabs because a
+  // view is a thing and a report is a stack of them, and mixing the two made
+  // both harder to find.
+  if (content.views.length > 0) {
+    panes.push({
+      id: 'views',
+      label: `Views (${content.views.length})`,
+      mount: (container) => mountViewsView(container, content.views, content.dashboards, content.reports),
+    });
+  }
+
+  if (content.reports.length > 0) {
     panes.push({
       id: 'reports',
-      label: 'Reports and views',
-      mount: (container) => {
-        const referenced = new Set(content.dashboards.flatMap((dashboard) => dashboard.viewIds));
-        append(
-          container,
-          content.reports.length > 0
-            ? card(
-                'Report definitions',
-                browser({
-                  items: [...content.reports].sort((a, b) => a.name.localeCompare(b.name)),
-                  note: 'A report with no schedule has never been sent to anyone.',
-                  search: (report) => `${report.name} ${report.description ?? ''} ${report.subjects.join(' ')}`,
-                  filters: [{ label: 'Never scheduled', keep: (report) => report.scheduleCount === 0 }],
-                  empty: 'No reports match.',
-                  columns: [
-                    { header: 'Report', cell: (report) => report.name || report.id },
-                    { header: 'About', cell: (report) => report.subjects.join(', ') || '—' },
-                    { header: 'Schedules', cell: (report) => (report.scheduleCount > 0 ? el('span', { class: 'pill', text: String(report.scheduleCount) }) : el('span', { class: 'pill warn', text: 'none' })) },
-                  ],
-                }),
-              )
-            : el('span', {}),
-          content.views.length > 0
-            ? card(
-                'View definitions',
-                browser({
-                  items: [...content.views].sort((a, b) => a.name.localeCompare(b.name)),
-                  search: (view) => `${view.name} ${view.description ?? ''} ${view.subjects.join(' ')}`,
-                  filters: [{ label: 'Not on any dashboard', keep: (view) => !referenced.has(view.id) }],
-                  empty: 'No views match.',
-                  columns: [
-                    { header: 'View', cell: (view) => view.name || view.id },
-                    { header: 'About', cell: (view) => [...new Set(view.subjects)].slice(0, 4).join(', ') || '—' },
-                    { header: 'On a dashboard', cell: (view) => (referenced.has(view.id) ? 'yes' : 'no') },
-                  ],
-                }),
-              )
-            : el('span', {}),
-        );
-      },
+      label: `Reports (${content.reports.length})`,
+      mount: (container) => mountReportsView(container, content.reports, content.views, content.dashboards),
     });
   }
 

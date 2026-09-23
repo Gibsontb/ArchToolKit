@@ -143,6 +143,12 @@ export interface ReportDefinition {
   readonly subjects: readonly string[];
   /** Report schedule ids that run it, filled in from the export's schedules. */
   readonly scheduleCount: number;
+  /** What it is made of, in order. Empty when the export did not carry it. */
+  readonly sections: readonly ReportSection[];
+  /** pdf, csv. */
+  readonly outputFormats: readonly string[];
+  readonly owner?: string;
+  readonly active?: boolean;
 }
 
 export interface DashboardWidget {
@@ -218,13 +224,46 @@ export function widgetFamily(type: string): WidgetFamily {
   return WIDGET_FAMILIES[type] ?? 'other';
 }
 
+/** One column of a list view, or one series of a chart. */
+export interface ViewColumn {
+  /** The metric or property, e.g. `cpu|demandmhz`. */
+  readonly key: string;
+  /** What the column is headed, which is not the key. */
+  readonly label: string;
+  /** A string attribute is a label; everything else is a number. */
+  readonly text: boolean;
+}
+
 export interface ViewDefinition {
   readonly id: string;
   readonly name: string;
   readonly description?: string;
   readonly subjects: readonly string[];
-  /** LIST, DISTRIBUTION, TREND, SUMMARY, TEXT — what it draws. */
+  /** list, line-chart, donut-chart, pie-chart, bar-chart, text, image, summary. */
   readonly presentation?: string;
+  /**
+   * The columns, in the order they are shown.
+   *
+   * This is the part worth having. "A list view of virtual machines" tells you
+   * nothing; the fourteen columns it actually shows tell you whether it is the
+   * one you are looking for.
+   */
+  readonly columns: readonly ViewColumn[];
+  /** Where it is allowed to be used: dashboard, report, details, content. */
+  readonly usages: readonly string[];
+  /** The window it looks back over, e.g. "7 days". */
+  readonly timeRange?: string;
+  /** Rows per page, where the view paginates. */
+  readonly pageSize?: number;
+}
+
+/** One block of a report: a view, a dashboard, a cover page, contents. */
+export interface ReportSection {
+  /** View, Dashboard, CoverPage, TableOfContents. */
+  readonly contentType: string;
+  /** The view or dashboard it includes, by id. */
+  readonly contentKey?: string;
+  readonly orientation?: string;
 }
 
 export interface Dashboard {

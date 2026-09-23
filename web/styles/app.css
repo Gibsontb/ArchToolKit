@@ -2430,3 +2430,141 @@ textarea {
   align-items: end;
 }
 
+
+/* --- A view, drawn ------------------------------------------------------ */
+/* A list shows its real headers over a few ruled rows: enough to recognise the
+   view without pretending there is data in it. An export carries the layout
+   and the columns, never the numbers. */
+
+.view-canvas {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  padding: var(--space-3);
+}
+
+.view-canvas.is-empty {
+  padding: var(--space-5);
+  text-align: center;
+}
+
+.view-table th {
+  vertical-align: bottom;
+}
+
+.view-col-key {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.view-col-object {
+  min-width: 9rem;
+}
+
+.view-ghost {
+  display: block;
+  height: 0.6rem;
+  width: 70%;
+  border-radius: 3px;
+  background: var(--border);
+  opacity: 0.55;
+}
+
+.view-ghost.is-number {
+  width: 40%;
+  margin-left: auto;
+}
+
+.view-ghost-row td {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.view-foot {
+  margin: var(--space-2) 0 0;
+  font-size: 0.78rem;
+}
+
+.view-canvas.is-chart {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+.view-chart-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 9rem;
+  border: 1px dashed var(--border-strong, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.view-series {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+}
+
+.view-series li {
+  margin-bottom: var(--space-1);
+}
+
+.view-series code {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* --- A report, as its sections ------------------------------------------ */
+
+.report-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.report-section {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.report-section.kind-view { border-left-color: #3d7f63; }
+.report-section.kind-dashboard { border-left-color: #3f6fb5; }
+.report-section.kind-coverpage,
+.report-section.kind-tableofcontents { border-left-color: var(--text-muted); }
+
+.report-section-no {
+  min-width: 1.5rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.report-section-type {
+  font-size: 0.66rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.report-section-name.is-missing {
+  color: var(--danger, #b3261e);
+}
+
+.report-section-note {
+  font-size: 0.75rem;
+}
