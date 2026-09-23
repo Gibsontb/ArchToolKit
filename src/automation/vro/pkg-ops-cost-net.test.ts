@@ -345,6 +345,13 @@ describe('pkg ops-cost-net: showback rate card', { skip: !CURL }, () => {
     expect(ran.writes).toEqual([]);
   });
 
+  it('refuses a pricing list it does not recognise, rather than read it as empty and create a duplicate (regression)', async () => {
+    const odd = routes().map((r) => (r.method === 'GET' && r.path === '^/suite-api/api/pricing$' ? { ...r, body: { pricingCards: [{ id: 'pp-old', name: 'Standard rate card 2027' }] } } : r));
+    const ran = await run(files, odd, settings({ dryRun: false }));
+    expect(ran.result.error ?? '').toContain('GET /suite-api/api/pricing returned no list this workflow recognises');
+    expect(ran.writes).toEqual([]);
+  });
+
   it('stops at the first failure and says what failed', async () => {
     const ran = await run(files, routes({ postStatus: 500 }), settings({ dryRun: false }));
     expect(ran.writes).toEqual(['POST /suite-api/api/pricing']);
@@ -574,6 +581,25 @@ describe('pkg ops-cost-net: capacity report schedule', { skip: !CURL }, () => {
     expect(ran.writes).toEqual([]);
     expect(ran.result.outputs.reportScheduleId).toBe('sch-0');
   });
+
+  it('matches a schedule whose resourceId is a single id, and not one whose id only contains it (regression)', async () => {
+    const single = await run(files, routes([{ id: 'sch-0', reportScheduleType: 'MONTHLY', dayOfTheMonth: 1, resourceId: 'res-1' }]), settings({ dryRun: false }));
+    expect(single.writes).toEqual([]);
+    expect(single.result.outputs.reportScheduleId).toBe('sch-0');
+    const longer = await run(files, routes([{ id: 'sch-0', reportScheduleType: 'MONTHLY', dayOfTheMonth: 1, resourceId: 'res-10' }]), settings({ dryRun: false }));
+    expect(longer.writes).toEqual(['POST /suite-api/api/reportdefinitions/rd-1/schedules']);
+  });
+
+  it('refuses a schedule list or a report list it does not recognise, rather than read it as empty (regression)', async () => {
+    const oddSchedules = routes().map((r) => (r.path === '^/suite-api/api/reportdefinitions/rd-1/schedules$' && r.method === 'GET' ? { ...r, body: { schedules: [{ id: 'sch-0', reportScheduleType: 'MONTHLY', dayOfTheMonth: 1, resourceId: ['res-1'] }] } } : r));
+    const a = await run(files, oddSchedules, settings({ dryRun: false }));
+    expect(a.result.error ?? '').toContain('returned no reportSchedules list');
+    expect(a.writes).toEqual([]);
+    const oddDefinitions = routes().map((r) => (r.path === '^/suite-api/api/reportdefinitions\\?' ? { ...r, body: { definitions: [] } } : r));
+    const b = await run(files, oddDefinitions, settings({ dryRun: false }));
+    expect(b.result.error ?? '').toContain('GET reportdefinitions returned no reportDefinitions');
+    expect(b.writes).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -758,6 +784,21 @@ describe('pkg ops-cost-net: log alert, 9.1 log management and the 8.18/9.0 appli
     expect(ran.result.outputs.objectId).toBe('al-1');
   });
 
+  it('refuses a saved-query or alert list it does not recognise, rather than read it as empty and create a duplicate (regression)', async () => {
+    const ran = await run(files, routes91({ items: [{ id: 'qc-9', name: 'ESXi storage path failure' }] }), (h) => ops(h, { dryRun: false }));
+    expect(ran.result.error ?? '').toContain('GET /suite-api/api/logs/queryconfigs returned no list this workflow recognises');
+    expect(ran.writes).toEqual([]);
+    const oddAlerts = routesAppliance().map((r) => (r.method === 'GET' && r.path === '^/api/v1/alerts$' ? { ...r, body: { data: [{ id: 'al-0', name: 'ESXi storage path failure' }] } } : r));
+    const appl = await run(files, oddAlerts, appliance({ dryRun: false }));
+    expect(appl.result.error ?? '').toContain('GET /api/v1/alerts returned no list this workflow recognises');
+    expect(appl.writes).toEqual([]);
+    // The documented wrapper is still read.
+    const wrapped = routesAppliance().map((r) => (r.method === 'GET' && r.path === '^/api/v1/alerts$' ? { ...r, body: { alerts: [{ id: 'al-0', name: 'ESXi storage path failure' }] } } : r));
+    const left = await run(files, wrapped, appliance({ dryRun: false }));
+    expect(left.writes).toEqual([]);
+    expect(left.result.outputs.objectId).toBe('al-0');
+  });
+
   it('appliance: stops at the cap and at the first failure', async () => {
     const capped = await run(files, routesAppliance(), appliance({ dryRun: false, cap: 0 }));
     expect(capped.writes).toEqual([]);
@@ -782,6 +823,13 @@ describe('pkg ops-cost-net: audit trail', { skip: !CURL }, () => {
     expect(body.queryText).toEqual(['*']);
     expect(body.queryFilters.logQueryFiltersOperator).toBe('OR');
     expect(body.queryFilters.logQueryFilterConditions.map((c) => c.conditionValues[0])).toEqual(['svc-automation', 'svc-vcfops', 'svc-terraform']);
+  });
+
+  it('9.1: refuses a saved-query list it does not recognise (regression)', async () => {
+    const routes: FakeRoute[] = [...OPS_AUTH, { method: 'GET', path: '^/suite-api/api/logs/queryconfigs$', body: { results: [] } }, { method: 'POST', path: '^/suite-api/api/logs/queryconfigs$', body: { id: 'qc-2' } }];
+    const ran = await run(files, routes, (h) => ops(h, { dryRun: false }));
+    expect(ran.result.error ?? '').toContain('returned no list this workflow recognises');
+    expect(ran.writes).toEqual([]);
   });
 
   it('appliance: reads the last day per account and fails on a silent one', async () => {

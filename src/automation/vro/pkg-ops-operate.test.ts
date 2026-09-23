@@ -157,7 +157,8 @@ describe('ops-operate packages: built, importable, and within the repo rules', (
       const { spec } = pkgOf(build(id));
       const attrs = spec.configs[0]!.attributes;
       const secrets = attrs.filter((a) => a.type === 'SecureString');
-      expect(secrets.length).toBe(1);
+      // The password, and any webhook or audit URL (its path can be its secret).
+      expect(secrets.filter((a) => !/^(webhook|auditUrl)$/.test(a.name)).length).toBe(1);
       for (const s of secrets) expect(s.value === undefined || s.value === '').toBe(true);
       expect(attrs.some((a) => /password/i.test(a.name) && a.type !== 'SecureString')).toBe(false);
       const dry = attrs.find((a) => a.name === 'dryRun');
@@ -613,8 +614,33 @@ describe('ops-operate: audit report export', { skip: !CURL }, () => {
     expect(/^\d{4}-\d{2}-\d{2}$/.test(posted.exportedFor)).toBe(true);
     expect(server.requests().filter((r) => r.path.startsWith('/suite-api/') && !isAuth(r)).map(call)).toEqual(['GET /suite-api/api/audit/system']);
     const down = new VroEmulator(files, { config: { [p.configKey]: { opsHost: host, opsUsername: 'r', opsPassword: PASSWORD, auditUrl: `https://${host}/sink/down` } } }).runWorkflow(p.workflow);
-    expect(down.error ?? '').toContain('/sink/down returned HTTP 503');
+    expect(down.error ?? '').toContain(`Posting the audit report to https://${host} failed`);
+    expect(down.error ?? '').toContain('returned HTTP 503');
     expect(/do-not-log/.test(logText(ok) + logText(down))).toBe(false);
+  });
+
+  it('never logs, outputs or throws the path of auditUrl, which can carry its secret (regression)', async () => {
+    const server = await startFakeServer([
+      ...AUTH_ROUTES,
+      { method: 'GET', path: '^/suite-api/api/audit/system$', body: report },
+      { method: 'POST', path: '^/services/T0001/B0002/', status: 500, body: { message: 'boom' } },
+      { method: 'POST', path: '^/services/T0003/B0004/', body: {} },
+    ]);
+    servers.push(server);
+    const host = `127.0.0.1:${server.port}`;
+    const files = build('vcfops_audit');
+    const p = pkgOf(files);
+    const attr = p.spec.configs[0]!.attributes.find((a) => a.name === 'auditUrl');
+    expect(attr?.type).toBe('SecureString');
+    expect(attr?.value).toBe(undefined);
+    const runWith = (auditUrl: string) => new VroEmulator(files, { config: { [p.configKey]: { opsHost: host, opsUsername: 'r', opsPassword: PASSWORD, auditUrl } } }).runWorkflow(p.workflow);
+    const ok = runWith(`https://${host}/services/T0003/B0004/ok-path-token-do-not-log?sig=query-do-not-log`);
+    expect(ok.error).toBe(null);
+    expect(JSON.parse(String(ok.outputs.summary)).summary.sentTo).toBe(`https://${host}`);
+    expect(ok.logs.some((l) => l.message === `Audit report for ${JSON.parse(String(ok.outputs.summary)).summary.exportedFor} posted to https://${host}`)).toBe(true);
+    const failed = runWith(`https://${host}/services/T0001/B0002/failing-path-token-do-not-log`);
+    expect(failed.error ?? '').toContain(`Posting the audit report to https://${host} failed`);
+    expect(/do-not-log|T0001|T0003/.test(logText(ok) + logText(failed))).toBe(false);
   });
 });
 

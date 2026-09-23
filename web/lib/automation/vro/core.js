@@ -115,7 +115,7 @@ return out;`,
 const http               = {
   name: 'http',
   description:
-    'One REST call through a transient REST host. Returns { statusCode, body (parsed JSON, or the text), text }. Throws on a status outside 200-299 (and options.allow) with the method, the URL without its query, the status and the start of the response; never a header or the request body, and the value of every header sent (and of its last word, the token of "Bearer x") is scrubbed from the error. options: contentType, accept, allow (array of statuses to return rather than throw), redact (more strings to scrub, e.g. settings._secrets), timeout (seconds, default 60). The endpoint certificate must be trusted in Orchestrator (SSL Trust Manager).',
+    'One REST call through a transient REST host. Returns { statusCode, body (parsed JSON, or the text), text }. Throws on a status outside 200-299 (and options.allow) with the method, the URL without its query, the status and the start of the response; never a header or the request body, and the value of every header sent (and of its last word, the token of "Bearer x") is scrubbed from the error. options: contentType, accept, allow (array of statuses to return rather than throw), redact (more strings to scrub, from the URL in the error too, e.g. settings._secrets or a webhook path), timeout (seconds, default 60). The endpoint certificate must be trusted in Orchestrator (SSL Trust Manager).',
   resultType: 'Any',
   params: [
     p('method', 'string', 'GET, POST, PUT, PATCH or DELETE'),
@@ -147,6 +147,7 @@ if (!match) throw new Error("http: not an absolute URL: " + scrub(String(url).sp
 var base = match[1];
 var path = match[2] || "/";
 var where = String(method) + " " + base + path.split("?")[0];
+for (var r = 0; r < extra.length; r++) if (extra[r] && String(extra[r]) !== "/") where = where.split(String(extra[r])).join("****");
 var content = null;
 if (body !== null && body !== undefined) content = typeof body === "string" ? body : JSON.stringify(body);
 var host = RESTHostManager.createHost("archtoolkit");
@@ -410,16 +411,28 @@ return { "Authorization": "Bearer " + r.body.access_token };`,
 const pageAll               = {
   name: 'pageAll',
   description:
-    'Every page of a list. fetchPage(pageIndex) returns { items: [...], total: <number or null>, more: <boolean or null> }. Stops at an empty page, at more === false, or when total items are in hand. Throws rather than return a partial list: when a page fails, when total is not reached, or past maxPages (default 10000).',
+    'Every page of a list. fetchPage(pageIndex) returns { items: [...], total: <number or null>, more: <boolean or null> }. Stops at an empty page, at more === false, or when total items are in hand. Throws rather than return a partial or repeated list: when a page fails, when total is not reached, when a page starts with the same item (same id, or same JSON) as the page before, or past maxPages (default 10000).',
   resultType: 'Any',
   params: [p('fetchPage', 'Any', 'function (pageIndex) returning { items, total, more }'), p('maxPages', 'number', 'Refuse to read more pages than this; 0 or empty for 10000')],
   script: String.raw`var limit = maxPages && maxPages > 0 ? maxPages : 10000;
 var all = [];
 var total = null;
+var previousFirst = null;
+// A page's first item, by its id when it has one: the same first item on two
+// pages in a row is an endpoint ignoring the page parameter, not more items.
+function firstOf(list) {
+  if (!list.length) return null;
+  var head = list[0];
+  if (head && typeof head === "object" && head.id !== undefined && head.id !== null) return "id:" + String(head.id);
+  return "json:" + JSON.stringify(head);
+}
 for (var page = 0; page < limit; page++) {
   var result = fetchPage(page) || {};
   var items = result.items || [];
   if (result.total !== null && result.total !== undefined) total = Number(result.total);
+  var first = firstOf(items);
+  if (first !== null && first === previousFirst) throw new Error("Page " + page + " starts with the same item as page " + (page - 1) + " (after " + all.length + " items): the endpoint is not paging; refusing to act on a repeated list.");
+  previousFirst = first;
   for (var i = 0; i < items.length; i++) all.push(items[i]);
   if (items.length === 0 || result.more === false || (total !== null && all.length >= total)) {
     if (total !== null && all.length < total) throw new Error("Paging stopped at " + all.length + " of " + total + " items; refusing to act on a partial list.");
@@ -501,16 +514,24 @@ return JSON.stringify(record);`,
 
 const notify               = {
   name: 'notify',
-  description: 'POST a JSON payload to a webhook. Returns false and warns (never throws) when the URL is empty or the post fails: a report is not lost because its notification was.',
+  description:
+    'POST a JSON payload to a webhook. Returns false and warns (never throws) when the URL is empty or the post fails: a report is not lost because its notification was. A Slack, Teams or Google Chat webhook carries its secret in the path, so the whole URL, its path and its query are redacted and a failure names only the host. Keep the URL in a SecureString attribute.',
   resultType: 'boolean',
   params: [p('webhookUrl', 'string', 'Webhook URL, or empty for none'), p('payload', 'Any', 'Object or JSON string')],
   script: String.raw`if (!webhookUrl) return false;
+var url = String(webhookUrl);
+var parts = /^(https?:\/\/[^\/?#]+)([^#]*)/.exec(url);
+var host = parts ? parts[1] : "the webhook";
+var path = parts ? parts[2] : "";
+var hidden = [url, path, path.split("?")[0], path.split("?")[1] || ""];
 try {
   var body = typeof payload === "string" ? payload : JSON.stringify(payload);
-  System.getModule("com.archtoolkit.core").http("POST", String(webhookUrl), null, body, { redact: [String(webhookUrl).split("?")[1] || ""] });
+  System.getModule("com.archtoolkit.core").http("POST", url, null, body, { redact: hidden });
   return true;
 } catch (e) {
-  System.warn("Webhook post failed: " + String(e).split("?")[0]);
+  var reason = String(e && e.message ? e.message : e);
+  for (var i = 0; i < hidden.length; i++) if (hidden[i] && hidden[i] !== "/") reason = reason.split(hidden[i]).join("****");
+  System.warn("Webhook post to " + host + " failed: " + reason);
   return false;
 }`,
 };

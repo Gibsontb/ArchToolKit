@@ -150,6 +150,7 @@ export function toPackage(spec                       )                    {
   for (const [path, body] of Object.entries(inner)) files[`${dir}/${path}`] = body;
 
   const secrets = spec.config.attributes.filter((a) => a.type === 'SecureString').map((a) => a.name);
+  const urlSecrets = secrets.filter((name) => /webhook|url$|endpoint/i.test(name));
   const id = workflowId(workflow);
   const hasDryRun = spec.workflow.inputs.some((input) => input.name === 'dryRun');
   const contents = Object.keys(files).filter((path) => path.startsWith(`${dir}/`) || path.startsWith(`${CORE_PACKAGE_DIR}/`));
@@ -179,6 +180,12 @@ export function toPackage(spec                       )                    {
       heading: 'Fill the settings',
       lines: [
         `Assets → Configurations → ${category} → **${spec.config.name}**. Set the hosts and accounts${secrets.length > 0 ? `, and type the secrets into ${secrets.map((s) => `**${s}**`).join(', ')} (SecureString: empty in the package, stored encrypted by Orchestrator, never logged by the workflow)` : ''}.`,
+        ...(urlSecrets.length > 0
+          ? [
+              '',
+              `${urlSecrets.map((s) => `**${s}**`).join(', ')} ${urlSecrets.length > 1 ? 'are URLs, kept as SecureStrings' : 'is a URL, kept as a SecureString'}: a Slack, Teams or Google Chat webhook carries its secret in the path, so the URL is the credential. It is empty after import; type the URL you mean to use (left empty, nothing is posted), and the workflow logs only its host.`,
+            ]
+          : []),
         ...(hasDryRun ? ['', 'dryRun is on in the configuration element. It is the arming switch: nothing changes until it is set to false, and the workflow input dryRun can only make a run safer, never arm it. cap is the most changes one run may make.'] : []),
       ],
     },

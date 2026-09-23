@@ -457,6 +457,28 @@ describe('pkg ops-build: the report, imported and scheduled', { skip: !CURL || !
     expect(result.outputs.scheduleId).toBe('sch-old');
   });
 
+  it('matches an existing schedule whose resourceId is a single id, not a list (regression)', async () => {
+    const { result, requests } = await run(pkg, reportRoutes([{ id: 'sch-old', resourceId: 'res-1' }]), settings({ dryRun: false }));
+    expect(result.error).toBe(null);
+    expect(writesOf(requests).filter((w) => w.includes('/schedules'))).toEqual([]);
+    expect(result.outputs.scheduleId).toBe('sch-old');
+  });
+
+  it('refuses a schedule list or an object list it does not recognise, rather than read it as empty (regression)', async () => {
+    const oddSchedules = reportRoutes().map((r) => (r.method === 'GET' && r.path === '^/suite-api/api/reportdefinitions/rd-1/schedules$' ? { ...r, body: { items: [{ id: 'sch-old', resourceId: ['res-1'] }] } } : r));
+    const a = await run(pkg, oddSchedules, settings({ dryRun: false }));
+    expect(a.result.error ?? '').toContain('schedules returned no list this workflow recognises');
+    expect(writesOf(a.requests).filter((w) => w.includes('/schedules'))).toEqual([]);
+    // A bare array is taken as the list.
+    const bare = reportRoutes().map((r) => (r.method === 'GET' && r.path === '^/suite-api/api/reportdefinitions/rd-1/schedules$' ? { ...r, body: [{ id: 'sch-old', resourceId: ['res-1'] }] } : r));
+    const c = await run(pkg, bare, settings({ dryRun: false }));
+    expect(c.result.outputs.scheduleId).toBe('sch-old');
+    const oddObjects = [{ method: 'GET', path: '^/suite-api/api/resources\\?', body: { resources: [] } }, ...reportRoutes()];
+    const b = await run(pkg, oddObjects, settings({ dryRun: false }));
+    expect(b.result.error ?? '').toContain('returned no resourceList');
+    expect(writesOf(b.requests)).toEqual([]);
+  });
+
   it('stops at the cap after the import, before the schedule', async () => {
     const { result, requests } = await run(pkg, reportRoutes(), settings({ dryRun: false, cap: 1 }));
     expect(result.error ?? '').toContain('Cap reached: 1 change(s) made, the cap is 1; stopping before: schedule the report');

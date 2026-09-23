@@ -470,6 +470,13 @@ describe('vro: the alert definition, as an Orchestrator package', { skip: !CURL 
     expect(result.error ?? '').toContain('Paging stopped at 1 of 5 items');
   });
 
+  it('refuses a list answer with neither its key nor pageInfo, rather than reading it as empty (regression)', async () => {
+    const routes = opsRoutes().map((r) => (r.path === '^/suite-api/api/symptomdefinitions\\?' ? { method: 'GET', path: r.path, body: { unexpected: [] } } : r));
+    const { result, writes } = await runOps({ dryRun: false }, {}, routes);
+    expect(writes).toEqual([]);
+    expect(result.error ?? '').toContain('returned no symptomDefinitions');
+  });
+
   it('without a recommendation, creates three objects and no recommendation reference', async () => {
     const noRec = build('vcfops_alert_definition', { recommendation: '' });
     const dir = Object.keys(packagesIn(noRec)).find((d) => d !== 'com.archtoolkit.core.package')!;
@@ -482,5 +489,95 @@ describe('vro: the alert definition, as an Orchestrator package', { skip: !CURL 
     const posts = server.requests().filter((r) => r.method === 'POST' && !r.path.includes('/auth/'));
     expect(posts.map((r) => r.path)).toEqual(['/suite-api/api/symptomdefinitions', '/suite-api/api/symptomdefinitions', '/suite-api/api/alertdefinitions']);
     expect(posts[2]!.body.includes('recommendation')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('vro: the core library guards', { skip: !CURL }, () => {
+  const files = build('tags_compliance');
+  const servers: FakeServer[] = [];
+  after(() => servers.forEach((s) => s.stop()));
+  const core = (emulator: VroEmulator) => emulator.module('com.archtoolkit.core') as Record<string, (...args: unknown[]) => unknown>;
+
+  it('notify: a failed post names only the webhook host, never its path or query (regression)', async () => {
+    const server = await startFakeServer([
+      { method: 'POST', path: '^/services/T0001/', status: 500, body: { error: 'boom' } },
+      { method: 'POST', path: '^/services/T0002/', body: {} },
+    ]);
+    servers.push(server);
+    const host = `127.0.0.1:${server.port}`;
+    const emulator = new VroEmulator(files);
+    const failed = core(emulator).notify!(`https://${host}/services/T0001/B0002/path-token-do-not-log?key=query-do-not-log`, { a: 1 });
+    expect(failed).toBe(false);
+    const ok = core(emulator).notify!(`https://${host}/services/T0002/B0003/path-token-do-not-log`, '{"a":1}');
+    expect(ok).toBe(true);
+    // Nothing listens here: the connection error names the URL too.
+    const refused = core(emulator).notify!('https://127.0.0.1:1/services/T0004/refused-token-do-not-log', { a: 1 });
+    expect(refused).toBe(false);
+    const text = emulator.logs.map((l) => l.message).join('\n');
+    expect(text).toContain(`Webhook post to https://${host} failed`);
+    expect(text).toContain('Webhook post to https://127.0.0.1:1 failed');
+    expect(/do-not-log|T0001|T0004|\/services\//.test(text)).toBe(false);
+    expect(server.requests().map((r) => r.path.split('?')[0])).toEqual(['/services/T0001/B0002/path-token-do-not-log', '/services/T0002/B0003/path-token-do-not-log']);
+  });
+
+  it('http: options.redact scrubs the URL in the error as well as the response', async () => {
+    const server = await startFakeServer([{ method: 'GET', path: '^/x/', status: 403, body: { echo: '/x/secret-segment' } }]);
+    servers.push(server);
+    const emulator = new VroEmulator(files);
+    expect(() => core(emulator).http!('GET', `https://127.0.0.1:${server.port}/x/secret-segment`, null, null, { redact: ['/x/secret-segment'] })).toThrow(/GET https:\/\/127\.0\.0\.1:\d+\*\*\*\* returned HTTP 403/);
+    try {
+      core(emulator).http!('GET', `https://127.0.0.1:${server.port}/x/secret-segment`, null, null, { redact: ['/x/secret-segment'] });
+    } catch (e) {
+      expect(String(e)).not.toContain('secret-segment');
+    }
+  });
+
+  it('pageAll: refuses a page that starts with the same item as the page before, rather than loop (regression)', () => {
+    const emulator = new VroEmulator(files);
+    const pageAll = core(emulator).pageAll!;
+    // An endpoint that ignores the page parameter: the same page for ever, no total.
+    let calls = 0;
+    expect(() =>
+      pageAll(() => {
+        calls++;
+        return { items: [{ id: 'a' }, { id: 'b' }], total: null, more: null };
+      }, 0),
+    ).toThrow(/Page 1 starts with the same item as page 0 \(after 2 items\)/);
+    expect(calls).toBe(2);
+    // Items without ids compare by their JSON.
+    expect(() => pageAll(() => ({ items: ['x', 'y'], total: null, more: null }), 0)).toThrow(/same item/);
+    // Real pages still read whole, and a single page with more === false stops.
+    const pages = [[{ id: 1 }, { id: 2 }], [{ id: 3 }], []];
+    // (JSON: the list is made in the scripts' own context.)
+    expect(JSON.stringify(pageAll((page: number) => ({ items: pages[page], total: null, more: null }), 0))).toBe('[{"id":1},{"id":2},{"id":3}]');
+    expect(JSON.stringify(pageAll(() => ({ items: [{ id: 1 }], total: null, more: false }), 0))).toBe('[{"id":1}]');
+  });
+});
+
+describe('vro: webhook URLs are secrets in every automation', () => {
+  it('every webhook-like attribute is a SecureString with no value, and IMPORT.md says to fill it (regression)', async () => {
+    const { AUTOMATIONS } = await import('../blueprints/index.ts');
+    const WEBHOOKISH = /webhook|auditurl|^endpoint$/i;
+    const problems: string[] = [];
+    let seen = 0;
+    for (const blueprint of AUTOMATIONS) {
+      const files = blueprint.build(defaultValues(blueprint), blueprint.id).files;
+      for (const [dir, pkg] of Object.entries(packagesIn(files))) {
+        if (dir === 'com.archtoolkit.core.package') continue;
+        for (const config of readPackageSpec(pkg).configs) {
+          for (const a of config.attributes) {
+            if (!WEBHOOKISH.test(a.name)) continue;
+            seen++;
+            if (a.type !== 'SecureString') problems.push(`${blueprint.id}: ${a.name} is ${a.type}`);
+            if (a.value !== undefined) problems.push(`${blueprint.id}: ${a.name} carries a value`);
+            if (!(files['IMPORT.md'] ?? '').includes(`**${a.name}**`)) problems.push(`${blueprint.id}: IMPORT.md does not name ${a.name}`);
+          }
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    expect(seen).toBeGreaterThan(50);
   });
 });

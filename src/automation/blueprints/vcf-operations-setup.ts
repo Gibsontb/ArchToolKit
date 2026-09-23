@@ -111,13 +111,35 @@ if (found) {
   }
 }`;
 
-/** Outbound plugin: created once, by name; a new one is tested, and enabled only when the test passed. */
+/**
+ * Outbound plugin: created once, by name; a new one is tested, and enabled only
+ * when the test passed. One that exists but is disabled (enabled false in GET
+ * alertplugins) is tested and enabled the same way when testAndEnable is on.
+ */
 const OUTBOUND_BODY = String.raw`var plugin = JSON.parse(core.resource(RESOURCE_PATH, "plugin.json"));
 var existing = named(listAll("alertplugins?pluginTypeId=" + q(plugin.pluginTypeId), "notificationPluginInstances"), plugin.name);
+var testAndEnable = settings.testAndEnable === true || String(settings.testAndEnable) === "true";
 var pluginRef = null;
+function testThenEnable(ref) {
+  core.act(ctx, "test outbound instance \"" + plugin.name + "\"", function () {
+    return ops("POST", "alertplugins/" + q(ref) + "/test", null, null, null).statusCode;
+  });
+  core.act(ctx, "enable outbound instance \"" + plugin.name + "\"", function () {
+    return ops("PUT", "alertplugins/" + q(ref) + "/enable/true", null, null, null).statusCode;
+  });
+}
 if (existing) {
   pluginRef = String(existing.pluginId);
-  System.log("Exists, left as it is: outbound instance \"" + plugin.name + "\" (" + pluginRef + ")");
+  // VERIFY on your release: the instance's enabled flag in GET alertplugins. Without one, it is left as it is.
+  var disabled = existing.enabled === false || String(existing.enabled) === "false";
+  if (disabled && testAndEnable) {
+    System.log("Exists but is disabled: outbound instance \"" + plugin.name + "\" (" + pluginRef + "); testing it, and enabling it only when the test passes.");
+    testThenEnable(pluginRef);
+  } else if (disabled) {
+    System.log("Exists, left as it is (disabled): outbound instance \"" + plugin.name + "\" (" + pluginRef + "). Test and enable it by hand, or set testAndEnable to true.");
+  } else {
+    System.log("Exists, left as it is: outbound instance \"" + plugin.name + "\" (" + pluginRef + ")");
+  }
 } else {
   pluginRef = core.act(ctx, "create outbound instance \"" + plugin.name + "\"", function () {
     var r = ops("POST", "alertplugins", plugin, null, null);
@@ -125,13 +147,8 @@ if (existing) {
     if (!made) throw new Error("POST alertplugins returned no pluginId.");
     return String(made);
   });
-  if (settings.testAndEnable === true || String(settings.testAndEnable) === "true") {
-    core.act(ctx, "test outbound instance \"" + plugin.name + "\"", function () {
-      return ops("POST", "alertplugins/" + q(pluginRef) + "/test", null, null, null).statusCode;
-    });
-    core.act(ctx, "enable outbound instance \"" + plugin.name + "\"", function () {
-      return ops("PUT", "alertplugins/" + q(pluginRef) + "/enable/true", null, null, null).statusCode;
-    });
+  if (testAndEnable) {
+    testThenEnable(pluginRef);
   } else {
     System.log("Left disabled: test it (POST alertplugins/{id}/test, or Test in the interface) and enable it by hand.");
   }

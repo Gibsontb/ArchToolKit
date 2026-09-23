@@ -56,6 +56,8 @@ function built(id: string, overrides: BlueprintValues = {}): Built {
   return { files, dir, spec, workflow: spec.workflows[0]!.name, configKey: `${spec.configs[0]!.categoryPath}/${spec.configs[0]!.name}` };
 }
 
+// Webhook URLs are SecureStrings too (a webhook's path can be its secret); vro.test.ts checks them for every automation.
+const URL_SECRET = /^(webhook|backupWebhook|auditUrl|endpoint)$/;
 /** The package builds and parses, every script is ES5, secrets are empty SecureStrings, IMPORT.md names it. */
 function checkPackage(b: Built, prefix: string, secrets: readonly string[]): void {
   expect(b.spec.name.startsWith(prefix)).toBe(true);
@@ -71,7 +73,7 @@ function checkPackage(b: Built, prefix: string, secrets: readonly string[]): voi
   }
   expect(problems).toEqual([]);
   const attributes = b.spec.configs[0]!.attributes;
-  expect(attributes.filter((a) => a.type === 'SecureString').map((a) => a.name).sort()).toEqual([...secrets].sort());
+  expect(attributes.filter((a) => a.type === 'SecureString' && !URL_SECRET.test(a.name)).map((a) => a.name).sort()).toEqual([...secrets].sort());
   for (const a of attributes.filter((x) => x.type === 'SecureString')) expect(a.value === undefined || a.value === '').toBe(true);
   expect(b.files['IMPORT.md']!.includes(`import/${b.dir}`)).toBe(true);
   expect(b.files['IMPORT.md']!.startsWith('# Importing this into ')).toBe(true);

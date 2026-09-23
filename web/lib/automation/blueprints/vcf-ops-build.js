@@ -357,7 +357,7 @@ function contentAttributes(cap        , extra                                   
     ...extra,
     { name: 'dryRun', type: 'boolean'         , value: true, description: 'The arming switch: nothing is imported while this is true' },
     { name: 'cap', type: 'number'         , value: cap, description: 'The most changes one run may make' },
-    { name: 'webhook', type: 'string'         , value: '', description: 'Optional: where the audit record is posted' },
+    { name: 'webhook', type: 'SecureString'         , description: 'Optional: where the audit record is posted' },
   ];
 }
 
@@ -1277,10 +1277,14 @@ var KIND = ${JSON.stringify(kind)};
 var ctx = core.begin(settings, dryRun);
 ${OPS_LOGIN}
 var api = "https://" + settings.opsHost + "/suite-api/api/";
+// Every page is read; a list that cannot be read whole is an error, never an
+// empty list (acting on "nothing exists" would create duplicates).
 function listAll(path, key) {
   return core.pageAll(function (page) {
-    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body || {};
-    return { items: r[key] || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body;
+    if (!r || typeof r !== "object" || (!r.hasOwnProperty(key) && !r.pageInfo)) throw new Error("GET " + path.split("?")[0] + " returned no " + key + " (VERIFY the response shape on your release); refusing to go on with an empty list.");
+    var total = r.pageInfo && r.pageInfo.totalCount !== undefined && r.pageInfo.totalCount !== null ? r.pageInfo.totalCount : null;
+    return { items: r[key] || [], total: total, more: r.pageInfo ? null : false };
   }, 0);
 }
 var result = null;
@@ -1323,11 +1327,20 @@ try {
     core.act(ctx, "schedule the report \"" + REPORT_NAME + "\" for " + resourceId + " once it is imported", function () { return null; });
   } else {
     var defId = String(same[0].id);
-    var listed = core.http("GET", api + "reportdefinitions/" + defId + "/schedules", auth, null, SAFE).body || {};
-    var existing = listed.reportSchedules || listed.schedules || listed.reportSchedule || [];
+    var listed = core.http("GET", api + "reportdefinitions/" + defId + "/schedules", auth, null, SAFE).body;
+    var existing = null;
+    if (listed && typeof listed === "object") {
+      var wrappers = [listed, listed.reportSchedules, listed.schedules, listed.reportSchedule];
+      for (var w = 0; w < wrappers.length && existing === null; w++) if (wrappers[w] && typeof wrappers[w] === "object" && typeof wrappers[w] !== "string" && wrappers[w].length !== undefined) existing = wrappers[w];
+    }
+    // An unrecognised shape is not "no schedules": reading it as one would add a second schedule.
+    if (existing === null) throw new Error("GET reportdefinitions/" + defId + "/schedules returned no list this workflow recognises (reportSchedules, schedules or reportSchedule); refusing to act on it. VERIFY the response shape on your release.");
     var mine = null;
     for (var s = 0; s < existing.length; s++) {
-      var on = existing[s].resourceId || [];
+      // resourceId is a list in the documented schedule, but take a single id too.
+      var on = existing[s].resourceId;
+      if (on === null || on === undefined) on = [];
+      else if (typeof on !== "object") on = [on];
       for (var o = 0; o < on.length; o++) if (String(on[o]) === resourceId) mine = existing[s];
     }
     if (mine) {
@@ -1819,7 +1832,7 @@ core.notify(settings.webhook, summary);`;
             { name: 'changeTicket', type: 'string', value: '', description: 'The change the install runs under; required to install' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is installed or created while this is true' },
             { name: 'cap', type: 'number', value: configure ? 2 : 1, description: 'The most changes one run may make' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: configure ? [{ name: 'account.json', content: `${JSON.stringify(account, null, 2)}\n` }] : [],
@@ -2175,7 +2188,7 @@ if (problems > 0 && String(settings.failOnProblems) !== "false") throw new Error
             ...(auth === 'basic' ? [{ name: 'sourceUser', type: 'string'         , value: '', description: 'The account the pack will use' }] : []),
             ...(auth === 'none' ? [] : [{ name: 'sourceSecret', type: 'SecureString'         , description: auth === 'bearer' ? 'The bearer token the pack will use' : 'Its password' }]),
             { name: 'failOnProblems', type: 'boolean', value: true, description: 'Fail the run when a query or field returns nothing' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' },
           ],
         },
         resources: [{ name: 'design.json', content: `${JSON.stringify(design, null, 2)}\n` }],
@@ -2463,7 +2476,7 @@ throw new Error("actOn is a template: write the change for one target in the act
           attributes: [
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
             { name: 'cap', type: 'number', value: 25, description: 'The most targets one run may act on' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
       });
@@ -2758,7 +2771,7 @@ return value ? { "x-hm-authorization": String(value) } : null;`,
             { name: 'hcxPassword', type: 'SecureString', description: 'Its password' },
             ...(checkMp ? OPS_ATTRIBUTES : []),
             { name: 'failOnProblems', type: 'boolean', value: true, description: 'Fail the run when something should stop a wave' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' },
           ],
         },
       });
@@ -2883,7 +2896,7 @@ function networksPackage(opts
     config: {
       name: 'Settings',
       description: `Settings of the ${opts.workflowName} workflow. Fill netPassword after import.`,
-      attributes: [...NET_ATTRIBUTES, ...(opts.extra ?? []), { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' }],
+      attributes: [...NET_ATTRIBUTES, ...(opts.extra ?? []), { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' }],
     },
     resources: opts.resources,
   });

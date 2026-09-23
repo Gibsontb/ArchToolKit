@@ -722,6 +722,21 @@ describe('pkg fleet-tags: tags_cleanup', { skip: !CURL }, () => {
     expect(exported[0]!.tags.length).toBe(6);
   });
 
+  it('dry run: the category re-check counts tags it planned to delete as gone, as a live run would find them (regression)', async () => {
+    // The category's re-check lists a tag this run plans to delete (t-old): a
+    // live run deletes the tag first, so the category is still planned.
+    const withTag = (): FakeRoute[] => [{ method: 'POST', path: '^/api/cis/tagging/tag\\?action=list-tags-for-category$', body: ['t-old'] }, ...routes()()];
+    const dry = await runPkg(p, withTag, (h) => vcSettings(h));
+    expect(dry.result.error).toBe(null);
+    expect(writes(dry.requests)).toEqual([]);
+    const log = csvRows(String(dry.result.outputs.cleanupLogCsv)).slice(1).map((r) => `${r[4]} ${r[5]}`);
+    expect(log).toEqual(['t-Prod planned', 't-old planned', 'c-empty planned']);
+    // A tag it does not plan to delete still refuses the category, dry or live.
+    const withOther = (): FakeRoute[] => [{ method: 'POST', path: '^/api/cis/tagging/tag\\?action=list-tags-for-category$', body: ['t-new'] }, ...routes()()];
+    const other = await runPkg(p, withOther, (h) => vcSettings(h));
+    expect(csvRows(String(other.result.outputs.cleanupLogCsv)).slice(1).map((r) => `${r[4]} ${r[5]}`)).toEqual(['t-Prod planned', 't-old planned', 'c-empty refused: has 1 tag(s) now']);
+  });
+
   it('armed without a change ticket: refuses before reading anything', async () => {
     const { result, requests } = await runPkg(p, routes(), (h) => vcSettings(h, { dryRun: false }));
     expect(requests.length).toBe(0);
@@ -807,9 +822,87 @@ describe('pkg fleet-tags: fleet_password_rotation', { skip: !CURL }, () => {
     expect(many.result.error ?? '').toContain('2 accounts is more than maxResources (1)');
     const capped = await runPkg(p, routes(), (h) => sddcSettings(h, { dryRun: false, cap: 0 }));
     expect(writes(capped.requests)).toEqual([]);
-    expect(capped.result.error ?? '').toContain('Cap reached');
+    expect(capped.result.error ?? '').toContain('the cap allows 0 more change(s) (cap 0)');
     const failing = await runPkg(p, routes([{ method: 'GET', path: '^/v1/credentials/tasks/ct-1$', body: { status: 'FAILED' } }]), (h) => sddcSettings(h, { dryRun: false }));
     expect(failing.result.error ?? '').toContain('Credential task ct-1 failed');
+  });
+});
+
+describe('pkg fleet-tags: fleet_password_rotation, the cap and the credential tasks', { skip: !CURL }, () => {
+  const p = pkg('fleet_password_rotation', { domains: 'wld-01', usernames: 'root', max_resources: 2 });
+  const cred = (resourceName: string, domainName: string, username = 'root') => ({ credentialType: 'SSH', username, resource: { resourceName, resourceType: 'ESXI', domainName } });
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600000).toISOString();
+  const routes = (credentialTasks: unknown[], credentials: FakeRoute = at('GET', '/v1/credentials?resourceType=ESXI&accountType=USER', { elements: [cred('esx1', 'wld-01'), cred('esx2', 'wld-01'), cred('esx9', 'wld-02')] })) => () =>
+    sddcBase([
+      at('GET', '/v1/credentials/tasks', { elements: credentialTasks }),
+      credentials,
+      { method: 'PATCH', path: '^/v1/credentials$', body: { id: 'ct-1' } },
+      at('GET', '/v1/credentials/tasks/ct-1', { status: 'SUCCESSFUL' }),
+    ]);
+
+  it('the cap counts accounts: one PATCH for 2 accounts is refused under a cap of 1, before anything is sent (regression)', async () => {
+    const pkgCap = p.spec.configs[0]!.attributes.find((a) => a.name === 'cap');
+    expect(pkgCap?.value).toBe(2);
+    const refused = await runPkg(p, routes([]), (h) => sddcSettings(h, { dryRun: false, cap: 1 }));
+    expect(writes(refused.requests)).toEqual([]);
+    expect(refused.result.error ?? '').toContain('one PATCH /v1/credentials would change 2 account(s), and the cap allows 1 more change(s) (cap 1)');
+    const dry = await runPkg(p, routes([]), (h) => sddcSettings(h, { cap: 1 }));
+    expect(dry.result.error).toBe(null);
+    expect(dry.result.logs.some((l) => l.level === 'warn' && l.message.includes('A live run would refuse: 2 account(s) is more than the cap of 1'))).toBe(true);
+    const ok = await runPkg(p, routes([]), (h) => sddcSettings(h, { dryRun: false, cap: 2 }));
+    expect(writes(ok.requests)).toEqual(['PATCH /v1/credentials']);
+  });
+
+  it('an old FAILED credential task on other resources only warns; a recent one, a running one, or an old one on a selected resource refuses (regression)', async () => {
+    const sub = (name: string) => [{ resourceName: name, status: 'FAILED' }];
+    const old = await runPkg(p, routes([{ id: 'old-1', status: 'FAILED', creationTimestamp: hoursAgo(24 * 30), subTasks: sub('esx7') }]), (h) => sddcSettings(h, { dryRun: false }));
+    expect(old.result.error).toBe(null);
+    expect(writes(old.requests)).toEqual(['PATCH /v1/credentials']);
+    expect(old.result.logs.some((l) => l.level === 'warn' && l.message.startsWith('An older failed credential task (old-1'))).toBe(true);
+    const recent = await runPkg(p, routes([{ id: 'new-1', status: 'FAILED', creationTimestamp: hoursAgo(2), subTasks: sub('esx7') }]), (h) => sddcSettings(h, { dryRun: false }));
+    expect(writes(recent.requests)).toEqual([]);
+    expect(recent.result.error ?? '').toContain('1 failed credential task(s)');
+    const same = await runPkg(p, routes([{ id: 'old-2', status: 'FAILED', creationTimestamp: hoursAgo(24 * 30), subTasks: sub('ESX1') }]), (h) => sddcSettings(h, { dryRun: false }));
+    expect(writes(same.requests)).toEqual([]);
+    expect(same.result.error ?? '').toContain('1 failed credential task(s)');
+    // ...unless a later task on that resource succeeded (the remediation).
+    const remediated = await runPkg(p, routes([{ id: 'old-2', status: 'FAILED', creationTimestamp: hoursAgo(24 * 30), subTasks: sub('esx1') }, { id: 'fix-2', status: 'SUCCESSFUL', creationTimestamp: hoursAgo(24 * 29), subTasks: sub('esx1') }]), (h) => sddcSettings(h, { dryRun: false }));
+    expect(remediated.result.error).toBe(null);
+    expect(writes(remediated.requests)).toEqual(['PATCH /v1/credentials']);
+    const running = await runPkg(p, routes([{ id: 'run-1', status: 'IN_PROGRESS', creationTimestamp: hoursAgo(1) }]), (h) => sddcSettings(h, { dryRun: false }));
+    expect(writes(running.requests)).toEqual([]);
+    expect(running.result.error ?? '').toContain('1 credential task(s) in progress');
+  });
+
+  it('reads every page of /v1/credentials, and refuses a list shorter than pageMetadata promises (regression)', async () => {
+    const path = '^/v1/credentials\\?resourceType=ESXI&accountType=USER';
+    const paged: FakeRoute[] = [
+      { method: 'GET', path: `${path}&pageNumber=1&pageSize=2$`, body: { elements: [cred('esx2', 'wld-01')], pageMetadata: { pageNumber: 1, pageSize: 2, totalElements: 3, totalPages: 2 } } },
+      { method: 'GET', path: `${path}$`, body: { elements: [cred('esx1', 'wld-01'), cred('esx9', 'wld-02')], pageMetadata: { pageNumber: 0, pageSize: 2, totalElements: 3, totalPages: 2 } } },
+    ];
+    const all = await runPkg(p, () => [...paged, ...routes([])()], (h) => sddcSettings(h));
+    expect(all.result.error).toBe(null);
+    expect(JSON.parse(String(all.result.outputs.requestBody)).elements.map((e: { resourceName: string }) => e.resourceName)).toEqual(['esx1', 'esx2']);
+    // An SDDC Manager that ignores the page parameters: the same first page again.
+    const ignored: FakeRoute = { method: 'GET', path: `${path}`, body: { elements: [cred('esx1', 'wld-01'), cred('esx9', 'wld-02')], pageMetadata: { pageNumber: 0, pageSize: 2, totalElements: 3, totalPages: 2 } } };
+    const stuck = await runPkg(p, () => [ignored, ...routes([])()], (h) => sddcSettings(h, { dryRun: false }));
+    expect(writes(stuck.requests)).toEqual([]);
+    expect(stuck.result.error ?? '').toContain('starts with the same item');
+    // Fewer elements than pageMetadata promises (the next page is empty): refused, not read as the whole list.
+    const short = await runPkg(
+      p,
+      () => [
+        { method: 'GET', path: `${path}&pageNumber=1&pageSize=1$`, body: { elements: [], pageMetadata: { pageNumber: 1, pageSize: 1, totalElements: 3, totalPages: 3 } } },
+        { method: 'GET', path: `${path}$`, body: { elements: [cred('esx1', 'wld-01')], pageMetadata: { pageNumber: 0, pageSize: 1, totalElements: 3, totalPages: 3 } } },
+        ...routes([])(),
+      ],
+      (h) => sddcSettings(h, { dryRun: false }),
+    );
+    expect(writes(short.requests)).toEqual([]);
+    expect(short.result.error ?? '').toContain('Paging stopped at 1 of 3 items');
+    // And a list with no elements is not an empty list.
+    const odd = await runPkg(p, routes([], at('GET', '/v1/credentials?resourceType=ESXI&accountType=USER', { credentials: [] })), (h) => sddcSettings(h, { dryRun: false }));
+    expect(odd.result.error ?? '').toContain('GET /v1/credentials returned no elements list');
   });
 });
 
@@ -957,6 +1050,27 @@ describe('pkg fleet-tags: fleet_host_commission', { skip: !CURL }, () => {
     expect(writes(requests)).toEqual(['POST /v1/hosts/validations', 'POST /v1/hosts']);
     expect(requests.find((r) => r.method === 'POST' && r.path === '/v1/hosts')!.body).toBe(requests.find((r) => r.path === '/v1/hosts/validations')!.body);
     expect(result.outputs.commissionTaskId).toBe('task-h');
+  });
+
+  it('the cap counts hosts: one POST /v1/hosts for 3 hosts is refused under a cap of 2, before anything is sent (regression)', async () => {
+    expect(p.spec.configs[0]!.attributes.find((a) => a.name === 'cap')?.value).toBe(4);
+    const refused = await runPkg(p, routes(), (h) => settings(h, { dryRun: false, cap: 2 }));
+    expect(writes(refused.requests)).toEqual([]);
+    expect(refused.result.error ?? '').toContain('one POST /v1/hosts would commission 3 host(s), and the cap allows 2 more change(s) (cap 2)');
+    const dry = await runPkg(p, routes(), (h) => settings(h, { cap: 2 }));
+    expect(dry.result.error).toBe(null);
+    expect(dry.result.logs.some((l) => l.level === 'warn' && l.message.includes('A live run would refuse: 3 host(s) is more than the cap of 2'))).toBe(true);
+  });
+
+  it('reads every page of /v1/hosts, so a host on page two is not commissioned again (regression)', async () => {
+    const paged: FakeRoute[] = [
+      at('GET', '/v1/hosts?pageNumber=1&pageSize=1', { elements: [{ fqdn: 'esx06.example.com', status: 'ASSIGNED' }], pageMetadata: { pageNumber: 1, pageSize: 1, totalElements: 2, totalPages: 2 } }),
+      at('GET', '/v1/hosts', { elements: [{ fqdn: 'esx05.example.com', status: 'ASSIGNED' }], pageMetadata: { pageNumber: 0, pageSize: 1, totalElements: 2, totalPages: 2 } }),
+    ];
+    const { result, requests } = await runPkg(p, () => [...paged, ...routes()()], (h) => settings(h));
+    expect(result.error).toBe(null);
+    const spec = JSON.parse(requests.find((r) => r.path === '/v1/hosts/validations')!.body) as { fqdn: string }[];
+    expect(spec.map((h) => h.fqdn)).toEqual(['esx07.example.com', 'esx08.example.com']);
   });
 
   it('a failed validation commissions nothing; a missing password sends nothing at all', async () => {

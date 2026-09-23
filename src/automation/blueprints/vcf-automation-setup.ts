@@ -297,7 +297,7 @@ try {
   const listAll: VroActionDef = {
     name: 'listAll',
     description:
-      'Every item of a VCF Automation list, all pages, or an error — never a partial list. style "iaas": the IaaS API ($top, $skip, apiVersion; content and totalElements). style "page": the other services (page, size; content, totalElements, last). A plain array answer is taken as the whole list.',
+      'Every item of a VCF Automation list, all pages, or an error — never a partial list. style "iaas": the IaaS API ($top, $skip, apiVersion; content and totalElements). style "page": the other services (page, size; content, totalElements, last). A plain array answer is taken as the whole list; an answer that is neither an array nor has a content array is an error.',
     resultType: 'Any',
     params: [p('conn', 'Any', '{ host: "https://<host>", auth, safe, apiVersion }'), p('path', 'string', 'e.g. /iaas/api/zones'), p('style', 'string', 'iaas or page')],
     script: String.raw`var core = System.getModule("com.archtoolkit.core");
@@ -309,9 +309,10 @@ return core.pageAll(function (page) {
     : conn.host + path + sep + "page=" + page + "&size=" + SIZE;
   var body = core.http("GET", url, conn.auth, null, conn.safe).body;
   if (Object.prototype.toString.call(body) === "[object Array]") return { items: body, total: body.length, more: false };
-  body = body && typeof body === "object" ? body : {};
-  var items = body.content || [];
-  return { items: items, total: body.totalElements === undefined ? null : body.totalElements, more: body.last === true ? false : null };
+  // Neither an array nor a content list is an unrecognised answer, not an empty list:
+  // reading it as one would create duplicates.
+  if (!body || typeof body !== "object" || Object.prototype.toString.call(body.content) !== "[object Array]") throw new Error("GET " + String(path).split("?")[0] + " returned neither a list nor a content list (VERIFY the response shape on your release); refusing to go on with an empty list.");
+  return { items: body.content, total: body.totalElements === undefined ? null : body.totalElements, more: body.last === true ? false : null };
 }, 0);`,
   };
   const load: VroActionDef = {
@@ -527,7 +528,7 @@ function vcfaSettings(own: readonly VroConfigAttribute[], cap: number): VroConfi
     { name: 'payloadOverrides', type: 'string', value: '', description: 'Optional JSON, { "<resource name>": { "<field>": value } }, merged into the payloads before they are sent: for the values this package cannot look up' },
     { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
-    { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+    { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
   ];
 }
 

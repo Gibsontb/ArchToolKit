@@ -165,7 +165,7 @@ export function opsPackage(spec                )                    {
               { name: 'cap', type: 'number'         , value: spec.cap ?? 1, description: 'The most changes one run may make' },
             ]
           : []),
-        ...(spec.settings.some((a) => a.name === 'webhook') ? [] : [{ name: 'webhook', type: 'string'         , value: '', description: 'Optional: where the audit record is posted' }]),
+        ...(spec.settings.some((a) => a.name === 'webhook') ? [] : [{ name: 'webhook', type: 'SecureString'         , description: 'Optional: where the audit record is posted' }]),
       ],
     },
     ...(spec.resources ? { resources: spec.resources } : {}),
@@ -389,7 +389,11 @@ if (existing) {
 if (settings.sendSample === true || String(settings.sendSample) === "true") {
   if (!settings.endpoint) throw new Error("Set endpoint in the configuration element " + SETTINGS_NAME + " to send the sample.");
   var endpoint = String(settings.endpoint);
-  var where = endpoint.split("?")[0];
+  // endpoint is a SecureString (a webhook path can be its secret): only the host is logged.
+  var endpointParts = /^(https?:\/\/[^\/?#]+)([^#]*)/.exec(endpoint);
+  if (!endpointParts) throw new Error("endpoint is not an https:// URL.");
+  var where = endpointParts[1];
+  var SAMPLE_SAFE = { redact: settings._secrets.concat([endpoint, endpointParts[2], endpointParts[2].split("?")[0], endpointParts[2].split("?")[1] || ""]) };
   var sample = core.resource(RESOURCE_PATH, "sample.json");
   var headers = null;
   if (settings.receiverUsername) {
@@ -403,7 +407,7 @@ if (settings.sendSample === true || String(settings.sendSample) === "true") {
     if (open.result && open.result.length) throw new Error("Open incident " + open.result[0].number + " already has correlation_id " + corr + "; not creating a second. Close it to test again.");
   }
   core.act(ctx, "post the sample payload to " + where, function () {
-    return core.http("POST", endpoint, headers, sample, SAFE).statusCode;
+    return core.http("POST", endpoint, headers, sample, SAMPLE_SAFE).statusCode;
   });
 }`;
 
@@ -702,10 +706,14 @@ var api = "https://" + settings.opsHost + "/suite-api/api/";
 var auth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
 var SAFE = { redact: settings._secrets };
 
+// Every page is read; a list that cannot be read whole is an error, never an
+// empty list (acting on "nothing exists" would create duplicates).
 function listAll(path, key) {
   return core.pageAll(function (page) {
-    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body || {};
-    return { items: r[key] || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body;
+    if (!r || typeof r !== "object" || (!r.hasOwnProperty(key) && !r.pageInfo)) throw new Error("GET " + path.split("?")[0] + " returned no " + key + " (VERIFY the response shape on your release); refusing to go on with an empty list.");
+    var total = r.pageInfo && r.pageInfo.totalCount !== undefined && r.pageInfo.totalCount !== null ? r.pageInfo.totalCount : null;
+    return { items: r[key] || [], total: total, more: r.pageInfo ? null : false };
   }, 0);
 }
 function find(items, field, value) {
@@ -974,7 +982,7 @@ export const VCF_OPERATIONS_CONTENT                                 = [
             { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source for the account; empty for a local account' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
             { name: 'cap', type: 'number', value: hasRecommendation ? 4 : 3, description: 'The most objects one run may create' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [
@@ -1772,7 +1780,7 @@ core.notify(settings.webhook, summary);`,
           { name: 'definitionRegex', type: 'string', value: defRx, description: "Regular expression on the benchmark's compliance alert definition names. VERIFY it under Alerts > Alert Definitions" },
           { name: 'groupName', type: 'string', value: group, description: 'The custom group reported on' },
           { name: 'maxFailing', type: 'number', value: failOn, description: 'The run fails when more objects than this fail' },
-          { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the report is posted' },
+          { name: 'webhook', type: 'SecureString', description: 'Optional: where the report is posted' },
         ],
         body: COMPLIANCE_BODY,
         after: String.raw`failingCount = report.length;
@@ -1987,7 +1995,7 @@ if (failingCount > Number(settings.maxFailing)) throw new Error(failingCount + "
         outputs: [{ name: 'templateId', type: 'string', description: 'The payload template id, empty in a dry run' }],
         account: 'An account that may manage notification settings',
         settings: [
-          { name: 'endpoint', type: 'string', value: endpoint, description: 'The receiving endpoint, for the sample' },
+          { name: 'endpoint', type: 'SecureString', description: 'The receiving endpoint URL, for the sample (a webhook URL can be its own secret: type it after import)' },
           { name: 'sendSample', type: 'boolean', value: false, description: sn ? 'Post the sample: this CREATES AN INCIDENT' : 'Post the sample to the endpoint' },
           { name: 'receiverUsername', type: 'string', value: '', description: sn ? 'The ServiceNow integration user, for the sample' : 'Optional: a user for Basic authentication at the endpoint' },
           { name: 'receiverPassword', type: 'SecureString', description: 'Its password' },
@@ -2240,7 +2248,7 @@ core.notify(settings.webhook, summary);`,
         settings: [
           { name: 'environment', type: 'string', value: env, description: 'The environment name, recorded in the backup' },
           { name: 'includePolicies', type: 'boolean', value: policies, description: 'Also list the policies (the exports are zips, which only the script takes)' },
-          { name: 'webhook', type: 'string', value: '', description: 'Optional: where the backup JSON is posted — a receiver of your own that commits it' },
+          { name: 'webhook', type: 'SecureString', description: 'Optional: where the backup JSON is posted — a receiver of your own that commits it' },
         ],
         body: BACKUP_BODY,
         after: String.raw`backupJson = JSON.stringify(backup);
@@ -2393,7 +2401,7 @@ if (settings.webhook && !core.notify(settings.webhook, backupJson)) throw new Er
         settings: [
           { name: 'staleMinutes', type: 'number', value: stale, description: 'An adapter is stale after this many minutes without a collection' },
           { name: 'ignoreAdapters', type: 'Array/string', value: ignore, description: 'Adapter instances known to be off' },
-          { name: 'webhook', type: 'string', value: webhook, description: 'Where problems are posted: somewhere that is not VCF Operations' },
+          { name: 'webhook', type: 'SecureString', description: 'Where problems are posted: somewhere that is not VCF Operations' },
         ],
         body: HEALTH_BODY,
         after: String.raw`healthy = problems.length === 0;

@@ -115,10 +115,32 @@ var api = "https://" + settings.sddcHost;
 var auth = core.loginSddcManager(settings.sddcHost, settings.sddcUsername, settings.sddcPassword);
 function get(path) { return core.http("GET", api + path, auth, null, SAFE).body || {}; }
 function upper(s) { return String(s === undefined || s === null ? "" : s).toUpperCase(); }
+// Every element of a paged SDDC Manager list (/v1/tasks, /v1/hosts,
+// /v1/credentials...): the first page as SDDC Manager serves it, then
+// pageNumber/pageSize until pageMetadata.totalElements are in hand. An answer
+// with no elements list, or fewer elements than pageMetadata promises, is an
+// error: never a partial or empty list to act on.
+function getAll(path) {
+  var sep = path.indexOf("?") < 0 ? "?" : "&";
+  var firstNumber = 0;
+  var size = 0;
+  return core.pageAll(function (page) {
+    var b = get(page === 0 ? path : path + sep + "pageNumber=" + (firstNumber + page) + "&pageSize=" + size);
+    if (Object.prototype.toString.call(b.elements) !== "[object Array]") throw new Error("GET " + path.split("?")[0] + " returned no elements list (VERIFY the response shape on your release); refusing to go on with an empty list.");
+    var meta = b.pageMetadata && typeof b.pageMetadata === "object" ? b.pageMetadata : null;
+    if (page === 0) {
+      firstNumber = meta && meta.pageNumber !== undefined && meta.pageNumber !== null ? Number(meta.pageNumber) : 0;
+      size = meta && Number(meta.pageSize) > 0 ? Number(meta.pageSize) : b.elements.length;
+    }
+    var total = meta && meta.totalElements !== undefined && meta.totalElements !== null ? Number(meta.totalElements) : null;
+    var more = !meta ? false : meta.totalPages !== undefined && meta.totalPages !== null ? page + 1 < Number(meta.totalPages) : null;
+    return { items: b.elements, total: total, more: more };
+  }, 0);
+}
 // Nothing else running: rotating, commissioning or reconfiguring while an
 // upgrade or a domain operation is in flight is how a resource ends up locked.
 function busyGuard() {
-  var tasks = get("/v1/tasks").elements || [];
+  var tasks = getAll("/v1/tasks");
   var busy = 0;
   for (var i = 0; i < tasks.length; i++) if (/IN_PROGRESS|IN PROGRESS|PENDING/.test(upper(tasks[i].status))) busy++;
   if (busy > 0) throw new Error("Refusing: " + busy + " SDDC Manager task(s) in progress. Wait for them to finish. Nothing was changed.");
@@ -132,14 +154,9 @@ var MODE = String(mode || "ROTATE");
 if (MODE !== "ROTATE" && MODE !== "UPDATE_AUTO_ROTATE_POLICY") throw new Error("mode is ROTATE or UPDATE_AUTO_ROTATE_POLICY, not " + MODE + ".");
 var DAYS = Number(settings.autoRotateDays || 0);
 if (MODE === "UPDATE_AUTO_ROTATE_POLICY" && !(DAYS > 0)) throw new Error("No auto-rotate policy is configured: set autoRotateDays in " + SETTINGS_NAME + ".");
-// A failed rotation leaves resources locked; remediate it (operationType REMEDIATE) first.
-var credentialTasks = get("/v1/credentials/tasks").elements || [];
-var failedTasks = 0;
-for (var f = 0; f < credentialTasks.length; f++) if (upper(credentialTasks[f].status) === "FAILED") failedTasks++;
-if (failedTasks > 0) throw new Error("Refusing: " + failedTasks + " failed credential task(s) in SDDC Manager. Resolve them first. Nothing was changed.");
 busyGuard();
 var domains = settings.domains || [], users = settings.usernames || [];
-var all = get("/v1/credentials?resourceType=" + encodeURIComponent(TYPE) + "&accountType=" + encodeURIComponent(ACCOUNT)).elements || [];
+var all = getAll("/v1/credentials?resourceType=" + encodeURIComponent(TYPE) + "&accountType=" + encodeURIComponent(ACCOUNT));
 var selected = [];
 for (var i = 0; i < all.length; i++) {
   var c = all[i];
@@ -149,6 +166,55 @@ for (var i = 0; i < all.length; i++) {
   selected.push(c);
   System.log("Selected: " + (domain || "-") + "  " + c.resource.resourceName + "  " + c.username);
 }
+// A failed rotation leaves resources locked; remediate it (operationType REMEDIATE) first.
+// Which credential tasks stop the run (GET /v1/credentials/tasks, every page):
+//   - one still running (IN_PROGRESS, PENDING): always;
+//   - a FAILED one created within failedTaskHours (default 24), or whose
+//     creation time cannot be read: always, it may be what is being remediated;
+//   - an older FAILED one that names one of the selected resources (a subtask's
+//     resourceName or entityName), unless a later SUCCESSFUL task names that
+//     resource too (the remediation, or a rotation since);
+//   - any other older FAILED one is only warned about: once it is remediated
+//     it stays in the list, and must not block every rotation after it.
+// VERIFY on your release: the subtask fields that name the resource.
+var credentialTasks = getAll("/v1/credentials/tasks");
+var WINDOW_HOURS = Number(settings.failedTaskHours || 24);
+var nowMs = new Date().getTime();
+var selectedNames = {};
+for (var sn = 0; sn < selected.length; sn++) selectedNames[String(selected[sn].resource.resourceName).toLowerCase()] = true;
+function createdAt(task) { var t = Date.parse(String(task.creationTimestamp || "").replace(/\.[0-9]+/, "").replace(/\+00:00$/, "Z")); return isNaN(t) ? null : t; }
+function namesOf(task) {
+  var out = {};
+  var subs = task.subTasks || task.subtasks || [];
+  for (var i = 0; i < subs.length; i++) {
+    var n = subs[i].resourceName || subs[i].entityName || (subs[i].resource && subs[i].resource.resourceName);
+    if (n) out[String(n).toLowerCase()] = true;
+  }
+  return out;
+}
+var lastGood = {};
+for (var g = 0; g < credentialTasks.length; g++) {
+  if (!/^(SUCCESSFUL|SUCCEEDED|COMPLETED)$/.test(upper(credentialTasks[g].status))) continue;
+  var goodAt = createdAt(credentialTasks[g]);
+  var goodNames = namesOf(credentialTasks[g]);
+  for (var gn in goodNames) if (goodNames.hasOwnProperty(gn) && goodAt !== null && (!lastGood[gn] || goodAt > lastGood[gn])) lastGood[gn] = goodAt;
+}
+var running = 0, failedTasks = 0, oldFailed = 0;
+for (var f = 0; f < credentialTasks.length; f++) {
+  var ft = credentialTasks[f];
+  var fs = upper(ft.status);
+  if (/IN_PROGRESS|IN PROGRESS|PENDING/.test(fs)) { running++; continue; }
+  if (fs !== "FAILED") continue;
+  var at = createdAt(ft);
+  if (at === null || nowMs - at < WINDOW_HOURS * 3600000) { failedTasks++; continue; }
+  var names = namesOf(ft);
+  var blocks = false;
+  for (var fn in names) if (names.hasOwnProperty(fn) && selectedNames[fn] && !(lastGood[fn] && lastGood[fn] > at)) blocks = true;
+  if (blocks) failedTasks++;
+  else { oldFailed++; System.warn("An older failed credential task (" + (ft.id || "no id") + ", " + ft.creationTimestamp + ") does not block this run: it names no selected resource, or a later task succeeded on it. Check it was remediated."); }
+}
+if (running > 0) throw new Error("Refusing: " + running + " credential task(s) in progress in SDDC Manager. Wait for them to finish. Nothing was changed.");
+if (failedTasks > 0) throw new Error("Refusing: " + failedTasks + " failed credential task(s) in SDDC Manager (in the last " + WINDOW_HOURS + "h, or on a selected resource). Resolve them first. Nothing was changed.");
 requestBody = "";
 var taskId = "";
 if (!selected.length) {
@@ -156,6 +222,12 @@ if (!selected.length) {
 } else {
   var max = Number(settings.maxResources || 0);
   if (selected.length > max) throw new Error("Refusing: " + selected.length + " accounts is more than maxResources (" + max + "). Narrow the scope or raise it on purpose. Nothing was changed.");
+  // One PATCH changes every selected account, so the cap counts accounts, not calls.
+  var room = ctx.cap - ctx.count;
+  if (selected.length > room) {
+    if (!ctx.dryRun) throw new Error("Refusing: one PATCH /v1/credentials would change " + selected.length + " account(s), and the cap allows " + room + " more change(s) (cap " + ctx.cap + "). The cap counts accounts. Narrow the scope or raise cap on purpose. Nothing was changed.");
+    System.warn("A live run would refuse: " + selected.length + " account(s) is more than the cap of " + ctx.cap + " (the cap counts accounts).");
+  }
   // One element per resource, each listing the accounts to rotate (CredentialsUpdateSpec).
   var byResource = {};
   var elements = [];
@@ -229,7 +301,7 @@ try {
   for (var m = 0; m < managers.length; m++) System.log("SDDC Manager " + managers[m].fqdn + " " + managers[m].version);
 } catch (e) { problems.push("SDDC Manager API is not answering: " + (e && e.message ? e.message : e)); }
 // 2. Failed and stuck tasks.
-var tasks = get("/v1/tasks").elements || [];
+var tasks = getAll("/v1/tasks");
 for (var t = 0; t < tasks.length; t++) {
   var at = ts(tasks[t].creationTimestamp);
   if (at === null) continue;
@@ -239,7 +311,7 @@ for (var t = 0; t < tasks.length; t++) {
   else if (/IN_PROGRESS|IN PROGRESS/.test(status) && now - at > Number(settings.stuckHours) * 3600000) problems.push("stuck task (over " + settings.stuckHours + "h): " + name);
 }
 // 3. Hosts SDDC Manager cannot use.
-var hosts = get("/v1/hosts").elements || [];
+var hosts = getAll("/v1/hosts");
 for (var h = 0; h < hosts.length; h++) if (/UNUSEABLE|UNUSABLE|ERROR/.test(upper(hosts[h].status))) problems.push("host not usable: " + hosts[h].fqdn + " (" + hosts[h].status + ")");
 // 4. Backup configured, and recent: the newest task whose name or type mentions backup.
 var backup = {};
@@ -410,7 +482,7 @@ for (var p = 0; p < pools.length; p++) if (pools[p].name === POOL) poolId = Stri
 if (!poolId) throw new Error("No network pool named " + POOL + ".");
 // Idempotent: a host SDDC Manager already has is left alone.
 var known = {};
-var inventory = get("/v1/hosts").elements || [];
+var inventory = getAll("/v1/hosts");
 for (var k = 0; k < inventory.length; k++) known[String(inventory[k].fqdn).toLowerCase()] = inventory[k].status || "known";
 var todo = [];
 for (var h = 0; h < hosts.length; h++) {
@@ -422,6 +494,12 @@ var taskId = "";
 if (!todo.length) {
   System.log("Every host is commissioned already. Nothing to do.");
 } else {
+  // One POST /v1/hosts commissions every host in it, so the cap counts hosts, not calls.
+  var room = ctx.cap - ctx.count;
+  if (todo.length > room) {
+    if (!ctx.dryRun) throw new Error("Refusing: one POST /v1/hosts would commission " + todo.length + " host(s), and the cap allows " + room + " more change(s) (cap " + ctx.cap + "). The cap counts hosts. Raise cap on purpose, or list fewer hosts. Nothing was sent.");
+    System.warn("A live run would refuse: " + todo.length + " host(s) is more than the cap of " + ctx.cap + " (the cap counts hosts).");
+  }
   var spec = [];
   for (var t = 0; t < todo.length; t++) spec.push({ fqdn: todo[t].fqdn, username: todo[t].username, storageType: todo[t].storageType, networkPoolId: poolId, networkPoolName: POOL, password: String(settings[todo[t].envVar]) });
   var polls = Number(settings.pollCount || 60);
@@ -633,7 +711,7 @@ export const VCF_FLEET                                 = [
         categoryPath: `ArchToolKit/SDDC Manager/${base}`,
         workflow: {
           name: `Rotate passwords ${base}`,
-          description: `Selects the ${typeLabel} ${account} accounts SDDC Manager manages (GET /v1/credentials, filtered by domain and username), refuses while any credential task has failed or any task is running, or above maxResources, then PATCH /v1/credentials (operationType ${auto ? 'ROTATE, or UPDATE_AUTO_ROTATE_POLICY with the mode input' : 'ROTATE'}) and follows the task. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Selects the ${typeLabel} ${account} accounts SDDC Manager manages (GET /v1/credentials, filtered by domain and username), refuses while any task is running, while a credential task has failed in the last failedTaskHours or on a selected resource, or above maxResources or the cap (which counts accounts), then PATCH /v1/credentials (operationType ${auto ? 'ROTATE, or UPDATE_AUTO_ROTATE_POLICY with the mode input' : 'ROTATE'}) and follows the task. A dry run until dryRun is set to false in the configuration element.`,
           inputs: [
             { name: 'dryRun', type: 'boolean', description: 'true: select and show the request body, change nothing' },
             { name: 'mode', type: 'string', description: auto ? 'ROTATE (default) or UPDATE_AUTO_ROTATE_POLICY' : 'ROTATE (default)' },
@@ -658,8 +736,9 @@ export const VCF_FLEET                                 = [
             { name: 'autoRotateDays', type: 'number', value: auto ? days : 0, description: 'The auto-rotate policy for mode UPDATE_AUTO_ROTATE_POLICY; 0: none' },
             { name: 'taskPolls', type: 'number', value: 120, description: 'How many times to poll the credential task, 15 seconds apart' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is rotated while this is true' },
-            { name: 'cap', type: 'number', value: 1, description: 'The most PATCH /v1/credentials calls one run may make' },
-            { name: 'webhook', type: 'string', value: webhook, description: 'Where the audit record is posted' },
+            { name: 'failedTaskHours', type: 'number', value: 24, description: 'A FAILED credential task newer than this many hours refuses the run; an older one only when it names a selected resource with no later successful task' },
+            { name: 'cap', type: 'number', value: max, description: 'The most accounts one run may change (one PATCH /v1/credentials changes them all, so the cap counts accounts)' },
+            { name: 'webhook', type: 'SecureString', description: 'Where the audit record is posted' },
           ],
         },
       });
@@ -717,7 +796,7 @@ export const VCF_FLEET                                 = [
                 ? { heading: 'Set the auto-rotate policy', lines: [`\`./scripts/rotate.sh --execute --policy\` (or the workflow with mode UPDATE_AUTO_ROTATE_POLICY) sends the same selection with operationType UPDATE_AUTO_ROTATE_POLICY and autoRotatePolicy {frequencyInDays: ${days}, enableAutoRotatePolicy: true} — the body Broadcom KB 370275 gives.`] }
                 : undefined,
             ]),
-            ['operationType values (UPDATE, ROTATE, REMEDIATE, UPDATE_AUTO_ROTATE_POLICY) and the element fields are in the CredentialsUpdateSpec schema.', 'GET /v1/credentials is read as one page (elements); on an instance with more credentials than one page holds, check the pageMetadata of your release.', 'VCF 9.1: SDDC Manager still manages these passwords (techdocs "Using SDDC Manager to Manage Passwords"), but VCF Operations is the preferred place; see fleet91_password_rotate.'],
+            ['operationType values (UPDATE, ROTATE, REMEDIATE, UPDATE_AUTO_ROTATE_POLICY) and the element fields are in the CredentialsUpdateSpec schema.', 'The workflow reads every page of GET /v1/credentials and /v1/credentials/tasks (pageNumber and pageSize until pageMetadata.totalElements; VERIFY the paging parameters on your release) and refuses a list shorter than pageMetadata promises. The script reads one page (elements); on an instance with more credentials than one page holds, check the pageMetadata of your release.', 'A FAILED credential task refuses the run when it is newer than failedTaskHours (24), has no readable creation time, or names a selected resource with no later successful task; an older one is only warned about, because a remediated failure stays in the task list.', 'VCF 9.1: SDDC Manager still manages these passwords (techdocs "Using SDDC Manager to Manage Passwords"), but VCF Operations is the preferred place; see fleet91_password_rotate.'],
             [SDDC_API, 'Broadcom KB 370275, "Change password rotation to a custom value, in SDDC manager, via Developer center".'],
           ),
         },
@@ -894,7 +973,7 @@ export const VCF_FLEET                                 = [
           attributes: [
             ...SDDC_ATTRIBUTES,
             { name: 'withinDays', type: 'number', value: within, description: 'Report certificates expiring within this many days' },
-            { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any' },
+            { name: 'webhook', type: 'SecureString', description: 'Where the problems are posted when there are any' },
           ],
         },
       });
@@ -1079,7 +1158,7 @@ export const VCF_FLEET                                 = [
             { name: 'stuckHours', type: 'number', value: stuckHours, description: 'A task running longer than this is stuck' },
             { name: 'backupHours', type: 'number', value: backupHours, description: 'The last backup must be newer than this' },
             { name: 'startHealthSummary', type: 'boolean', value: summary, description: 'Also start a SoS health summary run' },
-            { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any; somewhere that is not SDDC Manager' },
+            { name: 'webhook', type: 'SecureString', description: 'Where the problems are posted when there are any; somewhere that is not SDDC Manager' },
           ],
         },
       });
@@ -1293,7 +1372,7 @@ export const VCF_FLEET                                 = [
             { name: 'backupPassphrase', type: 'SecureString', description: 'The encryption passphrase; keep a copy where it survives losing SDDC Manager' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is sent while this is true' },
             { name: 'cap', type: 'number', value: 1, description: 'The most configuration changes one run may make' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'backup-configuration.json', content: `${JSON.stringify(payload, null, 2)}\n` }],
@@ -1478,7 +1557,7 @@ export const VCF_FLEET                                 = [
             { name: 'domainName', type: 'string', value: domain, description: 'The workload domain, by name' },
             { name: 'targetVersion', type: 'string', value: target, description: 'The target VCF version, as the bundle list names it; empty: no bundle check' },
             { name: 'pollCount', type: 'number', value: timeout * 2, description: 'How many times to poll the precheck, 30 seconds apart' },
-            { name: 'webhook', type: 'string', value: webhook, description: 'Where the failed checks are posted when there are any' },
+            { name: 'webhook', type: 'SecureString', description: 'Where the failed checks are posted when there are any' },
           ],
         },
       });
@@ -1683,8 +1762,8 @@ export const VCF_FLEET                                 = [
             ...hosts.map((host) => ({ name: host.envVar, type: 'SecureString'         , description: `${host.fqdn}: the ${user} password` })),
             { name: 'pollCount', type: 'number', value: 60, description: 'How many times to poll the validation (10 s apart; the commission task twice as many, 20 s apart)' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is commissioned while this is true' },
-            { name: 'cap', type: 'number', value: 1, description: 'The most commission calls one run may make (one call commissions the whole batch)' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'cap', type: 'number', value: hosts.length, description: 'The most hosts one run may commission (one POST /v1/hosts commissions them all, so the cap counts hosts; a run over it refuses before sending anything)' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'hosts.json', content: `${JSON.stringify(hosts, null, 2)}\n` }],

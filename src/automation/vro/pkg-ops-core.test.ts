@@ -330,6 +330,27 @@ describe('pkg ops-core: vcfops_outbound_plugin', { skip: !CURL }, () => {
     expect(r.writes).toEqual([]);
     expect(r.result.outputs.pluginId).toBe('pl-0');
   });
+
+  it('tests and enables an instance of the same name that exists but is disabled, when testAndEnable is on (regression)', async () => {
+    const disabled = [{ pluginId: 'pl-1', name: 'Platform team mail relay', enabled: false }];
+    const dry = await run(files, routes(200, disabled));
+    expect(dry.result.error).toBe(null);
+    expect(dry.writes).toEqual([]);
+    expect(dryLines(dry)).toBe(2);
+    const r = await run(files, routes(200, disabled), ARMED);
+    expect(r.result.error).toBe(null);
+    expect(r.writes).toEqual(['POST /suite-api/api/alertplugins/pl-1/test', 'PUT /suite-api/api/alertplugins/pl-1/enable/true']);
+    expect(r.result.outputs.pluginId).toBe('pl-1');
+    // A failed test leaves it disabled.
+    const failed = await run(files, routes(500, disabled), ARMED);
+    expect(failed.writes).toEqual(['POST /suite-api/api/alertplugins/pl-1/test']);
+    expect(failed.result.error ?? '').toContain('Stopped after 0 change(s): test outbound instance');
+    // Enabled, or testAndEnable off: left as it is.
+    const enabled = await run(files, routes(200, [{ ...disabled[0], enabled: true }]), ARMED);
+    expect(enabled.writes).toEqual([]);
+    const off = await run(files, routes(200, disabled), { ...ARMED, testAndEnable: false });
+    expect(off.writes).toEqual([]);
+  });
 });
 
 describe('pkg ops-core: vcfops_access', { skip: !CURL }, () => {
@@ -397,14 +418,17 @@ describe('pkg ops-core: vcfops_notify_webhook', { skip: !CURL }, () => {
     at('POST', 'notifications/rules', o.status ? { message: 'no' } : { id: 'rule-1' }, o.status),
   ];
 
+  // endpoint is a SecureString (typed after import), so each run sets it.
+  const HOOK = { endpoint: ENDPOINT };
+
   it('dry run writes nothing', async () => {
-    const r = await run(files, routes());
+    const r = await run(files, routes(), HOOK);
     expect(r.result.error).toBe(null);
     expect(r.writes).toEqual([]);
   });
 
   it('armed: finds the outbound instance by its URL and creates the rule, enabled, through it', async () => {
-    const r = await run(files, routes(), ARMED);
+    const r = await run(files, routes(), { ...HOOK, ...ARMED });
     expect(r.result.error).toBe(null);
     expect(r.writes).toEqual(['POST /suite-api/api/notifications/rules']);
     expect(r.body('POST', '/suite-api/api/notifications/rules')).toEqual({
@@ -425,20 +449,29 @@ describe('pkg ops-core: vcfops_notify_webhook', { skip: !CURL }, () => {
   });
 
   it('leaves a rule of the same name alone; stops at the cap and at a failure', async () => {
-    const existing = await run(files, routes({ rules: [{ id: 'rule-0', name: 'Critical infrastructure to runbook' }] }), ARMED);
+    const existing = await run(files, routes({ rules: [{ id: 'rule-0', name: 'Critical infrastructure to runbook' }] }), { ...HOOK, ...ARMED });
     expect(existing.writes).toEqual([]);
-    const capped = await run(files, routes(), { ...ARMED, cap: 0 });
+    const capped = await run(files, routes(), { ...HOOK, ...ARMED, cap: 0 });
     expect(capped.result.error ?? '').toContain('Cap reached');
     expect(capped.writes).toEqual([]);
-    const failed = await run(files, routes({ status: 422 }), ARMED);
+    const failed = await run(files, routes({ status: 422 }), { ...HOOK, ...ARMED });
     expect(failed.result.error ?? '').toContain('Stopped after 0 change(s): create notification rule');
     lastIsRelease(failed);
   });
 
-  it('refuses when no outbound instance posts to the endpoint', async () => {
-    const r = await run(files, [list('alertplugins', 'notificationPluginInstances', [])], ARMED);
-    expect(r.result.error ?? '').toContain('No webhook outbound instance posts to');
+  it('refuses when no outbound instance posts to the endpoint, naming only its host', async () => {
+    const r = await run(files, [list('alertplugins', 'notificationPluginInstances', [])], { ...HOOK, ...ARMED });
+    expect(r.result.error ?? '').toContain('No webhook outbound instance posts to https://runbooks.example.com');
+    // The endpoint is a SecureString: a webhook's path can be its secret.
+    expect(r.result.error ?? '').not.toContain('/hooks/vcfops');
     expect(r.writes).toEqual([]);
+  });
+
+  it('keeps the endpoint a SecureString with no value (regression: it was a plain string carrying the URL)', () => {
+    const attrs = readPackageSpec(packagesIn(files)[Object.keys(packagesIn(files)).find((d) => d !== 'com.archtoolkit.core.package')!]!).configs[0]!.attributes;
+    const endpoint = attrs.find((a) => a.name === 'endpoint');
+    expect(endpoint?.type).toBe('SecureString');
+    expect(endpoint?.value).toBe(undefined);
   });
 });
 

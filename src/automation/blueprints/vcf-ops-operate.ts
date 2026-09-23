@@ -1828,7 +1828,7 @@ notes.push(f.platform === "kubernetes" ? "run fluent-bit --dry-run -c fluent-bit
             ...OPS_ACCOUNT,
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created or updated while this is true' },
             { name: 'cap', type: 'number', value: 1, description: 'The most changes one run may make (one saved query)' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [
@@ -2051,7 +2051,7 @@ notes.push(f.platform === "kubernetes" ? "run fluent-bit --dry-run -c fluent-bit
             { name: 'logsUsername', type: 'string', value: '', description: 'An account with the admin role on the appliance' },
             { name: 'logsPassword', type: 'SecureString', description: 'Its password' },
             { name: 'logsProvider', type: 'string', value: 'Local', description: 'Local, ActiveDirectory or vIDM' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record (counts and what was missing) is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record (counts and what was missing) is posted' },
           ],
         },
       });
@@ -2383,14 +2383,29 @@ for (var i = 0; i < reports.length; i++) {
   for (var j = 0; j < audits.length; j++) System.log("  " + reports[i].name + " / " + audits[j].name + ": " + audits[j].count);
 }
 reportJson = JSON.stringify({ exportedFor: day, host: settings.opsHost, report: report });
+// auditUrl is a SecureString: a collector URL can carry its token in the path
+// or the query, so only its host is ever logged, output or thrown.
+var auditHost = null;
 if (settings.auditUrl) {
+  var auditTarget = String(settings.auditUrl);
+  var auditParts = /^(https?:\/\/[^\/?#]+)([^#]*)/.exec(auditTarget);
+  if (!auditParts) throw new Error("auditUrl is not an https:// URL.");
+  auditHost = auditParts[1];
+  var auditPath = auditParts[2];
+  var auditHidden = [auditTarget, auditPath, auditPath.split("?")[0], auditPath.split("?")[1] || ""];
   // Unlike a notification, a copy that did not arrive fails the run.
-  core.http("POST", String(settings.auditUrl), null, reportJson, { redact: [String(settings.auditUrl).split("?")[1] || ""] });
-  System.log("Audit report for " + day + " posted to " + String(settings.auditUrl).split("?")[0]);
+  try {
+    core.http("POST", auditTarget, null, reportJson, { redact: auditHidden });
+  } catch (postError) {
+    var postReason = String(postError && postError.message ? postError.message : postError);
+    for (var h = 0; h < auditHidden.length; h++) if (auditHidden[h] && auditHidden[h] !== "/") postReason = postReason.split(auditHidden[h]).join("****");
+    throw new Error("Posting the audit report to " + auditHost + " failed: " + postReason);
+  }
+  System.log("Audit report for " + day + " posted to " + auditHost);
 } else {
   System.warn("auditUrl is empty: the report is only in the reportJson output. Set it, or copy with the script under scripts/.");
 }
-summary = core.audit(null, { source: "vcf-operations-audit", exportedFor: day, sections: reports.length, sentTo: settings.auditUrl ? String(settings.auditUrl).split("?")[0] : null });`;
+summary = core.audit(null, { source: "vcf-operations-audit", exportedFor: day, sections: reports.length, sentTo: auditHost });`;
 
 /**
  * Security Posture Management drift, without state: "new" are active
@@ -2641,7 +2656,7 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { name: 'failLevels', type: 'Array/string', value: [...levels], description: 'Health badge values that fail the run' },
           { name: 'failOnCritical', type: 'boolean', value: critical, description: 'Also fail on any critical alert' },
           { name: 'maxObjects', type: 'number', value: max, description: 'At most this many objects per kind are checked' },
-          { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any' },
+          { name: 'webhook', type: 'SecureString', description: 'Where the problems are posted when there are any' },
         ]),
       });
 
@@ -2800,7 +2815,7 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { name: 'sinceDays', type: 'number', value: since, description: 'Only findings that occurred in the last N days; 0 reads all open findings' },
           { name: 'includeObjects', type: 'boolean', value: objects, description: 'List the affected objects of each finding' },
           { name: 'maxRules', type: 'number', value: maxRules, description: 'Fetch affected objects for at most this many findings' },
-          { name: 'webhook', type: 'string', value: webhook, description: 'Where the report is posted, every run' },
+          { name: 'webhook', type: 'SecureString', description: 'Where the report is posted, every run' },
         ]),
       });
 
@@ -3181,7 +3196,7 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { name: 'capacityRegex', type: 'string', value: capRx, description: 'Case-insensitive regex over stat keys: which metrics the capacity section lists' },
           { name: 'healthBelow', type: 'number', value: below, description: 'Fail when a cluster\u2019s health score is below this' },
           { name: 'failOnFindings', type: 'boolean', value: failFindings, description: 'Fail on critical vSAN findings' },
-          { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any' },
+          { name: 'webhook', type: 'SecureString', description: 'Where the problems are posted when there are any' },
         ]),
       });
 
@@ -3339,7 +3354,7 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           script: AUDIT_WORKFLOW,
         },
         config: opsReadConfig(`Audit report export ${base}`, [
-          { name: 'auditUrl', type: 'string', value: '', description: 'HTTPS endpoint that stores the report: a SIEM or log collector HTTP input, an object-store gateway. Empty keeps it in the output only' },
+          { name: 'auditUrl', type: 'SecureString', description: 'HTTPS endpoint that stores the report: a SIEM or log collector HTTP input, an object-store gateway. Empty keeps it in the output only' },
         ]),
       });
 
@@ -3584,7 +3599,7 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { name: 'confidential', type: 'boolean', value: confidential, description: 'Include the confidential computing report' },
           { name: 'maxHosts', type: 'number', value: maxHosts, description: 'At most this many hosts in the confidential computing report' },
           { name: 'confidentialKeyRegex', type: 'string', value: 'sev|snp|tdx|sgx|confidential|trust.?domain', description: 'Host property names that count as confidential-computing properties' },
-          { name: 'webhook', type: 'string', value: webhook, description: 'Where the drift report is posted, every run' },
+          { name: 'webhook', type: 'SecureString', description: 'Where the drift report is posted, every run' },
         ]),
       });
 

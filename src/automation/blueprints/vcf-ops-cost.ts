@@ -63,7 +63,7 @@ function guardAttributes(cap: number, what: string): VroConfigAttribute[] {
   return [
     { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
     { name: 'cap', type: 'number', value: cap, description: `The most ${what} one run may make` },
-    { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+    { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
   ];
 }
 
@@ -83,10 +83,14 @@ if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUser
 var api = "https://" + settings.opsHost + "/suite-api/api/";
 var SAFE = { redact: settings._secrets };
 var auth = null;
+// Every page is read; a list that cannot be read whole is an error, never an
+// empty list (acting on "nothing exists" would create duplicates).
 function listAll(path, key) {
   return core.pageAll(function (page) {
-    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body || {};
-    return { items: r[key] || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body;
+    if (!r || typeof r !== "object" || (!r.hasOwnProperty(key) && !r.pageInfo)) throw new Error("GET " + path.split("?")[0] + " returned no " + key + " (VERIFY the response shape on your release); refusing to go on with an empty list.");
+    var total = r.pageInfo && r.pageInfo.totalCount !== undefined && r.pageInfo.totalCount !== null ? r.pageInfo.totalCount : null;
+    return { items: r[key] || [], total: total, more: r.pageInfo ? null : false };
   }, 0);
 }
 function statKeys(resourceId, pattern) {
@@ -238,7 +242,14 @@ ${OPS_LOGIN}
 try {
   var listed = core.http("GET", api + "pricing", auth, null, { redact: settings._secrets, allow: [404] });
   if (listed.statusCode === 404) throw new Error("GET /suite-api/api/pricing returned 404: this build has no pricing API. It is documented for Aria Operations 8.x and is not in the VCF Operations 9.1 API reference; create the pricing card by hand from rate-card.json.");
-  var policies = (listed.body && (listed.body.policies || listed.body.pricingPolicies)) || [];
+  var pricing = listed.body;
+  var policies = null;
+  if (pricing && typeof pricing === "object") {
+    var wrappers = [pricing, pricing.policies, pricing.pricingPolicies];
+    for (var w = 0; w < wrappers.length && policies === null; w++) if (wrappers[w] && typeof wrappers[w] === "object" && wrappers[w].length !== undefined) policies = wrappers[w];
+  }
+  // An unrecognised shape is not "no pricing cards": reading it as one would create a duplicate.
+  if (policies === null) throw new Error("GET /suite-api/api/pricing returned no list this workflow recognises (policies or pricingPolicies); refusing to act on it. VERIFY the response shape on your release.");
   for (var p = 0; p < policies.length; p++) if (String(policies[p].name) === String(card.name)) id = String(policies[p].id);
   if (id) {
     System.log("Exists, left as it is: pricing \"" + card.name + "\" (" + id + "). Rename it in the rate card, or change the existing one in the interface.");
@@ -382,11 +393,18 @@ try {
     resId = exact[0];
   }
 
-  var existing = core.http("GET", api + "reportdefinitions/" + encodeURIComponent(defId) + "/schedules", auth, null, SAFE).body || {};
-  var list = existing.reportSchedules || [];
+  var existing = core.http("GET", api + "reportdefinitions/" + encodeURIComponent(defId) + "/schedules", auth, null, SAFE).body;
+  var list = existing && typeof existing === "object" && existing.reportSchedules && typeof existing.reportSchedules === "object" && existing.reportSchedules.length !== undefined ? existing.reportSchedules : null;
+  // An unrecognised shape is not "no schedules": reading it as one would add a second schedule.
+  if (list === null) throw new Error("GET reportdefinitions/" + defId + "/schedules returned no reportSchedules list; refusing to act on it. VERIFY the response shape on your release.");
   for (var s = 0; s < list.length; s++) {
-    var ids = list[s].resourceId || [];
-    if (String(list[s].reportScheduleType) === "MONTHLY" && Number(list[s].dayOfTheMonth) === Number(schedule.dayOfTheMonth) && ids.indexOf(resId) >= 0) scheduleId = String(list[s].id);
+    // resourceId is a list in the documented schedule, but take a single id too.
+    var ids = list[s].resourceId;
+    if (ids === null || ids === undefined) ids = [];
+    else if (typeof ids !== "object") ids = [ids];
+    var covers = false;
+    for (var k = 0; k < ids.length; k++) if (String(ids[k]) === resId) covers = true;
+    if (String(list[s].reportScheduleType) === "MONTHLY" && Number(list[s].dayOfTheMonth) === Number(schedule.dayOfTheMonth) && covers) scheduleId = String(list[s].id);
   }
   if (scheduleId) {
     System.log("Exists, left as it is: a monthly schedule of this report on day " + schedule.dayOfTheMonth + " for this object (" + scheduleId + ").");
@@ -1466,7 +1484,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
             ...opsAttributes('A read-only account'),
             { name: 'cluster', type: 'string', value: cluster, description: 'The cluster the scenario is measured against' },
             { name: 'minDays', type: 'number', value: minDays, description: 'Fail when the least time remaining is under this' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' },
           ],
         },
         resources: [{ name: 'scenario.json', content: scenarioJson }],
@@ -1962,7 +1980,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
               { name: 'vcPassword', type: 'SecureString', description: 'Its password' },
               { name: 'holdDays', type: 'number', value: hold, description: 'Delete: quarantined at least this many days ago' },
               { name: 'maxObjects', type: 'number', value: cap, description: 'The most disks one run may pass' },
-              { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+              { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' },
             ],
           },
         });
@@ -2596,7 +2614,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
             { name: 'nsAdapter', type: 'string', value: adapter, description: 'Its adapter kind' },
             { name: 'propertyKey', type: 'string', value: groupBy === 'property' ? propKey : '', description: 'Roll up by this property of the namespace; empty for none' },
             { name: 'failOnUncosted', type: 'boolean', value: failUncosted, description: 'Fail the run when a namespace has no cost' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' },
           ],
         },
       });

@@ -59,6 +59,8 @@ function logText(run: WorkflowRun): string {
   return run.logs.map((line) => line.message).join('\n') + JSON.stringify(run.outputs) + (run.error ?? '');
 }
 
+// Webhook URLs are SecureStrings too (a webhook's path can be its secret); vro.test.ts checks them for every automation.
+const URL_SECRET = /^(webhook|backupWebhook|auditUrl|endpoint)$/;
 /** The package is well formed: parses, ES5, secrets empty SecureStrings, named in IMPORT.md, fallback kept. */
 function wellFormed(b: Built, secrets: readonly string[], scripts: readonly string[]): void {
   expect(b.spec.name.startsWith('com.archtoolkit.fleet91.')).toBe(true);
@@ -80,7 +82,7 @@ function wellFormed(b: Built, secrets: readonly string[], scripts: readonly stri
     expect(a?.type).toBe('SecureString');
     expect(a?.value).toBe(undefined);
   }
-  expect(attributes.filter((a) => a.type === 'SecureString').map((a) => a.name).sort()).toEqual([...secrets].sort());
+  expect(attributes.filter((a) => a.type === 'SecureString' && !URL_SECRET.test(a.name)).map((a) => a.name).sort()).toEqual([...secrets].sort());
   for (const r of b.spec.resources) if (r.name.endsWith('.json')) JSON.parse(r.content);
   const guide = b.files['IMPORT.md']!;
   expect(guide.includes(`import/${b.dir}`)).toBe(true);

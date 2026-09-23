@@ -387,7 +387,7 @@ const GUARD_ATTRS = (cap: number) =>
     { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
   ] as const;
-const WEBHOOK_ATTR = { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' } as const;
+const WEBHOOK_ATTR = { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' } as const;
 
 /** What the workflows share: the settings check and the login. */
 const LOGIN_JS = (org: string | null) => String.raw`var SAFE = { redact: settings._secrets };

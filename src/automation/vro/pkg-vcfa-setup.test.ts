@@ -425,7 +425,8 @@ describe('pkg vcfa-setup: every VCF Automation automation is an importable packa
       }
       expect(problems).toEqual([]);
       const attributes = spec.configs[0]!.attributes;
-      expect(attributes.filter((a) => a.type === 'SecureString').map((a) => a.name).sort()).toEqual([...c.secrets].sort());
+      // Webhook URLs are SecureStrings too (a webhook's path can be its secret); vro.test.ts checks them for every automation.
+      expect(attributes.filter((a) => a.type === 'SecureString' && a.name !== 'webhook').map((a) => a.name).sort()).toEqual([...c.secrets].sort());
       expect(attributes.filter((a) => a.type === 'SecureString').every((a) => a.value === undefined)).toBe(true);
       expect(attributes.find((a) => a.name === 'dryRun')?.value).toBe(true);
       expect(attributes.find((a) => a.name === 'cap')?.value).toBe(c.writes.length);
@@ -530,6 +531,16 @@ describe('pkg vcfa-setup: the particular cases', { skip: !CURL }, () => {
     const twice = await runWith(zoneFiles, [list('/iaas/api/zones', [{ id: 'z1', name: 'dc1-general' }, { id: 'z2', name: 'DC1-general' }]), ...zone.routes], { ...zone.settings, dryRun: false });
     expect(twice.writes).toEqual([]);
     expect(twice.result.error ?? '').toContain('refusing to guess');
+  });
+
+  it('refuses a list answer that is neither an array nor has a content array, rather than read it as empty (regression)', async () => {
+    const odd = await runWith(zoneFiles, [{ method: 'GET', path: '^/iaas/api/zones\\?', body: { items: [{ id: 'zone-1', name: 'dc1-general' }] } }, ...zone.routes], { ...zone.settings, dryRun: false });
+    expect(odd.writes).toEqual([]);
+    expect(odd.result.error ?? '').toContain('GET /iaas/api/zones returned neither a list nor a content list');
+    // A bare array is still the whole list.
+    const bare = await runWith(zoneFiles, [{ method: 'GET', path: '^/iaas/api/zones\\?', body: [{ id: 'zone-1', name: 'dc1-general' }] }, ...zone.routes], { ...zone.settings, dryRun: false });
+    expect(bare.result.error).toBe(null);
+    expect(bare.writes).toEqual([]);
   });
 
   it('pages through the IaaS API with $top and $skip until totalElements', async () => {

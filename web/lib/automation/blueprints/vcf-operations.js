@@ -36,7 +36,8 @@ const API_REF = 'VCF Operations API 9.x: https://developer.broadcom.com/xapis/vc
 
 /** Notification rule: the webhook outbound instance (by name, or by its URL), the template, then the rule once. */
 const NOTIFY_BODY = String.raw`var rule = JSON.parse(core.resource(RESOURCE_PATH, "rule.json"));
-var where = String(settings.endpoint || "").split("?")[0];
+// endpoint is a SecureString (a webhook path can be its secret): only its host is ever logged.
+var where = (/^(https?:\/\/[^\/?#]+)/.exec(String(settings.endpoint || "")) || ["", "the endpoint"])[1];
 var plugins = listAll("alertplugins?pluginTypeId=WebhookPlugin", "notificationPluginInstances");
 var plugin = null;
 if (settings.pluginName) {
@@ -339,7 +340,7 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
         outputs: [{ name: 'ruleId', type: 'string', description: 'The notification rule id, empty in a dry run' }],
         account: 'An account that may manage notification rules',
         settings: [
-          { name: 'endpoint', type: 'string', value: endpoint, description: 'The webhook URL, to find the outbound instance that posts to it' },
+          { name: 'endpoint', type: 'SecureString', description: 'The webhook URL, to find the outbound instance that posts to it (a webhook URL can be its own secret: type it after import)' },
           { name: 'pluginName', type: 'string', value: '', description: 'Or the webhook outbound instance, by name' },
           { name: 'payloadTemplate', type: 'string', value: '', description: 'Optional: the payload template, by name' },
         ],
@@ -1055,7 +1056,7 @@ core.notify(settings.webhook, summary);`,
             changes: false,
             outputs: [{ name: 'inMaintenance', type: 'number', description: 'Objects still in maintenance' }],
             account: 'A read-only account',
-            settings: [{ name: 'webhook', type: 'string', value: '', description: 'Where the list is posted when anything is still in maintenance' }],
+            settings: [{ name: 'webhook', type: 'SecureString', description: 'Where the list is posted when anything is still in maintenance' }],
             configName: 'Overrun check settings',
             body: OVERRUN_BODY,
             after: String.raw`inMaintenance = still.length;

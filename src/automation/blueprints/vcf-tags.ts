@@ -2620,6 +2620,8 @@ function planVcenter(host) {
     if (rows[r][5] === "delete" && !seen["d:" + dk]) { seen["d:" + dk] = true; deletes.push(rows[r]); }
   }
 }
+// Tags a dry run planned to delete, "host|tag id": see the category re-check.
+var dryRunDeleted = {};
 function deleteOne(row) {
   var host = row[0], kind = row[1], id = row[4];
   var h = session.headers[host];
@@ -2632,11 +2634,17 @@ function deleteOne(row) {
     for (var a = 0; a < attached.length; a++) n += (attached[a].object_ids || []).length;
     if (n > 0) { log.push([host, kind, row[2], row[3], id, "refused: attached to " + n + " object(s) now", TICKET]); System.warn("Refused: " + label + " is attached to " + n + " object(s) now."); return; }
   } else {
-    n = (core.http("POST", "https://" + host + "/api/cis/tagging/tag?action=list-tags-for-category", h, { category_id: id }, SAFE).body || []).length;
+    var inCategory = core.http("POST", "https://" + host + "/api/cis/tagging/tag?action=list-tags-for-category", h, { category_id: id }, SAFE).body || [];
+    n = 0;
+    // A dry run deleted nothing: a tag it planned to delete (and did not refuse)
+    // is still there, but a live run would have deleted it by now. Count it as
+    // gone, so the plan shows the category deletions a live run would make.
+    for (var ic = 0; ic < inCategory.length; ic++) if (!(ctx.dryRun && dryRunDeleted[host + "|" + String(inCategory[ic])])) n++;
     if (n > 0) { log.push([host, kind, row[2], row[3], id, "refused: has " + n + " tag(s) now", TICKET]); System.warn("Refused: " + label + " has " + n + " tag(s) now."); return; }
   }
   var entry = [host, kind, row[2], row[3], id, ctx.dryRun ? "planned" : "failed", TICKET];
   log.push(entry);
+  if (ctx.dryRun && kind === "tag") dryRunDeleted[host + "|" + String(id)] = true;
   core.act(ctx, "delete " + label + (TICKET ? " (" + TICKET + ")" : ""), function () {
     core.http("DELETE", "https://" + host + "/api/cis/tagging/" + kind + "/" + encodeURIComponent(id), h, null, SAFE);
     entry[5] = "deleted";
@@ -2901,7 +2909,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             { name: 'taskPolls', type: 'number', value: 180, description: 'How many times to poll a fleet task, 10 seconds apart, before giving up' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
             { name: 'cap', type: 'number', value: objects * Math.max(1, vcenter ? vcenters.length : 0) + (fleet ? objects + 20 : 0), description: 'The most objects one run may create or tasks it may start' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'tag-standard.json', content: standardJson(categories) }],
@@ -3437,7 +3445,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             ...vcAttributes(vcenters, 'Assign or Unassign vSphere Tag on the objects, and read on them'),
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is attached while this is true' },
             { name: 'cap', type: 'number', value: maxChanges, description: 'A run that plans more changes than this is refused before the first one' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'assignments.csv', content: `${sample.join('\n')}\n`, mimeType: 'text/csv' }],
@@ -3855,7 +3863,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             { name: 'maxVms', type: 'number', value: maxChanges, description: 'A run that would change more VMs than this is refused before the first change' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is attached while this is true' },
             { name: 'cap', type: 'number', value: maxChanges * 4, description: 'The most tag changes (VM and category) one run may make' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'tag-rules.json', content: `${JSON.stringify(rules, null, 2)}\n` }],
@@ -4102,7 +4110,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             { name: 'crossVcenter', type: 'boolean', value: cross, description: 'Compare the catalogue between vCenters' },
             { name: 'ignoreCategories', type: 'Array/string', value: listOf(ignore), description: 'Categories another product owns' },
             { name: 'excludeNames', type: 'string', value: exclude, description: 'Regular expression: objects never required to carry a tag' },
-            { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the summary is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the summary is posted' },
           ],
         },
         resources: [{ name: 'tag-standard.json', content: standardJson(categories) }],
@@ -4448,7 +4456,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             { name: 'taskPolls', type: 'number', value: 180, description: 'How many times to poll a task, 10 seconds apart, before giving up' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is pulled or pushed while this is true' },
             { name: 'cap', type: 'number', value: Math.max(10, adapters.length) * Math.max(1, Math.ceil(categories.length / 20)), description: 'The most pull or push tasks one run may start' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
       });
@@ -4795,11 +4803,11 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           description: 'Settings of the Tag backup and restore workflow. Fill vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0) after import. Schedule mode backup nightly; run restore by hand.',
           attributes: [
             ...vcAttributes(vcenters, 'read on every object (backup), plus Create vSphere Tag Category, Create vSphere Tag and Assign or Unassign vSphere Tag for a restore'),
-            { name: 'backupWebhook', type: 'string', value: '', description: 'Where each vCenter’s backup document is POSTed (a collector or an object-store gateway that keeps history); empty: only the backupJson output' },
+            { name: 'backupWebhook', type: 'SecureString', description: 'Where each vCenter’s backup document is POSTed (a collector or an object-store gateway that keeps history); empty: only the backupJson output' },
             { name: 'maxAttach', type: 'number', value: maxAttach, description: 'A restore planning more attachments than this is refused before the first' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch for restore: nothing is created or attached while this is true' },
             { name: 'cap', type: 'number', value: maxAttach, description: 'The most create and attach calls (an attach call is up to 100 objects) one restore may make' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
       });
@@ -5262,7 +5270,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             ...vcAttributes(vcenters, 'read on the VMs and their tags'),
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created or changed while this is true' },
             { name: 'cap', type: 'number', value: groupFiles.length + nsxFiles.length + maxChanges, description: 'The most changes one run may make' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [...groupFiles, ...nsxFiles.map((f) => f.file)].map((name) => ({ name, content: files[name]! })),
@@ -5539,7 +5547,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             { name: 'emptyCategories', type: 'boolean', value: emptyCategories, description: 'Also delete categories with no tags' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is deleted while this is true' },
             { name: 'cap', type: 'number', value: maxDeletes, description: 'A run planning more deletions than this is refused before the first' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'tag-standard.json', content: standardJson(categories) }],

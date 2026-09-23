@@ -87,7 +87,8 @@ function staticChecks(files: Record<string, string>, secrets: readonly string[])
   expect(pkg.spec.workflows.length).toBe(1);
   const attributes = pkg.spec.configs[0]!.attributes;
   const secure = attributes.filter((a) => a.type === 'SecureString');
-  expect(secure.map((a) => a.name).sort()).toEqual([...secrets].sort());
+  // Webhook URLs are SecureStrings too (a webhook's path can be its secret); vro.test.ts checks them for every automation.
+  expect(secure.map((a) => a.name).filter((name) => name !== 'webhook').sort()).toEqual([...secrets].sort());
   for (const a of secure) expect(a.value).toBe(undefined);
   expect(attributes.find((a) => a.name === 'dryRun')?.value).toBe(true);
   expect(typeof attributes.find((a) => a.name === 'cap')?.value).toBe('number');

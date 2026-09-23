@@ -354,12 +354,16 @@ const OPS_SETTINGS: readonly VroConfigAttribute[] = [
   { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source of the account; empty for a local account' },
 ];
 
-/** dryRun, cap and webhook: the arming switch, the most changes a run may make, and who is told. */
-function arming(cap: number, webhook: string, capWhat = 'changes'): VroConfigAttribute[] {
+/**
+ * dryRun, cap and webhook: the arming switch, the most changes a run may make,
+ * and who is told. The webhook the user gave is not written into the package:
+ * it is a SecureString, typed after import, because its path can be the secret.
+ */
+function arming(cap: number, _webhook: string, capWhat = 'changes'): VroConfigAttribute[] {
   return [
     { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing changes while this is true' },
     { name: 'cap', type: 'number', value: cap, description: `The most ${capWhat} one run may make` },
-    { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the audit record is posted' },
+    { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
   ];
 }
 
@@ -2155,7 +2159,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         config: {
           name: 'Settings',
           description: 'Settings of the fleet password policy workflow. Fill apiToken after import.',
-          attributes: [...FLEET_SETTINGS, ...(mode === 'report' ? [{ name: 'webhook', type: 'string' as const, value: webhook, description: 'Optional: where the record is posted when a component group is not compliant' }] : arming(3, webhook))],
+          attributes: [...FLEET_SETTINGS, ...(mode === 'report' ? [{ name: 'webhook', type: 'SecureString' as const, description: 'Optional: where the record is posted when a component group is not compliant' }] : arming(3, webhook))],
         },
         resources: mode === 'apply' ? [{ name: 'policy.json', content: json(policy) }] : [],
       });
@@ -2824,7 +2828,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           attributes: [
             ...FLEET_SETTINGS,
             ...(action === 'msca' ? [{ name: 'mscaPassword', type: 'SecureString' as const, description: `The password of the CA service account ${str(values, 'msca_user', '')}` }] : []),
-            ...(replacing ? arming(1, webhook, 'changes (one step is one change)') : [{ name: 'webhook', type: 'string' as const, value: webhook, description: 'Optional: where the record is posted when a certificate is inside the window' }]),
+            ...(replacing ? arming(1, webhook, 'changes (one step is one change)') : [{ name: 'webhook', type: 'SecureString' as const, description: 'Optional: where the record is posted when a certificate is inside the window' }]),
           ],
         },
         resources: replacing ? [...(action !== 'vmca' ? [{ name: 'csr-spec.json', content: json(csrSpec) }] : []), ...(action === 'msca' ? [{ name: 'ca-config.json', content: json(caConfig) }] : [])] : [],
@@ -3957,7 +3961,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           attributes: [
             ...OPS_SETTINGS,
             { name: 'licenseUsagePath', type: 'string', value: '', description: 'VERIFY: the license server usage endpoint for your release, e.g. /suite-api/api/...; empty for the licensing info only' },
-            { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the record is posted when anything is flagged' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the record is posted when anything is flagged' },
           ],
         },
       });
@@ -4263,7 +4267,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
                 { name: 'opsUsername', type: 'string', value: '', description: 'Optional: its account' },
                 { name: 'opsPassword', type: 'SecureString', description: 'Optional: its password' },
                 { name: 'opsAuthSource', type: 'string', value: '', description: 'Optional: its authentication source; empty for local' },
-                { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the record is posted when a cluster has drifted' },
+                { name: 'webhook', type: 'SecureString', description: 'Optional: where the record is posted when a cluster has drifted' },
               ],
         },
       });

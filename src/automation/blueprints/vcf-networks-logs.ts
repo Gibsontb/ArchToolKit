@@ -106,6 +106,9 @@ function login() {
 }
 function logout() {
   if (target === "9.1" && auth) core.logoutVcfOps(settings.opsHost, auth);
+  // standalone: the appliance documents no DELETE for /api/v2/sessions, so the
+  // session is left to expire on its own (its idle timeout).
+  // VERIFY on your release: if the appliance adds a documented session logout, call it here.
 }
 // The saved queries, whatever the list is wrapped in (the 9.1 reference names
 // the item, LogsQueryConfig, not the wrapper of GET /logs/queryconfigs).
@@ -113,7 +116,13 @@ function queryConfigs() {
   var b = core.http("GET", "https://" + settings.opsHost + "/suite-api/api/logs/queryconfigs", auth, null, SAFE).body;
   if (b && b.length !== undefined && typeof b !== "string") return b;
   b = b || {};
-  return b.queryConfigs || b.logsQueryConfigs || b.queryConfigList || b.configs || [];
+  var keys = ["queryConfigs", "logsQueryConfigs", "queryConfigList", "configs"];
+  for (var k = 0; k < keys.length; k++) {
+    var list = b[keys[k]];
+    if (list && typeof list === "object" && list.length !== undefined) return list;
+  }
+  // An unrecognised shape is not an empty list: reading it as one would create duplicates.
+  throw new Error("GET /suite-api/api/logs/queryconfigs returned no list this workflow recognises (an array, or queryConfigs, logsQueryConfigs, queryConfigList or configs); refusing to act on it. VERIFY the response shape on your release.");
 }
 `;
 
@@ -288,8 +297,10 @@ try {
     System.log("Next: a Log Based Alert Definition that selects \"" + query.name + "\" — see IMPORT.md.");
   } else {
     var alert = JSON.parse(core.resource(RESOURCE_PATH, "alert.json"));
-    var listed = core.http("GET", "https://" + settings.logsHost + "/api/v1/alerts", auth, null, SAFE).body || [];
-    var alerts = listed.length !== undefined && typeof listed !== "string" ? listed : listed.alerts || [];
+    var listed = core.http("GET", "https://" + settings.logsHost + "/api/v1/alerts", auth, null, SAFE).body;
+    var alerts = listed && typeof listed === "object" && listed.length !== undefined ? listed : listed && typeof listed === "object" && listed.alerts && typeof listed.alerts === "object" && listed.alerts.length !== undefined ? listed.alerts : null;
+    // An unrecognised shape is not an empty list: reading it as one would create a duplicate.
+    if (!alerts) throw new Error("GET /api/v1/alerts returned no list this workflow recognises (an array, or alerts); refusing to act on it.");
     for (var j = 0; j < alerts.length; j++) if (String(alerts[j].name) === String(alert.name)) createdId = String(alerts[j].id);
     if (createdId) System.log("Exists, left as it is: alert \"" + alert.name + "\" (" + createdId + ").");
     else createdId = core.act(ctx, "create alert \"" + alert.name + "\" (disabled)", function () {
@@ -713,7 +724,7 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
           description: 'Settings of the flow check. Fill netPassword after import.',
           attributes: [
             ...NETWORKS_ATTRIBUTES,
-            { name: 'webhook', type: 'string', value: webhook, description: 'Where flows found are posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Where flows found are posted' },
             { name: 'failOnFlows', type: 'boolean', value: true, description: 'Fail the run when any flow matched' },
           ],
         },
@@ -905,7 +916,7 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
           description: 'Settings of the change watch. Fill netPassword after import. baseline is written by the workflow.',
           attributes: [
             ...NETWORKS_ATTRIBUTES,
-            { name: 'webhook', type: 'string', value: webhook, description: 'Where changes are posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Where changes are posted' },
             { name: 'baseline', type: 'string', value: '', description: 'The previous run’s snapshot; empty on the first run' },
             { name: 'keepBaseline', type: 'boolean', value: true, description: 'Write each run’s snapshot back into baseline' },
           ],
@@ -1091,7 +1102,7 @@ export const LOGS_AUTOMATIONS: readonly AutomationBlueprint[] = [
             ...LOGS_ATTRIBUTES,
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
             { name: 'cap', type: 'number', value: 1, description: 'The most objects one run may create' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [
@@ -1275,7 +1286,7 @@ export const LOGS_AUTOMATIONS: readonly AutomationBlueprint[] = [
             { name: 'failOnSilence', type: 'boolean', value: true, description: 'standalone: fail the run when an account is silent' },
             { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
             { name: 'cap', type: 'number', value: 1, description: 'The most objects one run may create' },
-            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+            { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
           ],
         },
         resources: [{ name: 'queryconfig.json', content: `${JSON.stringify(trailQuery, null, 2)}\n` }],
