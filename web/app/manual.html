@@ -47,6 +47,7 @@
         <a href="scripts.html">Scripts</a>
         <a href="splunk.html">Splunk</a>
         <a href="aria.html">Aria Ops</a>
+        <a href="automation.html">Automation</a>
         <a href="data-editor.html">Data Editor</a>
         <a href="manual.html" aria-current="page">Manual</a>
       </nav>
@@ -82,6 +83,7 @@
             <li><a href="#scripts">Scripts</a></li>
             <li><a href="#splunk">Splunk</a></li>
             <li><a href="#aria">Aria Operations content</a></li>
+            <li><a href="#automation">Automation</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -132,6 +134,7 @@
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
             <tr><td><a href="aria.html">Aria Ops</a></td><td>Read a vROps 8.x or VCF Operations 9.x content export and find out what is wrong with the monitoring.</td></tr>
+            <tr><td><a href="automation.html">Automation</a></td><td>Automations for VCF Operations, for Networks, for Logs, VCF Automation, and the runners &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
           </table>
 
           <!-- ================================================================ -->
@@ -939,7 +942,68 @@
             something to say wins &mdash; rather than the last one read replacing the whole record.
           </p>
 
-          <h2 id="collector">17. The inventory collector</h2>
+          <h2 id="automation">17. Automation</h2>
+          <p>
+            <a href="automation.html">Automation</a> writes the automations the rest of the toolkit
+            implies: the notification rule that closes the gap the Aria Ops page keeps finding, the
+            scheduled reclamation, the cloud template people can request, the pipeline that runs the
+            Terraform. Five targets, which in VCF 9.1 are capabilities of one platform rather than
+            separate products &mdash; <strong>VCF Operations</strong>, <strong>VCF Operations for
+            Networks</strong>, <strong>VCF Operations for Logs</strong>, <strong>VCF Automation</strong>
+            and the runners.
+          </p>
+
+          <h3>Why an automation is not a script</h3>
+          <p>
+            A script runs when somebody runs it, and a person is there to read the output. An
+            automation runs because something happened &mdash; an alert fired, a schedule came round, a
+            request was approved &mdash; and nobody is watching. It acts on production at three in the
+            morning, on whatever its scope matched that night. So every generated automation carries
+            the same six answers in its README, in the same order:
+          </p>
+          <table>
+            <tr><th>Question</th><th>Why it is there</th></tr>
+            <tr><td>Trigger</td><td>What starts it, and how often it can fire at worst &mdash; which is not how often you expect it to.</td></tr>
+            <tr><td>Scope</td><td>What it may touch, and every indirection that decides it. An action inherits its scope from an alert, the alert from a policy, the policy from a custom group, and the group from a rule somebody wrote a year ago. Four steps between &ldquo;power off idle VMs&rdquo; and which VMs that is tonight.</td></tr>
+            <tr><td>Guardrails</td><td>What has to be true before it acts: a cap on objects per run, an exclusion tag, an approval, a maintenance window. Each one says which incident it prevents.</td></tr>
+            <tr><td>Dry run</td><td>How to make it report instead of act. Everything generated here is created disabled with its dry run on, because applying a file should never start something running.</td></tr>
+            <tr><td>Undo</td><td>How to reverse it &mdash; or an honest statement that you cannot, which is the more useful sentence.</td></tr>
+            <tr><td>Who is told</td><td>Where the record goes when it acts. A run log nobody reads is not a record.</td></tr>
+          </table>
+          <p>
+            The checks run over that structure rather than over the generated YAML, so the tests can
+            refuse an automation that is irreversible with no guardrail, or that changes something with
+            no dry run, without reading a line of the output.
+          </p>
+
+          <h3>What it can write</h3>
+          <table>
+            <tr><th>Target</th><th>Automations</th></tr>
+            <tr><td>VCF Operations <em>(6)</em></td><td>
+              <strong>Notification:</strong> a rule that posts alerts to a webhook rather than a mailbox &mdash; the piece that closes the gap the Aria Ops page finds, where thousands of alert definitions fire and tell nobody.<br/>
+              <strong>Scope:</strong> a custom group built with an exclusion tag from the start, so an object leaves the automation by being tagged rather than by somebody editing the automation at 2am.<br/>
+              <strong>Automation Central:</strong> scheduled reclamation of snapshots, powered-off VMs, orphaned disks and oversized VMs, with a cap on objects per run; and a maintenance window with the overrun check nobody remembers &mdash; a window that never closes is an estate with no alerting and no symptom.<br/>
+              <strong>Reporting and policy:</strong> a report schedule, and a policy override that exports the current state first because that export is the only undo.
+            </td></tr>
+            <tr><td>VCF Operations for Networks <em>(2)</em></td><td>A scheduled flow check for traffic crossing a boundary that should be closed, and a watch for NSX changes made outside the expected service accounts. Both report and neither acts &mdash; an automation that closes a flow on its own findings will close a load-bearing one.</td></tr>
+            <tr><td>VCF Operations for Logs <em>(2)</em></td><td>A log alert with a rate limit on it, because the failure is never the query &mdash; it is that the query matches ten thousand events an hour and the alert becomes its own incident. Plus an audit trail exported off the platform it audits.</td></tr>
+            <tr><td>VCF Automation <em>(3)</em></td><td>A cloud template with a lease, constrained inputs, and an owner and cost code asked for at request time; an extensibility action with the failure path that stops a blocking topic wedging every deployment in the estate; and an approval policy that can actually say no.</td></tr>
+            <tr><td>Pipelines and runners <em>(4)</em></td><td>An Azure Automation runbook on a managed identity with the schedule created disabled; an AWS SSM document targeted by tag with rate and error control; an AWX job template with check mode first; and plan-on-pull-request, apply-on-merge for Terraform, applying the plan that was reviewed rather than a fresh one.</td></tr>
+          </table>
+          <div class="tip warn">
+            <strong>No credentials, anywhere.</strong> Every generated automation reads its secret from a
+            managed identity, the runner&rsquo;s own store or an environment variable, or leaves
+            <code>&lt;REQUIRED&gt;</code> &mdash; and says which. A test refuses any generated file that
+            assigns one to a literal.
+          </div>
+          <div class="tip">
+            <strong>The scope is what goes wrong, not the code.</strong> Almost every automation incident
+            is a correct automation pointed at the wrong set of objects. That is why every README walks
+            the scope chain, and why the dry run is on by default: it is the only place a wrong scope is
+            visible before it acts.
+          </div>
+
+          <h2 id="collector">18. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -947,7 +1011,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">18. Keeping catalogs current</h2>
+          <h2 id="updates">19. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -962,7 +1026,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">19. Common workflows</h2>
+          <h2 id="workflows">20. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -999,7 +1063,7 @@
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">20. Troubleshooting</h2>
+          <h2 id="trouble">21. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -1017,7 +1081,7 @@
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">21. Known limits</h2>
+          <h2 id="limits">22. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
@@ -1034,7 +1098,7 @@
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">22. Licence and disclaimer</h2>
+          <h2 id="licence">23. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.
