@@ -31,6 +31,24 @@ Then open <http://127.0.0.1:8080/>.
 > ES modules cannot be loaded over `file://` in most browsers, so the local server is needed during
 > development. For distribution, serve `web/` from any static host.
 
+### On a machine with no Node
+
+A work PC or an air-gapped box often has no Node and no way to install it. The toolkit still runs
+there, because the built pages are committed in `web/lib`:
+
+1. On GitHub, **Code → Download ZIP**, and extract it anywhere.
+2. Double-click `start.bat`.
+
+With no Node on the PATH, `start.bat` serves the prebuilt pages with Windows PowerShell instead
+(`tools/serve.ps1`): localhost only, no administrator rights, nothing installed. If a policy blocks
+scripts, run it directly:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\serve.ps1
+```
+
+Only `start.bat --dev`, which rebuilds on every change, needs Node.
+
 If the default port is taken or reserved, the server walks forward to the next free one and tells
 you which it used. To pick one explicitly:
 

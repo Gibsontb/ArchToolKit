@@ -25,30 +25,51 @@ exit /b 1
 :parsed
 
 rem ---- Node present? -------------------------------------------------------
+rem Without Node (a locked-down work PC, an air-gapped jump box) the pages still
+rem run: web\lib is committed prebuilt, and tools\serve.ps1 serves it with
+rem Windows PowerShell. Only --dev, which rebuilds on change, needs Node.
 where node >nul 2>&1
 if errorlevel 1 (
-  echo.
-  echo   ERROR: Node.js was not found on PATH.
-  echo   ArchToolKit needs Node 22.6 or newer - it compiles TypeScript with
-  echo   Node's built-in type stripper and has no npm dependencies at all.
-  echo   Install from https://nodejs.org/ and reopen this window.
-  echo.
-  pause
-  exit /b 1
+  set "WHY=Node.js was not found on PATH."
+  goto nonode
 )
 
 rem ---- Node new enough? ----------------------------------------------------
 node -e "var v=process.versions.node.split('.').map(Number);process.exit((v[0]>22||(v[0]===22&&v[1]>=6))?0:1)"
 if errorlevel 1 (
   for /f %%v in ('node -p "process.versions.node"') do set "FOUND=%%v"
+  set "WHY=Node !FOUND! is too old to build; 22.6 or newer is needed."
+  goto nonode
+)
+goto hasnode
+
+:nonode
+if "%MODE%"=="dev" (
   echo.
-  echo   ERROR: Node !FOUND! is too old. ArchToolKit needs 22.6 or newer
-  echo   for the built-in TypeScript type stripper.
+  echo   ERROR: !WHY!
+  echo   --dev rebuilds on every change, which needs Node 22.6 or newer.
+  echo   Without --dev, start.bat serves the prebuilt pages with PowerShell instead.
   echo.
   pause
   exit /b 1
 )
+echo.
+echo   !WHY!
+echo   Serving the prebuilt pages with PowerShell instead - nothing to install.
+echo.
+set "PSARGS=-Port %FIRSTPORT%"
+if "%OPEN%"=="0" set "PSARGS=!PSARGS! -NoOpen"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\serve.ps1" !PSARGS!
+if errorlevel 1 (
+  echo.
+  echo   The PowerShell server could not start. If a policy blocks scripts, run:
+  echo     powershell -NoProfile -ExecutionPolicy Bypass -File tools\serve.ps1
+  echo.
+  pause
+)
+exit /b
 
+:hasnode
 rem ---- Find a free port ----------------------------------------------------
 set /a "LASTPORT=FIRSTPORT+11"
 set "PORT="

@@ -45,17 +45,31 @@ declare module 'node:assert/strict' {
   export default assert;
 }
 
-/* The manual-coverage test reads the shipped pages off disk, which is the only
-   place in `src/` that touches the file system. */
+/* The manual-coverage test reads the shipped pages off disk, and the prebuilt
+   test compares web/lib with the source; they are the only places in `src/`
+   that touch the file system. */
 
 declare module 'node:fs' {
   export function readFileSync(path: string, encoding: 'utf8'): string;
   export function readdirSync(path: string): string[];
+  export interface Dirent {
+    readonly name: string;
+    isDirectory(): boolean;
+    isFile(): boolean;
+  }
+  export function readdirSync(path: string, options: { withFileTypes: true }): Dirent[];
+  export function existsSync(path: string): boolean;
 }
 
 declare module 'node:path' {
   export function join(...parts: string[]): string;
   export function dirname(path: string): string;
+  export function relative(from: string, to: string): string;
+  export const sep: string;
+}
+
+declare module 'node:module' {
+  export function stripTypeScriptTypes(code: string, options?: { mode?: 'strip' | 'transform'; sourceMap?: boolean }): string;
 }
 
 declare module 'node:url' {

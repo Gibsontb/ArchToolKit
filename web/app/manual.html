@@ -110,11 +110,14 @@
             <tr><th>You have</th><th>Do this</th></tr>
             <tr><td>Node.js 22.6 or newer, on Windows</td><td>Double-click <code>start.bat</code> in the toolkit folder. It builds, finds a free port between 8080 and 8091, starts the server and opens your browser. Options: <code>--dev</code> (rebuild on every change), <code>--port N</code>, <code>--no-open</code>.</td></tr>
             <tr><td>Node.js, any system</td><td><code>npm run build</code> then <code>npm run serve</code>, and open the address it prints. <code>npm run dev</code> does both and rebuilds as files change.</td></tr>
+            <tr><td>Windows with no Node at all</td><td>Double-click <code>start.bat</code> anyway. With no Node on the PATH it serves the built pages with Windows PowerShell instead: localhost only, no admin rights, nothing to install. If a policy blocks scripts, run <code>powershell -NoProfile -ExecutionPolicy Bypass -File tools\serve.ps1</code>. Only <code>--dev</code> needs Node.</td></tr>
             <tr><td>Python but no Node</td><td>The built pages are already in the folder. From <code>web\</code>, run <code>python -m http.server 8080</code> and open <code>http://localhost:8080</code>.</td></tr>
             <tr><td>An internal web server</td><td>Copy the <code>web</code> folder to it as static files. Nothing else is needed.</td></tr>
           </table>
           <div class="tip">
-            <strong>On a work laptop without admin rights:</strong> use the Node.js <em>.zip</em> download,
+            <strong>Getting it onto another machine:</strong> on GitHub, <strong>Code &rarr; Download ZIP</strong>
+            and extract it. The download already contains the built pages, so it runs with nothing but
+            <code>start.bat</code>. To develop on that machine as well, you need Node: use the Node.js <em>.zip</em> download,
             extract it to a folder of your own, and add that folder to your account's PATH ("Edit
             environment variables for your account"). Or ask IT; Node.js LTS is often in Company Portal or
             Software Center. There is no <code>npm install</code> step: the toolkit has no dependencies.
