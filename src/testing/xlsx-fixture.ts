@@ -29,14 +29,20 @@ async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 /** A zip of the given files, deflated unless `stored` names them. */
-export async function zip(files: Record<string, string>, stored: readonly string[] = []): Promise<Uint8Array> {
+/**
+ * A zip in memory.
+ *
+ * Entries can be text or bytes; bytes are what a nested archive needs, and an
+ * Aria Operations export is a zip whose dashboards are each a zip of their own.
+ */
+export async function zip(files: Record<string, string | Uint8Array>, stored: readonly string[] = []): Promise<Uint8Array> {
   const encoder = new TextEncoder();
   const parts: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
   for (const [name, text] of Object.entries(files)) {
     const nameBytes = encoder.encode(name);
-    const raw = encoder.encode(text);
+    const raw = typeof text === 'string' ? encoder.encode(text) : text;
     const method = stored.includes(name) ? 0 : 8;
     const data = method === 0 ? raw : await deflate(raw);
     const crc = crc32(raw);

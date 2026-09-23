@@ -2320,3 +2320,23 @@ textarea {
   border-color: var(--danger, #b3261e);
   color: var(--danger, #b3261e);
 }
+
+/* --- Aria Operations severities --------------------------------------- */
+/* AUTO is not "no severity": it takes whichever symptom fired, so it reads
+   differently from the fixed ones and should not look like missing data. */
+
+.pill.severity-critical {
+  border-color: var(--danger, #b3261e);
+  color: var(--danger, #b3261e);
+}
+
+.pill.severity-immediate,
+.pill.severity-warning {
+  border-color: var(--warning, #b8860b);
+  color: var(--warning, #b8860b);
+}
+
+.pill.severity-auto,
+.pill.severity-unknown {
+  font-style: italic;
+}

@@ -46,6 +46,7 @@
         <a href="network.html">Network</a>
         <a href="scripts.html">Scripts</a>
         <a href="splunk.html">Splunk</a>
+        <a href="aria.html">Aria Ops</a>
         <a href="data-editor.html">Data Editor</a>
         <a href="manual.html" aria-current="page">Manual</a>
       </nav>
@@ -80,6 +81,7 @@
             <li><a href="#network">Network devices</a></li>
             <li><a href="#scripts">Scripts</a></li>
             <li><a href="#splunk">Splunk</a></li>
+            <li><a href="#aria">Aria Operations content</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -129,6 +131,7 @@
             <tr><td><a href="multicloud.html">Multi-Cloud</a></td><td>A four-step wizard that produces a cloud recommendation and onboarding playbook, ready for Word.</td></tr>
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
+            <tr><td><a href="aria.html">Aria Ops</a></td><td>Read a vROps 8.x or VCF Operations 9.x content export and find out what is wrong with the monitoring.</td></tr>
           </table>
 
           <!-- ================================================================ -->
@@ -864,7 +867,57 @@
             arrives is the whole game, which is why those five settings have a page of their own.
           </div>
 
-          <h2 id="collector">16. The inventory collector</h2>
+          <h2 id="aria">16. Aria Operations content</h2>
+          <p>
+            <a href="aria.html">Aria Ops</a> reads an export from vROps 8.x or VCF Operations 9.x and
+            shows you all of it at once. Drop in the content package (<code>.zip</code>) taken from the
+            appliance, the JSON inventories a script pulled from the suite API, or both, in any order —
+            each file is recognised by its shape rather than its name, and what is read is merged with
+            what was read before it.
+          </p>
+          <div class="tip">
+            <strong>Nothing is uploaded and nothing is kept.</strong> The files are read in the browser
+            and are gone when the tab closes. An Aria export carries estate object names, alerting
+            thresholds and email addresses, so keep the file out of a repository and out of a ticket
+            attachment.
+          </div>
+
+          <h3>Why bother, when the product already has this</h3>
+          <p>
+            Because the product shows you one object at a time, and every question worth asking about a
+            monitoring platform is about the whole of it. The findings are what the page is for; the
+            browsing is the convenience.
+          </p>
+          <table>
+            <tr><th>Finding</th><th>What it means</th></tr>
+            <tr><td>Alerts nobody is notified about</td><td>An alert definition that matches no enabled notification rule fires, appears in the interface, and tells no one. In most estates that is nearly all of them &mdash; fine for the definitions that ship with adapters you do not use, not fine for the ones somebody tuned.</td></tr>
+            <tr><td>A symptom that is not there</td><td>An alert whose symptom has been deleted can never fire, and the object it was watching shows as perfectly healthy.</td></tr>
+            <tr><td>Alerts with no symptoms at all</td><td>The same outcome from a different cause: nothing can make them fire.</td></tr>
+            <tr><td>Groups on the default policy</td><td>A custom group exists to give a set of objects different thresholds. One left on the default policy gets the same thresholds as everything else, so the group is doing nothing.</td></tr>
+            <tr><td>Policies that turn alerts off</td><td>Where an alert that &ldquo;should be firing&rdquo; usually went. Check the policy before re-tuning the symptom.</td></tr>
+            <tr><td>Private and duplicated dashboards</td><td>A dashboard that was never shared lives in one account and leaves with the person. Ninety copies of one name are ninety private forks that stopped tracking the original the day it was improved.</td></tr>
+            <tr><td>Reports nobody receives</td><td>A report definition with no schedule has never been sent to anyone.</td></tr>
+            <tr><td>Personal mailboxes on notification rules</td><td>When that person changes team the alert stops reaching anyone, and nothing reports that it has.</td></tr>
+            <tr><td>Super metrics</td><td>Ones that are a constant rather than a formula; ones built on other super metrics, which is a chain the interface does not show; and ones whose input is missing, which return nothing and take every chart built on them with them.</td></tr>
+          </table>
+
+          <h3>What it reads</h3>
+          <table>
+            <tr><th>Kind</th><th>Where it comes from</th></tr>
+            <tr><td>Alert definitions, symptoms, recommendations</td><td><code>alertdefs.xml</code>, <code>symptomdefs.xml</code>, <code>recommendationdefs.xml</code>, or the matching JSON inventories</td></tr>
+            <tr><td>Policies</td><td><code>policies.xml</code>, which also carries the alerts each policy turns on and off, or the policy inventory</td></tr>
+            <tr><td>Custom groups, super metrics, notification rules and templates</td><td><code>customgroups.json</code>, <code>supermetrics.json</code>, <code>notificationrules.json</code>, or the inventories</td></tr>
+            <tr><td>Dashboards</td><td>The <code>dashboards/</code> folder in the package &mdash; one zip per dashboard, each holding a <code>dashboard.json</code> &mdash; read including the widget layout and the views each widget shows</td></tr>
+            <tr><td>Views and reports</td><td><code>views.zip</code> and <code>reports.zip</code>, and <code>reportschedules/</code> for which reports actually run</td></tr>
+          </table>
+          <p>
+            Anything you leave out is simply a tab that does not appear, and the findings that depend on
+            it say so rather than guessing. Dropping the package and then a newer alert-definitions
+            inventory over the top of it merges field by field, so for each field the file that has
+            something to say wins &mdash; rather than the last one read replacing the whole record.
+          </p>
+
+          <h2 id="collector">17. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -872,7 +925,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">17. Keeping catalogs current</h2>
+          <h2 id="updates">18. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -887,7 +940,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">18. Common workflows</h2>
+          <h2 id="workflows">19. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -924,7 +977,7 @@
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">19. Troubleshooting</h2>
+          <h2 id="trouble">20. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -942,7 +995,7 @@
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">20. Known limits</h2>
+          <h2 id="limits">21. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
@@ -959,7 +1012,7 @@
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">21. Licence and disclaimer</h2>
+          <h2 id="licence">22. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.
