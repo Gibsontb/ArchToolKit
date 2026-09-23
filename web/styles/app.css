@@ -617,6 +617,30 @@ tbody tr:hover {
 
 /* ---------- Tool grid (home) ---------- */
 
+/* Twelve cards in one grid is a list you scan; five short groups is a sequence
+   you follow — inventory, decide, build, run, then the tools. */
+.tool-group {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: var(--space-6) 0 0;
+}
+
+.tool-group:first-of-type {
+  margin-top: 0;
+}
+
+.tool-group-note {
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  margin: var(--space-1) 0 var(--space-3);
+}
+
+.tool-group + .tool-grid {
+  margin-top: var(--space-3);
+}
+
 .tool-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

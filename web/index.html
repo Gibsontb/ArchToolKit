@@ -17,14 +17,14 @@
         <a href="app/inventory.html">VMware Inventory</a>
         <a href="app/vcf-sizing.html">VCF Sizing</a>
         <a href="app/vcf-spec.html">VCF Spec Builder</a>
-        <a href="app/data-editor.html">Data Editor</a>
         <a href="app/multicloud.html">Multi-Cloud</a>
         <a href="app/migration.html">Migration</a>
+        <a href="app/terraform.html">Terraform</a>
+        <a href="app/ansible.html">Ansible</a>
         <a href="app/network.html">Network</a>
         <a href="app/scripts.html">Scripts</a>
         <a href="app/splunk.html">Splunk</a>
-        <a href="app/terraform.html">Terraform</a>
-        <a href="app/ansible.html">Ansible</a>
+        <a href="app/data-editor.html">Data Editor</a>
         <a href="app/manual.html">Manual</a>
       </nav>
     </header>
@@ -40,6 +40,8 @@
         </p>
       </div>
 
+      <h2 class="tool-group">Start with what you have</h2>
+      <p class="tool-group-note">Import the estate as it is, before deciding anything about it.</p>
       <div class="tool-grid">
         <a class="tool-card" href="app/inventory.html">
           <h3>VMware Inventory</h3>
@@ -49,6 +51,11 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
+      </div>
+
+      <h2 class="tool-group">Decide and size</h2>
+      <p class="tool-group-note">What the target looks like, and what it costs to get there.</p>
+      <div class="tool-grid">
         <a class="tool-card" href="app/vcf-sizing.html">
           <h3>VCF 9.1 Sizing</h3>
           <p>
@@ -58,7 +65,6 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-
         <a class="tool-card" href="app/vcf-spec.html">
           <h3>VCF 9.1 Spec Builder</h3>
           <p>
@@ -67,17 +73,30 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-
-        <a class="tool-card" href="app/ansible.html">
-          <h3>Ansible Playbook Generator</h3>
+        <a class="tool-card" href="app/multicloud.html">
+          <h3>Multi-Cloud Decision &amp; Onboarding Wizard</h3>
           <p>
-            Forty-nine playbooks across AWS, Azure, Google Cloud, OCI, vSphere, Linux and Windows.
-            Pick one, fill in its parameters, and get the playbook plus a requirements.yml derived
-            from the modules it actually uses. Module names checked against the Galaxy catalog.
+            Pick the cloud once, answer four steps, and get a full recommendation — compute pattern,
+            data and storage, integration, resilience, security controls, DR by cloud, sizing
+            footprint and an onboarding playbook. Full view, Print, or Save as Word.
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
+        <a class="tool-card" href="app/migration.html">
+          <h3>Application Migration</h3>
+          <p>
+            Evaluate an application, route it across the seven Rs, and get the readiness score, the
+            risk band, the target cloud, the services that cover it and a step-by-step plan. Every
+            application evaluated is kept in the Portfolio tab, where the waves are planned and the
+            whole backlog exports as CSV or JSON.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
+      </div>
 
+      <h2 class="tool-group">Build it</h2>
+      <p class="tool-group-note">The infrastructure, its configuration, and the devices in front of it.</p>
+      <div class="tool-grid">
         <a class="tool-card" href="app/terraform.html">
           <h3>Terraform Script Generator</h3>
           <p>
@@ -89,18 +108,15 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-
-        <a class="tool-card" href="app/migration.html">
-          <h3>Application Migration</h3>
+        <a class="tool-card" href="app/ansible.html">
+          <h3>Ansible Playbook Generator</h3>
           <p>
-            Evaluate an application, route it across the seven Rs, and get the readiness score, the
-            risk band, the target cloud, the services that cover it and a step-by-step plan. Every
-            application evaluated is kept in the Portfolio tab, where the waves are planned and the
-            whole backlog exports as CSV or JSON.
+            Forty-nine playbooks across AWS, Azure, Google Cloud, OCI, vSphere, Linux and Windows.
+            Pick one, fill in its parameters, and get the playbook plus a requirements.yml derived
+            from the modules it actually uses. Module names checked against the Galaxy catalog.
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-
         <a class="tool-card" href="app/network.html">
           <h3>Network Device Configuration</h3>
           <p>
@@ -112,18 +128,22 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
+      </div>
 
+      <h2 class="tool-group">Run it</h2>
+      <p class="tool-group-note">The operational glue: what you write once something is live.</p>
+      <div class="tool-grid">
         <a class="tool-card" href="app/scripts.html">
           <h3>Script Generator</h3>
           <p>
-            PowerShell, Python, Bash and Windows batch — Active Directory, estate-wide commands,
-            certificates and event logs, CSV and API work, backups, deployments and health checks.
-            Every script says what it needs, how to make it report instead of act, and how to undo it,
-            in its own header. No credential is ever written into one.
+            PowerShell, Python, Bash and Windows batch. A catalogue of 420 commands you can search by
+            what you are trying to do, each with the thing about it that is not in the help — and a
+            builder that wraps any of them in strict mode, logging, a dry run and a loop. Every script
+            says what it needs, how to make it report instead of act, and how to undo it, in its own
+            header. No credential is ever written into one.
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-
         <a class="tool-card" href="app/splunk.html">
           <h3>Splunk App Generator</h3>
           <p>
@@ -134,17 +154,10 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
+      </div>
 
-        <a class="tool-card" href="app/multicloud.html">
-          <h3>Multi-Cloud Decision &amp; Onboarding Wizard</h3>
-          <p>
-            Pick the cloud once, answer four steps, and get a full recommendation — compute pattern,
-            data and storage, integration, resilience, security controls, DR by cloud, sizing
-            footprint and an onboarding playbook. Full view, Print, or Save as Word.
-          </p>
-          <span class="tag tag-ready">Ready</span>
-        </a>
-
+      <h2 class="tool-group">Tools and reference</h2>
+      <div class="tool-grid">
         <a class="tool-card" href="app/data-editor.html">
           <h3>Data Editor</h3>
           <p>
@@ -154,7 +167,6 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-
         <a class="tool-card" href="app/manual.html">
           <h3>Manual</h3>
           <p>
@@ -163,8 +175,8 @@
           </p>
           <span class="tag">Help</span>
         </a>
-
       </div>
+
 
       <div class="section-note" style="margin-top: var(--space-6)">
         Sizing and specification data is tagged with how it was verified. Figures from Broadcom's API
