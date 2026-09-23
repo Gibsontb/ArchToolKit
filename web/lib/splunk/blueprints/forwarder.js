@@ -326,7 +326,7 @@ export const FORWARDER_BLUEPRINTS                             = [
     tier: TIER,
     label: 'Where the forwarder sends data',
     group: 'Delivery',
-    description: 'outputs.conf pointing at every indexer rather than one, with the queue that carries a restart and the TLS that stops the data crossing the network in clear.',
+    description: 'outputs.conf pointing at every indexer rather than one, with indexer acknowledgement so nothing in flight is lost, a sensibly sized output queue, and the TLS that stops the data crossing the network in clear.',
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_forwarder_outputs' },
       { id: 'indexers', label: 'Indexers', control: 'textarea', default: 'idx01.example.com:9997\nidx02.example.com:9997\nidx03.example.com:9997', hint: 'Every one of them — a single entry is a single point of failure' },
@@ -336,7 +336,7 @@ export const FORWARDER_BLUEPRINTS                             = [
       ] },
       { id: 'manager_uri', label: 'Cluster manager', control: 'text', default: 'https://cm01.example.com:8089', showWhen: { input: 'discovery', equals: ['discovery'] } },
       { id: 'tls', label: 'TLS to the indexers', control: 'toggle', default: true },
-      { id: 'queue_size', label: 'Persistent queue', control: 'text', default: '5GB', hint: 'How much the forwarder buffers when the indexers are unreachable' },
+      { id: 'queue_size', label: 'Output queue (in memory)', control: 'text', default: 'auto', hint: 'maxQueueSize: auto (7MB with useACK), or a few MB. It is RAM on every forwarder and does not survive a restart — it is not a disk buffer' },
       { id: 'auto_lb_seconds', label: 'Switch indexer every (seconds)', control: 'number', default: 30, min: 5, max: 300 },
       { id: 'compression', label: 'Compress on the wire', control: 'toggle', default: false, hint: 'Saves bandwidth, costs forwarder CPU' },
       { id: 'index_and_forward', label: 'Also keep a local copy', control: 'toggle', default: false, hint: 'Only on a heavy forwarder, and rarely wanted' },
@@ -346,14 +346,30 @@ export const FORWARDER_BLUEPRINTS                             = [
       const indexers = listOf(str(values, 'indexers', '').replace(/\n/g, ','));
       const discovery = str(values, 'discovery', 'list') === 'discovery';
       const tls = bool(values, 'tls', true);
+      const queueRaw = str(values, 'queue_size', 'auto').trim() || 'auto';
+      const queueMatch = /^(\d+)\s*(KB|MB|GB)?$/i.exec(queueRaw);
+      const queueSize = /^auto$/i.test(queueRaw) ? 'auto' : queueMatch ? `${queueMatch[1]}${(queueMatch[2] ?? '').toUpperCase()}` : 'auto';
+      const queueMB = queueMatch && queueMatch[2] ? Number(queueMatch[1]) * ({ KB: 1 / 1024, MB: 1, GB: 1024 }                          )[queueMatch[2].toUpperCase()]  : 0;
       const findings            = [];
+
+      if (queueSize === 'auto' && !/^auto$/i.test(queueRaw)) {
+        findings.push(warning('splunk.queue-size-invalid', `"${queueRaw}" is not a maxQueueSize value (auto, a count, or a number with KB, MB or GB); auto is used instead.`, { source: 'outputs.conf spec' }));
+      }
+      if (queueMB > 100) {
+        findings.push(
+          warning('splunk.queue-size-large', `maxQueueSize = ${queueSize} is held in memory on every forwarder, and with useACK the wait queue is three times that again — about ${Math.round(queueMB * 4)} MB of RAM per forwarder when the indexers are away. It does not survive a restart, so it buys no durability for the memory it costs.`, {
+            remediation: 'Leave it at auto (7MB with useACK) or a few MB. Monitored files need no buffer: the forwarder stops reading and resumes at its saved offset. For network, scripted or FIFO inputs that cannot pause, set persistentQueueSize on those input stanzas in inputs.conf.',
+            source: 'outputs.conf and inputs.conf specification',
+          }),
+        );
+      }
 
       if (!discovery && indexers.length === 0) {
         findings.push(error('splunk.no-indexers', 'No indexer was given, so the forwarder has nowhere to send data.', { source: 'ArchToolKit' }));
       }
       if (!discovery && indexers.length === 1) {
         findings.push(
-          error('splunk.single-indexer', 'One indexer in the output list means a restart of that indexer stops ingestion from every forwarder using this app. The persistent queue buys time; it does not fix it.', {
+          error('splunk.single-indexer', 'One indexer in the output list means a restart of that indexer stops ingestion from every forwarder using this app. Back-pressure and useACK keep monitored files from being lost while it is down; nothing keeps the data flowing.', {
             remediation: 'List every indexer, or use indexer discovery so the list maintains itself.',
             source: 'ArchToolKit',
           }),
@@ -381,7 +397,8 @@ export const FORWARDER_BLUEPRINTS                             = [
         activation: 'restart',
         notes: [
           'Auto load balancing switches indexer on a timer, not per event. A forwarder sending one large file will stick to one indexer for the whole file unless forceTimebasedAutoLB is on — which is why one indexer sometimes looks far busier than the rest.',
-          `The persistent queue (${str(values, 'queue_size', '5GB')}) is what carries an indexer restart. Without it, a forwarder with nowhere to send stops reading its inputs, and on a rotating log that means data is lost rather than delayed.`,
+          `The output queue (maxQueueSize = ${queueSize}) is memory, not disk: it smooths short stalls and is gone on a restart. What carries an indexer outage is back-pressure — the forwarder stops reading monitored files and resumes at its saved offset, so a file is only lost if it rotates out of the monitored path before the indexers return. useACK keeps a copy of each block in a wait queue until an indexer confirms it is written.`,
+          'Inputs that cannot pause — TCP/UDP network inputs, scripted inputs, FIFOs — lose data under back-pressure. For those, the disk-backed buffer is persistentQueueSize on the input stanza in inputs.conf (for example [udp://514] persistentQueueSize = 5GB); outputs.conf has no persistent queue.',
           ...(discovery ? ['Indexer discovery means the list maintains itself as peers are added and removed. The forwarder needs to reach the cluster manager on 8089, and the manager needs a pass4SymmKey that matches.'] : []),
           ...(tls ? ['The certificate paths point at Splunk\u2019s defaults, which are the same self-signed certificate on every installation. Replace them with your own before this is anything but a lab.'] : []),
           'Restart after deploying. outputs.conf is not picked up by a reload.',
@@ -398,10 +415,16 @@ export const FORWARDER_BLUEPRINTS                             = [
             'defaultGroup = primary_indexers',
             ...(bool(values, 'index_and_forward', false) ? ['indexAndForward = 1'] : ['indexAndForward = 0']),
             '',
-            '# The queue is what carries an indexer restart. Without it a forwarder',
-            '# with nowhere to send stops reading, and on a rotating log that is',
-            '# data lost rather than delayed.',
-            `maxQueueSize = ${str(values, 'queue_size', '5GB')}`,
+            '# maxQueueSize is the in-MEMORY output queue. auto = 7MB with useACK',
+            '# (500KB without), and useACK adds a wait queue of three times this.',
+            '# It is not persisted and does not survive a restart; a GB value here',
+            '# is GBs of RAM on every forwarder for no durability. The disk-backed',
+            '# buffer is persistentQueueSize, and it belongs on network, scripted and',
+            '# FIFO input stanzas in inputs.conf, not here. Monitored files need none:',
+            '# the forwarder stops reading and resumes at its saved offset.',
+            `maxQueueSize = ${queueSize}`,
+            '# The forwarder keeps each block until an indexer confirms it is written,',
+            '# and resends it elsewhere if that indexer goes away first.',
             'useACK = true',
             '',
             '[tcpout:primary_indexers]',

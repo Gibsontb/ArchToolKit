@@ -823,8 +823,8 @@
 
           <h3>Why the tier is the first question</h3>
           <p>
-            The platform picker on this page is the Splunk <strong>tier</strong> — search head, indexer
-            or forwarder — rather than a cloud, because that is the setting that decides whether
+            The platform picker on this page is the Splunk <strong>tier</strong> — search head, indexer,
+            forwarder, heavy forwarder, management, edge, Cloud or an add-on that spans them — rather than a cloud, because that is the setting that decides whether
             anything works. A <code>props.conf</code> deployed to a search head does not parse data
             arriving from a forwarder. The app deploys, the file is read, and nothing happens. There is
             no error anywhere, and the symptom appears weeks later as events with the wrong timestamp.
@@ -843,23 +843,39 @@
           </p>
 
           <h3>What it can build</h3>
+          <p>
+            Fifty-six apps across eight tiers, for Splunk Enterprise 9.x and 10.x and Splunk Cloud
+            Platform. Anything that changes a running system comes with a script that is a dry run
+            until <code>--execute</code>, reads its secrets from a mode-600 file, and exits non-zero
+            when a step fails.
+          </p>
           <table>
             <tr><th>Tier</th><th>Apps</th></tr>
-            <tr><td>Search head <em>(6)</em></td><td>
-              <strong>Searches:</strong> a saved search or report written the way a scheduled one has to be — the index and sourcetype first so the filter happens at the earliest point, no leading wildcards, a schedule offset off the hour, and a window slightly longer than the interval so a late event is not missed.<br/>
-              <strong>Alerting:</strong> an alert with throttling per field, a condition that means something, and the severity, digest and suppression settings that stop one incident producing forty notifications.<br/>
-              <strong>Dashboards:</strong> Simple XML or Dashboard Studio, with a time token every panel reads and an optional base search so six panels are not six concurrent searches.<br/>
-              <strong>Knowledge objects:</strong> a macro with argument validation and a lookup with <code>max_matches</code> set, optionally applied automatically to a sourcetype; and a data model with acceleration, with the tsidx cost estimated from your daily volume rather than discovered afterwards.<br/>
-              <strong>Security:</strong> a correlation search with a MITRE technique, a documented false-positive note, risk attribution and an optional notable.
+            <tr><td>Add-ons and onboarding <em>(4)</em></td><td>
+              <strong>Onboard what you built:</strong> the network devices from the Network page (the
+              syslog lines to paste on each device, SC4S or heavy-forwarder listeners, the Splunkbase
+              add-on per platform, and a missing-device alert); the VCF and vSphere estate (ESXi, vCenter
+              and NSX syslog, and VCF Operations for Logs forwarding); and the imported VM estate
+              (serverclasses by OS and role, forwarder install lists and a licence estimate).<br/>
+              <strong>Add-ons:</strong> a custom add-on for any log source &mdash; index-time parsing,
+              search-time extraction, and the tags and fields the chosen CIM data model needs, with a local
+              parsing test and CIM validation searches.
             </td></tr>
-            <tr><td>Indexer <em>(2)</em></td><td>
-              <strong>Indexes:</strong> sized from daily volume, compression and retention, with the frozen decision made explicitly — the default deletes — and both the size and age limits set, since whichever is reached first rolls data away.<br/>
-              <strong>Parsing:</strong> the five settings that decide what an event is and when it happened, plus index-time routing, masking and dropping. These cannot be fixed later without re-indexing, and the generated app says so.
+            <tr><td>Management and platform <em>(14)</em></td><td>
+              <strong>Design:</strong> deployment sizing with the storage maths shown.<br/>
+              <strong>Clustering and distribution:</strong> indexer cluster with bundle push and
+              maintenance mode, search head cluster and deployer, deployment server classes.<br/>
+              <strong>Platform:</strong> licence manager and usage alerts, monitoring console, upgrade
+              runbook with prechecks, configuration and KV store backup.<br/>
+              <strong>Security:</strong> LDAP or SAML, roles and index access, TLS everywhere with an
+              expiry check, workload management, a REST admin kit, and authentication token lifecycle.
             </td></tr>
-            <tr><td>Forwarder <em>(3)</em></td><td>
-              <strong>Inputs:</strong> file and directory monitoring with the index named, the recursion bounded and the rotated files excluded; and syslog or HEC listeners with the port privilege, queue size and per-sender routing a busy listener needs.<br/>
-              <strong>Delivery:</strong> <code>outputs.conf</code> pointing at every indexer rather than one, with the persistent queue that carries an indexer restart and the TLS that stops the data crossing the network in clear.
-            </td></tr>
+            <tr><td>Search head <em>(11)</em></td><td>Saved searches, alerts, dashboards, macros and lookups, data models, correlation searches, field extractions with a local test, KV store collections, summary indexing and acceleration, risk-based alerting, and platform health alerts with a dashboard.</td></tr>
+            <tr><td>Indexer <em>(6)</em></td><td>Indexes sized from volume and retention, sourcetype parsing, SmartStore on S3 with a role rather than keys, hot and cold volumes, metrics indexes and log-to-metrics, and Ingest Actions to filter, mask and route to S3.</td></tr>
+            <tr><td>Heavy forwarder <em>(7)</em></td><td>SC4S or rsyslog for syslog, routing and cloning, the HTTP Event Collector, AWS (SQS-based S3), Azure (Event Hub, Entra ID), Google Cloud (Pub/Sub) and DB Connect.</td></tr>
+            <tr><td>Forwarder <em>(6)</em></td><td>File monitoring, syslog and HEC listeners, outputs to every indexer, Windows event logs with Sysmon, Linux logs with journald, and the universal forwarder install with its deployment client.</td></tr>
+            <tr><td>Edge <em>(3)</em></td><td>Edge Processor and Ingest Processor pipelines in SPL2, and the Splunk OpenTelemetry Collector for Kubernetes and for hosts.</td></tr>
+            <tr><td>Splunk Cloud Platform <em>(5)</em></td><td>Indexes, HEC tokens, IP allow lists and apps through the Admin Config Service, and an Enterprise-to-Cloud migration planner with dual forwarding that is checked with btool rather than assumed.</td></tr>
           </table>
           <div class="tip warn">
             <strong>No credentials, anywhere.</strong> A HEC token, a <code>pass4SymmKey</code> or an SSL

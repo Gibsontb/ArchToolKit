@@ -21,15 +21,15 @@ import { appConf, renderApp, renderRecord, standingFindings,                    
  
 
 export function appFiles(app           , name        )              {
-  const findings            = [...(app.findings ?? []), ...standingFindings(app)];
-  const files                         = renderApp(app, name);
+  // An app without an app.conf is a directory Splunk may or may not read, so
+  // one is added here — before the checks run, so they see the app as shipped.
+  const complete            = Object.keys(app.files).some((path) => path.endsWith('app.conf'))
+    ? app
+    : { ...app, files: { ...app.files, 'default/app.conf': appConf(app, app.title) } };
+  const findings            = [...(complete.findings ?? []), ...standingFindings(complete)];
+  const files                         = renderApp(complete, name);
 
-  // An app without an app.conf is a directory Splunk may or may not read.
-  if (!Object.keys(app.files).some((path) => path.endsWith('app.conf'))) {
-    files[`${app.app}/default/app.conf`] = `${appConf(app, app.title).join('\n')}\n`;
-  }
-
-  files['DEPLOY.md'] = `${[`# ${app.title}`, '', ...renderRecord(app, name)].join('\n')}\n`;
+  files['DEPLOY.md'] = `${[`# ${complete.title}`, '', ...renderRecord(complete, name)].join('\n')}\n`;
 
   return { files, findings };
 }
