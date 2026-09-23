@@ -6,6 +6,14 @@
  * is new is that every resource type they emit is checked against the committed
  * provider catalog, so a resource renamed in a provider release fails here
  * rather than at plan time.
+ *
+ * The Reference panel under the output is the Terraform Map, joined to what was
+ * just generated. The map on its own answers a browsing question — which
+ * resource do I reach for in this domain — and keeps its own page for that. But
+ * once something has been written, the same rows are reference for what is on
+ * the screen, and that belongs beside the output rather than one navigation
+ * away. A generated resource the map says nothing about is a gap in the map,
+ * and it is reported as one.
  */
 
 import { mountGeneratorPage } from './generator-page.js';
@@ -15,6 +23,7 @@ import { TERRAFORM_BLUEPRINTS } from '../terraform/blueprints/index.js';
 import { catalogFindings } from '../terraform/catalog.js';
 import { moduleFindings } from '../terraform/modules.js';
 import { buildStack } from '../terraform/stack.js';
+import { referencePanel } from './terraform-reference.js';
 
 const root = document.getElementById('terraform-root');
 if (root) {
@@ -45,6 +54,7 @@ if (root) {
         },
         downloadExtension: '.tf',
         standingFindings: () => [...catalogFindings(), ...moduleFindings()],
+        panels: (platform, files) => referencePanel(platform, files),
       });
     },
   });

@@ -725,28 +725,34 @@
           </p>
 
           <h3>What it can write</h3>
+          <p>48 scripts across four languages, grouped in the picker by what they touch.</p>
           <table>
             <tr><th>Language</th><th>Scripts</th></tr>
-            <tr><td>PowerShell</td><td>
+            <tr><td>PowerShell <em>(21)</em></td><td>
               <strong>Active Directory:</strong> create accounts from a CSV, find and disable stale user and computer accounts, audit privileged group membership with a comparison against the last run.<br/>
-              <strong>Windows servers:</strong> service health check and restart across a list of machines, certificate expiry from the store and from live TLS endpoints, event log summary grouped by id and source, disk pressure with the largest files and a safe cache cleanup, and the pattern for running one command across an estate in parallel with the failures collected.<br/>
-              <strong>Scaffolding:</strong> an advanced function with comment-based help, pipeline input, <code>ShouldProcess</code> and a Pester test; and installing a script as a scheduled task under a group managed service account.
+              <strong>Windows servers:</strong> service health check and restart across a list of machines, certificate expiry from the store and from live TLS endpoints, event log summary grouped by id and source, disk pressure with the largest files and a safe cache cleanup, patch compliance with pending-reboot detection, and the pattern for running one command across an estate in parallel with the failures collected.<br/>
+              <strong>Microsoft 365 and Entra:</strong> Exchange Online mailbox sizes, quotas, activity and forwarding — including the inbox rules a compromised account is usually forwarded by; and an Entra review of privileged roles, authentication methods and stale accounts, with Graph paging and throttling handled.<br/>
+              <strong>VMware:</strong> a vSphere inventory with sizing, placement, tools state and performance; and finding and removing the old snapshots that are the usual cause of a full datastore.<br/>
+              <strong>Azure:</strong> tag compliance across every subscription, optionally backfilling from the resource group — with the note that Azure does not actually inherit tags.<br/>
+              <strong>File services and network services:</strong> share permission audit for broken inheritance, direct user grants and open access; DHCP scope utilisation and DNS record health with duplicate and scavenging checks.<br/>
+              <strong>Security and databases:</strong> local administrator membership across the estate with nested groups expanded; SQL Server backups, space, jobs and the full-recovery-without-log-backups mismatch.<br/>
+              <strong>Scaffolding:</strong> an advanced function with comment-based help, pipeline input, <code>ShouldProcess</code> and a Pester test; a scheduled task under a group managed service account; and a whole module with a manifest, tests, a build script and CI.
             </td></tr>
-            <tr><td>Python</td><td>
-              <strong>Scaffolding:</strong> a command line tool with subcommands, layered configuration, logging to stderr and results to stdout, and exit codes a pipeline understands.<br/>
-              <strong>Data:</strong> read, validate, transform and write a CSV — clean, join, split or aggregate — never overwriting the input; and a log parser that reads a line at a time so file size does not matter.<br/>
-              <strong>Integration:</strong> a REST client with authentication from the environment, exponential backoff on the failures worth retrying, <code>Retry-After</code> honoured, and paging by offset, cursor or Link header.<br/>
-              <strong>Files:</strong> find duplicates by content in two passes, the largest files, the oldest, or a breakdown by type — then report, move to a holding folder, or hard link.
+            <tr><td>Python <em>(10)</em></td><td>
+              <strong>Scaffolding:</strong> a command line tool with subcommands, layered configuration, logging to stderr and results to stdout, and exit codes a pipeline understands; and a scheduled job with a lock that cannot go stale, a state file written only after success, and Prometheus metrics.<br/>
+              <strong>Data:</strong> read, validate, transform and write a CSV — clean, join, split or aggregate — never overwriting the input; a log parser that reads a line at a time so file size does not matter; and a comparison of two exports reporting added, removed and changed field by field.<br/>
+              <strong>Integration and network:</strong> a REST client with authentication from the environment, exponential backoff, <code>Retry-After</code> honoured and three paging styles; network device configuration backup with diffs and a git history; and a bulk endpoint check for status, timing, redirects and certificate expiry.<br/>
+              <strong>Files and reporting:</strong> find duplicates by content in two passes, the largest, the oldest or a breakdown by type; and a formatted Excel workbook with frozen headers, conditional formatting, a summary sheet and a chart.
             </td></tr>
-            <tr><td>Bash</td><td>
+            <tr><td>Bash <em>(10)</em></td><td>
               <strong>Scaffolding:</strong> the opening every shell script should have — <code>set -euo pipefail</code>, a trap, usage, argument parsing, a lock held on a file descriptor, and a dry run.<br/>
-              <strong>Operations:</strong> a backup with verification and rotation that runs only after the backup succeeds; a health check of services, disks, inodes, endpoints, load and certificates that exits with a monitoring code; and a deployment that switches a symlink, polls a health endpoint and rolls itself back when that fails.<br/>
-              <strong>Configuration:</strong> create users, install and validate their keys, set groups and sudo — refusing to disable password logins until at least one key works.
+              <strong>Operations:</strong> a backup with verification and rotation that runs only after the backup succeeds; a health check of services, disks, inodes, endpoints, load and certificates that exits with a monitoring code; a deployment that switches a symlink, polls a health endpoint and rolls itself back; a full system report that diffs itself against the last one; log and temporary file cleanup that leaves open files alone; and running one command across many hosts with the failures collected.<br/>
+              <strong>Configuration:</strong> create users, install and validate their keys, set groups and sudo — refusing to disable password logins until a key works; firewall rules with a revert timer that undoes them if nobody confirms; and certificate renewal with the service reload that everyone forgets and the read-back that proves it worked.
             </td></tr>
-            <tr><td>Windows batch</td><td>
+            <tr><td>Windows batch <em>(7)</em></td><td>
               <strong>Scaffolding:</strong> <code>setlocal</code>, delayed expansion, argument parsing, <code>errorlevel</code> checked immediately, and a single exit path.<br/>
-              <strong>Operations:</strong> robocopy backup or mirror with its exit codes read properly — anything below 8 is success — and a refusal to mirror an empty source over a destination; and stopping and starting services in dependency order, polling <code>sc query</code> rather than trusting <code>net stop</code>.<br/>
-              <strong>Configuration:</strong> a logon script mapping drives and printers by group, reading membership once, never stopping the logon on a failure.
+              <strong>Operations:</strong> robocopy backup or mirror with its exit codes read properly — anything below 8 is success — and a refusal to mirror an empty source; stopping and starting services in dependency order, polling <code>sc query</code> rather than trusting <code>net stop</code>; a machine inventory that reads the uninstall keys rather than Win32_Product; and a diagnostics bundle for when nobody can reach the machine remotely.<br/>
+              <strong>Deployment and configuration:</strong> a silent install that waits for the Windows Installer mutex, reads 0, 1641 and 3010 all as success, and verifies afterwards that the software is actually there; and a logon script mapping drives and printers by group that never stops the logon on a failure.
             </td></tr>
           </table>
           <div class="tip warn">

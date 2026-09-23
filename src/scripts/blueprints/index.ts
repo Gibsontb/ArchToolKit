@@ -10,19 +10,24 @@ import type { BlueprintGroup } from '../../kit/blueprint.ts';
 import type { ScriptBlueprint } from '../from-script.ts';
 import { SCRIPT_PLATFORMS } from '../script.ts';
 import { POWERSHELL_BASE } from './powershell.ts';
+import { POWERSHELL_CLOUD } from './powershell-cloud.ts';
+import { POWERSHELL_INFRA } from './powershell-infra.ts';
 import { PYTHON_BASE } from './python.ts';
+import { PYTHON_EXTRA } from './python-extra.ts';
 import { BASH_BASE } from './bash.ts';
+import { BASH_EXTRA } from './bash-extra.ts';
 import { CMD_BASE } from './cmd.ts';
+import { CMD_EXTRA } from './cmd-extra.ts';
 
-export const POWERSHELL_SCRIPTS: BlueprintGroup = { target: 'powershell', label: SCRIPT_PLATFORMS.powershell.label, blueprints: POWERSHELL_BASE };
-export const PYTHON_SCRIPTS: BlueprintGroup = { target: 'python', label: SCRIPT_PLATFORMS.python.label, blueprints: PYTHON_BASE };
-export const BASH_SCRIPTS: BlueprintGroup = { target: 'bash', label: SCRIPT_PLATFORMS.bash.label, blueprints: BASH_BASE };
-export const CMD_SCRIPTS: BlueprintGroup = { target: 'cmd', label: SCRIPT_PLATFORMS.cmd.label, blueprints: CMD_BASE };
+export const POWERSHELL_SCRIPTS: BlueprintGroup = { target: 'powershell', label: SCRIPT_PLATFORMS.powershell.label, blueprints: [...POWERSHELL_BASE, ...POWERSHELL_CLOUD, ...POWERSHELL_INFRA] };
+export const PYTHON_SCRIPTS: BlueprintGroup = { target: 'python', label: SCRIPT_PLATFORMS.python.label, blueprints: [...PYTHON_BASE, ...PYTHON_EXTRA] };
+export const BASH_SCRIPTS: BlueprintGroup = { target: 'bash', label: SCRIPT_PLATFORMS.bash.label, blueprints: [...BASH_BASE, ...BASH_EXTRA] };
+export const CMD_SCRIPTS: BlueprintGroup = { target: 'cmd', label: SCRIPT_PLATFORMS.cmd.label, blueprints: [...CMD_BASE, ...CMD_EXTRA] };
 
 export const SCRIPT_BLUEPRINTS: readonly BlueprintGroup[] = [POWERSHELL_SCRIPTS, PYTHON_SCRIPTS, BASH_SCRIPTS, CMD_SCRIPTS];
 
 /** Every script blueprint, with its structured builder, in one list. */
-export const SCRIPTS: readonly ScriptBlueprint[] = [...POWERSHELL_BASE, ...PYTHON_BASE, ...BASH_BASE, ...CMD_BASE];
+export const SCRIPTS: readonly ScriptBlueprint[] = [...POWERSHELL_BASE, ...POWERSHELL_CLOUD, ...POWERSHELL_INFRA, ...PYTHON_BASE, ...PYTHON_EXTRA, ...BASH_BASE, ...BASH_EXTRA, ...CMD_BASE, ...CMD_EXTRA];
 
 export function scriptFor(id: string): ScriptBlueprint | undefined {
   return SCRIPTS.find((blueprint) => blueprint.id === id);

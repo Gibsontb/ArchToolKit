@@ -2194,3 +2194,30 @@ textarea {
   flex: 1 1 8rem;
   min-width: 0;
 }
+
+/* The Reference panel: the Terraform Map, joined to what was just generated.
+   Collapsed by default, because it is reference rather than output — the point
+   is that it is there, not that it is in the way. */
+.reference-panel > summary {
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+}
+
+.reference-panel > summary:hover {
+  color: var(--text, #111827);
+}
+
+.reference-panel[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+.reference-panel details {
+  margin: var(--space-2) 0;
+}
+
+.reference-panel details > summary {
+  cursor: pointer;
+  font-size: 0.9em;
+}

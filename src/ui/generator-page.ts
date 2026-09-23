@@ -56,6 +56,15 @@ export interface GeneratorOptions {
   readonly standingFindings?: () => readonly Finding[];
   /** A reference page for this platform's resources, linked from step 1. */
   readonly mapHref?: string;
+  /**
+   * Extra panels rendered under the generated output.
+   *
+   * The Terraform page uses this to show the map rows that talk about the
+   * resources it has just written. It gets the platform and the files, because
+   * a panel about the output can only be built from the output — a blueprint's
+   * declared `emits` is a declaration, and most blueprints declare nothing.
+   */
+  readonly panels?: (platform: string, files: Readonly<Record<string, string>>) => readonly HTMLElement[];
   /** The `kind` written into saved settings, e.g. `archtoolkit.terraform-generator`. */
   readonly settingsKind: string;
   /**
@@ -966,6 +975,8 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
           ? `${errors} error${errors === 1 ? '' : 's'} — see below.`
           : 'Generated. No errors.';
 
+    const extra = generated === null ? [] : (options.panels?.(target, generated) ?? []);
+
     replace(
       stepThree,
       card(
@@ -978,6 +989,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
         ...children,
       ),
       findings.length > 0 ? card('Findings', findingsList(findings)) : el('div'),
+      ...extra,
     );
   }
 

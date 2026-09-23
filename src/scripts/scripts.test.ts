@@ -89,7 +89,11 @@ describe('every script', () => {
       if (script.effect === 'read') continue;
       const platform = SCRIPT_PLATFORMS[script.platform];
       const text = script.body.join('\n');
-      const hasDryRun = text.includes(platform.dryRunFlag) || /WhatIf|DRY_RUN|dry_run|DryRun|WHATIF/i.test(text);
+      // In PowerShell the dry run is `SupportsShouldProcess`, which supplies
+      // -WhatIf for free — but only for the lines inside ShouldProcess, so
+      // both halves have to be there.
+      const shouldProcess = script.platform === 'powershell' && /SupportsShouldProcess/.test(text) && /\$PSCmdlet\.ShouldProcess/.test(text);
+      const hasDryRun = shouldProcess || text.includes(platform.dryRunFlag) || /WhatIf|DRY_RUN|dry_run|DryRun|WHATIF/i.test(text);
       expect([id, hasDryRun]).toEqual([id, true]);
     }
   });

@@ -5,6 +5,10 @@ import { PROVIDERS, providerFor } from './providers.ts';
 import { scaffold } from './scaffold.ts';
 import { emitTerraform, VCF_PROVIDER_MAX_VCF } from './vcf.ts';
 import { buildSddcSpec, type DeploymentPlan } from '../vcf/spec-builder.ts';
+import { referenceFor, resourceTypesIn } from './reference.ts';
+import { mappedTargets } from './maps.ts';
+import { TERRAFORM_BLUEPRINTS } from './blueprints/index.ts';
+import { defaultValues } from '../kit/blueprint.ts';
 
 function basePlan(overrides: Partial<DeploymentPlan> = {}): DeploymentPlan {
   return {
@@ -255,5 +259,66 @@ describe('VCF resource emission', () => {
     expect(codes(emitTerraform(spec).findings)).toContain(
       'vcf.terraform.workflow-type-not-expressible',
     );
+  });
+});
+
+describe('the Reference panel: the map joined to what was generated', () => {
+  it('reads the resource types out of the generated HCL, not out of emits', () => {
+    // Most blueprints declare no emits. All of them produce HCL, so the HCL is
+    // the thing to read.
+    const files = {
+      'main.tf': 'resource "aws_vpc" "this" {\n  cidr_block = "10.0.0.0/16"\n}\n\ndata "aws_ami" "latest" {}\n',
+      'README.md': 'resource "aws_not_real" "ignored" {}',
+    };
+    expect(resourceTypesIn(files)).toEqual(['aws_ami', 'aws_vpc']);
+  });
+
+  it('finds the map rows that name what was built', () => {
+    const files = { 'main.tf': 'resource "aws_vpc" "this" {}\nresource "aws_subnet" "a" {}\n' };
+    const reference = referenceFor('aws', files);
+    expect(reference).toBeDefined();
+    expect(reference!.rows.length > 0).toBe(true);
+    // Every row it returns matched on something that was actually generated.
+    for (const row of reference!.rows) {
+      expect(row.matched.every((name) => reference!.resources.includes(name))).toBe(true);
+    }
+  });
+
+  it('says which generated resources the map has nothing about', () => {
+    const files = { 'main.tf': 'resource "aws_vpc" "this" {}\nresource "aws_quicksight_folder" "q" {}\n' };
+    const reference = referenceFor('aws', files);
+    expect(reference).toBeDefined();
+    expect(reference!.unmapped).toContain('aws_quicksight_folder');
+    expect(reference!.unmapped.includes('aws_vpc')).toBe(false);
+    // A gap in the map is information, not an error.
+    expect(reference!.findings.every((f) => f.severity === 'info')).toBe(true);
+  });
+
+  it('returns nothing for a platform that has no map, rather than an empty panel', () => {
+    // vSphere and VCF have no map. An empty panel would read as "the map knows
+    // nothing about this", when the truth is there is no map to consult.
+    expect(referenceFor('vsphere', { 'main.tf': 'resource "vsphere_virtual_machine" "vm" {}' })).toBe(null);
+    expect(referenceFor('aws', { 'main.tf': '# nothing here' })).toBe(null);
+  });
+
+  it('covers what the real blueprints build, for every platform that has a map', () => {
+    // The point of the panel is that it is populated. A platform whose
+    // blueprints produce nothing the map mentions has a map worth extending.
+    for (const target of mappedTargets()) {
+      const group = TERRAFORM_BLUEPRINTS.find((g) => g.target === target);
+      if (!group) continue;
+      let matched = 0;
+      let total = 0;
+      for (const blueprint of group.blueprints) {
+        const files = blueprint.build(defaultValues(blueprint), 'check').files;
+        const reference = referenceFor(target, files);
+        if (!reference) continue;
+        total += reference.resources.length;
+        matched += reference.resources.length - reference.unmapped.length;
+      }
+      // Not every resource needs a row, but a map that covers none of what the
+      // generator builds is not doing its job.
+      expect([target, total > 0 && matched > 0]).toEqual([target, true]);
+    }
   });
 });

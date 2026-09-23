@@ -56,6 +56,15 @@ import { isRecord,           } from '../editor/doc.js';
                                                        
                                                                             
                             
+     
+                                                      
+    
+                                                                          
+                                                                               
+                                                                               
+                                                                            
+     
+                                                                                                          
                                                                                         
                                 
      
@@ -966,6 +975,8 @@ export function mountGeneratorPage(root             , options                  )
           ? `${errors} error${errors === 1 ? '' : 's'} — see below.`
           : 'Generated. No errors.';
 
+    const extra = generated === null ? [] : (options.panels?.(target, generated) ?? []);
+
     replace(
       stepThree,
       card(
@@ -978,6 +989,7 @@ export function mountGeneratorPage(root             , options                  )
         ...children,
       ),
       findings.length > 0 ? card('Findings', findingsList(findings)) : el('div'),
+      ...extra,
     );
   }
 
