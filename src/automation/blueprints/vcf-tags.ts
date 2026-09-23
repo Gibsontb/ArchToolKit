@@ -719,20 +719,21 @@ function tagsImport(intro: string, steps: readonly (ImportStepSpec | undefined)[
 }
 
 /** IMPORT.md for the standard: every format, and which one goes where. */
-function taxonomyImport(categories: readonly StdCategory[], route: string): string {
+function taxonomyImport(categories: readonly StdCategory[], route: string, packageSteps: readonly ImportStepSpec[] = []): string {
   const tags = categories.reduce((n, c) => n + c.values.length, 0);
   const unconfirmed = [...new Set(categories.flatMap((c) => c.types))].filter((t) => POWERCLI_UNCONFIRMED.includes(t));
   return importGuide({
     product: 'vCenter and VCF Operations tag management',
     intro: `The same standard — ${categories.length} categories, ${tags} tags — in each form tags are imported with. Pick one route per vCenter; every route creates only what is missing.`,
     steps: [
+      ...packageSteps,
       {
-        heading: 'Route A — the scripts (this blueprint’s default)',
+        heading: 'Route A — the scripts, from a Linux host (instead of the package)',
         lines: [
           route === 'fleet'
-            ? '`./create-fleet.sh` (dry run), then `./create-fleet.sh --execute`: creates the categories and tags in VCF Operations fleet tag management and pushes them to the vCenters.'
-            : '`./create-vcenter.sh` (dry run), then `./create-vcenter.sh --execute`: sends exactly the bodies under import/vcenter-rest/ to every vCenter in VCENTERS, filling each tag’s category_id with the id its category got.',
-          ...(route === 'both' ? ['', 'Then `FLEET_ADAPTERS=<vCenter adapter ids> ./create-fleet.sh --execute`: imports the categories from those vCenters into VCF Operations fleet tag management.'] : []),
+            ? '`./scripts/create-fleet.sh` (dry run), then `./scripts/create-fleet.sh --execute`: creates the categories and tags in VCF Operations fleet tag management and pushes them to the vCenters. It reads scripts/tag-standard.json beside it.'
+            : '`./scripts/create-vcenter.sh` (dry run), then `./scripts/create-vcenter.sh --execute`: sends exactly the bodies under import/vcenter-rest/ to every vCenter in VCENTERS, filling each tag’s category_id with the id its category got. It reads scripts/tag-standard.json beside it.',
+          ...(route === 'both' ? ['', 'Then `FLEET_ADAPTERS=<vCenter adapter ids> ./scripts/create-fleet.sh --execute`: imports the categories from those vCenters into VCF Operations fleet tag management.'] : []),
         ],
       },
       {
@@ -757,12 +758,14 @@ function taxonomyImport(categories: readonly StdCategory[], route: string): stri
       {
         heading: 'VCF Operations 9.x tag management',
         lines: [
-          'VCF Operations does not import tags from a file. Its import is from a vCenter: create the standard in one vCenter by route A, B or C, then Manage > Fleet Management > Tags > Import from vCenter (or create-fleet.sh, which calls the same import), and push to the other vCenters from there. Or create it centrally (route "fleet only") and push — but not both, or every category gets two ids.',
+          'VCF Operations does not import tags from a file. Its import is from a vCenter: create the standard in one vCenter by route A, B or C, then Manage > Fleet Management > Tags > Import from vCenter (or the workflow with route both, or scripts/create-fleet.sh, which call the same import), and push to the other vCenters from there. Or create it centrally (route "fleet only") and push — but not both, or every category gets two ids.',
         ],
       },
     ],
     verify: [
       'VCF Operations 9.1 tag management file import: none found in the 9.0 and 9.1 descriptions; if your build offers one, compare its template with import/powercli/tag-standard.csv.',
+      'The VCF 9.1 API-token login to vCenter (identity broker token, exchanged for a SAML token, presented as SIGN) follows davidwzhang.com "VCF 9.1 API Access (4)"; confirm it against your vCenter, or use vcUsername and vcPassword.',
+      'How a fleet import (POST .../adapters/{adapterId}/categories/pull) reconciles the same category name arriving from a second vCenter is not spelt out in the 9.1.1 reference; the workflow checks every category and value by exact name afterwards and reports what is missing.',
       ...(unconfirmed.length > 0 ? [`PowerCLI -EntityType names for ${unconfirmed.join(', ')} are not confirmed here; PowerCLI refuses an unknown name before creating anything.`] : []),
       'Import-TagStandard.ps1 was parsed, not run against a vCenter.',
     ],
@@ -1377,6 +1380,1453 @@ if (problemCount > threshold && settings.failAboveThreshold !== false) {
   throw new Error("Tag compliance: " + problemCount + " problem(s), above the threshold of " + threshold + ". Every problem is in the log above.");
 }`;
 
+// ---------------------------------------------------------------------------
+// The other tag automations as Orchestrator packages: shared actions
+// ---------------------------------------------------------------------------
+
+const ap = (name: string, type: string, description: string) => ({ name, type, description });
+
+/** The configuration attributes every package that logs in to vCenter carries. */
+function vcAttributes(vcenters: readonly string[], why: string) {
+  return [
+    { name: 'vcenters', type: 'Array/string', value: [...vcenters], description: 'Every vCenter this may log in to' },
+    { name: 'vcfIdbHost', type: 'string', value: '', description: 'VCF 9.1: the VCF Identity Broker host' },
+    { name: 'vcfApiToken', type: 'SecureString', description: `VCF 9.1: an API token issued to an API client in VCF Operations, with ${why}` },
+    { name: 'vcUsername', type: 'string', value: '', description: `8.x and 9.0: an account with ${why}, user@domain, the same on every vCenter` },
+    { name: 'vcPassword', type: 'SecureString', description: '8.x and 9.0: its password' },
+  ] as const;
+}
+
+/**
+ * The vCenter tagging actions a package that changes tags carries, in its own
+ * module (actions call their siblings through System.getModule(module)).
+ *
+ * changeTag is the one place a value is replaced, and it is where the rule
+ * "never leave an object untagged on failure" lives: in a several-value
+ * category the new value is attached and read back before the old one is
+ * detached, so the object always has a value. In a one-value category vCenter
+ * refuses a second value ("Tagging cardinality violation", see
+ * github.com/ansible-collections/community.vmware issue 1501), so there the
+ * old value has to go first: detach, attach, read back, and on any failure
+ * re-attach the old value at once and read that back too. The error then says
+ * ROLLED BACK (the object has its old value) or ROLLBACK-FAILED (it has none,
+ * with the tag id to put back), and the run stops either way.
+ */
+function vcTagActions(module: string, only?: readonly string[]): VroActionDef[] {
+  const M = JSON.stringify(module);
+  const all: VroActionDef[] = [
+    {
+      name: 'vcLogin',
+      description: 'Log in to one vCenter: with vcfIdbHost and vcfApiToken (VCF 9.1, no password), else with vcUsername and vcPassword (8.x and 9.0). Returns the session header.',
+      resultType: 'Any',
+      params: [ap('settings', 'Any', 'What core.settings returned'), ap('host', 'string', 'vCenter host')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+if (settings.vcfApiToken) {
+  if (!settings.vcfIdbHost) throw new Error("vcfApiToken is set but vcfIdbHost is not: set the VCF Identity Broker host.");
+  return core.loginVcenterToken(String(host), settings.vcfIdbHost, settings.vcfApiToken);
+}
+if (!(settings.vcUsername && settings.vcPassword)) throw new Error("Set vcfIdbHost and vcfApiToken (VCF 9.1), or vcUsername and vcPassword (8.x and 9.0), in the configuration element.");
+return core.loginVcenter(String(host), settings.vcUsername, settings.vcPassword);`,
+    },
+    {
+      name: 'openVcenter',
+      description: 'The session header for a vCenter, logging in the first time and reading its tag catalogue into session.catalogues[host]. Refuses a vCenter not in settings.vcenters. The workflow logs out of every session.headers entry in its finally.',
+      resultType: 'Any',
+      params: [ap('settings', 'Any', 'What core.settings returned'), ap('session', 'Any', '{ headers: {}, catalogues: {} }'), ap('host', 'string', 'vCenter host')],
+      script: String.raw`var mod = System.getModule(${M});
+var h = String(host);
+if ((settings.vcenters || []).indexOf(h) < 0) throw new Error(h + " is not in vcenters in the configuration element; refusing to log in to it.");
+if (!session.headers[h]) {
+  session.headers[h] = mod.vcLogin(settings, h);
+  session.catalogues[h] = mod.readCatalogue(h, session.headers[h]);
+}
+return session.headers[h];`,
+    },
+    {
+      name: 'readCatalogue',
+      description: 'The tag catalogue of one vCenter: { categories: [{id, name, description, cardinality, associable_types}], tags: [{id, name, description, category_id, category}] }, sorted by name. Reads only.',
+      resultType: 'Any',
+      params: [ap('host', 'string', 'vCenter host'), ap('headers', 'Any', 'Session header')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var base = "https://" + host;
+function get(path) { return core.http("GET", base + path, headers, null, null).body || []; }
+function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+var categories = [];
+var ids = get("/api/cis/tagging/category");
+for (var i = 0; i < ids.length; i++) {
+  var c = get("/api/cis/tagging/category/" + encodeURIComponent(ids[i]));
+  categories.push({ id: String(c.id), name: String(c.name), description: c.description || "", cardinality: String(c.cardinality), associable_types: (c.associable_types || []).slice().sort(cmp) });
+}
+categories.sort(function (a, b) { return cmp(a.name, b.name); });
+var nameOf = {};
+for (var j = 0; j < categories.length; j++) nameOf[categories[j].id] = categories[j].name;
+var tags = [];
+var tagIds = get("/api/cis/tagging/tag");
+for (var k = 0; k < tagIds.length; k++) {
+  var t = get("/api/cis/tagging/tag/" + encodeURIComponent(tagIds[k]));
+  tags.push({ id: String(t.id), name: String(t.name), description: t.description || "", category_id: String(t.category_id), category: nameOf[t.category_id] || "?" });
+}
+tags.sort(function (a, b) { return cmp(a.category, b.category) || cmp(a.name, b.name); });
+return { categories: categories, tags: tags };`,
+    },
+    {
+      name: 'readAssociations',
+      description: 'Every association of the given tags, [{tag_id, type, id}], read 100 tags a request with list-attached-objects-on-tags (a POST that only reads).',
+      resultType: 'Any',
+      params: [ap('host', 'string', 'vCenter host'), ap('headers', 'Any', 'Session header'), ap('tags', 'Any', 'Tags from readCatalogue')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var out = [];
+for (var from = 0; from < tags.length; from += 100) {
+  var batch = [];
+  for (var n = from; n < Math.min(from + 100, tags.length); n++) batch.push(tags[n].id);
+  var attached = core.http("POST", "https://" + host + "/api/cis/tagging/tag-association?action=list-attached-objects-on-tags", headers, { tag_ids: batch }, null).body || [];
+  for (var a = 0; a < attached.length; a++) {
+    var objects = attached[a].object_ids || [];
+    for (var o = 0; o < objects.length; o++) out.push({ tag_id: String(attached[a].tag_id), type: String(objects[o].type), id: String(objects[o].id) });
+  }
+}
+return out;`,
+    },
+    {
+      name: 'readInventory',
+      description: 'Every object tags can be on, with its name: [{type, id, name}]. VMs host by host, because GET /api/vcenter/vm refuses rather than pages past its limit. Reads only.',
+      resultType: 'Any',
+      params: [ap('host', 'string', 'vCenter host'), ap('headers', 'Any', 'Session header')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var base = "https://" + host;
+function get(path) { return core.http("GET", base + path, headers, null, null).body || []; }
+var out = [];
+var seen = {};
+function add(type, id, name) {
+  var key = type + "/" + id;
+  if (seen[key]) return;
+  seen[key] = true;
+  out.push({ type: type, id: String(id), name: String(name) });
+}
+var hosts = get("/api/vcenter/host");
+for (var h = 0; h < hosts.length; h++) add("HostSystem", hosts[h].host, hosts[h].name);
+for (var h2 = 0; h2 < hosts.length; h2++) {
+  var vms = get("/api/vcenter/vm?hosts=" + encodeURIComponent(hosts[h2].host));
+  for (var v = 0; v < vms.length; v++) add("VirtualMachine", vms[v].vm, vms[v].name);
+}
+var lists = [["/api/vcenter/cluster", "ClusterComputeResource", "cluster"], ["/api/vcenter/datastore", "Datastore", "datastore"], ["/api/vcenter/folder", "Folder", "folder"], ["/api/vcenter/resource-pool", "ResourcePool", "resource_pool"], ["/api/vcenter/datacenter", "Datacenter", "datacenter"]];
+for (var l = 0; l < lists.length; l++) {
+  var items = get(lists[l][0]);
+  for (var m = 0; m < items.length; m++) add(lists[l][1], items[m][lists[l][2]], items[m].name);
+}
+var networks = get("/api/vcenter/network");
+for (var w = 0; w < networks.length; w++) add(networks[w].type === "DISTRIBUTED_PORTGROUP" ? "DistributedVirtualPortgroup" : networks[w].type === "OPAQUE_NETWORK" ? "OpaqueNetwork" : "Network", networks[w].network, networks[w].name);
+return out;`,
+    },
+    {
+      name: 'tagsOn',
+      description: 'The tag ids attached to one object now (list-attached-tags-on-objects, a POST that only reads).',
+      resultType: 'Any',
+      params: [ap('host', 'string', 'vCenter host'), ap('headers', 'Any', 'Session header'), ap('type', 'string', 'Object type, e.g. VirtualMachine'), ap('id', 'string', 'MoRef, e.g. vm-42')],
+      script: String.raw`var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/api/cis/tagging/tag-association?action=list-attached-tags-on-objects", headers, { object_ids: [{ type: String(type), id: String(id) }] }, null).body || [];
+var out = [];
+for (var i = 0; i < r.length; i++) {
+  var t = r[i].tag_ids || [];
+  for (var j = 0; j < t.length; j++) out.push(String(t[j]));
+}
+return out;`,
+    },
+    {
+      name: 'resolveObject',
+      description: 'An object name or MoRef to { type, id }, or "NOT_FOUND", "AMBIGUOUS" (more than one object of that type has the name) or "UNSUPPORTED" (a type this cannot look up). GET /api/vcenter/<type>?names= or ?<type>s=.',
+      resultType: 'Any',
+      params: [ap('host', 'string', 'vCenter host'), ap('headers', 'Any', 'Session header'), ap('type', 'string', 'Object type'), ap('ref', 'string', 'Name or MoRef')],
+      script: String.raw`var TYPES = { VirtualMachine: ["vm", "vm", "vms"], HostSystem: ["host", "host", "hosts"], ClusterComputeResource: ["cluster", "cluster", "clusters"], Datastore: ["datastore", "datastore", "datastores"], Folder: ["folder", "folder", "folders"], ResourcePool: ["resource-pool", "resource_pool", "resource_pools"], Datacenter: ["datacenter", "datacenter", "datacenters"], Network: ["network", "network", "networks"], DistributedVirtualPortgroup: ["network", "network", "networks"] };
+var t = TYPES[String(type)];
+if (!t) return "UNSUPPORTED";
+var moref = /^(vm-|host-|domain-c|datastore-|group-[a-z]|resgroup-|datacenter-|network-|dvportgroup-)[0-9]+$/.test(String(ref));
+var list = System.getModule("com.archtoolkit.core").http("GET", "https://" + host + "/api/vcenter/" + t[0] + "?" + (moref ? t[2] : "names") + "=" + encodeURIComponent(String(ref)), headers, null, null).body || [];
+if (list.length === 0) return "NOT_FOUND";
+if (list.length > 1) return "AMBIGUOUS";
+var kind = String(type);
+if (t[1] === "network") kind = list[0].type === "DISTRIBUTED_PORTGROUP" ? "DistributedVirtualPortgroup" : "Network";
+return { type: kind, id: String(list[0][t[1]]) };`,
+    },
+    {
+      name: 'changeTag',
+      description:
+        'Attach, detach or replace one value on one object, and read the object back. Replace in a several-value category: attach the new value, read it back, then detach the old — never without a value. Replace in a one-value category (vCenter refuses a second value): detach, attach, read back, and on failure re-attach the old value at once and read it back; the error says ROLLED BACK or ROLLBACK-FAILED. Returns "ok" or throws.',
+      resultType: 'string',
+      params: [
+        ap('host', 'string', 'vCenter host'),
+        ap('headers', 'Any', 'Session header'),
+        ap('type', 'string', 'Object type'),
+        ap('id', 'string', 'MoRef'),
+        ap('fromTagId', 'string', 'The value to remove, or null'),
+        ap('toTagId', 'string', 'The value to set, or null'),
+        ap('cardinality', 'string', 'SINGLE or MULTIPLE, of the category'),
+        ap('label', 'string', 'What this is, for the errors'),
+      ],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var mod = System.getModule(${M});
+var base = "https://" + host + "/api/cis/tagging/tag-association/";
+var object = { object_id: { type: String(type), id: String(id) } };
+function attach(tag) { core.http("POST", base + encodeURIComponent(tag) + "?action=attach", headers, object, null); }
+function detach(tag) { core.http("POST", base + encodeURIComponent(tag) + "?action=detach", headers, object, null); }
+function now() { try { return mod.tagsOn(host, headers, type, id); } catch (e) { return null; } }
+function on(list, tag) { return list !== null && list.indexOf(String(tag)) >= 0; }
+function why(e) { return e && e.message ? e.message : String(e); }
+var after;
+if (!fromTagId) {
+  try { attach(toTagId); } catch (e1) { if (!on(now(), toTagId)) throw new Error(label + ": the attach failed: " + why(e1)); }
+  if (!on(now(), toTagId)) throw new Error(label + ": the value is not on the object after the attach.");
+  return "ok";
+}
+if (!toTagId) {
+  try { detach(fromTagId); } catch (e2) { if (on(now(), fromTagId)) throw new Error(label + ": the detach failed: " + why(e2)); }
+  after = now();
+  if (after === null || on(after, fromTagId)) throw new Error(label + ": the value is still on the object, or it could not be read back.");
+  return "ok";
+}
+if (String(cardinality) !== "SINGLE") {
+  // Several values allowed: the new value first, so the object is never without one.
+  try { attach(toTagId); } catch (e3) { if (!on(now(), toTagId)) throw new Error(label + ": the new value did not take (" + why(e3) + "); the old value was not touched."); }
+  if (!on(now(), toTagId)) throw new Error(label + ": the new value is not on the object; the old value was not touched.");
+  try { detach(fromTagId); } catch (e4) { if (on(now(), fromTagId)) throw new Error(label + ": the new value is on, but the old one could not be detached (" + why(e4) + "); the object carries both."); }
+  if (on(now(), fromTagId)) throw new Error(label + ": the new value is on, but the old one is still there; the object carries both.");
+  return "ok";
+}
+// One value allowed: vCenter refuses a second, so the old one must go first.
+try { detach(fromTagId); } catch (e5) { if (on(now(), fromTagId)) throw new Error(label + ": could not detach the old value (" + why(e5) + "); nothing changed."); }
+var failure = null;
+try { attach(toTagId); } catch (e6) { failure = why(e6); }
+after = now();
+if (on(after, toTagId)) return "ok";
+// The old value is gone and the new one did not take: put the old one back now.
+try { attach(fromTagId); } catch (e7) { System.warn(label + ": re-attaching the old value: " + why(e7)); }
+if (on(now(), fromTagId)) throw new Error(label + ": the new value did not take (" + (failure || "not on the object after the attach") + "); ROLLED BACK: the old value was re-attached and read back.");
+throw new Error(label + ": the new value did not take (" + (failure || "not on the object after the attach") + ") AND the old value could not be re-attached: ROLLBACK-FAILED. The object has no value in this category now; attach tag " + fromTagId + " to " + type + " " + id + " by hand, or run the undo with the change log.");`,
+    },
+    {
+      name: 'parseCsv',
+      description: 'RFC 4180 CSV text to an array of rows (arrays of strings). Blank lines are dropped.',
+      resultType: 'Any',
+      params: [ap('text', 'string', 'CSV text')],
+      script: String.raw`var s = String(text || "");
+var rows = [];
+var row = [];
+var cell = "";
+var quoted = false;
+for (var i = 0; i < s.length; i++) {
+  var ch = s.charAt(i);
+  if (quoted) {
+    if (ch === '"' && s.charAt(i + 1) === '"') { cell += '"'; i++; }
+    else if (ch === '"') quoted = false;
+    else cell += ch;
+  } else if (ch === '"') quoted = true;
+  else if (ch === ",") { row.push(cell); cell = ""; }
+  else if (ch === "\n" || ch === "\r") {
+    if (ch === "\r" && s.charAt(i + 1) === "\n") i++;
+    row.push(cell); rows.push(row); row = []; cell = "";
+  } else cell += ch;
+}
+if (cell !== "" || row.length > 0) { row.push(cell); rows.push(row); }
+var out = [];
+for (var r = 0; r < rows.length; r++) {
+  if (rows[r].join("").replace(/\s/g, "") !== "") out.push(rows[r]);
+}
+return out;`,
+    },
+    {
+      name: 'toCsv',
+      description: 'A header and rows as CSV; a cell is quoted only when it holds a comma, a quote or a line break.',
+      resultType: 'string',
+      params: [ap('header', 'Any', 'Array of column names'), ap('rows', 'Any', 'Array of arrays')],
+      script: String.raw`function cell(v) {
+  var s = v === null || v === undefined ? "" : String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.split('"').join('""') + '"' : s;
+}
+var lines = [];
+var all = [header].concat(rows);
+for (var i = 0; i < all.length; i++) {
+  var cells = [];
+  for (var j = 0; j < all[i].length; j++) cells.push(cell(all[i][j]));
+  lines.push(cells.join(","));
+}
+return lines.join("\n") + "\n";`,
+    },
+    {
+      name: 'undoChangeLog',
+      description:
+        'Put every object in a change log back as it was, newest row first, working from what is on each object now rather than from the result column — so it is right for a log left by a run that stopped half way, and changes nothing when run twice. Every change goes through core.act (dry run, cap, stop on first failure). Returns the number of objects it had to change.',
+      resultType: 'number',
+      params: [ap('ctx', 'Any', 'What core.begin returned'), ap('settings', 'Any', 'What core.settings returned'), ap('session', 'Any', '{ headers, catalogues }'), ap('text', 'string', 'The change log CSV')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var mod = System.getModule(${M});
+var rows = mod.parseCsv(text);
+if (rows.length < 1) throw new Error("The change log is empty.");
+var need = ["vcenter", "object_type", "object_id", "object_name", "category", "before_id", "before", "after_id", "after", "action", "result"];
+var col = {};
+for (var c = 0; c < rows[0].length; c++) col[String(rows[0][c]).replace(/^\s+|\s+$/g, "")] = c;
+for (var n = 0; n < need.length; n++) if (!(need[n] in col)) throw new Error("Not a change log: there is no " + need[n] + " column.");
+var changed = 0;
+for (var r = rows.length - 1; r >= 1; r--) {
+  var o = {};
+  for (var k = 0; k < need.length; k++) o[need[k]] = rows[r][col[need[k]]] === undefined ? "" : String(rows[r][col[need[k]]]);
+  if (!o.object_id || !o.after_id) continue;
+  var h = mod.openVcenter(settings, session, o.vcenter);
+  var now = mod.tagsOn(o.vcenter, h, o.object_type, o.object_id);
+  var hasAfter = now.indexOf(o.after_id) >= 0;
+  var needBefore = o.action === "replace" && o.before_id !== "" && now.indexOf(o.before_id) < 0;
+  if (!hasAfter && !needBefore) {
+    System.log("As before already: " + o.object_name + " " + o.category + "=" + (o.before || "(none)") + " [" + o.result + "]");
+    continue;
+  }
+  var cardinality = "MULTIPLE";
+  var cats = session.catalogues[o.vcenter].categories;
+  for (var x = 0; x < cats.length; x++) if (cats[x].name === o.category) cardinality = cats[x].cardinality;
+  var label = o.object_name + " (" + o.object_id + ") on " + o.vcenter + ": " + o.category;
+  var what = hasAfter && needBefore ? "put back " + label + " " + o.after + " -> " + o.before : hasAfter ? "detach " + label + "=" + o.after : "re-attach " + label + "=" + o.before;
+  changed++;
+  core.act(ctx, what, function () {
+    return mod.changeTag(o.vcenter, h, o.object_type, o.object_id, hasAfter ? o.after_id : null, needBefore ? o.before_id : null, cardinality, label);
+  });
+}
+return changed;`,
+    },
+  ];
+  // Each package carries only what it calls (openVcenter needs vcLogin and
+  // readCatalogue; changeTag needs tagsOn; undoChangeLog needs parseCsv,
+  // openVcenter and changeTag).
+  return only ? all.filter((a) => only.includes(a.name)) : all;
+}
+
+/** The change log both assignment workflows write, and the undo reads: the same columns as tag-assign.sh writes. */
+const CHANGE_LOG_HEADER = ['vcenter', 'object_type', 'object_id', 'object_name', 'category', 'before_id', 'before', 'after_id', 'after', 'action', 'result'];
+
+/**
+ * Applying a plan of attach/replace changes: one object at a time, the change
+ * log row written as "pending" before each change and its result after, so a
+ * run that stops still leaves a log the undo can work from. Shared by the bulk
+ * and rule workflows (plan rows are objects with the CHANGE_LOG_HEADER fields
+ * plus cardinality).
+ */
+const APPLY_PLAN = String.raw`function applyPlan(changes) {
+  for (var i = 0; i < changes.length; i++) {
+    var p = changes[i];
+    var entry = { vcenter: p.vcenter, object_type: p.object_type, object_id: p.object_id, object_name: p.object_name, category: p.category, before_id: p.before_id, before: p.before, after_id: p.after_id, after: p.after, action: p.action, result: ctx.dryRun ? "planned" : "pending" };
+    changeLog.push(entry);
+    var label = p.object_name + " (" + p.object_id + ") on " + p.vcenter + ": " + p.category;
+    var what = p.action === "replace" ? "replace " + label + " " + p.before + " -> " + p.after : "attach " + label + "=" + p.after;
+    try {
+      core.act(ctx, what, function () {
+        return mod.changeTag(p.vcenter, session.headers[p.vcenter], p.object_type, p.object_id, p.action === "replace" ? p.before_id : null, p.after_id, p.cardinality, label);
+      });
+      if (!ctx.dryRun) entry.result = "ok";
+    } catch (e) {
+      var text = String(e && e.message ? e.message : e);
+      // Cap reached and "stopped earlier" mean the change was never attempted.
+      entry.result = text.indexOf("ROLLBACK-FAILED") >= 0 ? "ROLLBACK-FAILED" : text.indexOf("ROLLED BACK") >= 0 ? "rolled-back" : /^(Cap reached|Stopped earlier)/.test(text) ? "not-attempted" : entry.result === "pending" ? "failed" : entry.result;
+      throw e;
+    }
+  }
+}
+function logRows() {
+  var out = [];
+  for (var i = 0; i < changeLog.length; i++) {
+    var e = changeLog[i];
+    out.push([e.vcenter, e.object_type, e.object_id, e.object_name, e.category, e.before_id, e.before, e.after_id, e.after, e.action, e.result]);
+  }
+  return out;
+}`;
+
+/** The fleet tag-management actions (VCF Operations 9.1.1 API), for the packages that call it. */
+function fleetTagActions(): VroActionDef[] {
+  return [
+    {
+      name: 'fleetCategories',
+      description: 'Every category in fleet tag management whose name matches (partially — the query matches partially; pick the exact one yourself), or every category with names empty. POST .../tag-management/categories/query, 1,000 a page. Reads only.',
+      resultType: 'Any',
+      params: [ap('tm', 'string', 'https://<ops>/suite-api/api/fleet-management/tag-management'), ap('auth', 'Any', 'What core.loginVcfFleet returned'), ap('names', 'Any', 'Array of names, or null')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var body = names && names.length ? { names: names } : {};
+return core.pageAll(function (page) {
+  var r = core.http("POST", tm + "/categories/query?page=" + page + "&pageSize=1000", auth, body, null).body || {};
+  return { items: r.categories || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+}, 0);`,
+    },
+    {
+      name: 'fleetTags',
+      description: 'Every tag of one fleet category: POST .../categories/{id}/tags/query, 1,000 a page. Reads only.',
+      resultType: 'Any',
+      params: [ap('tm', 'string', 'Tag management base URL'), ap('auth', 'Any', 'Bearer header'), ap('categoryId', 'string', 'Category id')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+return core.pageAll(function (page) {
+  var r = core.http("POST", tm + "/categories/" + encodeURIComponent(categoryId) + "/tags/query?page=" + page + "&pageSize=1000", auth, {}, null).body || {};
+  return { items: r.tags || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+}, 0);`,
+    },
+    {
+      name: 'waitTask',
+      description: 'Wait for a fleet tagging task (push, pull, assignment): GET .../tasks/{taskId} until SUCCESS; FAILED or DISMISSED throws with its errorMessages, and so does running past maxPolls (10 s apart).',
+      resultType: 'Any',
+      params: [ap('tm', 'string', 'Tag management base URL'), ap('auth', 'Any', 'Bearer header'), ap('taskId', 'string', 'The taskId a 202 returned'), ap('maxPolls', 'number', 'Give up after this many polls; 0 for 180 (30 minutes)')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+if (!taskId) throw new Error("The call returned no taskId.");
+var limit = maxPolls && maxPolls > 0 ? maxPolls : 180;
+var status = "UNKNOWN";
+for (var i = 0; i < limit; i++) {
+  var r = core.http("GET", tm + "/tasks/" + encodeURIComponent(taskId), auth, null, null).body || {};
+  status = String(r.status || "UNKNOWN");
+  if (status === "SUCCESS") return r;
+  if (status === "FAILED" || status === "DISMISSED") throw new Error("Task " + taskId + ": " + status + ((r.errorMessages || []).length ? ": " + r.errorMessages.join("; ") : "") + ". Conflicts are under Manage > Fleet Management > Tags (View Conflict Details).");
+  System.sleep(10000);
+}
+throw new Error("Task " + taskId + " is still " + status + " after " + limit + " polls; check it under Manage > Fleet Management > Tags.");`,
+    },
+    {
+      name: 'fleetExport',
+      description: 'The whole fleet catalogue and every tagged resource as one sorted document { categories, tags, assignments: [{resourceId, tags: ["Category/tag"]}] }, the same as sync-control.sh export writes, so two exports diff cleanly. Reads only.',
+      resultType: 'Any',
+      params: [ap('tm', 'string', 'Tag management base URL'), ap('auth', 'Any', 'Bearer header')],
+      script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var mod = System.getModule(MODULE_NAME);
+function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+var categories = mod.fleetCategories(tm, auth, null);
+var tags = [];
+for (var i = 0; i < categories.length; i++) {
+  var types = categories[i].associableTypes || [];
+  for (var t = 0; t < types.length; t++) types[t].resourceKinds = (types[t].resourceKinds || []).slice().sort(cmp);
+  var list = mod.fleetTags(tm, auth, categories[i].id);
+  for (var j = 0; j < list.length; j++) tags.push(list[j]);
+}
+categories.sort(function (a, b) { return cmp(a.name, b.name); });
+tags.sort(function (a, b) { return cmp(a.categoryName, b.categoryName) || cmp(a.name, b.name); });
+var resources = core.pageAll(function (page) {
+  var r = core.http("POST", tm + "/resources/query?page=" + page + "&pageSize=1000", auth, {}, null).body || {};
+  return { items: r.resources || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+}, 0);
+var assignments = [];
+for (var k = 0; k < resources.length; k++) {
+  var names = [];
+  var on = resources[k].tags || [];
+  for (var n = 0; n < on.length; n++) names.push(on[n].categoryName + "/" + on[n].name);
+  names.sort(cmp);
+  assignments.push({ resourceId: String(resources[k].resourceId), tags: names });
+}
+assignments.sort(function (a, b) { return cmp(a.resourceId, b.resourceId); });
+return { categories: categories, tags: tags, assignments: assignments };`,
+    },
+  ];
+}
+
+/**
+ * Create the standard: on each vCenter (only what is missing, by exact name;
+ * drift and other-case names reported, never changed), then in fleet tag
+ * management — by importing from vCenter (route both) or by creating it
+ * centrally and optionally pushing it (route fleet). Mirrors create-vcenter.sh
+ * and create-fleet.sh.
+ */
+const TAXONOMY_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var SAFE = { redact: settings._secrets };
+var ROUTE = String(settings.route || "both");
+var S = JSON.parse(core.resource(RESOURCE_PATH, "tag-standard.json")).categories || [];
+var problems = [];
+function problem(text) { problems.push(text); System.warn("PROBLEM: " + text); }
+function lower(s) { return String(s).toLowerCase(); }
+var session = { headers: {}, catalogues: {} };
+function createVcenter(host) {
+  var h = mod.openVcenter(settings, session, host);
+  var C = session.catalogues[host];
+  System.log("== " + host + ": " + C.categories.length + " categories, " + C.tags.length + " tags today");
+  for (var i = 0; i < S.length; i++) {
+    var s = S[i];
+    var existing = null;
+    var near = [];
+    for (var c = 0; c < C.categories.length; c++) {
+      if (C.categories[c].name === s.name) existing = C.categories[c];
+      else if (lower(C.categories[c].name) === lower(s.name)) near.push(C.categories[c].name);
+    }
+    if (!existing && near.length) { problem(host + ": category \"" + s.name + "\" exists as \"" + near.join(", ") + "\". Rename one by hand; do not create both."); continue; }
+    var cid = null;
+    if (existing) {
+      cid = existing.id;
+      if (existing.cardinality !== s.cardinality) problem(host + ": category " + s.name + " is " + existing.cardinality + ", the standard says " + s.cardinality + ". Not changed.");
+      var missing = [];
+      for (var t = 0; t < s.associable_types.length; t++) if (existing.associable_types.length > 0 && existing.associable_types.indexOf(s.associable_types[t]) < 0) missing.push(s.associable_types[t]);
+      if (missing.length) problem(host + ": category " + s.name + " cannot yet go on " + missing.join(", ") + ". Not changed.");
+    } else {
+      cid = core.act(ctx, "create category " + s.name + " (" + s.cardinality + ") on " + host, function () {
+        var r = core.http("POST", "https://" + host + "/api/cis/tagging/category", h, { name: s.name, description: s.description, cardinality: s.cardinality, associable_types: s.associable_types }, SAFE);
+        if (typeof r.body !== "string" || !r.body) throw new Error("POST /api/cis/tagging/category returned no id; nothing after it was created.");
+        return r.body;
+      });
+    }
+    for (var v = 0; v < s.values.length; v++) {
+      var value = s.values[v];
+      if (existing) {
+        var have = false;
+        var nearTag = [];
+        for (var x = 0; x < C.tags.length; x++) {
+          if (C.tags[x].category_id !== cid) continue;
+          if (C.tags[x].name === value) have = true;
+          else if (lower(C.tags[x].name) === lower(value)) nearTag.push(C.tags[x].name);
+        }
+        if (have) continue;
+        if (nearTag.length) { problem(host + ": " + s.name + "=" + value + " exists as \"" + nearTag.join(", ") + "\"."); continue; }
+      }
+      core.act(ctx, "create tag " + s.name + "=" + value + " on " + host, function () {
+        var r = core.http("POST", "https://" + host + "/api/cis/tagging/tag", h, { name: value, description: s.name + " " + value + " (ArchToolKit tag standard)", category_id: cid }, SAFE);
+        if (typeof r.body !== "string" || !r.body) throw new Error("POST /api/cis/tagging/tag returned no id.");
+        return r.body;
+      });
+    }
+  }
+}
+function fleet() {
+  if (!settings.opsHost || !settings.vcfIdbHost || !settings.vcfApiToken) throw new Error("Fleet tag management needs opsHost, vcfIdbHost and vcfApiToken in " + SETTINGS_NAME + ".");
+  var TM = "https://" + settings.opsHost + "/suite-api/api/fleet-management/tag-management";
+  var auth = core.loginVcfFleet(settings.vcfIdbHost, settings.vcfApiToken);
+  var MODE = ROUTE === "both" ? "import" : "create";
+  var supported = [];
+  var kinds = core.http("GET", TM + "/categories/associable-types", auth, null, SAFE).body || {};
+  var list = kinds.associableTypes || [];
+  for (var k = 0; k < list.length; k++) if (list[k].adapterKind === "VMWARE") supported = supported.concat(list[k].resourceKinds || []);
+  if (MODE === "create") {
+    var unsupported = [];
+    for (var u = 0; u < S.length; u++) for (var ut = 0; ut < S[u].associable_types.length; ut++) if (supported.indexOf(S[u].associable_types[ut]) < 0 && unsupported.indexOf(S[u].associable_types[ut]) < 0) unsupported.push(S[u].associable_types[ut]);
+    if (unsupported.length) throw new Error("Refusing: fleet tag management does not list these object types: " + unsupported.join(", ") + ". Create those categories through the vCenter route, or take the types out of the standard. Nothing was created.");
+  }
+  if (MODE === "import") {
+    var adapters = settings.fleetAdapters || [];
+    if (!adapters.length) throw new Error("Set fleetAdapters in " + SETTINGS_NAME + " to the adapter ids of the vCenters the standard was created on.");
+    for (var a = 0; a < adapters.length; a++) {
+      var adapter = String(adapters[a]);
+      // One import at a time: the platform refuses a second while one runs.
+      core.act(ctx, "import (pull) the categories and tags of vCenter adapter " + adapter + " into fleet tag management", function () {
+        var r = core.http("POST", TM + "/adapters/" + encodeURIComponent(adapter) + "/categories/pull", auth, null, SAFE);
+        var task = r.body && r.body.taskId;
+        mod.waitTask(TM, auth, task, settings.taskPolls || 0);
+        return task;
+      });
+    }
+  }
+  var ids = [];
+  for (var i = 0; i < S.length; i++) {
+    var s = S[i];
+    // The query matches names partially; the exact one is picked here.
+    var found = mod.fleetCategories(TM, auth, [s.name]);
+    var existing = null;
+    var near = [];
+    for (var f = 0; f < found.length; f++) {
+      if (found[f].name === s.name) existing = found[f];
+      else if (lower(found[f].name) === lower(s.name)) near.push(found[f].name);
+    }
+    if (!existing && near.length) { problem("fleet: category \"" + s.name + "\" exists as \"" + near.join(", ") + "\"."); continue; }
+    var cid = null;
+    var have = [];
+    if (existing) {
+      cid = String(existing.id);
+      ids.push(cid);
+      if (existing.cardinality !== s.cardinality) problem("fleet: category " + s.name + " is " + existing.cardinality + ", the standard says " + s.cardinality + ". Not changed.");
+      var tags = mod.fleetTags(TM, auth, cid);
+      for (var t = 0; t < tags.length; t++) have.push(tags[t].name);
+    } else if (MODE === "import") {
+      if (ctx.dryRun) System.log("NOT YET: category " + s.name + " (the import should bring it from vCenter)");
+      else problem("fleet: category " + s.name + " is missing after the import. Is it in the vCenters behind fleetAdapters?");
+      continue;
+    } else {
+      cid = core.act(ctx, "create category " + s.name + " (" + s.cardinality + ") in fleet tag management", function () {
+        var body = { name: s.name, description: s.description, cardinality: s.cardinality, associableTypes: [{ adapterKind: "VMWARE", resourceKinds: s.associable_types.length ? s.associable_types : supported }] };
+        var r = core.http("POST", TM + "/categories", auth, body, SAFE);
+        if (!r.body || !r.body.id) throw new Error("POST .../categories returned no id; nothing after it was created.");
+        return String(r.body.id);
+      });
+      if (cid) ids.push(cid);
+    }
+    for (var v = 0; v < s.values.length; v++) {
+      var value = s.values[v];
+      if (have.indexOf(value) >= 0) continue;
+      if (MODE === "import") {
+        if (ctx.dryRun) System.log("NOT YET: tag " + s.name + "=" + value);
+        else problem("fleet: tag " + s.name + "=" + value + " is missing after the import.");
+        continue;
+      }
+      core.act(ctx, "create tag " + s.name + "=" + value + " in fleet tag management", function () {
+        var r = core.http("POST", TM + "/categories/" + encodeURIComponent(cid) + "/tags", auth, { name: value, description: s.name + " " + value + " (ArchToolKit tag standard)" }, SAFE);
+        if (!r.body || !r.body.id) throw new Error("POST .../tags returned no id.");
+        return String(r.body.id);
+      });
+    }
+  }
+  var push = settings.fleetPushAdapters || [];
+  if (MODE === "create" && push.length) {
+    for (var p = 0; p < push.length; p++) {
+      var target = String(push[p]);
+      // At most 20 categories a push (the interface's own limit), one push at a time.
+      for (var b = 0; b < ids.length; b += 20) {
+        var batch = ids.slice(b, b + 20);
+        core.act(ctx, "push " + batch.length + " categories to vCenter adapter " + target + " (overwrite false)", function () {
+          var r = core.http("POST", TM + "/adapters/" + encodeURIComponent(target) + "/categories/push", auth, { categoryIds: batch, overwrite: false }, SAFE);
+          var task = r.body && r.body.taskId;
+          mod.waitTask(TM, auth, task, settings.taskPolls || 0);
+          return task;
+        });
+      }
+    }
+  }
+}
+try {
+  if (ROUTE !== "fleet") {
+    var vcenters = settings.vcenters || [];
+    if (!vcenters.length) throw new Error("No vCenters: set vcenters in " + SETTINGS_NAME + ".");
+    for (var n = 0; n < vcenters.length; n++) createVcenter(String(vcenters[n]));
+  }
+  if (ROUTE !== "vcenter") fleet();
+} finally {
+  for (var host in session.headers) core.logoutVcenter(host, session.headers[host]);
+}
+problemCount = problems.length;
+summary = core.audit(ctx, { route: ROUTE, categories: S.length, problems: problems });
+core.notify(settings.webhook, summary);
+if (problems.length > 0) throw new Error(problems.length + " problem(s) need a person; each is a PROBLEM line in the log. Everything else was done.");`;
+
+/**
+ * Bulk assignment from a CSV, as tag-assign.sh does it: plan every row first
+ * (resolve the object, check the category, the value, the cardinality and
+ * what is attached now), refuse the whole run on a CSV that gives one object
+ * two values of a one-value category or plans more changes than the cap, then
+ * apply one object at a time through changeTag with a change log that is also
+ * the undo. undoLogCsv runs the undo instead.
+ */
+const BULK_ASSIGN_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var session = { headers: {}, catalogues: {} };
+var changeLog = [];
+var planRows = [];
+${APPLY_PLAN}
+function trim(s) { return String(s === undefined || s === null ? "" : s).replace(/^\s+|\s+$/g, ""); }
+var replaceAllowed = replace === true || String(replace) === "true";
+var changes = [];
+try {
+  if (undoLogCsv) {
+    var undone = mod.undoChangeLog(ctx, settings, session, String(undoLogCsv));
+    System.log((ctx.dryRun ? "DRY RUN: " + undone + " object(s) would be put back." : undone + " object(s) put back."));
+  } else {
+    var rows = mod.parseCsv(assignmentsCsv ? String(assignmentsCsv) : core.resource(RESOURCE_PATH, "assignments.csv"));
+    if (!rows.length || rows[0].join(",").replace(/\s/g, "").toLowerCase() !== "vcenter,object_type,object,category,tag") throw new Error("The first line must be the header vcenter,object_type,object,category,tag.");
+    var seen = {};
+    var dups = [];
+    for (var i = 1; i < rows.length; i++) {
+      var cells = rows[i];
+      var line = i + 1;
+      var host = trim(cells[0]), ref = trim(cells[2]), category = trim(cells[3]), tag = trim(cells[4]);
+      var p = { vcenter: host, object_type: trim(cells[1]), object_id: "", object_name: ref, category: category, before_id: "", before: "", after_id: "", after: tag, action: "refused", reason: "", cardinality: "" };
+      planRows.push(p);
+      if (cells.length !== 5 || !tag) { p.reason = "not five fields"; continue; }
+      if ((settings.vcenters || []).indexOf(host) < 0) { p.reason = host + " is not in vcenters in " + SETTINGS_NAME; continue; }
+      var h = mod.openVcenter(settings, session, host);
+      var C = session.catalogues[host];
+      var cat = null;
+      for (var c = 0; c < C.categories.length; c++) if (C.categories[c].name === category) cat = C.categories[c];
+      if (!cat) { p.reason = "no category " + category + " on " + host; continue; }
+      p.cardinality = cat.cardinality;
+      for (var t = 0; t < C.tags.length; t++) if (C.tags[t].category_id === cat.id && C.tags[t].name === tag) p.after_id = C.tags[t].id;
+      if (!p.after_id) { p.reason = "no tag " + tag + " in " + category + " (values come from the standard)"; continue; }
+      var found = mod.resolveObject(host, h, p.object_type, ref);
+      if (found === "NOT_FOUND") { p.reason = "no " + p.object_type + " named " + ref; continue; }
+      if (found === "AMBIGUOUS") { p.reason = "more than one " + p.object_type + " named " + ref + "; use its MoRef"; continue; }
+      if (found === "UNSUPPORTED") { p.reason = p.object_type + " cannot be looked up by this workflow"; continue; }
+      p.object_type = found.type;
+      p.object_id = found.id;
+      if (cat.associable_types.length > 0 && cat.associable_types.indexOf(found.type) < 0) { p.reason = category + " cannot be attached to " + found.type; continue; }
+      // Two rows giving one object two values of a one-value category refuse the
+      // run below: either order silently loses one of them.
+      var key = host + "|" + found.id + "|" + category;
+      if (cat.cardinality === "SINGLE" && seen[key]) {
+        if (seen[key].tag !== tag) {
+          dups.push("rows " + seen[key].line + " and " + line + ": " + ref + " (" + found.id + ") on " + host + " is given " + category + "=" + seen[key].tag + " and " + category + "=" + tag);
+          p.reason = "conflicts with row " + seen[key].line + ": " + category + " takes one value";
+        } else { p.action = "unchanged"; p.reason = "same as row " + seen[key].line; }
+        continue;
+      }
+      if (cat.cardinality === "SINGLE") seen[key] = { tag: tag, line: line };
+      var current = mod.tagsOn(host, h, found.type, found.id);
+      if (current.indexOf(p.after_id) >= 0) { p.action = "unchanged"; p.reason = "already tagged"; continue; }
+      var same = null;
+      for (var s = 0; s < C.tags.length && !same; s++) if (C.tags[s].category_id === cat.id && current.indexOf(C.tags[s].id) >= 0) same = C.tags[s];
+      if (same && cat.cardinality === "SINGLE") {
+        p.before_id = same.id;
+        p.before = same.name;
+        if (replaceAllowed) { p.action = "replace"; changes.push(p); }
+        else p.reason = "already " + category + "=" + same.name + "; run with the replace input true to change it";
+        continue;
+      }
+      p.action = "attach";
+      changes.push(p);
+    }
+    for (var r = 0; r < planRows.length; r++) {
+      var x = planRows[r];
+      System.log("PLAN: " + [x.action, x.vcenter, x.object_name + (x.object_id ? " (" + x.object_id + ")" : ""), x.category, (x.before || "-") + " -> " + x.after, x.reason].join(" | "));
+    }
+    System.log(changes.length + " change(s) planned, " + (planRows.length - changes.length) + " row(s) unchanged or refused.");
+    if (dups.length) throw new Error("Refusing: the CSV gives an object two different values of a one-value category: " + dups.join("; ") + ". Keep one row per object and one-value category, then run again. Nothing was changed.");
+    if (!ctx.dryRun && changes.length > ctx.cap) throw new Error("Refusing: " + changes.length + " changes is more than the cap of " + ctx.cap + ". Split the CSV, or raise cap after reading the plan. Nothing was changed.");
+    applyPlan(changes);
+  }
+} finally {
+  for (var vc in session.headers) core.logoutVcenter(vc, session.headers[vc]);
+  var planOut = [];
+  for (var q = 0; q < planRows.length; q++) {
+    var y = planRows[q];
+    planOut.push([y.vcenter, y.object_type, y.object_id, y.object_name, y.category, y.before_id, y.before, y.after_id, y.after, y.action, y.reason]);
+  }
+  planCsv = mod.toCsv(["vcenter", "object_type", "object_id", "object_name", "category", "before_id", "before", "tag_id", "tag", "action", "reason"], planOut);
+  changeLogCsv = mod.toCsv(CHANGE_LOG_HEADER, logRows());
+}
+summary = core.audit(ctx, { mode: undoLogCsv ? "undo" : "assign", planned: changes.length, rows: planRows.length });
+core.notify(settings.webhook, summary);`.replace('CHANGE_LOG_HEADER', JSON.stringify(CHANGE_LOG_HEADER));
+
+/**
+ * Rule-based VM tagging, as Tag-Rules.ps1 does it, on the vCenter REST API:
+ * fill-only rules set a category only when the VM has no value in it;
+ * authoritative rules also replace a different value in a one-value category
+ * and add to a several-value one; disagreements are reported, not settled.
+ * Folder membership is recursive (child folders are walked explicitly with
+ * parent_folders, rather than relying on the VM list filter to recurse).
+ */
+const RULES_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var SAFE = { redact: settings._secrets };
+var session = { headers: {}, catalogues: {} };
+var changeLog = [];
+${APPLY_PLAN}
+var rules = JSON.parse(core.resource(RESOURCE_PATH, "tag-rules.json"));
+var EXCLUDE = String(settings.excludeTag || "");
+var conflicts = [];
+var changes = [];
+function conflict(vc, vm, category, current, wanted, why) { conflicts.push([vc, vm, category, current, wanted, why]); System.warn("CONFLICT: " + [vc, vm, category, current, wanted, why].join(" | ")); }
+function planned(base, action, before, after) {
+  changes.push({ vcenter: base.vcenter, object_type: base.object_type, object_id: base.object_id, object_name: base.object_name, category: base.category, cardinality: base.cardinality, rule: base.rule, action: action, before_id: before ? before.id : "", before: before ? before.name : "", after_id: after.id, after: after.name });
+}
+function vmsIn(host, h, query) {
+  return core.http("GET", "https://" + host + "/api/vcenter/vm?" + query, h, null, SAFE).body || [];
+}
+function planVcenter(host) {
+  var h = mod.openVcenter(settings, session, host);
+  var C = session.catalogues[host];
+  var get = function (path) { return core.http("GET", "https://" + host + path, h, null, SAFE).body || []; };
+  var tagByPair = {};
+  for (var t = 0; t < C.tags.length; t++) tagByPair[C.tags[t].category + "=" + C.tags[t].name] = C.tags[t];
+  var tagById = {};
+  for (var t2 = 0; t2 < C.tags.length; t2++) tagById[C.tags[t2].id] = C.tags[t2];
+  var catByName = {};
+  for (var c = 0; c < C.categories.length; c++) catByName[C.categories[c].name] = C.categories[c];
+  var usable = [];
+  for (var r = 0; r < rules.length; r++) {
+    if (tagByPair[rules[r].category + "=" + rules[r].tag]) usable.push(rules[r]);
+    else conflict(host, "*", rules[r].category, "", rules[r].tag, "rule " + rules[r].kind + " " + rules[r].pattern + " skipped: there is no tag " + rules[r].category + "=" + rules[r].tag + " on " + host);
+  }
+  // Every VM, host by host (the VM list refuses rather than pages past its limit).
+  var vms = [];
+  var hosts = get("/api/vcenter/host");
+  for (var hh = 0; hh < hosts.length; hh++) {
+    var list = vmsIn(host, h, "hosts=" + encodeURIComponent(hosts[hh].host));
+    for (var v = 0; v < list.length; v++) vms.push({ id: String(list[v].vm), name: String(list[v].name) });
+  }
+  if (!vms.length) return;
+  // Every tag on every VM, read once.
+  var byVm = {};
+  var assoc = mod.readAssociations(host, h, C.tags);
+  for (var a = 0; a < assoc.length; a++) {
+    if (assoc[a].type !== "VirtualMachine" || !tagById[assoc[a].tag_id]) continue;
+    (byVm[assoc[a].id] = byVm[assoc[a].id] || []).push(tagById[assoc[a].tag_id]);
+  }
+  // Folder and cluster membership, read once per rule.
+  var members = {};
+  for (var m = 0; m < usable.length; m++) {
+    var rule = usable[m];
+    if (rule.kind !== "folder" && rule.kind !== "cluster") continue;
+    var key = rule.kind + ":" + rule.pattern;
+    if (members[key]) continue;
+    var set = {};
+    if (rule.kind === "cluster") {
+      var clusters = get("/api/vcenter/cluster?names=" + encodeURIComponent(rule.pattern));
+      for (var cl = 0; cl < clusters.length; cl++) {
+        var inCluster = vmsIn(host, h, "clusters=" + encodeURIComponent(clusters[cl].cluster));
+        for (var ic = 0; ic < inCluster.length; ic++) set[inCluster[ic].vm] = true;
+      }
+    } else {
+      var queue = get("/api/vcenter/folder?type=VIRTUAL_MACHINE&names=" + encodeURIComponent(rule.pattern));
+      var seenFolder = {};
+      while (queue.length) {
+        var folder = String(queue.shift().folder);
+        if (seenFolder[folder]) continue;
+        seenFolder[folder] = true;
+        var inFolder = vmsIn(host, h, "folders=" + encodeURIComponent(folder));
+        for (var f = 0; f < inFolder.length; f++) set[inFolder[f].vm] = true;
+        queue = queue.concat(get("/api/vcenter/folder?type=VIRTUAL_MACHINE&parent_folders=" + encodeURIComponent(folder)));
+      }
+    }
+    members[key] = set;
+  }
+  var needOs = false;
+  for (var g = 0; g < usable.length; g++) if (usable[g].kind === "guestos") needOs = true;
+  for (var i = 0; i < vms.length; i++) {
+    var vm = vms[i];
+    var current = byVm[vm.id] || [];
+    var pairs = [];
+    for (var p = 0; p < current.length; p++) pairs.push(current[p].category + "=" + current[p].name);
+    if (EXCLUDE && pairs.indexOf(EXCLUDE) >= 0) continue;
+    var os = null;
+    if (needOs) {
+      // The guest OS from VMware Tools when it runs, else the configured one.
+      var ident = core.http("GET", "https://" + host + "/api/vcenter/vm/" + encodeURIComponent(vm.id) + "/guest/identity", h, null, { allow: [400, 404, 503], redact: settings._secrets });
+      os = ident.statusCode === 200 && ident.body && ident.body.full_name ? String(ident.body.full_name.default_message || "") : "";
+      if (!os) { var info = core.http("GET", "https://" + host + "/api/vcenter/vm/" + encodeURIComponent(vm.id), h, null, SAFE).body || {}; os = String(info.guest_OS || ""); }
+    }
+    var want = {};
+    var order = [];
+    for (var u = 0; u < usable.length; u++) {
+      var rr = usable[u];
+      var hit = false;
+      if (rr.kind === "name") hit = new RegExp(rr.pattern, "i").test(vm.name);
+      else if (rr.kind === "folder" || rr.kind === "cluster") hit = !!members[rr.kind + ":" + rr.pattern][vm.id];
+      else if (rr.kind === "guestos") hit = !!os && os.toLowerCase().indexOf(String(rr.pattern).toLowerCase()) >= 0;
+      else if (rr.kind === "tag") hit = pairs.indexOf(rr.pattern) >= 0;
+      if (!hit) continue;
+      if (!want[rr.category]) { want[rr.category] = []; order.push(rr.category); }
+      want[rr.category].push(rr);
+    }
+    for (var o = 0; o < order.length; o++) {
+      var catName = order[o];
+      var category = catByName[catName];
+      if (!category) continue;
+      var wanted = [];
+      var why = [];
+      var authoritative = false;
+      var byAuthority = [];
+      for (var w = 0; w < want[catName].length; w++) {
+        var x = want[catName][w];
+        if (wanted.indexOf(x.tag) < 0) wanted.push(x.tag);
+        why.push(x.kind + " " + x.pattern);
+        if (x.mode === "authoritative") { authoritative = true; byAuthority.push(x.tag); }
+      }
+      var have = [];
+      for (var hv = 0; hv < current.length; hv++) if (current[hv].category === catName) have.push(current[hv]);
+      var haveNames = [];
+      for (var hn = 0; hn < have.length; hn++) haveNames.push(have[hn].name);
+      var base = { vcenter: host, object_type: "VirtualMachine", object_id: vm.id, object_name: vm.name, category: catName, cardinality: category.cardinality, rule: why.join("; ") };
+      if (category.cardinality === "SINGLE") {
+        if (wanted.length > 1) { conflict(host, vm.name, catName, haveNames.join(" "), wanted.join(" "), "rules disagree: " + why.join("; ")); continue; }
+        if (haveNames.indexOf(wanted[0]) >= 0) continue;
+        if (have.length > 0 && !authoritative) { conflict(host, vm.name, catName, haveNames[0], wanted[0], "fill-only rule (" + why.join("; ") + ") disagrees with the value already set; left alone"); continue; }
+        planned(base, have.length > 0 ? "replace" : "attach", have.length > 0 ? have[0] : null, tagByPair[catName + "=" + wanted[0]]);
+      } else {
+        // Several values: fill-only acts only when the VM has none in the category;
+        // once it has one, only an authoritative rule adds.
+        var missing = [];
+        for (var mi = 0; mi < wanted.length; mi++) if (haveNames.indexOf(wanted[mi]) < 0) missing.push(wanted[mi]);
+        if (!missing.length) continue;
+        if (have.length > 0) {
+          var fillOnly = [];
+          var kept = [];
+          for (var ms = 0; ms < missing.length; ms++) (byAuthority.indexOf(missing[ms]) >= 0 ? kept : fillOnly).push(missing[ms]);
+          if (fillOnly.length) conflict(host, vm.name, catName, haveNames.join(" "), fillOnly.join(" "), "fill-only rule (" + why.join("; ") + "): " + catName + " already has a value, so nothing is added");
+          missing = kept;
+        }
+        for (var ad = 0; ad < missing.length; ad++) planned(base, "attach", null, tagByPair[catName + "=" + missing[ad]]);
+      }
+    }
+  }
+}
+try {
+  if (undoLogCsv) {
+    var undone = mod.undoChangeLog(ctx, settings, session, String(undoLogCsv));
+    System.log(ctx.dryRun ? "DRY RUN: " + undone + " VM(s) would be put back." : undone + " VM(s) put back.");
+  } else {
+    var vcenters = settings.vcenters || [];
+    if (!vcenters.length) throw new Error("No vCenters: set vcenters in " + SETTINGS_NAME + ".");
+    for (var n = 0; n < vcenters.length; n++) planVcenter(String(vcenters[n]));
+    var vmSet = {};
+    var vmCount = 0;
+    for (var k = 0; k < changes.length; k++) {
+      var e = changes[k];
+      System.log("PLAN: " + [e.action, e.vcenter, e.object_name + " (" + e.object_id + ")", e.category, (e.before || "-") + " -> " + e.after, e.rule].join(" | "));
+      if (!vmSet[e.vcenter + "|" + e.object_id]) { vmSet[e.vcenter + "|" + e.object_id] = true; vmCount++; }
+    }
+    System.log(changes.length + " change(s) on " + vmCount + " VM(s); " + conflicts.length + " conflict(s).");
+    var maxVms = Number(settings.maxVms || 0);
+    if (vmCount > maxVms) throw new Error("Refusing: " + vmCount + " VMs would change, more than maxVms (" + maxVms + "). A rule is probably wider than meant; read the plan. Nothing was changed.");
+    applyPlan(changes);
+  }
+} finally {
+  for (var vc in session.headers) core.logoutVcenter(vc, session.headers[vc]);
+  var planOut = [];
+  for (var q = 0; q < changes.length; q++) planOut.push([changes[q].vcenter, changes[q].object_type, changes[q].object_id, changes[q].object_name, changes[q].category, changes[q].before, changes[q].after, changes[q].action, changes[q].rule]);
+  planCsv = mod.toCsv(["vcenter", "object_type", "object_id", "object_name", "category", "before", "after", "action", "rule"], planOut);
+  conflictsCsv = mod.toCsv(["vcenter", "vm", "category", "current", "wanted", "reason"], conflicts);
+  changeLogCsv = mod.toCsv(CHANGE_LOG_HEADER, logRows());
+}
+summary = core.audit(ctx, { mode: undoLogCsv ? "undo" : "rules", planned: changes.length, conflicts: conflicts.length });
+core.notify(settings.webhook, summary);`.replace('CHANGE_LOG_HEADER', JSON.stringify(CHANGE_LOG_HEADER));
+
+/**
+ * Fleet tag management (VCF Operations 9.1.1 API): import from vCenter, push to
+ * vCenter, export — each pull and push wrapped in an export before and after
+ * and a diff. Disengage has no API in 9.1.1, so the workflow exports and says
+ * the interface steps; a second run with action export records the after.
+ */
+const SYNC_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var SAFE = { redact: settings._secrets };
+var ACTION = String(action || settings.action || "export");
+if (["pull", "push", "export", "disengage"].indexOf(ACTION) < 0) throw new Error("action is pull, push, export or disengage, not " + ACTION + ".");
+if (!settings.opsHost || !settings.vcfIdbHost || !settings.vcfApiToken) throw new Error("Set opsHost, vcfIdbHost and vcfApiToken in " + SETTINGS_NAME + ".");
+var TM = "https://" + settings.opsHost + "/suite-api/api/fleet-management/tag-management";
+var auth = core.loginVcfFleet(settings.vcfIdbHost, settings.vcfApiToken);
+var adapters = settings.adapters || [];
+var names = settings.categories || [];
+var polls = settings.taskPolls || 0;
+beforeJson = "";
+afterJson = "";
+diff = "";
+function count(doc) { return doc.categories.length + " categories, " + doc.tags.length + " tags, " + doc.assignments.length + " tagged objects"; }
+function diffOf(a, b) {
+  function names(list, f) { var out = []; for (var i = 0; i < list.length; i++) out.push(f(list[i])); return out; }
+  function minus(x, y) { var out = []; for (var i = 0; i < x.length; i++) if (y.indexOf(x[i]) < 0) out.push(x[i]); return out; }
+  var ca = names(a.categories, function (c) { return c.name; }), cb = names(b.categories, function (c) { return c.name; });
+  var ta = names(a.tags, function (t) { return t.categoryName + "/" + t.name; }), tb = names(b.tags, function (t) { return t.categoryName + "/" + t.name; });
+  var xa = {}, xb = {}, keys = {};
+  for (var i = 0; i < a.assignments.length; i++) { xa[a.assignments[i].resourceId] = a.assignments[i].tags.join(","); keys[a.assignments[i].resourceId] = true; }
+  for (var j = 0; j < b.assignments.length; j++) { xb[b.assignments[j].resourceId] = b.assignments[j].tags.join(","); keys[b.assignments[j].resourceId] = true; }
+  var changed = 0;
+  for (var k in keys) if (xa[k] !== xb[k]) changed++;
+  return ["categories added:   " + minus(cb, ca).join(", "), "categories removed: " + minus(ca, cb).join(", "), "tags added:         " + minus(tb, ta).length, "tags removed:       " + minus(ta, tb).length, "objects whose tags changed: " + changed].join("\n");
+}
+if (ACTION === "export") {
+  var doc = mod.fleetExport(TM, auth);
+  afterJson = JSON.stringify(doc, null, 2);
+  System.log("Export: " + count(doc));
+} else if (ACTION === "disengage") {
+  // There is no disengage call in the 9.1.1 Tag Management API: record the state,
+  // and say the steps. Run the workflow again with action export afterwards.
+  var before = mod.fleetExport(TM, auth);
+  beforeJson = JSON.stringify(before, null, 2);
+  System.log("Before: " + count(before));
+  System.log("In VCF Operations, for each category in " + names.join(", ") + ": Manage > Fleet Management > Tags > Tag Definitions > the double arrow next to the category > Available In > tick " + settings.vcenter + " > Remove > tick the acknowledgment > Remove. Then run this workflow with action export, and compare with beforeJson.");
+} else {
+  if (!adapters.length) throw new Error("Set adapters in " + SETTINGS_NAME + " to the vCenter adapter ids.");
+  var ids = [];
+  if (ACTION === "push") {
+    // Every name must resolve to exactly one category, or nothing is pushed.
+    var missing = [];
+    for (var n = 0; n < names.length; n++) {
+      var found = mod.fleetCategories(TM, auth, [names[n]]);
+      var id = null;
+      for (var f = 0; f < found.length; f++) if (found[f].name === String(names[n])) id = String(found[f].id);
+      if (id) ids.push(id); else missing.push(String(names[n]));
+    }
+    if (missing.length || !ids.length) throw new Error("Refusing to push: " + (missing.length ? missing.join(", ") + " is not a category in fleet tag management" : "no categories named") + ". Nothing was pushed.");
+  }
+  var beforeDoc = null;
+  if (!ctx.dryRun) {
+    // The before export is the only record of what central management held: if it fails, nothing happens.
+    beforeDoc = mod.fleetExport(TM, auth);
+    beforeJson = JSON.stringify(beforeDoc, null, 2);
+    System.log("Before: " + count(beforeDoc));
+  }
+  try {
+    for (var a = 0; a < adapters.length; a++) {
+      var adapter = String(adapters[a]);
+      if (ACTION === "pull") {
+        core.act(ctx, "import (pull) the categories and tags of vCenter adapter " + adapter, function () {
+          var r = core.http("POST", TM + "/adapters/" + encodeURIComponent(adapter) + "/categories/pull", auth, null, SAFE);
+          return mod.waitTask(TM, auth, r.body && r.body.taskId, polls);
+        });
+      } else {
+        for (var b = 0; b < ids.length; b += 20) {
+          var batch = ids.slice(b, b + 20);
+          var overwrite = settings.overwrite === true || String(settings.overwrite) === "true";
+          core.act(ctx, "push " + batch.length + " categories (" + names.slice(b, b + 20).join(", ") + ") to vCenter adapter " + adapter + ", overwrite " + overwrite, function () {
+            var r = core.http("POST", TM + "/adapters/" + encodeURIComponent(adapter) + "/categories/push", auth, { categoryIds: batch, overwrite: overwrite }, SAFE);
+            return mod.waitTask(TM, auth, r.body && r.body.taskId, polls);
+          });
+        }
+      }
+    }
+  } finally {
+    if (beforeDoc) {
+      try {
+        var afterDoc = mod.fleetExport(TM, auth);
+        afterJson = JSON.stringify(afterDoc, null, 2);
+        diff = diffOf(beforeDoc, afterDoc);
+        System.log("After: " + count(afterDoc) + "\n" + diff);
+      } catch (e) {
+        System.warn("The after export failed: " + e);
+      }
+    }
+  }
+}
+summary = core.audit(ctx, { action: ACTION, adapters: adapters, categories: ACTION === "push" || ACTION === "disengage" ? names : [], diff: diff });
+core.notify(settings.webhook, summary);`;
+
+/**
+ * Backup and restore, as tag-backup.sh and tag-restore.sh do it. Backup reads
+ * each vCenter into the archtoolkit-tag-backup/1 document (the same format the
+ * scripts write and read, so either restores the other's backup). Restore
+ * recreates missing categories and tags by name and re-attaches by object type
+ * and name; it never deletes, never detaches, and never changes the value of a
+ * one-value category that already has one.
+ */
+const BACKUP_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var SAFE = { redact: settings._secrets };
+var MODE = String(mode || "backup");
+var session = { headers: {}, catalogues: {} };
+var failed = [];
+var counts = {};
+backupJson = "";
+restoreLog = "";
+function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+function backupOf(host) {
+  var h = mod.openVcenter(settings, session, host);
+  var C = session.catalogues[host];
+  var assoc = mod.readAssociations(host, h, C.tags);
+  var inv = mod.readInventory(host, h);
+  var nameOf = {};
+  for (var i = 0; i < inv.length; i++) nameOf[inv[i].type + "/" + inv[i].id] = inv[i].name;
+  var tagById = {};
+  for (var t = 0; t < C.tags.length; t++) tagById[C.tags[t].id] = C.tags[t];
+  var categories = [];
+  for (var c = 0; c < C.categories.length; c++) categories.push({ id: C.categories[c].id, name: C.categories[c].name, description: C.categories[c].description, cardinality: C.categories[c].cardinality, associable_types: C.categories[c].associable_types });
+  var tags = [];
+  for (var t2 = 0; t2 < C.tags.length; t2++) tags.push({ id: C.tags[t2].id, name: C.tags[t2].name, description: C.tags[t2].description, category: C.tags[t2].category });
+  var assignments = [];
+  for (var a = 0; a < assoc.length; a++) {
+    var tag = tagById[assoc[a].tag_id] || { category: "?", name: "?" };
+    var name = nameOf[assoc[a].type + "/" + assoc[a].id];
+    assignments.push({ category: tag.category, tag: tag.name, object_type: assoc[a].type, object_id: assoc[a].id, object_name: name === undefined ? null : name });
+  }
+  assignments.sort(function (x, y) { return cmp(x.category, y.category) || cmp(x.tag, y.tag) || cmp(x.object_type, y.object_type) || cmp(String(x.object_name), String(y.object_name)) || cmp(x.object_id, y.object_id); });
+  return { vcenter: host, format: "archtoolkit-tag-backup/1", categories: categories, tags: tags, assignments: assignments };
+}
+function restore(doc, host, catalogueOnly) {
+  var h = mod.openVcenter(settings, session, host);
+  var C = session.catalogues[host];
+  System.log("Restoring the " + doc.vcenter + " backup into " + host);
+  // 1. Categories, by exact name.
+  for (var c = 0; c < doc.categories.length; c++) {
+    var cat = doc.categories[c];
+    var existing = null;
+    for (var e = 0; e < C.categories.length; e++) if (C.categories[e].name === cat.name) existing = C.categories[e];
+    if (existing) {
+      if (existing.cardinality !== cat.cardinality) System.warn("DRIFT: category " + cat.name + ": cardinality differs from the backup. Left as it is.");
+      continue;
+    }
+    core.act(ctx, "create category " + cat.name + " on " + host, function () {
+      var r = core.http("POST", "https://" + host + "/api/cis/tagging/category", h, { name: cat.name, description: cat.description, cardinality: cat.cardinality, associable_types: cat.associable_types || [] }, SAFE);
+      if (typeof r.body !== "string" || !r.body) throw new Error("POST /api/cis/tagging/category returned no id.");
+      return r.body;
+    });
+  }
+  if (!ctx.dryRun) C = session.catalogues[host] = mod.readCatalogue(host, h);
+  // 2. Tags, by exact name within the category.
+  for (var t = 0; t < doc.tags.length; t++) {
+    var tg = doc.tags[t];
+    var have = false;
+    for (var x = 0; x < C.tags.length; x++) if (C.tags[x].category === tg.category && C.tags[x].name === tg.name) have = true;
+    if (have) continue;
+    var cid = null;
+    for (var y = 0; y < C.categories.length; y++) if (C.categories[y].name === tg.category) cid = C.categories[y].id;
+    core.act(ctx, "create tag " + tg.category + "=" + tg.name + " on " + host, function () {
+      if (!cid) throw new Error("There is no category " + tg.category + " to create the tag in.");
+      var r = core.http("POST", "https://" + host + "/api/cis/tagging/tag", h, { name: tg.name, description: tg.description, category_id: cid }, SAFE);
+      if (typeof r.body !== "string" || !r.body) throw new Error("POST /api/cis/tagging/tag returned no id.");
+      return r.body;
+    });
+  }
+  if (!ctx.dryRun) C = session.catalogues[host] = mod.readCatalogue(host, h);
+  if (catalogueOnly) { System.log("Catalogue done; assignments skipped (catalogueOnly)."); return; }
+  // 3. Assignments, by object type and name: MoRefs change when a vCenter is rebuilt, names usually do not.
+  var inv = mod.readInventory(host, h);
+  var assoc = mod.readAssociations(host, h, C.tags);
+  var tagId = {}, tagById = {}, card = {}, nameById = {}, idsByName = {}, has = {};
+  for (var i = 0; i < C.tags.length; i++) { tagId[C.tags[i].category + "\u001f" + C.tags[i].name] = C.tags[i].id; tagById[C.tags[i].id] = C.tags[i]; }
+  for (var k = 0; k < doc.categories.length; k++) card[doc.categories[k].name] = doc.categories[k].cardinality;
+  for (var n = 0; n < inv.length; n++) {
+    nameById[inv[n].type + "/" + inv[n].id] = inv[n].name;
+    (idsByName[inv[n].type + "/" + inv[n].name] = idsByName[inv[n].type + "/" + inv[n].name] || []).push(inv[n].id);
+  }
+  for (var s = 0; s < assoc.length; s++) (has[assoc[s].type + "/" + assoc[s].id] = has[assoc[s].type + "/" + assoc[s].id] || []).push(assoc[s].tag_id);
+  var rows = [];
+  var attach = {};
+  var attachCount = 0;
+  for (var z = 0; z < doc.assignments.length; z++) {
+    var w = doc.assignments[z];
+    var ids = w.object_name !== null && nameById[w.object_type + "/" + w.object_id] === w.object_name ? [w.object_id] : idsByName[w.object_type + "/" + (w.object_name || "")] || [];
+    var tid = tagId[w.category + "\u001f" + w.tag] || null;
+    var cur = has[w.object_type + "/" + (ids[0] || "")] || [];
+    var inCat = [];
+    for (var q = 0; q < cur.length; q++) if (tagById[cur[q]] && tagById[cur[q]].category === w.category) inCat.push(tagById[cur[q]].name);
+    var what = ids.length === 0 ? "missing-object" : ids.length > 1 ? "ambiguous-object" : !tid ? "tag-not-created-yet" : cur.indexOf(tid) >= 0 ? "present" : card[w.category] === "SINGLE" && inCat.length > 0 ? "conflict" : "attach";
+    counts[what] = (counts[what] || 0) + 1;
+    rows.push([what, w.category, w.tag, tid || "", w.object_type, ids[0] || "", w.object_name || w.object_id, inCat.join(" ")].join("\t"));
+    if (what === "attach") { (attach[tid] = attach[tid] || { label: w.category + "=" + w.tag, objects: [] }).objects.push({ type: w.object_type, id: ids[0] }); attachCount++; }
+  }
+  restoreLog = rows.join("\n") + (rows.length ? "\n" : "");
+  for (var what2 in counts) System.log("  " + counts[what2] + "\t" + what2);
+  var maxAttach = Number(settings.maxAttach || 0);
+  if (attachCount > maxAttach) throw new Error("Refusing: " + attachCount + " attachments is more than maxAttach (" + maxAttach + "). Read the restoreLog output, then raise it deliberately. Nothing was attached.");
+  for (var id in attach) {
+    for (var b = 0; b < attach[id].objects.length; b += 100) {
+      var batch = attach[id].objects.slice(b, b + 100);
+      core.act(ctx, "attach " + attach[id].label + " to " + batch.length + " object(s) on " + host, function () {
+        var r = core.http("POST", "https://" + host + "/api/cis/tagging/tag-association/" + encodeURIComponent(id) + "?action=attach-tag-to-multiple-objects", h, { object_ids: batch }, SAFE);
+        var result = r.body || {};
+        if (result.success === false) {
+          var messages = [];
+          var errs = result.error_messages || [];
+          for (var m = 0; m < errs.length; m++) messages.push(errs[m].default_message || String(errs[m]));
+          throw new Error("vCenter refused part of the batch: " + messages.join("; "));
+        }
+        return batch.length;
+      });
+    }
+  }
+}
+try {
+  if (MODE === "backup") {
+    var docs = [];
+    var vcenters = settings.vcenters || [];
+    for (var v = 0; v < vcenters.length; v++) {
+      var host = String(vcenters[v]);
+      try {
+        var doc = backupOf(host);
+        // An empty catalogue is a failed read, not a vCenter with no tags: it must
+        // not become the newest backup and make the history look like a wipe.
+        if (!doc.categories.length) { failed.push(host + ": no categories read; not taken as a backup"); continue; }
+        docs.push(doc);
+        System.log(host + ": " + doc.categories.length + " categories, " + doc.tags.length + " tags, " + doc.assignments.length + " assignments");
+        if (settings.backupWebhook) core.notify(settings.backupWebhook, doc);
+      } catch (e) {
+        failed.push(host + ": " + (e && e.message ? e.message : e));
+        System.error(host + ": FAILED: " + (e && e.message ? e.message : e));
+      }
+    }
+    backupJson = JSON.stringify(docs, null, 2);
+  } else if (MODE === "restore") {
+    if (!backup) throw new Error("Give the backup to restore in the backup input (a backupJson output, or a <vcenter>.json from tag-backup.sh).");
+    var parsed = JSON.parse(String(backup));
+    var list = Object.prototype.toString.call(parsed) === "[object Array]" ? parsed : [parsed];
+    var chosen = null;
+    for (var l = 0; l < list.length; l++) if (!chosen || (targetVcenter && list[l].vcenter === String(targetVcenter))) chosen = list[l];
+    if (list.length > 1 && !(targetVcenter && chosen.vcenter === String(targetVcenter))) throw new Error("The backup holds " + list.length + " vCenters; name the one to restore in targetVcenter.");
+    if (!chosen || chosen.format !== "archtoolkit-tag-backup/1") throw new Error("Not an archtoolkit-tag-backup/1 document.");
+    restore(chosen, String(targetVcenter || chosen.vcenter), catalogueOnly === true || String(catalogueOnly) === "true");
+  } else if (MODE === "undo-restore") {
+    if (!targetVcenter || !restoreLogToUndo) throw new Error("Undo needs targetVcenter and restoreLogToUndo (the restoreLog output of the restore).");
+    var target = String(targetVcenter);
+    var hh = mod.openVcenter(settings, session, target);
+    var lines = String(restoreLogToUndo).split("\n");
+    for (var u = 0; u < lines.length; u++) {
+      var f = lines[u].split("\t");
+      if (f[0] !== "attach" || !f[3] || !f[5]) continue;
+      core.act(ctx, "detach " + f[1] + "=" + f[2] + " from " + f[6] + " on " + target, function () {
+        return mod.changeTag(target, hh, f[4], f[5], f[3], null, "MULTIPLE", f[6] + ": " + f[1] + "=" + f[2]);
+      });
+    }
+  } else throw new Error("mode is backup, restore or undo-restore, not " + MODE + ".");
+} finally {
+  for (var vc in session.headers) core.logoutVcenter(vc, session.headers[vc]);
+}
+summary = core.audit(MODE === "backup" ? null : ctx, { mode: MODE, failed: failed, counts: counts });
+core.notify(settings.webhook, summary);
+if (failed.length) throw new Error(failed.length + " vCenter(s) were not backed up: " + failed.join("; ") + ". The others were.");`;
+
+/**
+ * Cleanup, as tag-cleanup.sh does it: export everything first (in the backup
+ * format, so the restore can put anything back by name), plan, refuse above
+ * the cap, and delete only with a change ticket — each tag re-checked for
+ * attachments, and each category for tags, at the moment of deleting.
+ */
+const CLEANUP_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var SAFE = { redact: settings._secrets };
+var session = { headers: {}, catalogues: {} };
+var TICKET = String(changeTicket || "");
+if (!ctx.dryRun && !TICKET) throw new Error("Deleting tags cannot be undone: give the approved change in the changeTicket input. Nothing was deleted.");
+var S = JSON.parse(core.resource(RESOURCE_PATH, "tag-standard.json")).categories || [];
+var PROTECT = settings.protectCategories || [];
+var EMPTY = settings.emptyCategories !== false && String(settings.emptyCategories) !== "false";
+var standard = {};
+for (var i = 0; i < S.length; i++) standard[S[i].name] = S[i].values || [];
+function isStandard(c, t) { return !!standard[c] && standard[c].indexOf(t) >= 0; }
+function key(s) { return String(s).toLowerCase().replace(/\s+/g, " ").replace(/^ | $/g, ""); }
+var plan = [];
+var deletes = [];
+var log = [];
+var exports = [];
+function planVcenter(host) {
+  var h = mod.openVcenter(settings, session, host);
+  var C = session.catalogues[host];
+  var assoc = mod.readAssociations(host, h, C.tags);
+  var byId = {};
+  for (var t = 0; t < C.tags.length; t++) byId[C.tags[t].id] = C.tags[t];
+  // The full catalogue and every assignment, before anything is planned, in the
+  // format the backup's restore reads.
+  var doc = { vcenter: host, format: "archtoolkit-tag-backup/1", categories: [], tags: [], assignments: [] };
+  for (var c = 0; c < C.categories.length; c++) doc.categories.push({ id: C.categories[c].id, name: C.categories[c].name, description: C.categories[c].description, cardinality: C.categories[c].cardinality, associable_types: C.categories[c].associable_types });
+  for (var t2 = 0; t2 < C.tags.length; t2++) doc.tags.push({ id: C.tags[t2].id, name: C.tags[t2].name, description: C.tags[t2].description, category: C.tags[t2].category });
+  var uses = {};
+  for (var a = 0; a < assoc.length; a++) {
+    uses[assoc[a].tag_id] = (uses[assoc[a].tag_id] || 0) + 1;
+    var tg = byId[assoc[a].tag_id] || { category: "?", name: "?" };
+    doc.assignments.push({ category: tg.category, tag: tg.name, object_type: assoc[a].type, object_id: assoc[a].id, object_name: null });
+  }
+  exports.push(doc);
+  var count = {};
+  for (var t3 = 0; t3 < C.tags.length; t3++) count[C.tags[t3].category_id] = (count[C.tags[t3].category_id] || 0) + 1;
+  var rows = [];
+  for (var t4 = 0; t4 < C.tags.length; t4++) {
+    var x = C.tags[t4];
+    if (uses[x.id]) continue;
+    if (PROTECT.indexOf(x.category) >= 0) rows.push([host, "tag", x.category, x.name, x.id, "keep", "category is protected"]);
+    else if (isStandard(x.category, x.name)) rows.push([host, "tag", x.category, x.name, x.id, "keep", "in the standard, just not used yet"]);
+    else rows.push([host, "tag", x.category, x.name, x.id, "delete", "attached to nothing"]);
+  }
+  for (var c2 = 0; c2 < C.categories.length; c2++) {
+    var y = C.categories[c2];
+    if (count[y.id]) continue;
+    if (!EMPTY) rows.push([host, "category", y.name, "", y.id, "keep", "empty categories not included"]);
+    else if (PROTECT.indexOf(y.name) >= 0 || standard[y.name]) rows.push([host, "category", y.name, "", y.id, "keep", "empty, but protected or in the standard"]);
+    else rows.push([host, "category", y.name, "", y.id, "delete", "no tags"]);
+  }
+  // Near-duplicates within a category: the one on the most objects is the keeper.
+  var groups = {};
+  for (var t5 = 0; t5 < C.tags.length; t5++) (groups[C.tags[t5].category_id + "|" + key(C.tags[t5].name)] = groups[C.tags[t5].category_id + "|" + key(C.tags[t5].name)] || []).push(C.tags[t5]);
+  for (var gk in groups) {
+    var g = groups[gk];
+    if (g.length < 2) continue;
+    var keep = g[0];
+    for (var k = 1; k < g.length; k++) if ((uses[g[k].id] || 0) > (uses[keep.id] || 0)) keep = g[k];
+    for (var d = 0; d < g.length; d++) {
+      if (g[d].id === keep.id) continue;
+      var unused = !uses[g[d].id] && !isStandard(g[d].category, g[d].name) && PROTECT.indexOf(g[d].category) < 0;
+      rows.push([host, "tag", g[d].category, g[d].name, g[d].id, unused ? "delete" : "report", "duplicate of \"" + keep.name + "\" (" + (uses[keep.id] || 0) + " objects); this one on " + (uses[g[d].id] || 0)]);
+    }
+  }
+  var cgroups = {};
+  for (var c3 = 0; c3 < C.categories.length; c3++) (cgroups[key(C.categories[c3].name)] = cgroups[key(C.categories[c3].name)] || []).push(C.categories[c3].name);
+  for (var ck in cgroups) if (cgroups[ck].length > 1) rows.push([host, "category", cgroups[ck].join(" / "), "", "", "report", "categories differing only by case or spacing"]);
+  var seen = {};
+  for (var r = 0; r < rows.length; r++) {
+    var u = JSON.stringify(rows[r].slice(1, 6));
+    if (seen[u]) continue;
+    seen[u] = true;
+    plan.push(rows[r]);
+    // A tag planned twice (unused and a duplicate) is deleted once.
+    var dk = rows[r].slice(0, 5).join("|");
+    if (rows[r][5] === "delete" && !seen["d:" + dk]) { seen["d:" + dk] = true; deletes.push(rows[r]); }
+  }
+}
+function deleteOne(row) {
+  var host = row[0], kind = row[1], id = row[4];
+  var h = session.headers[host];
+  var label = kind + " " + row[2] + (row[3] ? "/" + row[3] : "") + " on " + host;
+  var n;
+  if (kind === "tag") {
+    // Checked again at the moment of deleting: the plan can be minutes old.
+    var attached = core.http("POST", "https://" + host + "/api/cis/tagging/tag-association?action=list-attached-objects-on-tags", h, { tag_ids: [id] }, SAFE).body || [];
+    n = 0;
+    for (var a = 0; a < attached.length; a++) n += (attached[a].object_ids || []).length;
+    if (n > 0) { log.push([host, kind, row[2], row[3], id, "refused: attached to " + n + " object(s) now", TICKET]); System.warn("Refused: " + label + " is attached to " + n + " object(s) now."); return; }
+  } else {
+    n = (core.http("POST", "https://" + host + "/api/cis/tagging/tag?action=list-tags-for-category", h, { category_id: id }, SAFE).body || []).length;
+    if (n > 0) { log.push([host, kind, row[2], row[3], id, "refused: has " + n + " tag(s) now", TICKET]); System.warn("Refused: " + label + " has " + n + " tag(s) now."); return; }
+  }
+  var entry = [host, kind, row[2], row[3], id, ctx.dryRun ? "planned" : "failed", TICKET];
+  log.push(entry);
+  core.act(ctx, "delete " + label + (TICKET ? " (" + TICKET + ")" : ""), function () {
+    core.http("DELETE", "https://" + host + "/api/cis/tagging/" + kind + "/" + encodeURIComponent(id), h, null, SAFE);
+    entry[5] = "deleted";
+    return id;
+  });
+}
+try {
+  var vcenters = settings.vcenters || [];
+  if (!vcenters.length) throw new Error("No vCenters: set vcenters in " + SETTINGS_NAME + ".");
+  for (var v = 0; v < vcenters.length; v++) planVcenter(String(vcenters[v]));
+  for (var p = 0; p < plan.length; p++) System.log("PLAN: " + plan[p].join(" | "));
+  System.log(deletes.length + " deletion(s) planned; the rest are kept or only reported.");
+  if (!ctx.dryRun && deletes.length > ctx.cap) throw new Error("Refusing: " + deletes.length + " deletions is more than the cap of " + ctx.cap + ". Delete in smaller batches. Nothing was deleted.");
+  // Tags first, then categories: a category is only deleted once it is empty.
+  for (var q = 0; q < deletes.length; q++) if (deletes[q][1] === "tag") deleteOne(deletes[q]);
+  for (var q2 = 0; q2 < deletes.length; q2++) if (deletes[q2][1] === "category") deleteOne(deletes[q2]);
+} finally {
+  for (var vc in session.headers) core.logoutVcenter(vc, session.headers[vc]);
+  exportsJson = JSON.stringify(exports, null, 2);
+  planCsv = mod.toCsv(["vcenter", "kind", "category", "name", "id", "action", "reason"], plan);
+  cleanupLogCsv = mod.toCsv(["vcenter", "kind", "category", "name", "id", "result", "ticket"], log);
+}
+summary = core.audit(ctx, { ticket: TICKET, planned: deletes.length });
+core.notify(settings.webhook, summary);`;
+
+/**
+ * The consumers: VCF Operations custom groups (created when no group of that
+ * name exists), NSX groups (created or updated only when absent or carrying
+ * managed-by|archtoolkit, and left alone when already as generated), and the
+ * sync that copies the vCenter tag onto the NSX tag of the same VM — only its
+ * scope, every other NSX tag kept. Mirrors vcfops-apply-groups.sh,
+ * nsx-apply-groups.sh and nsx-tag-sync.sh.
+ */
+function consumeWorkflow(groupFiles: readonly string[], nsxGroups: readonly { id: string; file: string }[]): string {
+  return String.raw`var GROUP_FILES = ${JSON.stringify(groupFiles)};
+var NSX_GROUPS = ${JSON.stringify(nsxGroups)};
+var ctx = core.begin(settings, dryRun);
+var SAFE = { redact: settings._secrets };
+var session = { headers: {}, catalogues: {} };
+var opsAuth = null;
+var problems = [];
+var syncPlan = [];
+function on(value) { return value === true || String(value) === "true"; }
+function sameJson(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function vcfOpsGroups() {
+  if (!settings.opsHost || !settings.opsUsername || !settings.opsPassword) throw new Error("Set opsHost, opsUsername and opsPassword in " + SETTINGS_NAME + ", or set applyVcfOpsGroups to false.");
+  opsAuth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
+  var api = "https://" + settings.opsHost + "/suite-api/api/resources/groups";
+  var existing = core.pageAll(function (page) {
+    var r = core.http("GET", api + "?page=" + page + "&pageSize=1000", opsAuth, null, SAFE).body || {};
+    return { items: r.groups || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+  }, 0);
+  var names = {};
+  for (var i = 0; i < existing.length; i++) if (existing[i].resourceKey) names[existing[i].resourceKey.name] = existing[i].id;
+  for (var g = 0; g < GROUP_FILES.length; g++) {
+    var body = JSON.parse(core.resource(RESOURCE_PATH, GROUP_FILES[g]));
+    var name = body.resourceKey.name;
+    if (names[name]) { System.log("Exists, left as it is: custom group " + name + " (" + names[name] + ")"); continue; }
+    core.act(ctx, "create VCF Operations custom group " + name, function () {
+      var r = core.http("POST", api, opsAuth, body, SAFE);
+      if (!r.body || !r.body.id) throw new Error("POST /suite-api/api/resources/groups returned no id.");
+      return String(r.body.id);
+    });
+  }
+}
+function nsxGroups(nsx) {
+  var base = "https://" + settings.nsxHost + "/policy/api/v1/infra/domains/default/groups/";
+  for (var i = 0; i < NSX_GROUPS.length; i++) {
+    var id = NSX_GROUPS[i].id;
+    var body = JSON.parse(core.resource(RESOURCE_PATH, NSX_GROUPS[i].file));
+    // Only a 404 means absent. Anything else but 200 — 401, 403, a 5xx — means we
+    // cannot tell who owns it, so core.http throws and the run stops.
+    var r = core.http("GET", base + encodeURIComponent(id), nsx, null, { allow: [404], redact: settings._secrets });
+    if (r.statusCode === 200) {
+      var tags = r.body.tags || [];
+      var ours = false;
+      for (var t = 0; t < tags.length; t++) if (tags[t].scope === "managed-by" && tags[t].tag === "archtoolkit") ours = true;
+      if (!ours) { problems.push("NSX group " + id + " exists and was not created by this kit; refused. Rename ours or adopt it by hand."); System.warn("REFUSED: NSX group " + id + " exists without managed-by|archtoolkit."); continue; }
+      if (r.body.display_name === body.display_name && sameJson(r.body.expression, body.expression)) { System.log("As generated already: NSX group " + id); continue; }
+    }
+    core.act(ctx, (r.statusCode === 200 ? "update" : "create") + " NSX group " + id, function () {
+      core.http("PATCH", base + encodeURIComponent(id), nsx, body, SAFE);
+      return id;
+    });
+  }
+}
+function nsxSync(nsx) {
+  var CAT = String(settings.syncCategory);
+  var VMS = "https://" + settings.nsxHost + "/policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines";
+  // What vCenter says: instance UUID -> the values of the category.
+  var want = [];
+  var wantSet = {};
+  var vcenters = settings.vcenters || [];
+  for (var v = 0; v < vcenters.length; v++) {
+    var host = String(vcenters[v]);
+    var h = mod.openVcenter(settings, session, host);
+    var C = session.catalogues[host];
+    var tags = [];
+    var nameOf = {};
+    for (var t = 0; t < C.tags.length; t++) if (C.tags[t].category === CAT) { tags.push(C.tags[t]); nameOf[C.tags[t].id] = C.tags[t].name; }
+    var assoc = tags.length ? mod.readAssociations(host, h, tags) : [];
+    var byVm = {};
+    var order = [];
+    for (var a = 0; a < assoc.length; a++) {
+      if (assoc[a].type !== "VirtualMachine") continue;
+      if (!byVm[assoc[a].id]) { byVm[assoc[a].id] = []; order.push(assoc[a].id); }
+      byVm[assoc[a].id].push(nameOf[assoc[a].tag_id]);
+    }
+    for (var o = 0; o < order.length; o++) {
+      var info = core.http("GET", "https://" + host + "/api/vcenter/vm/" + encodeURIComponent(order[o]), h, null, SAFE).body || {};
+      var uuid = info.identity && info.identity.instance_uuid;
+      if (!uuid) { System.warn("No instance UUID for " + order[o] + " on " + host + "; skipped."); continue; }
+      want.push({ uuid: String(uuid), values: byVm[order[o]].sort() });
+      wantSet[uuid] = true;
+    }
+  }
+  // Every NSX VM with its tags, paged by cursor.
+  var nsxVms = {};
+  var cursor = "";
+  for (var page = 0; page < 10000; page++) {
+    var r = core.http("GET", VMS + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""), nsx, null, SAFE).body || {};
+    var results = r.results || [];
+    for (var i = 0; i < results.length; i++) nsxVms[results[i].external_id] = { name: results[i].display_name, tags: results[i].tags || [] };
+    cursor = r.cursor || "";
+    if (!cursor || !results.length) break;
+  }
+  function scoped(tags) { var out = []; for (var i = 0; i < tags.length; i++) if (tags[i].scope === CAT) out.push(tags[i].tag); return out.sort(); }
+  function others(tags) { var out = []; for (var i = 0; i < tags.length; i++) if (tags[i].scope !== CAT) out.push(tags[i]); return out; }
+  for (var w = 0; w < want.length; w++) {
+    var n = nsxVms[want[w].uuid];
+    if (!n) continue;
+    var have = scoped(n.tags);
+    if (have.join(",") === want[w].values.join(",")) continue;
+    var set = others(n.tags);
+    for (var x = 0; x < want[w].values.length; x++) set.push({ scope: CAT, tag: want[w].values[x] });
+    syncPlan.push({ uuid: want[w].uuid, name: n.name, have: have, want: want[w].values, tags: set });
+  }
+  if (on(settings.prune)) {
+    // NSX VMs with the scope that vCenter no longer tags: only those found by name
+    // in one of the vCenters, with the same instance UUID, are touched.
+    for (var id in nsxVms) {
+      if (wantSet[id] || !scoped(nsxVms[id].tags).length) continue;
+      for (var p = 0; p < vcenters.length; p++) {
+        var ph = String(vcenters[p]);
+        var hh = mod.openVcenter(settings, session, ph);
+        var found = core.http("GET", "https://" + ph + "/api/vcenter/vm?names=" + encodeURIComponent(nsxVms[id].name), hh, null, SAFE).body || [];
+        if (!found.length) continue;
+        var detail = core.http("GET", "https://" + ph + "/api/vcenter/vm/" + encodeURIComponent(found[0].vm), hh, null, SAFE).body || {};
+        if (!detail.identity || String(detail.identity.instance_uuid) !== id) continue;
+        syncPlan.push({ uuid: id, name: nsxVms[id].name, have: scoped(nsxVms[id].tags), want: [], tags: others(nsxVms[id].tags) });
+        break;
+      }
+    }
+  }
+  for (var s = 0; s < syncPlan.length; s++) System.log("SYNC: " + syncPlan[s].name + ": " + (syncPlan[s].have.join(",") || "(none)") + " -> " + (syncPlan[s].want.join(",") || "(none)"));
+  var max = Number(settings.maxVmChanges || 0);
+  if (syncPlan.length > max) throw new Error("Refusing: " + syncPlan.length + " VMs would have their NSX tags changed, more than maxVmChanges (" + max + "). Read the SYNC lines; if they are right, raise it for one run. Nothing was changed.");
+  // update_tags replaces the whole tag set, so each body carries every other
+  // scope unchanged plus the new values for this one.
+  for (var u = 0; u < syncPlan.length; u++) {
+    var item = syncPlan[u];
+    core.act(ctx, "set NSX tags " + CAT + " on " + item.name + ": " + (item.have.join(",") || "(none)") + " -> " + (item.want.join(",") || "(none)"), function () {
+      core.http("POST", VMS + "?action=update_tags", nsx, { virtual_machine_id: item.uuid, tags: item.tags }, SAFE);
+      return item.uuid;
+    });
+  }
+}
+try {
+  if (on(settings.applyVcfOpsGroups) && GROUP_FILES.length) vcfOpsGroups();
+  if ((on(settings.applyNsxGroups) && NSX_GROUPS.length) || on(settings.nsxSync)) {
+    if (!settings.nsxHost || !settings.nsxUsername || !settings.nsxPassword) throw new Error("Set nsxHost, nsxUsername and nsxPassword in " + SETTINGS_NAME + ".");
+    var nsx = core.loginNsx(settings.nsxUsername, settings.nsxPassword);
+    if (on(settings.applyNsxGroups) && NSX_GROUPS.length) nsxGroups(nsx);
+    if (on(settings.nsxSync)) nsxSync(nsx);
+  }
+} finally {
+  for (var vc in session.headers) core.logoutVcenter(vc, session.headers[vc]);
+  if (opsAuth) core.logoutVcfOps(settings.opsHost, opsAuth);
+  syncPlanJson = JSON.stringify(syncPlan, null, 2);
+}
+summary = core.audit(ctx, { problems: problems, nsxTagChanges: syncPlan.length });
+core.notify(settings.webhook, summary);
+if (problems.length) throw new Error(problems.join(" "));`;
+}
+
+/** fleetTagActions with the module name filled in where an action calls a sibling. */
+function fleetActionsIn(module: string): VroActionDef[] {
+  return fleetTagActions().map((a) => ({ ...a, script: a.script.split('MODULE_NAME').join(JSON.stringify(module)) }));
+}
+
 export const VCF_TAGS: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -1421,17 +2871,53 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
       }
       if (vcenters.length === 0) findings.push(error('tags.vcenters.none', 'No vCenters listed.', { source: SRC }));
 
+      // The central component: one Orchestrator package that creates the
+      // standard on every vCenter and in fleet tag management, in that order.
+      const objects = categories.reduce((n, c) => n + 1 + c.values.length, 0);
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.taxonomy',
+        description: `Creates the tag standard (${categories.length} categories) ${vcenter ? 'on every vCenter' : ''}${both ? ', then imports it into' : fleet ? 'in' : ''}${fleet ? ' VCF Operations fleet tag management' : ''}: only what is missing, by exact name. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Standard',
+        workflow: {
+          name: 'Create tag standard',
+          description: 'Creates every category and tag of the standard that is missing — on each vCenter (vCenter API), then in fleet tag management (import from vCenter, or create centrally and push), per the route setting. Never changes or deletes an existing one; drift and names that differ only by case are reported. A dry run until dryRun is set to false in the configuration element.',
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Problems a person has to settle (drift, other-case names, missing after import)' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: TAXONOMY_WORKFLOW,
+        },
+        actions: [...vcTagActions('com.archtoolkit.tags.taxonomy', ['vcLogin', 'openVcenter', 'readCatalogue']), ...fleetActionsIn('com.archtoolkit.tags.taxonomy').filter((a) => a.name !== 'fleetExport')],
+        config: {
+          name: 'Tag standard',
+          description: 'Settings of the Create tag standard workflow. Fill the secret for your version after import: vcfApiToken (VCF 9.1; also used for fleet tag management) or vcPassword (8.x and 9.0). dryRun stays true until a dry run has been read.',
+          attributes: [
+            { name: 'route', type: 'string', value: route, description: 'vcenter (vCenter API only), both (vCenter, then import into fleet tag management) or fleet (create centrally, optionally push)' },
+            ...vcAttributes(vcenters, 'the vSphere Tagging privileges Create vSphere Tag Category and Create vSphere Tag on every vCenter, and Tags Manage (tag_management.manage) in VCF Operations for the fleet route'),
+            { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations 9.1.1 host, for fleet tag management (routes both and fleet)' },
+            { name: 'fleetAdapters', type: 'Array/string', value: [], description: 'Route both: the VCF Operations adapter ids of the vCenters to import from' },
+            { name: 'fleetPushAdapters', type: 'Array/string', value: [], description: 'Route fleet: the vCenter adapter ids to push the categories to after creating them; empty to push nothing' },
+            { name: 'taskPolls', type: 'number', value: 180, description: 'How many times to poll a fleet task, 10 seconds apart, before giving up' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
+            { name: 'cap', type: 'number', value: objects * Math.max(1, vcenter ? vcenters.length : 0) + (fleet ? objects + 20 : 0), description: 'The most objects one run may create or tasks it may start' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [{ name: 'tag-standard.json', content: standardJson(categories) }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Tag standard — ${categories.length} categories, ${categories.reduce((n, c) => n + c.values.length, 0)} values`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: both ? 'An engineer runs create-vcenter.sh after the standard is reviewed, then create-fleet.sh to import what it created into fleet tag management; again, in that order, whenever a value is added.' : 'An engineer runs the create script after the standard is reviewed, and again whenever a value is added to it.' },
+        trigger: { kind: 'manual', detail: both ? 'An engineer runs the workflow Create tag standard (or scripts/create-vcenter.sh, then scripts/create-fleet.sh) after the standard is reviewed: it creates the standard on each vCenter, then imports it into fleet tag management; again whenever a value is added.' : 'An engineer runs the workflow Create tag standard (or the script under scripts/) after the standard is reviewed, and again whenever a value is added to it.' },
         scope: {
           what: `The tag catalogue — categories and tags, not assignments — on ${vcenter ? vcenters.join(', ') : 'no vCenter directly'}${fleet ? ', and in VCF Operations fleet tag management' : ''}.`,
           decidedBy: [
             'The lines in tag-standard.json: one category per line, one tag per allowed value.',
-            vcenter ? 'VCENTERS, or the list baked into create-vcenter.sh.' : 'The vCenter adapters named in FLEET_PUSH_ADAPTERS, if --push is given.',
-            ...(both ? ['FLEET_ADAPTERS: the vCenters create-fleet.sh imports from. An import brings in everything in that vCenter’s catalogue, not only the standard.'] : []),
+            vcenter ? 'vcenters in the configuration element Tag standard (VCENTERS, or the list baked into scripts/create-vcenter.sh).' : 'fleetPushAdapters (FLEET_PUSH_ADAPTERS with --push for the script): the vCenter adapters the categories are pushed to.',
+            ...(both ? ['fleetAdapters (FLEET_ADAPTERS for the script): the vCenters imported from. An import brings in everything in that vCenter’s catalogue, not only the standard.'] : []),
             'What already exists by exact name, which is skipped.',
           ],
           ifWrong: 'A category created with the wrong name or cardinality cannot be renamed or narrowed afterwards, in vCenter or VCF Operations. It has to be deleted, which is only possible once nothing carries its tags.',
@@ -1450,33 +2936,37 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           { rule: 'The standard is reviewed before it runs', because: 'Category names and cardinality are permanent. The findings on this page are the review checklist.' },
         ],
         dryRun: [
-          ...(vcenter ? ['./create-vcenter.sh with no flag lists every category and tag it would create on each vCenter, and every drift it found.'] : []),
-          ...(fleet ? [both ? './create-fleet.sh with no flag lists which adapters it would import from and which categories and values fleet management does not have yet. Its queries are reads.' : './create-fleet.sh with no flag does the same against fleet tag management. Its queries are reads.'] : []),
+          'The workflow Create tag standard is a dry run until dryRun is set to false in its configuration element: the log lists every "DRY RUN: would create …", every PROBLEM (drift, other-case names) and, for an import, what fleet management does not have yet. Its reads are GETs and the fleet query POSTs.',
+          ...(vcenter ? ['./scripts/create-vcenter.sh with no flag lists every category and tag it would create on each vCenter, and every drift it found.'] : []),
+          ...(fleet ? [both ? './scripts/create-fleet.sh with no flag lists which adapters it would import from and which categories and values fleet management does not have yet. Its queries are reads.' : './scripts/create-fleet.sh with no flag does the same against fleet tag management. Its queries are reads.'] : []),
         ],
         undo: [
-          ...(vcenter ? ['create-vcenter.sh writes every id it created to created-<run>.tsv. ./create-vcenter.sh --undo created-<run>.tsv --execute deletes those tags and categories again, skipping any that are now attached to something.'] : []),
+          ...(vcenter ? ['The workflow logs every object it created (AUDIT: changed: create …); delete those in vCenter once nothing carries them (DELETE /api/cis/tagging/tag/{id}, then /api/cis/tagging/category/{id}). The script writes every id it created to created-<run>.tsv, and ./scripts/create-vcenter.sh --undo created-<run>.tsv --execute deletes those tags and categories again, skipping any that are now attached to something.'] : []),
           ...(fleet && !both ? ['In fleet tag management, delete the tags then the category (DELETE .../categories/{id}/tags/{tagId}, then .../categories/{id}). You cannot delete a tag assigned to objects. A category already pushed to a vCenter stays there when deleted centrally — delete it in that vCenter too.'] : []),
           ...(both ? ['An import makes fleet management manage the vCenter’s category. To hand it back, disengage the vCenter from the category (Fleet Management > Tags > the category > Available In > Remove, or the tags_sync_control blueprint). Deleting it centrally does not delete it from the vCenter.'] : []),
         ],
-        told: [`The terminal that ran it${vcenter ? ', and created-<run>.tsv for the vCenter route' : ''}. Commit tag-standard.json and TAG-STANDARD.md to the repository the change was reviewed in.${fleet ? ' Fleet tasks and any conflicts also show under Manage > Fleet Management > Tags.' : ''}`],
+        told: [`The workflow's log and its summary output (posted to the webhook if set), or the terminal that ran the script${vcenter ? ', and created-<run>.tsv for the vCenter route' : ''}. Commit tag-standard.json and TAG-STANDARD.md to the repository the change was reviewed in.${fleet ? ' Fleet tasks and any conflicts also show under Manage > Fleet Management > Tags.' : ''}`],
         requires: [
           ...(vcenter ? [...VC_REQUIRES, 'The vCenter account needs Tagging > Create vSphere Tag Category and Create vSphere Tag (and Delete for --undo).'] : []),
-          ...(fleet ? ['VCF Operations 9.1.1 or later, an API client whose API token is in VCF_API_TOKEN_FILE, and the Tags Manage permission (tag_management.manage) for it.'] : []),
+          ...(fleet ? ['VCF Operations 9.1.1 or later, an API client whose API token is in vcfApiToken (VCF_API_TOKEN_FILE for the script), and the Tags Manage permission (tag_management.manage) for it.'] : []),
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the vCenter, identity broker and VCF Operations certificates trusted in Orchestrator.',
           ...(both ? ['Import needs each vCenter at 9.0 or later, licensed for VCF 9 and integrated with this VCF Operations (the documented requirements). A vSphere 8 vCenter can only take the vCenter route.'] : []),
         ],
         files: {
           'tag-standard.json': standardJson(categories),
           'TAG-STANDARD.md': standardMarkdown(categories),
-          ...(vcenter ? { 'create-vcenter.sh': createVcenterScript(vcenters) } : {}),
-          ...(fleet ? { 'create-fleet.sh': createFleetScript(vcenter ? 'import' : 'create') } : {}),
+          ...pkg.files,
+          'scripts/tag-standard.json': standardJson(categories),
+          ...(vcenter ? { 'scripts/create-vcenter.sh': createVcenterScript(vcenters) } : {}),
+          ...(fleet ? { 'scripts/create-fleet.sh': createFleetScript(vcenter ? 'import' : 'create') } : {}),
           'import/powercli/tag-standard.csv': powercliCsv(categories),
           'import/powercli/Import-TagStandard.ps1': powercliImportScript(vcenters),
           ...vcenterRestFiles(categories),
-          'IMPORT.md': taxonomyImport(categories, route),
+          'IMPORT.md': taxonomyImport(categories, route, pkg.importSteps),
         },
         notes: [
           'In VCF 9, fleet tag management is where the catalogue should live. There are two consistent ways to get it there, and mixing them is what breaks: create it centrally and push it to vCenters that do not have it (route "fleet only"), or create it in vCenter and import it (route "both", the order this blueprint uses). Creating it in both places gives every category two ids.',
-          ...(both ? ['Order for route "both": ./create-vcenter.sh --execute, then FLEET_ADAPTERS=<ids> ./create-fleet.sh --execute. POST .../tag-management/adapters/{adapterId}/categories/pull takes no body and answers 202 with a taskId (9.1.1 API reference). VERIFY on your release: how an import reconciles the same category name arriving from a second vCenter — the documentation lists conflicts under View Conflict Details but does not spell out the rule; the script reports a FAILED task and every category still missing afterwards.'] : []),
+          ...(both ? ['Order for route "both": the workflow does it in one run (vCenter first, then one import per adapter in fleetAdapters, then a check of every category and value by exact name); with the scripts, ./scripts/create-vcenter.sh --execute, then FLEET_ADAPTERS=<ids> ./scripts/create-fleet.sh --execute. POST .../tag-management/adapters/{adapterId}/categories/pull takes no body and answers 202 with a taskId (9.1.1 API reference). VERIFY on your release: how an import reconciles the same category name arriving from a second vCenter — the documentation lists conflicts under View Conflict Details but does not spell out the rule; the script reports a FAILED task and every category still missing afterwards.'] : []),
           'The fleet API field names (associableTypes with adapterKind and resourceKinds, cardinality SINGLE/MULTIPLE, categoryIds and overwrite on push) are from the 9.1.1 API reference. VERIFY: whether POST .../categories accepts a category with no tags yet — the interface refuses one, and the script creates the tags straight after.',
           'Pushing with overwrite false fails on conflicts (same name with different cardinality or fewer object types, or same name with a different id) and shows them under Fleet Management > Tags. Resolve them there; the script does not force them.',
         ],
@@ -1552,6 +3042,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '# (object is a name or a MoRef such as vm-2041).',
         '#',
         '#   ./tag-assign.sh [assignments.csv]                   dry run: plan-<run>.csv lists every change',
+        '#                                                       (default: ../assignments.csv, beside scripts/)',
         '#   ./tag-assign.sh [assignments.csv] --execute         make the changes; change-log-<run>.csv',
         '#   ./tag-assign.sh ... --replace                       allow replacing the value of a one-value category',
         '#   ./tag-assign.sh --undo change-log-<run>.csv [--execute]   put every object back as it was',
@@ -1560,7 +3051,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         'set -euo pipefail',
         'cd "$(dirname "$0")"',
         `MAX_CHANGES="\${MAX_CHANGES:-${maxChanges}}"`,
-        'CSV=assignments.csv; DRY_RUN=1; REPLACE=0; UNDO=""',
+        'CSV=../assignments.csv; DRY_RUN=1; REPLACE=0; UNDO=""',
         'while (( $# )); do',
         '  case "$1" in',
         '    --execute) DRY_RUN=0 ;;',
@@ -1752,7 +3243,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '  -UndoLog <change-log> puts every object back as it was.',
         '#>',
         'param(',
-        "  [string]$CsvPath = 'assignments.csv',",
+        "  [string]$CsvPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'assignments.csv'),",
         '  [switch]$Execute,',
         '  [switch]$Replace,',
         `  [int]$MaxChanges = ${maxChanges},`,
@@ -1918,6 +3409,40 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.bulk_assign',
+        description: `Assigns tags from a CSV (vcenter,object_type,object,category,tag) on ${vcenters.length} vCenter(s), at most ${maxChanges} changes a run, with a change log that is also the undo. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Bulk assign',
+        workflow: {
+          name: 'Assign tags from CSV',
+          description: 'Plans every row of the CSV (the assignmentsCsv input, or the resource element assignments.csv), refuses a CSV that gives one object two values of a one-value category or plans more changes than the cap, then attaches one object at a time and reads each back. A one-value category is only changed with replace = true, and a replace never leaves the object without a value unless the roll-back itself fails, which stops the run and says so. undoLogCsv puts back every object a change log names. A dry run until dryRun is set to false in the configuration element.',
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: plan and report, change nothing' },
+            { name: 'replace', type: 'boolean', description: 'true: allow replacing the value of a one-value category (tag-assign.sh --replace)' },
+            { name: 'assignmentsCsv', type: 'string', description: 'The CSV to apply; empty: the resource element assignments.csv' },
+            { name: 'undoLogCsv', type: 'string', description: 'A changeLogCsv from an earlier run: put every object in it back as it was, instead of assigning' },
+          ],
+          outputs: [
+            { name: 'planCsv', type: 'string', description: 'Every row with its MoRef, the current value and the action' },
+            { name: 'changeLogCsv', type: 'string', description: 'Before and after of every change, with its result; pass it back as undoLogCsv to undo' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: BULK_ASSIGN_WORKFLOW,
+        },
+        actions: vcTagActions('com.archtoolkit.tags.bulk_assign', ['vcLogin', 'openVcenter', 'readCatalogue', 'tagsOn', 'resolveObject', 'changeTag', 'parseCsv', 'toCsv', 'undoChangeLog']),
+        config: {
+          name: 'Bulk tag assignment',
+          description: 'Settings of the Assign tags from CSV workflow. Fill vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0) after import; a CSV row naming a vCenter that is not in vcenters is refused.',
+          attributes: [
+            ...vcAttributes(vcenters, 'Assign or Unassign vSphere Tag on the objects, and read on them'),
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is attached while this is true' },
+            { name: 'cap', type: 'number', value: maxChanges, description: 'A run that plans more changes than this is refused before the first one' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [{ name: 'assignments.csv', content: `${sample.join('\n')}\n`, mimeType: 'text/csv' }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Bulk tag assignment from assignments.csv (at most ${maxChanges} changes a run)`,
@@ -1940,33 +3465,38 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           { rule: 'Refuses a name that matches more than one object', because: 'Two VMs called "app01" in different folders is normal. The script asks for the MoRef rather than tagging both.' },
           { rule: 'Only attaches tags that already exist in the category', because: 'Values come from the standard. A typo in the CSV is refused instead of becoming a new tag.' },
           { rule: 'Writes the change log as it goes — a pending row before each change, its result after the object is read back', because: 'A run that dies half way otherwise leaves objects changed and no record of what they were before. The log is the undo.' },
-          { rule: 'A replace whose new value does not take re-attaches the old value at once and stops the run', because: 'Detach-then-attach leaves the object with no value in between. Without the immediate roll-back, a failed attach leaves a prod VM with no Environment, out of every group that selects on it.' },
+          { rule: 'A replace never leaves the object without a value: in a several-value category the new value is attached and read back before the old one is detached; in a one-value category, where vCenter refuses a second value, a new value that does not take is rolled back at once (old value re-attached and read back) and the run stops', because: 'Detach-then-attach leaves the object with no value in between. Without the immediate roll-back, a failed attach leaves a prod VM with no Environment, out of every group that selects on it. The only way it ends with no value is a roll-back that fails too, which the change log records as ROLLBACK-FAILED with the tag to put back.' },
           { rule: 'Stops at the first change that does not take', because: 'The next rows usually fail the same way (a missing privilege, a lost session). Re-running the same CSV plans only what is still missing.' },
           { rule: 'Refuses a CSV that gives one object two different values of a one-value category, listing the rows', because: 'Whichever row runs second silently wins, or replaces the first; either way the CSV said two things and one is lost.' },
         ],
         dryRun: [
-          ...(bash ? ['./tag-assign.sh with no --execute writes plan-<run>.csv — every row with its MoRef, the current value and the action — and changes nothing.'] : []),
-          ...(ps ? ['./Tag-Assign.ps1 without -Execute does the same with PowerCLI.'] : []),
+          'The workflow Assign tags from CSV is a dry run until dryRun is set to false in its configuration element: the planCsv output (and a PLAN line per row in the log) lists every row with its MoRef, the current value and the action, and nothing is attached.',
+          ...(bash ? ['./scripts/tag-assign.sh with no --execute writes plan-<run>.csv — every row with its MoRef, the current value and the action — and changes nothing.'] : []),
+          ...(ps ? ['./scripts/Tag-Assign.ps1 without -Execute does the same with PowerCLI.'] : []),
         ],
         undo: [
-          ...(bash ? ['./tag-assign.sh --undo change-log-<run>.csv --execute detaches every tag the run attached and re-attaches every value it replaced.'] : []),
-          ...(ps ? ['./Tag-Assign.ps1 -UndoLog change-log-<run>.csv -Execute does the same.'] : []),
+          'Run the workflow again with undoLogCsv set to the changeLogCsv output of the run to undo (same columns as the script’s change-log-<run>.csv, so either can undo the other’s run).',
+          ...(bash ? ['./scripts/tag-assign.sh --undo change-log-<run>.csv --execute detaches every tag the run attached and re-attaches every value it replaced.'] : []),
+          ...(ps ? ['./scripts/Tag-Assign.ps1 -UndoLog change-log-<run>.csv -Execute does the same.'] : []),
           'The undo works from what is on each object now rather than from the result column, newest row first: it detaches the value the run attached if it is there, and re-attaches the replaced value if it is missing. So it is right for a log left by a run that stopped or was killed half way (rows still marked pending included), and running it twice changes nothing the second time.',
         ],
-        told: ['plan-<run>.csv and change-log-<run>.csv beside the script; attach them to the change record. vCenter records every attach and detach as an event against the object.'],
+        told: ['The workflow’s planCsv and changeLogCsv outputs and its AUDIT lines (the audit record posted to the webhook if set); plan-<run>.csv and change-log-<run>.csv beside the script. Attach them to the change record. vCenter records every attach and detach as an event against the object.'],
         requires: [
           ...(bash ? VC_REQUIRES : []),
           ...(ps ? ['PowerShell 7 and PowerCLI (VMware.VimAutomation.Core) for Tag-Assign.ps1, with VCENTERS, VC_USER and VC_PASSWORD_FILE set the same way.'] : []),
           'Tagging > Assign or Unassign vSphere Tag on the objects (and on the root to be simple about it), plus read on the objects.',
           'The categories and tags already created — run the tag standard blueprint first.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the vCenter certificates trusted in Orchestrator.',
         ],
         files: {
           'assignments.csv': `${sample.join('\n')}\n`,
-          ...(bash ? { 'tag-assign.sh': bashScript } : {}),
-          ...(ps ? { 'Tag-Assign.ps1': psScript } : {}),
+          ...pkg.files,
+          ...(bash ? { 'scripts/tag-assign.sh': bashScript } : {}),
+          ...(ps ? { 'scripts/Tag-Assign.ps1': psScript } : {}),
           'IMPORT.md': tagsImport(
-            'assignments.csv is the bulk-assignment file. Neither vCenter nor VCF Operations imports an assignment CSV, so the scripts beside it are the import: they resolve each row to the object on its vCenter and attach the tag (POST /api/cis/tagging/tag-association/{tag}?action=attach-multiple-tags-to-object style calls, or PowerCLI New-TagAssignment).',
+            `assignments.csv is the bulk-assignment file. Neither vCenter nor VCF Operations imports an assignment CSV, so something has to read it and call the API: the Orchestrator package \`${pkg.packageDir}\` (on the shared core library) is that component — its workflow **Assign tags from CSV** resolves each row to the object on its vCenter and attaches the tag (POST /api/cis/tagging/tag-association/{tag}?action=attach, read back with list-attached-tags-on-objects). The scripts under scripts/ do the same from a host, with bash or PowerCLI.`,
             [
+              ...pkg.importSteps,
               {
                 heading: 'Fill assignments.csv',
                 lines: [
@@ -1978,10 +3508,11 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
                   '- category, tag: exactly as in the tag standard — create the standard first (tags_taxonomy).',
                 ],
               },
-              ...(bash ? [{ heading: 'Assign with the bash script', lines: ['`./tag-assign.sh assignments.csv` writes plan-<run>.csv listing every change; `./tag-assign.sh assignments.csv --execute` makes them and writes change-log-<run>.csv, which `./tag-assign.sh --undo change-log-<run>.csv --execute` reverses. Add `--replace` to allow changing the value of a one-value category.'] }] : []),
-              ...(ps ? [{ heading: bash ? 'Or with PowerCLI' : 'Assign with PowerCLI', lines: ['`pwsh ./Tag-Assign.ps1 -CsvPath assignments.csv` (dry run), then add `-Execute`. VC_USER and VC_PASSWORD_FILE log in.'] }] : []),
-              { heading: 'VCF 9.1', lines: ['Assignments made in vCenter appear in VCF Operations tag management (Manage > Fleet Management > Tags) with the next sync; 9.1 can also assign there by hand. There is no CSV import in either place (VERIFY on your build).'] },
+              ...(bash ? [{ heading: 'Or: assign with the bash script', lines: ['`./scripts/tag-assign.sh` (it reads assignments.csv, one level up) writes plan-<run>.csv listing every change; `./scripts/tag-assign.sh --execute` makes them and writes change-log-<run>.csv, which `./scripts/tag-assign.sh --undo change-log-<run>.csv --execute` reverses. Add `--replace` to allow changing the value of a one-value category.'] }] : []),
+              ...(ps ? [{ heading: bash ? 'Or with PowerCLI' : 'Or: assign with PowerCLI', lines: ['`pwsh ./scripts/Tag-Assign.ps1` (dry run; it reads assignments.csv one level up, or -CsvPath), then add `-Execute`. VC_USER and VC_PASSWORD_FILE log in.'] }] : []),
+              { heading: 'VCF 9.1', lines: ['Assignments made in vCenter appear in VCF Operations tag management (Manage > Fleet Management > Tags) with the next sync; 9.1.1 can also assign there, by hand or with POST /suite-api/api/fleet-management/tag-management/assignments ({resourceIds, tagsToAttach, tagsToDetach}, VCF Operations resource ids — not vCenter MoRefs). There is no CSV import in either place.'] },
             ],
+            ['A replace in a one-value category detaches the old value before attaching the new one, because vCenter refuses a second value in a one-value category ("Tagging cardinality violation"); the workflow rolls the old value back at once if the new one does not take. VERIFY on your build whether the 9.1.1 fleet assignment call (tagsToAttach and tagsToDetach in one task) swaps a one-value category without that window.', 'The VCF 9.1 API-token login to vCenter follows davidwzhang.com "VCF 9.1 API Access (4)"; confirm it, or use vcUsername and vcPassword.'],
           ),
         },
         notes: [
@@ -2099,8 +3630,8 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         'param(',
         '  [switch]$Execute,',
         `  [int]$MaxChanges = ${maxChanges},`,
-        "  [string]$RulesPath = 'tag-rules.json',",
-        "  [string]$OutDir = 'reports',",
+        "  [string]$RulesPath = (Join-Path $PSScriptRoot 'tag-rules.json'),",
+        "  [string]$OutDir = (Join-Path $PSScriptRoot 'reports'),",
         `  [string]$ExcludeTag = '${excludeTag.replace(/'/g, "''")}',`,
         '  [string]$UndoLog',
         ')',
@@ -2290,20 +3821,56 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
       const cron = [
         '# Tag rules, daily. No secret here: VCF_API_TOKEN_FILE is a path to a mode-600 file (VC_USER + VC_PASSWORD_FILE on 8.x/9.0).',
         `# ${scheduledExecute ? 'This schedule makes changes (capped).' : 'This schedule only reports. Add -Execute once the plans have been right for a while.'}`,
-        `0 ${hour} * * * cd /opt/archtoolkit/tag-rules && ${vcScheduledEnv(vcenters)} pwsh -NoProfile -File ./Tag-Rules.ps1${scheduledExecute ? ' -Execute' : ''} >> reports/tag-rules.log 2>&1`,
+        '# With the Orchestrator package, schedule the workflow Tag VMs from rules in Orchestrator instead and leave this out.',
+        `0 ${hour} * * * cd /opt/archtoolkit/tag-rules && ${vcScheduledEnv(vcenters)} pwsh -NoProfile -File ./scripts/Tag-Rules.ps1${scheduledExecute ? ' -Execute' : ''} >> scripts/reports/tag-rules.log 2>&1`,
         '',
       ].join('\n');
+
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.rules',
+        description: `Tags VMs on ${vcenters.length} vCenter(s) from ${rules.length} rules; fill-only unless a rule is authoritative; at most ${maxChanges} VMs a run. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Rules',
+        workflow: {
+          name: 'Tag VMs from rules',
+          description: `Reads every VM and its tags on each vCenter, matches the rules in the resource element tag-rules.json (name regex, folder, cluster, guest OS, tag already present), and attaches what the rules say — only into an empty category unless the rule is authoritative. Disagreements go to conflictsCsv and change nothing. VMs tagged ${excludeTag || '(no exclusion set)'} are never touched. undoLogCsv puts back every VM a change log names. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: plan and report, change nothing' },
+            { name: 'undoLogCsv', type: 'string', description: 'A changeLogCsv from an earlier run: put every VM in it back as it was, instead of applying the rules' },
+          ],
+          outputs: [
+            { name: 'planCsv', type: 'string', description: 'Every change the rules call for' },
+            { name: 'conflictsCsv', type: 'string', description: 'Everything a person has to settle' },
+            { name: 'changeLogCsv', type: 'string', description: 'Before and after of every change, with its result; pass it back as undoLogCsv to undo' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: RULES_WORKFLOW,
+        },
+        actions: vcTagActions('com.archtoolkit.tags.rules', ['vcLogin', 'openVcenter', 'readCatalogue', 'readAssociations', 'tagsOn', 'changeTag', 'parseCsv', 'toCsv', 'undoChangeLog']),
+        config: {
+          name: 'Tag rules',
+          description: 'Settings of the Tag VMs from rules workflow. Fill vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0) after import. Schedule the workflow report-only (dryRun true) until its plans have been right for a while.',
+          attributes: [
+            ...vcAttributes(vcenters, 'Assign or Unassign vSphere Tag on the VMs, and read on VMs, folders and clusters'),
+            { name: 'excludeTag', type: 'string', value: excludeTag, description: 'Category=Tag: VMs carrying it are never touched' },
+            { name: 'maxVms', type: 'number', value: maxChanges, description: 'A run that would change more VMs than this is refused before the first change' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is attached while this is true' },
+            { name: 'cap', type: 'number', value: maxChanges * 4, description: 'The most tag changes (VM and category) one run may make' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [{ name: 'tag-rules.json', content: `${JSON.stringify(rules, null, 2)}\n` }],
+      });
 
       return {
         platform: PLATFORM,
         title: `Rule-based VM tagging — ${rules.length} rules, daily at ${String(hour).padStart(2, '0')}:00`,
         effect: 'reversible',
-        trigger: { kind: 'schedule', detail: `Daily at ${String(hour).padStart(2, '0')}:00 from cron (or Windows Task Scheduler), ${scheduledExecute ? 'making changes' : 'report-only until -Execute is added'}.`, worstCase: 'once a day, across every VM on every vCenter listed' },
+        trigger: { kind: 'schedule', detail: `Daily at ${String(hour).padStart(2, '0')}:00 from the Orchestrator scheduler (or cron / Windows Task Scheduler with the fallback script), ${scheduledExecute ? 'making changes once dryRun is set to false' : 'report-only: dryRun stays true (and the script has no -Execute) until the plans have been right for a while'}.`, worstCase: 'once a day, across every VM on every vCenter listed' },
         scope: {
           what: `Virtual machines on ${vcenters.join(', ')}, in the categories the rules name, never those tagged ${excludeTag || '(nothing — no exclusion set)'}.`,
           decidedBy: [
-            'The rules in tag-rules.json, in the order written.',
-            'Which VMs match: a name regex (case-insensitive, .NET syntax), membership anywhere under a folder or in a cluster of that name, the guest OS name, or a tag already present.',
+            'The rules in tag-rules.json (the resource element of the same name in the package), in the order written.',
+            'Which VMs match: a name regex (case-insensitive; JavaScript syntax in the workflow, .NET in the script), membership anywhere under a folder or in a cluster of that name, the guest OS name, or a tag already present.',
             'Fill-only rules act only on a category the VM has no value in, whether it takes one value or several; authoritative rules also replace a different value in a one-value category, and add their value to a several-value category that already has others.',
             `The exclusion tag ${excludeTag || '(none)'}, checked before any rule.`,
           ],
@@ -2312,30 +3879,40 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         guardrails: [
           { rule: `Refuses the whole run if more than ${maxChanges} VMs would change`, because: 'A new rule that matches everything is the realistic failure. The first run after it is refused instead of re-tagging the estate.' },
           { rule: 'Fill-only by default: a category that already has a value on the VM — one or several — is never changed or added to unless the rule is authoritative', because: 'A person who tagged a VM by hand knew something the naming convention did not. Adding Application=payments next to a hand-set Application=web-portal would put the VM in both firewall groups.' },
-          { rule: 'Writes the log as it goes, and a replace whose new value does not take re-attaches the old value at once and stops the run', because: 'Detach-then-attach leaves the VM with no value in between; a failure there without the roll-back leaves it out of every group that selects on the category, with no record to undo from.' },
+          { rule: 'Writes the log as it goes, and a replace never leaves the VM without a value: a several-value category gets the new value before the old one goes; a one-value category (vCenter refuses a second value) is rolled back at once if the new value does not take, and the run stops', because: 'Detach-then-attach leaves the VM with no value in between; a failure there without the roll-back leaves it out of every group that selects on the category, with no record to undo from.' },
           { rule: 'Rules that disagree about a one-value category change nothing and are reported', because: 'Picking one silently means the VM’s environment depends on the order rules happen to be read in.' },
           ...(excludeTag ? [{ rule: `VMs tagged ${excludeTag} are never touched`, because: 'An owner can take a VM out of the automation at once, without editing it.' }] : []),
           { rule: `The schedule is ${scheduledExecute ? 'set to act, still capped' : 'report-only'}`, because: 'Nobody reads the plan of a scheduled run. Report-only until the plans have been right for a while.' },
         ],
-        dryRun: ['./Tag-Rules.ps1 without -Execute writes reports/tag-rules-plan-<run>.csv and reports/tag-rules-conflicts-<run>.csv and changes nothing.'],
-        undo: ['./Tag-Rules.ps1 -UndoLog reports/tag-rules-log-<run>.csv -Execute removes every tag the run attached and puts back every value it replaced. It works from what is on each VM now, newest row first, so it is right for the log of a run that stopped half way (rows still marked pending included) and changes nothing when run twice.'],
-        told: ['reports/tag-rules-log-<run>.csv for changes, reports/tag-rules-conflicts-<run>.csv for everything a person has to settle. Point whoever owns the standard at the conflicts file; it is the useful half.'],
+        dryRun: ['The workflow Tag VMs from rules is a dry run until dryRun is set to false in its configuration element: planCsv and conflictsCsv say what it would do, and nothing changes.', './scripts/Tag-Rules.ps1 without -Execute writes scripts/reports/tag-rules-plan-<run>.csv and tag-rules-conflicts-<run>.csv and changes nothing.'],
+        undo: ['Run the workflow with undoLogCsv set to the changeLogCsv of the run to undo; ./scripts/Tag-Rules.ps1 -UndoLog scripts/reports/tag-rules-log-<run>.csv -Execute does the same for a script run. Both remove every tag the run attached and put back every value it replaced, working from what is on each VM now, newest row first, so they are right for the log of a run that stopped half way (rows still marked pending included) and change nothing when run twice.'],
+        told: ['The workflow’s changeLogCsv and conflictsCsv outputs and the audit record (posted to the webhook if set); scripts/reports/tag-rules-log-<run>.csv and tag-rules-conflicts-<run>.csv for the script. Point whoever owns the standard at the conflicts; they are the useful half.'],
         requires: [
-          'PowerShell 7 and PowerCLI (VMware.VimAutomation.Core) on the machine that runs it.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the vCenter certificates trusted in Orchestrator, and vcfApiToken or vcUsername/vcPassword filled in.',
+          'For the fallback script: PowerShell 7 and PowerCLI (VMware.VimAutomation.Core) on the machine that runs it.',
           'VCENTERS, VC_USER and VC_PASSWORD_FILE (a file readable only by the account running the job) in the job’s environment.',
           'Tagging > Assign or Unassign vSphere Tag on the VMs, and read on folders and clusters.',
           'Every Category=Tag the rules set must already exist; a rule whose tag is missing is skipped and reported.',
         ],
         files: {
-          'tag-rules.json': `${JSON.stringify(rules, null, 2)}\n`,
-          'Tag-Rules.ps1': script,
+          ...pkg.files,
+          'scripts/tag-rules.json': `${JSON.stringify(rules, null, 2)}\n`,
+          'scripts/Tag-Rules.ps1': script,
           'crontab.txt': cron,
-          'IMPORT.md': tagsImport('tag-rules.json is read by Tag-Rules.ps1; no product imports it. vCenter has no rule-based tagging of its own, which is what the script supplies.', [
-            { heading: 'Run it', lines: ['`pwsh ./Tag-Rules.ps1` (dry run), then `-Execute`, from a host with PowerCLI; then install the line in crontab.txt with `crontab -e`.'] },
-          ]),
+          'IMPORT.md': tagsImport(
+            `vCenter has no rule-based tagging of its own; the Orchestrator package \`${pkg.packageDir}\` supplies it, on the shared core library: the workflow **Tag VMs from rules** reads the rules from its resource element tag-rules.json and tags through the vCenter REST API. scripts/Tag-Rules.ps1 does the same with PowerCLI from a host.`,
+            [
+              ...pkg.importSteps,
+              { heading: 'Or: the PowerCLI script', lines: ['`pwsh ./scripts/Tag-Rules.ps1` (dry run; it reads scripts/tag-rules.json), then `-Execute`, from a host with PowerCLI; then install the line in crontab.txt with `crontab -e`.'] },
+            ],
+            [
+              'Guest OS rules match the VMware Tools full name (GET /api/vcenter/vm/{vm}/guest/identity) and fall back to the configured guest_OS identifier (for example WINDOWS_2019SERVER_64), which contains "WINDOWS" but not "Linux" for most Linux guests — check a guestos rule against your VMs.',
+              'The VCF 9.1 API-token login to vCenter follows davidwzhang.com "VCF 9.1 API Access (4)"; confirm it, or use vcUsername and vcPassword.',
+            ],
+          ),
         },
         notes: [
-          'Name patterns use .NET regular expressions and -match, which is case-insensitive. ^prd- also matches PRD-.',
+          'Name patterns are case-insensitive regular expressions (JavaScript in the workflow, .NET -match in the script); ^prd- also matches PRD-. Keep them to the common subset.',
           'The guest OS comes from VMware Tools when it is running, otherwise from the guest OS the VM was configured with.',
           'On Windows, run it from Task Scheduler as a service account and keep the password file in that account’s profile, or replace the three credential lines with Import-Clixml of a DPAPI-protected credential.',
           'VCF Automation also tags the VMs it deploys, from the template. Rules here fill what nothing else set; they are not a substitute for tagging at deployment.',
@@ -2605,7 +4182,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         ],
         default: 'pull',
       },
-      { id: 'adapters', label: 'vCenter adapter ids', control: 'text', default: '', hint: 'Comma separated; ./sync-control.sh --list-adapters shows them. Or set FLEET_ADAPTERS' },
+      { id: 'adapters', label: 'vCenter adapter ids', control: 'text', default: '', hint: 'Comma separated; ./scripts/sync-control.sh --list-adapters shows them. Or set FLEET_ADAPTERS' },
       { id: 'categories', label: 'Categories', control: 'text', default: 'Environment, Owner, CostCenter', hint: 'For push and disengage', showWhen: { input: 'action', equals: ['push', 'disengage'] } },
       { id: 'overwrite', label: 'Overwrite category properties in vCenter on push', control: 'toggle', default: false, showWhen: { input: 'action', equals: ['push'] } },
       { id: 'vcenter', label: 'vCenter to disengage', control: 'text', default: 'vc-wld01.example.com', showWhen: { input: 'action', equals: ['disengage'] } },
@@ -2618,7 +4195,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
       const vcenter = str(values, 'vcenter', 'vc-wld01.example.com');
       const findings: Finding[] = [];
       if (adapters.length === 0 && action !== 'export' && action !== 'disengage') {
-        findings.push(info('tags.sync.adapters-at-runtime', 'No adapter ids given, so the script takes them from FLEET_ADAPTERS when it runs.', { remediation: 'Run ./sync-control.sh --list-adapters to see them.', source: SRC }));
+        findings.push(info('tags.sync.adapters-at-runtime', 'No adapter ids given, so the script takes them from FLEET_ADAPTERS when it runs.', { remediation: 'Run ./scripts/sync-control.sh --list-adapters to see them.', source: SRC }));
       }
       if (action === 'push' && categories.length > 20) findings.push(info('tags.sync.push-batches', `${categories.length} categories go out in batches of 20, the interface’s own limit.`, { source: SRC }));
       if (action === 'push' && overwrite) {
@@ -2787,7 +4364,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '',
         '## Before',
         '',
-        '1. `./sync-control.sh export baseline` and keep the file with the change record.',
+        '1. `./scripts/sync-control.sh export baseline` and keep the file with the change record.',
         '2. Run the tag compliance report, so the drift you are about to fix — or create — is on record.',
         '3. Check nobody else is importing: the interface refuses a second import from the same domain while one is running, and warns you.',
         '',
@@ -2797,7 +4374,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           ? [
               'Interface: Manage > Fleet Management > Tags > Import, choose the VCF domain, Import. If some categories cannot be imported, open View Conflict Details from the banner — the banner cannot be reopened once dismissed.',
               '',
-              'API: `./sync-control.sh pull --execute` — POST .../tag-management/adapters/{adapterId}/categories/pull per adapter, then GET .../tasks/{taskId} until SUCCESS or FAILED.',
+              'API: the workflow Fleet tag sync control with action pull, or `./scripts/sync-control.sh pull --execute` — POST .../tag-management/adapters/{adapterId}/categories/pull per adapter, then GET .../tasks/{taskId} until SUCCESS or FAILED.',
               '',
               'Requirements from the documentation: the vCenter is 9.0 or later, licensed for VCF 9, integrated with this VCF Operations, and you hold Tags Manage.',
             ]
@@ -2805,23 +4382,23 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
             ? [
                 'Interface: Manage > Fleet Management > Tags, tick up to 20 categories, Push Categories, choose VCF Domain vCenter Instances or a Tag Group custom group, optionally tick overwrite, Push.',
                 '',
-                'API: `./sync-control.sh push --execute` — POST .../tag-management/adapters/{adapterId}/categories/push with {categoryIds, overwrite} per adapter, 20 categories at a time.',
+                'API: the workflow Fleet tag sync control with action push, or `./scripts/sync-control.sh push --execute` — POST .../tag-management/adapters/{adapterId}/categories/push with {categoryIds, overwrite} per adapter, 20 categories at a time.',
                 '',
                 'Conflicts that fail the push whatever overwrite says: the same category is single in one place and multiple in the other; VCF Operations has fewer object types than the vCenter; the same name has a different id. Resolve them in VCF Operations (widen it to match) or in the vCenter (rename or delete the stray one).',
               ]
             : action === 'disengage'
               ? [
-                  `Interface only — the 9.1.1 Tag Management API has no call for it. \`./sync-control.sh disengage\` exports before, prints these steps, waits, and exports after.`,
+                  `Interface only — the 9.1.1 Tag Management API has no call for it. \`./scripts/sync-control.sh disengage\` exports before, prints these steps, waits, and exports after.`,
                   '',
                   `For each of ${categories.join(', ')}: Manage > Fleet Management > Tags > Tag Definitions > the double arrow next to the category > Available In > tick ${vcenter} > Remove > tick the acknowledgment > Remove.`,
                   '',
                   'What it means, from the documentation: VCF Operations can no longer unassign tags of that category on objects in that vCenter (a lock icon shows it); deleting the tag or category in VCF Operations leaves it in that vCenter. The 9.1 release describes this as disengaging tag management: synchronisation stops for those tags, and the metadata stays where it is.',
                 ]
-              : ['`./sync-control.sh export <label>` writes every category, tag and tagged resource to exports/fleet-inventory-<label>.json, sorted so two exports diff cleanly.']),
+              : ['`./scripts/sync-control.sh export <label>` writes every category, tag and tagged resource to exports/fleet-inventory-<label>.json, sorted so two exports diff cleanly.']),
         '',
         '## After',
         '',
-        '1. `./sync-control.sh export after` (pull and push do this themselves) and read the diff.',
+        '1. `./scripts/sync-control.sh export after` (pull and push do this themselves) and read the diff.',
         '2. Run the tag compliance report again.',
         '',
         '## Undo',
@@ -2835,6 +4412,46 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
               : ['An export changes nothing.']),
         '',
       ].join('\n');
+
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.sync_control',
+        description: `Fleet tag management in VCF Operations 9.1.1: ${action} (import from vCenter, push to vCenter, export; disengage records the state and says the steps), wrapped in an export before and after. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Fleet sync',
+        workflow: {
+          name: 'Fleet tag sync control',
+          description: 'Pull (import categories and tags from each vCenter adapter), push (the named categories to each adapter, 20 a task) or export the fleet catalogue and every assignment, through /suite-api/api/fleet-management/tag-management. Pull and push export before and after and diff; one background task at a time, each waited for. Disengage has no API in 9.1.1: the workflow exports and logs the interface steps. A dry run until dryRun is set to false in the configuration element.',
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: say what would be pulled or pushed, change nothing' },
+            { name: 'action', type: 'string', description: 'pull, push, export or disengage; empty: the action setting' },
+          ],
+          outputs: [
+            { name: 'beforeJson', type: 'string', description: 'The export before a pull or push (or before a disengage)' },
+            { name: 'afterJson', type: 'string', description: 'The export after, or the export itself' },
+            { name: 'diff', type: 'string', description: 'What changed between the two' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: SYNC_WORKFLOW,
+        },
+        actions: fleetActionsIn('com.archtoolkit.tags.sync_control'),
+        config: {
+          name: 'Fleet tag sync',
+          description: 'Settings of the Fleet tag sync control workflow. Fill vcfApiToken after import: an API token of an API client with Tags Manage (tag_management.manage) and Tags View.',
+          attributes: [
+            { name: 'action', type: 'string', value: action, description: 'pull, push, export or disengage, when the input is empty' },
+            { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations 9.1.1 host' },
+            { name: 'vcfIdbHost', type: 'string', value: '', description: 'The VCF Identity Broker host' },
+            { name: 'vcfApiToken', type: 'SecureString', description: 'An API token issued to an API client in VCF Operations' },
+            { name: 'adapters', type: 'Array/string', value: adapters, description: 'The VCF Operations adapter ids of the vCenters, one per vCenter' },
+            { name: 'categories', type: 'Array/string', value: categories, description: 'Push and disengage: the categories, by exact name' },
+            { name: 'overwrite', type: 'boolean', value: overwrite, description: 'Push: replace the category properties in vCenter with VCF Operations’ copy' },
+            { name: 'vcenter', type: 'string', value: vcenter, description: 'Disengage: the vCenter to take out of central management' },
+            { name: 'taskPolls', type: 'number', value: 180, description: 'How many times to poll a task, 10 seconds apart, before giving up' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is pulled or pushed while this is true' },
+            { name: 'cap', type: 'number', value: Math.max(10, adapters.length) * Math.max(1, Math.ceil(categories.length / 20)), description: 'The most pull or push tasks one run may start' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+      });
 
       const verb = action === 'pull' ? 'Import vCenter tags into fleet tag management' : action === 'push' ? `Push ${categories.join(', ')} to vCenter` : action === 'disengage' ? `Disengage ${vcenter} from ${categories.join(', ')}` : 'Export the fleet tag catalogue';
       return {
@@ -2871,10 +4488,13 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           { rule: 'One background task at a time, waited for until SUCCESS or FAILED', because: 'The platform refuses simultaneous imports, and overlapping pushes to one vCenter fail on each other’s conflicts.' },
           ...(action === 'push' ? [{ rule: `Pushes at most 20 categories per task, overwrite=${overwrite}`, because: 'Twenty is the interface’s own limit; overwrite off means a conflict fails loudly instead of silently rewriting vCenter.' }] : []),
           ...(action === 'disengage' ? [{ rule: 'Disengage is done in the interface, which requires ticking an acknowledgment; the script only records either side', because: 'There is no API for it in 9.1.1, and a step that stops central management should need a person anyway.' }] : []),
-          { rule: 'Nothing acts without --execute', because: 'The dry run names every adapter and category it would touch.' },
+          { rule: 'Nothing acts until dryRun is set to false in the configuration element (the script: without --execute)', because: 'The dry run names every adapter and category it would touch.' },
+          { rule: 'Push refuses unless every category name resolves to exactly one category, and pushes nothing then', because: 'A push of half the list is a fleet in two states.' },
         ],
         dryRun: [
-          action === 'disengage' ? './sync-control.sh export baseline, then read which categories and tagged objects the vCenter has before touching anything.' : `./sync-control.sh ${action === 'export' ? 'export baseline' : action} without --execute lists what it would do and calls nothing that changes state.`,
+          action === 'disengage'
+            ? 'Run the workflow with action export (or ./scripts/sync-control.sh export baseline), then read which categories and tagged objects the vCenter has before touching anything.'
+            : `The workflow Fleet tag sync control is a dry run until dryRun is set to false: it logs "DRY RUN: would …" for every task it would start. ./scripts/sync-control.sh ${action === 'export' ? 'export baseline' : action} without --execute does the same.`,
         ],
         undo: [
           action === 'pull'
@@ -2885,24 +4505,35 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
                 ? 'Any tag task for the category on that vCenter — assign, push, or import — puts it back under VCF Operations management (documented).'
                 : 'Nothing to undo.',
         ],
-        told: ['exports/fleet-inventory-<run>-before.json and -after.json and the printed diff; attach all three to the change record. Task results and conflicts also show under Manage > Fleet Management > Tags, until the banner is dismissed.'],
+        told: ['The workflow’s beforeJson, afterJson and diff outputs and its audit record (posted to the webhook if set); with the script, scripts/exports/fleet-inventory-<run>-before.json and -after.json and the printed diff. Attach them to the change record. Task results and conflicts also show under Manage > Fleet Management > Tags, until the banner is dismissed.'],
         requires: [
           'VCF Operations 9.1.1 or later for the API (9.1 for disengage in the interface), with the vCenters integrated and at 9.0 or later.',
-          'An API client in VCF Operations whose token is in VCF_API_TOKEN_FILE, with Tags Manage (tag_management.manage) and Tags View; VCF_IDB_HOST set to the VCF Identity Broker.',
+          'An API client in VCF Operations with Tags Manage (tag_management.manage) and Tags View, its API token in vcfApiToken (VCF_API_TOKEN_FILE for the script), and vcfIdbHost (VCF_IDB_HOST) set to the VCF Identity Broker.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the identity broker and VCF Operations certificates trusted in Orchestrator.',
           'For push: vSphere Tagging privileges on the target vCenters for the account VCF Operations uses.',
         ],
         files: {
-          'IMPORT.md': tagsImport('Nothing is imported: sync-control.sh calls the 9.1.1 fleet tag-management API (import from vCenter, push, disengage, export). RUNBOOK.md is the same in the interface.', [
-            { heading: 'Run it', lines: ['`./sync-control.sh --list-adapters` for the vCenter adapter ids, then the action (`export <label>`, `pull`, `push` or `disengage`) — `pull` and `push` are dry runs until `--execute`. In the interface: Manage > Fleet Management > Tags.'] },
-          ]),
-          'sync-control.sh': script,
+          'IMPORT.md': tagsImport(
+            `No tag file is imported: the Orchestrator package \`${pkg.packageDir}\` (on the shared core library) calls the 9.1.1 fleet tag-management API — import from vCenter, push, export — with the workflow **Fleet tag sync control**. scripts/sync-control.sh does the same from a Linux host. RUNBOOK.md is the same in the interface.`,
+            [
+              ...pkg.importSteps,
+              { heading: 'Or: the script', lines: ['`./scripts/sync-control.sh --list-adapters` for the vCenter adapter ids, then the action (`export <label>`, `pull`, `push` or `disengage`) — `pull` and `push` are dry runs until `--execute`. In the interface: Manage > Fleet Management > Tags.'] },
+            ],
+            [
+              'The adapter ids: GET /suite-api/api/adapters?adapterKindKey=VMWARE (sync-control.sh --list-adapters) with the fleet Bearer token; if your release refuses it, the ids are in Administration > Integrations, or in the Import dialog under Fleet Management > Tags.',
+              'Disengage (removing a vCenter from a category’s central management) has no call in the 9.1.1 Tag Management API reference; if a later release adds one, the workflow still only records it.',
+            ],
+          ),
+          ...pkg.files,
+          'scripts/sync-control.sh': script,
           'RUNBOOK.md': runbook,
           ...(action === 'export'
             ? {
                 'crontab.txt': [
                   '# Nightly export of the fleet tag catalogue and every assignment, as evidence and a diff baseline.',
                   '# No secret here: VCF_API_TOKEN_FILE is a path to a mode-600 file.',
-                  `30 0 * * * cd /opt/archtoolkit/tag-sync && ${scheduledEnv('vcf-fleet')} ./sync-control.sh export nightly-$(date +\\%F) >> exports/export.log 2>&1`,
+                  '# With the Orchestrator package, schedule the workflow with action export instead and leave this out.',
+                  `30 0 * * * cd /opt/archtoolkit/tag-sync && ${scheduledEnv('vcf-fleet')} ./scripts/sync-control.sh export nightly-$(date +\\%F) >> scripts/exports/export.log 2>&1`,
                   '',
                 ].join('\n'),
               }
@@ -3136,11 +4767,48 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.backup',
+        description: `Backs up every tag category, tag and assignment of ${vcenters.length} vCenter(s), and restores them by name — never deleting or detaching. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Backup',
+        workflow: {
+          name: 'Tag backup and restore',
+          description: 'mode backup: reads every category, tag and assignment of each vCenter into the archtoolkit-tag-backup/1 format (the backupJson output, and each vCenter posted to backupWebhook if set). mode restore: recreates the missing categories and tags of one backup by name and re-attaches its assignments by object type and name, never deleting, detaching or changing a one-value category that has a value. mode undo-restore: detaches what a restore attached. Restore is a dry run until dryRun is set to false in the configuration element.',
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: say what a restore would do, change nothing' },
+            { name: 'mode', type: 'string', description: 'backup (default), restore or undo-restore' },
+            { name: 'backup', type: 'string', description: 'restore: the backup — a backupJson output, or one <vcenter>.json from tag-backup.sh' },
+            { name: 'targetVcenter', type: 'string', description: 'restore and undo-restore: the vCenter to restore into; empty: the one the backup came from' },
+            { name: 'catalogueOnly', type: 'boolean', description: 'restore: categories and tags only, no assignments' },
+            { name: 'restoreLogToUndo', type: 'string', description: 'undo-restore: the restoreLog output of the restore to undo' },
+          ],
+          outputs: [
+            { name: 'backupJson', type: 'string', description: 'backup: one archtoolkit-tag-backup/1 document per vCenter, as a JSON array' },
+            { name: 'restoreLog', type: 'string', description: 'restore: action, category, tag, tag id, object type, object id, object name, current value — tab separated, as tag-restore.sh writes it' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: BACKUP_WORKFLOW,
+        },
+        actions: vcTagActions('com.archtoolkit.tags.backup', ['vcLogin', 'openVcenter', 'readCatalogue', 'readAssociations', 'readInventory', 'tagsOn', 'changeTag']),
+        config: {
+          name: 'Tag backup',
+          description: 'Settings of the Tag backup and restore workflow. Fill vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0) after import. Schedule mode backup nightly; run restore by hand.',
+          attributes: [
+            ...vcAttributes(vcenters, 'read on every object (backup), plus Create vSphere Tag Category, Create vSphere Tag and Assign or Unassign vSphere Tag for a restore'),
+            { name: 'backupWebhook', type: 'string', value: '', description: 'Where each vCenter’s backup document is POSTed (a collector or an object-store gateway that keeps history); empty: only the backupJson output' },
+            { name: 'maxAttach', type: 'number', value: maxAttach, description: 'A restore planning more attachments than this is refused before the first' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch for restore: nothing is created or attached while this is true' },
+            { name: 'cap', type: 'number', value: maxAttach, description: 'The most create and attach calls (an attach call is up to 100 objects) one restore may make' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+      });
+
       return {
         platform: PLATFORM,
         title: `Nightly tag backup of ${vcenters.length} vCenter(s) to git, with restore`,
         effect: 'reversible',
-        trigger: { kind: 'schedule', detail: `The backup runs daily at ${String(hour).padStart(2, '0')}:00 from cron. The restore is run by hand, after an accident or a vCenter rebuild.`, worstCase: 'the backup once a day; the restore whenever someone runs it' },
+        trigger: { kind: 'schedule', detail: `The backup runs daily at ${String(hour).padStart(2, '0')}:00 — the workflow Tag backup and restore (mode backup) on the Orchestrator scheduler, or scripts/tag-backup.sh from cron to keep the history in git. The restore is run by hand, after an accident or a vCenter rebuild.`, worstCase: 'the backup once a day; the restore whenever someone runs it' },
         scope: {
           what: `Backup: reads the tag catalogue, every assignment and the object names of ${vcenters.join(', ')}; writes to ${repo}. Restore: creates missing categories and tags and attaches tags on one vCenter.`,
           decidedBy: [
@@ -3155,32 +4823,41 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           { rule: 'The restore never changes the value of a one-value category that already has one', because: 'The live value may be newer than the backup. Conflicts are listed for a person.' },
           { rule: `The restore refuses more than ${maxAttach} attachments (MAX_ATTACH)`, because: 'Restoring the wrong vCenter’s backup would otherwise re-tag every name-alike object.' },
           { rule: 'An object whose name matches more than one object is skipped, not guessed', because: 'Two VMs with one name in different folders is ordinary; tagging both is not.' },
-          { rule: 'The backup refuses to replace a non-empty catalogue with an empty one', because: 'A failed read that commits an empty file makes the history look like a wipe, and the next restore from HEAD restores nothing.' },
+          { rule: 'The backup refuses to replace a non-empty catalogue with an empty one (the workflow never takes an empty catalogue as a backup, and fails the run)', because: 'A failed read that commits an empty file makes the history look like a wipe, and the next restore from HEAD restores nothing.' },
         ],
         dryRun: [
-          './tag-restore.sh <file> [vcenter] without --execute lists the categories and tags it would create and writes restore-log-<run>.tsv with the action for every assignment: attach, present, conflict, missing-object, ambiguous-object.',
+          'The workflow in mode restore is a dry run until dryRun is set to false in its configuration element: the log lists every "DRY RUN: would create/attach …" and the restoreLog output the action for every assignment.',
+          './scripts/tag-restore.sh <file> [vcenter] without --execute lists the categories and tags it would create and writes restore-log-<run>.tsv with the action for every assignment: attach, present, conflict, missing-object, ambiguous-object.',
           'The backup is itself read-only against vCenter; run it by hand once and read the git diff.',
         ],
         undo: [
-          'Restore: ./tag-restore.sh --undo restore-log-<run>.tsv <vcenter> --execute detaches everything that run attached. Categories and tags it created stay; delete them in vCenter if unwanted, once unattached.',
+          'Restore: the workflow in mode undo-restore with targetVcenter and restoreLogToUndo (the restoreLog output) detaches everything that run attached; ./scripts/tag-restore.sh --undo restore-log-<run>.tsv <vcenter> --execute does the same for a script run. Categories and tags it created stay; delete them in vCenter if unwanted, once unattached.',
           'Backup: git revert or git reset in the backup repository; vCenter is not touched.',
         ],
-        told: [`A git commit in ${repo} whenever tags change${push ? ', pushed to its remote' : ''}; the commit diff is the change record. The restore writes restore-log-<run>.tsv.`],
+        told: [`The workflow: its backupJson output, each document posted to backupWebhook if set, and a failed run when a vCenter could not be read. The script: a git commit in ${repo} whenever tags change${push ? ', pushed to its remote' : ''}; the commit diff is the change record. A restore returns (or writes) the restore log.`],
         requires: [
           ...VC_REQUIRES,
           `A git clone at ${repo} the job can commit${push ? ' and push' : ''} to, with its git identity and remote credentials set up for the job’s account.`,
           'Read-only access for the backup; Create vSphere Tag Category, Create vSphere Tag and Assign or Unassign vSphere Tag for the restore.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the vCenter certificates trusted in Orchestrator. Orchestrator has no git; for history in git keep the script, or point backupWebhook at something that keeps every version.',
         ],
         files: {
-          'IMPORT.md': tagsImport('tag-backup.sh writes the catalogue and every assignment as JSON; tag-restore.sh is the only thing that reads that JSON back — vCenter and VCF Operations have no import for it.', [
-            { heading: 'Back up daily', lines: ['Install the line in crontab.txt with `crontab -e` after one run by hand.'] },
-            { heading: 'Restore', lines: ['`./tag-restore.sh <backup>/<vcenter>.json [target-vcenter]` (dry run: what would be recreated), then `--execute` (`--catalogue-only` for categories and tags without assignments). It recreates what is missing through POST /api/cis/tagging/category and /tag, then the assignments.'] },
-          ]),
-          'tag-backup.sh': backup,
-          'tag-restore.sh': restore,
+          'IMPORT.md': tagsImport(
+            `The backup is JSON in the archtoolkit-tag-backup/1 format; vCenter and VCF Operations have no import for it, so the restore is the import. The Orchestrator package \`${pkg.packageDir}\` (on the shared core library) does both with the workflow **Tag backup and restore**; scripts/tag-backup.sh and scripts/tag-restore.sh do the same from a Linux host, the backup into git. Either restores the other's backup.`,
+            [
+              ...pkg.importSteps,
+              { heading: 'Or: back up daily with the script', lines: ['Install the line in crontab.txt with `crontab -e` after one run by hand.'] },
+              { heading: 'Or: restore with the script', lines: ['`./scripts/tag-restore.sh <backup>/<vcenter>.json [target-vcenter]` (dry run: what would be recreated), then `--execute` (`--catalogue-only` for categories and tags without assignments). It recreates what is missing through POST /api/cis/tagging/category and /tag, then the assignments.'] },
+            ],
+            ['The VCF 9.1 API-token login to vCenter follows davidwzhang.com "VCF 9.1 API Access (4)"; confirm it, or use vcUsername and vcPassword.'],
+          ),
+          ...pkg.files,
+          'scripts/tag-backup.sh': backup,
+          'scripts/tag-restore.sh': restore,
           'crontab.txt': [
             '# Tag backup, daily. No secret here: VCF_API_TOKEN_FILE is a path to a mode-600 file (VC_USER + VC_PASSWORD_FILE on 8.x/9.0).',
-            `0 ${hour} * * * cd /opt/archtoolkit/tag-backup && ${vcScheduledEnv(vcenters)} BACKUP_REPO=${repo} ./tag-backup.sh >> tag-backup.log 2>&1`,
+            '# With the Orchestrator package, schedule the workflow Tag backup and restore (mode backup) instead, or keep this for the git history.',
+            `0 ${hour} * * * cd /opt/archtoolkit/tag-backup && ${vcScheduledEnv(vcenters)} BACKUP_REPO=${repo} ./scripts/tag-backup.sh >> tag-backup.log 2>&1`,
             '',
           ].join('\n'),
         },
@@ -3279,11 +4956,13 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         )}\n`;
       }
       if (groupFiles.length > 0) {
-        files['vcfops-apply-groups.sh'] = applyScript(
+        // The fallback lives in scripts/ and works from the folder above, where the
+        // payloads are (they are also the files people send by hand).
+        files['scripts/vcfops-apply-groups.sh'] = applyScript(
           'vcf-operations',
           groupFiles.map((file) => ({ method: 'POST' as const, path: '/suite-api/api/resources/groups', payload: file })),
           'DELETE /suite-api/api/resources/groups/{id} for each group created. Deleting a group does not touch its members.',
-        );
+        ).replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")/.."\n');
       }
       files['vcfops-policies.md'] = [
         `# VCF Operations policy per ${groupCat}`,
@@ -3387,15 +5066,16 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '}',
       ];
       if (nsxFiles.length > 0) {
-        files['nsx-apply-groups.sh'] = [
+        files['scripts/nsx-apply-groups.sh'] = [
           '#!/usr/bin/env bash',
           `# Create or update the NSX groups for ${nsxCat} (Policy API, default domain).`,
           '#',
           '# Refuses to update a group that exists without the managed-by|archtoolkit',
           '# tag: somebody built it by hand, and firewall rules may depend on its',
           '# current membership. Without --execute it only prints what it would do.',
+          '# Works from the folder above scripts/, where the nsx-group-*.json bodies are.',
           'set -euo pipefail',
-          'cd "$(dirname "$0")"',
+          'cd "$(dirname "$0")/.."',
           'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
           ...nsxAuth,
           'DRY_RUN=1; [[ "${1:-}" == "--execute" ]] && DRY_RUN=0',
@@ -3424,7 +5104,7 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         ].join('\n');
       }
       if (nsxSync) {
-        files['nsx-tag-sync.sh'] = [
+        files['scripts/nsx-tag-sync.sh'] = [
           '#!/usr/bin/env bash',
           `# Copy the vCenter ${nsxCat} tags onto the NSX tags of the same VMs, as`,
           `# scope ${nsxCat}, tag <value>. NSX groups match NSX tags, not vCenter tags.`,
@@ -3545,14 +5225,59 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
 
       const template = { name: `VM placed by ${placeCat}`, description: `A vSphere VM placed and tagged by ${placeCat}${c ? ` and ${costCat}` : ''}. Generated by ArchToolKit.`, version: '1.0.0', yaml: files['vcfa-template.yaml'] ?? '' };
       files[templatePath(template)] = blueprintYaml(template);
+      // The central component: one Orchestrator package that creates the VCF
+      // Operations groups and the NSX groups from the same bodies, and runs the sync.
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.consume',
+        description: `Applies the tag consumers: ${groupFiles.length} VCF Operations custom groups (${groupCat}), ${nsxFiles.length} NSX groups (${nsxCat})${nsxSync ? `, and the sync of the vCenter ${nsxCat} tag onto NSX` : ''}. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Consumers',
+        workflow: {
+          name: 'Apply tag consumers',
+          description: `Creates the VCF Operations custom groups that do not exist yet (by name), creates or updates the NSX groups (refusing any that exist without managed-by|archtoolkit, leaving alone those already as generated)${nsxSync ? `, and copies the vCenter ${nsxCat} tag onto the NSX tag scope ${nsxCat} of the same VMs (only that scope; every other NSX tag kept; refused above maxVmChanges)` : ''}. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: say what would be created and changed, change nothing' }],
+          outputs: [
+            { name: 'syncPlanJson', type: 'string', description: 'Every VM whose NSX tags the sync changes (or would), with the scope values before (have) and after, and the whole tag set sent' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: consumeWorkflow(groupFiles, nsxFiles),
+        },
+        actions: vcTagActions('com.archtoolkit.tags.consume', ['vcLogin', 'openVcenter', 'readCatalogue', 'readAssociations']),
+        config: {
+          name: 'Tag consumers',
+          description: 'Settings of the Apply tag consumers workflow. Fill opsPassword, nsxPassword and vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0) after import.',
+          attributes: [
+            { name: 'applyVcfOpsGroups', type: 'boolean', value: groupFiles.length > 0, description: 'Create the VCF Operations custom groups' },
+            { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host' },
+            { name: 'opsUsername', type: 'string', value: '', description: 'An account that may create custom groups' },
+            { name: 'opsPassword', type: 'SecureString', description: 'Its password' },
+            { name: 'opsAuthSource', type: 'string', value: '', description: 'Its authentication source; empty for a local account' },
+            { name: 'applyNsxGroups', type: 'boolean', value: nsxFiles.length > 0, description: 'Create or update the NSX groups' },
+            { name: 'nsxSync', type: 'boolean', value: nsxSync, description: `Copy the vCenter ${nsxCat} tags onto the NSX tags of the same VMs` },
+            { name: 'nsxHost', type: 'string', value: nsxHost, description: 'NSX Manager' },
+            { name: 'nsxUsername', type: 'string', value: '', description: 'An NSX account with rights on groups and VM tags' },
+            { name: 'nsxPassword', type: 'SecureString', description: 'Its password' },
+            { name: 'syncCategory', type: 'string', value: nsxCat, description: 'The vCenter category copied to the NSX scope of the same name' },
+            { name: 'prune', type: 'boolean', value: false, description: 'Also clear the scope from VMs in these vCenters that no longer carry the vCenter tag at all' },
+            { name: 'maxVmChanges', type: 'number', value: maxChanges, description: 'The sync refuses a run that would change more VMs than this' },
+            ...vcAttributes(vcenters, 'read on the VMs and their tags'),
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created or changed while this is true' },
+            { name: 'cap', type: 'number', value: groupFiles.length + nsxFiles.length + maxChanges, description: 'The most changes one run may make' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [...groupFiles, ...nsxFiles.map((f) => f.file)].map((name) => ({ name, content: files[name]! })),
+      });
+      Object.assign(files, pkg.files);
+
       files['IMPORT.md'] = tagsImport(
-        'Each consumer takes its own format. Where a file is exactly the request body the consumer takes, it is sent as it stands.',
+        `Each consumer takes its own format. Where a file is exactly the request body the consumer takes, it is sent as it stands — by the Orchestrator package \`${pkg.packageDir}\` (on the shared core library, workflow **Apply tag consumers**), or by the scripts under scripts/, which work from this folder.`,
         [
+          ...pkg.importSteps,
           groupFiles.length > 0
-            ? { heading: 'VCF Operations custom groups', lines: [`Each vcfops-group-*.json is exactly the body of POST /suite-api/api/resources/groups. \`./vcfops-apply-groups.sh\` (dry run), then \`--execute\`. Then assign a policy per group as in vcfops-policies.md. (The interface’s custom-group Import takes its own export format, not these bodies.)`] }
+            ? { heading: 'VCF Operations custom groups', lines: [`Each vcfops-group-*.json is exactly the body of POST /suite-api/api/resources/groups; the workflow sends them (resource elements of the same names). Or \`./scripts/vcfops-apply-groups.sh\` (dry run), then \`--execute\`. Then assign a policy per group as in vcfops-policies.md. (The interface’s custom-group Import takes its own export format, not these bodies.)`] }
             : undefined,
           nsxFiles.length > 0
-            ? { heading: 'NSX groups', lines: [`Each nsx-group-*.json is exactly the body of PATCH /policy/api/v1/infra/domains/default/groups/<id>. \`./nsx-apply-groups.sh\` (dry run), then \`--execute\`.${nsxSync ? ' Then schedule nsx-tag-sync.sh, which copies the vCenter tag to the NSX tag the groups select on.' : ''}`] }
+            ? { heading: 'NSX groups', lines: [`Each nsx-group-*.json is exactly the body of PATCH /policy/api/v1/infra/domains/default/groups/<id>; the workflow sends them. Or \`./scripts/nsx-apply-groups.sh\` (dry run), then \`--execute\`.${nsxSync ? ' Then schedule the workflow (or scripts/nsx-tag-sync.sh), which copies the vCenter tag to the NSX tag the groups select on.' : ''}`] }
             : undefined,
           {
             heading: 'VCF Automation',
@@ -3563,7 +5288,11 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           },
           { heading: 'Showback', lines: ['cost-showback.md: steps in VCF Operations; nothing to upload.'] },
         ],
-        ['The VCF Operations group rule reads the vSphere tag property summary|tag with the value <Category-value>; check the property on one tagged VM in VCF Operations before relying on the group.'],
+        [
+          'The VCF Operations group rule reads the vSphere tag property summary|tag with the value <Category-value>; check the property on one tagged VM in VCF Operations before relying on the group.',
+          'The workflow finds existing custom groups with GET /suite-api/api/resources/groups (the groups array, by resourceKey.name); check the list shape on your release before an armed run, or a group could be created twice.',
+          'The NSX sync reads /api/vcenter/vm/{vm} identity.instance_uuid and calls the NSX realized-state virtual-machines update_tags action, which replaces a VM’s whole tag set; check both on your NSX and vCenter releases.',
+        ],
       );
       files['TAG-CONSUMERS.md'] = [
         '# What reads which tag',
@@ -3617,18 +5346,20 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           { rule: 'Every script is a dry run without --execute', because: 'Membership is the blast radius; read it first.' },
         ],
         dryRun: [
-          'vcfops-apply-groups.sh without --execute prints what it would POST.',
-          'nsx-apply-groups.sh without --execute prints which groups it would create and which it refuses.',
-          ...(nsxSync ? ['nsx-tag-sync.sh without --execute lists every VM whose NSX tags would change, before and after.'] : []),
+          'The workflow Apply tag consumers is a dry run until dryRun is set to false in its configuration element: it logs every group it would create or update, every group it refuses, and (SYNC lines, syncPlanJson) every VM whose NSX tags would change.',
+          'scripts/vcfops-apply-groups.sh without --execute prints what it would POST.',
+          'scripts/nsx-apply-groups.sh without --execute prints which groups it would create and which it refuses.',
+          ...(nsxSync ? ['scripts/nsx-tag-sync.sh without --execute lists every VM whose NSX tags would change, before and after.'] : []),
         ],
         undo: [
           'VCF Operations: DELETE /suite-api/api/resources/groups/{id}. Members are untouched.',
           'NSX: DELETE /policy/api/v1/infra/domains/default/groups/{id} — refused by NSX while a rule still uses the group, which is the right order anyway.',
-          ...(nsxSync ? ['NSX tags: each sync run saves its plan (nsx-tag-sync-<run>.json) with every changed VM’s previous values in the scope (have) and the tag set it sent. To put a VM back, POST update_tags with that set, the scope values swapped back to have.'] : []),
+          ...(nsxSync ? ['NSX tags: each sync run keeps its plan (the syncPlanJson output; nsx-tag-sync-<run>.json for the script) with every changed VM’s previous values in the scope (have) and the tag set it sent. To put a VM back, POST update_tags with that set, the scope values swapped back to have.'] : []),
         ],
-        told: ['Each apply prints the membership count of every group it touched. The NSX audit log records every group and tag change against the NSX account used.'],
+        told: ['The workflow’s log and audit record (posted to the webhook if set); each script prints the membership count of every group it touched. The NSX audit log records every group and tag change against the NSX account used.'],
         requires: [
-          'VCF Operations with the vCenters collected, and OpsToken access (VCFOPS_TOKEN or VCFOPS_PASSWORD_FILE) for vcfops-apply-groups.sh.',
+          'VCF Operations with the vCenters collected; opsUsername/opsPassword for the workflow, OpsToken access (VCFOPS_TOKEN or VCFOPS_PASSWORD_FILE) for scripts/vcfops-apply-groups.sh.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations, NSX and vCenter certificates trusted in Orchestrator.',
           `NSX Manager ${nsxHost}, an account with rights on groups and VM tags, and its password in a mode-600 NSX_PASSWORD_FILE.`,
           ...(nsxSync ? VC_REQUIRES : []),
           'The categories and values already created — the tag standard blueprint.',
@@ -3779,6 +5510,41 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: 'com.archtoolkit.tags.cleanup',
+        description: `Finds unused tags, empty categories and near-duplicates on ${vcenters.length} vCenter(s) and deletes only the unused ones that are not in the standard, after exporting everything, with a change ticket and at most ${maxDeletes} deletions a run. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags/Cleanup',
+        workflow: {
+          name: 'Clean up tags',
+          description: 'Exports every category, tag and assignment of each vCenter (the exportsJson output, in the backup format), plans — delete what is attached to nothing and not in the standard or a protected category; report near-duplicates in use — and deletes only with a changeTicket, re-checking each tag for attachments and each category for tags at the moment of deleting. A dry run until dryRun is set to false in the configuration element.',
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: plan and export, delete nothing' },
+            { name: 'changeTicket', type: 'string', description: 'The approved change; required to delete, recorded against every deletion' },
+          ],
+          outputs: [
+            { name: 'exportsJson', type: 'string', description: 'Everything as it was before, one archtoolkit-tag-backup/1 document per vCenter: the restore input of the tag backup workflow' },
+            { name: 'planCsv', type: 'string', description: 'Every candidate with delete, keep or report and the reason' },
+            { name: 'cleanupLogCsv', type: 'string', description: 'What was deleted or refused, with the ticket' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: CLEANUP_WORKFLOW,
+        },
+        actions: vcTagActions('com.archtoolkit.tags.cleanup', ['vcLogin', 'openVcenter', 'readCatalogue', 'readAssociations', 'toCsv']),
+        config: {
+          name: 'Tag cleanup',
+          description: 'Settings of the Clean up tags workflow. Fill vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0) after import, for an account that reads every object — otherwise attached tags look unused to it.',
+          attributes: [
+            ...vcAttributes(vcenters, 'read on every object and Delete vSphere Tag and Delete vSphere Tag Category'),
+            { name: 'protectCategories', type: 'Array/string', value: protect, description: 'Never delete from these categories' },
+            { name: 'emptyCategories', type: 'boolean', value: emptyCategories, description: 'Also delete categories with no tags' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is deleted while this is true' },
+            { name: 'cap', type: 'number', value: maxDeletes, description: 'A run planning more deletions than this is refused before the first' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [{ name: 'tag-standard.json', content: standardJson(categories) }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Tag cleanup on ${vcenters.length} vCenter(s) — at most ${maxDeletes} deletions a run`,
@@ -3795,30 +5561,37 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
           ifWrong: 'A tag that looks unused to an account that cannot see every object is deleted from under the objects it could not see — and deleting a tag detaches it everywhere. Run it as an account that reads the whole inventory.',
         },
         guardrails: [
-          { rule: 'Deletes only with --execute and CHANGE_TICKET set, and records the ticket against every deletion', because: 'A deletion cannot be undone in vCenter. The ticket is the approval, and the log ties each deletion to it.' },
+          { rule: 'Deletes only when armed (dryRun false in the configuration element; --execute for the script) and with a change ticket (the changeTicket input; CHANGE_TICKET), and records the ticket against every deletion', because: 'A deletion cannot be undone in vCenter. The ticket is the approval, and the log ties each deletion to it.' },
           { rule: 'Writes a full export of every category, tag and assignment before planning anything', because: 'It is the only way back: the restore script recreates a deleted tag or category from it by name.' },
           { rule: 'Re-checks each tag for attachments immediately before deleting it, and refuses if it has any', because: 'The plan can be minutes old, and somebody may have used the tag since.' },
           { rule: 'Never deletes a category or value that is in the standard', because: 'An allowed value nobody has used yet — Environment=dr — is not clutter; deleting it breaks the next deployment that asks for it.' },
           { rule: `Refuses a run planning more than ${maxDeletes} deletions`, because: 'A wrong standard file or an account that sees too little makes everything look unused.' },
           { rule: 'Near-duplicates in use are reported, not merged', because: 'Merging means re-tagging objects, which moves them between groups; that is a reviewed bulk assignment, not a cleanup.' },
         ],
-        dryRun: ['./tag-cleanup.sh without --execute writes cleanup-plan-<run>.csv — every candidate with delete, keep or report and the reason — and the export in backups/, and deletes nothing.'],
+        dryRun: ['The workflow Clean up tags is a dry run until dryRun is set to false in its configuration element: planCsv and exportsJson are written and nothing is deleted.', './scripts/tag-cleanup.sh without --execute writes cleanup-plan-<run>.csv — every candidate with delete, keep or report and the reason — and the export in backups/, and deletes nothing.'],
         undo: [
           'None in vCenter: a deleted tag is gone, and so is every assignment it had (it had none, or it would not have been deleted).',
-          'Recreate from the export: backups/tags-<vcenter>-<run>.json is in the tag-backup.sh format, so ./tag-restore.sh backups/tags-<vcenter>-<run>.json <vcenter> --catalogue-only --execute (the backup blueprint) recreates every deleted category and tag by name. The new tag has a new id — anything that stored the old id will not find it.',
+          'Recreate from the export: the workflow’s exportsJson output (the script’s backups/tags-<vcenter>-<run>.json) is in the tag backup format, so the tag backup blueprint’s workflow in mode restore with catalogueOnly (or ./scripts/tag-restore.sh backups/tags-<vcenter>-<run>.json <vcenter> --catalogue-only --execute) recreates every deleted category and tag by name. The new tag has a new id — anything that stored the old id will not find it.',
         ],
-        told: ['cleanup-log-<run>.csv with the change ticket on every row, and the plan and export beside it; attach all three to the ticket. vCenter logs each deletion as an event.'],
+        told: ['The workflow’s cleanupLogCsv (the change ticket on every row), planCsv and exportsJson outputs and its audit record (posted to the webhook if set); the script writes cleanup-log-<run>.csv, the plan and the export. Attach them to the ticket. vCenter logs each deletion as an event.'],
         requires: [
           ...VC_REQUIRES,
           'An account that can read every object in each vCenter (otherwise attached tags look unused to it) with Delete vSphere Tag and Delete vSphere Tag Category.',
-          'A change ticket for the --execute run.',
+          'A change ticket for the armed run.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the vCenter certificates trusted in Orchestrator.',
         ],
         files: {
-          'tag-standard.json': standardJson(categories),
-          'tag-cleanup.sh': script,
-          'IMPORT.md': tagsImport('Nothing is imported: tag-cleanup.sh compares each vCenter’s catalogue with tag-standard.json and removes only what its plan lists.', [
-            { heading: 'Run it', lines: ['`./tag-cleanup.sh` writes cleanup-plan-<run>.csv; `CHANGE_TICKET=<ref> ./tag-cleanup.sh --execute` exports everything, then deletes.'] },
-          ]),
+          ...pkg.files,
+          'scripts/tag-standard.json': standardJson(categories),
+          'scripts/tag-cleanup.sh': script,
+          'IMPORT.md': tagsImport(
+            `Nothing is imported into vCenter: the Orchestrator package \`${pkg.packageDir}\` (on the shared core library) compares each vCenter’s catalogue with the standard in its resource element tag-standard.json and deletes only what its plan lists, with the workflow **Clean up tags**. scripts/tag-cleanup.sh does the same from a Linux host.`,
+            [
+              ...pkg.importSteps,
+              { heading: 'Or: the script', lines: ['`./scripts/tag-cleanup.sh` writes cleanup-plan-<run>.csv; `CHANGE_TICKET=<ref> ./scripts/tag-cleanup.sh --execute` exports everything, then deletes.'] },
+            ],
+            ['If a category is managed by VCF Operations fleet tag management (9.x), delete it there (DELETE /suite-api/api/fleet-management/tag-management/categories/{id}) rather than in vCenter: a later push or import brings back what was deleted in the vCenter.', 'The VCF 9.1 API-token login to vCenter follows davidwzhang.com "VCF 9.1 API Access (4)"; confirm it, or use vcUsername and vcPassword.'],
+          ),
         },
         notes: [
           'If a category is managed centrally by VCF Operations fleet tag management, delete it there instead: a later push or import brings back what was deleted in the vCenter.',

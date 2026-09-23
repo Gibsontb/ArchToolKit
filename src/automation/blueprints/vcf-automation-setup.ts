@@ -27,7 +27,10 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, authHeader, authPreamble, hostVar } from '../apply.ts';
-import { apiStep, importBundle, importMd, manualStep, setupOrderStep, verifyFor } from '../vcfa-import.ts';
+import { apiStep, importBundle, importMd, manualStep, setupOrderStep, verifyFor, type ImportStep, type VroParam } from '../vcfa-import.ts';
+import { packageNameOf, toPackage, type AutomationPackage } from '../vro/to-package.ts';
+import type { VroActionDef } from '../vro/core.ts';
+import type { VroConfigAttribute } from '../../kit/vro-package.ts';
 
 const PLATFORM = 'vcf-automation' as const;
 const SRC = 'ArchToolKit';
@@ -44,6 +47,16 @@ function tagsOf(text: string): { key: string; value: string }[] {
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+/**
+ * The IaaS apiVersion the scripts send. The 9.1 IaaS spec marks apiVersion
+ * required on every call without naming the current value; 2021-07-15 is the
+ * value of the Aria Automation 8.x programming guide. VERIFY on your release.
+ */
+const IAAS_API_VERSION = '2021-07-15';
+function iaasPath(path: string): string {
+  return `${path}?apiVersion=${IAAS_API_VERSION}`;
 }
 
 interface ChainStep {
@@ -208,6 +221,410 @@ const PLACEMENT = [
 ];
 
 // ---------------------------------------------------------------------------
+// The Orchestrator package every VCF Automation blueprint here becomes.
+//
+// Each automation is one workflow on the shared core library. What they have
+// in common — log in to the organization, list what exists, create in order
+// with each id passed on, poll the request tracker the IaaS API answers with,
+// refuse to send a placeholder, import a cloud template and version it — is in
+// a handful of actions carried by each package (in its own module, so two
+// packages never share state). The core library would be the better home for
+// them; until it has them, each package carries its copy.
+//
+// VCF 9.1 facts these rely on (the IMPORT.md of each automation says which are
+// VERIFY):
+//   - Everything here is the VM Apps organization API — IaaS (/iaas/api),
+//     blueprint, catalog, content, policy, properties, ABX and event broker —
+//     documented for 9.0–9.1.1 at developer.broadcom.com ("VM Apps Org - …").
+//     An All Apps organization has none of these objects: its regions, zones
+//     and namespaces come from the provider.
+//   - The organization API token is exchanged for a one-hour bearer token with
+//     grant_type=refresh_token. core.loginVcfAutomation posts to
+//     /oauth/tenant/<org>/token; TechDocs 9.0 ("Get Your Access Token for the
+//     VCF Automation VM Apps API") gives /tm/oauth/tenant/<org>/token, so the
+//     login action here tries that on a 404.
+//   - The IaaS API takes apiVersion on every call (required in the 9.1 spec);
+//     cloud accounts answer 202 with a RequestTracker (status INPROGRESS,
+//     FINISHED or FAILED; resources holds the object link).
+//   - A bearer token is not a session: there is nothing to log out of.
+
+/** One object a workflow ensures exists: looked up by name, created when missing. */
+interface EnsureStep {
+  /** The id goes into values[key], and __KEY__ in later payloads is replaced by it. */
+  readonly key: string;
+  readonly label: string;
+  /** The resource element holding the payload. */
+  readonly resource: string;
+  /** Where to list what exists, and how it pages: iaas ($top/$skip and apiVersion) or page (page/size). */
+  readonly list: string;
+  readonly style: 'iaas' | 'page';
+  /** POST here to create it. */
+  readonly create: string;
+  /** An existing object matches when any of these fields equals the payload's (case-insensitive). Default name. */
+  readonly matchFields?: readonly string[];
+  /** Also require the same projectId: names are unique per project, not per organization. */
+  readonly sameProject?: boolean;
+  /** The id is chosen by the client (in the payload); use it when the answer carries none. */
+  readonly clientId?: boolean;
+}
+
+/** ES5 actions every VCF Automation package carries, in its own module. */
+function vcfaActions(module: string, withTemplates: boolean): VroActionDef[] {
+  const self = `System.getModule(${JSON.stringify(module)})`;
+  const p = (name: string, type: string, description: string) => ({ name, type, description });
+  const login: VroActionDef = {
+    name: 'login',
+    description:
+      'VCF Automation login through core.loginVcfAutomation (org empty: 8.x refresh token; an organization name: 9.x API token). When the 9.x exchange at /oauth/tenant/<org>/token answers 404, tries /tm/oauth/tenant/<org>/token, the path TechDocs 9.0 gives for a VM Apps organization. Returns { Authorization: "Bearer <token>" }.',
+    resultType: 'Any',
+    params: [p('host', 'string', 'VCF Automation host'), p('token', 'string', 'From a SecureString attribute'), p('org', 'string', 'Organization name, "provider", or empty for 8.x')],
+    script: String.raw`var core = System.getModule("com.archtoolkit.core");
+try {
+  return core.loginVcfAutomation(host, token, org || "");
+} catch (e) {
+  if (!org || String(e).indexOf("HTTP 404") < 0) throw e;
+  var path = String(org) === "provider" ? "/tm/oauth/provider/token" : "/tm/oauth/tenant/" + encodeURIComponent(String(org)) + "/token";
+  System.warn("The token exchange at /oauth answered 404; trying " + path + ".");
+  var form = "grant_type=refresh_token&" + "refresh_token" + "=" + encodeURIComponent(String(token));
+  var r = core.http("POST", "https://" + host + path, null, form, { contentType: "application/x-www-form-urlencoded", accept: "application/*", redact: [token] });
+  if (!r.body || !r.body.access_token) throw new Error("The token exchange at " + path + " returned no access token.");
+  if (r.body.refresh_token && String(r.body.refresh_token) !== String(token)) {
+    System.warn("VCF Automation token rotation is on: the API token in the configuration element no longer works. Issue a new one and replace it before the next run.");
+  }
+  return { "Authorization": "Bearer " + r.body.access_token };
+}`,
+  };
+  const listAll: VroActionDef = {
+    name: 'listAll',
+    description:
+      'Every item of a VCF Automation list, all pages, or an error — never a partial list. style "iaas": the IaaS API ($top, $skip, apiVersion; content and totalElements). style "page": the other services (page, size; content, totalElements, last). A plain array answer is taken as the whole list.',
+    resultType: 'Any',
+    params: [p('conn', 'Any', '{ host: "https://<host>", auth, safe, apiVersion }'), p('path', 'string', 'e.g. /iaas/api/zones'), p('style', 'string', 'iaas or page')],
+    script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var SIZE = 200;
+var sep = String(path).indexOf("?") < 0 ? "?" : "&";
+return core.pageAll(function (page) {
+  var url = style === "iaas"
+    ? conn.host + path + sep + "apiVersion=" + encodeURIComponent(conn.apiVersion) + "&$top=" + SIZE + "&$skip=" + page * SIZE
+    : conn.host + path + sep + "page=" + page + "&size=" + SIZE;
+  var body = core.http("GET", url, conn.auth, null, conn.safe).body;
+  if (Object.prototype.toString.call(body) === "[object Array]") return { items: body, total: body.length, more: false };
+  body = body && typeof body === "object" ? body : {};
+  var items = body.content || [];
+  return { items: items, total: body.totalElements === undefined ? null : body.totalElements, more: body.last === true ? false : null };
+}, 0);`,
+  };
+  const load: VroActionDef = {
+    name: 'load',
+    description: 'The package payloads, parsed: { "<resource name>": object }.',
+    resultType: 'Any',
+    params: [p('resourcePath', 'string', 'RESOURCE_PATH'), p('names', 'Any', 'Array of resource names')],
+    script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var out = {};
+for (var i = 0; i < names.length; i++) out[names[i]] = JSON.parse(core.resource(resourcePath, names[i]));
+return out;`,
+  };
+  const regionId: VroActionDef = {
+    name: 'regionId',
+    description:
+      'The IaaS region id to use: settings.regionId when set; otherwise the one region whose externalRegionId is settings.externalRegionId (e.g. Datacenter:datacenter-3), from GET /iaas/api/regions; otherwise null. Throws when the external id matches none or several.',
+    resultType: 'string',
+    params: [p('conn', 'Any', 'The connection'), p('settings', 'Any', 'What settings() returned')],
+    script: String.raw`if (settings.regionId) return String(settings.regionId);
+if (!settings.externalRegionId) return null;
+var regions = ${self}.listAll(conn, "/iaas/api/regions", "iaas");
+var hits = [];
+for (var i = 0; i < regions.length; i++) if (String(regions[i].externalRegionId) === String(settings.externalRegionId)) hits.push(regions[i]);
+if (hits.length !== 1) throw new Error(hits.length + " regions have externalRegionId " + settings.externalRegionId + "; set regionId instead.");
+System.log("Region " + settings.externalRegionId + " is " + hits[0].id);
+return String(hits[0].id);`,
+  };
+  const ensureAll: VroActionDef = {
+    name: 'ensureAll',
+    description:
+      'Make sure each object in steps exists, in order. Reads first (also in a dry run): an object whose name (or another steps[i].matchFields field) matches is left as it is and its id used; two matches stop the run. Then checks every payload still to be sent: a "<REQUIRED" placeholder or an __ID__ no earlier step provides stops a live run before any change (a dry run warns). Then creates, each through core.act, replacing __KEY__ with the ids so far; a 202 request tracker is polled until FINISHED (settings.trackPolls polls, settings.trackSeconds apart; default 120 x 5 s). settings.payloadOverrides, a JSON object { "<resource>": { field: value } }, is merged into the payloads first. Returns values: the id of every step.',
+    resultType: 'Any',
+    params: [
+      p('ctx', 'Any', 'What core.begin returned'),
+      p('conn', 'Any', 'The connection'),
+      p('steps', 'Any', 'Array of { key, label, resource, list, style, create, matchFields, sameProject, clientId }'),
+      p('bodies', 'Any', 'What load returned, with what the workflow filled in'),
+      p('values', 'Any', 'Ids known already, by key; filled in'),
+      p('settings', 'Any', 'What settings() returned'),
+    ],
+    script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var self = ${self};
+values = values || {};
+function isArray(v) { return Object.prototype.toString.call(v) === "[object Array]"; }
+function merge(target, extra) {
+  for (var k in extra) {
+    if (!extra.hasOwnProperty(k)) continue;
+    if (extra[k] && typeof extra[k] === "object" && !isArray(extra[k]) && target[k] && typeof target[k] === "object" && !isArray(target[k])) merge(target[k], extra[k]);
+    else target[k] = extra[k];
+  }
+}
+if (settings.payloadOverrides) {
+  var overrides = typeof settings.payloadOverrides === "string" ? JSON.parse(settings.payloadOverrides) : settings.payloadOverrides;
+  for (var name in overrides) if (overrides.hasOwnProperty(name) && bodies[name]) merge(bodies[name], overrides[name]);
+}
+function placeholders(value, path, out) {
+  if (typeof value === "string") { if (value.indexOf("<REQUIRED") >= 0) out.push(path + ": " + value); return out; }
+  if (value && typeof value === "object") for (var k in value) if (value.hasOwnProperty(k)) placeholders(value[k], path ? path + "." + k : k, out);
+  return out;
+}
+function same(a, b) { return a !== null && a !== undefined && String(a).toLowerCase() === String(b).toLowerCase(); }
+
+// 1. Read what exists.
+var planned = [];
+for (var i = 0; i < steps.length; i++) {
+  var step = steps[i];
+  var body = bodies[step.resource];
+  if (values[step.key]) { System.log("Given, not created: " + step.label + " (" + values[step.key] + ")"); continue; }
+  var fields = step.matchFields || ["name"];
+  var items = self.listAll(conn, step.list, step.style);
+  var hits = [];
+  for (var j = 0; j < items.length; j++) {
+    var match = false;
+    for (var f = 0; f < fields.length; f++) if (body[fields[f]] !== undefined && same(items[j][fields[f]], body[fields[f]])) match = true;
+    if (match && step.sameProject && String(items[j].projectId) !== String(body.projectId)) match = false;
+    if (match) hits.push(items[j]);
+  }
+  if (hits.length > 1) throw new Error(hits.length + " objects at " + step.list + " match " + step.label + "; refusing to guess which one is meant. Tidy them up first.");
+  if (hits.length === 1) {
+    values[step.key] = String(hits[0].id);
+    System.log("Exists, left as it is: " + step.label + " (" + values[step.key] + ")");
+  } else {
+    planned.push(step);
+  }
+}
+
+// 2. Nothing is sent with a placeholder in it.
+var problems = [];
+var known = {};
+for (var key in values) if (values.hasOwnProperty(key)) known[key] = true;
+for (var n = 0; n < planned.length; n++) {
+  var text = JSON.stringify(bodies[planned[n].resource]);
+  var found = placeholders(bodies[planned[n].resource], "", []);
+  for (var q = 0; q < found.length; q++) problems.push(planned[n].resource + " " + found[q]);
+  var tokens = text.match(/__[A-Z][A-Z0-9_]*__/g) || [];
+  for (var t = 0; t < tokens.length; t++) if (!known[tokens[t].slice(2, -2)]) problems.push(planned[n].resource + ": nothing provides " + tokens[t]);
+  known[planned[n].key] = true;
+}
+if (problems.length > 0) {
+  if (!ctx.dryRun) throw new Error("Nothing was changed: " + problems.length + " value(s) are still placeholders. Fill them in the configuration element (or payloadOverrides): " + problems.join("; "));
+  for (var w = 0; w < problems.length; w++) System.warn("A live run would stop before any change: " + problems[w]);
+}
+
+// 3. Create, in order.
+function track(tracker) {
+  var polls = settings.trackPolls ? Number(settings.trackPolls) : 120;
+  var seconds = settings.trackSeconds ? Number(settings.trackSeconds) : 5;
+  var where = String(tracker.selfLink);
+  var link = where.indexOf("http") === 0 ? where : conn.host + where;
+  for (var count = 0; ; count++) {
+    var status = String(tracker.status || "unknown");
+    if (status === "FINISHED") {
+      var res = (tracker.resources || [])[0];
+      if (!res) throw new Error("Request " + where + " finished without naming what it made.");
+      return String(res).split("/").pop();
+    }
+    if (status === "FAILED") throw new Error("Request " + where + " failed: " + (tracker.message || "no message"));
+    if (count >= polls) throw new Error("Request " + where + " is still " + status + " after " + count + " polls; GET it before running again.");
+    System.sleep(seconds * 1000);
+    tracker = core.http("GET", link, conn.auth, null, conn.safe).body || {};
+  }
+}
+function create(step, text) {
+  var url = conn.host + step.create;
+  if (step.style === "iaas") url += (step.create.indexOf("?") < 0 ? "?" : "&") + "apiVersion=" + encodeURIComponent(conn.apiVersion);
+  var r = core.http("POST", url, conn.auth, text, conn.safe);
+  var b = r.body && typeof r.body === "object" ? r.body : {};
+  if (b.selfLink && String(b.selfLink).indexOf("/request-tracker/") >= 0) return track(b);
+  if (b.id) return String(b.id);
+  if (step.clientId && JSON.parse(text).id) return String(JSON.parse(text).id);
+  throw new Error("POST " + step.create + " returned no id; nothing after it was created.");
+}
+for (var s = 0; s < planned.length; s++) {
+  var text2 = JSON.stringify(bodies[planned[s].resource]);
+  for (var v in values) if (values.hasOwnProperty(v)) text2 = text2.split("__" + v + "__").join(values[v]);
+  var id = core.act(ctx, "create " + planned[s].label, (function (st, tx) { return function () { return create(st, tx); }; })(planned[s], text2));
+  values[planned[s].key] = id || "new-" + planned[s].key.toLowerCase().replace(/_/g, "-");
+}
+return values;`,
+  };
+  const importTemplate: VroActionDef = {
+    name: 'importTemplate',
+    description:
+      'Import one cloud template (blueprint.yaml) through the blueprint API, as import-templates.sh does: validate (POST /blueprint/api/blueprint-validation, which saves nothing), then create it in the project or update the draft of the one template with that name there when its content differs, then create the version, released when release is true. An existing version number is left alone. Returns the template id ("" in a dry run for a new one).',
+    resultType: 'string',
+    params: [
+      p('ctx', 'Any', 'What core.begin returned'),
+      p('conn', 'Any', 'The connection'),
+      p('template', 'Any', '{ name, description, version, content }'),
+      p('projectId', 'string', 'The project'),
+      p('release', 'boolean', 'Release the version to the catalog'),
+    ],
+    script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var self = ${self};
+var api = conn.host + "/blueprint/api";
+var name = String(template.name);
+var body = { name: name, description: String(template.description || ""), projectId: String(projectId), requestScopeOrg: false, content: String(template.content) };
+var check = core.http("POST", api + "/blueprint-validation", conn.auth, body, { redact: conn.safe.redact, allow: [400, 404, 405] });
+if (check.statusCode >= 200 && check.statusCode < 300 && check.body && check.body.valid === false) {
+  var messages = [];
+  var list = check.body.validationMessages || [];
+  for (var m = 0; m < list.length; m++) messages.push((list[m].type || "INFO") + ": " + (list[m].message || JSON.stringify(list[m])));
+  var why = "Template \"" + name + "\" is not valid: " + messages.join("; ");
+  if (!ctx.dryRun) throw new Error(why + ". Nothing was changed.");
+  System.warn(why);
+} else if (check.statusCode >= 200 && check.statusCode < 300) {
+  System.log("Template \"" + name + "\" validated.");
+} else {
+  System.warn("Validation answered HTTP " + check.statusCode + "; creating it validates again.");
+}
+var existing = self.listAll(conn, "/blueprint/api/blueprints?name=" + encodeURIComponent(name), "page");
+var hits = [];
+for (var i = 0; i < existing.length; i++) if (String(existing[i].name) === name && (!existing[i].projectId || String(existing[i].projectId) === String(projectId))) hits.push(existing[i]);
+if (hits.length > 1) throw new Error(hits.length + " templates named \"" + name + "\" in project " + projectId + "; refusing to guess. Tidy them up first.");
+var id = "";
+if (hits.length === 1) {
+  id = String(hits[0].id);
+  var current = core.http("GET", api + "/blueprints/" + encodeURIComponent(id), conn.auth, null, conn.safe).body || {};
+  if (String(current.content || "") === body.content) System.log("Exists with the same content, left as it is: template \"" + name + "\" (" + id + ")");
+  else core.act(ctx, "update the draft of template \"" + name + "\" (" + id + ")", function () { return core.http("PUT", api + "/blueprints/" + encodeURIComponent(id), conn.auth, body, conn.safe).statusCode; });
+} else {
+  id = core.act(ctx, "create template \"" + name + "\" in project " + projectId, function () {
+    var r = core.http("POST", api + "/blueprints", conn.auth, body, conn.safe);
+    if (!r.body || !r.body.id) throw new Error("POST /blueprint/api/blueprints returned no id.");
+    return String(r.body.id);
+  }) || "";
+}
+var version = String(template.version);
+var versions = id ? self.listAll(conn, "/blueprint/api/blueprints/" + encodeURIComponent(id) + "/versions", "page") : [];
+for (var j = 0; j < versions.length; j++) {
+  if (String(versions[j].version) === version) {
+    System.warn("Version " + version + " of \"" + name + "\" exists and versions are immutable: raise version: in blueprint.yaml to publish a change.");
+    return id;
+  }
+}
+core.act(ctx, "create version " + version + " of template \"" + name + "\"" + (release ? " and release it to the catalog" : " (not released)"), function () {
+  var v = { version: version, description: String(template.description || ""), changeLog: "Imported by ArchToolKit", release: release === true };
+  return core.http("POST", api + "/blueprints/" + encodeURIComponent(id) + "/versions", conn.auth, v, conn.safe).statusCode;
+});
+return ctx.dryRun ? "" : id;`,
+  };
+  return [login, listAll, load, regionId, ensureAll, ...(withTemplates ? [importTemplate] : [])];
+}
+
+/** The settings every VCF Automation package has, then its own, then the guard. */
+function vcfaSettings(own: readonly VroConfigAttribute[], cap: number): VroConfigAttribute[] {
+  return [
+    { name: 'vcfaHost', type: 'string', value: '', description: 'VCF Automation host (FQDN)' },
+    { name: 'vcfaOrg', type: 'string', value: '', description: 'VCF Automation 9.x: the VM Apps organization name, as in its login URL. Empty for Aria Automation 8.x, where vcfaApiToken is a refresh token.' },
+    { name: 'vcfaApiToken', type: 'SecureString', description: 'The organization API token (9.x), or the refresh token (8.x), of an account that may create these objects' },
+    { name: 'iaasApiVersion', type: 'string', value: '2021-07-15', description: 'apiVersion sent to /iaas/api (required in the 9.1 spec). VERIFY the value your release lists in its IaaS API reference.' },
+    ...own,
+    { name: 'payloadOverrides', type: 'string', value: '', description: 'Optional JSON, { "<resource name>": { "<field>": value } }, merged into the payloads before they are sent: for the values this package cannot look up' },
+    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
+    { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
+    { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+  ];
+}
+
+/**
+ * The start of every VCF Automation workflow script: the guard, the checks,
+ * the login and the payloads. Reads happen in a dry run too.
+ */
+function vcfaHead(resources: readonly string[]): string {
+  return String.raw`var ctx = core.begin(settings, dryRun);
+if (!settings.vcfaHost) throw new Error("Set vcfaHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.vcfaApiToken) throw new Error("Set vcfaApiToken in the configuration element " + SETTINGS_NAME + ".");
+var auth = mod.login(settings.vcfaHost, settings.vcfaApiToken, settings.vcfaOrg || "");
+var conn = { host: "https://" + settings.vcfaHost, auth: auth, safe: { redact: settings._secrets }, apiVersion: settings.iaasApiVersion || "2021-07-15" };
+var bodies = mod.load(RESOURCE_PATH, ${JSON.stringify(resources)});
+var values = {};
+`;
+}
+
+/** The end: outputs, the audit record, the webhook. */
+function vcfaTail(outputs: Readonly<Record<string, string>>): string {
+  const assign = Object.entries(outputs).map(([output, key]) => `${output} = ctx.dryRun ? "" : String(values.${key} || "");`);
+  const summary = Object.entries(outputs).map(([output, key]) => `${output}: values.${key} || null`).join(', ');
+  return [...assign, `summary = core.audit(ctx, { ${summary} });`, 'core.notify(settings.webhook, summary);', ''].join('\n');
+}
+
+const SUMMARY_OUTPUT: VroParam = { name: 'summary', type: 'string', description: 'The audit record, JSON' };
+const DRY_RUN_INPUT: VroParam = { name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' };
+
+/** One VCF Automation automation as an Orchestrator package. */
+export function vcfaPackage(spec: {
+  readonly thing: string;
+  readonly base: string;
+  readonly folder: string;
+  readonly workflowName: string;
+  readonly description: string;
+  readonly outputs: Readonly<Record<string, string>>;
+  readonly script: string;
+  readonly payloads: Readonly<Record<string, unknown>>;
+  readonly extraResources?: readonly { readonly name: string; readonly content: string }[];
+  readonly settings: readonly VroConfigAttribute[];
+  readonly cap: number;
+  readonly templates?: boolean;
+}): AutomationPackage {
+  const packageName = packageNameOf('vcfa', spec.thing, spec.base);
+  return toPackage({
+    packageName,
+    description: `${spec.description} Generated by ArchToolKit.`,
+    categoryPath: `ArchToolKit/VCF Automation/${spec.folder}/${spec.base}`,
+    workflow: {
+      name: spec.workflowName,
+      description: `${spec.description} Reads what exists first and leaves it alone; a dry run until dryRun is set to false in the configuration element.`,
+      inputs: [DRY_RUN_INPUT],
+      outputs: [...Object.keys(spec.outputs).map((name) => ({ name, type: 'string', description: `The id, empty in a dry run` })), SUMMARY_OUTPUT],
+      script: `${vcfaHead(Object.keys(spec.payloads))}${spec.script}${vcfaTail(spec.outputs)}`,
+    },
+    actions: vcfaActions(packageName, spec.templates === true),
+    config: {
+      name: 'Settings',
+      description: `Settings of the ${spec.workflowName} workflow. Fill the secrets after import; set dryRun to false only after a dry run.`,
+      attributes: vcfaSettings(spec.settings, spec.cap),
+    },
+    resources: [...Object.entries(spec.payloads).map(([name, value]) => ({ name, content: json(value) })), ...(spec.extraResources ?? [])],
+  });
+}
+
+/** ES5 for a list of ensure steps, as a literal. */
+export function stepsJs(steps: readonly EnsureStep[]): string {
+  return `var STEPS = ${JSON.stringify(steps)};\n`;
+}
+
+/** A fallback script moved to scripts/: it reads its payloads beside it, wherever it is run from. */
+export function fromScriptsDir(script: string): string {
+  return script.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")"\n');
+}
+
+/** The VERIFY lines every VCF Automation package adds to IMPORT.md. */
+export function packageVerify(extra: readonly string[] = []): string[] {
+  return [
+    'Package login: core.loginVcfAutomation exchanges the organization API token at /oauth/tenant/<org>/token (vrealize.it, "VCF Automation 9 API Access"); TechDocs 9.0 gives /tm/oauth/tenant/<org>/token, which the login action tries on a 404. VERIFY which one your 9.1 appliance answers.',
+    'Package: /iaas/api calls carry apiVersion (iaasApiVersion, default 2021-07-15, the 8.x value): the 9.1 IaaS spec marks it required but does not name the current value. VERIFY it against the IaaS API reference of your release.',
+    ...extra,
+  ];
+}
+
+/** The package steps, then the rest. */
+export function withPackageSteps(pkg: AutomationPackage, rest: readonly (ImportStep | undefined)[]): (ImportStep | undefined)[] {
+  return [
+    ...pkg.importSteps.map((step, index) =>
+      index === 0
+        ? { heading: `${step.heading} — the workflow that does all of it`, lines: [...step.lines, '', `The shell scripts in the steps below do the same from a Linux host with curl and jq, if you would rather not use Orchestrator (they are not idempotent; the workflow is). Any other \`import/\` files are the same content in the form VCF Automation's own import dialogs take.`] }
+        : step,
+    ),
+    ...rest,
+  ];
+}
+
+// ---------------------------------------------------------------------------
 
 export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
@@ -321,9 +738,50 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
       };
 
       const steps: ChainStep[] = [
-        { method: 'POST', path: '/iaas/api/cloud-accounts-vsphere', payload: `${base}-vsphere.json`, captureAs: 'VSPHERE_ACCOUNT_ID', secrets: { password: 'VSPHERE_PASSWORD' }, tracked: true },
-        ...(withNsx ? [{ method: 'POST' as const, path: '/iaas/api/cloud-accounts-nsx-t', payload: `${base}-nsx.json`, captureAs: 'NSX_ACCOUNT_ID', secrets: { password: 'NSX_PASSWORD' }, tracked: true }] : []),
+        { method: 'POST', path: iaasPath('/iaas/api/cloud-accounts-vsphere'), payload: `${base}-vsphere.json`, captureAs: 'VSPHERE_ACCOUNT_ID', secrets: { password: 'VSPHERE_PASSWORD' }, tracked: true },
+        ...(withNsx ? [{ method: 'POST' as const, path: iaasPath('/iaas/api/cloud-accounts-nsx-t'), payload: `${base}-nsx.json`, captureAs: 'NSX_ACCOUNT_ID', secrets: { password: 'NSX_PASSWORD' }, tracked: true }] : []),
       ];
+
+      // The package: one workflow that creates the vSphere account, waits for
+      // its request tracker, then the NSX account associated with it. A
+      // vCenter already registered under another name (VCF often registers the
+      // workload domain itself) counts as existing, by hostName.
+      const pkg = vcfaPackage({
+        thing: 'cloud_account',
+        base,
+        folder: 'Cloud accounts',
+        workflowName: `Create cloud account ${base}`,
+        description: `Creates the vSphere cloud account ${accountName}${withNsx ? ' and the NSX cloud account associated with it' : ''} in a VCF Automation VM Apps organization, with the passwords from the configuration element.`,
+        outputs: { vsphereAccountId: 'VSPHERE_ACCOUNT_ID', ...(withNsx ? { nsxAccountId: 'NSX_ACCOUNT_ID' } : {}) },
+        payloads: { 'vsphere.json': vsphere, ...(withNsx ? { 'nsx.json': nsx } : {}) },
+        settings: [
+          { name: 'vspherePassword', type: 'SecureString', description: `The password of ${vcUser}` },
+          ...(withNsx ? [{ name: 'nsxPassword', type: 'SecureString' as const, description: `The password of ${nsxUser}` }] : []),
+          { name: 'regions', type: 'string', value: '', description: 'Optional: externalRegionId values to enable, comma separated (Datacenter:<moref>), replacing the ones in the payload' },
+          { name: 'trackPolls', type: 'number', value: 120, description: 'How many times to poll a cloud account request before giving up' },
+          { name: 'trackSeconds', type: 'number', value: 5, description: 'Seconds between polls' },
+        ],
+        cap: withNsx ? 2 : 1,
+        script: [
+          stepsJs([
+            { key: 'VSPHERE_ACCOUNT_ID', label: `vSphere cloud account "${accountName}"`, resource: 'vsphere.json', list: '/iaas/api/cloud-accounts-vsphere', style: 'iaas', create: '/iaas/api/cloud-accounts-vsphere', matchFields: ['name', 'hostName'] },
+            ...(withNsx ? [{ key: 'NSX_ACCOUNT_ID', label: `NSX cloud account "${accountName}-nsx"`, resource: 'nsx.json', list: '/iaas/api/cloud-accounts-nsx-t', style: 'iaas' as const, create: '/iaas/api/cloud-accounts-nsx-t', matchFields: ['name', 'hostName'] }] : []),
+          ]),
+          String.raw`var V = bodies["vsphere.json"];
+if (settings.regions) {
+  var wanted = String(settings.regions).split(",");
+  V.regions = [];
+  for (var i = 0; i < wanted.length; i++) {
+    var r = wanted[i].replace(/^\s+|\s+$/g, "");
+    if (r) V.regions.push({ externalRegionId: r, name: r.split(":")[0] });
+  }
+}
+V.password = settings.vspherePassword ? String(settings.vspherePassword) : "<REQUIRED — vspherePassword in the configuration element>";
+if (bodies["nsx.json"]) bodies["nsx.json"].password = settings.nsxPassword ? String(settings.nsxPassword) : "<REQUIRED — nsxPassword in the configuration element>";
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
 
       const enumerate = [
         '#!/usr/bin/env bash',
@@ -337,7 +795,7 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         '# The password reaches jq through its environment and curl on stdin, so it is',
         '# never an argument that a process list could show.',
         `VSPHERE_PASSWORD="\${VSPHERE_PASSWORD}" jq -n --arg h '${vcHost}' --arg u '${vcUser}' '{hostName:$h, username:$u, password:env.VSPHERE_PASSWORD, acceptSelfSignedCertificate:${selfSigned}}' |`,
-        `  curl -sS -f -X POST "https://\${${hostVar('vcf-automation')}}/iaas/api/cloud-accounts-vsphere/region-enumeration" \\`,
+        `  curl -sS -f -X POST "https://\${${hostVar('vcf-automation')}}/iaas/api/cloud-accounts-vsphere/region-enumeration?apiVersion=${IAAS_API_VERSION}" \\`,
         `  -H "${authHeader('vcf-automation')}" -H "Accept: application/json" -H "Content-Type: application/json" \\`,
         '  --data-binary @- | jq .',
         '# In newer releases this is asynchronous: it returns a request tracker, and the',
@@ -349,7 +807,7 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         platform: PLATFORM,
         title: `${accountName} — vSphere${withNsx ? ' and NSX' : ''} cloud account${withNsx ? 's' : ''}`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'An administrator runs apply.sh once, when the workload domain is handed to VCF Automation' },
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) once, when the workload domain is handed to VCF Automation' },
         scope: {
           what: enableAll ? `Every datacenter in ${vcHost}, and everything VCF Automation discovers in them.` : `The datacenters ${datacenters.join(', ')} in ${vcHost}, and everything VCF Automation discovers in them.`,
           decidedBy: [
@@ -368,8 +826,9 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: 'The script stops if the vSphere account returns no id', because: 'An NSX account associated with nothing is created happily, and then every on-demand network fails with an error that does not mention it.' },
         ],
         dryRun: [
-          'Run enumerate-regions.sh to see what the vCenter offers before choosing what to enable.',
-          'Run apply.sh without --execute: it lists the payloads and the environment variables it will need.',
+          `Run the workflow Create cloud account ${base} with dryRun = true (the configuration element keeps it a dry run until its dryRun is set to false): it reads the existing cloud accounts, logs "DRY RUN: would create …" for each missing one and warns about any value still a placeholder.`,
+          'Run scripts/enumerate-regions.sh to see what the vCenter offers before choosing what to enable.',
+          'Or run scripts/apply.sh without --execute: it lists the payloads and the environment variables it will need.',
         ],
         undo: [
           'DELETE /iaas/api/cloud-accounts-nsx-t/{id}, then DELETE /iaas/api/cloud-accounts-vsphere/{id}, using created-ids.txt.',
@@ -383,29 +842,32 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           'jq on the machine running the scripts, and VSPHERE_PASSWORD' + (withNsx ? ' and NSX_PASSWORD' : '') + ' in its environment.',
         ],
         files: {
-          [`${base}-vsphere.json`]: json(vsphere),
-          ...(withNsx ? { [`${base}-nsx.json`]: json(nsx) } : {}),
-          'enumerate-regions.sh': enumerate,
-          'apply.sh': chainScript(`Create the ${accountName} cloud account${withNsx ? 's' : ''} in VCF Automation.`, steps, 'DELETE the NSX account, then the vSphere account, by the ids in created-ids.txt.'),
+          ...pkg.files,
+          [`scripts/${base}-vsphere.json`]: json(vsphere),
+          ...(withNsx ? { [`scripts/${base}-nsx.json`]: json(nsx) } : {}),
+          'scripts/enumerate-regions.sh': enumerate,
+          'scripts/apply.sh': fromScriptsDir(chainScript(`Create the ${accountName} cloud account${withNsx ? 's' : ''} in VCF Automation.`, steps, 'DELETE the NSX account, then the vSphere account, by the ids in created-ids.txt.')),
           'IMPORT.md': importMd({
             subject: `The vSphere cloud account ${accountName}${withNsx ? ' and its NSX account' : ''}.`,
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_cloud_account'),
-              manualStep('Find the regions', ['`./enumerate-regions.sh` lists the datacenters the vCenter offers as externalRegionId values; put the ones you mean in the regions field of the vSphere payload.']),
-              apiStep('Cloud accounts', 'apply.sh', [
-                `\`${base}-vsphere.json\` → POST /iaas/api/cloud-accounts-vsphere, with the password taken from VSPHERE_PASSWORD`,
-                ...(withNsx ? [`\`${base}-nsx.json\` → POST /iaas/api/cloud-accounts-nsx-t, with the password from NSX_PASSWORD and the vSphere account id from the first call`] : []),
-              ], ['The passwords are read from the environment by jq and sent on stdin; they are never in the files. The ids go to created-ids.txt, for the zone and for undo.']),
-            ],
+              manualStep('Find the regions', ['`./scripts/enumerate-regions.sh` lists the datacenters the vCenter offers as externalRegionId values; put the ones you mean in the `regions` attribute of the configuration element (comma separated), or in the regions field of the vSphere payload for the script.']),
+              apiStep('Or by script: cloud accounts', 'scripts/apply.sh', [
+                `\`scripts/${base}-vsphere.json\` → POST /iaas/api/cloud-accounts-vsphere, with the password taken from VSPHERE_PASSWORD`,
+                ...(withNsx ? [`\`scripts/${base}-nsx.json\` → POST /iaas/api/cloud-accounts-nsx-t, with the password from NSX_PASSWORD and the vSphere account id from the first call`] : []),
+              ], ['The passwords are read from the environment by jq and sent on stdin; they are never in the files. The ids go to scripts/created-ids.txt, for the zone and for undo. The script is not idempotent; the workflow is.']),
+            ]),
             auth: ['apply'],
             orgs: 'VCF Automation 9.1 / 9.1.1 VM Apps organizations and Aria Automation 8.x. In an All Apps organization vCenter and NSX arrive with the provider’s region instead',
-            verify: ['The association field between the NSX and vSphere accounts has moved between releases; GET an existing pair and match it.'],
+            verify: packageVerify([
+              'The association field between the NSX and vSphere accounts has moved between releases; GET an existing pair and match it. The 9.1 spec (VM Apps Org - Provisioning Service, "Create vSphere Cloud Account Async") lists associatedCloudAccountIds on the vSphere account, regions required, and a 202 RequestTracker answer.',
+            ]),
           }),
         },
         notes: [
           'The association field has moved between releases: some take associatedCloudAccountIds on the NSX account, some on the vSphere one, some both. GET an existing pair in your system and match it.',
           'In VCF Automation 9 with the all-apps organisation model, vCenter and NSX arrive through the provider’s region and are not created per tenant. This blueprint is for the VM Apps (Assembler) model.',
-          'The create calls are asynchronous in the current API (202 with a RequestTracker; status INPROGRESS, FINISHED or FAILED; resources holds the account link) and take an apiVersion query parameter. Without apiVersion some releases answer with the older, synchronous shape; apply.sh handles both. If your release rejects the regions field, add ?apiVersion= with the version your API reference lists to both paths.',
+          `The create calls are asynchronous in the current API (202 with a RequestTracker; status INPROGRESS, FINISHED or FAILED; resources holds the account link) and the 9.1 spec marks apiVersion required. The workflow and scripts/apply.sh send apiVersion=${IAAS_API_VERSION} and handle both the tracker and the older synchronous answer; if your release lists another value, set iaasApiVersion in the configuration element (and edit the two paths in the script).`,
           'The regions field replaced regionIds in 8.x. If your version rejects it, GET an existing account and copy its shape.',
         ],
         findings,
@@ -492,11 +954,33 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         tags: zoneTags,
       };
 
+      const pkg = vcfaPackage({
+        thing: 'zone',
+        base,
+        folder: 'Cloud zones',
+        workflowName: `Create cloud zone ${base}`,
+        description: `Creates the cloud zone ${zoneName} in a VCF Automation VM Apps organization.`,
+        outputs: { zoneId: 'ZONE_ID' },
+        payloads: { 'zone.json': zone },
+        settings: [
+          { name: 'regionId', type: 'string', value: '', description: 'The IaaS region id (GET /iaas/api/regions); replaces the one in the payload' },
+          { name: 'externalRegionId', type: 'string', value: '', description: 'Or the datacenter as the cloud account names it, e.g. Datacenter:datacenter-3: the workflow looks the region id up' },
+        ],
+        cap: 1,
+        script: [
+          stepsJs([{ key: 'ZONE_ID', label: `cloud zone "${zoneName}"`, resource: 'zone.json', list: '/iaas/api/zones', style: 'iaas', create: '/iaas/api/zones' }]),
+          String.raw`var region = mod.regionId(conn, settings);
+if (region) bodies["zone.json"].regionId = region;
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
       return {
         platform: PLATFORM,
         title: `${zoneName} — cloud zone, ${placement.toLowerCase()} placement`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'An administrator runs apply.sh when the zone is created; afterwards every deployment in every project that uses it is placed by it' },
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) when the zone is created; afterwards every deployment in every project that uses it is placed by it' },
         scope: {
           what:
             mode === 'tags'
@@ -518,7 +1002,7 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           ...(folder ? [{ rule: `Machines go in folder ${folder}`, because: 'A folder is what vCenter permissions, backup jobs and humans use to tell self-service machines from everything else.' }] : []),
         ],
         dryRun: [
-          'Run apply.sh without --execute to see the payload.',
+          `Run the workflow Create cloud zone ${base} with dryRun = true: it reads the zones, logs "DRY RUN: would create …" and warns if the region id is still a placeholder. scripts/apply.sh without --execute shows the payload.`,
           mode === 'tags' ? `Before creating it, GET /iaas/api/fabric-computes?$filter=tags.item.key eq '${computeTags[0]?.key ?? 'key'}' and count what comes back. That is the zone.` : 'Before creating it, list the compute it will include in the interface and check each one.',
           'After creating it, open the zone’s Compute tab: it shows what the filter actually matched.',
         ],
@@ -526,16 +1010,18 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         told: ['Nobody. Changes to zones are in the VCF Automation audit log only.'],
         requires: ['A cloud account with the region enabled (see the cloud account blueprint).', mode === 'tags' ? 'Tags on the clusters or resource pools — applied in VCF Automation or synchronised from vCenter tags.' : 'The fabric compute ids.', ...(folder ? [`The folder ${folder} existing in vCenter.`] : [])],
         files: {
-          [`${base}.json`]: json(zone),
-          'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/zones', payload: `${base}.json` }], 'DELETE /iaas/api/zones/{id} after removing it from every project.'),
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(zone),
+          'scripts/apply.sh': fromScriptsDir(applyScript('vcf-automation', [{ method: 'POST', path: iaasPath('/iaas/api/zones'), payload: `${base}.json` }], 'DELETE /iaas/api/zones/{id} after removing it from every project.')),
           'IMPORT.md': importMd({
             subject: `The cloud zone ${zoneName}.`,
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_cloud_zone'),
-              apiStep('Cloud zone', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/zones`], ['Fill the region id first (GET /iaas/api/regions, after the cloud account has collected). The zone id it returns goes into the project.']),
-            ],
+              manualStep('The region', ['Set regionId in the configuration element (GET /iaas/api/regions, after the cloud account has collected), or externalRegionId (Datacenter:<moref>) and the workflow looks it up. The zone id it outputs goes into the project.']),
+              apiStep('Or by script: cloud zone', 'scripts/apply.sh', [`\`scripts/${base}.json\` → POST /iaas/api/zones`], ['Fill the region id in the payload first. The script is not idempotent; the workflow is.']),
+            ]),
             auth: ['apply'],
-            verify: [],
+            verify: packageVerify(),
           }),
         },
         notes: [
@@ -642,11 +1128,39 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         customProperties: props,
       };
 
+      const pkg = vcfaPackage({
+        thing: 'project',
+        base,
+        folder: 'Projects',
+        workflowName: `Create project ${base}`,
+        description: `Creates the project ${projectName} in a VCF Automation VM Apps organization, with its groups, zones, quotas and custom properties.`,
+        outputs: { projectId: 'PROJECT_ID' },
+        payloads: { 'project.json': project },
+        settings: [{ name: 'zoneIds', type: 'string', value: '', description: 'Cloud zone ids, comma separated, highest priority first (GET /iaas/api/zones); replaces the ones in the payload, each with the quota above' }],
+        cap: 1,
+        script: [
+          stepsJs([{ key: 'PROJECT_ID', label: `project "${projectName}"`, resource: 'project.json', list: '/iaas/api/projects', style: 'iaas', create: '/iaas/api/projects' }]),
+          String.raw`var P = bodies["project.json"];
+if (settings.zoneIds) {
+  var quota = P.zoneAssignmentConfigurations[0] || {};
+  var zones = String(settings.zoneIds).split(",");
+  P.zoneAssignmentConfigurations = [];
+  for (var i = 0; i < zones.length; i++) {
+    var z = zones[i].replace(/^\s+|\s+$/g, "");
+    if (!z) continue;
+    P.zoneAssignmentConfigurations.push({ zoneId: z, priority: P.zoneAssignmentConfigurations.length, maxNumberInstances: quota.maxNumberInstances, memoryLimitMB: quota.memoryLimitMB, cpuLimit: quota.cpuLimit, storageLimitGB: quota.storageLimitGB });
+  }
+}
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
       return {
         platform: PLATFORM,
         title: `${projectName} — project for ${members.length} member ${type}(s), ${zoneIds.length} zone(s)`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'An administrator runs apply.sh when a team is onboarded; afterwards its members can request whatever is shared to it' },
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) when a team is onboarded; afterwards its members can request whatever is shared to it' },
         scope: {
           what: `Everything members of ${members.join(', ') || '(nobody)'} deploy through project ${projectName}, in zones ${zoneIds.join(', ')}.`,
           decidedBy: [
@@ -662,21 +1176,23 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: type === 'group' ? 'Access by directory group' : 'Access by named user — see the finding', because: 'Leavers are removed from groups by the directory, not from projects by anyone.' },
           ...(naming ? [{ rule: `Machines named ${naming}`, because: 'A name that says which project owns it is how an orphan in vCenter gets back to a person.' }] : []),
         ],
-        dryRun: ['Run apply.sh without --execute to see the payload.', 'Expand each group in the directory and count its members before --execute. That count is who can deploy.'],
+        dryRun: [`Run the workflow Create project ${base} with dryRun = true: it reads the projects and logs what it would create. scripts/apply.sh without --execute shows the payload.`, 'Expand each group in the directory and count its members before arming it. That count is who can deploy.'],
         undo: ['DELETE /iaas/api/projects/{id}. It fails while the project has deployments; those must be deleted or moved to another project first, which is why undo is only clean on day one.'],
         told: ['Nobody. Consider an Event Broker subscription on project changes if the change process needs one.'],
         requires: ['The cloud zones, and their ids.', 'The directory groups, synchronised into VCF Automation’s identity source.'],
         files: {
-          [`${base}.json`]: json(project),
-          'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/projects', payload: `${base}.json` }], 'DELETE /iaas/api/projects/{id} once it has no deployments.'),
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(project),
+          'scripts/apply.sh': fromScriptsDir(applyScript('vcf-automation', [{ method: 'POST', path: iaasPath('/iaas/api/projects'), payload: `${base}.json` }], 'DELETE /iaas/api/projects/{id} once it has no deployments.')),
           'IMPORT.md': importMd({
             subject: `The project ${projectName}.`,
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_project'),
-              apiStep('Project', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/projects`], ['Fill the cloud zone ids first (GET /iaas/api/zones). The project id it returns is what VCFA_PROJECT_ID means in every import script on this page.']),
-            ],
+              manualStep('The zones', ['Set zoneIds in the configuration element (GET /iaas/api/zones, or the zone workflow output) unless the payload already has them. The project id the workflow outputs is what VCFA_PROJECT_ID and projectId mean everywhere else on this page.']),
+              apiStep('Or by script: project', 'scripts/apply.sh', [`\`scripts/${base}.json\` → POST /iaas/api/projects`], ['Fill the cloud zone ids in the payload first. The script is not idempotent; the workflow is.']),
+            ]),
             auth: ['apply'],
-            verify: [],
+            verify: packageVerify(),
           }),
         },
         notes: [
@@ -768,11 +1284,56 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         ),
       };
 
+      // Image ids are looked up, never typed: the fabric image of that name in
+      // the region's datacenter. Two with the same name stop the run.
+      const pkg = vcfaPackage({
+        thing: 'mappings',
+        base,
+        folder: 'Mappings',
+        workflowName: `Create mappings ${base}`,
+        description: `Creates the flavor profile and the image profile ${profileName} for one region of a VCF Automation VM Apps organization, with each image id looked up by name.`,
+        outputs: { flavorProfileId: 'FLAVOR_PROFILE_ID', imageProfileId: 'IMAGE_PROFILE_ID' },
+        payloads: { 'flavor-profile.json': flavor, 'image-profile.json': image },
+        settings: [
+          { name: 'regionId', type: 'string', value: '', description: 'The IaaS region id (GET /iaas/api/regions); replaces the one in the payloads' },
+          { name: 'externalRegionId', type: 'string', value: '', description: 'Or the datacenter as the cloud account names it, e.g. Datacenter:datacenter-3: the workflow looks the region id up' },
+        ],
+        cap: 2,
+        script: [
+          stepsJs([
+            // One profile of each kind per region: an existing one for the region counts, whatever its name.
+            { key: 'FLAVOR_PROFILE_ID', label: `flavor profile "${profileName}-flavors"`, resource: 'flavor-profile.json', list: '/iaas/api/flavor-profiles', style: 'iaas', create: '/iaas/api/flavor-profiles', matchFields: ['name', 'regionId'] },
+            { key: 'IMAGE_PROFILE_ID', label: `image profile "${profileName}-images"`, resource: 'image-profile.json', list: '/iaas/api/image-profiles', style: 'iaas', create: '/iaas/api/image-profiles', matchFields: ['name', 'regionId'] },
+          ]),
+          String.raw`var region = mod.regionId(conn, settings);
+if (region) {
+  bodies["flavor-profile.json"].regionId = region;
+  bodies["image-profile.json"].regionId = region;
+  var external = String(core.http("GET", conn.host + "/iaas/api/regions/" + encodeURIComponent(region) + "?apiVersion=" + encodeURIComponent(conn.apiVersion), conn.auth, null, conn.safe).body.externalRegionId || "");
+  var fabric = mod.listAll(conn, "/iaas/api/fabric-images", "iaas");
+  var mapping = bodies["image-profile.json"].imageMapping;
+  for (var key in mapping) {
+    if (!mapping.hasOwnProperty(key) || String(mapping[key].id).indexOf("<REQUIRED") < 0) continue;
+    var hits = [];
+    for (var i = 0; i < fabric.length; i++) if (String(fabric[i].name) === String(mapping[key].name) && (!fabric[i].externalRegionId || String(fabric[i].externalRegionId) === external)) hits.push(fabric[i]);
+    if (hits.length === 1) {
+      mapping[key].id = String(hits[0].id);
+      System.log("Image " + key + " is " + mapping[key].name + " (" + hits[0].id + ")");
+    } else {
+      mapping[key].id = "<REQUIRED — " + hits.length + " images named " + mapping[key].name + " in " + (external || region) + "; set imageMapping." + key + ".id in payloadOverrides>";
+    }
+  }
+}
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
       return {
         platform: PLATFORM,
         title: `${profileName} — ${sizes.length} flavor and ${images.length} image mappings`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'An administrator runs apply.sh per region; afterwards every template that names these sizes or images resolves through them' },
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) per region; afterwards every template that names these sizes or images resolves through them' },
         scope: {
           what: `Every deployment in region ${regionId} whose template asks for ${sizeNames.join(', ')} or ${images.map((i) => i.key).join(', ') || 'any image'}.`,
           decidedBy: ['The region the profile is created in.', 'The mapping names, which templates refer to by string.', 'The zones on that region and the projects that use them.'],
@@ -783,29 +1344,31 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: `xlarge capped at a warning above 16 vCPU / 128 GB`, because: 'The largest self-service size is the one most often chosen "to be safe".' },
           { rule: 'Image ids resolved from the region, not typed', because: 'An image mapping to a template name that exists only in another vCenter fails at request time with an allocation error.' },
         ],
-        dryRun: ['Run apply.sh without --execute.', 'GET /iaas/api/images?$filter=... for each template and put its id in the image payload before --execute.'],
+        dryRun: [`Run the workflow Create mappings ${base} with dryRun = true: it looks up each image by name in the region and warns about any it cannot find exactly once.`, 'For scripts/apply.sh: GET /iaas/api/images?$filter=... for each template and put its id in the image payload before --execute.'],
         undo: ['DELETE /iaas/api/flavor-profiles/{id} and /iaas/api/image-profiles/{id}. Deployed machines are unaffected; new requests naming these mappings fail until they are replaced.'],
         told: ['Nobody. The audit log records the change.'],
         requires: ['The region, with data collection complete so templates are discovered.', 'Templates or content library items named as listed, in that region.'],
         files: {
-          [`${base}-flavor-profile.json`]: json(flavor),
-          [`${base}-image-profile.json`]: json(image),
-          'apply.sh': applyScript(
+          ...pkg.files,
+          [`scripts/${base}-flavor-profile.json`]: json(flavor),
+          [`scripts/${base}-image-profile.json`]: json(image),
+          'scripts/apply.sh': fromScriptsDir(applyScript(
             'vcf-automation',
             [
-              { method: 'POST', path: '/iaas/api/flavor-profiles', payload: `${base}-flavor-profile.json` },
-              { method: 'POST', path: '/iaas/api/image-profiles', payload: `${base}-image-profile.json` },
+              { method: 'POST', path: iaasPath('/iaas/api/flavor-profiles'), payload: `${base}-flavor-profile.json` },
+              { method: 'POST', path: iaasPath('/iaas/api/image-profiles'), payload: `${base}-image-profile.json` },
             ],
             'DELETE /iaas/api/flavor-profiles/{id} and /iaas/api/image-profiles/{id}.',
-          ),
+          )),
           'IMPORT.md': importMd({
             subject: 'Image and flavor mappings for one region.',
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_mappings'),
-              apiStep('Mappings', 'apply.sh', [`\`${base}-flavor-profile.json\` → POST /iaas/api/flavor-profiles`, `\`${base}-image-profile.json\` → POST /iaas/api/image-profiles`], ['Fill each image id from GET /iaas/api/images first. A region that already has a profile needs a PATCH of that one instead of a second POST.']),
-            ],
+              manualStep('The region', ['Set regionId (or externalRegionId) in the configuration element. The workflow looks up each image id as the fabric image of that name in the region; one it cannot find exactly once stops a live run and is named in the log. A region that already has a flavor or image profile is left as it is — change that one in the interface or by PATCH.']),
+              apiStep('Or by script: mappings', 'scripts/apply.sh', [`\`scripts/${base}-flavor-profile.json\` → POST /iaas/api/flavor-profiles`, `\`scripts/${base}-image-profile.json\` → POST /iaas/api/image-profiles`], ['Fill each image id from GET /iaas/api/images first. A region that already has a profile needs a PATCH of that one instead of a second POST.']),
+            ]),
             auth: ['apply'],
-            verify: [],
+            verify: packageVerify(['Image lookup: GET /iaas/api/fabric-images, matched on name and externalRegionId; VERIFY those fields on a fabric image of your release, and that an image mapping takes the fabric image id.']),
           }),
         },
         notes: [
@@ -974,11 +1537,57 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         tags,
       }));
 
+      // The fabric network of each existing CIDR is looked up, never typed; the
+      // NSX ids an on-demand profile needs are not something a name finds, so
+      // they stay placeholders until payloadOverrides gives them.
+      const pkg = vcfaPackage({
+        thing: 'network_profile',
+        base,
+        folder: 'Network profiles',
+        workflowName: `Create network profile ${base}`,
+        description: `Creates the network profile ${profileName}${range ? ' and its IP range' : ''} in a VCF Automation VM Apps organization, with the fabric networks looked up by CIDR.`,
+        outputs: { networkProfileId: 'NETWORK_PROFILE_ID', ...(range ? { ipRangeId: 'IP_RANGE_ID' } : {}) },
+        payloads: { ...(range ? { 'ip-range.json': range } : {}), 'network-profile.json': profile },
+        settings: [
+          { name: 'regionId', type: 'string', value: '', description: 'The IaaS region id (GET /iaas/api/regions); replaces the one in the payload' },
+          { name: 'externalRegionId', type: 'string', value: '', description: 'Or the datacenter as the cloud account names it, e.g. Datacenter:datacenter-3: the workflow looks the region id up' },
+        ],
+        cap: range ? 2 : 1,
+        script: [
+          stepsJs([
+            ...(range ? [{ key: 'IP_RANGE_ID', label: `IP range "${profileName}-range"`, resource: 'ip-range.json', list: '/iaas/api/network-ip-ranges', style: 'iaas' as const, create: '/iaas/api/network-ip-ranges' }] : []),
+            { key: 'NETWORK_PROFILE_ID', label: `network profile "${profileName}"`, resource: 'network-profile.json', list: '/iaas/api/network-profiles', style: 'iaas', create: '/iaas/api/network-profiles' },
+          ]),
+          `var CIDRS = ${JSON.stringify(existing)};\n`,
+          String.raw`var NP = bodies["network-profile.json"];
+var RANGE = bodies["ip-range.json"];
+var region = mod.regionId(conn, settings);
+var external = "";
+if (region) {
+  NP.regionId = region;
+  external = String(core.http("GET", conn.host + "/iaas/api/regions/" + encodeURIComponent(region) + "?apiVersion=" + encodeURIComponent(conn.apiVersion), conn.auth, null, conn.safe).body.externalRegionId || "");
+}
+if (CIDRS.length > 0) {
+  var networks = mod.listAll(conn, "/iaas/api/fabric-networks", "iaas");
+  for (var c = 0; c < CIDRS.length; c++) {
+    var hits = [];
+    for (var i = 0; i < networks.length; i++) if (String(networks[i].cidr) === CIDRS[c] && (!external || !networks[i].externalRegionId || String(networks[i].externalRegionId) === external)) hits.push(networks[i]);
+    var id = hits.length === 1 ? String(hits[0].id) : "<REQUIRED — " + hits.length + " fabric networks with CIDR " + CIDRS[c] + "; set its id in payloadOverrides>";
+    if (hits.length === 1) System.log("Network " + CIDRS[c] + " is " + hits[0].name + " (" + id + ")");
+    NP.fabricNetworkIds[c] = id;
+    if (c === 0 && RANGE) RANGE.fabricNetworkIds = [id];
+  }
+}
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
       return {
         platform: PLATFORM,
         title: `${profileName} — ${mode === 'on-demand' ? 'existing and on-demand' : 'existing'} networks, ${isolation.toLowerCase().replace(/_/g, ' ')} isolation`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'An administrator runs apply.sh per region; afterwards every machine placed in the region takes its network and address from here' },
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) per region; afterwards every machine placed in the region takes its network and address from here' },
         scope: {
           what: `Network placement and IP allocation for every deployment in region ${regionId} whose network constraints match ${tags.map((t) => `${t.key}:${t.value}`).join(', ') || '(anything)'}.`,
           decidedBy: [
@@ -995,7 +1604,7 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: `Isolation: ${isolation}`, because: mode === 'on-demand' ? 'On-demand networks without isolation are just more flat networks with a nicer name.' : 'Written down, so a template asking for a private network fails clearly rather than getting a shared one.' },
           ...(ipam === 'internal' ? [{ rule: `Static range ${rangeStart} – ${rangeEnd} only`, because: 'The range leaves the gateway, infrastructure and anything allocated by hand outside what VCF Automation hands out.' }] : []),
         ],
-        dryRun: ['Run apply.sh without --execute.', 'Fill every <REQUIRED> id from GET /iaas/api/fabric-networks and the NSX objects before --execute; the POST fails on a placeholder rather than guessing.'],
+        dryRun: [`Run the workflow Create network profile ${base} with dryRun = true: it looks up each fabric network by CIDR and warns about every value still a placeholder — a live run refuses to send one.`, 'For scripts/apply.sh: fill every <REQUIRED> id from GET /iaas/api/fabric-networks and the NSX objects before --execute; the POST fails on a placeholder rather than guessing.'],
         undo: ['DELETE /iaas/api/network-profiles/{id} and /iaas/api/network-ip-ranges/{id}. Machines keep their addresses; allocations recorded in internal IPAM are released only when the machines are deleted.'],
         told: ['Nobody by VCF Automation. If an external IPAM is used, its own audit log records each allocation.'],
         requires: [
@@ -1004,31 +1613,39 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           ...(ipam === 'external' ? ['An IPAM integration configured under Integrations, with its IP ranges discovered and assigned to these networks.'] : []),
         ],
         files: {
-          [`${base}.json`]: json(profile),
-          ...(range ? { [`${base}-ip-range.json`]: json(range) } : {}),
-          'fabric-networks.json': json(fabric),
-          'apply.sh': applyScript(
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(profile),
+          ...(range ? { [`scripts/${base}-ip-range.json`]: json(range) } : {}),
+          'scripts/fabric-networks.json': json(fabric),
+          'scripts/apply.sh': fromScriptsDir(applyScript(
             'vcf-automation',
             [
-              ...(range ? [{ method: 'POST' as const, path: '/iaas/api/network-ip-ranges', payload: `${base}-ip-range.json` }] : []),
-              { method: 'POST', path: '/iaas/api/network-profiles', payload: `${base}.json` },
+              ...(range ? [{ method: 'POST' as const, path: iaasPath('/iaas/api/network-ip-ranges'), payload: `${base}-ip-range.json` }] : []),
+              { method: 'POST', path: iaasPath('/iaas/api/network-profiles'), payload: `${base}.json` },
             ],
             'DELETE /iaas/api/network-profiles/{id}, then /iaas/api/network-ip-ranges/{id}.',
-          ),
+          )),
           'IMPORT.md': importMd({
             subject: 'A network profile and its IP range.',
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_network_profile'),
-              apiStep('Network profile', 'apply.sh', [...(range ? [`\`${base}-ip-range.json\` → POST /iaas/api/network-ip-ranges`] : []), `\`${base}.json\` → POST /iaas/api/network-profiles`], ['Fill the fabric network ids from GET /iaas/api/fabric-networks first; fabric-networks.json lists the PATCH each network needs.']),
-            ],
+              manualStep('What the workflow cannot look up', [
+                'Set regionId (or externalRegionId) in the configuration element. The fabric network of each CIDR is looked up by the workflow.',
+                ...(mode === 'on-demand' || isolationType === 'SUBNET'
+                  ? ['The NSX ids (transport zone / network domain, external network, Tier-0, edge cluster) are not found by name: put them in payloadOverrides, e.g. `{"network-profile.json": {"isolationNetworkDomainId": "…", "customProperties": {"tier0LogicalRouterId": "…"}}}`. A live run refuses to send a placeholder.']
+                  : []),
+                'Each fabric network needs its CIDR, gateway and DNS set before internal IPAM hands out addresses: scripts/fabric-networks.json lists the PATCH each one needs (not sent by the workflow or the script — the ids are looked up first).',
+              ]),
+              apiStep('Or by script: network profile', 'scripts/apply.sh', [...(range ? [`\`scripts/${base}-ip-range.json\` → POST /iaas/api/network-ip-ranges`] : []), `\`scripts/${base}.json\` → POST /iaas/api/network-profiles`], ['Fill the fabric network ids from GET /iaas/api/fabric-networks first. The script is not idempotent; the workflow is.']),
+            ]),
             auth: ['apply'],
-            verify: [],
+            verify: packageVerify(['Fabric network lookup: GET /iaas/api/fabric-networks, matched on cidr and externalRegionId; VERIFY those fields on your release.']),
           }),
         },
         notes: [
           'The interface calls them "on-demand network" and "on-demand security group"; the API field isolationType takes NONE, SUBNET and SECURITY_GROUP. The payload maps one to the other.',
           'The NSX-related custom properties (Tier-0, edge cluster) have changed names between releases. GET an existing network profile that uses on-demand networks and copy its shape.',
-          'fabric-networks.json is not sent by apply.sh: each entry is a PATCH against a discovered network, and the ids have to be looked up first.',
+          'scripts/fabric-networks.json is not sent by the workflow or scripts/apply.sh: each entry is a PATCH against a discovered network, and the ids have to be looked up first.',
           ...(ipam === 'external' ? ['With external IPAM, IP ranges come from the provider via the integration and are not created here; assign them to the networks in the interface or via /iaas/api/external-network-ip-ranges.'] : []),
         ],
         findings,
@@ -1118,11 +1735,62 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         tags,
       };
 
+      // The storage policy and the datastore are looked up by name in the
+      // region's datacenter: two datastores with one name in two clusters are
+      // common, and a run stops rather than choose.
+      const pkg = vcfaPackage({
+        thing: 'storage_profile',
+        base,
+        folder: 'Storage profiles',
+        workflowName: `Create storage profile ${base}`,
+        description: `Creates the vSphere storage profile ${profileName} in a VCF Automation VM Apps organization, with the storage policy and datastore looked up by name.`,
+        outputs: { storageProfileId: 'STORAGE_PROFILE_ID' },
+        payloads: { 'storage-profile.json': profile },
+        settings: [
+          { name: 'regionId', type: 'string', value: '', description: 'The IaaS region id (GET /iaas/api/regions); replaces the one in the payload' },
+          { name: 'externalRegionId', type: 'string', value: '', description: 'Or the datacenter as the cloud account names it, e.g. Datacenter:datacenter-3: the workflow looks the region id up' },
+        ],
+        cap: 1,
+        script: [
+          stepsJs([{ key: 'STORAGE_PROFILE_ID', label: `storage profile "${profileName}"`, resource: 'storage-profile.json', list: '/iaas/api/storage-profiles-vsphere', style: 'iaas', create: '/iaas/api/storage-profiles-vsphere' }]),
+          `var POLICY = ${JSON.stringify(policy)};\nvar DATASTORE = ${JSON.stringify(datastore)};\n`,
+          String.raw`var SP = bodies["storage-profile.json"];
+var region = mod.regionId(conn, settings);
+var external = "";
+if (region) {
+  SP.regionId = region;
+  external = String(core.http("GET", conn.host + "/iaas/api/regions/" + encodeURIComponent(region) + "?apiVersion=" + encodeURIComponent(conn.apiVersion), conn.auth, null, conn.safe).body.externalRegionId || "");
+}
+function lookup(path, name, field, what) {
+  if (!name || String(SP[field] || "").indexOf("<REQUIRED") < 0) return;
+  var items = mod.listAll(conn, path, "iaas");
+  var hits = [];
+  for (var i = 0; i < items.length; i++) if (String(items[i].name) === name && (!external || !items[i].externalRegionId || String(items[i].externalRegionId) === external)) hits.push(items[i]);
+  if (hits.length === 1) {
+    SP[field] = String(hits[0].id);
+    System.log(what + " \"" + name + "\" is " + SP[field]);
+  } else {
+    SP[field] = "<REQUIRED — " + hits.length + " " + what + "s named " + name + "; set " + field + " in payloadOverrides>";
+  }
+}
+lookup("/iaas/api/fabric-vsphere-storage-policies", POLICY, "storagePolicyId", "storage policy");
+lookup("/iaas/api/fabric-vsphere-datastores", DATASTORE, "datastoreId", "datastore");
+if (SP.defaultItem === true && region) {
+  var profiles = mod.listAll(conn, "/iaas/api/storage-profiles-vsphere", "iaas");
+  for (var d = 0; d < profiles.length; d++) {
+    if (profiles[d].defaultItem === true && String(profiles[d].regionId) === region && String(profiles[d].name) !== String(SP.name)) System.warn("Storage profile \"" + profiles[d].name + "\" is already the default for this region; with two, which one wins depends on ordering. Make one of them not the default.");
+  }
+}
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
       return {
         platform: PLATFORM,
         title: `${profileName} — ${provisioning} disks on ${policy || datastore || 'no target'}${isDefault ? ', region default' : ''}`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'An administrator runs apply.sh per region; afterwards every disk placed in the region with matching constraints — or none, if this is the default — uses it' },
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) per region; afterwards every disk placed in the region with matching constraints — or none, if this is the default — uses it' },
         scope: {
           what: isDefault ? `Every disk in region ${regionId} whose template does not ask for a specific storage tag.` : `Disks in region ${regionId} whose template constrains storage to ${tags.map((t) => `${t.key}:${t.value}`).join(', ')}.`,
           decidedBy: ['The region.', isDefault ? 'The default flag: templates with no storage constraint land here.' : 'The capability tags matched against template storage constraints.', policy ? `The storage policy "${policy}" and which datastores are compatible with it.` : `The datastore "${datastore}".`],
@@ -1133,21 +1801,23 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: iops > 0 ? `${iops} IOPS limit per disk` : 'No IOPS limit on this profile', because: 'Limits belong on a tier that is chosen; a limit on the default throttles workloads that never asked for it.' },
           { rule: 'Storage policy or datastore resolved by id, not by name in the payload', because: 'Two datastores with the same name in two clusters is common, and the API does not choose between them for you.' },
         ],
-        dryRun: ['Run apply.sh without --execute.', 'Resolve each <REQUIRED> id and confirm which datastores the storage policy is compatible with in this region before --execute.'],
+        dryRun: [`Run the workflow Create storage profile ${base} with dryRun = true: it looks up the storage policy and datastore by name, warns about a second default in the region, and logs what it would create.`, 'Confirm which datastores the storage policy is compatible with in this region before arming it. For scripts/apply.sh, resolve each <REQUIRED> id by hand.'],
         undo: ['DELETE /iaas/api/storage-profiles/{id}. Existing disks are unaffected. If it was the default, another profile must be made default first or new requests without a storage constraint fail.'],
         told: ['Nobody. The audit log records the change.'],
         requires: ['The region with data collection complete, so storage policies and datastores are discovered.'],
         files: {
-          [`${base}.json`]: json(profile),
-          'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/storage-profiles-vsphere', payload: `${base}.json` }], 'DELETE /iaas/api/storage-profiles-vsphere/{id}.'),
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(profile),
+          'scripts/apply.sh': fromScriptsDir(applyScript('vcf-automation', [{ method: 'POST', path: iaasPath('/iaas/api/storage-profiles-vsphere'), payload: `${base}.json` }], 'DELETE /iaas/api/storage-profiles-vsphere/{id}.')),
           'IMPORT.md': importMd({
             subject: 'A vSphere storage profile.',
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_storage_profile'),
-              apiStep('Storage profile', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/storage-profiles-vsphere`], ['Fill the region, storage policy and datastore ids first.']),
-            ],
+              manualStep('The region', ['Set regionId (or externalRegionId) in the configuration element; the workflow looks up the storage policy and datastore by name in that region.']),
+              apiStep('Or by script: storage profile', 'scripts/apply.sh', [`\`scripts/${base}.json\` → POST /iaas/api/storage-profiles-vsphere`], ['Fill the region, storage policy and datastore ids first. The script is not idempotent; the workflow is.']),
+            ]),
             auth: ['apply'],
-            verify: [],
+            verify: packageVerify(['Storage lookups: GET /iaas/api/fabric-vsphere-storage-policies and /iaas/api/fabric-vsphere-datastores, matched on name and externalRegionId; VERIFY those fields on your release.']),
           }),
         },
         notes: [
@@ -1286,6 +1956,40 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         { method: 'POST', path: '/policy/api/policies', payload: `${base}-sharing-policy.json`, captureAs: 'SHARING_POLICY_ID' },
       ];
 
+      const pkg = vcfaPackage({
+        thing: 'catalog',
+        base,
+        folder: 'Catalog',
+        workflowName: `Create content source ${base}`,
+        description: `Creates ${git ? 'the repository source, ' : ''}the catalog content source ${sourceName} and its content-sharing policy in a VCF Automation VM Apps organization, the policy pointing at the source it just made.`,
+        outputs: { ...(git ? { gitSourceId: 'GIT_SOURCE_ID' } : {}), catalogSourceId: 'CATALOG_SOURCE_ID', sharingPolicyId: 'SHARING_POLICY_ID' },
+        payloads: { ...(gitSource ? { 'git-source.json': gitSource } : {}), 'catalog-source.json': catalogSource, 'sharing-policy.json': sharing },
+        settings: [
+          { name: 'sourceProjectId', type: 'string', value: '', description: 'The project the templates are imported into and released from (GET /iaas/api/projects); replaces the one in the payloads' },
+          ...(shareTo === 'all' ? [] : [{ name: 'consumerProjectId', type: 'string' as const, value: '', description: 'The project the content is shared in; replaces the one in the sharing policy' }]),
+          ...(git ? [{ name: 'integrationId', type: 'string' as const, value: '', description: `The ${type === 'com.gitlab' ? 'GitLab' : 'GitHub'} integration id (GET /iaas/api/integrations)` }] : []),
+        ],
+        cap: git ? 3 : 2,
+        script: [
+          stepsJs([
+            ...(git ? [{ key: 'GIT_SOURCE_ID', label: `repository source "${sourceName}-git"`, resource: 'git-source.json', list: '/content/api/sources', style: 'page' as const, create: '/content/api/sources' }] : []),
+            { key: 'CATALOG_SOURCE_ID', label: `catalog source "${sourceName}"`, resource: 'catalog-source.json', list: '/catalog/api/admin/sources', style: 'page', create: '/catalog/api/admin/sources' },
+            { key: 'SHARING_POLICY_ID', label: `content-sharing policy "${sourceName} — sharing"`, resource: 'sharing-policy.json', list: '/policy/api/policies?typeId=com.vmware.policy.catalog.entitlement', style: 'page', create: '/policy/api/policies' },
+          ]),
+          String.raw`var GIT = bodies["git-source.json"];
+var CAT = bodies["catalog-source.json"];
+var SHARE = bodies["sharing-policy.json"];
+if (settings.sourceProjectId) {
+  CAT.config.sourceProjectId = String(settings.sourceProjectId);
+  if (GIT) GIT.projectId = String(settings.sourceProjectId);
+}
+if (GIT && settings.integrationId) GIT.config.integrationId = String(settings.integrationId);
+if (SHARE.projectId !== undefined && settings.consumerProjectId) SHARE.projectId = String(settings.consumerProjectId);
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
       return {
         platform: PLATFORM,
         title: `${sourceName} — ${git ? `${repo}@${branch}` : 'released templates'} shared to ${shareTo === 'groups' ? groups.join(', ') : shareTo === 'project' ? 'one project' : 'every project'}`,
@@ -1308,7 +2012,7 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: shareTo === 'all' ? 'Shared organisation-wide — see the finding' : shareTo === 'project' ? 'Shared to one project' : 'Shared to named groups in one project', because: 'Sharing is what turns a template into something a person can request. It is the change control on the catalogue.' },
           { rule: 'Sharing policy created after, and referring to, the content source', because: 'A sharing policy that names a source id from another environment silently shares nothing.' },
         ],
-        dryRun: ['Run apply.sh without --execute.', 'After --execute, open Service Broker → Content as a member of one of the groups rather than as an administrator, and check exactly which items appear.'],
+        dryRun: [`Run the workflow Create content source ${base} with dryRun = true: it reads the sources and policies, logs what it would create and warns about any id still a placeholder. scripts/apply.sh without --execute prints the payloads.`, 'After the live run, open the catalog as a member of one of the groups rather than as an administrator, and check exactly which items appear.'],
         undo: [
           'DELETE /policy/api/policies/{id} first: the items disappear from the catalogue at once.',
           'Then DELETE /catalog/api/admin/sources/{id}' + (git ? ' and /content/api/sources/{id}' : '') + ', by the ids in created-ids.txt. Existing deployments are unaffected.',
@@ -1318,17 +2022,19 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           ...(git ? [`A ${type === 'com.gitlab' ? 'GitLab' : 'GitHub'} integration in VCF Automation with read access to ${repo}.`] : []),
           'The source project and the consuming project.',
           'Directory groups synchronised and members of the consuming project.',
-          'jq on the machine running apply.sh.',
+          'jq on the machine running scripts/apply.sh, if the script is used.',
         ],
         files: {
-          ...(gitSource ? { [`${base}-git-source.json`]: json(gitSource) } : {}),
-          [`${base}-catalog-source.json`]: json(catalogSource),
-          [`${base}-sharing-policy.json`]: json(sharing),
-          'apply.sh': chainScript(`Create the ${sourceName} content source and its sharing policy.`, steps, 'DELETE the sharing policy, then the catalog source, then the repository source, by the ids in created-ids.txt.'),
+          ...pkg.files,
+          ...(gitSource ? { [`scripts/${base}-git-source.json`]: json(gitSource) } : {}),
+          [`scripts/${base}-catalog-source.json`]: json(catalogSource),
+          [`scripts/${base}-sharing-policy.json`]: json(sharing),
+          'scripts/apply.sh': fromScriptsDir(chainScript(`Create the ${sourceName} content source and its sharing policy.`, steps, 'DELETE the sharing policy, then the catalog source, then the repository source, by the ids in created-ids.txt.')),
           'IMPORT.md': importMd({
             subject: `The content source ${sourceName} and who it is shared with.`,
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_catalog'),
+              manualStep('The ids', [`Set sourceProjectId${shareTo === 'all' ? '' : ', consumerProjectId'}${git ? ' and integrationId' : ''} in the configuration element. A live run refuses to send a payload that still has a placeholder in it; the dry run lists them.`]),
               ...(git
                 ? [
                     manualStep('Lay out the repository', [
@@ -1336,14 +2042,17 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
                     ]),
                   ]
                 : []),
-              apiStep('Content source and sharing', 'apply.sh', [
-                ...(git ? [`\`${base}-git-source.json\` → POST /content/api/sources (the repository, imported into the project)`] : []),
-                `\`${base}-catalog-source.json\` → POST /catalog/api/admin/sources (released templates of the project, into the catalogue)`,
-                `\`${base}-sharing-policy.json\` → POST /policy/api/policies, with the catalog source id from the call before`,
-              ], ['Fill the `<REQUIRED>` project and integration ids first.']),
-            ],
+              apiStep('Or by script: content source and sharing', 'scripts/apply.sh', [
+                ...(git ? [`\`scripts/${base}-git-source.json\` → POST /content/api/sources (the repository, imported into the project)`] : []),
+                `\`scripts/${base}-catalog-source.json\` → POST /catalog/api/admin/sources (released templates of the project, into the catalogue)`,
+                `\`scripts/${base}-sharing-policy.json\` → POST /policy/api/policies, with the catalog source id from the call before`,
+              ], ['Fill the `<REQUIRED>` project and integration ids first. The script is not idempotent; the workflow is.']),
+            ]),
             auth: ['apply'],
-            verify: ['The repository source config field names are the least certain part; GET an existing one and match it.'],
+            verify: packageVerify([
+              'POST /catalog/api/admin/sources {name, typeId, config, projectId} and POST /policy/api/policies {typeId, name, enforcementType, definition, criteria, scopeCriteria, projectId} are in the 9.1 VM Apps Org - Catalog and - Policies references; the config of a com.vmw.blueprint source (sourceProjectId) and the entitlement definition are not spelled out there — VERIFY by GET of one made in the interface.',
+              'The repository source (/content/api/sources) config field names are the least certain part; GET an existing one and match it.',
+            ]),
           }),
         },
         notes: [
@@ -1383,7 +2092,7 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         default: 'org',
       },
       { id: 'project_ids', label: 'Project ids', control: 'text', default: '', showWhen: { input: 'scope', equals: ['projects'] } },
-      { id: 'counter_scope', label: 'Counter shared across projects', control: 'toggle', default: false, hint: 'Off: each project counts from the start' },
+      { id: 'counter_scope', label: 'Counter shared across projects', control: 'toggle', default: false, hint: 'The 9.1 API keeps counters per project and has no field for this — see the finding' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
       const namingName = str(values, 'naming_name', 'naming');
@@ -1440,14 +2149,22 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
       if (scope === 'projects' && projectIds.length === 0) {
         findings.push(error('vcfa.naming.no-projects', 'Named projects was chosen and no project is listed.', { source: SRC }));
       }
+      if (shared) {
+        findings.push(
+          info('vcfa.naming.counter-scope', 'The 9.1 custom naming API has no field for a counter shared across projects.', {
+            remediation: 'The spec (VM Apps Org - Provisioning Service, POST /iaas/api/naming) keeps counters per project (templates[].counters[].projectId). The payload no longer sends the counterScope field older versions of this kit wrote; check the counter behaviour in the interface after the first requests.',
+            source: SRC,
+          }),
+        );
+      }
 
       const naming = {
         name: namingName,
         description: 'Generated by ArchToolKit.',
         projects:
           scope === 'org'
-            ? [{ orgDefault: true, active: true, orgId: '<REQUIRED — organisation id>' }]
-            : projectIds.map((projectId) => ({ projectId, active: true, orgDefault: false })),
+            ? [{ defaultOrg: true, active: true, orgId: '<REQUIRED — organisation id>' }]
+            : projectIds.map((projectId) => ({ projectId, active: true, defaultOrg: false })),
         templates: [
           {
             name: `${namingName}-machine`,
@@ -1458,10 +2175,39 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
             startCounter: start,
             incrementStep: 1,
             uniqueName: true,
-            counterScope: shared ? 'ORG' : 'PROJECT',
           },
         ],
       };
+
+      // The organisation id of an organisation-default template is the one
+      // every project of the organisation carries; the workflow reads it from
+      // the first project rather than asking for it.
+      const pkg = vcfaPackage({
+        thing: 'naming',
+        base,
+        folder: 'Naming',
+        workflowName: `Create custom naming ${base}`,
+        description: `Creates the custom naming template ${namingName} in a VCF Automation VM Apps organization.`,
+        outputs: { namingId: 'NAMING_ID' },
+        payloads: { 'naming.json': naming },
+        settings: [{ name: 'orgId', type: 'string', value: '', description: 'The organization id; empty: read from the first project (GET /iaas/api/projects)' }],
+        cap: 1,
+        script: [
+          stepsJs([{ key: 'NAMING_ID', label: `custom naming "${namingName}"`, resource: 'naming.json', list: '/iaas/api/naming', style: 'iaas', create: '/iaas/api/naming' }]),
+          String.raw`var NM = bodies["naming.json"];
+for (var i = 0; i < NM.projects.length; i++) {
+  if (String(NM.projects[i].orgId || "").indexOf("<REQUIRED") < 0) continue;
+  var org = settings.orgId ? String(settings.orgId) : "";
+  if (!org) {
+    var projects = mod.listAll(conn, "/iaas/api/projects", "iaas");
+    for (var j = 0; j < projects.length && !org; j++) if (projects[j].orgId) org = String(projects[j].orgId);
+  }
+  if (org) NM.projects[i].orgId = org;
+}
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
 
       return {
         platform: PLATFORM,
@@ -1482,25 +2228,26 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: windows ? 'Checked against the 15-character NetBIOS limit' : 'Checked against the 63-character DNS label limit', because: 'Windows silently truncates to 15 characters, and two truncated names collide in Active Directory.' },
           { rule: 'uniqueName is on', because: 'A duplicate name fails the request at allocation instead of creating a second machine with the same name.' },
         ],
-        dryRun: ['Run apply.sh without --execute.', `The longest name this pattern produces with the samples given is ${example} (${example.length} characters). Try it with your longest real project name.`],
+        dryRun: [`Run the workflow Create custom naming ${base} with dryRun = true: it reads the naming templates and logs what it would create.`, `The longest name this pattern produces with the samples given is ${example} (${example.length} characters). Try it with your longest real project name.`],
         undo: ['DELETE /iaas/api/naming/{id}. Projects fall back to their own template or the default. Names already given stay.'],
         told: ['Nobody. The name appears in the deployment and in vCenter.'],
         requires: ['The organisation id, or the project ids.', ...(pattern.includes('resource.environment') ? ['An environment custom property on every machine resource — set by the template input — or the name contains an empty segment.'] : [])],
         files: {
-          [`${base}.json`]: json(naming),
-          'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/naming', payload: `${base}.json` }], 'DELETE /iaas/api/naming/{id}.'),
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(naming),
+          'scripts/apply.sh': fromScriptsDir(applyScript('vcf-automation', [{ method: 'POST', path: iaasPath('/iaas/api/naming'), payload: `${base}.json` }], 'DELETE /iaas/api/naming/{id}.')),
           'IMPORT.md': importMd({
             subject: 'A custom naming template.',
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_naming'),
-              apiStep('Custom naming', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/naming`], ['By hand: Infrastructure → Custom naming → New, with the same template.']),
-            ],
+              apiStep('Or by script: custom naming', 'scripts/apply.sh', [`\`scripts/${base}.json\` → POST /iaas/api/naming`], [`${scope === 'org' ? 'Fill the organisation id first. ' : ''}By hand: Infrastructure → Custom naming → New, with the same template. The script is not idempotent; the workflow is.`]),
+            ]),
             auth: ['apply'],
-            verify: ['The naming field names are the least certain in the set: GET /iaas/api/naming on a system with one configured and match it.'],
+            verify: packageVerify(['Custom naming: the 9.1 spec (VM Apps Org - Provisioning Service, POST /iaas/api/naming) lists projects[] {projectId, orgId, active, defaultOrg} and templates[] {name, resourceType, resourceTypeName, pattern, staticPattern, startCounter, incrementStep, uniqueName}, which is what is sent; the resourceType values (COMPUTE is the spec example) and whether orgId is needed beside defaultOrg are not spelled out — VERIFY by GET /iaas/api/naming on a system with one configured.']),
           }),
         },
         notes: [
-          'Custom naming arrived in 8.x at /iaas/api/naming. The template field names (resourceType, counterScope and so on) are the least certain in this set — GET /iaas/api/naming on a system with one configured and match it.',
+          'Custom naming is at /iaas/api/naming in 8.x and in the 9.1 VM Apps spec. The organisation-default flag is defaultOrg there (older versions of this kit wrote orgDefault), and there is no counterScope field — counters are per project. GET /iaas/api/naming on a system with one configured and match it.',
           'The counter is persisted per template and scope and is not reused when machines are deleted. Starting a new template restarts it — which can collide with names that still exist.',
           'Templates exist per resource type. This writes one for machines; networks, load balancers and security groups keep the default until given their own.',
         ],
@@ -1634,8 +2381,42 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
               '',
             ];
 
-      const imported = importBundle({
-        templates: [{ name: `${groupName} property group example`, description: `Generated by ArchToolKit. Uses the ${type.toLowerCase()} property group ${groupName}.`, yaml: example.join('\n') }],
+      const exampleTemplate = { name: `${groupName} property group example`, description: `Generated by ArchToolKit. Uses the ${type.toLowerCase()} property group ${groupName}.`, yaml: example.join('\n') };
+      const imported = importBundle({ templates: [exampleTemplate] });
+      const exampleYaml = imported.files[Object.keys(imported.files).find((path) => path.endsWith('/blueprint.yaml'))!]!;
+
+      // The group, and — only when asked, since it is an example — the
+      // template that shows how to use it, imported through the blueprint API.
+      const pkg = vcfaPackage({
+        thing: 'property_group',
+        base,
+        folder: 'Property groups',
+        workflowName: `Create property group ${base}`,
+        description: `Creates the ${type.toLowerCase()} property group ${groupName} in a VCF Automation VM Apps organization${shared ? '' : ', in one project'}, and optionally imports the example template that uses it.`,
+        outputs: { propertyGroupId: 'PROPERTY_GROUP_ID', exampleTemplateId: 'TEMPLATE_ID' },
+        payloads: { 'property-group.json': group },
+        extraResources: [{ name: 'example-blueprint.yaml', content: exampleYaml }],
+        templates: true,
+        settings: [
+          { name: 'projectId', type: 'string', value: '', description: shared ? 'The project the example template is imported into' : 'The project the group belongs to, and the example template is imported into' },
+          { name: 'importExample', type: 'boolean', value: false, description: 'Also import the example template (as a draft, version 1.0.0, not released)' },
+        ],
+        cap: 3,
+        script: [
+          stepsJs([{ key: 'PROPERTY_GROUP_ID', label: `property group "${groupName}"`, resource: 'property-group.json', list: '/properties/api/property-groups', style: 'page', create: '/properties/api/property-groups', sameProject: !shared }]),
+          `var EXAMPLE = ${JSON.stringify({ name: exampleTemplate.name, description: exampleTemplate.description, version: '1.0.0' })};\n`,
+          String.raw`var PG = bodies["property-group.json"];
+if (PG.projectId !== undefined && settings.projectId) PG.projectId = String(settings.projectId);
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+if (settings.importExample === true || String(settings.importExample) === "true") {
+  if (!settings.projectId) throw new Error("importExample is on and projectId is empty: set the project the example template goes into.");
+  EXAMPLE.content = core.resource(RESOURCE_PATH, "example-blueprint.yaml");
+  values.TEMPLATE_ID = mod.importTemplate(ctx, conn, EXAMPLE, String(settings.projectId), false);
+} else {
+  System.log("The example template is not imported (importExample is off); import/templates has it for the script or the Import dialog.");
+}
+`,
+        ].join(''),
       });
 
       return {
@@ -1653,24 +2434,26 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           { rule: type === 'CONSTANT' ? 'Constants, not inputs' : 'Inputs are constrained by enum or pattern', because: type === 'CONSTANT' ? 'A backup tier that requesters could type would be whatever they typed.' : 'The group is where the constraint lives once, rather than in forty templates slightly differently.' },
           { rule: 'Changes to the group are edits in the repository, applied by this script', because: 'A property group edited in the interface is changed for every template at once with no record of what it was.' },
         ],
-        dryRun: ['Run apply.sh without --execute.', `Search the template repository for "${groupName}" before changing the group, and count the templates that will be affected.`],
+        dryRun: [`Run the workflow Create property group ${base} with dryRun = true: it reads the property groups (and, with importExample on, validates the example template) and logs what it would create. scripts/apply.sh without --execute shows the payload.`, `Search the template repository for "${groupName}" before changing the group, and count the templates that will be affected.`],
         undo: ['DELETE /properties/api/property-groups/{id}. Templates that refer to it then fail validation, so remove the references first. To revert an edit, PUT the previous version from the repository.'],
         told: ['Nobody. Template authors find out when a template fails to validate — which is why changes go through the repository.'],
         requires: [...(kind === 'os' ? [`Image mappings named ${osList.join(', ')} in every region the templates deploy to.`] : []), 'Templates updated to refer to the group (see the example YAML).'],
         files: {
-          [`${base}.json`]: json(group),
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(group),
           [`${base}-template-example.yaml`]: example.join('\n'),
-          'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/properties/api/property-groups', payload: `${base}.json` }], 'DELETE /properties/api/property-groups/{id} once no template refers to it.'),
+          'scripts/apply.sh': fromScriptsDir(applyScript('vcf-automation', [{ method: 'POST', path: '/properties/api/property-groups', payload: `${base}.json` }], 'DELETE /properties/api/property-groups/{id} once no template refers to it.')),
           ...imported.files,
           'IMPORT.md': importMd({
             subject: `The property group ${groupName}, and a template that uses it.`,
-            steps: [
+            steps: withPackageSteps(pkg, [
               setupOrderStep('vcfa_property_group'),
-              apiStep('Property group', 'apply.sh', [`\`${base}.json\` → POST /properties/api/property-groups`], ['By hand: Design → Property Groups → New, with the same properties. It must exist before a template that refers to it validates.']),
+              manualStep('The project', [`${shared ? 'The group is shared across the organization. ' : 'Set projectId in the configuration element: the group belongs to that project. '}To have the workflow import the example template as well, set projectId and importExample = true; it validates the template, creates it in that project (or updates the draft of the one with that name) and creates version 1.0.0, not released.`]),
+              apiStep('Or by script: property group', 'scripts/apply.sh', [`\`scripts/${base}.json\` → POST /properties/api/property-groups`], ['By hand: Design → Property Groups → New, with the same properties. It must exist before a template that refers to it validates. The script is not idempotent; the workflow is.']),
               imported.steps.templates,
-            ],
+            ]),
             auth: ['apply', 'import'],
-            verify: verifyFor(imported),
+            verify: packageVerify([...verifyFor(imported), 'Property groups: POST /properties/api/property-groups and its list are as 8.x writes them; VERIFY the list pages with page/size on your release.']),
           }),
         },
         notes: [

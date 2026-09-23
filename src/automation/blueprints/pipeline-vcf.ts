@@ -18,6 +18,8 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble } from '../apply.ts';
+import { packageNameOf, toPackage, type AutomationPackage } from '../vro/to-package.ts';
+import type { VroActionDef } from '../vro/core.ts';
 
 const PLATFORM = 'pipeline' as const;
 const SRC = 'ArchToolKit';
@@ -85,14 +87,35 @@ const VCFA_LIB = [
   '# exchanged for a bearer token that expires on its own; neither is written to',
   '# disk or echoed, and the refresh token is never a command argument — jq reads',
   '# it from its environment and curl takes the body on stdin.',
+  '#',
+  '# VCFA_ORG picks the login:',
+  '#   empty            Aria Automation 8.x: POST /iaas/api/login {refreshToken}',
+  '#   <organization>   VCF Automation 9.x: POST /oauth/tenant/<organization>/token,',
+  '#                    grant_type=refresh_token with the organization API token',
+  '#   provider         VCF Automation 9.x provider: POST /oauth/provider/token',
   '',
   'vcfa_login() {',
   '  : "${VCFA_HOST:?set VCFA_HOST, e.g. vcfa.example.com}"',
   '  : "${VCFA_REFRESH_TOKEN:?set VCFA_REFRESH_TOKEN from the CI secret store}"',
   '  command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
-  '  VCFA_TOKEN=$(VCFA_REFRESH_TOKEN="$VCFA_REFRESH_TOKEN" jq -n \'{refreshToken: env.VCFA_REFRESH_TOKEN}\' |',
-  '    curl -sS -f -X POST "https://${VCFA_HOST}/iaas/api/login" \\',
-  '      -H "Content-Type: application/json" --data-binary @- | jq -r .token)',
+  '  local org="${VCFA_ORG:-}"',
+  '  # Azure Pipelines leaves an undefined $(VCFA_ORG) as that literal text.',
+  '  [[ "$org" == \'$(\'* ]] && org=""',
+  '  if [[ -z "$org" ]]; then',
+  '    VCFA_TOKEN=$(VCFA_REFRESH_TOKEN="$VCFA_REFRESH_TOKEN" jq -n \'{refreshToken: env.VCFA_REFRESH_TOKEN}\' |',
+  '      curl -sS -f -X POST "https://${VCFA_HOST}/iaas/api/login" \\',
+  '        -H "Content-Type: application/json" --data-binary @- | jq -r .token)',
+  '  else',
+  '    local path="/oauth/tenant/$(jq -rn --arg o "$org" \'$o|@uri\')/token" answer',
+  '    [[ "$org" == "provider" ]] && path="/oauth/provider/token"',
+  '    answer=$(VCFA_REFRESH_TOKEN="$VCFA_REFRESH_TOKEN" jq -jn \'"grant_type=refresh_token&refresh_token" + "=" + (env.VCFA_REFRESH_TOKEN|@uri)\' |',
+  '      curl -sS -f -X POST "https://${VCFA_HOST}${path}" \\',
+  '        -H "Content-Type: application/x-www-form-urlencoded" -H "Accept: application/*" --data-binary @-)',
+  '    VCFA_TOKEN=$(jq -r .access_token <<<"$answer")',
+  '    if [[ "$(jq -r \'.refresh_token // empty\' <<<"$answer")" != "" ]] && ! VCFA_REFRESH_TOKEN="$VCFA_REFRESH_TOKEN" jq -e \'.refresh_token == env.VCFA_REFRESH_TOKEN\' <<<"$answer" >/dev/null; then',
+  '      echo "WARNING: token rotation is on in $org: the API token in the CI secret store no longer works. Replace it before the next run." >&2',
+  '    fi',
+  '  fi',
   '  [[ -n "$VCFA_TOKEN" && "$VCFA_TOKEN" != "null" ]] || { echo "VCF Automation login failed" >&2; exit 1; }',
   '  export VCFA_TOKEN',
   '}',
@@ -119,17 +142,428 @@ const VCFA_LIB = [
 ].join('\n');
 
 const VCFA_LOGIN_NOTE =
-  'The scripts log in with POST /iaas/api/login and a refresh token — the Aria Automation 8.x flow. VCF Automation 9.x organizations can issue API tokens differently; check how yours does before relying on it, and change vcfa_login in one place if it differs.';
+  'The scripts log in two ways, chosen by VCFA_ORG. Empty: POST /iaas/api/login with a refresh token (Aria Automation 8.x). Set to an organization name: POST /oauth/tenant/<org>/token with grant_type=refresh_token and the organization\'s API token (VCF Automation 9.x, All Apps organization; "provider" uses /oauth/provider/token). The bearer token that comes back is used for /blueprint/api, /deployment/api, /abx/api, /event-broker/api and /vco/api alike. With token rotation on in the organization, 9.x returns a new API token and the old one stops working — the script warns, and the CI secret has to be replaced.';
+
+// ---------------------------------------------------------------------------
+// The Orchestrator side.
+//
+// A CI pipeline file is imported by committing it to the repository the CI
+// reads; nothing is uploaded to the CI itself. So the Orchestrator package of a
+// CI automation is the thing that does exactly that, through the git host's
+// API: it compares every file with the base branch, writes what differs to a
+// working branch, and opens a pull request — the review is the approval, and
+// the merge is what switches the pipeline on. Azure DevOps also needs a
+// pipeline definition pointing at the YAML; the workflow creates it once the
+// file is on the base branch (the run after the merge).
+//
+// The providers' APIs:
+//   GitHub  GET /repos/{o}/{r}/git/ref/heads/{b}, GET /repos/{o}/{r}/contents/{path}?ref=,
+//           POST /repos/{o}/{r}/git/refs, PUT /repos/{o}/{r}/contents/{path},
+//           GET|POST /repos/{o}/{r}/pulls  (docs.github.com, REST "Repository contents",
+//           "Git references", "Pulls"). A User-Agent header is required.
+//   GitLab  GET /api/v4/projects/{id}/repository/branches/{b}, .../repository/files/{path}?ref=,
+//           POST .../repository/commits (actions create|update; start_branch makes the branch),
+//           GET|POST .../merge_requests  (docs.gitlab.com, "Commits API", "Repository files API").
+//   Azure   GET {org}/{project}/_apis/git/repositories/{repo}, .../refs?filter=heads/{b},
+//   DevOps  .../items?path=&includeContent=true, POST .../pushes, GET|POST .../pullrequests,
+//           GET|POST {org}/{project}/_apis/pipelines  (learn.microsoft.com, Azure DevOps REST 7.1).
+
+/** One file in the repository: its path there and its content. */
+export type RepoFiles = Readonly<Record<string, string>>;
+
+const PUBLISH_ACTION: VroActionDef = {
+  name: 'publishToRepo',
+  description:
+    'Put files into a git repository through a pull request (GitHub), merge request (GitLab) or pull request (Azure DevOps). Each file is compared with the base branch; only files that differ are written, to the working branch, and a request is opened unless one is already open. Every write goes through core.act. For Azure DevOps with a pipeline name, the pipeline definition is created once the YAML is on the base branch. Returns { changed, unchanged, pullRequest, pipeline }.',
+  resultType: 'Any',
+  params: [
+    { name: 'ctx', type: 'Any', description: 'What core.begin returned' },
+    { name: 'provider', type: 'string', description: 'github, gitlab or azdo' },
+    { name: 'api', type: 'string', description: 'https://api.github.com, https://gitlab.example.com, or https://dev.azure.com/<organization>' },
+    { name: 'repository', type: 'string', description: 'owner/repo (GitHub), group/project (GitLab), project/repository (Azure DevOps)' },
+    { name: 'baseBranch', type: 'string', description: 'The branch the CI runs from, usually main' },
+    { name: 'branch', type: 'string', description: 'The working branch the files are written to' },
+    { name: 'files', type: 'Any', description: 'Object of repository path to content' },
+    { name: 'title', type: 'string', description: 'Title of the pull request and the commit message' },
+    { name: 'description', type: 'string', description: 'Body of the pull request' },
+    { name: 'headers', type: 'Any', description: 'What repoAuth returned' },
+    { name: 'redact', type: 'Any', description: 'Strings to scrub from errors, e.g. settings._secrets' },
+    { name: 'pipelineName', type: 'string', description: 'Azure DevOps only: the pipeline definition to create; empty for none' },
+    { name: 'ciPath', type: 'string', description: 'Azure DevOps only: the YAML the pipeline definition points at' },
+  ],
+  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var P = String(provider || "").toLowerCase();
+if (P !== "github" && P !== "gitlab" && P !== "azdo") throw new Error("gitProvider must be github, gitlab or azdo, not '" + provider + "'.");
+var API = String(api || "").replace(/\/+$/, "");
+if (!/^https:\/\/[^\/]+/.test(API)) throw new Error("gitApi must be an https:// URL, e.g. https://api.github.com.");
+var REPO = String(repository || "").replace(/^\/+|\/+$/g, "");
+var BASE = String(baseBranch || "main");
+var BR = String(branch || "");
+if (REPO.split("/").length < 2) throw new Error("repository must be owner/repo, group/project or project/repository, not '" + REPO + "'.");
+if (!BR || BR === BASE) throw new Error("The working branch must be set and must not be the base branch: the files go in through a review.");
+
+function opts(extra) {
+  var r = { redact: redact || [], accept: P === "github" ? "application/vnd.github+json" : "application/json" };
+  if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) r[k] = extra[k];
+  return r;
+}
+function call(method, url, body, extra) { return core.http(method, url, headers, body, opts(extra)); }
+function segments(path) {
+  var parts = String(path).split("/");
+  for (var i = 0; i < parts.length; i++) parts[i] = encodeURIComponent(parts[i]);
+  return parts.join("/");
+}
+function unbase64(text) {
+  var A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  var clean = String(text).replace(/[^A-Za-z0-9+\/]/g, "");
+  var out = "";
+  var bits = 0;
+  var value = 0;
+  for (var i = 0; i < clean.length; i++) {
+    value = (value << 6) | A.indexOf(clean.charAt(i));
+    bits += 6;
+    if (bits >= 8) { bits -= 8; out += String.fromCharCode((value >> bits) & 255); }
+  }
+  try { return decodeURIComponent(escape(out)); } catch (e) { return out; }
+}
+
+var paths = [];
+for (var p in files) if (files.hasOwnProperty(p)) paths.push(p);
+paths.sort();
+
+// Each provider: the base commit, whether the branch exists, a file's content
+// on a ref, the writes, and the review request.
+var G;
+if (P === "github") {
+  var R = API + "/repos/" + REPO;
+  G = {
+    head: function (b) {
+      var r = call("GET", R + "/git/ref/heads/" + segments(b), null, { allow: [404] });
+      return r.statusCode === 404 ? null : String(r.body.object.sha);
+    },
+    read: function (path, ref) {
+      var r = call("GET", R + "/contents/" + segments(path) + "?ref=" + encodeURIComponent(ref), null, { allow: [404] });
+      return r.statusCode === 404 ? null : { text: unbase64(r.body.content), sha: String(r.body.sha) };
+    },
+    write: function (list, branchSha, baseSha) {
+      if (!branchSha) core.act(ctx, "create branch " + BR + " from " + BASE, function () { return call("POST", R + "/git/refs", { ref: "refs/heads/" + BR, sha: baseSha }); });
+      for (var i = 0; i < list.length; i++) {
+        (function (c) {
+          core.act(ctx, (c.onBranch ? "update " : "add ") + c.path + " on " + BR, function () {
+            var body = { message: title + ": " + c.path, content: core.base64(String(files[c.path])), branch: BR };
+            if (c.onBranch) body.sha = c.onBranch.sha;
+            return call("PUT", R + "/contents/" + segments(c.path), body);
+          });
+        })(list[i]);
+      }
+    },
+    findReview: function () {
+      var owner = REPO.split("/")[0];
+      var open = call("GET", R + "/pulls?state=open&head=" + encodeURIComponent(owner + ":" + BR) + "&base=" + encodeURIComponent(BASE)).body || [];
+      return open.length > 0 ? String(open[0].html_url) : null;
+    },
+    openReview: function () {
+      var r = call("POST", R + "/pulls", { title: title, head: BR, base: BASE, body: description });
+      return String(r.body.html_url);
+    }
+  };
+} else if (P === "gitlab") {
+  var L = API + "/api/v4/projects/" + encodeURIComponent(REPO);
+  G = {
+    head: function (b) {
+      var r = call("GET", L + "/repository/branches/" + encodeURIComponent(b), null, { allow: [404] });
+      return r.statusCode === 404 ? null : String(r.body.commit.id);
+    },
+    read: function (path, ref) {
+      var r = call("GET", L + "/repository/files/" + encodeURIComponent(path) + "?ref=" + encodeURIComponent(ref), null, { allow: [404] });
+      return r.statusCode === 404 ? null : { text: unbase64(r.body.content), sha: String(r.body.blob_id) };
+    },
+    write: function (list, branchSha) {
+      var actions = [];
+      var names = [];
+      for (var i = 0; i < list.length; i++) {
+        actions.push({ action: list[i].onBranch ? "update" : "create", file_path: list[i].path, content: String(files[list[i].path]) });
+        names.push(list[i].path);
+      }
+      core.act(ctx, "commit " + names.join(", ") + " to " + BR, function () {
+        var body = { branch: BR, commit_message: title, actions: actions };
+        if (!branchSha) body.start_branch = BASE;
+        return call("POST", L + "/repository/commits", body);
+      });
+    },
+    findReview: function () {
+      var open = call("GET", L + "/merge_requests?state=opened&source_branch=" + encodeURIComponent(BR) + "&target_branch=" + encodeURIComponent(BASE)).body || [];
+      return open.length > 0 ? String(open[0].web_url) : null;
+    },
+    openReview: function () {
+      var r = call("POST", L + "/merge_requests", { source_branch: BR, target_branch: BASE, title: title, description: description, remove_source_branch: true });
+      return String(r.body.web_url);
+    }
+  };
+} else {
+  var slash = REPO.indexOf("/");
+  var PROJECT = API + "/" + encodeURIComponent(REPO.substring(0, slash)) + "/_apis";
+  var repo = call("GET", PROJECT + "/git/repositories/" + encodeURIComponent(REPO.substring(slash + 1)) + "?api-version=7.1").body;
+  var REPO_ID = String(repo.id);
+  var Z = PROJECT + "/git/repositories/" + REPO_ID;
+  G = {
+    head: function (b) {
+      var list = call("GET", Z + "/refs?filter=" + encodeURIComponent("heads/" + b) + "&api-version=7.1").body.value || [];
+      for (var i = 0; i < list.length; i++) if (String(list[i].name) === "refs/heads/" + b) return String(list[i].objectId);
+      return null;
+    },
+    read: function (path, ref) {
+      var r = call("GET", Z + "/items?path=" + encodeURIComponent("/" + path) + "&versionDescriptor.version=" + encodeURIComponent(ref) + "&versionDescriptor.versionType=branch&includeContent=true&api-version=7.1", null, { allow: [404] });
+      return r.statusCode === 404 ? null : { text: String(r.body.content), sha: String(r.body.objectId) };
+    },
+    write: function (list, branchSha, baseSha) {
+      var changes = [];
+      var names = [];
+      for (var i = 0; i < list.length; i++) {
+        changes.push({ changeType: list[i].onBranch ? "edit" : "add", item: { path: "/" + list[i].path }, newContent: { content: String(files[list[i].path]), contentType: "rawtext" } });
+        names.push(list[i].path);
+      }
+      // A push to a branch that does not exist yet names the commit it starts
+      // from as oldObjectId.
+      core.act(ctx, "push " + names.join(", ") + " to " + BR, function () {
+        return call("POST", Z + "/pushes?api-version=7.1", { refUpdates: [{ name: "refs/heads/" + BR, oldObjectId: branchSha || baseSha }], commits: [{ comment: title, changes: changes }] });
+      });
+    },
+    findReview: function () {
+      var open = call("GET", Z + "/pullrequests?searchCriteria.status=active&searchCriteria.sourceRefName=" + encodeURIComponent("refs/heads/" + BR) + "&searchCriteria.targetRefName=" + encodeURIComponent("refs/heads/" + BASE) + "&api-version=7.1").body.value || [];
+      return open.length > 0 ? String(open[0].url || open[0].pullRequestId) : null;
+    },
+    openReview: function () {
+      var r = call("POST", Z + "/pullrequests?api-version=7.1", { sourceRefName: "refs/heads/" + BR, targetRefName: "refs/heads/" + BASE, title: title, description: description });
+      return String(r.body.url || r.body.pullRequestId);
+    }
+  };
+}
+
+var baseSha = G.head(BASE);
+if (!baseSha) throw new Error("No branch " + BASE + " in " + REPO + ".");
+var needed = [];
+var unchanged = [];
+var onBase = {};
+for (var i = 0; i < paths.length; i++) {
+  var current = G.read(paths[i], BASE);
+  onBase[paths[i]] = current;
+  if (current && current.text === String(files[paths[i]])) { unchanged.push(paths[i]); System.log("Already on " + BASE + ": " + paths[i]); }
+  else needed.push(paths[i]);
+}
+var result = { changed: [], unchanged: unchanged, pullRequest: null, pipeline: null };
+if (needed.length > 0) {
+  var branchSha = G.head(BR);
+  var writes = [];
+  for (var j = 0; j < needed.length; j++) {
+    var there = branchSha ? G.read(needed[j], BR) : onBase[needed[j]];
+    if (branchSha && there && there.text === String(files[needed[j]])) { System.log("Already on " + BR + ": " + needed[j]); continue; }
+    writes.push({ path: needed[j], onBranch: there });
+    result.changed.push(needed[j]);
+  }
+  if (writes.length > 0) G.write(writes, branchSha, baseSha);
+  result.pullRequest = G.findReview();
+  if (result.pullRequest) System.log("A review is already open: " + result.pullRequest);
+  else result.pullRequest = core.act(ctx, "open a review of " + BR + " into " + BASE, function () { return G.openReview(); });
+} else {
+  System.log("Every file is already on " + BASE + " as generated; nothing to propose.");
+}
+
+if (P === "azdo" && pipelineName) {
+  if (!onBase[ciPath] && !G.read(ciPath, BASE)) {
+    System.log("The pipeline definition " + pipelineName + " is created on the run after " + ciPath + " reaches " + BASE + ".");
+  } else {
+    var pipelines = call("GET", PROJECT + "/pipelines?api-version=7.1").body.value || [];
+    for (var k = 0; k < pipelines.length; k++) if (String(pipelines[k].name) === String(pipelineName)) result.pipeline = String(pipelines[k].id);
+    if (result.pipeline) System.log("Pipeline " + pipelineName + " exists (" + result.pipeline + "); left as it is.");
+    else result.pipeline = core.act(ctx, "create pipeline " + pipelineName + " from /" + ciPath, function () {
+      var r = call("POST", PROJECT + "/pipelines?api-version=7.1", { name: String(pipelineName), folder: "\\", configuration: { type: "yaml", path: "/" + ciPath, repository: { id: REPO_ID, type: "azureReposGit" } } });
+      return String(r.body.id);
+    });
+  }
+}
+return result;`,
+};
+
+const REPO_AUTH_ACTION: VroActionDef = {
+  name: 'repoAuth',
+  description: 'The authorization headers of a git host: GitHub a bearer token (with the User-Agent and API version GitHub requires), GitLab a PRIVATE-TOKEN, Azure DevOps a personal access token as Basic with an empty user.',
+  resultType: 'Any',
+  params: [
+    { name: 'provider', type: 'string', description: 'github, gitlab or azdo' },
+    { name: 'gitToken', type: 'string', description: 'From a SecureString attribute' },
+  ],
+  script: String.raw`if (!gitToken) throw new Error("Set gitToken in the configuration element: a token that may push a branch and open a pull request in the repository, and nothing more.");
+var p = String(provider || "").toLowerCase();
+if (p === "github") return { "Authorization": "Bearer " + gitToken, "User-Agent": "ArchToolKit-Orchestrator", "X-GitHub-Api-Version": "2022-11-28" };
+if (p === "gitlab") return { "PRIVATE-TOKEN": String(gitToken) };
+if (p === "azdo") return { "Authorization": "Basic " + System.getModule("com.archtoolkit.core").base64(":" + gitToken) };
+throw new Error("gitProvider must be github, gitlab or azdo.");`,
+};
+
+/** The git host a CI's files naturally live on. */
+function providerOf(ci: Ci | 'github' | 'azdo'): 'github' | 'gitlab' | 'azdo' {
+  return ci === 'gitlab' ? 'gitlab' : ci === 'azdo' ? 'azdo' : 'github';
+}
+
+const DEFAULT_API: Record<'github' | 'gitlab' | 'azdo', string> = {
+  github: 'https://api.github.com',
+  gitlab: 'https://gitlab.example.com',
+  azdo: 'https://dev.azure.com/<organization>',
+};
+
+/**
+ * The Orchestrator package of a CI automation: one workflow that proposes the
+ * pipeline file and the scripts beside it to the repository, as a pull
+ * request, through the git host's API.
+ */
+export function ciRepoPackage(spec: {
+  readonly packageName: string;
+  readonly categoryPath: string;
+  readonly what: string;
+  readonly ci: Ci | 'github' | 'azdo';
+  readonly ciPath: string;
+  readonly files: RepoFiles;
+  readonly branch: string;
+  readonly pipelineName?: string;
+}): AutomationPackage {
+  const provider = providerOf(spec.ci);
+  const q = JSON.stringify;
+  return toPackage({
+    packageName: spec.packageName,
+    description: `Proposes ${spec.what} to its git repository as a pull request, through the git host's API. Generated by ArchToolKit.`,
+    categoryPath: spec.categoryPath,
+    workflow: {
+      name: 'Propose the pipeline to the repository',
+      description: `Compares ${Object.keys(spec.files).length} file(s) — ${spec.ciPath} and what it runs — with the base branch, writes those that differ to a working branch, and opens a pull request (merge request on GitLab). Nothing reaches the base branch without a review.${spec.pipelineName ? ' On Azure DevOps, the run after the merge creates the pipeline definition.' : ''} A dry run until dryRun is set to false in the configuration element.`,
+      inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be written and change nothing' }],
+      outputs: [
+        { name: 'changedFiles', type: 'number', description: 'Files written (or that would be) to the working branch' },
+        { name: 'pullRequest', type: 'string', description: 'The review, open or opened; empty in a dry run or when nothing differs' },
+        { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+      ],
+      script: String.raw`var ctx = core.begin(settings, dryRun);
+if (!settings.gitApi || !settings.repository) throw new Error("Set gitApi and repository in the configuration element " + SETTINGS_NAME + ".");
+var files = JSON.parse(core.resource(RESOURCE_PATH, "repo-files.json"));
+var headers = mod.repoAuth(settings.gitProvider, settings.gitToken);
+var result = mod.publishToRepo(ctx, settings.gitProvider, settings.gitApi, settings.repository, settings.baseBranch || "main", settings.branch, files,
+  ${q(`ArchToolKit: ${spec.what}`)},
+  ${q(`Generated by ArchToolKit and proposed by the Orchestrator workflow "Propose the pipeline to the repository". Review the pipeline file (${spec.ciPath}) and the scripts it runs; merging this is what switches the pipeline on.`)},
+  headers, settings._secrets, String(settings.gitProvider).toLowerCase() === "azdo" ? ${q(spec.pipelineName ?? '')} : "", ${q(spec.ciPath)});
+changedFiles = result.changed.length;
+pullRequest = ctx.dryRun ? "" : (result.pullRequest || "");
+summary = core.audit(ctx, { changed: result.changed, unchanged: result.unchanged, pullRequest: pullRequest, pipeline: result.pipeline });
+core.notify(settings.webhook, summary);`,
+    },
+    actions: [REPO_AUTH_ACTION, PUBLISH_ACTION],
+    config: {
+      name: 'Settings',
+      description: 'Where the pipeline goes. Fill gitToken after import; set dryRun to false only after a dry run.',
+      attributes: [
+        { name: 'gitProvider', type: 'string', value: provider, description: 'github, gitlab or azdo — where the repository is' },
+        { name: 'gitApi', type: 'string', value: DEFAULT_API[provider], description: 'https://api.github.com (or https://<GHES host>/api/v3), https://<GitLab host>, or https://dev.azure.com/<organization>' },
+        { name: 'repository', type: 'string', value: '', description: 'owner/repo, group/project, or project/repository' },
+        { name: 'baseBranch', type: 'string', value: 'main', description: 'The branch the CI runs from' },
+        { name: 'branch', type: 'string', value: spec.branch, description: 'The working branch the files are proposed from' },
+        { name: 'gitToken', type: 'SecureString', description: 'May push a branch and open a pull request; nothing more' },
+        { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is written while this is true' },
+        { name: 'cap', type: 'number', value: Object.keys(spec.files).length + 3, description: 'The most writes one run may make' },
+        { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+      ],
+    },
+    resources: [{ name: 'repo-files.json', content: `${JSON.stringify(spec.files, null, 2)}\n` }],
+  });
+}
+
+/** The package's IMPORT.md steps, as Markdown, numbered from `from`. */
+export function packageImportMd(pkg: AutomationPackage, intro: readonly string[]): string[] {
+  return [
+    ...intro,
+    '',
+    ...pkg.importSteps.flatMap((step, index) => [`### ${index + 1}. ${step.heading}`, '', ...step.lines, '']),
+  ];
+}
+
+/** The IMPORT.md section for a CI package: what the workflow does, then the package steps. */
+function ciPackageImportMd(pkg: AutomationPackage, ci: Ci, ciPath: string, pipelineName?: string): string[] {
+  const provider = providerOf(ci);
+  return packageImportMd(pkg, [
+    '## Route 1 — the Orchestrator package proposes it to the repository (VCF 9.1)',
+    '',
+    `The package \`${pkg.packageDir}\` is the central component. Its workflow **${pkg.workflowName}** puts \`${ciPath}\` and the scripts it runs into the repository through the ${provider === 'github' ? 'GitHub' : provider === 'gitlab' ? 'GitLab' : 'Azure DevOps'} API: every file is compared with the base branch, the ones that differ are written to the working branch, and a ${provider === 'gitlab' ? 'merge request' : 'pull request'} is opened (or the open one reused). Nothing reaches the base branch without a review, and the merge is what switches the pipeline on.${ci === 'jenkins' ? ' For Jenkins, set gitProvider to wherever the repository is (github, gitlab or azdo), then create the Jenkins job by hand (route 2, step 2).' : ''}${pipelineName ? ` On Azure DevOps, run the workflow once more after the merge: it creates the pipeline definition **${pipelineName}** pointing at \`/${ciPath}\`.` : ''}`,
+    '',
+    'Orchestrator needs to reach the git host over HTTPS (trust its certificate in step 2 below). If it cannot, use route 2.',
+  ]);
+}
+
+/**
+ * IMPORT.md of a CI automation: the Orchestrator package first (route 1), then
+ * committing the files by hand (route 2), then what is confirmed and what to
+ * verify for VCF 9.1.
+ */
+function ciImportMdWithPackage(ci: Ci, path: string, body: string, runner: string, pkg: AutomationPackage, notes: readonly string[], pipelineName?: string): string {
+  const manual = ciImportMd(ci, path, body, runner).split('\n');
+  return [
+    manual[0],
+    '',
+    ...ciPackageImportMd(pkg, ci, path, pipelineName),
+    '## Route 2 — commit the files yourself',
+    '',
+    ...manual.slice(2),
+    '## VCF 9.1: confirmed, and what to verify',
+    '',
+    ...notes.map((note) => `- ${note}`),
+    `- The workflow's git calls are the documented ones of each host (GitHub REST "Repository contents", "Git references" and "Pulls", with the User-Agent GitHub requires; GitLab "Commits API" with actions and start_branch, and "Merge requests API"; Azure DevOps REST 7.1 "Pushes", "Pull Requests" and "Pipelines").`,
+    '- VERIFY (Azure DevOps): that a push to a branch that does not exist yet, with oldObjectId set to the base commit, creates the branch from it on your organization; and that the pipeline definition\'s folder, a single backslash, is the root on yours.',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The files of a CI automation: the repository files as they were, the
+ * Orchestrator package that proposes them, and the IMPORT.md for both routes.
+ */
+export function ciFilesWithPackage(spec: {
+  readonly ci: Ci;
+  readonly ciPath: string;
+  readonly runner: string;
+  readonly kind: string;
+  readonly base: string;
+  readonly what: string;
+  readonly notes: readonly string[];
+  readonly files: RepoFiles;
+  readonly pipelineName?: string;
+}): Record<string, string> {
+  const names = ciNames(spec.kind, spec.base);
+  const pipelineName = spec.ci === 'azdo' ? (spec.pipelineName ?? spec.base) : undefined;
+  const pkg = ciRepoPackage({ ...names, what: spec.what, ci: spec.ci, ciPath: spec.ciPath, files: spec.files, ...(pipelineName ? { pipelineName } : {}) });
+  return {
+    ...pkg.files,
+    ...spec.files,
+    'IMPORT.md': ciImportMdWithPackage(spec.ci, spec.ciPath, spec.files[spec.ciPath] ?? '', spec.runner, pkg, spec.notes, pipelineName),
+  };
+}
+
+/** The package name and category of a CI automation. */
+function ciNames(kind: string, base: string): { packageName: string; categoryPath: string; branch: string } {
+  return { packageName: packageNameOf('pipeline', kind, base), categoryPath: `ArchToolKit/Pipelines/${base}`, branch: `archtoolkit/${base}` };
+}
+
+const VCFA9_NOTES: readonly string[] = [
+  'VCF Automation 9.x: set VCFA_ORG to the All Apps organization name and VCFA_REFRESH_TOKEN to an API token issued in that organization; ci/vcfa-lib.sh then logs in with POST /oauth/tenant/<org>/token, grant_type=refresh_token (vrealize.it, "VCF Automation 9 API Access"; the core library\'s loginVcfAutomation does the same). Leave VCFA_ORG empty for Aria Automation 8.x.',
+  'On VCF Automation 9.1 an organization bearer token is accepted by /blueprint/api, /deployment/api, /event-broker/api, /catalog/api and /vco/api on the same host (the mcp-vcf-orchestrator client, verified against 9.1, calls all of them with the token from POST /cloudapi/1.0.0/sessions). VERIFY that the /oauth/tenant/<org>/token access token is accepted the same way on yours; if not, log in with /cloudapi/1.0.0/sessions and take the x-vmware-vcloud-access-token header.',
+  'VERIFY: the blueprint-requests, versions, abx and iaas/projects request and response fields against the API documentation your 9.1 instance serves (All Apps organization → API documentation); they are the 8.x ones, which the All Apps organization carries forward.',
+];
 
 export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
   automationBlueprint({
     id: 'pipe_codestream',
     platform: PLATFORM,
-    label: 'A VCF Automation Pipelines pipeline (formerly Code Stream)',
+    label: 'An Automation Pipelines pipeline (Aria Automation 8.x; not in VCF 9)',
     group: 'VCF Automation Pipelines',
     description:
-      'A pipeline in the native export format of VCF Automation Pipelines — Aria Automation Pipelines, Code Stream before that — with its endpoints, its secret variables and its notifications. Every credential is a ${var.…} secret variable entered in the interface; none is in these files. Check that your VCF Automation release still has Pipelines before building on it.',
+      'A pipeline in the native export format of Automation Pipelines — Aria Automation 8.x, Code Stream before that — with its endpoints, its secret variables and its notifications, and an Orchestrator workflow that imports them. Every credential is a ${var.…} secret variable entered in the interface; none is in these files. Aria Automation 8.x only: Pipelines is not in VCF Automation 9 (KB 378424).',
     inputs: [
       {
         id: 'pattern',
@@ -178,8 +612,8 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
       const base = slugOf(name || pipelineName, 'pipeline');
 
       const findings: Finding[] = [
-        warning('pipe.codestream.availability', 'Pipelines was part of Aria Automation 8.x. Whether VCF Automation 9.x includes it depends on your release and organization type.', {
-          remediation: 'Check the release notes and your own instance for Pipelines before building on this. The portable alternative is "Cloud templates as code, tested in CI" (pipe_template_ci), which calls the same APIs from any CI.',
+        warning('pipe.codestream.availability', 'Automation Pipelines is not in VCF Automation 9: 8.18.1 is the last release with it (Broadcom KB 378424). These files import into Aria Automation 8.x only.', {
+          remediation: 'On VCF 9.1 use "Cloud templates as code, tested in CI" (pipe_template_ci), which calls the VCF Automation APIs from GitHub, GitLab, Azure Pipelines or Jenkins, or run the Orchestrator workflow from the Orchestrate tab behind an approval policy.',
           source: SRC,
         }),
       ];
@@ -640,6 +1074,46 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const endpointNames = endpoints.map((doc) => /\nname: (.+)/.exec(doc)?.[1] ?? 'endpoint');
+      const pipelineYaml = `${pipeline.join('\n').replace(/\n+$/, '')}\n`;
+      // The Orchestrator package does what import.sh does — variables, then
+      // endpoints, then the pipeline — but idempotently: a variable or an
+      // endpoint that exists is left alone (its value or credential was typed in
+      // the interface), and an existing pipeline is updated with action=apply.
+      // It is an 8.x package: Pipelines is not in VCF Automation 9, and the
+      // workflow says so and stops if the service is not there.
+      const pkg = toPackage({
+        packageName: packageNameOf('pipeline', 'codestream', pipelineName),
+        description: `Imports the Automation Pipelines pipeline ${pipelineName} with its variables and endpoints (Aria Automation 8.x; Pipelines is not in VCF Automation 9). Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/Pipelines/${pipelineName}`,
+        workflow: {
+          name: `Import pipeline ${pipelineName}`,
+          description: `Creates in Automation Pipelines, project "${project}": ${vars.length} variable(s) (empty), ${endpointNames.length} endpoint(s) and the pipeline ${pipelineName}. What exists is left alone, except the pipeline, which is updated. Stops with an explanation on VCF Automation 9, which has no Pipelines. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be imported and change nothing' }],
+          outputs: [
+            { name: 'pipelineStatus', type: 'string', description: 'CREATED, UPDATED, or empty in a dry run' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: codestreamWorkflow(project, vars, endpointNames, pipelineName),
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of Import pipeline ${pipelineName}. Aria Automation 8.x only. Fill vcfaRefreshToken after import; set dryRun to false only after a dry run.`,
+          attributes: [
+            { name: 'vcfaHost', type: 'string', value: '', description: 'Aria Automation 8.x host (FQDN)' },
+            { name: 'vcfaRefreshToken', type: 'SecureString', description: 'A refresh token of an account that may create pipelines, endpoints and variables in the project' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is imported while this is true' },
+            { name: 'cap', type: 'number', value: vars.length + endpointNames.length + 1, description: 'The most objects one run may create or update' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [
+          ...vars.map((variable) => ({ name: `variable-${variable}.json`, content: variableJson(variable) })),
+          ...endpoints.map((doc, index) => ({ name: `endpoint-${endpointNames[index]}.yaml`, content: `${doc}\n`, mimeType: 'text/plain' })),
+          { name: 'pipeline.yaml', content: pipelineYaml, mimeType: 'text/plain' },
+        ],
+      });
+
       const title =
         pattern === 'template'
           ? `${blueprintName} — test deployment, approval, release, in VCF Automation Pipelines`
@@ -686,6 +1160,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           ...(pattern === 'vro' ? [{ rule: `Refused if the dry run touches more than ${maxObjects}`, because: 'A workflow that finds a thousand objects when it expected twenty has the wrong input, not a busy day.' }] : []),
         ],
         dryRun: [
+          `The Orchestrator workflow ${pkg.workflowName} is a dry run until dryRun is set to false in its configuration element: it reads, and logs every "DRY RUN: would …" with an AUDIT summary.`,
           'Run the pipeline from a branch. It runs every stage up to the approval, and the Condition stops it there.',
           pattern === 'vro' ? 'The DryRun task runs the workflow with dryRun true. The workflow has to honour that input — check that it does before trusting it.' : 'Reject the approval on the first run from main and read what it would have done.',
           'import.sh without --execute prints what it would import.',
@@ -702,24 +1177,32 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           ...(pattern === 'vro' ? ['The Record task posts what ran to record_webhook_url.'] : []),
         ],
         requires: [
-          'Pipelines available in your VCF Automation release — see the warning.',
+          'Aria Automation 8.x (8.18.1 is the last release with Pipelines). VCF Automation 9 has no Pipelines — see the warning.',
           `A Pipelines project "${project}"; the endpoints are in the import file.`,
           'Every variable in the variables file set in the interface before import.',
           ...(pattern === 'template' ? ['A test project with a lease policy of a day, so a test deployment that escapes deletion expires on its own.'] : []),
         ],
         files: {
+          ...pkg.files,
           // The one file the Import dialog takes: variables, endpoints, pipeline.
           [`import/pipelines/${pipelineName}.yaml`]: `${[...variables, ...endpoints, ...pipeline].join('\n').replace(/\n+$/, '')}\n`,
           // The same objects one per file, for the API route in import.sh.
           ...Object.fromEntries(vars.map((variable) => [`import/api/variables/${variable}.json`, variableJson(variable)])),
-          ...Object.fromEntries(endpoints.map((doc) => [`import/api/endpoints/${/\nname: (.+)/.exec(doc)?.[1] ?? 'endpoint'}.yaml`, `${doc}\n`])),
-          [`import/api/${pipelineName}-pipeline.yaml`]: `${pipeline.join('\n').replace(/\n+$/, '')}\n`,
-          'import.sh': codestreamImportScript(pipelineName, vars, endpoints.map((doc) => /\nname: (.+)/.exec(doc)?.[1] ?? 'endpoint')),
+          ...Object.fromEntries(endpoints.map((doc, index) => [`import/api/endpoints/${endpointNames[index]}.yaml`, `${doc}\n`])),
+          [`import/api/${pipelineName}-pipeline.yaml`]: pipelineYaml,
+          'import.sh': codestreamImportScript(pipelineName, vars, endpointNames),
           'IMPORT.md': [
-            '# Importing this into VCF Automation Pipelines',
+            '# Importing this into VCF Automation Pipelines (Aria Automation 8.x only)',
             '',
-            `Pipeline **${pipelineName}** in project **${project}**, with ${endpoints.length} endpoint${endpoints.length === 1 ? '' : 's'} and ${vars.length} variable${vars.length === 1 ? '' : 's'}. Aria Automation 8.x Pipelines (Code Stream); on VCF Automation 9.x only where Pipelines is present in your release. The project must exist first.`,
+            `Pipeline **${pipelineName}** in project **${project}**, with ${endpoints.length} endpoint${endpoints.length === 1 ? '' : 's'} and ${vars.length} variable${vars.length === 1 ? '' : 's'}. The project must exist first.`,
             '',
+            '**VCF 9.1: this does not import.** Automation Pipelines (Code Stream) is not part of VCF Automation 9: "VCF Automation Pipelines will not be available with the release and install of VCF Automation 9", and VCF 5.2.1 / VCF Automation 8.18.1 is the last version that supports it (Broadcom KB 378424, https://knowledge.broadcom.com/external/article/378424). Every file here is an 8.x artifact, for an 8.18 instance that is still supported. On VCF 9.1, do the same job with an external CI driving the VCF Automation APIs — "Cloud templates as code, tested in CI" (pipe_template_ci) for the template pattern — or, for the Orchestrator pattern, run the workflow from the Orchestrate tab (or a catalog item) with an approval policy in front of it.',
+            '',
+            ...packageImportMd(pkg, [
+              '## Route 0 — the Orchestrator package imports it through the API (8.x)',
+              '',
+              `The package \`${pkg.packageDir}\` holds the workflow **${pkg.workflowName}**: it creates the variables (empty), then the endpoints, then the pipeline, through /pipeline/api/variables and /pipeline/api/import. A variable or endpoint that already exists is left alone — its value was typed in the interface — and an existing pipeline is updated with action=apply. On an instance without Pipelines (VCF Automation 9) it stops at the first read and says why. Aria Automation 8.x: the embedded Orchestrator client, Assets → Packages → Import.`,
+            ]),
             `## Route 1 — the interface: \`import/pipelines/${pipelineName}.yaml\``,
             '',
             `Pipelines → **Import** → select \`${pipelineName}.yaml\` → **Import**. The file is several YAML documents separated by \`---\`: the VARIABLE documents first, then the ENDPOINT documents, then the PIPELINE, so everything the pipeline refers to exists before it does.`,
@@ -755,12 +1238,14 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
             '- Document shape (`project`, `kind: PIPELINE`, `name`, `enabled`, `concurrency`, `input` with `_inputMeta` inside it, `workspace`, `stageOrder`, `stages`, `notifications.email`; `kind: ENDPOINT` with `type`, `isRestricted`, `properties`; `kind: VARIABLE` with `type` REGULAR/SECRET and `value`): Aria Automation 8.x exports published on GitHub (e.g. mcclanc/CodeStream-K8s-Blog Pipeline/pipeline.yaml) and the "pipeline as code" tutorial in the Automation Pipelines documentation.',
             '- `POST /pipeline/api/import?action=create|apply` with `Content-Type: application/x-yaml`, `POST /pipeline/api/variables`, and multi-document VARIABLE files: the VMware code-stream-cli source (cmd/api-func-shared.go, api-func-variables.go).',
             '- VERIFY: task input fields and output paths (`${Stage.Task.output…}`) against an export from your own instance; whether an endpoint imports with `${var.…}` in its password field on your release (if not, type the credential into the endpoint instead).',
+            '- The Orchestrator workflow finds existing objects with `GET /pipeline/api/{variables,endpoints,pipelines}?$filter=((name eq \'…\') and (project eq \'…\'))`, reads the `documents` map of the answer, and checks that the import answers `status: CREATED` (create) or `UPDATED` (apply) — the filters, the list shape and the import statuses the code-stream-cli source uses (cmd/api-func-variables.go, api-func-pipelines.go, api-func-shared.go).',
+            '- Not in VCF Automation 9: Broadcom KB 378424. The replacement Broadcom names is Continuous Delivery Director; the portable route is any CI calling the VCF Automation APIs.',
             '',
           ].join('\n'),
           'git-webhook.md': webhook,
         },
         notes: [
-          'Pipelines was a capability of Aria Automation 8.x (Code Stream before that). Its availability in VCF Automation 9.x must be checked for your release. If it is not there, "Cloud templates as code, tested in CI" does the same job from GitHub, GitLab, Azure Pipelines or Jenkins against the same APIs.',
+          'Pipelines was a capability of Aria Automation 8.x (Code Stream before that) and is not in VCF Automation 9 (Broadcom KB 378424; 8.18.1 is the last release with it). Everything here imports into 8.x only. On VCF 9.1, "Cloud templates as code, tested in CI" does the same job from GitHub, GitLab, Azure Pipelines or Jenkins against the VCF Automation APIs.',
           'The YAML keys follow an 8.x export. Task input fields in particular — the Blueprint task’s, the output paths like ${Stage.Task.output…} — should be checked against an export from your own instance before the rest is imported.',
           'import.sh uses /pipeline/api/import and /pipeline/api/variables, the paths the VMware code-stream-cli uses. The same service answers under /codestream/api on 8.x appliances.',
           'Variables of type SECRET are masked in the interface and in execution logs. Hosts are REGULAR. A webhook URL is SECRET because chat webhooks carry their credential in the URL.',
@@ -1019,7 +1504,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '    steps:',
           '      - uses: actions/checkout@v4',
           '      - run: pip install --quiet yamllint',
-          '      - run: ci/lint-templates.sh',
+          '      - run: bash ci/lint-templates.sh',
           '',
           '  release:',
           "    if: github.ref == 'refs/heads/main' && github.event_name == 'push'",
@@ -1031,20 +1516,21 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '    env:',
           '      VCFA_HOST: ${{ vars.VCFA_HOST }}',
           '      VCFA_REFRESH_TOKEN: ${{ secrets.VCFA_REFRESH_TOKEN }}',
+          '      VCFA_ORG: ${{ vars.VCFA_ORG }}',
           '    steps:',
           '      - uses: actions/checkout@v4',
           '        with: { fetch-depth: 2 }',
           '      - name: Test deployment, smoke check, release',
-          '        run: ci/release-templates.sh --execute',
+          '        run: bash ci/release-templates.sh --execute',
           '      - name: Delete the test deployment',
           '        if: always()',
-          '        run: ci/delete-test.sh',
+          '        run: bash ci/delete-test.sh',
           '',
         ],
         gitlab: [
           '# Generated by ArchToolKit.',
           '#',
-          '# VCFA_HOST and VCFA_REFRESH_TOKEN are CI/CD variables — the token masked and',
+          '# VCFA_HOST, VCFA_ORG (VCF Automation 9.x only) and VCFA_REFRESH_TOKEN are CI/CD variables — the token masked and',
           '# protected, so only main can read it.',
           'stages: [lint, release]',
           '',
@@ -1058,7 +1544,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           `      changes: ['${dir}**/*']`,
           '  script:',
           '    - pip install --quiet yamllint',
-          '    - ci/lint-templates.sh',
+          '    - bash ci/lint-templates.sh',
           '',
           'release:',
           '  stage: release',
@@ -1071,10 +1557,10 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '    - if: $CI_COMMIT_BRANCH == "main"',
           `      changes: ['${dir}**/*']`,
           '  script:',
-          '    - ci/release-templates.sh --execute',
+          '    - bash ci/release-templates.sh --execute',
           '  after_script:',
           '    # after_script runs whether the script passed, failed or was cancelled.',
-          '    - ci/delete-test.sh',
+          '    - bash ci/delete-test.sh',
           '',
         ],
         azdo: [
@@ -1095,7 +1581,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '    jobs:',
           '      - job: lint',
           '        steps:',
-          '          - script: pip install --quiet yamllint && ci/lint-templates.sh',
+          '          - script: pip install --quiet yamllint && bash ci/lint-templates.sh',
           '',
           '  - stage: release',
           "    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))",
@@ -1110,15 +1596,17 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '              steps:',
           '                - checkout: self',
           '                  fetchDepth: 2',
-          '                - script: ci/release-templates.sh --execute',
+          '                - script: bash ci/release-templates.sh --execute',
           '                  env:',
           '                    VCFA_HOST: $(VCFA_HOST)',
           '                    VCFA_REFRESH_TOKEN: $(VCFA_REFRESH_TOKEN)',
-          '                - script: ci/delete-test.sh',
+          '                    VCFA_ORG: $(VCFA_ORG)',
+          '                - script: bash ci/delete-test.sh',
           '                  condition: always()',
           '                  env:',
           '                    VCFA_HOST: $(VCFA_HOST)',
           '                    VCFA_REFRESH_TOKEN: $(VCFA_REFRESH_TOKEN)',
+          '                    VCFA_ORG: $(VCFA_ORG)',
           '',
         ],
         jenkins: [
@@ -1132,7 +1620,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '  stages {',
           '    stage(\'Lint\') {',
           '      steps {',
-          '        sh \'pip install --quiet --user yamllint && PATH="$HOME/.local/bin:$PATH" ci/lint-templates.sh\'',
+          '        sh \'pip install --quiet --user yamllint && PATH="$HOME/.local/bin:$PATH" bash ci/lint-templates.sh\'',
           '      }',
           '    }',
           '    stage(\'Release\') {',
@@ -1140,9 +1628,10 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '      environment {',
           '        VCFA_HOST = "${env.VCFA_HOST}"',
           '        VCFA_REFRESH_TOKEN = credentials(\'vcfa-refresh-token\')',
+          '        VCFA_ORG = "${env.VCFA_ORG ?: \'\'}"',
           '      }',
           '      steps {',
-          '        sh \'ci/release-templates.sh --execute\'',
+          '        sh \'bash ci/release-templates.sh --execute\'',
           '      }',
           '      post {',
           '        always { sh \'ci/delete-test.sh\' }',
@@ -1195,6 +1684,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           { rule: 'One release at a time', because: 'Two merges released side by side can finish in the wrong order.' },
         ],
         dryRun: [
+          'The Orchestrator workflow Propose the pipeline to the repository is a dry run until dryRun is set to false in its configuration element: it compares the files and logs what it would write and open.',
           'ci/release-templates.sh without --execute logs in, lists the changed templates and says what it would do.',
           'ci/lint-templates.sh runs on every pull request and changes nothing.',
         ],
@@ -1214,15 +1704,23 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           'jq, curl, python3 with PyYAML (yamllint brings it) on the runner.',
           `A test project "${testProject}" with a short lease policy, so anything that escapes deletion expires anyway.`,
         ],
-        files: {
-          [ciFile(ci, base)]: env.join('\n'),
-          'IMPORT.md': ciImportMd(ci, ciFile(ci, base), env.join('\n'), runner),
-          'ci/vcfa-lib.sh': VCFA_LIB,
-          'ci/lint-templates.sh': lint,
-          'ci/release-templates.sh': release,
-          'ci/delete-test.sh': deleteTest,
-          [`${dir}README-layout.txt`]: sampleIds,
-        },
+        files: ciFilesWithPackage({
+          ci,
+          ciPath: ciFile(ci, base),
+          runner,
+          kind: 'templates',
+          base,
+          what: 'the cloud template pipeline (lint, test deployment, release)',
+          notes: VCFA9_NOTES,
+          files: {
+            [ciFile(ci, base)]: env.join('\n'),
+            'ci/vcfa-lib.sh': VCFA_LIB,
+            'ci/lint-templates.sh': lint,
+            'ci/release-templates.sh': release,
+            'ci/delete-test.sh': deleteTest,
+            [`${dir}README-layout.txt`]: sampleIds,
+          },
+        }),
         notes: [
           'The test deployment is made from the content in git (the content field of a blueprint request), so the draft in the instance is only written once the test has passed.',
           'The version name is the date and the short commit, so every version points at the commit that produced it.',
@@ -1741,6 +2239,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           },
         ],
         dryRun: [
+          'The Orchestrator workflow Propose the pipeline to the repository is a dry run until dryRun is set to false in its configuration element: it compares the files and logs what it would write and open.',
           '`python3 promotion/promote.py check` resolves every name against production and prints create or update per object. It changes nothing.',
           'The pipeline runs it on every pull request, and again before the apply on main.',
         ],
@@ -1764,12 +2263,23 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
               : 'The vcfops-dry-run environment with an approval check, and "Make secrets available to builds of forks" left off.',
           `A self-hosted runner labelled "${runner}" that can reach production VCF Operations. python3, no extra packages.`,
         ],
-        files: {
-          [ciPath]: env.join('\n'),
-          'IMPORT.md': ciImportMd(ci, ciPath, env.join('\n'), runner),
-          'promotion/promote.py': promote,
-          'promotion/HOW-TO-PROMOTE.md': howTo,
-        },
+        files: ciFilesWithPackage({
+          ci,
+          ciPath,
+          runner,
+          kind: 'vcfops_promotion',
+          base,
+          what: 'the VCF Operations content promotion pipeline',
+          notes: [
+            'VCF Operations 9.1: promote.py logs in with POST /suite-api/api/auth/token/acquire and sends OpsToken, and creates or updates with POST and PUT on /suite-api/api/symptomdefinitions, /supermetrics and /alertdefinitions — the suite API, unchanged in 9.1.',
+            'VERIFY: alert definition fields added by 9.1 that a PUT rejects; compare the body with GET /suite-api/api/alertdefinitions/{id} from production.',
+          ],
+          files: {
+            [ciPath]: env.join('\n'),
+            'promotion/promote.py': promote,
+            'promotion/HOW-TO-PROMOTE.md': howTo,
+          },
+        }),
         notes: [
           'The alert definition payload shape is the one the nightly backup reads from the suite API, so what is backed up is what is sent. If a PUT is rejected, compare the body against GET /suite-api/api/alertdefinitions/{id} from production — fields added by newer releases may need removing.',
           'Symptoms are applied before alerts, so an alert whose symptom is created in the same run resolves it.',
@@ -2003,7 +2513,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
         '  # <verify> these query parameters against the Orchestrator API your instance',
         '  # serves. The embedded Orchestrator accepts the VCF Automation bearer token.',
         '  curl -sS -f -X POST \\',
-        '    "https://${VCFA_HOST}/vco/api/packages?overwrite=true&importConfigurationAttributeValues=false&tagImportMode=DoNotImport" \\',
+        '    "https://${VCFA_HOST}/vco/api/packages?overwrite=true&importConfigurationAttributeValues=false&importConfigSecureStringAttributeValues=false&tagImportMode=DoNotImport" \\',
         '    -H @<(printf \'Authorization: Bearer %s\\n\' "$VCFA_TOKEN") -H "Accept: application/json" \\',
         '    -F "file=@${pkg}"',
         '  echo "imported $pkg"',
@@ -2034,7 +2544,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
-      const deploySteps = ['ci/abx-deploy.sh --execute', ...(vro ? ['ci/vro-import.sh --execute'] : []), 'ci/subscriptions-check.sh'];
+      const deploySteps = ['bash ci/abx-deploy.sh --execute', ...(vro ? ['bash ci/vro-import.sh --execute'] : []), 'bash ci/subscriptions-check.sh'];
       const paths = [dir, ...(vro ? [vroDir] : [])];
       const testSetup = py ? 'pip install --quiet pytest' : '';
 
@@ -2077,6 +2587,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '    env:',
           '      VCFA_HOST: ${{ vars.VCFA_HOST }}',
           '      VCFA_REFRESH_TOKEN: ${{ secrets.VCFA_REFRESH_TOKEN }}',
+          '      VCFA_ORG: ${{ vars.VCFA_ORG }}',
           '    steps:',
           '      - uses: actions/checkout@v4',
           '        with: { fetch-depth: 2 }',
@@ -2089,7 +2600,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
         gitlab: [
           '# Generated by ArchToolKit.',
           '#',
-          '# VCFA_HOST and VCFA_REFRESH_TOKEN are CI/CD variables — the token masked and',
+          '# VCFA_HOST, VCFA_ORG (VCF Automation 9.x only) and VCFA_REFRESH_TOKEN are CI/CD variables — the token masked and',
           '# protected, so only main can read it.',
           'stages: [test, deploy]',
           '',
@@ -2154,6 +2665,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
             '                  env:',
             '                    VCFA_HOST: $(VCFA_HOST)',
             '                    VCFA_REFRESH_TOKEN: $(VCFA_REFRESH_TOKEN)',
+            '                    VCFA_ORG: $(VCFA_ORG)',
           ]),
           '',
         ],
@@ -2173,6 +2685,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '      environment {',
           '        VCFA_HOST = "${env.VCFA_HOST}"',
           "        VCFA_REFRESH_TOKEN = credentials('vcfa-refresh-token')",
+          "        VCFA_ORG = \"${env.VCFA_ORG ?: ''}\"",
           '      }',
           '      steps {',
           ...deploySteps.map((step) => `        sh '${step}'`),
@@ -2209,6 +2722,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           ...(vro ? [{ rule: 'Configuration values are not imported', because: 'A package carries its configuration elements. Importing their values would overwrite production endpoints and secure strings with development ones.' }] : []),
         ],
         dryRun: [
+          'The Orchestrator workflow Propose the pipeline to the repository is a dry run until dryRun is set to false in its configuration element: it compares the files and logs what it would write and open.',
           'ci/abx-deploy.sh without --execute prints the source diff per action.',
           ...(vro ? ['ci/vro-import.sh without --execute lists the packages it would import.'] : []),
           'Run the updated action once by hand in the interface with __dryRun set before enabling any subscription on it.',
@@ -2226,17 +2740,30 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           `A self-hosted runner labelled "${runner}" inside the network for the deploy step. The unit tests run anywhere.`,
           'Each action created once by hand (or from "An extensibility action on a deployment event"), with its id in action.json.',
         ],
-        files: {
-          [ciFile(ci, base)]: env.join('\n'),
-          'IMPORT.md': ciImportMd(ci, ciFile(ci, base), env.join('\n'), runner),
-          'ci/vcfa-lib.sh': VCFA_LIB,
-          'ci/abx-deploy.sh': deploy,
-          'ci/subscriptions-check.sh': subsCheck,
-          ...(vro ? { 'ci/vro-import.sh': vroImport } : {}),
-          [py ? `${dir}tests/stub_context.py` : `${dir}tests/stub-context.js`]: stub,
-          [py ? `${dir}example-action/test_handler.py` : `${dir}example-action/handler.test.js`]: exampleTest,
-          [`${dir}example-action/action.json`]: `${JSON.stringify(actionJson, null, 2)}\n`,
-        },
+        files: ciFilesWithPackage({
+          ci,
+          ciPath: ciFile(ci, base),
+          runner,
+          kind: 'abx',
+          base,
+          what: `the extensibility pipeline (unit tests, action updates${vro ? ', Orchestrator package imports' : ''})`,
+          notes: [
+            ...VCFA9_NOTES,
+            ...(vro
+              ? ['ci/vro-import.sh posts each .package to /vco/api/packages with overwrite=true, importConfigurationAttributeValues=false, importConfigSecureStringAttributeValues=false and tagImportMode=DoNotImport, multipart field "file" — the parameters the mcp-vcf-orchestrator client sends to VCF Automation 9.1.']
+              : []),
+          ],
+          files: {
+            [ciFile(ci, base)]: env.join('\n'),
+            'ci/vcfa-lib.sh': VCFA_LIB,
+            'ci/abx-deploy.sh': deploy,
+            'ci/subscriptions-check.sh': subsCheck,
+            ...(vro ? { 'ci/vro-import.sh': vroImport } : {}),
+            [py ? `${dir}tests/stub_context.py` : `${dir}tests/stub-context.js`]: stub,
+            [py ? `${dir}example-action/test_handler.py` : `${dir}example-action/handler.test.js`]: exampleTest,
+            [`${dir}example-action/action.json`]: `${JSON.stringify(actionJson, null, 2)}\n`,
+          },
+        }),
         notes: [
           `Put the action’s ${handlerFile} beside action.json in its folder — the one this kit writes in "An extensibility action on a deployment event" already honours __dryRun, which is what the example tests rely on.`,
           'PUT /abx/api/resources/actions/{id} replaces the whole action, so the script GETs it first and changes only source and dependencies. If your release rejects fields from the GET in the PUT, strip them in the jq line.',
@@ -2390,13 +2917,13 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           : []),
         'run() {',
         '  local id="$1" script="$2" from="$3"',
-        '  if [[ ! -x "$script" ]]; then',
+        '  if [[ ! -f "$script" ]]; then',
         '    echo "MISSING $script — generate it from $from and commit it here" | tee "out/$id-$STAMP.log"',
         '    FAILED+=("$id (missing)")',
         '    return',
         '  fi',
         '  echo "== $id"',
-        '  if "$script" > "out/$id-$STAMP.log" 2>&1; then',
+        '  if bash "$script" > "out/$id-$STAMP.log" 2>&1; then',
         '    echo "   ok"',
         '  else',
         '    echo "   FAILED — see out/$id-$STAMP.log"',
@@ -2449,7 +2976,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           ...(opsEnvGh.length > 0 ? ['    env:', ...opsEnvGh] : []),
           '    steps:',
           '      - uses: actions/checkout@v4',
-          '      - run: ops/run-all.sh',
+          '      - run: bash ops/run-all.sh',
           '      - uses: actions/upload-artifact@v4',
           '        if: always()',
           '        with:',
@@ -2475,7 +3002,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
             ? ['  variables:', '    VCFOPS_USER: $VCFOPS_READONLY_USER', '    VCFOPS_PASSWORD: $VCFOPS_READONLY_PASSWORD', ...(compliance ? ['    GROUP_ID: $COMPLIANCE_GROUP_ID'] : [])]
             : []),
           '  script:',
-          '    - ops/run-all.sh',
+          '    - bash ops/run-all.sh',
           '  artifacts:',
           '    when: always',
           `    expire_in: ${retention} days`,
@@ -2502,7 +3029,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           '    timeoutInMinutes: 30',
           '    steps:',
           '      - checkout: self',
-          '      - script: ops/run-all.sh',
+          '      - script: bash ops/run-all.sh',
           ...(needsOps
             ? ['        env:', '          VCFOPS_HOST: $(VCFOPS_HOST)', '          VCFOPS_USER: $(VCFOPS_READONLY_USER)', '          VCFOPS_PASSWORD: $(VCFOPS_READONLY_PASSWORD)', ...(compliance ? ['          GROUP_ID: $(COMPLIANCE_GROUP_ID)'] : [])]
             : []),
@@ -2533,7 +3060,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
             : []),
           '  stages {',
           "    stage('Checks') {",
-          "      steps { sh 'ops/run-all.sh' }",
+          "      steps { sh 'bash ops/run-all.sh' }",
           '    }',
           '  }',
           '  post {',
@@ -2572,7 +3099,7 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           { rule: 'Every check runs, even after one fails', because: 'A certificate expiring and an adapter down on the same morning should both be reported.' },
           { rule: 'Fails the run on a non-zero exit', because: 'The CI already knows how to tell somebody about a failed run. That is the notification.' },
         ],
-        dryRun: ['Run it once by hand (workflow_dispatch, "Run pipeline", "Build now") and read the artifact. Nothing here changes anything.'],
+        dryRun: ['The Orchestrator workflow Propose the pipeline to the repository is a dry run until dryRun is set to false in its configuration element: it compares the files and logs what it would write and open.', 'Run it once by hand (workflow_dispatch, "Run pipeline", "Build now") and read the artifact. Nothing here changes anything.'],
         undo: ['Nothing to undo — every check reads only. To stop it, disable the schedule.'],
         told: [
           `A failed run in ${CI_LABEL[ci]}, which notifies the way your CI is set up to — check who receives it.`,
@@ -2583,16 +3110,27 @@ export const PIPELINE_VCF: readonly AutomationBlueprint[] = [
           ...(needsOps ? [`A read-only VCF Operations account, its password in ${secretStore(ci)}.`] : []),
           ...checks.filter((check) => check.id !== 'cert-expiry').map((check) => `${check.script}, generated from ${check.from} and committed beside run-all.sh.`),
         ],
-        files: {
-          [ciFile(ci, base)]: env.join('\n'),
-          'IMPORT.md': ciImportMd(ci, ciFile(ci, base), env.join('\n'), runner),
-          'ops/run-all.sh': runAll,
-          ...(needsOps ? { 'ops/acquire-token.sh': acquire } : {}),
-          ...(certs ? { 'ops/cert-expiry.sh': certScript } : {}),
-        },
+        files: ciFilesWithPackage({
+          ci,
+          ciPath: ciFile(ci, base),
+          runner,
+          kind: 'scheduled',
+          base,
+          what: 'the scheduled read-only VCF checks',
+          notes: [
+            'VCF Operations 9.1: ops/acquire-token.sh uses POST /suite-api/api/auth/token/acquire, unchanged in 9.1.',
+            'The checks themselves are generated by their own blueprints; commit them beside run-all.sh (it reports a missing one rather than failing silently).',
+          ],
+          files: {
+            [ciFile(ci, base)]: env.join('\n'),
+            'ops/run-all.sh': runAll,
+            ...(needsOps ? { 'ops/acquire-token.sh': acquire } : {}),
+            ...(certs ? { 'ops/cert-expiry.sh': certScript } : {}),
+          },
+        }),
         notes: [
           'Watch the watcher: if the runner is offline, the schedule silently does nothing. The VCF Operations self-check cannot see that; your CI’s own runner-offline alert can.',
-          'Commit the scripts with the executable bit (git update-index --chmod=+x ops/*.sh), or run-all.sh reports them missing.',
+          'Every script is run with bash, so it works whatever file mode it was committed with — including when the Orchestrator workflow commits it through the git host\'s API, which cannot set the executable bit.',
           'Cron in every one of these CIs is UTC unless told otherwise. 06:00 UTC is not 06:00 where the people reading the result are.',
         ],
         findings,
@@ -2719,6 +3257,69 @@ function codestreamImportScript(pipelineName: string, vars: readonly string[], e
     `# Undo: DELETE /pipeline/api/pipelines/{id}, then the endpoints and variables it used.`,
     '',
   ].join('\n');
+}
+
+/**
+ * The Orchestrator workflow that imports a Pipelines pipeline: the ES5 twin of
+ * import.sh, made idempotent. 8.x login (POST /iaas/api/login), because the
+ * service it talks to only exists on 8.x.
+ */
+function codestreamWorkflow(project: string, vars: readonly string[], endpointNames: readonly string[], pipelineName: string): string {
+  const q = JSON.stringify;
+  return String.raw`var PROJECT = ${q(project)};
+var VARIABLES = ${q(vars)};
+var ENDPOINTS = ${q(endpointNames)};
+var PIPELINE = ${q(pipelineName)};
+var ctx = core.begin(settings, dryRun);
+if (!settings.vcfaHost || !settings.vcfaRefreshToken) throw new Error("Set vcfaHost and vcfaRefreshToken in the configuration element " + SETTINGS_NAME + ".");
+var api = "https://" + settings.vcfaHost + "/pipeline/api/";
+var auth = core.loginVcfAutomation(settings.vcfaHost, settings.vcfaRefreshToken, "");
+function o(extra) {
+  var r = { redact: settings._secrets };
+  if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) r[k] = extra[k];
+  return r;
+}
+// The id of the object of this kind with this name in the project, or null.
+function existing(kind, name) {
+  var filter = "((name eq '" + String(name).replace(/'/g, "''") + "') and (project eq '" + PROJECT.replace(/'/g, "''") + "'))";
+  var r = core.http("GET", api + kind + "?$filter=" + encodeURIComponent(filter), auth, null, o());
+  var docs = (r.body && r.body.documents) || {};
+  for (var link in docs) if (docs.hasOwnProperty(link)) return String(docs[link].id || link);
+  return null;
+}
+function importYaml(action, label, yaml) {
+  return core.act(ctx, label, function () {
+    var r = core.http("POST", api + "import?action=" + action, auth, yaml, o({ contentType: "application/x-yaml", accept: "application/x-yaml, application/json" }));
+    var m = /["']?status["']?\s*:\s*["']?([A-Z_]+)/.exec(r.text);
+    var want = action === "create" ? "CREATED" : "UPDATED";
+    if (!m || m[1] !== want) throw new Error("The import answered " + (m ? m[1] : "with no status") + " rather than " + want + ": " + String(r.text).substring(0, 200));
+    return m[1];
+  });
+}
+
+var probe = core.http("GET", api + "pipelines?$top=1", auth, null, o({ allow: [404] }));
+if (probe.statusCode === 404) {
+  throw new Error("This VCF Automation has no Automation Pipelines: GET /pipeline/api/pipelines answered 404. Pipelines is not in VCF Automation 9 (Broadcom KB 378424; 8.18.1 is the last release with it). On VCF 9.1 use a CI pipeline against the VCF Automation APIs instead.");
+}
+for (var i = 0; i < VARIABLES.length; i++) {
+  var v = VARIABLES[i];
+  var vid = existing("variables", v);
+  if (vid) { System.log("Variable " + v + " exists, left as it is (its value is set in the interface)."); continue; }
+  var body = JSON.parse(core.resource(RESOURCE_PATH, "variable-" + v + ".json"));
+  core.act(ctx, "create variable " + v + " (empty)", function () { return core.http("POST", api + "variables", auth, body, o()); });
+}
+for (var j = 0; j < ENDPOINTS.length; j++) {
+  var e = ENDPOINTS[j];
+  if (existing("endpoints", e)) { System.log("Endpoint " + e + " exists, left as it is (its credentials are set in the interface)."); continue; }
+  importYaml("create", "create endpoint " + e, core.resource(RESOURCE_PATH, "endpoint-" + e + ".yaml"));
+}
+var pipelineYaml = core.resource(RESOURCE_PATH, "pipeline.yaml");
+var status = existing("pipelines", PIPELINE)
+  ? importYaml("apply", "update pipeline " + PIPELINE, pipelineYaml)
+  : importYaml("create", "create pipeline " + PIPELINE, pipelineYaml);
+pipelineStatus = status || "";
+summary = core.audit(ctx, { project: PROJECT, pipeline: PIPELINE, pipelineStatus: pipelineStatus, next: "Set the secret variable values and the endpoint placeholders in the interface, then add the git webhook." });
+core.notify(settings.webhook, summary);`;
 }
 
 /** A YAML scalar that survives any text: a JSON string is a valid double-quoted YAML scalar. */

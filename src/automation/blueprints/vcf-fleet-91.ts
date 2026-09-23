@@ -7,12 +7,22 @@
  * management components, and in 9.1.1 VCF Automation, VCF Operations for
  * networks and the cloud proxies too — under one identity broker.
  *
- * Every script here talks to /suite-api/api/fleet-management on the VCF
- * Operations appliance with a Bearer token from the VCF Identity Broker,
- * exchanged for the API token of an API client (fleet91_api_clients writes and
- * rotates that token file; everything else reads it). Long-running requests are
- * followed at /suite-api/api/workflows/requests/{requestId}. Reads come first;
- * anything that changes the fleet is behind --execute.
+ * Each blueprint emits one Orchestrator package (to-package.ts) on the shared
+ * ArchToolKit core library: the workflow that does the job, dry run until its
+ * configuration element is armed, capped, stopping at the first failure, and
+ * audited. The bash scripts it replaced stay under scripts/ as the fallback.
+ *
+ * Both talk to /suite-api/api/fleet-management on the VCF Operations
+ * appliance with a Bearer token from the VCF Identity Broker, exchanged for
+ * the API token of an API client (fleet91_api_clients issues and rotates it).
+ * Long-running requests are followed at
+ * /suite-api/api/workflows/requests/{requestId}. The exceptions, each where
+ * its endpoint requires: the classic /suite-api/api endpoints (collectors,
+ * licensing, Salt) take an OpsToken; the fleet lifecycle API takes the
+ * jwtToken the OpsToken is exchanged for; DNS and NTP go through SDDC
+ * Manager's /v1 API in the package; configuration drift is vCenter's.
+ * Reads come first; anything that changes the fleet is behind dryRun = false
+ * in the package, --execute in the scripts.
  *
  * Paths and fields confirmed against the VCF Operations API reference
  * (developer.broadcom.com) and the davidwzhang.com 9.1 series are used as they
@@ -26,6 +36,9 @@ import { automationBlueprint, type AutomationBlueprint } from '../from-automatio
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
 import { importGuide, type ImportStepSpec } from './vcf-networks-logs.ts';
+import { packageNameOf, toPackage } from '../vro/to-package.ts';
+import type { VroActionDef } from '../vro/core.ts';
+import type { VroConfigAttribute, VroParamSpec } from '../../kit/vro-package.ts';
 
 const PLATFORM = 'vcf-fleet' as const;
 const SRC = 'ArchToolKit';
@@ -46,7 +59,7 @@ function fleetImport(intro: string, steps: readonly (ImportStepSpec | undefined)
 
 /** The step for a read-only script run on a schedule. */
 function cronStep(script: string): ImportStepSpec {
-  return { heading: 'Run it once, then schedule it', lines: [`Run \`./${script}\` by hand and compare with the VCF Operations interface, then install the line in crontab.txt with \`crontab -e\`.`] };
+  return { heading: 'Or: the fallback script, from a Linux host, on cron', lines: [`Run \`./scripts/${script}\` by hand and compare with the VCF Operations interface, then install the line in crontab.txt with \`crontab -e\`. With the Orchestrator package, schedule the workflow instead and leave crontab.txt out.`] };
 }
 
 /** Single-quote a value for bash. */
@@ -285,6 +298,8 @@ function head(title: string, usage: readonly string[]): string[] {
     '',
     ...authPreamble('vcf-fleet'),
     'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+    '# The payloads are read from beside the script, wherever it is run from.',
+    'HERE="$(cd "$(dirname "$0")" && pwd)"',
     '',
     ...fleetApi(),
     '',
@@ -297,9 +312,1595 @@ const cron = (base: string, schedule: string, script: string, args = ''): string
   [
     `# ${base}: the script logs in for itself from the API token file (mode 600,`,
     '# written and rotated by fleet91_api_clients). No token is in this line.',
-    `${schedule} cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./${script}${args ? ` ${args}` : ''} >> /var/log/archtoolkit/${base}.log 2>&1`,
+    '# With the Orchestrator package, schedule its workflow in Orchestrator instead and leave this out.',
+    `${schedule} cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./scripts/${script}${args ? ` ${args}` : ''} >> /var/log/archtoolkit/${base}.log 2>&1`,
     '',
   ].join('\n');
+
+// ---------------------------------------------------------------------------
+// The Orchestrator packages.
+//
+// Each blueprint below also emits one Orchestrator package (to-package.ts): a
+// workflow that does the job through the same APIs as the script, on the
+// shared ArchToolKit core library. The bash scripts stay, under scripts/, as
+// the fallback for people who run them from a Linux host.
+//
+// Which login each endpoint takes:
+//   /suite-api/api/fleet-management/...     Bearer from the identity broker
+//                                           (core.loginVcfFleet, API token)
+//   /suite-api/api/collectors, licensing,   OpsToken (core.loginVcfOps)
+//     salt, auth/token/exchange
+//   /fleet-lcm/v1 on the lifecycle host     the jwtToken the OpsToken is
+//                                           exchanged for (serviceKeys fleet-lcm)
+//   SDDC Manager /v1                        core.loginSddcManager
+//   vCenter /api                            core.loginVcenter / loginVcenterToken
+
+const vp = (name: string, type: string, description: string): VroParamSpec => ({ name, type, description });
+
+const ORCH_REQ = 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the endpoint certificates trusted in Orchestrator (SSL Trust Manager).';
+
+/** The settings every fleet-management package logs in with. */
+const FLEET_SETTINGS: readonly VroConfigAttribute[] = [
+  { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host (FQDN): /suite-api/api/fleet-management is called here' },
+  { name: 'idbHost', type: 'string', value: '', description: 'VCF Identity Broker host: the API token is exchanged at /acs/t/CUSTOMER/token' },
+  { name: 'apiToken', type: 'SecureString', description: 'The API token of an API client in VCF Operations (fleet91_api_clients) whose role has the privileges this workflow needs' },
+];
+
+/** The settings of a package that talks to the classic VCF Operations API with an OpsToken. */
+const OPS_SETTINGS: readonly VroConfigAttribute[] = [
+  { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host (FQDN)' },
+  { name: 'opsUsername', type: 'string', value: '', description: 'A VCF Operations account for the OpsToken (/suite-api/api/auth/token/acquire)' },
+  { name: 'opsPassword', type: 'SecureString', description: 'Its password' },
+  { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source of the account; empty for a local account' },
+];
+
+/** dryRun, cap and webhook: the arming switch, the most changes a run may make, and who is told. */
+function arming(cap: number, webhook: string, capWhat = 'changes'): VroConfigAttribute[] {
+  return [
+    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing changes while this is true' },
+    { name: 'cap', type: 'number', value: cap, description: `The most ${capWhat} one run may make` },
+    { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the audit record is posted' },
+  ];
+}
+
+const DRY_RUN_INPUT = { name: 'dryRun', type: 'boolean', description: 'true: report what would change and change nothing' } as const;
+const SUMMARY_OUTPUT = { name: 'summary', type: 'string', description: 'The audit record, JSON' } as const;
+
+/**
+ * The login every fleet-management workflow opens with. auth is a function,
+ * not a header: the identity broker's access token lasts about thirty
+ * minutes and a certificate replacement alone can take eleven, so it logs in
+ * again from the API token after twenty-five. The actions below take auth
+ * itself and call it for each request.
+ */
+const FLEET_LOGIN = String.raw`if (!settings.opsHost || !settings.idbHost) throw new Error("Set opsHost and idbHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.apiToken) throw new Error("Set apiToken in the configuration element " + SETTINGS_NAME + ": the API token of an API client (see fleet91_api_clients).");
+var FM = "https://" + settings.opsHost + "/suite-api/api/fleet-management";
+var SAFE = { redact: settings._secrets };
+var bearer = null;
+var bearerAt = 0;
+function auth() {
+  var now = new Date().getTime();
+  if (!bearer || now - bearerAt > 25 * 60 * 1000) {
+    bearer = core.loginVcfFleet(settings.idbHost, settings.apiToken);
+    bearerAt = now;
+  }
+  return bearer;
+}
+function fm(method, path, body, options) {
+  return core.http(method, FM + path, auth(), body === undefined ? null : body, options || SAFE);
+}
+`;
+
+/** The OpsToken login of the classic VCF Operations API; logoutVcfOps goes in the workflow's finally. */
+const OPS_LOGIN = String.raw`if (!settings.opsHost) throw new Error("Set opsHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUsername and opsPassword in the configuration element " + SETTINGS_NAME + ".");
+var API = "https://" + settings.opsHost + "/suite-api/api";
+var SAFE = { redact: settings._secrets };
+var opsAuth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
+function ops(method, path, body, options) {
+  return core.http(method, API + path, opsAuth, body === undefined ? null : body, options || SAFE);
+}
+`;
+
+/**
+ * Every page of a fleet-management query. The page size is not documented as
+ * capped, and a server that capped it quietly would make "short page" look
+ * like "last page", so it pages to an empty page or to pageInfo.totalCount,
+ * and throws — never returns part of a list — on a response it does not
+ * recognise, a page that repeats, or a count short of the total.
+ */
+const FLEET_QUERY: VroActionDef = {
+  name: 'fleetQuery',
+  description:
+    'Every record of a VCF Operations fleet-management query: POST <url>?page=N&pageSize=1000 with body, the records under the first of keys ("a|b") present in the response. Throws rather than return a partial list: on a response without that array (unless pageInfo.totalCount is 0), a page that repeats, or fewer records than pageInfo.totalCount.',
+  resultType: 'Any',
+  params: [
+    vp('url', 'string', 'The query URL, https://<ops>/suite-api/api/fleet-management/.../query'),
+    vp('auth', 'Any', 'A function returning the authorization header, or the header object'),
+    vp('body', 'Any', 'The query body (filters); {} for all'),
+    vp('keys', 'string', 'The list key(s) of the response, "a" or "a|b"'),
+    vp('safe', 'Any', 'The http() options, with redact'),
+  ],
+  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var names = String(keys).split("|");
+var target = String(url);
+var where = "POST " + target.split("?")[0];
+var previous = null;
+return core.pageAll(function (page) {
+  var headers = typeof auth === "function" ? auth() : auth;
+  var r = core.http("POST", target + (target.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", headers, body || {}, safe || {}).body;
+  if (!r || typeof r !== "object") throw new Error(where + " page " + page + ": not a JSON object; refusing a partial list.");
+  var items = null;
+  for (var i = 0; i < names.length && items === null; i++) {
+    if (r[names[i]] !== undefined && r[names[i]] !== null) items = r[names[i]];
+  }
+  var total = r.pageInfo && r.pageInfo.totalCount !== undefined && r.pageInfo.totalCount !== null ? Number(r.pageInfo.totalCount) : null;
+  if (items === null && total === 0) items = [];
+  if (Object.prototype.toString.call(items) !== "[object Array]") throw new Error(where + " page " + page + ": no " + keys + " array in the response; refusing a partial list.");
+  var signature = JSON.stringify(items);
+  if (page > 0 && items.length > 0 && signature === previous) throw new Error(where + ": page " + page + " repeats the page before it; the server is not paging. Refusing a partial list.");
+  previous = signature;
+  return { items: items, total: total };
+}, 200);`,
+};
+
+/**
+ * Follow a fleet request (the requestId a password or certificate change
+ * returns) to the end, at the path the VCF Operations API reference documents.
+ */
+const FOLLOW_REQUEST: VroActionDef = {
+  name: 'followRequest',
+  description:
+    'Follows a VCF Operations fleet request, GET /suite-api/api/workflows/requests/{requestId}, every 15 seconds. Returns the request when its state is COMPLETED. Throws when it FAILED (or ERROR, CANCELLED, ABORTED) with its errorCause, and throws "outcome UNKNOWN" when it is still running after tries checks or its status could not be read eight times in a row — a caller that changes something must treat that as "may have happened".',
+  resultType: 'Any',
+  params: [
+    vp('opsHost', 'string', 'VCF Operations host'),
+    vp('auth', 'Any', 'A function returning the authorization header, or the header object'),
+    vp('requestId', 'string', 'The requestId'),
+    vp('tries', 'number', 'How many checks, 15 seconds apart; 0 for 240 (an hour)'),
+    vp('safe', 'Any', 'The http() options, with redact'),
+  ],
+  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var limit = tries && tries > 0 ? tries : 240;
+var misses = 0;
+var state = "UNKNOWN";
+for (var i = 0; i < limit; i++) {
+  var r = null;
+  try {
+    r = core.http("GET", "https://" + opsHost + "/suite-api/api/workflows/requests/" + encodeURIComponent(String(requestId)), typeof auth === "function" ? auth() : auth, null, safe || {}).body;
+  } catch (e) {
+    misses++;
+    if (misses >= 8) throw new Error("Request " + requestId + ": status unreadable " + misses + " times in a row; outcome UNKNOWN. Follow it in VCF Operations before running again.");
+    System.sleep(15000);
+    continue;
+  }
+  misses = 0;
+  state = String((r && r.state) || "UNKNOWN");
+  if (state === "COMPLETED") {
+    System.log("Request " + requestId + ": COMPLETED");
+    return r;
+  }
+  if (/^(FAILED|ERROR|CANCELLED|CANCELED|ABORTED)$/.test(state)) {
+    var cause = r.errorCause ? JSON.stringify(r.errorCause).substring(0, 300) : "no cause given";
+    throw new Error("Request " + requestId + " " + state + ": " + cause);
+  }
+  System.sleep(15000);
+}
+throw new Error("Request " + requestId + " still " + state + " after " + limit + " checks; outcome UNKNOWN. Follow it in VCF Operations before running again.");`,
+};
+
+const FLEET_ACTIONS: readonly VroActionDef[] = [FLEET_QUERY, FOLLOW_REQUEST];
+
+/**
+ * The end of every changing workflow: the audit record whatever happened, the
+ * webhook when something needs a person, and then the failure, if any, so the
+ * run shows failed. Error messages come from core.http, which has already
+ * scrubbed every secret out of them.
+ */
+const FINISH = String.raw`summary = core.audit(ctx, report);
+if (failure || problems.length > 0) core.notify(settings.webhook, summary);
+if (failure) throw failure;`;
+
+/** The same for a read-only workflow. */
+const FINISH_READ = String.raw`summary = core.audit(null, report);
+if (failure || problems.length > 0) core.notify(settings.webhook, summary);
+if (failure) throw failure;`;
+
+/** The package's category and name: one per instance name, so two instances never collide. */
+function fleetNames(kind: string, base: string): { packageName: string; categoryPath: string } {
+  return { packageName: packageNameOf('fleet91', kind, base), categoryPath: `ArchToolKit/Fleet/${base}` };
+}
+
+/** The sources the 9.1 audit of this file rests on, for IMPORT.md. */
+const AUDIT_SOURCES = {
+  opsApi: 'VCF Operations API 9.1 reference, developer.broadcom.com/xapis/vcf-operations-api/latest/ — Fleet Password Management, Fleet Password Policy Management, Fleet Certificate Management, IAM APIs, Workflow Request, Collector Groups, Collectors, Product Licensing, Salt Management, Auth (token/acquire, token/exchange).',
+  idb: 'davidwzhang.com, "VCF 9.1 API Access (1): Basic" (2026-05-10): POST https://<identity broker>/acs/t/CUSTOMER/token, grant_type urn:custom:vcf:params:oauth:grant-type:api-token, api_token.',
+  passwords: 'davidwzhang.com, "VCF 9.1 Fleet Management API (3): Automated Password Management" (2026-05-18): accounts/query filters, PUT .../accounts/{passwordAccountKey}/password {currentPassword, newPassword}, requestId followed at /suite-api/api/workflows/requests/{requestId}, state INPROGRESS/COMPLETED, errorCause.',
+  certificates: 'davidwzhang.com, "VCF 9.1 Fleet Management API (1)" and "(2)" (2026-05-16/17): certificates/query {status, appliance, applianceFqdn, category}, POST csrs {certificateId, generateCsrSpec{..., subjectAltNames: the certificate\'s subjectAlternativeNames {dns, ip}}}, GET csrs?commonName= returning certificateSignatureInfo[].csr, PUT certificates/{key} {caType EXTERNAL_CA | MSCA, certificateChain}.',
+  fleetLcm: 'VCF Fleet LCM Service APIs, developer.broadcom.com/xapis/vcf-fleet-lcm-service-apis/latest/: base https://<fleet lifecycle host>/fleet-lcm/v1; token by POST /suite-api/api/auth/token/exchange {"serviceKeys":["fleet-lcm"]} with an OpsToken, returning jwtToken; Sddc Lcm, Upgrade Plan and Task operations. williamlam.com, "VCF 9.1 - Automating VCF Backup Scheduling with the Fleet LCM API" (2026-07): the backupConfigSpec body.',
+  sddcDnsNtp: 'SDDC Manager API 9.1, developer.broadcom.com/xapis/sddc-manager-api/latest/: GET/PUT /v1/system/dns-configuration {dnsServers[{ipAddress, isPrimary}], at most 2} and /v1/system/ntp-configuration {ntpServers[{ipAddress}]}, POST .../validations and GET .../validations/{id} (executionStatus, resultStatus), a Task followed at /v1/tasks/{id}. The reference marks the DNS PUT deprecated "in favor of newer configuration management endpoints".',
+  vcConfig: 'vSphere Automation API (govmomi vapi/esx/settings/clusters/configuration): /api/esx/settings/clusters/{cluster}/configuration with action=checkCompliance, precheck, apply and importConfig as tasks (vmw-task=true), and exportConfig returning {config} directly — not a task.',
+} as const;
+/** The read-only report of password policies, component groups and accounts. */
+const POLICY_REPORT_WORKFLOW = String.raw`${FLEET_LOGIN}var problems = [];
+var failure = null;
+var report = { policies: 0, componentGroups: 0, accounts: 0 };
+var lines = [];
+function when(ms) { return Number(ms) > 0 ? new Date(Number(ms)).toISOString().substring(0, 16) + "Z" : "unknown"; }
+try {
+  var policies = mod.fleetQuery(FM + "/password-policies/query", auth, {}, "policies", SAFE);
+  report.policies = policies.length;
+  for (var i = 0; i < policies.length; i++) {
+    var c = policies[i].complexityConstraints || {};
+    var x = policies[i].expirationConstraints || {};
+    lines.push(["policy", policies[i].name, "fleet=" + (policies[i].fleet === true), "length>=" + c.minLength, "expiry=" + x.maxDays + "d", "history=" + c.passwordHistory, "updated " + when(policies[i].updatedAt)].join("\t"));
+  }
+  // Every page, or the run fails: a group on page two is still a group.
+  var groups = mod.fleetQuery(FM + "/password-policies/component-groups/query", auth, {}, "results", SAFE);
+  report.componentGroups = groups.length;
+  if (groups.length === 0) problems.push("No component groups returned: cannot judge compliance.");
+  for (var j = 0; j < groups.length; j++) {
+    var g = groups[j];
+    var name = g.componentGroupResourceFqdn || g.componentGroupResourceName || "?";
+    var status = g.componentGroupComplianceStatus ? String(g.componentGroupComplianceStatus) : "";
+    lines.push(["group", g.componentGroup, name, g.policyName || "-", status || "NO STATUS", "checked " + when(g.complianceUpdatedAt)].join("\t"));
+    // Anything not explicitly COMPLIANT is a problem, including a missing status.
+    if (status !== "COMPLIANT") problems.push(name + ": " + (status || "no compliance status"));
+  }
+  var accounts = mod.fleetQuery(FM + "/password-management/accounts/query", auth, {}, "vcfPasswordAccounts", SAFE);
+  report.accounts = accounts.length;
+  accounts.sort(function (a, b) { return Number(a.lastPasswordUpdateTimestamp || 0) - Number(b.lastPasswordUpdateTimestamp || 0); });
+  for (var k = 0; k < accounts.length; k++) {
+    lines.push(["account", accounts[k].appliance, accounts[k].applianceFqdn, accounts[k].userName, accounts[k].status, "changed " + when(accounts[k].lastPasswordUpdateTimestamp)].join("\t"));
+  }
+} catch (e) {
+  failure = e;
+}
+for (var n = 0; n < problems.length; n++) System.warn("PROBLEM: " + problems[n]);
+report.problems = problems;
+problemCount = problems.length;
+reportText = lines.join("\n");
+${FINISH_READ}`;
+
+/**
+ * Create or update the policy and apply it, or (9.1.1) detach it from named
+ * instances. Idempotent: a policy whose settings already match is left as it
+ * is, and no task is submitted where the policy is already applied. Every
+ * existing policy is exported before the first change — that is the undo.
+ */
+function policyChangeWorkflow(mode: string, target: string, policyName: string, instances: readonly string[]): string {
+  const q = JSON.stringify;
+  const needsInstances = mode === 'detach' || (mode === 'apply' && target === 'INSTANCE');
+  return String.raw`var MODE = ${q(mode)};
+var TARGET = ${q(target)};
+var POLICY_NAME = ${q(policyName)};
+var INSTANCES = ${q(instances)};
+var NEEDS_INSTANCES = ${needsInstances ? 'true' : 'false'};
+var ctx = core.begin(settings, dryRun);
+${FLEET_LOGIN}var problems = [];
+var failure = null;
+var report = { policy: POLICY_NAME, mode: MODE, target: TARGET, instances: INSTANCES, policyId: null, taskId: null };
+var before = "";
+var ACTIVE_TASK = /^(IN_PROGRESS|PENDING|QUEUED|RUNNING)$/;
+function lower(s) { return String(s || "").toLowerCase(); }
+function wanted(fqdn) {
+  for (var i = 0; i < INSTANCES.length; i++) if (lower(INSTANCES[i]) === lower(fqdn)) return true;
+  return false;
+}
+// Only the settings the policy file sets are compared; anything else the
+// server adds (ids, dates) does not count as a difference.
+function same(have, want) {
+  var parts = ["complexityConstraints", "expirationConstraints", "lockoutConstraints"];
+  for (var i = 0; i < parts.length; i++) {
+    var w = want[parts[i]] || {};
+    var h = have[parts[i]] || {};
+    for (var k in w) if (w.hasOwnProperty(k) && String(h[k]) !== String(w[k])) return false;
+  }
+  return true;
+}
+// The undo, taken once, before the first change of an armed run.
+function exportFirst() {
+  if (ctx.dryRun || before) return;
+  var r = fm("POST", "/password-policies/export", {});
+  var text = typeof r.body === "string" ? r.body : JSON.stringify(r.body);
+  if (!text || text === "{}" || text === "[]" || text === "null") throw new Error("Refusing: the policy export is empty, so there would be no undo.");
+  before = text;
+  System.log("Every existing password policy exported to the policiesBefore output: that is the undo.");
+}
+function runTask(description, body) {
+  exportFirst();
+  return core.act(ctx, description, function () {
+    var r = fm("POST", "/password-policies/component-groups/tasks", body);
+    var id = r.body && r.body.taskId ? String(r.body.taskId) : "";
+    if (!id) throw new Error("The policy task was sent but no taskId came back; check the password policy task history.");
+    var status = "UNKNOWN";
+    for (var n = 0; n < 120; n++) {
+      var t = fm("GET", "/password-policies/component-groups/tasks/" + encodeURIComponent(id)).body || {};
+      status = String(t.taskStatus || "UNKNOWN");
+      if (!ACTIVE_TASK.test(status)) break;
+      System.sleep(15000);
+    }
+    if (status !== "COMPLETED" && status !== "SUCCEEDED") throw new Error("Policy task " + id + " ended " + status + ". Read the component states before retrying (taskType POLICY_RETRY).");
+    return id;
+  });
+}
+try {
+  // Guardrail: two overlapping tasks on the same component group leave its
+  // compliance state meaningless. Every page is read.
+  var tasks = mod.fleetQuery(FM + "/password-policies/component-groups/tasks/query", auth, {}, "results|tasks", SAFE);
+  var running = 0;
+  for (var t = 0; t < tasks.length; t++) if (ACTIVE_TASK.test(String(tasks[t].taskStatus || ""))) running++;
+  if (running > 0) throw new Error("Refusing: " + running + " password policy task(s) still in progress.");
+
+  // Matched by exact name here as well as in the query: a server that ignored
+  // the filter would otherwise hand back some other policy to overwrite.
+  var named = mod.fleetQuery(FM + "/password-policies/query", auth, { policyNames: [POLICY_NAME] }, "policies", SAFE);
+  var existing = [];
+  for (var i = 0; i < named.length; i++) if (named[i].name === POLICY_NAME) existing.push(named[i]);
+  if (existing.length > 1) throw new Error("Refusing: " + existing.length + " policies are named " + POLICY_NAME + ".");
+  var current = existing.length === 1 ? existing[0] : null;
+
+  // Filtered by the server and again here, so a filter the server ignored
+  // cannot widen the change.
+  var groups = mod.fleetQuery(FM + "/password-policies/component-groups/query", auth, NEEDS_INSTANCES ? { componentGroupResourceFqdns: INSTANCES } : {}, "results", SAFE);
+  var targets = [];
+  for (var g = 0; g < groups.length; g++) {
+    if (NEEDS_INSTANCES ? wanted(groups[g].componentGroupResourceFqdn) : String(groups[g].componentGroup) === TARGET) targets.push(groups[g]);
+  }
+  if (NEEDS_INSTANCES && targets.length !== INSTANCES.length) throw new Error("Refusing: " + INSTANCES.length + " instance FQDN(s) given, " + targets.length + " component group(s) matched. Check the names against the report.");
+  var ids = [];
+  for (var m = 0; m < targets.length; m++) {
+    if (NEEDS_INSTANCES && !targets[m].componentGroupResourceId) throw new Error("Component group " + targets[m].componentGroupResourceFqdn + " has no componentGroupResourceId.");
+    ids.push(String(targets[m].componentGroupResourceId));
+  }
+  var where = TARGET === "FLEET" ? "the fleet" : TARGET === "MANAGEMENT" ? "the management components" : INSTANCES.join(", ");
+
+  if (MODE === "detach") {
+    if (!current) throw new Error("No policy named " + POLICY_NAME + "; there is nothing to remove.");
+    report.policyId = String(current.id);
+    var attached = [];
+    for (var a = 0; a < targets.length; a++) if (targets[a].policyName === POLICY_NAME) attached.push(String(targets[a].componentGroupResourceId));
+    if (attached.length === 0) System.log("Password policy \"" + POLICY_NAME + "\" is not applied to " + where + "; left as it is.");
+    else report.taskId = runTask("remove password policy \"" + POLICY_NAME + "\" from " + attached.length + " instance(s)", { taskType: "POLICY_DETACH", policyId: String(current.id), targetComponentGroups: { componentGroups: ["INSTANCE"], componentGroupResourceIds: attached } });
+  } else {
+    var desired = JSON.parse(core.resource(RESOURCE_PATH, "policy.json"));
+    var changed = false;
+    var policyId = current ? String(current.id) : null;
+    if (!current) {
+      exportFirst();
+      policyId = core.act(ctx, "create password policy \"" + POLICY_NAME + "\"", function () {
+        var r = fm("POST", "/password-policies", desired);
+        if (!r.body || !r.body.id) throw new Error("POST /password-policies returned no id; check Fleet management > Passwords before running again.");
+        return String(r.body.id);
+      }) || "new-policy";
+      changed = true;
+    } else if (same(current, desired)) {
+      System.log("Password policy \"" + POLICY_NAME + "\" (" + policyId + ") already has these settings; left as it is.");
+    } else {
+      exportFirst();
+      core.act(ctx, "update password policy \"" + POLICY_NAME + "\" (" + policyId + ")", function () {
+        // VERIFY: the update body is the create body plus the id.
+        var body = JSON.parse(JSON.stringify(desired));
+        body.id = policyId;
+        fm("PUT", "/password-policies", body);
+        return policyId;
+      });
+      changed = true;
+    }
+    report.policyId = policyId;
+    var applied = TARGET === "FLEET" ? Boolean(current && current.fleet === true) : targets.length > 0;
+    for (var s = 0; TARGET !== "FLEET" && s < targets.length; s++) if (targets[s].policyName !== POLICY_NAME) applied = false;
+    if (!changed && applied) System.log("Password policy \"" + POLICY_NAME + "\" is already applied to " + where + "; no task submitted.");
+    else report.taskId = runTask("apply password policy \"" + POLICY_NAME + "\" to " + where, { taskType: "POLICY_APPLY", policyId: policyId, targetComponentGroups: { componentGroups: [TARGET], componentGroupResourceIds: TARGET === "INSTANCE" ? ids : [] } });
+  }
+} catch (e) {
+  failure = e;
+}
+report.problems = problems;
+policyId = ctx.dryRun ? "" : report.policyId || "";
+taskId = ctx.dryRun ? "" : report.taskId || "";
+policiesBefore = before;
+${FINISH}`;
+}
+/**
+ * Change the passwords of the selected accounts one at a time, following each
+ * request to the end and stopping at the first that does not complete.
+ *
+ * The fleet API needs the current password to set a new one, so both come
+ * from the SecureString rotationSecrets, never from the package. Orchestrator
+ * does not generate passwords here: a workflow has no private, durable place
+ * to write a new password down before it is sent (its log is not one, and its
+ * variables are only kept between steps), and a password that went through
+ * but was never written down is a locked account.
+ */
+function rotateWorkflow(appliance: string, credType: string, status: string, fqdns: readonly string[], users: readonly string[]): string {
+  const q = JSON.stringify;
+  return String.raw`var APPLIANCE = ${q(appliance)};
+var CRED_KIND = ${q(credType)};
+var STATUS = ${q(status)};
+var FQDNS = ${q(fqdns)};
+var USERS = ${q(users)};
+var ctx = core.begin(settings, dryRun);
+${FLEET_LOGIN}var problems = [];
+var failure = null;
+var report = { appliance: APPLIANCE, credentialType: CRED_KIND, selected: [], changed: [], skipped: [] };
+function lower(s) { return String(s || "").toLowerCase(); }
+function listed(list, value, caseless) {
+  if (list.length === 0) return true;
+  for (var i = 0; i < list.length; i++) if (caseless ? lower(list[i]) === lower(value) : String(list[i]) === String(value)) return true;
+  return false;
+}
+// rotationSecrets: a JSON array of {"fqdn", "user", "current", "next"}. It is
+// parsed here and never echoed; a parse error names the setting, not its value.
+var entries = [];
+try {
+  entries = JSON.parse(String(settings.rotationSecrets || "[]"));
+} catch (e) {
+  throw new Error("rotationSecrets in " + SETTINGS_NAME + " is not a JSON array of {fqdn, user, current, next}.");
+}
+if (Object.prototype.toString.call(entries) !== "[object Array]") throw new Error("rotationSecrets in " + SETTINGS_NAME + " is not a JSON array of {fqdn, user, current, next}.");
+// Every password is scrubbed from anything an endpoint echoes back.
+var redact = (settings._secrets || []).slice(0);
+for (var r = 0; r < entries.length; r++) {
+  if (entries[r] && entries[r].current) redact.push(String(entries[r].current));
+  if (entries[r] && entries[r].next) redact.push(String(entries[r].next));
+}
+SAFE = { redact: redact };
+function entryFor(account) {
+  for (var i = 0; i < entries.length; i++) {
+    if (entries[i] && lower(entries[i].fqdn) === lower(account.applianceFqdn) && String(entries[i].user) === String(account.userName)) return entries[i];
+  }
+  return null;
+}
+try {
+  var max = Number(settings.maxAccounts) > 0 ? Number(settings.maxAccounts) : 0;
+  // One appliance type per run: the query filters on it, and so does this.
+  var filter = { appliance: APPLIANCE, credentialType: CRED_KIND };
+  if (STATUS) filter.status = STATUS;
+  var accounts = mod.fleetQuery(FM + "/password-management/accounts/query", auth, filter, "vcfPasswordAccounts", SAFE);
+  var selected = [];
+  for (var a = 0; a < accounts.length; a++) {
+    var acct = accounts[a];
+    if (String(acct.appliance) !== APPLIANCE) continue;
+    if (!listed(FQDNS, acct.applianceFqdn, true) || !listed(USERS, acct.userName, false)) continue;
+    if (!acct.passwordAccountKey) throw new Error("Account " + acct.userName + "@" + acct.applianceFqdn + " has no passwordAccountKey.");
+    selected.push(acct);
+    report.selected.push(acct.userName + "@" + acct.applianceFqdn);
+    System.log("Selected: " + acct.applianceFqdn + " " + acct.userName + " " + acct.status + " " + (acct.credentialType || CRED_KIND));
+  }
+  if (selected.length === 0) throw new Error("Nothing matched the filter, so nothing was changed. Check the names against the accounts query.");
+  if (selected.length > max) throw new Error("Refusing: " + selected.length + " accounts is above maxAccounts (" + max + "). Narrow the filter or raise it on purpose.");
+  for (var s = 0; s < selected.length; s++) {
+    var account = selected[s];
+    var who = account.userName + "@" + account.applianceFqdn;
+    var entry = entryFor(account);
+    if (!entry || !entry.current || !entry.next) {
+      report.skipped.push(who);
+      problems.push(who + ": no current and next password in rotationSecrets, not changed");
+      continue;
+    }
+    core.act(ctx, "change the password of " + who, function () {
+      var resp;
+      try {
+        resp = fm("PUT", "/password-management/accounts/" + encodeURIComponent(String(account.passwordAccountKey)) + "/password", { currentPassword: String(entry.current), newPassword: String(entry.next) });
+      } catch (e) {
+        var text = String(e && e.message ? e.message : e);
+        // A 4xx is a refusal. Anything else (5xx, a timeout, no answer) may
+        // have gone through.
+        if (/returned HTTP 4\d\d/.test(text) && !/HTTP 40[8]|HTTP 429/.test(text)) throw new Error(text + " (refused; the password was not changed)");
+        throw new Error(text + " — OUTCOME UNKNOWN: the new password may already be in effect. Try it first, then the old one.");
+      }
+      if (!resp.body || !resp.body.requestId) throw new Error("HTTP " + resp.statusCode + " and no requestId — OUTCOME UNKNOWN: the new password may already be in effect. Try it first, then the old one.");
+      // 9.1.1 known issue: a request can be marked failed although the
+      // component changed. The error says so; check before retrying.
+      try {
+        mod.followRequest(settings.opsHost, auth, String(resp.body.requestId), 240, SAFE);
+      } catch (e2) {
+        throw new Error(String(e2 && e2.message ? e2.message : e2) + " The new password may be in effect (9.1.1 known issue): try it first, then the old one.");
+      }
+      report.changed.push(who);
+      return String(resp.body.requestId);
+    });
+  }
+} catch (e) {
+  failure = e;
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+report.problems = problems;
+changedAccounts = report.changed.join("\n");
+${FINISH}`;
+}
+/** Every fleet TLS certificate expiring within the window. Reads only. */
+function certReportWorkflow(within: number): string {
+  return String.raw`var WITHIN = ${within};
+${FLEET_LOGIN}var problems = [];
+var failure = null;
+var report = { within: WITHIN, certificates: 0 };
+var rows = ["appliance,fqdn,daysToExpire,status,issuedBy,certificateResourceKey"];
+function csv(v) { return "\"" + String(v === null || v === undefined ? "" : v).replace(/"/g, "\"\"") + "\""; }
+try {
+  // daysToExpire and status (EXPIRED, EXPIRING_30, EXPIRING_60, NORMAL) come
+  // from the fleet API. Every page, or the run fails: "nothing expires" is
+  // only said after the whole list has been read.
+  var all = mod.fleetQuery(FM + "/certificate-management/certificates/query", auth, { category: "TLS_CERT" }, "vcfCertificateModels", SAFE);
+  report.certificates = all.length;
+  if (all.length === 0) problems.push("no certificates returned by the fleet certificate query; a fleet always has some, so expiry cannot be judged");
+  all.sort(function (a, b) { return Number(a.daysToExpire === undefined ? -1 : a.daysToExpire) - Number(b.daysToExpire === undefined ? -1 : b.daysToExpire); });
+  for (var i = 0; i < all.length; i++) {
+    var c = all[i];
+    var days = typeof c.daysToExpire === "number" ? c.daysToExpire : null;
+    if (c.status === "EXPIRED" || days === null || days <= WITHIN) {
+      problems.push(c.appliance + " " + c.applianceFqdn + ": " + (days === null ? "?" : days) + " days, " + c.status + ", issued by " + (c.issuedBy || "?") + ", key " + c.certificateResourceKey);
+      rows.push([c.appliance, c.applianceFqdn, days === null ? "" : days, c.status, c.issuedBy, c.certificateResourceKey].map(csv).join(","));
+    }
+  }
+} catch (e) {
+  failure = e;
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+report.problems = problems;
+expiringCount = rows.length - 1;
+reportCsv = rows.join("\n") + "\n";
+${FINISH_READ}`;
+}
+
+/**
+ * Replace one appliance's certificate, one step per run: configure the
+ * Microsoft CA, generate the CSR, or install. Refuses unless exactly one TLS
+ * certificate matches the appliance and FQDN.
+ */
+function certReplaceWorkflow(action: string, appliance: string, fqdn: string, caType: string): string {
+  const q = JSON.stringify;
+  return String.raw`var ACTION = ${q(action)};
+var APPLIANCE = ${q(appliance)};
+var FQDN = ${q(fqdn)};
+var CA_TYPE = ${q(caType)};
+var ctx = core.begin(settings, dryRun);
+${FLEET_LOGIN}var problems = [];
+var failure = null;
+var STEP = String(step || (ACTION === "external" || ACTION === "msca" ? "csr" : "install"));
+var report = { step: STEP, appliance: APPLIANCE, fqdn: FQDN, caType: CA_TYPE, certificateKey: null };
+var pem = "";
+function lower(s) { return String(s || "").toLowerCase(); }
+// Filtered by the server, every page read, and filtered again here: a filter
+// field the server ignored must not widen the match.
+function matchCert() {
+  var all = mod.fleetQuery(FM + "/certificate-management/certificates/query", auth, { appliance: APPLIANCE, applianceFqdn: FQDN, category: "TLS_CERT" }, "vcfCertificateModels", SAFE);
+  var out = [];
+  for (var i = 0; i < all.length; i++) if (String(all[i].appliance) === APPLIANCE && lower(all[i].applianceFqdn) === lower(FQDN)) out.push(all[i]);
+  return out;
+}
+function describe(c) { return c.daysToExpire + " days left, issued by " + c.issuedBy + ", status " + c.status + ", key " + c.certificateResourceKey; }
+try {
+  if (STEP === "configure-ca") {
+    if (ACTION !== "msca") throw new Error("configure-ca is the Microsoft CA step; this package replaces with " + CA_TYPE + ".");
+    if (!settings.mscaPassword) throw new Error("Set mscaPassword (the CA service account password) in " + SETTINGS_NAME + ".");
+    var wanted = JSON.parse(core.resource(RESOURCE_PATH, "ca-config.json"));
+    var spec = wanted.certificateAuthoritiesSpec.microsoftCertificateAuthoritySpec;
+    // Read for the comparison only; nothing of it is logged but the CA URL.
+    var have = fm("GET", "/certificate-management/certificate-authorities").body || {};
+    var mine = have.certificateAuthoritiesSpec && have.certificateAuthoritiesSpec.microsoftCertificateAuthoritySpec;
+    if (mine && mine.serverUrl === spec.serverUrl && mine.templateName === spec.templateName && mine.username === spec.username) {
+      System.log("The Microsoft CA " + spec.serverUrl + " is already configured with template " + spec.templateName + "; left as it is.");
+    } else {
+      core.act(ctx, "configure the Microsoft CA " + spec.serverUrl + " (template " + spec.templateName + ")", function () {
+        var body = JSON.parse(JSON.stringify(wanted));
+        body.certificateAuthoritiesSpec.microsoftCertificateAuthoritySpec.secret = String(settings.mscaPassword);
+        fm("PUT", "/certificate-management/certificate-authorities", body);
+        return true;
+      });
+    }
+  } else {
+    var match = matchCert();
+    if (match.length !== 1) {
+      for (var m = 0; m < match.length; m++) System.log("  matched: " + match[m].certificateResourceKey + " " + match[m].issuedTo);
+      throw new Error("Refusing: expected exactly one TLS certificate for " + APPLIANCE + " " + FQDN + ", found " + match.length + ".");
+    }
+    var cert = match[0];
+    var key = String(cert.certificateResourceKey);
+    report.certificateKey = key;
+    System.log("Certificate " + describe(cert));
+    if (STEP === "csr") {
+      if (ACTION === "vmca") throw new Error("There is no CSR step for a VMCA-signed certificate: run the install step.");
+      var csrSpec = JSON.parse(core.resource(RESOURCE_PATH, "csr-spec.json"));
+      csrSpec.certificateId = key;
+      // The names the certificate has now: {dns: [...], ip: [...]}.
+      csrSpec.generateCsrSpec.subjectAltNames = cert.subjectAlternativeNames || { dns: [FQDN], ip: [] };
+      core.act(ctx, "generate a CSR for " + APPLIANCE + " " + FQDN, function () {
+        var r = fm("POST", "/certificate-management/csrs", csrSpec);
+        if (!r.body || !r.body.requestId) throw new Error("CSR generation was sent but no requestId came back; check VCF Operations before running again.");
+        mod.followRequest(settings.opsHost, auth, String(r.body.requestId), 40, SAFE);
+        var list = fm("GET", "/certificate-management/csrs?commonName=" + encodeURIComponent(FQDN)).body || {};
+        var infos = list.certificateSignatureInfo || [];
+        for (var i = infos.length - 1; i >= 0; i--) if (lower(infos[i].commonName) === lower(FQDN) && infos[i].csr) { pem = String(infos[i].csr); break; }
+        if (!pem) throw new Error("The CSR was generated but could not be read back; download it from VCF Operations.");
+        return String(r.body.requestId);
+      });
+      if (pem) System.log("CSR generated: the csrPem output. " + (ACTION === "external" ? "Have it signed, then run the install step with the chain (leaf, intermediates, root) in certificateChain." : "Now run the install step."));
+    } else if (STEP === "install") {
+      var body = { caType: CA_TYPE };
+      if (ACTION === "external") {
+        var chain = String(certificateChain || "");
+        if (chain.indexOf("BEGIN CERTIFICATE") < 0) throw new Error("certificateChain is not a PEM chain (leaf, intermediates, root).");
+        if (/PRIVATE KEY/.test(chain)) throw new Error("Refusing: certificateChain holds a private key. The key never leaves the appliance; give the signed chain only.");
+        body.certificateChain = chain;
+      }
+      core.act(ctx, "replace the certificate of " + APPLIANCE + " " + FQDN + " (" + CA_TYPE + ")", function () {
+        var r = fm("PUT", "/certificate-management/certificates/" + encodeURIComponent(key), body);
+        if (!r.body || !r.body.requestId) throw new Error("The replacement was sent but no requestId came back. Check the appliance in VCF Operations before running again.");
+        System.log("Replacement request " + r.body.requestId + ". This takes ten minutes or more; the appliance restarts services.");
+        mod.followRequest(settings.opsHost, auth, String(r.body.requestId), 240, SAFE);
+        return String(r.body.requestId);
+      });
+      if (!ctx.dryRun) {
+        var now = matchCert();
+        for (var n = 0; n < now.length; n++) System.log("Now: " + describe(now[n]));
+      }
+    } else {
+      throw new Error("Unknown step " + STEP + ": configure-ca, csr or install.");
+    }
+  }
+} catch (e) {
+  failure = e;
+}
+report.problems = problems;
+csrPem = pem;
+certificateKey = report.certificateKey || "";
+${FINISH}`;
+}
+/**
+ * DNS and NTP for each VCF instance, through the SDDC Manager API: the
+ * documented route. VCF Operations' fleet settings API is not in the public
+ * reference; SDDC Manager's is, and it validates the servers from SDDC
+ * Manager itself — the precheck the bash script can only approximate from
+ * wherever it runs. What already matches is left alone.
+ */
+function settingsWorkflow(kinds: readonly ('dns' | 'ntp')[]): string {
+  return String.raw`var KINDS = ${JSON.stringify(kinds)};
+var ctx = core.begin(settings, dryRun);
+var hosts = settings.sddcManagers || [];
+if (hosts.length === 0) throw new Error("Set sddcManagers (the SDDC Manager of each VCF instance) in " + SETTINGS_NAME + ".");
+if (!settings.sddcUsername || !settings.sddcPassword) throw new Error("Set sddcUsername and sddcPassword in " + SETTINGS_NAME + ".");
+var SAFE = { redact: settings._secrets };
+var problems = [];
+var failure = null;
+var report = { sddcManagers: hosts, kinds: KINDS, changed: [], unchanged: [] };
+var before = {};
+function servers(kind, config) {
+  var list = (config && config[kind === "dns" ? "dnsServers" : "ntpServers"]) || [];
+  var out = [];
+  for (var i = 0; i < list.length; i++) out.push(String(list[i].ipAddress) + (kind === "dns" && list[i].isPrimary ? " (primary)" : ""));
+  // NTP servers are a set; DNS order and the primary flag matter.
+  if (kind === "ntp") out.sort();
+  return out.join(", ");
+}
+// One SDDC Manager task or validation, followed to the end.
+function follow(sddc, auth, path, done) {
+  for (var i = 0; i < 240; i++) {
+    var b = core.http("GET", "https://" + sddc + path, auth, null, SAFE).body || {};
+    if (done(b)) return b;
+    System.sleep(15000);
+  }
+  throw new Error("GET " + path + " on " + sddc + " did not finish in an hour; outcome UNKNOWN. Follow it in SDDC Manager.");
+}
+try {
+  for (var h = 0; h < hosts.length; h++) {
+    var sddc = String(hosts[h]);
+    var auth = core.loginSddcManager(sddc, settings.sddcUsername, settings.sddcPassword);
+    before[sddc] = {};
+    for (var k = 0; k < KINDS.length; k++) {
+      var kind = KINDS[k];
+      var path = "/v1/system/" + kind + "-configuration";
+      var label = kind.toUpperCase() + " servers of " + sddc;
+      var desired = JSON.parse(core.resource(RESOURCE_PATH, kind + "-configuration.json"));
+      var current = core.http("GET", "https://" + sddc + path, auth, null, SAFE).body || {};
+      before[sddc][kind] = current;
+      if (servers(kind, current) === servers(kind, desired)) {
+        System.log(label + " are already " + servers(kind, desired) + "; left as they are.");
+        report.unchanged.push(label);
+        continue;
+      }
+      System.log(label + ": " + (servers(kind, current) || "none") + " -> " + servers(kind, desired));
+      // The precheck is SDDC Manager's own validation of the new servers. It
+      // changes nothing, so a dry run runs it too.
+      var v = core.http("POST", "https://" + sddc + path + "/validations", auth, desired, SAFE).body || {};
+      if (!v.id) throw new Error("The " + kind + " validation on " + sddc + " returned no id.");
+      var result = follow(sddc, auth, path + "/validations/" + encodeURIComponent(v.id), function (b) { return b.executionStatus && b.executionStatus !== "IN_PROGRESS" && b.executionStatus !== "CANCELLATION_IN_PROGRESS"; });
+      var checks = result.validationChecks || [];
+      for (var c = 0; c < checks.length; c++) if (checks[c].resultStatus && checks[c].resultStatus !== "SUCCEEDED") System.warn("  " + checks[c].resultStatus + ": " + checks[c].description);
+      var passed = result.executionStatus === "COMPLETED" && (result.resultStatus === "SUCCEEDED" || (result.resultStatus === "WARNING" && settings.allowWarnings === true));
+      if (!passed) throw new Error("Refusing: SDDC Manager's validation of the new " + kind.toUpperCase() + " servers on " + sddc + " ended " + result.executionStatus + "/" + result.resultStatus + ". Nothing was changed there.");
+      core.act(ctx, "set the " + label + " to " + servers(kind, desired), function () {
+        var t = core.http("PUT", "https://" + sddc + path, auth, desired, SAFE).body || {};
+        if (!t.id) throw new Error("PUT " + path + " returned no task id; check the task list in SDDC Manager before running again.");
+        var task = follow(sddc, auth, "/v1/tasks/" + encodeURIComponent(t.id), function (b) { return /^(SUCCESSFUL|FAILED|CANCELLED|COMPLETED_WITH_WARNING|SKIPPED|TIMED_OUT)$/.test(String(b.status)); });
+        if (task.status !== "SUCCESSFUL" && task.status !== "COMPLETED_WITH_WARNING") throw new Error("SDDC Manager task " + t.id + " ended " + task.status + ". A component that failed is rolled back to its previous setting.");
+        report.changed.push(label);
+        return String(t.id);
+      });
+    }
+  }
+} catch (e) {
+  failure = e;
+}
+report.problems = problems;
+settingsBefore = JSON.stringify(before);
+${FINISH}`;
+}
+/**
+ * The SSO realm every identity workflow works in: ssoRealmId from the
+ * settings, or the only realm there is. With several and none named, it
+ * refuses rather than guess.
+ */
+const REALM = String.raw`function realmId() {
+  if (settings.ssoRealmId) return String(settings.ssoRealmId);
+  var list = (fm("GET", "/iam/ssorealms").body || {}).ssoRealms || [];
+  if (list.length === 1 && list[0].id) return String(list[0].id);
+  var ids = [];
+  for (var i = 0; i < list.length; i++) ids.push(list[i].id + " (" + (list[i].name || "") + ")");
+  throw new Error(list.length === 0 ? "No SSO realm found." : "Refusing: " + list.length + " SSO realms (" + ids.join(", ") + "); set ssoRealmId in " + SETTINGS_NAME + ".");
+}
+function listOf(body, keys, what) {
+  if (Object.prototype.toString.call(body) === "[object Array]") return body;
+  for (var i = 0; i < keys.length; i++) if (body && Object.prototype.toString.call(body[keys[i]]) === "[object Array]") return body[keys[i]];
+  throw new Error("Unrecognised " + what + " response: no list in it.");
+}
+`;
+
+/** One identity task per package: the OIDC provider, a custom role, a group's role, or the component role sync. */
+function identityWorkflow(task: string, group: string, roleName: string): string {
+  const q = JSON.stringify;
+  const body: Record<string, string> = {
+    oidc: String.raw`  // Guardrail: a way in that does not depend on the new provider. The list
+  // must be recognisable as a list: counting the keys of some other object
+  // would pass this check with no emergency client at all.
+  var emergency = listOf(fm("GET", "/iam/ssorealms/" + encodeURIComponent(realm) + "/emergency-clients").body, ["emergencyClients", "elements"], "emergency-clients");
+  if (emergency.length < 1) throw new Error("Refusing: no emergency client in this realm. Create one (Identity > Emergency access) and store its token offline first.");
+  if (!settings.oidcClientSecret) throw new Error("Set oidcClientSecret in " + SETTINGS_NAME + ".");
+  var provider = JSON.parse(core.resource(RESOURCE_PATH, "identity-provider.json"));
+  if (JSON.stringify(provider).indexOf("<REQUIRED") >= 0) throw new Error("identity-provider.json still has <REQUIRED> values.");
+  provider.ssoRealmId = realm;
+  provider.idpConfig.oidcConfiguration.clientSecret = String(settings.oidcClientSecret);
+  // There is no list of providers in the API, only GET by id: idpConfigId in
+  // the settings is what makes a second run update instead of adding another.
+  if (settings.idpConfigId) {
+    var id = String(settings.idpConfigId);
+    fm("GET", "/iam/identity-providers/" + encodeURIComponent(id));
+    core.act(ctx, "update identity provider " + provider.name + " (" + id + ")", function () {
+      provider.id = id;
+      fm("PUT", "/iam/identity-providers", provider);
+      return id;
+    });
+    report.id = id;
+  } else {
+    report.id = core.act(ctx, "create " + provider.idpType + " identity provider " + provider.name, function () {
+      var r = fm("POST", "/iam/identity-providers", provider);
+      var made = r.body && (r.body.id || r.body.idpConfigId);
+      if (!made) throw new Error("The identity provider was sent but no id came back; check Identity & Access before running again.");
+      System.log("Created identity provider " + made + ". Put it into idpConfigId in " + SETTINGS_NAME + " so the next run updates it instead of adding another. Test a login in a private window before you log out of this one.");
+      return String(made);
+    });
+  }
+`,
+    role: String.raw`  var role = JSON.parse(core.resource(RESOURCE_PATH, "vcf-role.json"));
+  // Only a 404 means "no such role". Anything else stops the run.
+  var found = fm("GET", "/iam/roles/" + encodeURIComponent(role.roleName), undefined, { redact: SAFE.redact, allow: [404] });
+  if (found.statusCode === 200) {
+    System.log("VCF role " + role.roleName + " exists; left as it is. Change it with PUT /iam/roles deliberately.");
+  } else {
+    report.id = core.act(ctx, "create VCF role " + role.roleName, function () {
+      fm("POST", "/iam/roles", role);
+      return role.roleName;
+    });
+  }
+`,
+    group: String.raw`  var GROUP = ${q(group)};
+  var query = JSON.parse(core.resource(RESOURCE_PATH, "groups-query.json"));
+  var groups = mod.fleetQuery(FM + "/iam/ssorealms/" + encodeURIComponent(realm) + "/groups/query", auth, query, "groups|results|elements", SAFE);
+  var matches = [];
+  for (var i = 0; i < groups.length; i++) {
+    var n = String(groups[i].name || groups[i].displayName || "").toLowerCase();
+    var g = GROUP.toLowerCase();
+    if (n === g || n.indexOf(g + "@") === 0) matches.push(groups[i]);
+  }
+  if (matches.length !== 1) throw new Error("Refusing: expected one group named " + GROUP + ", found " + matches.length + ". On 9.1.1 with on-demand lookup the group must exist in the directory; on 9.1.0 it must have been synced.");
+  var gid = String(matches[0].id);
+  // The PUT replaces every role of the group. If the current roles cannot be
+  // read as a list, stop: treating "unreadable" as "none" would wipe them.
+  var have = fm("GET", "/iam/ssorealms/" + encodeURIComponent(realm) + "/principals/" + encodeURIComponent(gid) + "/roles").body;
+  if (!have || typeof have !== "object" || !("vcfRoleAssignments" in have)) throw new Error("No vcfRoleAssignments in the roles of group " + gid + "; refusing to replace roles that could not be read.");
+  var current = have.vcfRoleAssignments || [];
+  if (Object.prototype.toString.call(current) !== "[object Array]") throw new Error("vcfRoleAssignments of group " + gid + " is not a list; refusing.");
+  before = JSON.stringify({ vcfRoleAssignments: current });
+  var add = JSON.parse(core.resource(RESOURCE_PATH, "role-assignment.json")).vcfRoleAssignments;
+  var next = current.slice(0);
+  for (var a = 0; a < add.length; a++) {
+    var held = false;
+    for (var c = 0; c < current.length; c++) if (current[c].roleName === add[a].roleName && JSON.stringify(current[c].roleScope) === JSON.stringify(add[a].roleScope)) held = true;
+    if (!held) next.push(add[a]);
+  }
+  var names = [];
+  for (var r = 0; r < current.length; r++) names.push(current[r].roleName);
+  System.log("Group " + GROUP + " (" + gid + ") holds: " + (names.join(", ") || "no roles"));
+  if (next.length === current.length) {
+    System.log("Group " + GROUP + " already has " + ${q(roleName)} + " at that scope; left as it is.");
+  } else {
+    report.id = core.act(ctx, "give group " + GROUP + " the VCF role " + ${q(roleName)} + ", keeping its " + current.length + " other assignment(s)", function () {
+      fm("PUT", "/iam/ssorealms/" + encodeURIComponent(realm) + "/principals/" + encodeURIComponent(gid) + "/roles", { vcfRoleAssignments: next });
+      return gid;
+    });
+  }
+`,
+    sync: String.raw`  var roles = listOf(fm("GET", "/iam/components/roles").body, ["roles", "elements"], "component roles");
+  System.log(roles.length + " provisioned component role(s).");
+  for (var i = 0; i < roles.length; i++) {
+    var rid = roles[i].id || roles[i].roleId;
+    if (!rid) throw new Error("A provisioned component role has no id.");
+    var rname = roles[i].name || roles[i].roleName || rid;
+    var state = String(roles[i].status || roles[i].provisioningStatus || "UNKNOWN");
+    // A drift check changes nothing on the component, so a dry run starts it too.
+    try {
+      var check = fm("POST", "/iam/components/roles/" + encodeURIComponent(rid) + "/drift-check", {}).body || {};
+      System.log("  " + rname + "  state=" + state + "  drift check " + (check.status || check.taskId || "submitted"));
+    } catch (e) {
+      problems.push(rname + ": drift check could not be started");
+    }
+    if (state === "UNKNOWN") problems.push(rname + ": provisioning status could not be read");
+    if (/FAIL|ERROR/.test(state)) {
+      problems.push(rname + ": last provisioning " + state);
+      // A re-push overwrites a role someone changed in the component on
+      // purpose, so it is a change: dry run, cap, audit.
+      core.act(ctx, "retry provisioning of component role " + rname, (function (id) {
+        return function () { fm("POST", "/iam/components/roles/" + encodeURIComponent(id) + "/retry", {}); return id; };
+      })(rid));
+    }
+  }
+  System.log("Drift results arrive as tasks: GET /iam/tasks/{taskId}, or Identity > Roles in VCF Operations.");
+`,
+  };
+  return String.raw`var ctx = core.begin(settings, dryRun);
+${FLEET_LOGIN}${REALM}var problems = [];
+var failure = null;
+var report = { task: ${q(task)}, id: null };
+var before = "";
+try {
+  var realm = ${task === 'sync' ? '""' : 'realmId()'};
+  if (realm) System.log("SSO realm " + realm);
+${body[task] ?? ''}} catch (e) {
+  failure = e;
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+report.problems = problems;
+resultId = ctx.dryRun ? "" : report.id || "";
+rolesBefore = before;
+${FINISH}`;
+}
+/**
+ * The API client and its tokens. status reads; bootstrap creates the client,
+ * its roles and its first token; rotate issues a new token (or regenerates
+ * the current one) and proves it works; revoke deletes one token, never the
+ * one this package logs in with.
+ *
+ * Unlike the script, rotate does not revoke the old token: the new one has to
+ * be put into the apiToken setting of every ArchToolKit package first, and
+ * Orchestrator cannot do that for them. The new token is the SecureString
+ * output newApiToken of the run; revoke the old one when it is in place.
+ */
+function apiTokenWorkflow(clientId: string, clientName: string, ttlMinutes: number, accessMinutes: number, rotateDays: number, strategy: string): string {
+  const q = JSON.stringify;
+  return String.raw`var CLIENT_ID = ${q(clientId)};
+var CLIENT_NAME = ${q(clientName)};
+var TTL_MINUTES = ${ttlMinutes};
+var ACCESS_MINUTES = ${accessMinutes};
+var ROTATE_DAYS = ${rotateDays};
+var STRATEGY = ${q(strategy)};
+var API_CLIENT_KIND = "API_CLIENT";
+var ACTIVE = "ACTIVE";
+var DESCRIPTION = "Issued by ArchToolKit";
+var ctx = core.begin(settings, dryRun);
+${FLEET_LOGIN}${REALM}var problems = [];
+var failure = null;
+var COMMAND = String(command || "status");
+var report = { command: COMMAND, clientId: CLIENT_ID, daysLeft: null, newTokenId: null };
+var issued = "";
+function enc(s) { return encodeURIComponent(String(s)); }
+// Every page, filtered to exactly this client.
+function tokensOf(realm) {
+  var all = mod.fleetQuery(FM + "/iam/ssorealms/" + enc(realm) + "/api-tokens/query", auth, { searchTerms: { allOf: [{ field: "CLIENT_ID", terms: [CLIENT_ID], operator: "LIKE" }], anyOf: [] }, filters: { tokenType: [API_CLIENT_KIND] } }, "apiTokens", SAFE);
+  var out = [];
+  for (var i = 0; i < all.length; i++) if (String(all[i].apiClientId) === CLIENT_ID) out.push(all[i]);
+  return out;
+}
+// expirationDate is a Unix timestamp; seconds or milliseconds are both accepted.
+function seconds(e) { var n = Number(e || 0); return n > 100000000000 ? n / 1000 : n; }
+function newest(list) {
+  var best = null;
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].tokenStatus || ACTIVE) !== ACTIVE) continue;
+    if (!best || seconds(list[i].expirationDate) > seconds(best.expirationDate)) best = list[i];
+  }
+  return best;
+}
+function leftOf(t) { return t ? Math.floor((seconds(t.expirationDate) - new Date().getTime() / 1000) / 86400) : 0; }
+function describe(t) { return t.id + " (" + t.tokenName + ", ends " + t.tokenLastChars + ", " + (t.tokenStatus || ACTIVE) + ", last used " + (t.lastUsedDate || "never") + ")"; }
+// A new token is kept as the output before anything else, then proven: it
+// is exchanged at the identity broker and used for a read.
+function keep(body, what) {
+  var value = body && body.token ? String(body.token) : "";
+  if (!value) throw new Error(what + " returned no token.");
+  SAFE.redact.push(value);
+  issued = value;
+  report.newTokenId = String(body.id || "");
+  System.log(what + ": token " + body.id + " ending " + body.tokenLastChars + ", expires " + (body.expirationDate ? new Date(seconds(body.expirationDate) * 1000).toISOString() : "?") + ".");
+  try {
+    core.http("GET", FM + "/iam/ssorealms", core.loginVcfFleet(settings.idbHost, value), null, SAFE);
+  } catch (e) {
+    throw new Error("The new token " + body.id + " did not work (" + (e && e.message ? e.message : e) + "). It is in the newApiToken output; the old token is untouched.");
+  }
+  System.log("The new token works. It is the newApiToken output of this run: put it into apiToken of every ArchToolKit package configuration (and the token file of the scripts).");
+  return String(body.id || "");
+}
+function issue(realm, what) {
+  var stamp = new Date().toISOString().substring(0, 10).split("-").join("");
+  var r = fm("POST", "/iam/ssorealms/" + enc(realm) + "/api-tokens", { apiClientId: CLIENT_ID, tokenName: CLIENT_ID + "-" + stamp, tokenDescription: DESCRIPTION, tokenType: API_CLIENT_KIND, apiTokenTtl: String(TTL_MINUTES), accessTokenTtl: String(ACCESS_MINUTES) });
+  return keep(r.body, what);
+}
+try {
+  var realm = realmId();
+  if (COMMAND === "status") {
+    var list = tokensOf(realm);
+    System.log("API tokens of " + CLIENT_ID + ": " + list.length);
+    for (var i = 0; i < list.length; i++) System.log("  " + describe(list[i]));
+    var current = newest(list);
+    var left = leftOf(current);
+    report.daysLeft = left;
+    System.log("The newest active token has " + left + " day(s) left; rotation window " + ROTATE_DAYS + " days.");
+    if (left <= 0) problems.push(CLIENT_ID + ": no active API token, or it has expired — every fleet automation is failing");
+    else if (left <= ROTATE_DAYS) problems.push(CLIENT_ID + ": API token has " + left + " day(s) left — rotation is due");
+    if (list.length > 2) problems.push(CLIENT_ID + ": " + list.length + " tokens exist — revoke the ones nothing uses");
+  } else if (COMMAND === "bootstrap") {
+    var clients = mod.fleetQuery(FM + "/iam/ssorealms/" + enc(realm) + "/api-clients/query", auth, {}, "apiClients|clients|elements", SAFE);
+    var uuid = null;
+    for (var c = 0; c < clients.length; c++) if (String(clients[c].clientId) === CLIENT_ID) uuid = String(clients[c].clientUuid);
+    if (uuid) System.log("API client " + CLIENT_ID + " exists (" + uuid + "); reused.");
+    else {
+      uuid = core.act(ctx, "create API client " + CLIENT_ID, function () {
+        var r = fm("POST", "/iam/ssorealms/" + enc(realm) + "/api-clients", { clientId: CLIENT_ID, clientName: CLIENT_NAME, clientDescription: "Fleet automation (ArchToolKit)" });
+        if (!r.body || !r.body.clientUuid) throw new Error("The API client was sent but no clientUuid came back; check Identity > API clients.");
+        return String(r.body.clientUuid);
+      });
+    }
+    var want = JSON.parse(core.resource(RESOURCE_PATH, "role-assignment.json")).vcfRoleAssignments;
+    var have = [];
+    if (uuid) {
+      var roles = fm("GET", "/iam/ssorealms/" + enc(realm) + "/principals/" + enc(uuid) + "/roles").body || {};
+      have = roles.vcfRoleAssignments || [];
+    }
+    var next = have.slice(0);
+    for (var w = 0; w < want.length; w++) {
+      var held = false;
+      for (var h = 0; h < have.length; h++) if (have[h].roleName === want[w].roleName && JSON.stringify(have[h].roleScope) === JSON.stringify(want[w].roleScope)) held = true;
+      if (!held) next.push(want[w]);
+    }
+    if (uuid && next.length === have.length) System.log("API client " + CLIENT_ID + " already has its role; left as it is.");
+    else core.act(ctx, "give API client " + CLIENT_ID + " the role " + want[0].roleName, function () {
+      fm("PUT", "/iam/ssorealms/" + enc(realm) + "/principals/" + enc(uuid) + "/roles", { vcfRoleAssignments: next });
+      return uuid;
+    });
+    var existing = uuid ? newest(tokensOf(realm)) : null;
+    if (existing) System.log("API client " + CLIENT_ID + " already has an active token " + describe(existing) + "; none issued. Use rotate.");
+    else core.act(ctx, "issue the first API token of " + CLIENT_ID, function () { return issue(realm, "Issued"); });
+  } else if (COMMAND === "rotate") {
+    var all = tokensOf(realm);
+    var cur = newest(all);
+    var remaining = leftOf(cur);
+    report.daysLeft = remaining;
+    if (remaining > ROTATE_DAYS && force !== true) {
+      System.log("Not due: " + remaining + " day(s) left, rotating at " + ROTATE_DAYS + ". Nothing done.");
+    } else if (STRATEGY === "regenerate") {
+      if (!cur) throw new Error("No current token to regenerate; run bootstrap.");
+      // VERIFY: regenerating is expected to invalidate the old secret at once,
+      // which stops every package that still has it until the new one is in.
+      core.act(ctx, "regenerate API token " + describe(cur), function () {
+        var r = fm("POST", "/iam/ssorealms/" + enc(realm) + "/api-tokens/" + enc(cur.id) + "/regenerate", {});
+        return keep(r.body, "Regenerated");
+      });
+    } else {
+      core.act(ctx, "issue a new API token for " + CLIENT_ID + (cur ? " (the old one, " + cur.id + ", stays until you revoke it)" : ""), function () { return issue(realm, "Issued"); });
+      if (cur && !ctx.dryRun) System.log("When every package has the new token, run this workflow with command revoke and tokenId " + cur.id + ".");
+    }
+  } else if (COMMAND === "revoke") {
+    if (!tokenId) throw new Error("Give tokenId: the id of the token to revoke.");
+    var victim = null;
+    var mine = tokensOf(realm);
+    for (var v = 0; v < mine.length; v++) if (String(mine[v].id) === String(tokenId)) victim = mine[v];
+    if (!victim) throw new Error("No token " + tokenId + " for " + CLIENT_ID + ".");
+    // Revoking the token this package logs in with would stop everything at once.
+    var last = String(victim.tokenLastChars || "");
+    var own = String(settings.apiToken).slice(-4);
+    if (!last) throw new Error("Refusing: VCF Operations gave no tokenLastChars for " + tokenId + ", so it cannot be told apart from the token in use.");
+    if (last.slice(-own.length) === own || own.slice(-last.length) === last) throw new Error("Refusing: " + tokenId + " looks like the token in apiToken. Put the new token in first.");
+    core.act(ctx, "revoke API token " + describe(victim), function () {
+      fm("DELETE", "/iam/ssorealms/" + enc(realm) + "/api-tokens/" + enc(victim.id));
+      return String(victim.id);
+    });
+  } else {
+    throw new Error("Unknown command " + COMMAND + ": status, bootstrap, rotate or revoke.");
+  }
+} catch (e) {
+  failure = e;
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+report.problems = problems;
+daysLeft = report.daysLeft === null ? -1 : report.daysLeft;
+newTokenId = report.newTokenId || "";
+newApiToken = issued;
+${FINISH}`;
+}
+/**
+ * License usage as CSV. Reads only: the licensing info of VCF Operations,
+ * and the per-asset usage from licenseUsagePath when it is set (the license
+ * server endpoint is not in the public reference).
+ */
+const LICENSE_WORKFLOW = String.raw`${OPS_LOGIN}var problems = [];
+var failure = null;
+var report = { source: null, rows: 0 };
+var csvText = "";
+var FLAG = /expired|over.?used|overage|non.?compliant|out of compliance|violation/i;
+function csv(v) {
+  var s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  return /[",\n]/.test(s) ? "\"" + s.replace(/"/g, "\"\"") + "\"" : s;
+}
+// The largest array of objects anywhere in the response: the rows.
+function largest(node, best) {
+  if (Object.prototype.toString.call(node) === "[object Array]") {
+    var objects = node.length > 0;
+    for (var i = 0; i < node.length; i++) if (!node[i] || typeof node[i] !== "object" || Object.prototype.toString.call(node[i]) === "[object Array]") objects = false;
+    if (objects && (!best || node.length > best.length)) best = node;
+    for (var j = 0; j < node.length; j++) best = largest(node[j], best);
+  } else if (node && typeof node === "object") {
+    for (var k in node) if (node.hasOwnProperty(k)) best = largest(node[k], best);
+  }
+  return best;
+}
+// Every object with a string value that says expired, over-used or
+// non-compliant, as one line of its values.
+function flagged(node, out) {
+  if (Object.prototype.toString.call(node) === "[object Array]") {
+    for (var i = 0; i < node.length; i++) flagged(node[i], out);
+  } else if (node && typeof node === "object") {
+    var hit = false;
+    var words = [];
+    for (var k in node) {
+      if (!node.hasOwnProperty(k)) continue;
+      if (typeof node[k] === "string" && FLAG.test(node[k])) hit = true;
+      if (node[k] === null || typeof node[k] !== "object") words.push(String(node[k]));
+    }
+    if (hit) out.push(words.join(" ").substring(0, 200));
+    for (var m in node) if (node.hasOwnProperty(m) && node[m] && typeof node[m] === "object") flagged(node[m], out);
+  }
+  return out;
+}
+try {
+  var info = ops("GET", "/product/licensing/info").body;
+  System.log("VCF Operations licensing: " + JSON.stringify(info).substring(0, 500));
+  // The edition is kept for the record only; nothing below reads it.
+  try {
+    report.edition = ops("GET", "/product/licensing/edition").body;
+  } catch (e) {
+    System.warn("The licensing edition could not be read: " + (e && e.message ? e.message : e));
+  }
+  var source = info;
+  report.source = "/product/licensing/info";
+  if (settings.licenseUsagePath) {
+    // VERIFY: the license server usage endpoint is not in the public reference.
+    source = core.http("GET", "https://" + settings.opsHost + String(settings.licenseUsagePath), opsAuth, null, SAFE).body;
+    report.source = String(settings.licenseUsagePath);
+  }
+  var rows = largest(source, null) || [source];
+  var columns = [];
+  var seen = {};
+  for (var r = 0; r < rows.length; r++) for (var c in rows[r]) if (rows[r].hasOwnProperty(c) && !seen[c]) { seen[c] = true; columns.push(c); }
+  columns.sort();
+  var lines = [columns.map(csv).join(",")];
+  for (var i = 0; i < rows.length; i++) {
+    var cells = [];
+    for (var j = 0; j < columns.length; j++) cells.push(csv(rows[i][columns[j]]));
+    lines.push(cells.join(","));
+  }
+  csvText = lines.join("\n") + "\n";
+  report.rows = rows.length;
+  System.log("License usage: " + rows.length + " row(s) from " + report.source + ".");
+  var hits = flagged(source, []);
+  for (var h = 0; h < hits.length; h++) problems.push(hits[h]);
+} catch (e) {
+  failure = e;
+} finally {
+  core.logoutVcfOps(settings.opsHost, opsAuth);
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+report.problems = problems;
+problemCount = problems.length;
+usageCsv = csvText;
+${FINISH_READ}`;
+/** The vCenter login and task helpers of the drift workflows. */
+const VC_LOGIN = String.raw`if (!settings.vcenter) throw new Error("Set vcenter in " + SETTINGS_NAME + ".");
+var VC = "https://" + settings.vcenter;
+var SAFE = { redact: settings._secrets };
+// VCF 9.1: an API token through the identity broker; 8.x and 9.0: a password.
+var vcAuth = settings.vcfApiToken ? core.loginVcenterToken(settings.vcenter, settings.vcfIdbHost, settings.vcfApiToken) : core.loginVcenter(settings.vcenter, settings.vcUsername, settings.vcPassword);
+function vc(method, path, body) { return core.http(method, VC + path, vcAuth, body === undefined ? null : body, SAFE); }
+// Matched by exact name here too: a filter vCenter ignored would otherwise
+// hand back the first cluster it has.
+function clusterId(name) {
+  var list = vc("GET", "/api/vcenter/cluster?names=" + encodeURIComponent(name)).body || [];
+  var out = [];
+  for (var i = 0; i < list.length; i++) if (list[i].name === name) out.push(list[i].cluster);
+  return out.length === 1 ? String(out[0]) : null;
+}
+var DEADLINE = new Date().getTime() + Number(settings.timeoutMinutes || 90) * 60000;
+// Follow a vCenter task to the end; its result, or an error.
+function waitTask(task) {
+  if (!task) throw new Error("vCenter returned no task id.");
+  var misses = 0;
+  while (true) {
+    var t = null;
+    try {
+      t = vc("GET", "/api/cis/tasks/" + encodeURIComponent(task)).body || {};
+      misses = 0;
+    } catch (e) {
+      misses++;
+      if (misses >= 6) throw new Error("Task " + task + ": status unreadable " + misses + " times in a row.");
+    }
+    if (t && t.status === "SUCCEEDED") return t.result || {};
+    if (t && /^(FAILED|CANCELED|CANCELLED)$/.test(String(t.status))) throw new Error("Task " + task + " " + t.status + ": " + JSON.stringify(t.error || {}).substring(0, 300));
+    if (new Date().getTime() > DEADLINE) throw new Error("Task " + task + " still " + (t ? t.status : "unreadable") + " at the deadline (timeoutMinutes).");
+    System.sleep(20000);
+  }
+}
+function compliance(id) {
+  var result = waitTask(vc("POST", "/api/esx/settings/clusters/" + encodeURIComponent(id) + "/configuration?action=checkCompliance&vmw-task=true").body);
+  return { status: String(result.status || result.cluster_status || "UNKNOWN"), result: result };
+}
+`;
+
+/** Salt for VCF Components (9.1.1): which resources report a failure. Optional; needs opsHost. */
+const SALT_CHECK = String.raw`function saltCheck() {
+  if (!settings.opsHost) return;
+  var ops = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
+  try {
+    var body = core.http("GET", "https://" + settings.opsHost + "/suite-api/api/salt/resources/statuses", ops, null, SAFE).body;
+    var list = Object.prototype.toString.call(body) === "[object Array]" ? body : body && (body.resourceStatuses || body.statuses || body.elements);
+    if (Object.prototype.toString.call(list) !== "[object Array]") throw new Error("Unrecognised Salt statuses response.");
+    for (var i = 0; i < list.length; i++) {
+      var status = String(list[i].status || list[i].saltStatus || "NO STATUS");
+      if (/FAIL|ERROR|DISCONNECT|NO STATUS/i.test(status)) problems.push("Salt: " + (list[i].resourceName || list[i].resourceId || list[i].id) + ": " + status);
+    }
+    System.log("Salt for VCF Components: " + list.length + " resource(s) read.");
+  } finally {
+    core.logoutVcfOps(settings.opsHost, ops);
+  }
+}
+`;
+
+/** Detect: the compliance check of each cluster, which changes nothing on the hosts. */
+function driftDetectWorkflow(): string {
+  return String.raw`${VC_LOGIN}${SALT_CHECK}var problems = [];
+var failure = null;
+var report = { vcenter: settings.vcenter, clusters: [] };
+var lines = [];
+try {
+  var clusters = settings.clusters || [];
+  if (clusters.length === 0) throw new Error("Set clusters in " + SETTINGS_NAME + ".");
+  for (var c = 0; c < clusters.length; c++) {
+    var name = String(clusters[c]);
+    var id = clusterId(name);
+    if (!id) { problems.push(name + ": no such cluster on " + settings.vcenter); continue; }
+    var check;
+    try {
+      check = compliance(id);
+    } catch (e) {
+      problems.push(name + ": compliance check did not complete (" + (e && e.message ? e.message : e) + ") — is the cluster managed by a configuration profile?");
+      continue;
+    }
+    lines.push(name + "\t" + check.status);
+    var hosts = check.result.hosts || {};
+    for (var h in hosts) if (hosts.hasOwnProperty(h)) lines.push("  " + h + "\t" + (hosts[h] && hosts[h].status ? hosts[h].status : JSON.stringify(hosts[h])));
+    report.clusters.push({ cluster: name, status: check.status });
+    if (check.status !== "COMPLIANT") problems.push(name + ": " + check.status);
+  }
+  saltCheck();
+} catch (e) {
+  failure = e;
+} finally {
+  core.logoutVcenter(settings.vcenter, vcAuth);
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+report.problems = problems;
+problemCount = problems.length;
+reportText = lines.join("\n");
+${FINISH_READ}`;
+}
+
+/**
+ * Remediate one cluster: export the configuration (the undo), check
+ * compliance, require vCenter's precheck to pass, and only then apply.
+ */
+function driftRemediateWorkflow(cluster: string): string {
+  return String.raw`var CLUSTER = ${JSON.stringify(cluster)};
+var ctx = core.begin(settings, dryRun);
+${VC_LOGIN}var problems = [];
+var failure = null;
+var report = { vcenter: settings.vcenter, cluster: CLUSTER, before: null, after: null };
+var exported = "";
+try {
+  var id = clusterId(CLUSTER);
+  if (!id) throw new Error("No cluster " + CLUSTER + " on " + settings.vcenter + ".");
+  var base = "/api/esx/settings/clusters/" + encodeURIComponent(id) + "/configuration";
+  // The undo: the configuration as it is now. exportConfig answers directly,
+  // it is not a task.
+  var ex = vc("POST", base + "?action=exportConfig").body || {};
+  exported = typeof ex === "string" ? ex : ex.config ? String(ex.config) : "";
+  if (!exported) throw new Error("Refusing: the configuration export is empty, so there would be no undo.");
+  System.log("Current configuration exported to the configBefore output (" + exported.length + " characters).");
+  var check = compliance(id);
+  report.before = check.status;
+  System.log("Compliance: " + check.status);
+  if (check.status === "COMPLIANT") {
+    System.log("Nothing to remediate on " + CLUSTER + ".");
+  } else {
+    // Guardrail: the precheck finds hosts that cannot enter maintenance mode,
+    // or settings that cannot be applied, before anything moves. Only an
+    // explicit pass goes on; a missing or unfamiliar status is not a pass.
+    var pre = waitTask(vc("POST", base + "?action=precheck&vmw-task=true").body);
+    var pstatus = String(pre.status || "UNKNOWN");
+    System.log("Precheck: " + pstatus);
+    if (!/^(OK|SUCCESS|SUCCEEDED|PASSED|WARNING)$/.test(pstatus)) throw new Error("Refusing: the precheck status is " + pstatus + ", not a pass. " + JSON.stringify(pre).substring(0, 300));
+    if (pstatus === "WARNING") System.warn("The precheck passed with warnings; read them before arming.");
+    core.act(ctx, "apply the desired configuration to cluster " + CLUSTER + " (hosts may enter maintenance mode)", function () {
+      waitTask(vc("POST", base + "?action=apply&vmw-task=true", {}).body);
+      var after = compliance(id);
+      report.after = after.status;
+      if (after.status !== "COMPLIANT") throw new Error("The cluster is still " + after.status + " after remediation. Read the task before running again.");
+      return after.status;
+    });
+  }
+} catch (e) {
+  failure = e;
+} finally {
+  core.logoutVcenter(settings.vcenter, vcAuth);
+}
+report.problems = problems;
+configBefore = exported;
+${FINISH}`;
+}
+/**
+ * The Fleet LCM token. The API reference documents the exchange of an
+ * OpsToken at /suite-api/api/auth/token/exchange with serviceKeys fleet-lcm,
+ * answered with jwtToken — a field core.exchangeVcfOpsToken does not read
+ * (it knows token, accessToken, access_token and tokens[]), so this package
+ * carries its own.
+ */
+const FLEET_LCM_TOKEN: VroActionDef = {
+  name: 'fleetLcmToken',
+  description:
+    'VCF 9.1 Fleet LCM: exchange an OpsToken for a Fleet LCM token, POST /suite-api/api/auth/token/exchange {"serviceKeys":["fleet-lcm"]}, reading jwtToken (and, should a release answer otherwise, token, accessToken or access_token). Returns { Authorization: "Bearer <jwt>" }.',
+  resultType: 'Any',
+  params: [vp('opsHost', 'string', 'VCF Operations host'), vp('opsHeaders', 'Any', 'What core.loginVcfOps returned'), vp('safe', 'Any', 'The http() options, with redact')],
+  script: String.raw`var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + opsHost + "/suite-api/api/auth/token/exchange", opsHeaders, { serviceKeys: ["fleet-lcm"] }, safe || {});
+var b = r.body || {};
+var jwt = b.jwtToken || b.token || b.accessToken || b.access_token;
+if (!jwt) throw new Error("The token exchange for fleet-lcm at " + opsHost + " returned no jwtToken.");
+return { "Authorization": "Bearer " + jwt };`,
+};
+
+/**
+ * The fleet lifecycle of the management components: inventory, backup
+ * freshness, the SFTP backup schedule, and an upgrade plan that is applied
+ * only behind a change reference, a passed precheck and fresh backups.
+ */
+function lifecycleWorkflow(backupHours: number, target: string, doBackup: boolean, doUpgrade: boolean): string {
+  const q = JSON.stringify;
+  return String.raw`var BACKUP_HOURS = ${backupHours};
+var TARGET = ${q(target)};
+var CAN_BACKUP = ${doBackup ? 'true' : 'false'};
+var CAN_UPGRADE = ${doUpgrade ? 'true' : 'false'};
+var ctx = core.begin(settings, dryRun);
+if (!settings.lcmHost) throw new Error("Set lcmHost (the fleet lifecycle host) in " + SETTINGS_NAME + ".");
+${OPS_LOGIN}var LCM = "https://" + settings.lcmHost + "/fleet-lcm/v1";
+var lcmAuth = null;
+var lcmAt = 0;
+// The Fleet LCM token is exchanged again after twenty minutes: an upgrade
+// runs for hours.
+function lcm(method, path, body) {
+  var now = new Date().getTime();
+  if (!lcmAuth || now - lcmAt > 20 * 60 * 1000) { lcmAuth = mod.fleetLcmToken(settings.opsHost, opsAuth, SAFE); lcmAt = now; }
+  return core.http(method, LCM + path, lcmAuth, body === undefined ? null : body, SAFE);
+}
+function listOf(body, keys, what) {
+  if (Object.prototype.toString.call(body) === "[object Array]") return body;
+  for (var i = 0; i < keys.length; i++) if (body && Object.prototype.toString.call(body[keys[i]]) === "[object Array]") return body[keys[i]];
+  throw new Error("Unrecognised " + what + " response: no list in it.");
+}
+function waitTask(task) {
+  var misses = 0;
+  var status = "UNKNOWN";
+  for (var i = 0; i < 720; i++) {
+    var t = null;
+    try { t = lcm("GET", "/tasks/" + encodeURIComponent(task)).body || {}; misses = 0; } catch (e) { misses++; if (misses >= 6) throw new Error("Fleet LCM task " + task + ": status unreadable " + misses + " times in a row."); }
+    status = t ? String(t.status || "UNKNOWN") : status;
+    if (status === "SUCCEEDED") return t;
+    if (/^(FAILED|CANCELLED|CANCELED)$/.test(status)) throw new Error("Fleet LCM task " + task + " " + status + ": " + JSON.stringify(t.stages || t.errors || {}).substring(0, 300));
+    System.sleep(20000);
+  }
+  throw new Error("Fleet LCM task " + task + " still " + status + " after four hours.");
+}
+function instances() {
+  var list = listOf(lcm("GET", "/sddc-lcms").body, ["elements", "sddcLcms"], "sddc-lcms");
+  var ids = [];
+  for (var i = 0; i < list.length; i++) {
+    var id = list[i].id || list[i].sddcLcmId;
+    if (!id) throw new Error("A VCF instance registered with the fleet lifecycle service has no id.");
+    ids.push(String(id));
+  }
+  if (ids.length === 0) throw new Error("No VCF instances registered with the fleet lifecycle service.");
+  return ids;
+}
+// The newest backup point of every component, in hours. Anything that cannot
+// be read counts as no backup: "could not read" is never "recent".
+function checkBackups() {
+  var rows = [];
+  var ids;
+  try { ids = instances(); } catch (e) { problems.push("the backup list could not be read in full (" + (e && e.message ? e.message : e) + ") — no backup is assumed"); return rows; }
+  for (var i = 0; i < ids.length; i++) {
+    var body;
+    try { body = lcm("GET", "/sddc-lcms/" + encodeURIComponent(ids[i]) + "/backups?pageSize=100").body || {}; } catch (e2) { problems.push("backups of instance " + ids[i] + " could not be read — no backup is assumed"); continue; }
+    if (Object.prototype.toString.call(body.backups) !== "[object Array]") { problems.push("no backups array for instance " + ids[i] + " — no backup is assumed"); continue; }
+    for (var b = 0; b < body.backups.length; b++) {
+      var bk = body.backups[b];
+      var points = bk.points || [];
+      var newest = null;
+      for (var p = 0; p < points.length; p++) {
+        var raw = points[p];
+        var t = typeof raw === "number" ? raw : /^\d+$/.test(String(raw)) ? Number(raw) : Date.parse(String(raw));
+        if (!isNaN(t)) { if (t < 100000000000) t = t * 1000; if (newest === null || t > newest) newest = t; }
+      }
+      var type = String(bk.componentType || "?");
+      var name = String(bk.name || bk.componentId || "?");
+      var age = newest === null ? -1 : Math.floor((new Date().getTime() - newest) / 3600000);
+      rows.push({ instance: ids[i], type: type, name: name, age: age });
+      if (age < 0) problems.push(type + " " + name + ": no readable backup point");
+      else if (age > BACKUP_HOURS) problems.push(type + " " + name + ": last backup " + age + "h ago (limit " + BACKUP_HOURS + "h)");
+      else System.log("  ok  " + type + " " + name + ": " + age + "h ago");
+    }
+  }
+  if (rows.length === 0) problems.push("no backups listed for any component");
+  return rows;
+}
+function componentsOf(plan) {
+  var c = plan && plan.components;
+  if (c && Object.prototype.toString.call(c.elements) === "[object Array]") return c.elements;
+  if (Object.prototype.toString.call(c) === "[object Array]") return c;
+  return null;
+}
+// Every component in the plan must carry an explicit passing precheck status.
+function blockers(plan) {
+  var comps = componentsOf(plan);
+  if (!comps) return ["the plan has no component list"];
+  if (comps.length === 0) return ["the plan lists no components"];
+  var out = [];
+  for (var i = 0; i < comps.length; i++) {
+    var s = comps[i].precheck && typeof comps[i].precheck.status === "string" ? comps[i].precheck.status.toUpperCase() : null;
+    if (!s || !/^(SUCCEEDED|SUCCESSFUL|COMPLETED|PASSED)$/.test(s)) out.push((comps[i].type || comps[i].componentType || "?") + " " + (comps[i].fqdn || comps[i].name || "?") + ": precheck " + (s || "not run / no status"));
+  }
+  return out;
+}
+var problems = [];
+var failure = null;
+var COMMAND = String(command || "backup-status");
+var report = { command: COMMAND, planId: null };
+var lines = [];
+try {
+  if (COMMAND === "inventory") {
+    var comps = listOf(lcm("GET", "/components").body, ["elements", "components"], "components");
+    for (var i = 0; i < comps.length; i++) lines.push([comps[i].type || comps[i].componentType, comps[i].fqdn || comps[i].name, comps[i].version, comps[i].status || ""].join("\t"));
+  } else if (COMMAND === "backup-status") {
+    var rows = checkBackups();
+    for (var r = 0; r < rows.length; r++) lines.push([rows[r].instance, rows[r].type, rows[r].name, rows[r].age].join("\t"));
+  } else if (COMMAND === "backup-config") {
+    if (!CAN_BACKUP) throw new Error("This package was generated without the backup schedule.");
+    if (!settings.sftpPassword || !settings.backupPassphrase) throw new Error("Set sftpPassword and backupPassphrase in " + SETTINGS_NAME + ".");
+    var spec = JSON.parse(core.resource(RESOURCE_PATH, "backup-config.json"));
+    if (JSON.stringify(spec).indexOf("<REQUIRED") >= 0) throw new Error("backup-config.json still has <REQUIRED> values: the SSH host key fingerprint of the SFTP server.");
+    spec.backupConfigSpec.storage.sftp.password = String(settings.sftpPassword);
+    spec.backupConfigSpec.encryptionPassphrase = String(settings.backupPassphrase);
+    var ids = instances();
+    // PATCH sets the schedule to exactly these values; running it again
+    // changes nothing and creates nothing.
+    for (var n = 0; n < ids.length; n++) {
+      core.act(ctx, "set the SFTP backup schedule of VCF instance " + ids[n] + " (" + spec.backupConfigSpec.storage.sftp.host + ")", (function (id) {
+        return function () {
+          var resp = lcm("PATCH", "/sddc-lcms/" + encodeURIComponent(id), spec).body || {};
+          var task = resp.taskId || resp.id;
+          if (task) waitTask(String(task));
+          return id;
+        };
+      })(ids[n]));
+    }
+  } else if (COMMAND === "plan" || COMMAND === "precheck" || COMMAND === "apply") {
+    if (!CAN_UPGRADE) throw new Error("This package was generated without the upgrade plan.");
+    if (COMMAND === "plan") {
+      // VERIFY: a plan for the same target version is found by
+      // spec.desiredSoftware.version and reused rather than created again.
+      var plans = listOf(lcm("GET", "/upgrade-plans").body, ["elements", "upgradePlans"], "upgrade-plans");
+      for (var pl = 0; pl < plans.length && !report.planId; pl++) {
+        var sw = plans[pl].spec && plans[pl].spec.desiredSoftware;
+        if (sw && sw.version === TARGET) report.planId = String(plans[pl].id || plans[pl].planId);
+      }
+      if (report.planId) System.log("An upgrade plan to " + TARGET + " exists (" + report.planId + "); reused. Next: command precheck.");
+      else report.planId = core.act(ctx, "create an upgrade plan to " + TARGET, function () {
+        var created = lcm("POST", "/upgrade-plans", { spec: { desiredSoftware: { version: TARGET, components: [] }, componentsFilter: [] } }).body || {};
+        var id = created.id || created.planId;
+        if (!id) throw new Error("The plan was sent but no plan id came back; check Fleet management > Lifecycle.");
+        var cs = componentsOf(created) || [];
+        for (var c = 0; c < cs.length; c++) System.log("  " + [cs[c].type, cs[c].fqdn, cs[c].version + " -> " + cs[c].targetVersion, cs[c].status].join("\t"));
+        return String(id);
+      });
+    } else {
+      var PLAN = String(planId || "");
+      if (!PLAN) throw new Error("Give planId.");
+      report.planId = PLAN;
+      if (COMMAND === "precheck") {
+        // A precheck changes no component, so a dry run runs it too.
+        var pr = lcm("POST", "/upgrade-plans/" + encodeURIComponent(PLAN) + "?action=precheck", {}).body || {};
+        var pt = pr.taskId || (pr.executions && pr.executions.length ? pr.executions[pr.executions.length - 1].taskId : null) || pr.id;
+        if (pt) { try { waitTask(String(pt)); } catch (e3) { problems.push("precheck task " + pt + " did not succeed: " + (e3 && e3.message ? e3.message : e3)); } }
+        var checked = lcm("GET", "/upgrade-plans/" + encodeURIComponent(PLAN)).body;
+        var bl = blockers(checked);
+        for (var x = 0; x < bl.length; x++) problems.push("not ready: " + bl[x]);
+        if (bl.length === 0) System.log("Every component in the plan passed its precheck.");
+      } else {
+        // Guardrails. Each fails closed: what cannot be read counts as not
+        // passed. A dry run runs them too, so it says whether an armed run would go on.
+        if (!ctx.dryRun && !changeRef) throw new Error("Refusing: give the change reference (changeRef input).");
+        var plan = lcm("GET", "/upgrade-plans/" + encodeURIComponent(PLAN)).body;
+        var gate = blockers(plan);
+        if (gate.length > 0) throw new Error("Refusing: the plan has not passed its precheck: " + gate.join("; ") + ". Run command precheck and read it.");
+        var backed = {};
+        var rowsNow = checkBackups();
+        for (var y = 0; y < rowsNow.length; y++) backed[rowsNow[y].type.toUpperCase()] = true;
+        var pcs = componentsOf(plan);
+        for (var z = 0; z < pcs.length; z++) {
+          var ptype = String(pcs[z].type || pcs[z].componentType || "?").toUpperCase();
+          if (!backed[ptype]) problems.push(ptype + ": in the plan, but no backup of that component type is listed");
+        }
+        if (problems.length > 0) throw new Error("Refusing: every component in the plan needs a backup newer than " + BACKUP_HOURS + "h first: " + problems.join("; "));
+        core.act(ctx, "apply upgrade plan " + PLAN + " to " + TARGET + (changeRef ? " under change " + changeRef : ""), function () {
+          var ar = lcm("POST", "/upgrade-plans/" + encodeURIComponent(PLAN) + "?action=apply", {}).body || {};
+          var at = ar.taskId || (ar.executions && ar.executions.length ? ar.executions[ar.executions.length - 1].taskId : null) || ar.id;
+          if (!at) throw new Error("No task id returned; follow the plan in VCF Operations.");
+          waitTask(String(at));
+          return String(at);
+        });
+      }
+    }
+  } else {
+    throw new Error("Unknown command " + COMMAND + ": inventory, backup-status, backup-config, plan, precheck or apply.");
+  }
+} catch (e) {
+  failure = e;
+} finally {
+  core.logoutVcfOps(settings.opsHost, opsAuth);
+}
+for (var w = 0; w < problems.length; w++) System.warn("PROBLEM: " + problems[w]);
+report.problems = problems;
+reportText = lines.join("\n");
+upgradePlanId = report.planId || "";
+${FINISH}`;
+}
+/**
+ * Cloud proxies: task health (read only, the default, for the scheduler) or
+ * task group (create or update the HA collector group). The group is left
+ * alone when its members and switches already match.
+ */
+function cloudProxyWorkflow(groupName: string, proxies: readonly string[], lateMinutes: number): string {
+  const q = JSON.stringify;
+  return String.raw`var GROUP = ${q(groupName)};
+var PROXIES = ${q(proxies)};
+var LATE_MINUTES = ${lateMinutes};
+var TASK = String(task || "health");
+var ctx = core.begin(settings, dryRun);
+${OPS_LOGIN}var problems = [];
+var failure = null;
+var report = { task: TASK, group: GROUP };
+var lines = [];
+var before = "";
+function arrayIn(body, keys, what) {
+  for (var i = 0; i < keys.length; i++) if (body && Object.prototype.toString.call(body[keys[i]]) === "[object Array]") return body[keys[i]];
+  throw new Error("Unrecognised " + what + " response: no list in it.");
+}
+// VERIFY: the list keys (collector, collectorGroups) and the state value UP.
+function collectors() { return arrayIn(ops("GET", "/collectors").body, ["collector", "collectors"], "collectors"); }
+function groups() { return arrayIn(ops("GET", "/collectorgroups").body, ["collectorGroups", "collectorGroup"], "collectorgroups"); }
+function ids(list) { var out = []; for (var i = 0; i < list.length; i++) out.push(String(list[i])); out.sort(); return out.join(","); }
+try {
+  if (TASK === "health") {
+    var all = collectors();
+    // An empty list would otherwise read as "every proxy is up".
+    if (all.length === 0) throw new Error("VCF Operations listed no collectors at all; cannot judge.");
+    var now = new Date().getTime();
+    var up = {};
+    for (var i = 0; i < all.length; i++) {
+      var c = all[i];
+      lines.push([c.name, c.state, c.hostName || "", "last heartbeat " + (c.lastHeartbeat ? new Date(Number(c.lastHeartbeat)).toISOString() : "?")].join("\t"));
+      if (c.state === "UP") up[String(c.id)] = true;
+      if (c.local === true) continue;
+      if (c.state !== "UP") problems.push(c.name + ": state " + (c.state || "unknown"));
+      else if (Number(c.lastHeartbeat || 0) < now - LATE_MINUTES * 60000) problems.push(c.name + ": no heartbeat for " + Math.floor((now - Number(c.lastHeartbeat || 0)) / 60000) + " minutes");
+    }
+    // An HA group with fewer than two members UP is not HA any more.
+    var gs = groups();
+    for (var g = 0; g < gs.length; g++) {
+      if (gs[g].haEnabled !== true) continue;
+      var members = gs[g].collectorId || [];
+      var n = 0;
+      for (var m = 0; m < members.length; m++) if (up[String(members[m])]) n++;
+      if (n < 2) problems.push("collector group " + gs[g].name + ": only " + n + " member(s) UP — no failover left");
+    }
+  } else if (TASK === "group") {
+    var known = collectors();
+    var selected = [];
+    var down = [];
+    for (var p = 0; p < PROXIES.length; p++) {
+      var hit = null;
+      for (var k = 0; k < known.length; k++) if (known[k].name === PROXIES[p]) hit = known[k];
+      if (!hit) continue;
+      selected.push(hit);
+      if (hit.state !== "UP") down.push(hit.name + "=" + hit.state);
+    }
+    // A group built from a proxy that is down fails over to nothing.
+    if (selected.length !== PROXIES.length) throw new Error("Refusing: found " + selected.length + " of " + PROXIES.length + " cloud proxies. Known: " + known.map(function (x) { return x.name; }).join(", "));
+    if (down.length > 0) throw new Error("Refusing: not UP: " + down.join(", "));
+    var want = JSON.parse(core.resource(RESOURCE_PATH, "collector-group.json"));
+    want.collectorId = [];
+    for (var s = 0; s < selected.length; s++) want.collectorId.push(selected[s].id);
+    var existing = [];
+    var list = groups();
+    for (var e = 0; e < list.length; e++) if (list[e].name === GROUP) existing.push(list[e]);
+    if (existing.length > 1) throw new Error("Refusing: " + existing.length + " collector groups are named " + GROUP + ".");
+    var current = existing.length === 1 ? existing[0] : null;
+    if (current) {
+      before = JSON.stringify(current);
+      if (ids(current.collectorId || []) === ids(want.collectorId) && current.haEnabled === want.haEnabled && current.lbEnabled === want.lbEnabled && (want.virtualIP === undefined || current.virtualIP === want.virtualIP)) {
+        System.log("Collector group " + GROUP + " already has " + PROXIES.join(", ") + " with these settings; left as it is.");
+      } else {
+        System.log("Collector group " + GROUP + " has members " + ids(current.collectorId || []) + "; will have " + ids(want.collectorId) + ". Its previous state is the groupBefore output.");
+        want.id = current.id;
+        core.act(ctx, "update collector group " + GROUP + " to " + PROXIES.join(", "), function () { ops("PUT", "/collectorgroups", want); return String(current.id); });
+      }
+    } else {
+      core.act(ctx, "create collector group " + GROUP + " with " + PROXIES.join(", "), function () {
+        var r = ops("POST", "/collectorgroups", want);
+        return String((r.body && r.body.id) || "");
+      });
+    }
+    System.log("Move the adapter instances that should fail over onto the group (Administration > Integrations > each account > Collector).");
+  } else {
+    throw new Error("Unknown task " + TASK + ": health or group.");
+  }
+} catch (e) {
+  failure = e;
+} finally {
+  core.logoutVcfOps(settings.opsHost, opsAuth);
+}
+for (var w = 0; w < problems.length; w++) System.warn("PROBLEM: " + problems[w]);
+report.problems = problems;
+problemCount = problems.length;
+reportText = lines.join("\n");
+groupBefore = before;
+${FINISH}`;
+}
 
 export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
@@ -489,9 +2090,9 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'else',
         '  if [[ -n "$EXISTING" ]]; then',
         '    # VERIFY: the update body is the create body plus the id.',
-        '    POLICY_ID=$(jq --arg id "$EXISTING" \'. + {id: $id}\' policy.json | api PUT "${FM}/password-policies" --data @- | jq -r \'.id // empty\')',
+        '    POLICY_ID=$(jq --arg id "$EXISTING" \'. + {id: $id}\' "${HERE}/policy.json" | api PUT "${FM}/password-policies" --data @- | jq -r \'.id // empty\')',
         '  else',
-        '    POLICY_ID=$(api POST "${FM}/password-policies" --data @policy.json | jq -r \'.id // empty\')',
+        '    POLICY_ID=$(api POST "${FM}/password-policies" --data @"${HERE}/policy.json" | jq -r \'.id // empty\')',
         '  fi',
         '  [[ -n "$POLICY_ID" ]] || { echo "The policy was sent but no id came back; check Fleet management > Passwords before re-running." >&2; exit 1; }',
         '  echo "Policy ${POLICY_ID}"',
@@ -520,24 +2121,68 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      // The Orchestrator package: the report, or the change, as one workflow.
+      const names = fleetNames('password_policy', base);
+      const pkg = toPackage({
+        ...names,
+        description: mode === 'report' ? 'Reports every VCF 9.1 fleet password policy, component group compliance and account. Reads only. Generated by ArchToolKit.' : `${mode === 'detach' ? 'Removes' : 'Creates or updates, then applies,'} the VCF 9.1 fleet password policy "${policyName}". Generated by ArchToolKit.`,
+        workflow:
+          mode === 'report'
+            ? {
+                name: `Fleet password policy report ${base}`,
+                description: 'Reads every password policy, every component group with its compliance, and every password account from VCF Operations fleet management. Changes nothing; posts to the webhook when a component group is not COMPLIANT.',
+                inputs: [],
+                outputs: [
+                  { name: 'problemCount', type: 'number', description: 'Component groups not COMPLIANT' },
+                  { name: 'reportText', type: 'string', description: 'One tab-separated line per policy, component group and account' },
+                  SUMMARY_OUTPUT,
+                ],
+                script: POLICY_REPORT_WORKFLOW,
+              }
+            : {
+                name: `Fleet password policy ${base}`,
+                description: `${mode === 'detach' ? `Removes password policy "${policyName}" from ${instances.join(', ')} (9.1.1), which fall back to the fleet policy.` : `Creates or updates password policy "${policyName}" from policy.json and applies it to ${target === 'FLEET' ? 'the fleet' : target === 'MANAGEMENT' ? 'the management components' : instances.join(', ')}.`} Refuses while a policy task runs; exports every policy before the first change; leaves alone what already matches. A dry run until dryRun is set to false in the configuration element.`,
+                inputs: [DRY_RUN_INPUT],
+                outputs: [
+                  { name: 'policyId', type: 'string', description: 'The policy id; empty in a dry run' },
+                  { name: 'taskId', type: 'string', description: 'The policy task id, when one was submitted' },
+                  { name: 'policiesBefore', type: 'string', description: 'Every policy as exported before the first change: the undo' },
+                  SUMMARY_OUTPUT,
+                ],
+                script: policyChangeWorkflow(mode, target, policyName, instances),
+              },
+        actions: FLEET_ACTIONS,
+        config: {
+          name: 'Settings',
+          description: 'Settings of the fleet password policy workflow. Fill apiToken after import.',
+          attributes: [...FLEET_SETTINGS, ...(mode === 'report' ? [{ name: 'webhook', type: 'string' as const, value: webhook, description: 'Optional: where the record is posted when a component group is not compliant' }] : arming(3, webhook))],
+        },
+        resources: mode === 'apply' ? [{ name: 'policy.json', content: json(policy) }] : [],
+      });
+
       const files: Record<string, string> = {
-        'password-policy-report.sh': report,
+        ...pkg.files,
+        'scripts/password-policy-report.sh': report,
         'crontab.txt': cron(base, '0 6 * * 1', 'password-policy-report.sh'),
       };
       if (mode !== 'report') {
-        files['password-policy.sh'] = policyScript;
-        if (mode === 'apply') files['policy.json'] = json(policy);
+        files['scripts/password-policy.sh'] = policyScript;
+        if (mode === 'apply') files['scripts/policy.json'] = json(policy);
       }
       files['IMPORT.md'] = fleetImport(
-        mode === 'apply'
-          ? 'policy.json is exactly the body of POST .../fleet-management/password-policies (a PUT to update adds the existing id). Password policies have no file import in the interface.'
-          : 'Nothing is imported: the report reads the policies and accounts.',
+        `The Orchestrator package does the job: the workflow **${pkg.workflowName}** on the shared ArchToolKit core library — \`${pkg.packageDir}\` and \`import/com.archtoolkit.core.package\`. ${mode === 'apply' ? 'Its resource element policy.json (scripts/policy.json for the script) is exactly the body of POST .../fleet-management/password-policies; the update is PUT with the existing id added. ' : ''}Password policies have no file import in the interface. The bash scripts under scripts/ do the same from a Linux host.`,
         [
+          ...pkg.importSteps,
           cronStep('password-policy-report.sh'),
           mode !== 'report'
-            ? { heading: mode === 'apply' ? 'Create or update the policy, then apply it' : 'Apply the policy', lines: ['`./password-policy.sh` (dry run), then `--execute`. In the interface: Manage > Fleet management > Passwords > Password policies (VERIFY the menu name on your build).'] }
+            ? { heading: mode === 'apply' ? 'Or: create or update the policy with the script' : 'Or: remove the policy with the script', lines: ['`./scripts/password-policy.sh` (dry run), then `--execute`. In the interface: Manage > Fleet management > Passwords > Password policies (VERIFY the menu name on your build).'] }
             : undefined,
         ],
+        [
+          'Confirmed in the VCF Operations API 9.1 reference (Fleet Password Policy Management): POST/PUT /fleet-management/password-policies, POST .../query, POST .../export, POST .../component-groups/query, POST .../component-groups/tasks, POST .../tasks/query, GET .../tasks/{id}.',
+          'VERIFY: the PUT body (the create body plus id); the response fields the workflow reads to leave things alone — policies[].fleet, results[].componentGroup, policyName, componentGroupResourceId, componentGroupComplianceStatus, taskId and taskStatus — are the ones the script already used, not all confirmed in the reference.',
+        ],
+        [FLEET_API, AUDIT_SOURCES.opsApi, AUDIT_SOURCES.idb],
       );
 
       return {
@@ -560,14 +2205,14 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { rule: 'Exports every existing policy before changing anything', because: 'The previous values are the undo, and nobody writes them down beforehand.' },
           { rule: 'The generator rejects minimums that add up to more than the length, and a warning period longer than the expiry', because: 'Both are accepted by the API and make every later rotation fail.' },
         ],
-        dryRun: ['Run password-policy.sh without --execute: it resolves the policy and the component groups and says what it would send.', 'Run password-policy-report.sh first; it only reads.'],
+        dryRun: [`Run the workflow ${pkg.workflowName} with dryRun = true (the configuration element keeps it a dry run until its dryRun is false): it reads the tasks, the policy and the component groups and logs every "DRY RUN: would …".`, 'Or run scripts/password-policy.sh without --execute; scripts/password-policy-report.sh only reads.'],
         undo: [
           'Re-create the previous values from policies-before-<time>.json with PUT /password-policies, then apply again.',
           'On 9.1.1, detaching a policy from an instance makes it fall back to the fleet policy.',
           'A password already changed under the new policy stays changed.',
         ],
         told: [webhook ? `${webhook}, when a component group is non-compliant, failed or has no policy.` : 'The exit code only.', 'VCF Operations records the task under the password policy task history.'],
-        requires: ['An API client with vcf_password.manage (and administration.fleetSettings.password.* on 9.1) — see fleet91_api_clients.', 'Every VCF component at 9.1 or later: the policy page is unavailable until they are (9.1.1 known issue).', 'jq and bash 4.'],
+        requires: ['An API client with vcf_password.manage (and administration.fleetSettings.password.* on 9.1) — see fleet91_api_clients.', 'Every VCF component at 9.1 or later: the policy page is unavailable until they are (9.1.1 known issue).', ORCH_REQ, 'For the scripts: jq and bash 4.'],
         files,
         notes: [
           'Confirmed against the VCF Operations API reference (Fleet Password Policy Management): create, query, export, component-groups query and tasks with POLICY_APPLY and POLICY_DETACH.',
@@ -654,6 +2299,30 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
 
       const filter: Record<string, string> = { credentialType: credType };
       if (status) filter.status = status;
+
+      const names = fleetNames('password_rotate', base);
+      const pkg = toPackage({
+        ...names,
+        description: `Changes ${label} ${credType} passwords through VCF Operations fleet management, one account at a time. Generated by ArchToolKit.`,
+        workflow: {
+          name: `Fleet password rotation ${base}`,
+          description: `Queries the ${label} ${credType} accounts VCF Operations manages${fqdns.length ? ` on ${fqdns.join(', ')}` : ''}${users.length ? `, named ${users.join(', ')}` : ''}, refuses above maxAccounts, and changes each one that has a current and a next password in rotationSecrets, one at a time, following each request to the end and stopping at the first that does not complete. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: [{ name: 'changedAccounts', type: 'string', description: 'user@fqdn of every account changed, one per line' }, SUMMARY_OUTPUT],
+          script: rotateWorkflow(appliance, credType, status, fqdns, users),
+        },
+        actions: FLEET_ACTIONS,
+        config: {
+          name: 'Settings',
+          description: 'Settings of the fleet password rotation workflow. Fill apiToken and rotationSecrets after import; clear rotationSecrets after the run.',
+          attributes: [
+            ...FLEET_SETTINGS,
+            { name: 'rotationSecrets', type: 'SecureString', description: 'JSON array, one object per account: fqdn, user, current (its password now) and next (the new one)' },
+            { name: 'maxAccounts', type: 'number', value: max, description: 'Refuse outright when more accounts than this match' },
+            ...arming(max, webhook, 'password changes'),
+          ],
+        },
+      });
 
       const rotate = [
         ...head(`Change ${label} ${credType} passwords through VCF Operations fleet management.`, [
@@ -857,17 +2526,38 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
             : [{ rule: 'Each account is marked PENDING in rotation-state-<time>.tsv before its request is sent, then DONE, FAILED, REFUSED or UNKNOWN', because: 'After a timeout or a proxy 504 you need to know which accounts may be on the new password.' }]),
           { rule: 'Refuses to act on a partial account list: every page is read, and a response it does not recognise stops the run', because: 'Rotating from page one of a larger list leaves accounts behind while the run reports success.' },
         ],
-        dryRun: ['Run rotate-passwords.sh without --execute. It lists every account it would change and every account it would skip, and sends nothing.'],
+        dryRun: [`Run the workflow ${pkg.workflowName} with dryRun = true: it lists every account it selected and logs "DRY RUN: would change the password of …" for each, sending nothing.`, 'Or run scripts/rotate-passwords.sh without --execute.'],
         undo: [
           'Run again with a ROTATION_FILE whose third column is the new password and fourth column the old one (source "file").',
           source === 'generate' ? 'The generated passwords are in new-passwords-<time>.tsv, each written before it was sent. A line marked PENDING, UNKNOWN or FAILED may or may not be in effect — try the new password, then the old one.' : 'The previous passwords are the third column of your ROTATION_FILE; rotation-state-<time>.tsv says which accounts were DONE, and which are UNKNOWN or FAILED and need trying both ways.',
           'A password history in the policy may refuse the old password; lower it temporarily if you must put one back.',
         ],
         told: [webhook ? `${webhook}, when a change is refused or does not complete.` : 'The exit code only.', 'rotation-<time>.log beside the script, without passwords.', 'VCF Operations records each request under its password management tasks (all local account operations are audited in 9.1.1).'],
-        requires: ['An API client with vcf_password.manage — see fleet91_api_clients.', 'The current passwords, from your vault, in a mode-600 file.', 'jq, bash 4' + (source === 'generate' ? ' and openssl.' : '.')],
+        requires: ['An API client with vcf_password.manage — see fleet91_api_clients.', 'The current passwords, from your vault: in the SecureString rotationSecrets for the package (with the new ones), in a mode-600 file for the script.', ORCH_REQ, 'For the script: jq, bash 4' + (source === 'generate' ? ' and openssl.' : '.')],
         files: {
-          'rotate-passwords.sh': rotate,
-          'IMPORT.md': fleetImport('Nothing is uploaded as a file: the rotation request names accounts read from the fleet at run time.', [{ heading: 'Rotate', lines: ['`./rotate-passwords.sh` (dry run: lists the accounts), then `--execute`.'] }]),
+          ...pkg.files,
+          'scripts/rotate-passwords.sh': rotate,
+          'IMPORT.md': fleetImport(
+            `The Orchestrator package does the job: the workflow **${pkg.workflowName}** on the shared ArchToolKit core library — \`${pkg.packageDir}\` and \`import/com.archtoolkit.core.package\`. Nothing is uploaded as a file: the accounts are read from the fleet at run time. The bash script under scripts/ does the same from a Linux host.`,
+            [
+              ...pkg.importSteps,
+              {
+                heading: 'The passwords, in rotationSecrets',
+                lines: [
+                  'The fleet API needs the current password to set a new one. Put both, for every account this run may change, into the SecureString **rotationSecrets** as one line of JSON: `[{"fqdn": "esx01.example.com", "user": "root", "current": "…", "next": "…"}]`. Clear it after the run.',
+                  source === 'generate'
+                    ? 'The workflow does not generate passwords: Orchestrator has no private place to write a new password down before it is sent, and one that went through but was never written down is a locked account. Generate them in your vault (or with scripts/rotate-passwords.sh, which writes each one to a mode-600 file first) and paste them as "next".'
+                    : 'The "next" values are the new passwords, from your vault.',
+                ],
+              },
+              { heading: 'Or: rotate with the script', lines: ['`./scripts/rotate-passwords.sh` (dry run: lists the accounts), then `--execute`.'] },
+            ],
+            [
+              'Confirmed in the VCF Operations API 9.1 reference (Fleet Password Management): POST /fleet-management/password-management/accounts/query and PUT .../accounts/{passwordAccountKey}/password; the request is followed at GET /suite-api/api/workflows/requests/{requestId} (Workflow Request).',
+              'VERIFY: credentialType values other than SSH; the reference documents pageSize but no maximum — the workflow asks for 1000 per page and reads to pageInfo.totalCount, and refuses a partial list.',
+            ],
+            [FLEET_API, AUDIT_SOURCES.opsApi, AUDIT_SOURCES.idb, AUDIT_SOURCES.passwords],
+          ),
         },
         notes: [
           'Confirmed: POST /password-management/accounts/query and PUT /password-management/accounts/{passwordAccountKey}/password {currentPassword, newPassword} returning a requestId, followed at /suite-api/api/workflows/requests/{requestId} (davidwzhang.com part 3; VCF Operations API reference).',
@@ -1028,7 +2718,8 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         ...(action === 'vmca'
           ? ['    echo "No CSR step for VMCA: run install." >&2; exit 2 ;;']
           : [
-              '    BODY=$(jq --arg k "$KEY" --argjson c "$MATCH" \'.certificateId = $k | .generateCsrSpec.subjectAltNames = ($c[0].subjectAlternativeNames // .generateCsrSpec.commonName)\' csr-spec.json)',
+              '    # subjectAltNames takes the object the query returns: {dns: [...], ip: [...]}.',
+              '    BODY=$(jq --arg k "$KEY" --argjson c "$MATCH" \'.certificateId = $k | .generateCsrSpec.subjectAltNames = ($c[0].subjectAlternativeNames // {dns: [.generateCsrSpec.commonName], ip: []})\' "${HERE}/csr-spec.json")',
               '    if (( DRY_RUN )); then echo "DRY RUN: would POST ${FM}/certificate-management/csrs:"; jq . <<<"$BODY"; exit 0; fi',
               '    REQ=$(api POST "${FM}/certificate-management/csrs" --data "$BODY" | jq -r \'.requestId // empty\')',
               '    [[ -n "$REQ" ]] || { echo "CSR generation was sent but no requestId came back; check VCF Operations before re-running." >&2; exit 1; }',
@@ -1090,24 +2781,80 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const caConfig = {
+        certificateAuthorityType: 'MICROSOFT',
+        certificateAuthoritiesSpec: { microsoftCertificateAuthoritySpec: { serverUrl: str(values, 'msca_url', ''), templateName: str(values, 'msca_template', ''), username: str(values, 'msca_user', '') } },
+      };
+      const names = fleetNames('certificates', base);
+      const steps = action === 'external' ? 'csr, then install with the signed chain' : action === 'msca' ? 'configure-ca once, then csr, then install' : 'install';
+      const pkg = toPackage({
+        ...names,
+        description: replacing ? `Replaces the ${appliance} certificate on ${fqdn} (${caType}) through VCF Operations fleet management, one step per run. Generated by ArchToolKit.` : `Reports every VCF 9.1 fleet TLS certificate expiring within ${within} days. Reads only. Generated by ArchToolKit.`,
+        workflow: replacing
+          ? {
+              name: `Fleet certificate replacement ${base}`,
+              description: `Replaces the TLS certificate of ${appliance} ${fqdn} with a ${caType} certificate, one step per run (${steps}). Refuses unless exactly one certificate matches; follows each request to the end. A dry run until dryRun is set to false in the configuration element.`,
+              inputs: [
+                { name: 'step', type: 'string', description: action === 'vmca' ? 'install' : action === 'msca' ? 'configure-ca, csr or install' : 'csr or install' },
+                ...(action === 'external' ? [{ name: 'certificateChain', type: 'string', description: 'For install: the signed PEM chain — leaf, intermediates, root. Never the key.' }] : []),
+                DRY_RUN_INPUT,
+              ],
+              outputs: [
+                { name: 'csrPem', type: 'string', description: 'The CSR, after the csr step' },
+                { name: 'certificateKey', type: 'string', description: 'The certificateResourceKey of the certificate replaced' },
+                SUMMARY_OUTPUT,
+              ],
+              script: certReplaceWorkflow(action, appliance, fqdn, caType),
+            }
+          : {
+              name: `Fleet certificate expiry report ${base}`,
+              description: `Reads every TLS certificate VCF Operations manages across the fleet and reports those expiring within ${within} days, expired, or with no readable expiry. Changes nothing.`,
+              inputs: [],
+              outputs: [
+                { name: 'expiringCount', type: 'number', description: 'Certificates inside the window' },
+                { name: 'reportCsv', type: 'string', description: 'appliance,fqdn,daysToExpire,status,issuedBy,certificateResourceKey' },
+                SUMMARY_OUTPUT,
+              ],
+              script: certReportWorkflow(within),
+            },
+        actions: FLEET_ACTIONS,
+        config: {
+          name: 'Settings',
+          description: `Settings of the fleet certificate workflow. Fill apiToken${action === 'msca' ? ' and mscaPassword' : ''} after import.`,
+          attributes: [
+            ...FLEET_SETTINGS,
+            ...(action === 'msca' ? [{ name: 'mscaPassword', type: 'SecureString' as const, description: `The password of the CA service account ${str(values, 'msca_user', '')}` }] : []),
+            ...(replacing ? arming(1, webhook, 'changes (one step is one change)') : [{ name: 'webhook', type: 'string' as const, value: webhook, description: 'Optional: where the record is posted when a certificate is inside the window' }]),
+          ],
+        },
+        resources: replacing ? [...(action !== 'vmca' ? [{ name: 'csr-spec.json', content: json(csrSpec) }] : []), ...(action === 'msca' ? [{ name: 'ca-config.json', content: json(caConfig) }] : [])] : [],
+      });
+
       const files: Record<string, string> = {
-        'certificate-report.sh': report,
+        ...pkg.files,
+        'scripts/certificate-report.sh': report,
         'crontab.txt': cron(base, '0 7 * * *', 'certificate-report.sh'),
       };
       if (replacing) {
-        files['replace-certificate.sh'] = replace;
-        if (action !== 'vmca') files['csr-spec.json'] = json(csrSpec);
-        if (action === 'msca') files['configure-msca.sh'] = configureMsca;
+        files['scripts/replace-certificate.sh'] = replace;
+        if (action !== 'vmca') files['scripts/csr-spec.json'] = json(csrSpec);
+        if (action === 'msca') files['scripts/configure-msca.sh'] = configureMsca;
       }
       files['IMPORT.md'] = fleetImport(
-        replacing
-          ? `The report reads; replace-certificate.sh does the replacement.${action !== 'vmca' ? ' csr-spec.json is the CSR request body with the certificate id and subject alternative names left for the script to fill from the certificate it replaces.' : ''}`
-          : 'Nothing is imported: the report reads the fleet’s certificates.',
+        `The Orchestrator package does the job: the workflow **${pkg.workflowName}** on the shared ArchToolKit core library — \`${pkg.packageDir}\` and \`import/com.archtoolkit.core.package\`.${replacing ? ` Run it once per step (${steps}); each run is its own decision, often days apart.${action !== 'vmca' ? ' The resource element csr-spec.json is the CSR request body; the certificate id and the subject alternative names are filled from the certificate it replaces.' : ''}` : ' It only reads.'} The bash scripts under scripts/ do the same from a Linux host.`,
         [
+          ...pkg.importSteps,
           cronStep('certificate-report.sh'),
-          ...(action === 'msca' ? [{ heading: 'Configure the Microsoft CA', lines: ['`./configure-msca.sh` (dry run), then `--execute`.'] }] : []),
-          replacing ? { heading: 'Replace', lines: ['`./replace-certificate.sh` (dry run), then `--execute`, in a change window.'] } : undefined,
+          ...(action === 'msca' ? [{ heading: 'Or: configure the Microsoft CA with the script', lines: ['`./scripts/configure-msca.sh` (dry run), then `--execute`.'] }] : []),
+          replacing ? { heading: 'Or: replace with the script', lines: ['`./scripts/replace-certificate.sh` (dry run), then `--execute`, in a change window.'] } : undefined,
         ],
+        [
+          'Confirmed in the VCF Operations API 9.1 reference (Fleet Certificate Management): POST certificates/query, GET/PUT certificates/{id}, GET/POST csrs, GET/PUT certificate-authorities; requests followed at /suite-api/api/workflows/requests/{requestId}.',
+          ...(action === 'msca' ? ['VERIFY: the PUT certificate-authorities body (certificateAuthorityType MICROSOFT, certificateAuthoritiesSpec.microsoftCertificateAuthoritySpec {serverUrl, templateName, username, secret}) is not shown in the public reference or the blogs; compare it with what the interface sends (Manage > Fleet Management > Certificates > Configure CA for Fleet) first.'] : []),
+          ...(action === 'vmca' ? ['VERIFY: caType VMCA (9.1.1) and whether it needs a CSR first; the reference names EXTERNAL_CA and MSCA.'] : []),
+          'VERIFY: the maximum pageSize of certificates/query (the workflow asks for 1000 per page and reads to pageInfo.totalCount); key sizes other than KEY_2048.',
+        ],
+        [FLEET_API, AUDIT_SOURCES.opsApi, AUDIT_SOURCES.idb, AUDIT_SOURCES.certificates],
       );
 
       return {
@@ -1130,12 +2877,12 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               ...(action === 'msca' ? [{ rule: 'The CA password is read from a mode-600 file and sent on stdin; the dry run masks it', because: 'The CA service account can issue certificates for anything the template allows.' }] : []),
             ]
           : [],
-        dryRun: replacing ? ['Every step prints what it would send unless given --execute.', 'Run certificate-report.sh first; it only reads.'] : ['certificate-report.sh only reads. Compare its list with Fleet management > Certificates in VCF Operations once.'],
+        dryRun: replacing ? [`Run the workflow ${pkg.workflowName} with dryRun = true for each step: it matches the certificate and logs "DRY RUN: would …".`, 'The scripts print what they would send unless given --execute; certificate-report.sh only reads.'] : ['The report workflow and scripts/certificate-report.sh only read. Compare the list with Fleet management > Certificates in VCF Operations once.'],
         undo: replacing
           ? ['The previous certificate cannot be put back through this API: its key stays on the appliance only until the new one is installed.', 'Replace again — with a new CSR, or with VMCA on 9.1.1 — if the new certificate is wrong.']
           : ['The report changes nothing.'],
         told: [webhook ? `${webhook}, when anything is inside the window.` : 'The exit code only.', ...(replacing ? ['VCF Operations records each request under its certificate management tasks.'] : [])],
-        requires: ['An API client with vcf_certificates.manage (vcf_certificates.view for the report) — see fleet91_api_clients.', 'jq and bash 4; openssl to inspect a chain.', ...(action === 'msca' ? ['A Microsoft CA with web enrollment and a template that allows server authentication.'] : [])],
+        requires: ['An API client with vcf_certificates.manage (vcf_certificates.view for the report) — see fleet91_api_clients.', ORCH_REQ, 'For the scripts: jq and bash 4; openssl to inspect a chain.', ...(action === 'msca' ? ['A Microsoft CA with web enrollment and a template that allows server authentication.'] : [])],
         files,
         notes: [
           'Confirmed: certificates/query, csrs (POST, and GET ?commonName=), PUT certificates/{certificateResourceKey} with caType EXTERNAL_CA, MSCA or VMCA, and PUT certificate-authorities (VCF Operations API reference; davidwzhang.com parts 1 and 2).',
@@ -1174,6 +2921,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: 'ntp1.example.com, ntp2.example.com', showWhen: { input: 'setting', notEquals: ['dns'] } },
       { id: 'max_offset', label: 'Largest offset from this machine (seconds)', control: 'number', default: 2, min: 1, max: 300, showWhen: { input: 'setting', notEquals: ['dns'] } },
       { id: 'instances', label: 'VCF instances', control: 'text', default: 'vcf-instance-01', hint: 'Comma separated, as fleet settings names them' },
+      { id: 'sddc_managers', label: 'SDDC Manager of each instance', control: 'text', default: 'sddc-manager-01.example.com', hint: 'Comma separated. The Orchestrator workflow sets DNS and NTP through each SDDC Manager API' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
       const setting = str(values, 'setting', 'both');
@@ -1183,6 +2931,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       const ntp = listOf(str(values, 'ntp_servers', ''));
       const maxOffset = num(values, 'max_offset', 2);
       const instances = listOf(str(values, 'instances', ''));
+      const sddcManagers = listOf(str(values, 'sddc_managers', ''));
       const doDns = setting !== 'ntp';
       const doNtp = setting !== 'dns';
       const base = slugOf(name || 'fleet-settings', 'fleet-settings');
@@ -1192,6 +2941,10 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       if (doNtp && ntp.length < 2) findings.push(warning('fleet91.settings.one-ntp', 'One NTP server cannot be sanity-checked against another; if it drifts, the whole instance drifts with it.', { remediation: 'Give at least two, ideally three or four.', source: SRC }));
       if (doDns && names.length === 0) findings.push(error('fleet91.settings.no-names', 'The DNS precheck needs names to resolve. Give the FQDNs of the components in the instance.', { source: SRC }));
       if (instances.length === 0) findings.push(error('fleet91.settings.no-instance', 'Name at least one VCF instance to apply the setting to.', { source: SRC }));
+      if (sddcManagers.length === 0) findings.push(error('fleet91.settings.no-sddc', 'Name the SDDC Manager of each instance: the Orchestrator workflow sets DNS and NTP through its API.', { source: SRC }));
+      if (doDns && dns.length > 2) findings.push(error('fleet91.settings.dns-max', `${dns.length} DNS servers given; SDDC Manager takes at most two (a primary and a secondary).`, { source: SRC }));
+      const IP = /^(\d{1,3}(\.\d{1,3}){3}|[0-9a-f:]*:[0-9a-f:.]+)$/i;
+      if (doDns && dns.some((server) => !IP.test(server))) findings.push(error('fleet91.settings.dns-ip', `DNS servers must be IP addresses (${dns.filter((server) => !IP.test(server)).join(', ')} is not): the SDDC Manager API takes ipAddress.`, { source: SRC }));
 
       const precheck = [
         '#!/usr/bin/env bash',
@@ -1326,6 +3079,35 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      // The bodies SDDC Manager takes (PUT and POST .../validations alike).
+      const dnsConfig = { dnsServers: dns.slice(0, 2).map((ipAddress, index) => ({ ipAddress, isPrimary: index === 0 })) };
+      const ntpConfig = { ntpServers: ntp.map((ipAddress) => ({ ipAddress })) };
+      const kinds: ('dns' | 'ntp')[] = [...(doDns ? (['dns'] as const) : []), ...(doNtp ? (['ntp'] as const) : [])];
+      const what = setting === 'both' ? 'DNS and NTP' : setting.toUpperCase();
+      const pkg = toPackage({
+        ...fleetNames('settings', base),
+        description: `Sets the ${what} servers of each VCF instance through its SDDC Manager, after SDDC Manager has validated them. Generated by ArchToolKit.`,
+        workflow: {
+          name: `Fleet ${setting === 'both' ? 'DNS and NTP' : setting.toUpperCase()} ${base}`,
+          description: `For each SDDC Manager in sddcManagers: reads the current ${what} configuration, leaves it alone if it already matches, otherwise has SDDC Manager validate the new servers and — only if the validation SUCCEEDED — applies them and follows the task. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: [{ name: 'settingsBefore', type: 'string', description: 'The configuration of each SDDC Manager before the run, JSON: the undo' }, SUMMARY_OUTPUT],
+          script: settingsWorkflow(kinds),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the fleet DNS/NTP workflow. Fill sddcPassword after import.',
+          attributes: [
+            { name: 'sddcManagers', type: 'Array/string', value: sddcManagers, description: 'The SDDC Manager of every VCF instance to set' },
+            { name: 'sddcUsername', type: 'string', value: '', description: 'An account with the ADMIN role in SDDC Manager, the same on each' },
+            { name: 'sddcPassword', type: 'SecureString', description: 'Its password' },
+            { name: 'allowWarnings', type: 'boolean', value: false, description: 'Apply when SDDC Manager’s validation ends WARNING rather than SUCCEEDED' },
+            ...arming(sddcManagers.length * kinds.length, '', 'setting changes'),
+          ],
+        },
+        resources: [...(doDns ? [{ name: 'dns-configuration.json', content: json(dnsConfig) }] : []), ...(doNtp ? [{ name: 'ntp-configuration.json', content: json(ntpConfig) }] : [])],
+      });
+
       return {
         platform: PLATFORM,
         title: `Set fleet ${setting === 'both' ? 'DNS and NTP' : setting.toUpperCase()} for ${instances.join(', ') || 'named instances'}`,
@@ -1341,25 +3123,32 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           ...(doNtp ? [{ rule: 'The precheck fails NTP servers more than 300 seconds apart', because: 'The documented limit for new NTP servers is five minutes of skew between them.' }] : []),
           { rule: 'A component that fails the update is rolled back by VCF Operations', because: 'Documented platform behaviour: a partial failure does not leave a component with half a setting.' },
         ],
-        dryRun: ['precheck.sh changes nothing.', 'apply-settings.sh without --execute runs the precheck and prints what it would send.'],
-        undo: ['Assign the previous setting to the same instances. Record it from Fleet settings before you start: this generates the new one only.'],
+        dryRun: [`Run the workflow ${pkg.workflowName} with dryRun = true: it reads each SDDC Manager's configuration and runs SDDC Manager's validation of the new servers, which changes nothing, and logs "DRY RUN: would set …".`, 'scripts/precheck.sh changes nothing; scripts/apply-settings.sh without --execute runs it and prints what it would send.'],
+        undo: ['The workflow’s settingsBefore output holds each SDDC Manager’s DNS and NTP configuration as it was: PUT it back (it is the same body shape), or assign the previous setting in Fleet settings.'],
         told: ['VCF Operations records the update under fleet management tasks.', 'precheck.sh output is the evidence for the change record.'],
-        requires: ['dig; and one of ntpdate, sntp or chronyd.', 'An API client with administration.fleetSettings.manage (or the .dns / .ntp sub-privileges) — see fleet91_api_clients.'],
+        requires: ['For the package: an SDDC Manager account with the ADMIN role on each instance.', ORCH_REQ, 'For the scripts: dig; one of ntpdate, sntp or chronyd; and an API client with administration.fleetSettings.manage (or the .dns / .ntp sub-privileges) — see fleet91_api_clients.'],
         files: {
-          'precheck.sh': precheck,
-          'apply-settings.sh': apply,
+          ...pkg.files,
+          'scripts/precheck.sh': precheck,
+          'scripts/apply-settings.sh': apply,
           // One body per call, exactly as sent: the DNS setting without the NTP
           // servers and the other way round.
-          ...(doDns ? { 'dns-setting.json': json({ ...payload, ntpServers: undefined }) } : {}),
-          ...(doNtp ? { 'ntp-setting.json': json({ ...payload, dnsServers: undefined }) } : {}),
+          ...(doDns ? { 'scripts/dns-setting.json': json({ ...payload, ntpServers: undefined }) } : {}),
+          ...(doNtp ? { 'scripts/ntp-setting.json': json({ ...payload, dnsServers: undefined }) } : {}),
           'apply-in-ui.txt': ui,
           'IMPORT.md': fleetImport(
-            'Fleet settings have no file import. The documented route is the interface (apply-in-ui.txt, step by step); the API route sends dns-setting.json and ntp-setting.json as they stand, once the paths are known.',
+            `Fleet settings have no file import. The Orchestrator package — the workflow **${pkg.workflowName}**, \`${pkg.packageDir}\` on \`import/com.archtoolkit.core.package\` — takes the documented API route: SDDC Manager's /v1/system/${kinds.map((k) => `${k}-configuration`).join(' and /v1/system/')} on each instance, validated by SDDC Manager before anything is applied. Its resource elements ${kinds.map((k) => `${k}-configuration.json`).join(' and ')} are exactly the bodies it sends. The interface route is apply-in-ui.txt.`,
             [
-              { heading: 'Precheck', lines: ['`./precheck.sh` from the management network. Do not continue unless it prints "Precheck passed."'] },
-              { heading: 'Apply', lines: ['Either follow apply-in-ui.txt (Manage > Fleet management > Fleet settings), or set DNS_SETTINGS_PATH / NTP_SETTINGS_PATH from the API reference for your release and run `./apply-settings.sh --execute` (VERIFY: the paths and bodies are not in the public reference).'] },
+              ...pkg.importSteps,
+              { heading: 'Or: precheck from the management network', lines: ['`./scripts/precheck.sh`. It checks forward and reverse lookups and NTP offsets from where it runs, which the SDDC Manager validation does not report name by name.'] },
+              { heading: 'Or: the interface', lines: ['Follow apply-in-ui.txt (Manage > Fleet management > Fleet settings). scripts/apply-settings.sh sends scripts/dns-setting.json and scripts/ntp-setting.json once DNS_SETTINGS_PATH / NTP_SETTINGS_PATH are set from the API reference for your release (VERIFY: the VCF Operations fleet settings paths and bodies are not in the public reference).'] },
             ],
-            ['The body shape of both files (name, description, dnsServers or ntpServers, instances) is not documented; compare with what the interface sends before using the API route.'],
+            [
+              'Confirmed in the SDDC Manager API 9.1 reference: /v1/system/dns-configuration and /v1/system/ntp-configuration (GET, PUT, POST validations, GET validations/{id}), dnsServers at most two.',
+              'VERIFY: the reference marks the DNS PUT deprecated "in favor of newer configuration management endpoints" — on 9.1 fleet settings in VCF Operations own DNS and NTP. Confirm on your build that the SDDC Manager route still updates the same components (apply-in-ui.txt lists them), or use the interface.',
+              'VERIFY: the body shape of scripts/dns-setting.json and ntp-setting.json (name, description, dnsServers or ntpServers, instances) for the VCF Operations route is not documented; compare with what the interface sends before using it.',
+            ],
+            [FLEET_API, AUDIT_SOURCES.sddcDnsNtp],
           ),
         },
         notes: [
@@ -1517,9 +3306,9 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           '',
           'build() {',
           '  jq --arg r "$REALM" --rawfile s "$OIDC_CLIENT_SECRET_FILE" --arg mask "$1" \\',
-          '    \'.ssoRealmId = $r | .idpConfig.oidcConfiguration.clientSecret = (if $mask == "mask" then "********" else ($s | rtrimstr("\\n")) end)\' identity-provider.json',
+          '    \'.ssoRealmId = $r | .idpConfig.oidcConfiguration.clientSecret = (if $mask == "mask" then "********" else ($s | rtrimstr("\\n")) end)\' "${HERE}/identity-provider.json"',
           '}',
-          'if grep -q "<REQUIRED" identity-provider.json; then echo "identity-provider.json still has <REQUIRED> values." >&2; exit 1; fi',
+          'if grep -q "<REQUIRED" "${HERE}/identity-provider.json"; then echo "identity-provider.json still has <REQUIRED> values." >&2; exit 1; fi',
           'if (( DRY_RUN )); then echo "DRY RUN: would POST ${FM}/iam/identity-providers:"; build mask; exit 0; fi',
           'build send | api POST "${FM}/iam/identity-providers" --data-binary @- | jq \'{id, name, idpType, provisionType}\'',
           'echo "Test a login in a private window before you log out of this one."',
@@ -1543,8 +3332,8 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           '  404) ;;',
           '  *) echo "Refusing: could not tell whether the role exists (HTTP ${EXISTS})." >&2; exit 1 ;;',
           'esac',
-          'if (( DRY_RUN )); then echo "DRY RUN: would POST ${FM}/iam/roles:"; jq . vcf-role.json; exit 0; fi',
-          'api POST "${FM}/iam/roles" --data @vcf-role.json | jq \'{roleName, type, createdAt}\'',
+          'if (( DRY_RUN )); then echo "DRY RUN: would POST ${FM}/iam/roles:"; jq . "${HERE}/vcf-role.json"; exit 0; fi',
+          'api POST "${FM}/iam/roles" --data @"${HERE}/vcf-role.json" | jq \'{roleName, type, createdAt}\'',
           '',
         ];
       } else if (task === 'group') {
@@ -1562,7 +3351,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           ...parseArgs(),
           ...realm,
           `GROUP=${sq(group)}`,
-          'MATCHES=$(api POST "${FM}/iam/ssorealms/${REALM}/groups/query?page=0&pageSize=50" --data @groups-query.json \\',
+          'MATCHES=$(api POST "${FM}/iam/ssorealms/${REALM}/groups/query?page=0&pageSize=50" --data @"${HERE}/groups-query.json" \\',
           '  | jq -c --arg g "$GROUP" \'[(.groups // .results // .elements // [])[] | select((.name // .displayName // "" | ascii_downcase) == ($g | ascii_downcase) or ((.name // "") | ascii_downcase | startswith(($g | ascii_downcase) + "@")))]\')',
           'if [[ "$(jq length <<<"$MATCHES")" != "1" ]]; then',
           '  echo "Refusing: expected one group named ${GROUP}, found $(jq length <<<"$MATCHES"). On 9.1.1 with on-demand lookup, the group must exist in AD; on 9.1.0 it must have been synced." >&2',
@@ -1575,7 +3364,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           'CURRENT=$(api GET "${FM}/iam/ssorealms/${REALM}/principals/${GID}/roles" \\',
           '  | jq -c \'if type == "object" and has("vcfRoleAssignments") and ((.vcfRoleAssignments | type) == "array" or .vcfRoleAssignments == null) then (.vcfRoleAssignments // []) else error("no vcfRoleAssignments in the response") end\')',
           'echo "Current roles: $(jq -r \'[.[].roleName] | join(", ")\' <<<"$CURRENT")"',
-          'NEW=$(jq -c --slurpfile a role-assignment.json \'. as $cur | ($a[0].vcfRoleAssignments) as $add | if all($add[]; . as $n | any($cur[]; .roleName == $n.roleName and .roleScope == $n.roleScope)) then $cur else $cur + $add end\' <<<"$CURRENT")',
+          'NEW=$(jq -c --slurpfile a "${HERE}/role-assignment.json" \'. as $cur | ($a[0].vcfRoleAssignments) as $add | if all($add[]; . as $n | any($cur[]; .roleName == $n.roleName and .roleScope == $n.roleScope)) then $cur else $cur + $add end\' <<<"$CURRENT")',
           'if [[ "$NEW" == "$CURRENT" ]]; then echo "The group already has that role at that scope."; exit 0; fi',
           'if (( DRY_RUN )); then echo "DRY RUN: would PUT the roles of group ${GID}:"; jq \'{vcfRoleAssignments: .}\' <<<"$NEW"; exit 0; fi',
           'STAMP=$(date +%Y%m%d-%H%M%S)',
@@ -1621,11 +3410,67 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         ];
       }
       files['identity.sh'] = script.join('\n');
+      const workflowNames: Record<string, string> = { oidc: 'identity provider', role: 'custom role', group: 'group role', sync: 'component role sync' };
+      const pkg = toPackage({
+        ...fleetNames(`identity_${task}`, base),
+        description: `VCF 9.1 identity and access: ${workflowNames[task] ?? task}. Generated by ArchToolKit.`,
+        workflow: {
+          name: `Fleet ${workflowNames[task] ?? task} ${base}`,
+          description:
+            task === 'oidc'
+              ? `Configures ${idpType} as the OIDC identity provider of the VCF Identity Broker, with the client secret from the configuration element. Refuses unless the realm has an emergency client. Updates the provider in idpConfigId when set, creates it otherwise.`
+              : task === 'role'
+                ? `Creates the custom VCF role ${roleName} from vcf-role.json; an existing role of that name is left alone.`
+                : task === 'group'
+                  ? `Gives directory group ${group} the VCF role ${roleName} (${scopeType}), keeping every role it already has; refuses unless exactly one group matches.`
+                  : 'Starts a drift check of every custom component role VCF has provisioned, and retries provisioning of those whose last push failed.',
+          inputs: [DRY_RUN_INPUT],
+          outputs: [
+            { name: 'resultId', type: 'string', description: task === 'oidc' ? 'The identity provider id' : task === 'role' ? 'The role name, when created' : task === 'group' ? 'The group id, when changed' : 'Empty' },
+            { name: 'rolesBefore', type: 'string', description: task === 'group' ? 'The group’s role assignments before the change, JSON: the undo' : 'Empty' },
+            SUMMARY_OUTPUT,
+          ],
+          script: identityWorkflow(task, group, roleName),
+        },
+        actions: FLEET_ACTIONS,
+        config: {
+          name: 'Settings',
+          description: `Settings of the fleet identity workflow. Fill apiToken${task === 'oidc' ? ' and oidcClientSecret' : ''} after import.`,
+          attributes: [
+            ...FLEET_SETTINGS,
+            ...(task !== 'sync' ? [{ name: 'ssoRealmId', type: 'string' as const, value: '', description: 'The SSO realm; empty for the only one there is' }] : []),
+            ...(task === 'oidc'
+              ? [
+                  { name: 'oidcClientSecret', type: 'SecureString' as const, description: 'The client secret of the application registered in the provider' },
+                  { name: 'idpConfigId', type: 'string' as const, value: '', description: 'The provider this workflow created, once it has: a run with it set updates instead of adding another' },
+                ]
+              : []),
+            ...arming(task === 'sync' ? 20 : 1, '', task === 'sync' ? 'retries' : 'changes'),
+          ],
+        },
+        resources: Object.entries(files)
+          .filter(([path]) => path.endsWith('.json'))
+          .map(([path, content]) => ({ name: path, content })),
+      });
+      for (const path of Object.keys(files)) {
+        files[`scripts/${path}`] = files[path]!;
+        delete files[path];
+      }
+      Object.assign(files, pkg.files);
       files['IMPORT.md'] = fleetImport(
-        task === 'group'
-          ? 'role-assignment.json is the PUT .../iam/ssorealms/{realm}/principals/{groupId}/roles body with the one new assignment; because that PUT replaces every assignment, identity.sh sends it together with the group’s current ones (groups-query.json is the body of the group lookup).'
-          : 'identity.sh sends the JSON beside it; values it cannot know in advance (the realm id, the client secret) are filled in memory at run time.',
-        [{ heading: 'Apply', lines: ['`./identity.sh` (dry run), then `./identity.sh --execute`. In the interface: Manage > Identity & Access (VERIFY the menu name on your build).'] }],
+        `The Orchestrator package does the job: the workflow **${pkg.workflowName}** on the shared ArchToolKit core library — \`${pkg.packageDir}\` and \`import/com.archtoolkit.core.package\`. ${
+          task === 'group'
+            ? 'Its resource element role-assignment.json (scripts/role-assignment.json for the script) is the PUT .../iam/ssorealms/{realm}/principals/{groupId}/roles body with the one new assignment; because that PUT replaces every assignment, the workflow sends it together with the group’s current ones (groups-query.json is the body of the group lookup).'
+            : task === 'sync'
+              ? 'It sends no file.'
+              : 'It sends the JSON in its resource elements (the same files under scripts/ for the script); values it cannot know in advance — the realm id, the client secret — are filled in memory at run time.'
+        } The bash script under scripts/ does the same from a Linux host.`,
+        [...pkg.importSteps, { heading: 'Or: apply with the script', lines: ['`./scripts/identity.sh` (dry run), then `./scripts/identity.sh --execute`. In the interface: Manage > Identity & Access (VERIFY the menu name on your build).'] }],
+        [
+          'Confirmed in the VCF Operations API 9.1 reference (IAM APIs): GET /iam/ssorealms, GET/POST emergency-clients, POST/PUT /iam/identity-providers and GET/DELETE /iam/identity-providers/{idpConfigId}, GET/POST /iam/roles and GET /iam/roles/{name}, POST .../groups/query, GET/PUT .../principals/{principalId}/roles, GET /iam/components/roles, POST .../{roleId}/drift-check and /retry.',
+          'VERIFY: the groups/query body (the search-terms shape is borrowed from the API token query) and its response key; the response keys of the component-role and emergency-client lists; that generic OIDC is idpType OTHER; that PUT /iam/identity-providers takes the create body with its id.',
+        ],
+        [FLEET_API, AUDIT_SOURCES.opsApi, AUDIT_SOURCES.idb],
       );
 
       const titles: Record<string, string> = {
@@ -1670,7 +3515,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           ...(task === 'sync' ? [{ rule: 'Retries provisioning only with --execute', because: 'A re-push overwrites a role someone changed in vCenter on purpose, and that deserves a look first.' }] : []),
           { rule: 'Dry run unless --execute', because: 'Identity changes are reviewed before they are made, not after the first failed login.' },
         ],
-        dryRun: ['identity.sh without --execute resolves everything and prints the body it would send.'],
+        dryRun: [`Run the workflow ${pkg.workflowName} with dryRun = true: it resolves everything and logs "DRY RUN: would …".`, 'Or scripts/identity.sh without --execute, which prints the body it would send.'],
         undo:
           task === 'oidc'
             ? ['DELETE /iam/identity-providers/{idpConfigId}, logged in through the emergency client if need be.']
@@ -1680,7 +3525,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
                 ? ['PUT roles-before-<group>-<time>.json back to /iam/ssorealms/{realm}/principals/{groupId}/roles.']
                 : ['A drift check changes nothing. A retry pushes the VCF definition again; to keep a vCenter-side change, change the VCF role instead.'],
         told: ['VCF Operations audits identity changes under Identity and access.', 'The change record, which should name the group or provider.'],
-        requires: ['An API client with identity.management.manage — see fleet91_api_clients.', 'jq and bash 4.', ...(task === 'oidc' ? ['An application registered in the provider with the identity broker’s redirect URI, and its client secret in a mode-600 file.'] : [])],
+        requires: ['An API client with identity.management.manage — see fleet91_api_clients.', ORCH_REQ, 'For the script: jq and bash 4.', ...(task === 'oidc' ? ['An application registered in the provider with the identity broker’s redirect URI, and its client secret in a mode-600 file.'] : [])],
         files,
         notes: [
           'Confirmed paths (VCF Operations API reference, IAM APIs): /iam/ssorealms, /iam/identity-providers (idpProtocol OIDC; idpType OKTA, ENTRA_ID, SYMANTEC_IDSP, OTHER), /iam/roles (componentRoles), /iam/ssorealms/{id}/groups/query, /iam/ssorealms/{id}/principals/{principalId}/roles (vcfRoleAssignments), /iam/components/roles/{roleId}/drift-check and /retry, /iam/ssorealms/{id}/emergency-clients.',
@@ -1853,7 +3698,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '      if [[ -n "$EXISTING" ]]; then WHAT="reuse client ${EXISTING}"; else WHAT="create API client ${CLIENT_ID}"; fi',
         '      echo "DRY RUN: would ${WHAT}, set its roles from role-assignment.json,"',
         '      echo "         issue a ${TTL_MIN}-minute API token and write it to ${TARGET_TOKEN_FILE} (mode 600) once it is proven."',
-        '      jq . role-assignment.json',
+        '      jq . "${HERE}/role-assignment.json"',
         '      exit 0',
         '    fi',
         '    if [[ -z "$EXISTING" ]]; then',
@@ -1862,7 +3707,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '      [[ -n "$EXISTING" ]] || { echo "The API client was sent but no clientUuid came back; check Identity > API clients." >&2; exit 1; }',
         '      echo "Created API client ${CLIENT_ID} (${EXISTING})"',
         '    fi',
-        '    api PUT "${FM}/iam/ssorealms/${REALM}/principals/${EXISTING}/roles" --data @role-assignment.json >/dev/null',
+        '    api PUT "${FM}/iam/ssorealms/${REALM}/principals/${EXISTING}/roles" --data @"${HERE}/role-assignment.json" >/dev/null',
         '    echo "Roles: $(api GET "${FM}/iam/ssorealms/${REALM}/principals/${EXISTING}/roles" | jq -r \'[.vcfRoleAssignments[]?.roleName] | join(", ")\')"',
         '    RESP=$(issue)',
         '    install_token "$RESP" || exit 1',
@@ -1927,12 +3772,41 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        ...fleetNames('api_token', base),
+        description: `API client ${clientId} and its API token: status, bootstrap, rotate and revoke. Generated by ArchToolKit.`,
+        workflow: {
+          name: `Fleet API token ${base}`,
+          description: `command status (read only): days left on ${clientId}'s newest active token, failing inside the last ${rotateDays} days. bootstrap: create the API client, give it ${roleName} (${scopeType}), issue its first token. rotate: ${strategy === 'overlap' ? 'issue a second token and prove it, keeping the old one until revoke' : 'regenerate the token and prove it'}. revoke: delete one token, never the one in apiToken. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [
+            { name: 'command', type: 'string', description: 'status, bootstrap, rotate or revoke' },
+            { name: 'tokenId', type: 'string', description: 'For revoke: the token to delete' },
+            { name: 'force', type: 'boolean', description: 'For rotate: rotate even outside the rotation window' },
+            DRY_RUN_INPUT,
+          ],
+          outputs: [
+            { name: 'daysLeft', type: 'number', description: 'Days left on the newest active token (status, rotate)' },
+            { name: 'newApiToken', type: 'SecureString', description: 'The token issued by bootstrap or rotate, proven to work' },
+            { name: 'newTokenId', type: 'string', description: 'Its id' },
+            SUMMARY_OUTPUT,
+          ],
+          script: apiTokenWorkflow(clientId, clientName, tokenDays * 24 * 60, accessMinutes, rotateDays, strategy),
+        },
+        actions: FLEET_ACTIONS,
+        config: {
+          name: 'Settings',
+          description: 'Settings of the fleet API token workflow. apiToken is the token it authenticates with: for bootstrap, an administrator’s API token; afterwards, the client’s own (its role then needs the privilege to manage API tokens), or a separate rotator client’s.',
+          attributes: [...FLEET_SETTINGS, { name: 'ssoRealmId', type: 'string', value: '', description: 'The SSO realm; empty for the only one there is' }, ...arming(3, webhook)],
+        },
+        resources: [{ name: 'role-assignment.json', content: json({ vcfRoleAssignments: [assignment] }) }],
+      });
+
       const crontab = [
         `# ${base}: status every morning (alerts on the exit code), rotation attempt every`,
         '# night — it does nothing until the token is inside the rotation window.',
         '# Both authenticate with the token file itself; no token is in these lines.',
-        `15 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./api-token.sh status >> /var/log/archtoolkit/${base}.log 2>&1`,
-        `45 2 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./api-token.sh rotate --execute >> /var/log/archtoolkit/${base}.log 2>&1`,
+        `15 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./scripts/api-token.sh status >> /var/log/archtoolkit/${base}.log 2>&1`,
+        `45 2 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./scripts/api-token.sh rotate --execute >> /var/log/archtoolkit/${base}.log 2>&1`,
         '',
       ].join('\n');
 
@@ -1955,28 +3829,42 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { rule: 'Refuses a token file that is not mode 600 or 400; never prints a token', because: 'The API token is a long-lived credential with the client’s role.' },
           { rule: 'bootstrap refuses if the token file already exists', because: 'Bootstrapping twice would overwrite a working token with a new client’s.' },
         ],
-        dryRun: ['Every command except status prints what it would do unless given --execute.', 'status only reads.'],
+        dryRun: [`Run the workflow ${pkg.workflowName} with dryRun = true: every command except status logs "DRY RUN: would …" and changes nothing; status only reads.`, 'The script: every command except status prints what it would do unless given --execute.'],
         undo: [
-          'After a rotation the previous file is kept as <token file>.previous until the old token is revoked; restore it with mv if the new one misbehaves.',
+          'The package never revokes on rotate: the old token keeps working until you run revoke, so a new token that misbehaves is undone by putting the old one back into apiToken.',
+          'After a rotation by the script the previous file is kept as <token file>.previous until the old token is revoked; restore it with mv if the new one misbehaves.',
           'A revoked token cannot be restored. Issue a new one with bootstrap (after moving the file aside) or from Identity > API clients in VCF Operations.',
           'To remove the client: DELETE /iam/ssorealms/{realm}/api-clients/{clientId}, after revoking its tokens.',
         ],
         told: [webhook ? `${webhook}, when the token is inside the window, has expired, a rotation fails, or tokens pile up.` : 'The exit code only.', 'VCF Operations shows each token’s creation, expiry and last use under Identity > API clients.'],
         requires: [
-          'For bootstrap: an administrator’s API token (SSO user token) created in VCF Operations, in a mode-600 file set as VCF_API_TOKEN_FILE, with TARGET_TOKEN_FILE set to the new file.',
+          ORCH_REQ,
+          'For bootstrap: an administrator’s API token (SSO user token) created in VCF Operations — in apiToken for the package; in a mode-600 file set as VCF_API_TOKEN_FILE, with TARGET_TOKEN_FILE set to the new file, for the script.',
           `The role ${roleName} existing, with the privileges the other scripts need: vcf_certificates.*, vcf_password.*, identity.management.*, administration.fleetSettings.*, configuration_drifts.*, and always ops.administration.management_tasks.* and administration.api.read_access.`,
           'VCF_IDB_HOST (the identity broker) and VCFOPS_HOST set; jq, curl and bash 4.',
         ],
         files: {
-          'api-token.sh': script,
-          'role-assignment.json': json({ vcfRoleAssignments: [assignment] }),
+          ...pkg.files,
+          'scripts/api-token.sh': script,
+          'scripts/role-assignment.json': json({ vcfRoleAssignments: [assignment] }),
           'crontab.txt': crontab,
           'IMPORT.md': fleetImport(
-            'The API client, its roles and its token are created through the API; role-assignment.json is exactly the body of PUT .../iam/ssorealms/{realm}/principals/{clientUuid}/roles.',
+            `The Orchestrator package — the workflow **${pkg.workflowName}**, \`${pkg.packageDir}\` on \`import/com.archtoolkit.core.package\` — creates the API client, its roles and its tokens through the API; its resource element role-assignment.json (scripts/role-assignment.json for the script) is exactly the body of PUT .../iam/ssorealms/{realm}/principals/{clientUuid}/roles. Run it with command status (the default, read only), bootstrap, rotate or revoke.`,
             [
-              { heading: 'Bootstrap the client', lines: ['`./api-token.sh bootstrap` (dry run), then `--execute`: creates the API client, PUTs role-assignment.json as its roles, issues a token and writes it to the token file (mode 600). In the interface: Manage > Identity & Access > API clients (VERIFY the menu name on your build).'] },
-              { heading: 'Rotate on a schedule', lines: ['Install the line in crontab.txt with `crontab -e`.'] },
+              ...pkg.importSteps,
+              {
+                heading: 'Rotation in Orchestrator',
+                lines: [
+                  'Schedule the workflow with command status: it fails and posts to the webhook once the token is inside the rotation window. Then run it with command rotate: it issues a new token, proves it works, and returns it as the SecureString output **newApiToken** — it does not revoke the old one, because Orchestrator cannot put the new token into the other packages for you. Paste newApiToken into apiToken of every ArchToolKit package configuration (and the scripts\' token file), then run command revoke with tokenId set to the old token.',
+                ],
+              },
+              { heading: 'Or: bootstrap and rotate with the script', lines: ['`./scripts/api-token.sh bootstrap` (dry run), then `--execute`: creates the API client, PUTs scripts/role-assignment.json as its roles, issues a token and writes it to the token file (mode 600), proven first. Then install the lines in crontab.txt with `crontab -e`: the script swaps the file and revokes the old token itself. In the interface: Manage > Identity & Access > API clients (VERIFY the menu name on your build).'] },
             ],
+            [
+              'Confirmed in the VCF Operations API 9.1 reference (IAM APIs): GET /iam/ssorealms; POST .../api-clients and .../api-clients/query; GET/PUT .../principals/{principalId}/roles; POST .../api-tokens, .../api-tokens/query, .../api-tokens/{id}/regenerate; DELETE .../api-tokens/{id}.',
+              'VERIFY: whether regenerate invalidates the previous secret immediately (the overlap strategy does not depend on it); the api-clients/query response key; whether expirationDate is seconds or milliseconds (both are accepted); that apiTokenTtl and accessTokenTtl are minutes.',
+            ],
+            [FLEET_API, AUDIT_SOURCES.opsApi, AUDIT_SOURCES.idb, 'davidwzhang.com, "VCF 9.1 API Access (8): API Token Lifecycle Automation" (2026-05-22).'],
           ),
         },
         notes: [
@@ -2049,6 +3937,31 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'exit 1',
       ]);
 
+      const pkg = toPackage({
+        ...fleetNames('licensing', base),
+        description: 'VCF 9.1 license usage as CSV. Reads only. Generated by ArchToolKit.',
+        workflow: {
+          name: `Fleet license usage ${base}`,
+          description: 'Reads the licensing info of VCF Operations (and the per-asset usage at licenseUsagePath, when set), writes it as CSV, and fails when anything reports expired, over-used or non-compliant. Changes nothing.',
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Entries reporting expired, over-used or non-compliant' },
+            { name: 'usageCsv', type: 'string', description: `The usage, as ${csv} would hold it` },
+            SUMMARY_OUTPUT,
+          ],
+          script: LICENSE_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the fleet license usage workflow. Fill opsPassword after import.',
+          attributes: [
+            ...OPS_SETTINGS,
+            { name: 'licenseUsagePath', type: 'string', value: '', description: 'VERIFY: the license server usage endpoint for your release, e.g. /suite-api/api/...; empty for the licensing info only' },
+            { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the record is posted when anything is flagged' },
+          ],
+        },
+      });
+
       const steps = [
         'VCF 9.1 licensing — the steps that stay in the interface (Broadcom techdocs 9.1, Licensing).',
         '',
@@ -2089,18 +4002,27 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           ifWrong: 'Nothing changes. A report that reads the wrong endpoint shows the wrong numbers, which is why the raw JSON is kept beside the CSV.',
         },
         guardrails: [],
-        dryRun: ['license-report.sh only reads. Compare its CSV with Licenses & Registration once.'],
+        dryRun: ['The workflow and scripts/license-report.sh only read. Compare the CSV with Licenses & Registration once.'],
         undo: ['Nothing to undo.'],
         told: [webhook ? `${webhook}, when anything reports expired, over-used or non-compliant.` : 'The exit code only.'],
-        requires: ['An API client with read access to licensing (vcf_viewer is enough for the info endpoint) — see fleet91_api_clients.', 'jq and bash 4.'],
+        requires: ['For the package: a VCF Operations account that can read licensing, for the OpsToken.', ORCH_REQ, 'For the script: an API client with read access to licensing (vcf_viewer) — see fleet91_api_clients — jq and bash 4.'],
         files: {
-          'license-report.sh': report,
+          ...pkg.files,
+          'scripts/license-report.sh': report,
           'license-steps.txt': steps,
           'crontab.txt': cron(base, '0 8 * * 1', 'license-report.sh'),
-          'IMPORT.md': fleetImport('Licences are assigned in the interface; license-steps.txt is the click path. The report only reads.', [cronStep('license-report.sh'), { heading: 'Assign', lines: ['Follow license-steps.txt.'] }]),
+          'IMPORT.md': fleetImport(
+            `Licences are assigned in the interface; license-steps.txt is the click path. The report only reads: the Orchestrator package — the workflow **${pkg.workflowName}**, \`${pkg.packageDir}\` on \`import/com.archtoolkit.core.package\` — or scripts/license-report.sh from a Linux host.`,
+            [...pkg.importSteps, cronStep('license-report.sh'), { heading: 'Assign', lines: ['Follow license-steps.txt.'] }],
+            [
+              'Confirmed in the VCF Operations API 9.1 reference (Product Licensing): GET /suite-api/api/product/licensing/info, /edition and /npc/status — nothing more. The package logs in with an OpsToken (POST /suite-api/api/auth/token/acquire), which the classic /suite-api/api endpoints take; the script uses the identity broker Bearer token (VERIFY that the licensing endpoints accept it on your build).',
+              'VERIFY: the license server usage and assignment endpoints are not in the public reference, so the report takes the path from licenseUsagePath (LICENSE_USAGE_PATH for the script) and flattens whatever it returns.',
+            ],
+            [FLEET_API, AUDIT_SOURCES.opsApi],
+          ),
         },
         notes: [
-          'Confirmed: GET /suite-api/api/product/licensing/info and /edition (VCF Operations API reference). Licensing APIs are available to all customers from 9.1 (VMware blog, May 2026).',
+          'Confirmed: GET /suite-api/api/product/licensing/info and /edition (VCF Operations API reference). Licensing APIs are available to all customers from 9.1 (VMware blog, May 2026). The package logs in with an OpsToken, which the classic /suite-api/api endpoints take.',
           'VERIFY: the license server usage and assignment endpoints; they are not in the public reference at the time of writing, so the report takes the path from LICENSE_USAGE_PATH and flattens whatever it returns.',
         ],
         findings,
@@ -2248,8 +4170,8 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
         '# The undo: the configuration as it is now, before anything is applied.',
         'STAMP=$(date +%Y%m%d-%H%M%S)',
-        'T=$(vc POST "/api/esx/settings/clusters/${ID}/configuration?action=exportConfig&vmw-task=true" | jq -r .)',
-        'wait_task "$T" > "config-before-${C}-${STAMP}.json"',
+        '# exportConfig answers directly with {config}; it is not a task.',
+        'vc POST "/api/esx/settings/clusters/${ID}/configuration?action=exportConfig" > "config-before-${C}-${STAMP}.json"',
         'jq -e \'. != null and . != {}\' "config-before-${C}-${STAMP}.json" >/dev/null || { echo "Refusing: the configuration export is empty, so there would be no undo." >&2; exit 1; }',
         'echo "Current configuration exported to config-before-${C}-${STAMP}.json"',
         '',
@@ -2303,12 +4225,60 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'exit 1',
       ]);
 
+      const vcSettings: VroConfigAttribute[] = [
+        { name: 'vcenter', type: 'string', value: vcenter, description: 'The vCenter of the clusters' },
+        { name: 'vcfIdbHost', type: 'string', value: '', description: 'VCF 9.1: the VCF Identity Broker host' },
+        { name: 'vcfApiToken', type: 'SecureString', description: 'VCF 9.1: an API token whose role has the configuration profile privileges on the vCenter' },
+        { name: 'vcUsername', type: 'string', value: '', description: '8.x and 9.0: an account with the configuration profile privileges, user@domain' },
+        { name: 'vcPassword', type: 'SecureString', description: '8.x and 9.0: its password' },
+        { name: 'timeoutMinutes', type: 'number', value: timeout, description: 'Give up on a vCenter task after this long' },
+      ];
+      const pkg = toPackage({
+        ...fleetNames(remediate ? 'drift_remediate' : 'drift_detect', base),
+        description: remediate ? `Remediates configuration drift on cluster ${cluster} (vSphere Configuration Profiles). Generated by ArchToolKit.` : `Detects configuration drift on ${clusters.length} cluster(s) (vSphere Configuration Profiles). Generated by ArchToolKit.`,
+        workflow: remediate
+          ? {
+              name: `Fleet drift remediation ${base}`,
+              description: `Exports the configuration of ${cluster} (the undo), checks compliance, requires vCenter's precheck to pass, and only then applies the desired configuration and checks again. A dry run until dryRun is set to false in the configuration element.`,
+              inputs: [DRY_RUN_INPUT],
+              outputs: [{ name: 'configBefore', type: 'string', description: 'The cluster configuration before the run: the undo (importConfig)' }, SUMMARY_OUTPUT],
+              script: driftRemediateWorkflow(cluster),
+            }
+          : {
+              name: `Fleet drift detection ${base}`,
+              description: 'Runs vCenter’s compliance check on each cluster — which changes nothing on the hosts — and fails when any has drifted or could not be checked. With opsHost set, also reads the 9.1.1 Salt for VCF Components status.',
+              inputs: [],
+              outputs: [{ name: 'problemCount', type: 'number', description: 'Clusters drifted or not checkable, and Salt failures' }, { name: 'reportText', type: 'string', description: 'Each cluster and host with its status' }, SUMMARY_OUTPUT],
+              script: driftDetectWorkflow(),
+            },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the configuration drift workflow. Fill vcfApiToken (9.1) or vcPassword (8.x, 9.0) after import.',
+          attributes: remediate
+            ? [...vcSettings, ...arming(1, webhook, 'remediations')]
+            : [
+                ...vcSettings,
+                { name: 'clusters', type: 'Array/string', value: clusters, description: 'The clusters to check' },
+                { name: 'opsHost', type: 'string', value: '', description: 'Optional (9.1.1): VCF Operations host, to read the Salt for VCF Components status' },
+                { name: 'opsUsername', type: 'string', value: '', description: 'Optional: its account' },
+                { name: 'opsPassword', type: 'SecureString', description: 'Optional: its password' },
+                { name: 'opsAuthSource', type: 'string', value: '', description: 'Optional: its authentication source; empty for local' },
+                { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the record is posted when a cluster has drifted' },
+              ],
+        },
+      });
+
       const files: Record<string, string> = remediate
-        ? { 'remediate-drift.sh': remediateScript, 'salt-status.sh': salt }
-        : { 'detect-drift.sh': detect, 'salt-status.sh': salt, 'crontab.txt': [`# ${base}: daily drift check. vCenter login comes from the mode-600 password file;`, '# no password is in this line.', `30 6 * * * cd /opt/archtoolkit/${base} && VCENTER_USER=svc-drift@vsphere.local VCENTER_PASSWORD_FILE=/etc/archtoolkit/vcenter-password ./detect-drift.sh >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n') };
+        ? { ...pkg.files, 'scripts/remediate-drift.sh': remediateScript, 'scripts/salt-status.sh': salt }
+        : { ...pkg.files, 'scripts/detect-drift.sh': detect, 'scripts/salt-status.sh': salt, 'crontab.txt': [`# ${base}: daily drift check. vCenter login comes from the mode-600 password file;`, '# no password is in this line. With the Orchestrator package, schedule its workflow instead.', `30 6 * * * cd /opt/archtoolkit/${base} && VCENTER_USER=svc-drift@vsphere.local VCENTER_PASSWORD_FILE=/etc/archtoolkit/vcenter-password ./scripts/detect-drift.sh >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n') };
       files['IMPORT.md'] = fleetImport(
-        'Nothing is imported: the scripts call the vCenter configuration-profile API and the VCF Operations Salt API.',
-        [remediate ? { heading: 'Remediate one cluster', lines: ['`./remediate-drift.sh` (precheck and export of the current configuration), then `--execute`.'] } : cronStep('detect-drift.sh')],
+        `Nothing else is imported: the Orchestrator package — the workflow **${pkg.workflowName}**, \`${pkg.packageDir}\` on \`import/com.archtoolkit.core.package\` — and the scripts under scripts/ call the vCenter configuration-profile API${remediate ? '' : ' and, optionally, the VCF Operations Salt API'}.`,
+        [...pkg.importSteps, remediate ? { heading: 'Or: remediate one cluster with the script', lines: ['`./scripts/remediate-drift.sh` (precheck and export of the current configuration), then `--execute`.'] } : cronStep('detect-drift.sh')],
+        [
+          'Confirmed (vSphere Automation API; govmomi): /api/esx/settings/clusters/{cluster}/configuration with action checkCompliance, precheck, apply and importConfig as tasks (vmw-task=true), and exportConfig answering directly with {config}; vCenter tasks at /api/cis/tasks/{task}. Salt: GET /suite-api/api/salt/resources/statuses (VCF Operations API 9.1 reference).',
+          'VERIFY: the fields of the compliance and precheck results (status or cluster_status, hosts); the apply body — {} relies on the cluster’s remediation settings; the VCF 9.1 API-token login to vCenter (identity broker token exchanged for a SAML token, presented as SIGN) follows davidwzhang.com "VCF 9.1 API Access (4)".',
+        ],
+        [FLEET_API, AUDIT_SOURCES.vcConfig, AUDIT_SOURCES.opsApi],
       );
 
       return {
@@ -2330,10 +4300,10 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               { rule: `Gives up after ${timeout} minutes`, because: 'A remediation stuck on one host should page someone, not run into the morning.' },
             ]
           : [],
-        dryRun: remediate ? ['remediate-drift.sh without --execute exports, checks and prechecks, and applies nothing.'] : ['detect-drift.sh only starts compliance checks, which change nothing on the hosts.'],
+        dryRun: remediate ? [`The workflow ${pkg.workflowName} with dryRun = true, or scripts/remediate-drift.sh without --execute, exports, checks and prechecks, and applies nothing.`] : ['The workflow and scripts/detect-drift.sh only start compliance checks, which change nothing on the hosts.'],
         undo: remediate ? ['Import config-before-<cluster>-<time>.json (POST …/configuration?action=importConfig) and apply again — or, better, fix the profile if the drift was the intended state.'] : ['Nothing to undo.'],
         told: [...(!remediate && webhook ? [`${webhook}, when any cluster has drifted.`] : []), 'vCenter records each task; VCF Operations shows the drift under Fleet management > Configuration drifts.'],
-        requires: ['Clusters managed by vSphere Configuration Profiles (Desired State – Configuration in vCenter).', 'A vCenter account with the configuration profile privileges, its password in a mode-600 file.', 'For salt-status.sh: an API client with read access — see fleet91_api_clients.', 'jq and bash 4.'],
+        requires: ['Clusters managed by vSphere Configuration Profiles (Desired State – Configuration in vCenter).', 'A vCenter account with the configuration profile privileges: an API token or password in the configuration element for the package, the password in a mode-600 file for the script.', ORCH_REQ, 'For salt-status.sh: an API client with read access — see fleet91_api_clients.', 'jq and bash 4.'],
         files,
         notes: [
           'Detection and remediation are vCenter’s: the VCF Operations configuration drift view reads the same result, and its documentation says remediation happens in vCenter, not in VCF Operations.',
@@ -2427,6 +4397,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
         ...authPreamble('vcf-operations'),
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+        'HERE="$(cd "$(dirname "$0")" && pwd)"',
         `LCM_HOST="\${FLEET_LCM_HOST:-${lcmHost}}"`,
         `BACKUP_HOURS=${backupHours}`,
         `TARGET=${sq(target)}`,
@@ -2534,13 +4505,13 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               '    : "${SFTP_PASSWORD_FILE:?set SFTP_PASSWORD_FILE to a mode-600 file holding the SFTP password}"',
               '    : "${BACKUP_PASSPHRASE_FILE:?set BACKUP_PASSPHRASE_FILE to a mode-600 file holding the backup encryption passphrase}"',
               '    need_private "$SFTP_PASSWORD_FILE"; need_private "$BACKUP_PASSPHRASE_FILE"',
-              '    grep -q "<REQUIRED" backup-config.json && { echo "backup-config.json still has <REQUIRED> values." >&2; exit 1; }',
+              '    grep -q "<REQUIRED" "${HERE}/backup-config.json" && { echo "backup-config.json still has <REQUIRED> values." >&2; exit 1; }',
               '    IDS=$(lcm GET /sddc-lcms | jq -r \'(if type == "array" then . else (.elements // .sddcLcms) end) | if type == "array" then .[] | (.id // .sddcLcmId // error("an instance has no id")) else error("unrecognised sddc-lcms response") end\')',
               '    [[ -n "$IDS" ]] || { echo "No VCF instances registered with the fleet lifecycle service; nothing to configure." >&2; exit 1; }',
               '    if (( DRY_RUN )); then echo "DRY RUN: would PATCH /fleet-lcm/v1/sddc-lcms/{id} for: ${IDS//$\'\\n\'/ } with backup-config.json plus the SFTP password and passphrase from their files."; exit 0; fi',
               '    for id in $IDS; do',
               '      T=$(jq --rawfile pw "$SFTP_PASSWORD_FILE" --rawfile pp "$BACKUP_PASSPHRASE_FILE" \\',
-              '            \'.backupConfigSpec.storage.sftp.password = ($pw | rtrimstr("\\n")) | .backupConfigSpec.encryptionPassphrase = ($pp | rtrimstr("\\n"))\' backup-config.json \\',
+              '            \'.backupConfigSpec.storage.sftp.password = ($pw | rtrimstr("\\n")) | .backupConfigSpec.encryptionPassphrase = ($pp | rtrimstr("\\n"))\' "${HERE}/backup-config.json" \\',
               '          | lcm PATCH "/sddc-lcms/${id}" --data-binary @- | jq -r \'.id // .taskId // empty\')',
               '      echo "Backup configuration for ${id}: task ${T:-none}"',
               '      [[ -z "$T" ]] || wait_lcm_task "$T" || PROBLEMS+=("backup configuration of ${id} failed")',
@@ -2628,22 +4599,65 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        ...fleetNames('lifecycle', base),
+        description: `Fleet lifecycle of the VCF 9.1 management components${doUpgrade ? `: upgrade to ${target}` : ''}${doBackup ? ', SFTP backup schedule' : ''}, backup freshness and inventory. Generated by ArchToolKit.`,
+        workflow: {
+          name: `Fleet lifecycle ${base}`,
+          description: `command inventory or backup-status (read)${doBackup ? ', backup-config (sets the SFTP schedule on every VCF instance)' : ''}${doUpgrade ? `, plan (an upgrade plan to ${target}), precheck (runs and reads it) or apply (needs changeRef, a passed precheck and a backup of every component newer than ${backupHours}h)` : ''}. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [
+            { name: 'command', type: 'string', description: `inventory, backup-status${doBackup ? ', backup-config' : ''}${doUpgrade ? ', plan, precheck or apply' : ''}` },
+            ...(doUpgrade ? [{ name: 'planId', type: 'string', description: 'For precheck and apply: the upgrade plan' }, { name: 'changeRef', type: 'string', description: 'For apply: the change reference; required when armed' }] : []),
+            DRY_RUN_INPUT,
+          ],
+          outputs: [{ name: 'reportText', type: 'string', description: 'The inventory or the backup ages' }, { name: 'upgradePlanId', type: 'string', description: 'The upgrade plan (plan, precheck, apply)' }, SUMMARY_OUTPUT],
+          script: lifecycleWorkflow(backupHours, target, doBackup, doUpgrade),
+        },
+        actions: [FLEET_LCM_TOKEN],
+        config: {
+          name: 'Settings',
+          description: `Settings of the fleet lifecycle workflow. Fill opsPassword${doBackup ? ', sftpPassword and backupPassphrase' : ''} after import.`,
+          attributes: [
+            ...OPS_SETTINGS,
+            { name: 'lcmHost', type: 'string', value: lcmHost, description: 'The fleet lifecycle host (VCF management services runtime FQDN): /fleet-lcm/v1' },
+            ...(doBackup
+              ? [
+                  { name: 'sftpPassword', type: 'SecureString' as const, description: `The password of SFTP user ${str(values, 'sftp_user', '')}` },
+                  { name: 'backupPassphrase', type: 'SecureString' as const, description: 'The backup encryption passphrase. Keep it in the vault too: without it the backups cannot be restored' },
+                ]
+              : []),
+            ...arming(doUpgrade ? 1 : 10, '', doUpgrade ? 'changes (an upgrade is one)' : 'changes (one per VCF instance)'),
+          ],
+        },
+        resources: doBackup ? [{ name: 'backup-config.json', content: json(backupSpec) }] : [],
+      });
+
       const files: Record<string, string> = {
-        'fleet-lifecycle.sh': script,
+        ...pkg.files,
+        'scripts/fleet-lifecycle.sh': script,
         'restore-notes.txt': restore,
-        'crontab.txt': [`# ${base}: backup freshness every morning. The script logs in from the password`, '# file (mode 600); no password or token is in this line.', `0 8 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh backup-status >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n'),
+        'crontab.txt': [`# ${base}: backup freshness every morning. The script logs in from the password`, '# file (mode 600); no password or token is in this line.', `0 8 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./scripts/fleet-lifecycle.sh backup-status >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n'),
       };
-      if (doBackup) files['backup-config.json'] = json(backupSpec);
+      if (doBackup) files['scripts/backup-config.json'] = json(backupSpec);
       files['IMPORT.md'] = fleetImport(
-        doBackup
-          ? 'backup-config.json is the PATCH /fleet-lcm/v1/sddc-lcms/{id} body (backupConfigSpec) without its two secrets: fleet-lifecycle.sh adds the SFTP password and the encryption passphrase from their mode-600 files in memory, then sends it to each VCF instance.'
-          : 'Nothing is imported: the script drives the fleet lifecycle API.',
+        `The Orchestrator package — the workflow **${pkg.workflowName}**, \`${pkg.packageDir}\` on \`import/com.archtoolkit.core.package\` — drives the fleet lifecycle API; its command input picks the job. ${
+          doBackup
+            ? 'Its resource element backup-config.json (scripts/backup-config.json for the script) is the PATCH /fleet-lcm/v1/sddc-lcms/{id} body (backupConfigSpec) without its two secrets: the workflow adds sftpPassword and backupPassphrase from the configuration element in memory (the script from mode-600 files), then sends it to each VCF instance.'
+            : ''
+        } The bash script under scripts/ does the same from a Linux host.`,
         [
-          doBackup ? { heading: 'Set the backup schedule', lines: ['Replace the <REQUIRED> SSH host-key fingerprint in backup-config.json, then `./fleet-lifecycle.sh backup-config` (dry run) and `--execute`. In the interface: Fleet management > Lifecycle > the instance > Backup settings.'] } : undefined,
-          { heading: 'Check backups every morning', lines: ['Install the line in crontab.txt with `crontab -e`; it runs `fleet-lifecycle.sh backup-status`.'] },
-          doUpgrade ? { heading: 'Upgrade', lines: ['`./fleet-lifecycle.sh` with the upgrade commands its header lists, dry run first; the apply step needs `--execute --change <ref>`.'] } : undefined,
+          ...pkg.importSteps,
+          doBackup ? { heading: 'Set the backup schedule', lines: ['Replace the <REQUIRED> SSH host-key fingerprint in the resource element backup-config.json (Assets → Resources; scripts/backup-config.json for the script), then run the workflow with command backup-config, dry run first. Or `./scripts/fleet-lifecycle.sh backup-config` and `--execute`. In the interface: Fleet management > Lifecycle > the instance > Backup settings.'] } : undefined,
+          { heading: 'Check backups every morning', lines: ['Schedule the workflow with command backup-status; or install the line in crontab.txt with `crontab -e`, which runs `scripts/fleet-lifecycle.sh backup-status`.'] },
+          doUpgrade ? { heading: 'Upgrade', lines: ['Run the workflow with command plan, then precheck with the planId, then apply with planId and changeRef — dry run first. Or `./scripts/fleet-lifecycle.sh` with the upgrade commands its header lists; the apply step needs `--execute --change <ref>`.'] } : undefined,
         ],
-        ['The backupConfigSpec field names follow the 9.1 fleet lifecycle API as the script cites it; the restore body is not public (restore-notes.txt).'],
+        [
+          'Confirmed in the VCF Fleet LCM Service API reference: base /fleet-lcm/v1 on the fleet lifecycle host; the token by POST /suite-api/api/auth/token/exchange {"serviceKeys":["fleet-lcm"]} with an OpsToken, answered with jwtToken; GET /components; GET/PATCH /sddc-lcms and /sddc-lcms/{id}; GET/POST /sddc-lcms/{id}/backups; GET/POST /upgrade-plans, GET /upgrade-plans/{planId}, POST ?action=precheck and ?action=apply; GET /tasks/{taskId}. The reference says these APIs may change in future releases.',
+          'The backupConfigSpec field names (fullSchedule, incrementalSchedule, retention, storage.sftp {host, port, username, password, directory, thumbprint}, encryptionPassphrase) are williamlam.com’s, July 2026.',
+          'VERIFY: the format of backups[].points (read as ISO 8601 or epoch); the list keys of /components, /sddc-lcms and /upgrade-plans; the precheck status values (only SUCCEEDED, SUCCESSFUL, COMPLETED or PASSED count as a pass); that backups[].componentType uses the plan’s component type names; that a plan for the same target is recognised by spec.desiredSoftware.version; the body of a restore (restore-notes.txt).',
+          'Another route to a Fleet LCM token is POST https://<fleet lifecycle host>/api/v1/identity/token with grant_type=password and the fleet lifecycle account (jadenetworksolutions.co.uk, 2026); this package uses the OpsToken exchange the API reference documents.',
+        ],
+        [FLEET_API, AUDIT_SOURCES.fleetLcm],
       );
 
       return {
@@ -2672,10 +4686,10 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
             : []),
           { rule: 'Nothing changes without --execute', because: 'Every acting command prints what it would send first.' },
         ],
-        dryRun: ['inventory, backup-status and precheck read (a precheck changes no component).', 'backup-config, plan and apply print what they would send unless given --execute.'],
+        dryRun: ['inventory, backup-status and precheck read (a precheck changes no component).', `backup-config, plan and apply: the workflow ${pkg.workflowName} with dryRun = true runs every gate and logs "DRY RUN: would …"; the script prints what it would send unless given --execute.`],
         undo: [...(doBackup ? ['Backup schedule: PATCH the previous settings back, or disable fullSchedule.'] : []), ...(doUpgrade ? ['An upgrade cannot be rolled back in place. Restore each component from the backup taken before apply (restore-notes.txt).'] : [])],
         told: ['VCF Operations shows fleet lifecycle tasks under Fleet management > Lifecycle.', 'The change record named with --change.'],
-        requires: ['A VCF Operations account with fleet lifecycle rights for the OpsToken, its password in a mode-600 file (VCFOPS_USER, VCFOPS_PASSWORD_FILE).', 'The fleet lifecycle host (FLEET_LCM_HOST).', ...(doBackup ? ['An SFTP server with space for the management components, its password and a backup passphrase in mode-600 files.'] : []), 'jq, curl and bash 4.'],
+        requires: ['A VCF Operations account with fleet lifecycle rights for the OpsToken: its password in the SecureString opsPassword for the package, in a mode-600 file for the script (VCFOPS_USER, VCFOPS_PASSWORD_FILE).', ORCH_REQ, 'The fleet lifecycle host (FLEET_LCM_HOST).', ...(doBackup ? ['An SFTP server with space for the management components, its password and a backup passphrase in mode-600 files.'] : []), 'jq, curl and bash 4.'],
         files,
         notes: [
           'Confirmed (developer.broadcom.com, VCF Fleet LCM Service APIs): base /fleet-lcm/v1 on the fleet lifecycle host; authentication by POST /suite-api/api/auth/token/exchange {"serviceKeys":["fleet-lcm"]} with an OpsToken, returning jwtToken; GET /components; GET /sddc-lcms; PATCH /sddc-lcms/{id} with backupConfigSpec (williamlam.com, July 2026); GET /sddc-lcms/{id}/backups; POST /upgrade-plans, ?action=precheck and ?action=apply; GET /tasks/{id}. The reference says these APIs may change in future releases.',
@@ -2721,6 +4735,25 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
 
       const group = { name: groupName, description: 'Written by ArchToolKit.', collectorId: ['<REQUIRED — cloud proxy ids; collector-group.sh fills them from the names>'], haEnabled: true, lbEnabled: lb, ...(vip ? { virtualIP: vip } : {}) };
 
+      const pkg = toPackage({
+        ...fleetNames('cloud_proxy', base),
+        description: `Cloud proxy health, and the HA collector group ${groupName}. Generated by ArchToolKit.`,
+        workflow: {
+          name: `Fleet cloud proxies ${base}`,
+          description: `task health (the default; reads only): every cloud proxy UP and heard from within ${late} minutes, and every HA group with a spare. task group: create or update the HA collector group ${groupName} with ${proxies.join(', ')}${lb ? ', load balanced' : ''}, refusing unless every proxy exists and is UP; left alone when it already matches. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'task', type: 'string', description: 'health (default) or group' }, DRY_RUN_INPUT],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'health: proxies down or late, HA groups without a spare' },
+            { name: 'reportText', type: 'string', description: 'health: every cloud proxy with its state and last heartbeat' },
+            { name: 'groupBefore', type: 'string', description: 'group: the group before the change, JSON: the undo' },
+            SUMMARY_OUTPUT,
+          ],
+          script: cloudProxyWorkflow(groupName, proxies, late),
+        },
+        config: { name: 'Settings', description: 'Settings of the cloud proxy workflow. Fill opsPassword after import.', attributes: [...OPS_SETTINGS, ...arming(1, webhook)] },
+        resources: [{ name: 'collector-group.json', content: json(group) }],
+      });
+
       const apply = [
         ...head(`Create or update the HA collector group "${groupName}" with ${proxies.join(', ')}.`, [
           'Refuses unless every named cloud proxy exists and is UP: a group built from',
@@ -2742,7 +4775,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '# An unrecognised list stops here: read as "no groups", it would create a',
         '# second group of the same name.',
         'EXISTING=$(api GET /suite-api/api/collectorgroups | jq -c --arg g "$GROUP" \'(.collectorGroups // .collectorGroup) | if type == "array" then ([.[] | select(.name == $g)] | if length > 1 then error("\\(length) groups are named \\($g)") else (.[0] // empty) end) else error("unrecognised collectorgroups response") end\')',
-        'BODY=$(jq --argjson ids "$IDS" --argjson ex "${EXISTING:-null}" \'.collectorId = $ids | if $ex then .id = $ex.id else . end\' collector-group.json)',
+        'BODY=$(jq --argjson ids "$IDS" --argjson ex "${EXISTING:-null}" \'.collectorId = $ids | if $ex then .id = $ex.id else . end\' "${HERE}/collector-group.json")',
         'if [[ -n "$EXISTING" ]]; then',
         '  echo "Group exists with members $(jq -c .collectorId <<<"$EXISTING"); would become ${IDS}."',
         '  METHOD=PUT',
@@ -2819,22 +4852,29 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { rule: 'Saves the existing group before a change', because: 'The previous membership is the undo.' },
           { rule: 'Dry run unless --execute', because: 'Membership changes move collection, which is best seen before it happens.' },
         ],
-        dryRun: ['collector-group.sh without --execute resolves the proxies and prints the body.', 'proxy-health.sh only reads.'],
+        dryRun: [`Run the workflow ${pkg.workflowName} with task group and dryRun = true: it resolves the proxies and logs "DRY RUN: would …".`, 'scripts/collector-group.sh without --execute does the same; task health and scripts/proxy-health.sh only read.'],
         undo: ['PUT collector-group-before-<time>.json back to /suite-api/api/collectorgroups, or DELETE /suite-api/api/collectorgroups/{id} for a group this created.'],
         told: [webhook ? `${webhook}, when a proxy is down, late, or an HA group has no spare.` : 'The exit code only.'],
-        requires: ['Two or more cloud proxies deployed at the same site, able to reach the same endpoints.', 'An API client with collector group rights — see fleet91_api_clients.', 'jq and bash 4.'],
+        requires: ['Two or more cloud proxies deployed at the same site, able to reach the same endpoints.', 'For the package: a VCF Operations account with collector group rights, for the OpsToken; for the scripts: an API client with them — see fleet91_api_clients.', ORCH_REQ, 'For the scripts: jq and bash 4.'],
         files: {
-          'collector-group.sh': apply,
-          'collector-group.json': json(group),
-          'proxy-health.sh': health,
+          ...pkg.files,
+          'scripts/collector-group.sh': apply,
+          'scripts/collector-group.json': json(group),
+          'scripts/proxy-health.sh': health,
           'outbound-proxy.txt': outboundNotes,
           'crontab.txt': cron(base, '*/15 * * * *', 'proxy-health.sh'),
           'IMPORT.md': fleetImport(
-            'collector-group.json is the collector group body; collectorId is left as a placeholder because the cloud proxy ids exist only in your VCF Operations — collector-group.sh looks them up by name and fills them (and the id, when the group exists) before sending.',
+            `The Orchestrator package — the workflow **${pkg.workflowName}**, \`${pkg.packageDir}\` on \`import/com.archtoolkit.core.package\` — does both jobs: task health (read only, the default: schedule it every fifteen minutes) and task group. Its resource element collector-group.json (scripts/collector-group.json for the script) is the collector group body; collectorId is left as a placeholder because the cloud proxy ids exist only in your VCF Operations — the workflow and the script look them up by name and fill them (and the id, when the group exists) before sending.`,
             [
-              { heading: 'Create the collector group', lines: ['`./collector-group.sh` (dry run), then `--execute`. In the interface: Administration > Collector Groups > Add.'] },
+              ...pkg.importSteps,
+              { heading: 'Or: create the collector group with the script', lines: ['`./scripts/collector-group.sh` (dry run), then `--execute`. In the interface: Administration > Collector Groups > Add.'] },
               cronStep('proxy-health.sh'),
             ],
+            [
+              'Confirmed in the VCF Operations API 9.1 reference (Collector Groups, Collectors): GET/POST/PUT /suite-api/api/collectorgroups, GET/DELETE /collectorgroups/{id}, PUT/DELETE /collectorgroups/{id}/collector/{collectorId}; GET /suite-api/api/collectors. The package logs in with an OpsToken.',
+              'VERIFY: the list keys of GET collectors (collector) and collectorgroups (collectorGroups), the state value UP and lastHeartbeat in epoch milliseconds; the body of PUT collectorgroups (the full group with its id); the field names haEnabled, lbEnabled and virtualIP.',
+            ],
+            [FLEET_API, AUDIT_SOURCES.opsApi],
           ),
         },
         notes: [

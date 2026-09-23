@@ -30,8 +30,10 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, readScript, scheduledEnv } from '../apply.ts';
-import { withScriptsImportMd } from '../vcfops-import.ts';
+import { importMd, withScriptsImportMd, type ImportStep } from '../vcfops-import.ts';
 import { PAGED_HELPERS, WEBHOOK_HELPER, shq, workDirLines } from './vcf-operations-content.ts';
+import { packageNameOf, toPackage, type AutomationPackage } from '../vro/to-package.ts';
+import type { VroConfigAttribute } from '../../kit/vro-package.ts';
 
 const OPS = 'vcf-operations' as const;
 const LOGS = 'vcf-operations-logs' as const;
@@ -70,6 +72,187 @@ function condition(field: string, operator: string, value: string): { field: str
 function describe(c: { field: string; operator: string; value?: string } | undefined): string {
   if (!c) return 'no condition';
   return c.value === undefined ? `${c.field} ${c.operator.toLowerCase()}` : `${c.field} ${c.operator.toLowerCase()} "${c.value}"`;
+}
+
+// ===========================================================================
+// The Orchestrator packages: what every workflow in this file shares
+// ===========================================================================
+
+/** The VCF Operations account every package here logs in with; the password is filled after import. */
+const OPS_ACCOUNT: readonly VroConfigAttribute[] = [
+  { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host (FQDN)' },
+  { name: 'opsUsername', type: 'string', value: '', description: 'A VCF Operations account; read-only is enough unless the workflow says otherwise' },
+  { name: 'opsPassword', type: 'SecureString', description: 'Its password' },
+  { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source of the account; empty for a local account' },
+];
+
+/**
+ * Log in to VCF Operations and the paged readers every read workflow uses.
+ * getAll/postAll follow page= through core.pageAll, which refuses a partial
+ * list; a response without the list key or pageInfo is an error, never an
+ * empty list. The caller logs out in a finally.
+ */
+const OPS_SESSION = String.raw`if (!settings.opsHost) throw new Error("Set opsHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUsername and opsPassword in the configuration element " + SETTINGS_NAME + ".");
+var api = "https://" + settings.opsHost + "/suite-api/api/";
+var SAFE = { redact: settings._secrets };
+var PAGE_SIZE = 1000;
+function paged(method, path, key, body) {
+  return core.pageAll(function (page) {
+    var url = api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=" + PAGE_SIZE;
+    var r = core.http(method, url, auth, method === "GET" ? null : body, SAFE).body;
+    if (!r || typeof r !== "object" || !(r[key] || r.pageInfo)) throw new Error(method + " " + path.split("?")[0] + ": the response has no " + key + " (VERIFY the response shape).");
+    var items = r[key] || [];
+    return { items: items, total: r.pageInfo && r.pageInfo.totalCount !== undefined && r.pageInfo.totalCount !== null ? r.pageInfo.totalCount : null, more: items.length < PAGE_SIZE ? false : null };
+  }, 0);
+}
+function getAll(path, key) { return paged("GET", path, key, null); }
+function postAll(path, key, body) { return paged("POST", path, key, body || {}); }
+function csvCell(v) {
+  var s = v === null || v === undefined ? "" : String(v);
+  return /[",\n]/.test(s) ? "\"" + s.replace(/"/g, "\"\"") + "\"" : s;
+}
+function csvLine(cells) {
+  var out = [];
+  for (var c = 0; c < cells.length; c++) out.push(csvCell(cells[c]));
+  return out.join(",");
+}
+// Every object with a statKey under a stats response, in document order: the
+// nesting differs between the latest-stats and the stats calls, and between
+// releases, so it is found by walking rather than by path.
+function statsIn(node, out) {
+  out = out || [];
+  if (node && typeof node === "object") {
+    if (node.statKey) out.push(node);
+    for (var k in node) if (node.hasOwnProperty(k) && k !== "statKey") statsIn(node[k], out);
+  }
+  return out;
+}
+function lastValue(stat) {
+  var data = stat && stat.data;
+  return data && data.length > 0 ? Number(data[data.length - 1]) : null;
+}
+var auth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
+`;
+
+/** Probe for the 9.1 findings path: the reference lists /api/diagnostics/findings, the category page /api/findings. */
+const FINDINGS_PATH = String.raw`function findingsPath(body) {
+  var candidates = ["diagnostics/findings/query", "findings/query"];
+  for (var c = 0; c < candidates.length; c++) {
+    var probe = core.http("POST", api + candidates[c] + "?page=0&pageSize=1", auth, body, { redact: settings._secrets, allow: [404] });
+    if (probe.statusCode !== 404) return candidates[c];
+  }
+  throw new Error("Neither /suite-api/api/diagnostics/findings/query nor /suite-api/api/findings/query answered: is this VCF Operations 9.1 or later?");
+}
+`;
+
+/**
+ * The shape of the log management 9.1 workflows whose rule has no public API:
+ * CHECKS test the rule on its own terms (problems fail the run, notes are
+ * logged), then, when opsHost is set, the workflow proves log management 9.1
+ * is there by exchanging the VCF Operations session for an ops-li token (KB
+ * 450054). It writes nothing anywhere: the rule is entered in the interface.
+ */
+function logsSpecWorkflow(what: string, checks: string): string {
+  return String.raw`var problems = [];
+var notes = [];
+function lines(text) {
+  var out = [];
+  var all = String(text || "").split("\n");
+  for (var i = 0; i < all.length; i++) {
+    var line = all[i].replace(/\s+$/, "");
+    if (line && line.charAt(0) !== "#") out.push(line);
+  }
+  return out;
+}
+// A Python-style selector as JavaScript: a leading (?i) or (?m) becomes a flag.
+// Anything else JavaScript does not have (named groups, (?s), (?x)) cannot be
+// simulated here, and saying so is a problem, not a pass.
+function jsRegex(selector, flags) {
+  var src = String(selector);
+  var f = flags || "";
+  var m = /^\(\?([a-zA-Z]+)\)/.exec(src);
+  if (m) {
+    if (/[^im]/.test(m[1])) throw new Error("the inline flags (?" + m[1] + ") cannot be simulated in Orchestrator; run the script under scripts/ instead");
+    if (m[1].indexOf("i") >= 0) f += "i";
+    if (m[1].indexOf("m") >= 0) f += "m";
+    src = src.substring(m[0].length);
+  }
+  if (/\(\?P?</.test(src.replace(/\(\?<[=!]/g, ""))) throw new Error("named groups cannot be simulated in Orchestrator; run the script under scripts/ instead");
+  return new RegExp(src, f);
+}
+${checks}
+var logManagement = "not checked: opsHost is empty, so only the rule itself was tested";
+if (settings.opsHost) {
+  if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUsername and opsPassword in the configuration element " + SETTINGS_NAME + ", or leave opsHost empty to test the rule only.");
+  var auth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
+  try {
+    // The token itself is not kept or logged: a successful exchange is the
+    // evidence that the ops-li service is registered behind this VCF Operations.
+    core.exchangeVcfOpsToken(settings.opsHost, auth, "ops-li");
+    logManagement = "log management 9.1 answered the ops-li token exchange at " + settings.opsHost;
+  } finally {
+    core.logoutVcfOps(settings.opsHost, auth);
+  }
+}
+System.log("Log management: " + logManagement);
+for (var n = 0; n < notes.length; n++) System.log("NOTE: " + notes[n]);
+for (var p = 0; p < problems.length; p++) System.log("PROBLEM: " + problems[p]);
+report = JSON.stringify({ what: ${JSON.stringify(what)}, problems: problems, notes: notes, logManagement: logManagement });
+summary = core.audit(null, { what: ${JSON.stringify(what)}, problems: problems.length, logManagement: logManagement, enteredIn: "${CONFIGURATIONS} (no public API for this in 9.1)" });
+if (problems.length > 0) throw new Error(problems.length + " problem(s) with " + ${JSON.stringify(what)} + "; each is a PROBLEM line in the log. Fix the rule before entering it.");
+System.log(${JSON.stringify(what)} + ": no problems. Enter it in ${CONFIGURATIONS} as the APPLY steps say.");`;
+}
+
+const LOGS_SPEC_OUTPUTS = [
+  { name: 'report', type: 'string', description: 'Problems, notes and the log management check, JSON' },
+  { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+] as const;
+
+/** A log management 9.1 package whose rule is entered by hand: the workflow tests it and checks log management is there. */
+function logsSpecPackage(opts: { area: string; base: string; workflow: string; what: string; description: string; checks: string; resources: { name: string; content: string }[] }): AutomationPackage {
+  return toPackage({
+    packageName: packageNameOf('logs91', opts.area, opts.base),
+    description: `${opts.description} Reads only. Generated by ArchToolKit.`,
+    categoryPath: `ArchToolKit/Log management/${opts.base}`,
+    workflow: {
+      name: opts.workflow,
+      description: `${opts.description} It changes nothing: 9.1 documents no API for this rule, so it is entered in ${CONFIGURATIONS}. Fails when the rule would not do what it says.`,
+      inputs: [],
+      outputs: [...LOGS_SPEC_OUTPUTS],
+      script: logsSpecWorkflow(opts.what, opts.checks),
+    },
+    config: {
+      name: 'Settings',
+      description: `Settings of ${opts.workflow}. Leave opsHost empty to test the rule only; set it (and fill opsPassword) to also check that log management 9.1 answers behind VCF Operations.`,
+      attributes: [...OPS_ACCOUNT],
+    },
+    resources: opts.resources,
+  });
+}
+
+/** IMPORT.md: the package first, then whatever else the automation carries. */
+function packageImportMd(title: string, pkg: AutomationPackage, others: readonly ImportStep[], verify: readonly string[] = []): string {
+  return importMd({
+    title,
+    intro: [
+      `The Orchestrator package is the central piece: \`${pkg.packageDir}\` on the shared core library \`import/com.archtoolkit.core.package\`, each built and signed as a .package in the .zip download. The files under scripts/ do the same job from a Linux host, for anyone not using Orchestrator.`,
+    ],
+    steps: [
+      ...pkg.importSteps.map((step, index) => ({
+        heading: index === 0 ? `${step.heading} — the workflow ${pkg.workflowName}` : step.heading,
+        files: index === 0 ? [pkg.packageDir, 'import/com.archtoolkit.core.package'] : [],
+        how: step.lines.filter((line) => line.trim() !== '').map((line) => line.replace(/^- /, '')),
+      })),
+      ...others,
+      ...(verify.length > 0 ? [{ heading: 'Not confirmed for VCF 9.1', files: [], how: ['Each line below is something the 9.1 documentation reviewed does not state. Check it on your build before relying on it.'], verify }] : []),
+    ],
+  });
+}
+
+/** Run a script from the folder it is in, so the files it reads beside it are found wherever it is called from. */
+function fromOwnDir(script: string): string {
+  return script.includes('cd "$(dirname "$0")"') ? script : script.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")"\n');
 }
 
 // ===========================================================================
@@ -257,6 +440,160 @@ function linesOf(text: string): string[] {
     .filter((line) => line.trim() !== '');
 }
 
+/**
+ * The saved log query, made to exist as written. The extracted field is
+ * tested first, locally, so a query whose field never matches is not created
+ * at all. Then GET /suite-api/api/logs/queryconfigs (every page, logsQueryConfigs):
+ * missing → POST; there but different → PUT with its id; the same → left alone.
+ * Two with the same name is refused rather than guessed at. The OpsToken is
+ * the documented authentication for queryconfigs; no ops-li exchange needed.
+ */
+const QUERY_CONFIG_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+var qc = JSON.parse(core.resource(RESOURCE_PATH, "queryconfig.json"));
+var field = JSON.parse(core.resource(RESOURCE_PATH, "extracted-field.json"));
+var rx;
+try {
+  rx = new RegExp("(?:" + field.preContext + ")(" + field.valueRegex + ")(?:" + field.postContext + ")", "g");
+} catch (e) {
+  throw new Error("The extracted field " + field.name + " is not a valid regular expression: " + (e && e.message ? e.message : e));
+}
+var hits = [];
+var m;
+while ((m = rx.exec(String(field.sample || ""))) !== null) {
+  hits.push(m[1]);
+  if (m[0] === "") rx.lastIndex++;
+}
+if (hits.length === 0) throw new Error("The extracted field " + field.name + " pulls nothing out of the sample line; nothing was created. Fix the text before or after the value.");
+System.log(field.name + " = " + hits.join(", ") + " (from the sample line)");
+${OPS_SESSION}
+function canon(v) {
+  if (v === null || v === undefined) return "null";
+  if (typeof v !== "object") return JSON.stringify(v);
+  var out = [];
+  if (Object.prototype.toString.call(v) === "[object Array]") {
+    for (var i = 0; i < v.length; i++) out.push(canon(v[i]));
+    return "[" + out.join(",") + "]";
+  }
+  var keys = [];
+  for (var k in v) if (v.hasOwnProperty(k)) keys.push(k);
+  keys.sort();
+  for (var j = 0; j < keys.length; j++) out.push(JSON.stringify(keys[j]) + ":" + canon(v[keys[j]]));
+  return "{" + out.join(",") + "}";
+}
+function differs(have, want) {
+  var fields = ["description", "queryText", "dateRange", "queryFilters"];
+  for (var f = 0; f < fields.length; f++) if (canon(have[fields[f]]) !== canon(want[fields[f]])) return fields[f];
+  return null;
+}
+var id = "";
+try {
+  var existing = getAll("logs/queryconfigs", "logsQueryConfigs");
+  var found = [];
+  for (var e2 = 0; e2 < existing.length; e2++) if (String(existing[e2].name) === String(qc.name)) found.push(existing[e2]);
+  if (found.length > 1) throw new Error(found.length + " saved queries are named \"" + qc.name + "\"; delete the extras by hand, then run again. Nothing was changed.");
+  if (found.length === 0) {
+    id = core.act(ctx, "create saved log query \"" + qc.name + "\"", function () {
+      var r = core.http("POST", api + "logs/queryconfigs", auth, qc, SAFE);
+      if (!r.body || !r.body.id) throw new Error("POST logs/queryconfigs returned no id.");
+      return String(r.body.id);
+    }) || "";
+  } else {
+    id = String(found[0].id);
+    var what = differs(found[0], qc);
+    if (!what) {
+      System.log("Exists and matches, left as it is: saved log query \"" + qc.name + "\" (" + id + ")");
+    } else {
+      var body = JSON.parse(JSON.stringify(qc));
+      body.id = id;
+      core.act(ctx, "update saved log query \"" + qc.name + "\" (" + id + "; its " + what + " differs)", function () {
+        return core.http("PUT", api + "logs/queryconfigs", auth, body, SAFE);
+      });
+    }
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+queryConfigId = id;
+summary = core.audit(ctx, { queryConfigId: id, name: qc.name, extracted: hits, next: "Select the saved query in a log-based alert definition (Add Log Condition)." });
+core.notify(settings.webhook, summary);`;
+
+/**
+ * The standalone VCF Operations for Logs 8.18 / 9.0 appliance's own session
+ * login — the one place in this file where /api/v2 is right, because the
+ * inventory is taken from the appliance before it is replaced. 9.1 log
+ * management has no /api/v2. Core has no action for it, so it lives in the
+ * package: POST /api/v2/sessions {username, password, provider} → sessionId,
+ * sent as Authorization: Bearer <sessionId>.
+ */
+const LOGS_APPLIANCE_LOGIN = {
+  name: 'loginLogsAppliance',
+  description: 'Standalone VCF Operations for Logs 8.18 / 9.0 appliance (not 9.1): POST /api/v2/sessions {username, password, provider}. Returns { Authorization: "Bearer <sessionId>" }. Sessions expire on their own (ttl); the appliance API documents no logout.',
+  resultType: 'Any',
+  params: [
+    { name: 'host', type: 'string', description: 'Appliance host:port, normally :9543' },
+    { name: 'username', type: 'string', description: 'Account' },
+    { name: 'password', type: 'string', description: 'From a SecureString attribute' },
+    { name: 'provider', type: 'string', description: 'Local, ActiveDirectory or vIDM; empty = Local' },
+  ],
+  script: String.raw`var body = { username: String(username), password: String(password), provider: provider ? String(provider) : "Local" };
+var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/api/v2/sessions", null, body, { redact: [password] });
+if (!r.body || !r.body.sessionId) throw new Error("The Logs appliance at " + host + " returned no session id.");
+return { "Authorization": "Bearer " + r.body.sessionId };`,
+};
+
+/** What the inventory reads, each at /api/v2 first and /api/v1 second: paths moved between releases. */
+const LOGS_INVENTORY_ITEMS: readonly (readonly [string, readonly string[]])[] = [
+  ['version', ['/api/v2/version', '/api/v1/version']],
+  ['content-packs', ['/api/v2/content/contentpack/list', '/api/v1/content/contentpack/list']],
+  ['alerts', ['/api/v2/alerts', '/api/v1/alerts']],
+  ['forwarding', ['/api/v2/forwarding', '/api/v1/forwarding']],
+  ['partitions', ['/api/v2/partitions', '/api/v1/partitions']],
+  ['archiving', ['/api/v2/archiving', '/api/v1/archiving']],
+  ['agent-groups', ['/api/v2/agent/groups', '/api/v1/agent/groups']],
+  ['agents', ['/api/v2/agent/agents', '/api/v1/agent/agents']],
+];
+
+const LOGS_INVENTORY_WORKFLOW = String.raw`var ITEMS = ${JSON.stringify(LOGS_INVENTORY_ITEMS)};
+if (!settings.logsHost) throw new Error("Set logsHost (the " + SETTINGS_NAME + " configuration element) to the standalone Logs appliance, host:9543.");
+if (!settings.logsUsername || !settings.logsPassword) throw new Error("Set logsUsername and logsPassword in the configuration element " + SETTINGS_NAME + ".");
+var SAFE = { redact: settings._secrets };
+var auth = mod.loginLogsAppliance(settings.logsHost, settings.logsUsername, settings.logsPassword, settings.logsProvider || "Local");
+var saved = {};
+var counts = {};
+var missing = [];
+for (var i = 0; i < ITEMS.length; i++) {
+  var name = ITEMS[i][0];
+  var paths = ITEMS[i][1];
+  var got = false;
+  for (var p = 0; p < paths.length && !got; p++) {
+    try {
+      var r = core.http("GET", "https://" + settings.logsHost + paths[p], auth, null, SAFE);
+      saved[name] = { path: paths[p], data: r.body };
+      var d = r.body;
+      var n = 1;
+      if (d && Object.prototype.toString.call(d) === "[object Array]") n = d.length;
+      else if (d && typeof d === "object") {
+        n = 0;
+        for (var k in d) if (d.hasOwnProperty(k) && Object.prototype.toString.call(d[k]) === "[object Array]") n += d[k].length;
+        if (n === 0) n = 1;
+      }
+      counts[name] = n;
+      System.log("saved  " + name + "  (" + paths[p] + ")  " + n + " item(s)");
+      got = true;
+    } catch (e) {
+      var status = /returned (HTTP \d+)/.exec(String(e && e.message ? e.message : e));
+      System.log("no answer from " + paths[p] + (status ? " (" + status[1] + ")" : ""));
+    }
+  }
+  if (!got) missing.push(name + " (tried: " + paths.join(" ") + ")");
+}
+inventoryJson = JSON.stringify({ host: settings.logsHost, taken: new Date().toISOString(), items: saved });
+summary = core.audit(null, { host: settings.logsHost, counts: counts, missing: missing });
+core.notify(settings.webhook, summary);
+for (var m = 0; m < missing.length; m++) System.warn("NOT EXPORTED: " + missing[m]);
+if (missing.length > 0) throw new Error(missing.length + " item(s) not exported: " + missing.join("; ") + ". Export those from the interface before the upgrade; the rest is in the inventoryJson output.");
+System.log("Inventory complete: keep the inventoryJson output with the change record.");`;
+
 export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -333,6 +670,73 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         filterCriteria: filter ? [filter] : [],
         _note: 'A spec to review and to enter in Log Processing → Log Masking. Not an API payload — 9.1 documents no API for masking.',
       };
+      const samplesMask = md(['# Lines that must come out masked. Fake secrets of the real shape only.', ...mustMask]);
+      const samplesClean = md(['# Lines that must come out exactly as they went in.', ...mustNot]);
+
+      // The same test as test-masking.sh, in Orchestrator: every capture group's
+      // match replaced by the mask value, the way 9.1 applies the rule.
+      const pkg = logsSpecPackage({
+        area: 'masking',
+        base,
+        workflow: `Test log masking ${base}`,
+        what: `the masking rule "${ruleName}"`,
+        description: `Tests the 9.1 log masking rule "${ruleName}" against lines that must be masked and lines that must not change.`,
+        resources: [
+          { name: 'masking-rule.json', content: json(rule) },
+          { name: 'samples-must-mask.txt', content: samplesMask },
+          { name: 'samples-must-not-change.txt', content: samplesClean },
+        ],
+        checks: String.raw`var rule = JSON.parse(core.resource(RESOURCE_PATH, "masking-rule.json"));
+var mustMask = lines(core.resource(RESOURCE_PATH, "samples-must-mask.txt"));
+var mustNot = lines(core.resource(RESOURCE_PATH, "samples-must-not-change.txt"));
+var mask = rule.maskValue === undefined || rule.maskValue === null ? "" : String(rule.maskValue);
+var rx = null;
+if (!rule.selector) problems.push("the rule has no selector, so there is nothing to mask");
+else {
+  try { rx = jsRegex(rule.selector, "g"); } catch (e) { problems.push("selector " + rule.selector + ": " + (e && e.message ? e.message : e)); }
+}
+if (rx) {
+  var groups = new RegExp(rx.source + "|").exec("").length - 1;
+  if (groups === 0) problems.push("the selector has no capture group, so 9.1 would mask nothing");
+  else {
+    // Replace what each group captured inside the match, last group first.
+    var applyMask = function (line) {
+      var captured = [];
+      rx.lastIndex = 0;
+      var out = line.replace(rx, function (whole) {
+        var s = whole;
+        for (var g = groups; g >= 1; g--) {
+          var cap = arguments[g];
+          if (cap === undefined || cap === null || cap === "") continue;
+          captured.push(cap);
+          var at = s.lastIndexOf(cap);
+          if (at >= 0) s = s.substring(0, at) + mask + s.substring(at + cap.length);
+        }
+        return s;
+      });
+      return { out: out, captured: captured };
+    };
+    var tested = 0;
+    for (var i = 0; i < mustMask.length; i++) {
+      tested++;
+      var r = applyMask(mustMask[i]);
+      var leaked = false;
+      for (var c = 0; c < r.captured.length; c++) if (r.captured[c] !== mask && r.out.indexOf(r.captured[c]) >= 0) leaked = true;
+      if (r.out === mustMask[i] || leaked) problems.push("not masked: " + mustMask[i]);
+      else System.log("ok    " + r.out);
+    }
+    for (var j = 0; j < mustNot.length; j++) {
+      tested++;
+      var k = applyMask(mustNot[j]);
+      if (k.out !== mustNot[j]) problems.push("changed: " + mustNot[j] + "  ->  " + k.out);
+      else System.log("ok    " + k.out);
+    }
+    if (tested === 0) problems.push("no sample lines, so this proves nothing");
+    notes.push(tested + " sample line(s) tested against " + rule.selector);
+  }
+}
+notes.push("the Log Masking tab's own preview is the authority: JavaScript's regex engine differs from the platform's at the edges");`,
+      });
 
       return {
         platform: LOGS,
@@ -353,11 +757,12 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           ifWrong: 'A selector that matches too much blanks the evidence an investigation needs, permanently, for every event ingested while it is on. One that matches too little leaves the secret in the store and in every forwarded copy.',
         },
         guardrails: [
-          { rule: 'test-masking.sh exits 1 when a sample secret survives masking or a clean line is changed', because: 'A selector one character off masks nothing, and nobody notices until the secret turns up in a forwarded copy.' },
+          { rule: `The workflow Test log masking ${base} (and scripts/test-masking.sh) fails when a sample secret survives masking or a clean line is changed`, because: 'A selector one character off masks nothing, and nobody notices until the secret turns up in a forwarded copy.' },
+          { rule: 'The workflow changes nothing: 9.1 has no API for masking, so a person enters the tested rule', because: 'A masking rule is permanent in its effect on every event ingested while it is on; it goes in by hand, after the test.' },
           { rule: 'The platform masks only events ingested after the rule is enabled', because: 'A bad selector cannot destroy the history already stored — it can only damage new events until it is turned off.' },
         ],
         dryRun: [
-          'Run ./test-masking.sh. It reads only the files beside it.',
+          `Run the workflow Test log masking ${base}, or ./scripts/test-masking.sh. Both read only the rule and the samples.`,
           'In the Log Masking tab, use the rule form’s preview on real events before enabling it.',
           'After enabling, search Explore Logs for the next event from a sample source and check the value arrives masked.',
         ],
@@ -366,16 +771,24 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           'Events ingested while it was on stay masked. That part cannot be undone — which is the point of masking, and the risk of a selector that is too wide.',
         ],
         told: ['Nobody — masking is silent by design. Record the rule and its test output in the change that enabled it.'],
-        requires: ['Log management 9.1 deployed and integrated with VCF Operations.', 'An account with rights to Operate → Administration → Configurations.', 'python3 on the machine that runs the test.'],
+        requires: ['Log management 9.1 deployed and integrated with VCF Operations.', 'An account with rights to Operate → Administration → Configurations.', 'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1. For the script: python3.'],
         files: {
-          'masking-rule.json': json(rule),
-          'samples-must-mask.txt': md(['# Lines that must come out masked. Fake secrets of the real shape only.', ...mustMask]),
-          'samples-must-not-change.txt': md(['# Lines that must come out exactly as they went in.', ...mustNot]),
-          'test-masking.sh': MASK_TEST,
+          ...pkg.files,
+          'scripts/masking-rule.json': json(rule),
+          'scripts/samples-must-mask.txt': samplesMask,
+          'scripts/samples-must-not-change.txt': samplesClean,
+          'scripts/test-masking.sh': MASK_TEST,
+          'IMPORT.md': packageImportMd(`the masking rule "${ruleName}"`, pkg, [
+            { heading: 'Or: the same test from a Linux host', files: ['scripts/test-masking.sh', 'scripts/masking-rule.json', 'scripts/samples-must-mask.txt', 'scripts/samples-must-not-change.txt'], how: ['`./scripts/test-masking.sh` (python3) runs the selector over the samples beside it with Python’s regex engine.'] },
+            { heading: 'Then enter the rule', files: [`${base}-APPLY.md`], how: [`Nothing imports a masking rule in 9.1: enter it in ${CONFIGURATIONS} → Log Processing → Log Masking as ${base}-APPLY.md says, once the test passes.`] },
+          ], [
+            'whether a forwarded copy is masked: the documentation does not say whether forwarding runs after masking.',
+            'that the ops-li token exchange fails, rather than answering, on a VCF Operations without log management; the workflow treats a successful exchange as proof log management is there.',
+          ]),
           [`${base}-APPLY.md`]: md([
             `# Apply "${ruleName}" (VCF Operations 9.1 log masking)`,
             '',
-            '1. Run `./test-masking.sh` and read every line. It must end with 0 failures.',
+            `1. Run the workflow **Test log masking ${base}** (or \`./scripts/test-masking.sh\`) and read every line. It must end with no PROBLEM.`,
             `2. VCF Operations → ${CONFIGURATIONS} → **Log Processing** card → **Log Masking** tab → **Add**.`,
             `3. Name: \`${ruleName}\``,
             `4. Field Name: \`${field}\` (pick it from the dropdown — if it is not listed, the field is not extracted on these events).`,
@@ -479,6 +892,58 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         conditions: [scope, match].filter(Boolean),
         _note: 'A spec to review and enter in Log Processing → Log Filtering. Not an API payload — 9.1 documents no API for filters.',
       };
+      const samplesDrop = md(['# Lines the filter should drop.', ...linesOf(str(values, 'samples_drop', ''))]);
+      const samplesKeep = md(['# Lines the filter must keep.', ...linesOf(str(values, 'samples_keep', ''))]);
+
+      const pkg = logsSpecPackage({
+        area: 'filter',
+        base,
+        workflow: `Test log filter ${base}`,
+        what: `the ingestion filter "${filterName}"`,
+        description: `Tests the 9.1 ingestion filter "${filterName}" against lines it should drop and lines it must keep.`,
+        resources: [
+          { name: 'log-filter.json', content: json(spec) },
+          { name: 'samples-drop.txt', content: samplesDrop },
+          { name: 'samples-keep.txt', content: samplesKeep },
+        ],
+        checks: String.raw`var spec = JSON.parse(core.resource(RESOURCE_PATH, "log-filter.json"));
+var drop = lines(core.resource(RESOURCE_PATH, "samples-drop.txt"));
+var keep = lines(core.resource(RESOURCE_PATH, "samples-keep.txt"));
+var cond = spec.match || {};
+var op = String(cond.operator || "");
+var value = cond.value === undefined || cond.value === null ? "" : String(cond.value);
+if (!spec.scope) notes.push("no scope condition: the filter applies to production as well as everything else");
+if (op === "Exists" || op === "Does not exist") {
+  if (!spec.scope) problems.push("\"" + cond.field + " " + op.toLowerCase() + "\" with no scope condition drops every such event across the estate");
+  else notes.push("an Exists condition cannot be simulated on message text; use PREVIEW in the Log Filtering tab");
+} else {
+  // Only the match condition is simulated, on the message text; the scope
+  // condition is checked by PREVIEW in the Log Filtering tab.
+  var matches = null;
+  if (op === "Matches Regex") {
+    try {
+      var re = jsRegex(value, "");
+      matches = function (l) { return re.test(l); };
+    } catch (e) { problems.push("match regex " + value + ": " + (e && e.message ? e.message : e)); }
+  } else if (op === "Contains") matches = function (l) { return l.indexOf(value) >= 0; };
+  else if (op === "Does not contain") matches = function (l) { return l.indexOf(value) < 0; };
+  else if (op === "Starts with") matches = function (l) { return l.indexOf(value) === 0; };
+  else if (op === "Does not start with") matches = function (l) { return l.indexOf(value) !== 0; };
+  else problems.push("unknown operator " + op);
+  if (matches) {
+    for (var i = 0; i < drop.length; i++) {
+      if (matches(drop[i])) System.log("ok    drop  " + drop[i]);
+      else problems.push("would keep: " + drop[i]);
+    }
+    for (var j = 0; j < keep.length; j++) {
+      if (!matches(keep[j])) System.log("ok    keep  " + keep[j]);
+      else problems.push("would DROP: " + keep[j]);
+    }
+    if (drop.length + keep.length === 0) problems.push("no sample lines, so this proves nothing");
+    notes.push((drop.length + keep.length) + " sample line(s) tested against " + cond.field + " " + op.toLowerCase() + " " + value);
+  }
+}`,
+      });
 
       const estimate = md([
         `# Savings estimate — ${filterName}`,
@@ -513,23 +978,28 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           ifWrong: 'Dropped events are never stored, never alert and never reach a forwarded copy. A filter wider than meant is found the day somebody searches for an event that was never kept.',
         },
         guardrails: [
-          { rule: 'test-filter.sh exits 1 when a line meant to be kept would be dropped', because: 'A regex that also matches ERROR lines turns a debug filter into an outage blind spot.' },
-          { rule: 'This generator refuses a field-exists filter with no scope condition (an error finding)', because: '"message exists" with no scope drops everything, and the rule form will accept it.' },
+          { rule: `The workflow Test log filter ${base} (and scripts/test-filter.sh) fails when a line meant to be kept would be dropped`, because: 'A regex that also matches ERROR lines turns a debug filter into an outage blind spot.' },
+          { rule: 'This generator refuses a field-exists filter with no scope condition (an error finding), and so does the workflow', because: '"message exists" with no scope drops everything, and the rule form will accept it.' },
         ],
-        dryRun: ['Run ./test-filter.sh.', 'In the Log Filtering tab, press PREVIEW before CREATE and read what it would drop.'],
+        dryRun: [`Run the workflow Test log filter ${base}, or ./scripts/test-filter.sh. Neither changes anything.`, 'In the Log Filtering tab, press PREVIEW before CREATE and read what it would drop.'],
         undo: ['Log Processing → Log Filtering → the filter → Enabled off, or delete it. Ingestion resumes at once.', 'Events dropped while it was on were never stored and cannot be recovered.'],
         told: ['Nobody. Record the PREVIEW result and the measured share in the change.'],
-        requires: ['Log management 9.1.', 'Fewer than 10 filters already defined — the documented maximum is 10.', 'python3 on the machine that runs the test.'],
+        requires: ['Log management 9.1.', 'Fewer than 10 filters already defined — the documented maximum is 10.', 'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1. For the script: python3.'],
         files: {
-          'log-filter.json': json(spec),
-          'samples-drop.txt': md(['# Lines the filter should drop.', ...linesOf(str(values, 'samples_drop', ''))]),
-          'samples-keep.txt': md(['# Lines the filter must keep.', ...linesOf(str(values, 'samples_keep', ''))]),
-          'test-filter.sh': FILTER_TEST,
+          ...pkg.files,
+          'scripts/log-filter.json': json(spec),
+          'scripts/samples-drop.txt': samplesDrop,
+          'scripts/samples-keep.txt': samplesKeep,
+          'scripts/test-filter.sh': FILTER_TEST,
           'savings-estimate.md': estimate,
+          'IMPORT.md': packageImportMd(`the ingestion filter "${filterName}"`, pkg, [
+            { heading: 'Or: the same test from a Linux host', files: ['scripts/test-filter.sh', 'scripts/log-filter.json', 'scripts/samples-drop.txt', 'scripts/samples-keep.txt'], how: ['`./scripts/test-filter.sh` (python3) runs the match condition over the samples beside it.'] },
+            { heading: 'Then enter the filter', files: [`${base}-APPLY.md`, 'savings-estimate.md'], how: [`Nothing imports an ingestion filter in 9.1: enter it in ${CONFIGURATIONS} → Log Processing → Log Filtering as ${base}-APPLY.md says, once the test passes.`] },
+          ], ['whether matching events are dropped or kept: the 9.1 page does not say it in words. PREVIEW shows which.']),
           [`${base}-APPLY.md`]: md([
             `# Apply "${filterName}" (VCF Operations 9.1 log filtering)`,
             '',
-            '1. Run `./test-filter.sh`; it must end with 0 failures.',
+            `1. Run the workflow **Test log filter ${base}** (or \`./scripts/test-filter.sh\`); it must end with no PROBLEM.`,
             `2. VCF Operations → ${CONFIGURATIONS} → **Log Processing** card → **Log Filtering** tab → **ADD**.`,
             `3. Name: \`${filterName}\`. Leave Enable Configuration on only once PREVIEW looks right.`,
             ...(scope ? [`4. ADD FILTER: ${scope.field} — ${scope.operator}${scope.value !== undefined ? ` — \`${scope.value}\`` : ''}`] : ['4. (No scope condition.)']),
@@ -683,13 +1153,43 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = logsSpecPackage({
+        area: 'forwarding',
+        base,
+        workflow: `Check log forwarding ${base}`,
+        what: `the forwarding rule "${destName}"`,
+        description: `Checks the 9.1 log forwarding rule "${destName}" to ${host || 'an external destination'}: destination, port, transport and filter.`,
+        resources: [{ name: 'forwarding-rule.json', content: json(spec) }],
+        checks: String.raw`var spec = JSON.parse(core.resource(RESOURCE_PATH, "forwarding-rule.json"));
+if (!spec.host) problems.push("no destination host");
+var port = Number(spec.port);
+if (!(port >= 1 && port <= 65535)) problems.push("port " + spec.port + " is not a valid port");
+if (spec.transport === "UDP") notes.push("UDP drops events under load and cannot be encrypted");
+if (spec.useSsl && port === 514) notes.push("port 514 is the plain syslog port; TLS listeners are normally on 6514");
+var filters = spec.filters || [];
+if (filters.length === 0) notes.push("unfiltered: every event log management ingests is forwarded");
+for (var i = 0; i < filters.length; i++) {
+  if (filters[i].operator !== "Matches Regex") continue;
+  try { jsRegex(filters[i].value, ""); } catch (e) { problems.push("filter regex " + filters[i].value + ": " + (e && e.message ? e.message : e)); }
+}
+// Orchestrator's scripting API has no raw TCP or TLS probe: reachability and
+// the certificate are for VALIDATE CONNECTION in the rule form, which runs
+// from the platform, and for scripts/check-destination.sh.
+notes.push("reachability and the certificate of " + spec.host + ":" + spec.port + " are checked by VALIDATE CONNECTION in the rule form and by scripts/check-destination.sh");`,
+      });
+
       const files: Record<string, string> = {
-        'forwarding-rule.json': json(spec),
-        'check-destination.sh': check,
+        ...pkg.files,
+        'scripts/forwarding-rule.json': json(spec),
+        'scripts/check-destination.sh': check,
+        'IMPORT.md': packageImportMd(`the log forwarding rule "${destName}"`, pkg, [
+          { heading: 'Then check the destination from the management network', files: ['scripts/check-destination.sh'], how: ['`./scripts/check-destination.sh` fails on a name that does not resolve, a closed port, or a certificate that does not verify or expires within 30 days.'] },
+          { heading: 'Then enter the rule', files: [`${base}-APPLY.md`, 'scripts/forwarding-rule.json', ...(kind === 'splunk' ? ['splunk-inputs.conf'] : [])], how: [`Nothing imports a log management forwarding rule in 9.1: enter it in ${CONFIGURATIONS} → Log Forwarding as ${base}-APPLY.md says. PUT /suite-api/api/logs/forwarding is VCF Operations’ own self-logging, not this.`] },
+        ]),
         [`${base}-APPLY.md`]: md([
           `# Apply "${destName}" (VCF Operations 9.1 log forwarding)`,
           '',
-          '1. Run `./check-destination.sh` from the management network.',
+          `1. Run the workflow **Check log forwarding ${base}**, then \`./scripts/check-destination.sh\` from the management network.`,
           `2. VCF Operations → ${CONFIGURATIONS} → **Log Forwarding** card → **ADD**.`,
           `3. Name \`${destName}\`, Host \`${host}\`, Port \`${port}\`, Protocol ${protocol}${protocol === 'Syslog' ? `, Transport ${transport}` : ''}${tls ? ', SSL/TLS on' : ''}.`,
           ...(custom.length > 0 ? [`4. Custom fields: ${custom.map((field) => `\`${field.key}=${field.value}\``).join(', ')}.`] : ['4. No custom fields.']),
@@ -723,10 +1223,11 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           ifWrong: 'Too wide, and the destination’s licence and storage fill with appliance chatter; too narrow, and the SIEM misses the event it was bought to see. Either way, forwarded events cannot be recalled.',
         },
         guardrails: [
-          { rule: 'check-destination.sh exits 1 on a closed port, or on a certificate that does not verify or expires within 30 days', because: 'A forwarding rule to a dead or untrusted endpoint queues and then drops, silently.' },
+          { rule: `The workflow Check log forwarding ${base} fails on a missing host, an invalid port or a filter regex that does not compile, and changes nothing`, because: 'The rule goes in by hand; the workflow makes sure what goes in is well-formed.' },
+          { rule: 'scripts/check-destination.sh exits 1 on a closed port, or on a certificate that does not verify or expires within 30 days', because: 'A forwarding rule to a dead or untrusted endpoint queues and then drops, silently.' },
           ...(filter ? [{ rule: `Only events where ${describe(filter)} leave`, because: 'The platform applies the rule’s filter before sending, so unrelated data never reaches a third party.' }] : []),
         ],
-        dryRun: ['Run ./check-destination.sh.', 'Use VALIDATE CONNECTION in the rule form before CREATE.'],
+        dryRun: [`Run the workflow Check log forwarding ${base} and ./scripts/check-destination.sh. Neither changes anything.`, 'Use VALIDATE CONNECTION in the rule form before CREATE.'],
         undo: ['Log Forwarding → the rule → turn Enable Configuration off, or delete it. Events already sent stay at the destination.'],
         told: [`${host || 'The destination'} receives the events; nobody is told the rule exists. Record it with the destination owner.`],
         requires: [`${host}:${port} reachable from the log management instance${tls ? ', with a certificate chain it trusts' : ''}.`, 'Log management 9.1.'],
@@ -822,6 +1323,7 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         requiredRetentionDays: required,
         archive: archive === 'none' ? null : archive === 's3' ? { type: 'S3', storage: `${bucket} at ${endpoint}` } : { type: 'NFS', storage: nfs },
         change: ticket,
+        partitionsTotal: total,
         _note: 'A spec to review and enter in the interface. 9.1 documents no API for partitions.',
       };
       const storage =
@@ -868,6 +1370,28 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           ].join('\n')
         : undefined;
 
+      const pkg = logsSpecPackage({
+        area: 'partition',
+        base,
+        workflow: `Check log partition ${base}`,
+        what: `the partition "${partition}"`,
+        description: `Checks the 9.1 log partition "${partition}": its filter, its retention against the requirement, its archive and its change number.`,
+        resources: [{ name: 'partition.json', content: json(spec) }],
+        checks: String.raw`var spec = JSON.parse(core.resource(RESOURCE_PATH, "partition.json"));
+if (!spec.filter) problems.push("a partition needs a filter to decide which events go into it");
+else if (spec.filter.operator === "Matches Regex") {
+  try { jsRegex(spec.filter.value, ""); } catch (e) { problems.push("filter regex " + spec.filter.value + ": " + (e && e.message ? e.message : e)); }
+}
+var retention = Number(spec.retentionDays);
+var required = Number(spec.requiredRetentionDays);
+if (retention < required && !spec.archive) problems.push("searchable for " + retention + " days, required for " + required + ", and nothing archived: the last " + (required - retention) + " days of the requirement are not kept");
+if (!spec.change) problems.push("no change number: retention decides when events are deleted, so it goes through change");
+if (Number(spec.partitionsTotal) > 10) problems.push(spec.partitionsTotal + " partitions: 9.1 allows the default Audit & Logs partition plus up to 9 more");
+if (spec.archive && spec.archive.type === "S3" && /\bhttp:\/\//i.test(String(spec.archive.storage))) problems.push("the S3 endpoint is plain HTTP; 9.1 requires a certificate issued by a trusted CA for S3");
+if (retention > 90) notes.push(retention + " days searchable: the upper limit depends on the size profile and the number of partitions; the partition form shows yours");
+if (spec.archive) notes.push("archive target " + spec.archive.type + " " + spec.archive.storage + ": reachability is checked by scripts/check-archive.sh and Validate in the External Storage form");`,
+      });
+
       return {
         platform: LOGS,
         title: `Partition "${partition}" — ${retention} days searchable${storage ? `, archived to ${archive.toUpperCase()}` : ', not archived'}`,
@@ -881,9 +1405,10 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         guardrails: [
           { rule: 'The generator refuses a retention below the required retention unless an archive is configured', because: 'The requirement is usually discovered in an audit, after the events have gone.' },
           { rule: `A change number is required (${ticket || 'none given'}); the generator refuses without one`, because: 'Retention is a delete schedule. Lowering it later deletes history at once.' },
-          ...(storage ? [{ rule: 'check-archive.sh exits 1 when the archive target cannot be reached or its certificate does not verify', because: 'An archive that fails to write is found when somebody needs to restore from it.' }] : []),
+          { rule: `The workflow Check log partition ${base} applies the same refusals, and changes nothing`, because: 'The partition goes in by hand; the workflow is the second pair of eyes on the numbers before it does.' },
+          ...(storage ? [{ rule: 'scripts/check-archive.sh exits 1 when the archive target cannot be reached or its certificate does not verify', because: 'An archive that fails to write is found when somebody needs to restore from it.' }] : []),
         ],
-        dryRun: ['Read partition.json and the filter in it.', ...(storage ? ['Run ./check-archive.sh, then Validate in the External Storage form.'] : []), 'In Explore Logs, run the partition’s filter over the last day and count what it matches.'],
+        dryRun: [`Run the workflow Check log partition ${base}, and read scripts/partition.json and the filter in it.`, ...(storage ? ['Run ./scripts/check-archive.sh, then Validate in the External Storage form.'] : []), 'In Explore Logs, run the partition’s filter over the last day and count what it matches.'],
         undo: ['Raise the retention back. Events already aged out are gone unless they were archived.', ...(storage ? ['Archived events can be brought back with the log import task (Configuring Log Import and Export Tasks).'] : [])],
         told: ['Nobody when events age out — that is the design. Put the retention in the records-retention register.'],
         requires: [
@@ -892,14 +1417,19 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           ...(archive === 'nfs' ? ['An NFSv3 export reachable from the VCF management network, owned by root.'] : []),
         ],
         files: {
-          'partition.json': json(spec),
-          ...(storage ? { 'external-storage.json': json(storage), 'check-archive.sh': check! } : {}),
+          ...pkg.files,
+          'scripts/partition.json': json(spec),
+          ...(storage ? { 'scripts/external-storage.json': json(storage), 'scripts/check-archive.sh': check! } : {}),
+          'IMPORT.md': packageImportMd(`the partition "${partition}"`, pkg, [
+            ...(storage ? [{ heading: 'Then check the archive target from the management network', files: ['scripts/check-archive.sh', 'scripts/external-storage.json'], how: ['`./scripts/check-archive.sh` fails when the archive target cannot be reached or its certificate does not verify.'] }] : []),
+            { heading: 'Then enter the partition', files: [`${base}-APPLY.md`, 'scripts/partition.json'], how: [`Nothing imports a partition in 9.1: create it in ${CONFIGURATIONS} as ${base}-APPLY.md says.`] },
+          ], ['the card that holds partitions in 9.1: the pages reviewed place it with Log Processing and External Storage under Configurations without naming it.']),
           [`${base}-APPLY.md`]: md([
             `# Apply partition "${partition}" (VCF Operations 9.1)`,
             '',
             ...(storage
               ? [
-                  `1. ${CONFIGURATIONS} → **External Storage** card → add the ${archive.toUpperCase()} location from external-storage.json; enter the keys in the form. **Validate**, **SAVE**, then **APPLY** (restarts the service). Up to 5 locations.`,
+                  `1. ${CONFIGURATIONS} → **External Storage** card → add the ${archive.toUpperCase()} location from scripts/external-storage.json; enter the keys in the form. **Validate**, **SAVE**, then **APPLY** (restarts the service). Up to 5 locations.`,
                 ]
               : ['1. No archive.']),
             '2. Create the partition with the filter and retention in partition.json, and select the archive location for it.',
@@ -1096,6 +1626,28 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         sendTo: { via, target, port },
       };
 
+      const checkFile = os === 'windows' ? 'scripts/Check-Agent.ps1' : 'scripts/check-agent.sh';
+      const pkg = logsSpecPackage({
+        area: 'agents',
+        base,
+        workflow: `Check agent group ${base}`,
+        what: `the agent group "${group}"`,
+        description: `Checks the ${os === 'kubernetes' ? 'Fluent Bit' : 'log management agent'} group "${group}": its membership filter and its target.`,
+        resources: [{ name: 'agent-group.json', content: json(spec) }],
+        checks: String.raw`var spec = JSON.parse(core.resource(RESOURCE_PATH, "agent-group.json"));
+var send = spec.sendTo || {};
+if (!send.target) problems.push("no target to send to");
+var port = Number(send.port);
+if (!(port >= 1 && port <= 65535)) problems.push("port " + send.port + " is not a valid port");
+var f = spec.filter || {};
+if (f.platform !== "kubernetes" && (!f.hostname || f.hostname === "*")) notes.push("the group matches every " + f.os + " agent, so this configuration lands on every server of every role");
+if (f.platform === "kubernetes" && (!f.namespaces || f.namespaces.length === 0)) notes.push("no namespaces: Fluent Bit tails every container log on each node");
+if (send.via === "direct") notes.push("direct to log management skips the cloud proxy that would aggregate and buffer");
+// Whether an agent runs and reaches its target is a question for the server
+// itself; Orchestrator cannot see it.
+notes.push(f.platform === "kubernetes" ? "run fluent-bit --dry-run -c fluent-bit.conf to parse the configuration" : "whether each agent runs and reaches " + send.target + ":" + send.port + " is checked on the server by ${checkFile}");`,
+      });
+
       return {
         platform: LOGS,
         title: `Agent group "${group}" — ${os === 'kubernetes' ? 'Fluent Bit' : `${os} agents named ${hostFilter}`}, role ${role}`,
@@ -1108,26 +1660,39 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         },
         guardrails: [
           { rule: os === 'kubernetes' ? 'Fluent Bit verifies the target’s TLS certificate (tls.verify On)' : 'Central configuration applies only to agents that match the group filter', because: os === 'kubernetes' ? 'A collector that accepts any certificate will send logs to whoever answers.' : 'A configuration meant for web servers does not reach the database tier.' },
-          ...(os === 'kubernetes' ? [] : [{ rule: `${os === 'windows' ? 'Check-Agent.ps1' : 'check-agent.sh'} exits 1 when the agent is stopped or cannot reach ${target}`, because: 'A server that stopped sending looks exactly like a quiet server.' }]),
+          ...(os === 'kubernetes' ? [] : [{ rule: `${checkFile} exits 1 when the agent is stopped or cannot reach ${target}`, because: 'A server that stopped sending looks exactly like a quiet server.' }]),
+          { rule: `The workflow Check agent group ${base} fails on a missing target or an invalid port, and changes nothing`, because: 'The group is saved by hand; the workflow checks what will be saved.' },
         ],
-        dryRun: [os === 'kubernetes' ? 'Run fluent-bit --dry-run -c fluent-bit.conf to parse it.' : `Apply to one server first: put the group filter on a single hostname, run the check there, then widen it to ${hostFilter}.`],
+        dryRun: [`Run the workflow Check agent group ${base}.`, os === 'kubernetes' ? 'Run fluent-bit --dry-run -c fluent-bit.conf to parse it.' : `Apply to one server first: put the group filter on a single hostname, run the check there, then widen it to ${hostFilter}.`],
         undo: [os === 'kubernetes' ? 'Restore the previous Fluent Bit ConfigMap and restart the DaemonSet.' : 'Delete the agent group. Agents drop the central configuration at their next check-in and fall back to their local liagent.ini.'],
         told: ['Nobody. Agent health is on the agents page; the checks here are what make a silent agent noisy.'],
         requires: [os === 'kubernetes' ? 'Fluent Bit deployed as a DaemonSet with read access to /var/log/containers.' : 'The log management agent installed on each server (RHEL 9/10, SLES 15 SP7/16, Ubuntu 22.04/24.04/26.04, Debian 12/13, Photon 4+, or Windows).', `${target}:${os === 'kubernetes' ? 6514 : port} reachable from the servers.`],
         files:
           os === 'kubernetes'
-            ? { 'fluent-bit.conf': md(fluent), 'agent-group.json': json(spec) }
+            ? {
+                ...pkg.files,
+                'fluent-bit.conf': md(fluent),
+                'scripts/agent-group.json': json(spec),
+                'IMPORT.md': packageImportMd(`the Fluent Bit configuration "${group}"`, pkg, [
+                  { heading: 'Then apply the configuration to the cluster', files: ['fluent-bit.conf'], how: ['Put fluent-bit.conf in the Fluent Bit ConfigMap of the DaemonSet and restart it. Nothing in VCF Operations imports it.'] },
+                ], ['the syslog TLS listener (port 6514) on the target for third-party Fluent Bit; 9.1 configures VKS clusters itself and does not document the listener for others.']),
+              }
             : {
+                ...pkg.files,
                 'liagent.ini': md(ini),
-                'agent-group.json': json(spec),
-                ...(os === 'windows' ? { 'Check-Agent.ps1': checkWindows } : { 'check-agent.sh': checkLinux }),
+                'scripts/agent-group.json': json(spec),
+                ...(os === 'windows' ? { 'scripts/Check-Agent.ps1': checkWindows } : { 'scripts/check-agent.sh': checkLinux }),
+                'IMPORT.md': packageImportMd(`the agent group "${group}"`, pkg, [
+                  { heading: 'Then create the group and paste its configuration', files: ['liagent.ini', `${base}-APPLY.md`], how: [`Nothing imports an agent group in 9.1: create it and paste liagent.ini as ${base}-APPLY.md says.`] },
+                  { heading: 'Then check one member', files: [checkFile], how: [`Run ${checkFile} on one server in the group.`] },
+                ], ['the card that holds agent groups in 9.1, and port 9543 for the cfapi TLS target on a 9.1 cloud proxy.']),
                 [`${base}-APPLY.md`]: md([
                   `# Apply agent group "${group}"`,
                   '',
                   `1. VCF Operations → ${CONFIGURATIONS} → Log Collection → agents (VERIFY: 9.1 documents centralised agent configuration and agent groups under "Configuring Agent Group" without naming the card).`,
                   `2. New group \`${group}\`, filter: OS ${os}, hostname matches \`${hostFilter}\`.`,
                   '3. Paste liagent.ini into the group’s configuration and save.',
-                  `4. Run ${os === 'windows' ? 'Check-Agent.ps1' : 'check-agent.sh'} on one member, then search Explore Logs for \`role = ${role}\`.`,
+                  `4. Run ${checkFile} on one member, then search Explore Logs for \`role = ${role}\`.`,
                 ]),
               },
         notes: [
@@ -1242,6 +1807,36 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: packageNameOf('logs91', 'query', base),
+        description: `Creates or updates the VCF Operations 9.1 saved log query "${queryName}" through /suite-api/api/logs/queryconfigs, after testing its extracted field. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/Log management/${base}`,
+        workflow: {
+          name: `Create saved log query ${base}`,
+          description: `Tests the extracted field ${field} on the sample line, then makes the saved log query "${queryName}" exist as written: created when missing, updated when it differs, left alone when it matches. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created or updated and change nothing' }],
+          outputs: [
+            { name: 'queryConfigId', type: 'string', description: 'The saved query id; empty when a dry run would create it' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: QUERY_CONFIG_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of Create saved log query ${base}. Fill opsPassword after import; set dryRun to false only after a dry run.`,
+          attributes: [
+            ...OPS_ACCOUNT,
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created or updated while this is true' },
+            { name: 'cap', type: 'number', value: 1, description: 'The most changes one run may make (one saved query)' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [
+          { name: 'queryconfig.json', content: json(queryConfig) },
+          { name: 'extracted-field.json', content: json(extraction) },
+        ],
+      });
+
       return {
         platform: LOGS,
         title: `Log alert "${queryName}" — more than ${threshold} in ${windowMin} minutes`,
@@ -1253,22 +1848,32 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
           ifWrong: 'Too broad a query raises the alert on every object that logs the phrase, including ones that log it harmlessly; too narrow and it never fires. Neither changes anything in the estate.',
         },
         guardrails: [
-          { rule: 'apply.sh sends nothing without --execute', because: 'Every run of the POST creates another saved query with the same name.' },
-          { rule: 'test-extraction.sh exits 1 when the sample line yields no value', because: 'An extracted field that never matches makes every chart built on it empty, and nobody notices for weeks.' },
+          { rule: `The workflow Create saved log query ${base} is a dry run until dryRun is false in its configuration element, makes at most cap (1) change, and creates only when no saved query of that name exists — otherwise it updates that one, or leaves it alone when it matches`, because: 'Every POST creates another saved query, even with the same name; the workflow looks first.' },
+          { rule: 'The workflow tests the extracted field on the sample line before calling anything, and stops when it extracts nothing (so does scripts/test-extraction.sh)', because: 'An extracted field that never matches makes every chart built on it empty, and nobody notices for weeks.' },
+          { rule: 'scripts/apply.sh sends nothing without --execute', because: 'The fallback script does not look first: every run of its POST creates another saved query.' },
         ],
-        dryRun: ['Run ./apply.sh without --execute.', 'Run ./test-extraction.sh.', `Run the query in Explore Logs over the last 7 days and count how often more than ${threshold} arrived in ${windowMin} minutes — that is how often this will fire.`],
-        undo: ['DELETE /suite-api/api/logs/queryconfigs/{queryConfigId} with the id the POST returned, after deleting the alert definition that selects it.', 'Delete the extracted field in Explore Logs.'],
-        told: ['Nobody until a notification rule matches the alert. Pair it with "Send an alert to a webhook".'],
-        requires: ['VCF Operations 9.1 with log management.', 'A VCF Operations account allowed to manage log queries and alert definitions.'],
+        dryRun: [`Run the workflow Create saved log query ${base} with dryRun = true: the log says "DRY RUN: would create" or "would update", or that it exists and matches.`, 'Or ./scripts/apply.sh without --execute, and ./scripts/test-extraction.sh.', `Run the query in Explore Logs over the last 7 days and count how often more than ${threshold} arrived in ${windowMin} minutes — that is how often this will fire.`],
+        undo: ['DELETE /suite-api/api/logs/queryconfigs/{queryConfigId} with the id in the workflow’s queryConfigId output and AUDIT line (or the one the script’s POST returned), after deleting the alert definition that selects it.', 'Delete the extracted field in Explore Logs.'],
+        told: ['Nobody until a notification rule matches the alert. Pair it with "Send an alert to a webhook". The workflow posts its audit record to the webhook in its settings, if one is set.'],
+        requires: ['VCF Operations 9.1 with log management.', 'A VCF Operations account allowed to manage log queries and alert definitions.', 'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1, with the VCF Operations certificate trusted.'],
         files: {
-          'queryconfig.json': json(queryConfig),
-          'apply.sh': applyScript(OPS, [{ method: 'POST', path: '/suite-api/api/logs/queryconfigs', payload: 'queryconfig.json' }], 'DELETE /suite-api/api/logs/queryconfigs/{queryConfigId} with the id returned above.'),
-          'extracted-field.json': json(extraction),
-          'test-extraction.sh': test,
+          ...pkg.files,
+          'scripts/queryconfig.json': json(queryConfig),
+          'scripts/apply.sh': fromOwnDir(applyScript(OPS, [{ method: 'POST', path: '/suite-api/api/logs/queryconfigs', payload: 'queryconfig.json' }], 'DELETE /suite-api/api/logs/queryconfigs/{queryConfigId} with the id returned above.')),
+          'scripts/extracted-field.json': json(extraction),
+          'scripts/test-extraction.sh': test,
+          'IMPORT.md': packageImportMd(`the saved log query "${queryName}"`, pkg, [
+            { heading: 'Or: the same POST from a Linux host', files: ['scripts/apply.sh', 'scripts/queryconfig.json', 'scripts/test-extraction.sh', 'scripts/extracted-field.json'], how: ['`./scripts/test-extraction.sh`, then `./scripts/apply.sh --execute` (POST /suite-api/api/logs/queryconfigs with the OpsToken). It does not look for an existing query first.'] },
+            { heading: 'Then the extracted field and the alert definition', files: [`${base}-ALERT.md`], how: ['Neither has a documented 9.1 API: create them in the interface as the ALERT file says, selecting the saved query the workflow made.'] },
+          ], [
+            'queryFilters operator names other than CONTAINS, and whether partitions takes names or ids: the API reference shows only CONTAINS and an empty partitions list.',
+            'that PUT /suite-api/api/logs/queryconfigs takes the id in the body (the reference lists no id in the path for PUT).',
+            'that GET returns the saved query as it was posted; a field the server fills in on its own would make the workflow update it on every run (the log names the field that differs).',
+          ]),
           [`${base}-ALERT.md`]: md([
             `# Log-based alert on "${queryName}"`,
             '',
-            '1. `./apply.sh --execute` creates the saved query; note the id it returns.',
+            `1. Run the workflow **Create saved log query ${base}** armed (or \`./scripts/apply.sh --execute\`); note the id it returns.`,
             `2. Explore Logs → run the saved query → select \`${pre}${sample ? '…' : ''}\` in a result → Extract Field → name \`${field}\`, before \`${pre}\`, value \`${valueRx}\`, after \`${post}\`.`,
             '3. Infrastructure Operations → Configurations → Alert Definitions → Add.',
             `4. Base Object Type: ${kind}. Next.`,
@@ -1392,7 +1997,7 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         '',
         '## Before',
         '',
-        `- [ ] Run \`./export-inventory.sh\` against the ${source} appliance; it must exit 0. Keep the folder with the change.`,
+        `- [ ] Run the workflow **Export Logs inventory ${base}** (or \`./scripts/export-inventory.sh\`) against the ${source} appliance; it must finish without NOT EXPORTED. Keep its inventoryJson output (or the folder) with the change.`,
         '- [ ] Export custom dashboards, saved queries and user alerts from the interface too — **custom content is not transferred automatically**.',
         `- [ ] New FQDN \`${fqdn || '<REQUIRED>'}\` in DNS (forward and reverse), on the network that hosts the VCF management services. Log management cannot run on a custom NSX overlay segment.`,
         `- [ ] Size ${size}. Replicas scale separately from the size profile (small 1–19, medium and large 3–19).`,
@@ -1423,6 +2028,34 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         'Known issue in 9.1.1: Log Management disaster recovery displays an error after restoration.',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('logs', 'inventory', base),
+        description: `Reads the configuration of a standalone VCF Operations for Logs ${source} appliance before it is replaced by 9.1 log management. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/Log management/${base}`,
+        workflow: {
+          name: `Export Logs inventory ${base}`,
+          description: `Reads the version, content packs, alerts, forwarding, partitions, archiving, agent groups and agents of the standalone Logs ${source} appliance through its own API (/api/v2, then /api/v1) and returns them as one JSON document. Changes nothing. Fails when any item could not be read.`,
+          inputs: [],
+          outputs: [
+            { name: 'inventoryJson', type: 'string', description: 'Everything read, by item, with the path that answered' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: LOGS_INVENTORY_WORKFLOW,
+        },
+        actions: [LOGS_APPLIANCE_LOGIN],
+        config: {
+          name: 'Settings',
+          description: `Settings of Export Logs inventory ${base}. The appliance account's password is filled after import.`,
+          attributes: [
+            { name: 'logsHost', type: 'string', value: '', description: `The standalone Logs ${source} appliance, host:9543` },
+            { name: 'logsUsername', type: 'string', value: '', description: 'An account with the admin role on the appliance' },
+            { name: 'logsPassword', type: 'SecureString', description: 'Its password' },
+            { name: 'logsProvider', type: 'string', value: 'Local', description: 'Local, ActiveDirectory or vIDM' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record (counts and what was missing) is posted' },
+          ],
+        },
+      });
+
       return {
         platform: LOGS,
         title: `Standalone Logs ${source} → 9.1 log management: inventory and checklist`,
@@ -1430,18 +2063,30 @@ export const VCF_OPS_LOGS_91: readonly AutomationBlueprint[] = [
         trigger: { kind: 'manual', detail: 'Run once before the upgrade, and again the day of it to catch changes since.', worstCase: 'twice' },
         scope: {
           what: `The configuration of one standalone VCF Operations for Logs ${source} appliance.`,
-          decidedBy: ['What the Logs account used for the session can read. An account with the admin role sees everything the script asks for.'],
-          ifWrong: 'An item the account cannot read is listed as not exported and the script exits 1. Nothing on the appliance is changed either way.',
+          decidedBy: ['What the Logs account used for the session can read. An account with the admin role sees everything the workflow and the script ask for.'],
+          ifWrong: 'An item the account cannot read is listed as not exported and the run fails. Nothing on the appliance is changed either way.',
         },
         guardrails: [
-          { rule: 'Reads only; every call is a GET', because: 'An inventory taken before an upgrade must not be the thing that changes the system.' },
-          { rule: 'Exits 1 when any item could not be exported', because: 'A gap found after the old appliance is gone is a gap for good.' },
+          { rule: 'Reads only; every call after the session login is a GET', because: 'An inventory taken before an upgrade must not be the thing that changes the system.' },
+          { rule: 'The workflow fails (the script exits 1) when any item could not be exported', because: 'A gap found after the old appliance is gone is a gap for good.' },
+          { rule: 'The /api/v2 appliance API is used only here, against the 8.18 / 9.0 appliance', because: '9.1 log management has no /api/v2; its calls go through VCF Operations.' },
         ],
-        dryRun: ['It only reads. Run it and read summary.txt.'],
+        dryRun: [`It only reads. Run the workflow Export Logs inventory ${base} (or ./scripts/export-inventory.sh) and read the log.`],
         undo: ['Nothing to undo.'],
-        told: ['The export folder and summary.txt. Attach them to the upgrade change.'],
-        requires: ['jq and bash 4 on the machine running it.', `Network access to the ${source} appliance API (port 9543) and a session (VCFLOGS_TOKEN, or VCFLOGS_USER with VCFLOGS_PASSWORD_FILE).`],
-        files: { 'export-inventory.sh': script, [`${base}-CHECKLIST.md`]: checklist },
+        told: ['The inventoryJson output (the export folder and summary.txt with the script), and the webhook if one is set. Attach them to the upgrade change.'],
+        requires: ['For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1 with the appliance certificate trusted. For the script: jq and bash 4.', `Network access to the ${source} appliance API (port 9543) and an account on it.`],
+        files: {
+          ...pkg.files,
+          'scripts/export-inventory.sh': script,
+          [`${base}-CHECKLIST.md`]: checklist,
+          'IMPORT.md': packageImportMd(`the Logs ${source} inventory`, pkg, [
+            { heading: 'Or: the script, from a Linux host', files: ['scripts/export-inventory.sh'], how: ['`./scripts/export-inventory.sh` writes one JSON file per item and summary.txt (VCFLOGS_HOST, VCFLOGS_USER, VCFLOGS_PASSWORD_FILE).'] },
+            { heading: 'Then work through the checklist', files: [`${base}-CHECKLIST.md`], how: ['Before, during and after the upgrade; the inventory is what the after-steps compare against.'] },
+          ], [
+            'the appliance API paths: each item is tried at /api/v2 and then /api/v1, because they moved between releases; an item neither answers is exported by hand.',
+            'the Logs appliance API documents no session logout; the session expires with its ttl.',
+          ]),
+        },
         notes: [
           'VERIFY: the old appliance API paths — the script tries /api/v2 then /api/v1 for each, because they moved between releases. An item neither answers is exported by hand.',
           '9.1 log management is a containerised service in the VCF management services platform. The old appliance’s /api/v2 (and its /api/v2/sessions login, which this script uses) does not exist on it: this script is for the standalone 8.18 / 9.0 appliance only. Calls to 9.1 log management go through VCF Operations with the KB 450054 token exchange (POST /suite-api/api/auth/token/exchange {"serviceKeys":["ops-li"]}).',
@@ -1469,6 +2114,398 @@ const HEALTH_LEVELS: Readonly<Record<string, readonly string[]>> = {
   orange: ['ORANGE', 'RED'],
   yellow: ['YELLOW', 'ORANGE', 'RED'],
 };
+
+/** Active alerts per object, from the query form (GET /alerts has no activeOnly), every page. */
+const ACTIVE_ALERTS = String.raw`function activeAlertsByResource() {
+  var alerts = postAll("alerts/query", "alerts", { activeOnly: true });
+  var by = {};
+  for (var a = 0; a < alerts.length; a++) {
+    var id = String(alerts[a].resourceId);
+    (by[id] = by[id] || []).push({ level: String(alerts[a].alertLevel || ""), name: String(alerts[a].alertDefinitionName || alerts[a].alertDefinitionId || "") });
+  }
+  return by;
+}
+function levelCount(list, level) {
+  var n = 0;
+  for (var l = 0; l < list.length; l++) if (list[l].level === level) n++;
+  return n;
+}
+function uniqueNames(list) {
+  var seen = {};
+  var out = [];
+  for (var u = 0; u < list.length; u++) if (!seen[list[u].name]) { seen[list[u].name] = true; out.push(list[u].name); }
+  return out.sort();
+}
+`;
+
+const HEALTH_WORKFLOW = String.raw`${OPS_SESSION}${ACTIVE_ALERTS}
+var kinds = settings.kinds || [];
+var levels = settings.failLevels || [];
+var max = Number(settings.maxObjects) > 0 ? Number(settings.maxObjects) : 2000;
+var problems = [];
+var rows = [];
+try {
+  if (kinds.length === 0) throw new Error("No object kinds: set kinds (adapterKind|resourceKind|label) in " + SETTINGS_NAME + ".");
+  var byResource = activeAlertsByResource();
+  for (var k = 0; k < kinds.length; k++) {
+    var parts = String(kinds[k]).split("|");
+    var ak = parts[0], rk = parts[1], label = parts[2] || parts[1];
+    var list;
+    try {
+      list = getAll("resources?adapterKind=" + encodeURIComponent(ak) + "&resourceKind=" + encodeURIComponent(rk), "resourceList");
+    } catch (e) {
+      problems.push("could not read " + label + " objects (" + ak + " / " + rk + "): " + (e && e.message ? e.message : e));
+      continue;
+    }
+    System.log(label + ": " + list.length + " object(s)");
+    if (list.length === 0) problems.push("no " + label + " objects returned for " + ak + " / " + rk + ": a blind spot; check the kind key and the adapter");
+    if (list.length > max) problems.push(list.length + " " + label + " objects, more than the " + max + " this report is set for: only the first " + max + " are checked");
+    for (var j = 0; j < list.length && j < max; j++) {
+      var r = list[j];
+      var al = byResource[String(r.identifier)] || [];
+      var row = {
+        kind: label,
+        id: r.identifier,
+        name: r.resourceKey && r.resourceKey.name ? r.resourceKey.name : r.identifier,
+        health: r.resourceHealth || "UNKNOWN",
+        score: r.resourceHealthValue === undefined ? null : r.resourceHealthValue,
+        critical: levelCount(al, "CRITICAL"),
+        immediate: levelCount(al, "IMMEDIATE"),
+        warning: levelCount(al, "WARNING"),
+        alerts: uniqueNames(al)
+      };
+      rows.push(row);
+      if (levels.indexOf(String(row.health)) >= 0 || (settings.failOnCritical !== false && row.critical > 0)) {
+        problems.push(row.kind + " " + row.name + ": health " + row.health + (row.critical > 0 ? ", " + row.critical + " critical alert(s): " + row.alerts.join("; ") : ""));
+      }
+    }
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+var csv = [csvLine(["kind", "name", "health", "score", "critical", "immediate", "warning", "alerts"])];
+for (var c = 0; c < rows.length; c++) csv.push(csvLine([rows[c].kind, rows[c].name, rows[c].health, rows[c].score, rows[c].critical, rows[c].immediate, rows[c].warning, rows[c].alerts.join("; ")]));
+reportJson = JSON.stringify(rows);
+reportCsv = csv.join("\n") + "\n";
+problemCount = problems.length;
+for (var p = 0; p < problems.length; p++) System.log("PROBLEM: " + problems[p]);
+summary = core.audit(null, { source: "vcf-health", objects: rows.length, problems: problems.length });
+if (problems.length > 0) {
+  core.notify(settings.webhook, { source: "vcf-health", problems: problems });
+  throw new Error("VCF Health: " + problems.length + " problem(s) at or above the threshold; each is a PROBLEM line in the log.");
+}
+System.log("VCF Health: nothing at or above the threshold.");`;
+
+const FINDINGS_WORKFLOW = String.raw`${OPS_SESSION}${FINDINGS_PATH}
+var severities = settings.severities || [];
+var failRx = settings.failRegex ? new RegExp(String(settings.failRegex), "i") : null;
+var since = Number(settings.sinceDays) || 0;
+var maxRules = Number(settings.maxRules) || 0;
+var filter = {};
+if (severities.length > 0) filter.severities = severities;
+if (since > 0) filter.fromOccurrenceTime = new Date().getTime() - since * 86400000;
+var body = { filter: filter };
+var all;
+var path;
+try {
+  path = findingsPath(body);
+  all = postAll(path + "?sortBy=SEVERITY&sortOrder=DESCENDING", "findings", body);
+  System.log(all.length + " finding(s) via /suite-api/api/" + path);
+  if (settings.includeObjects !== false) {
+    var base = path.replace(/\/query$/, "");
+    for (var i = 0; i < all.length; i++) {
+      // VERIFY: the rule id field; the documented response lists ruleName, and
+      // the object query needs ruleUuid. A failed read stops the report: an
+      // empty list would say "affects nothing".
+      var uuid = all[i].ruleUuid || all[i].ruleId || all[i].uuid || "";
+      all[i].objects = [];
+      if (uuid && i < maxRules) {
+        var objs = postAll(base + "/" + encodeURIComponent(String(uuid)) + "/affectedobjects/query", "affectedObjects", { filter: {} });
+        for (var o = 0; o < objs.length; o++) all[i].objects.push({ name: objs[o].name, resourceId: objs[o].resourceId, resourceKind: objs[o].resourceKind });
+      }
+    }
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+var groups = {};
+var order = [];
+for (var g = 0; g < all.length; g++) {
+  var sev = String(all[g].severity || "");
+  if (!groups[sev]) { groups[sev] = []; order.push(sev); }
+  groups[sev].push(all[g]);
+}
+var bySeverity = [];
+for (var s = 0; s < order.length; s++) {
+  bySeverity.push({ severity: order[s], count: groups[order[s]].length, findings: groups[order[s]] });
+  System.log(order[s] + ": " + groups[order[s]].length);
+}
+var csv = [csvLine(["severity", "rule", "category", "affected", "lastObserved", "objects"])];
+for (var f = 0; f < all.length; f++) {
+  var names = [];
+  var objects = all[f].objects || [];
+  for (var n = 0; n < objects.length; n++) names.push(objects[n].name);
+  csv.push(csvLine([all[f].severity, all[f].ruleName, all[f].category, all[f].affectedObjectsCount, all[f].lastObservedTimeInMillis ? new Date(Number(all[f].lastObservedTimeInMillis)).toISOString() : "", names.join("; ")]));
+}
+var failing = 0;
+if (failRx) for (var x = 0; x < all.length; x++) if (failRx.test(String(all[x].severity || ""))) failing++;
+findingCount = all.length;
+reportJson = JSON.stringify(bySeverity);
+reportCsv = csv.join("\n") + "\n";
+summary = core.audit(null, { source: "vcf-operations-findings", findings: all.length, failing: failing, path: "/suite-api/api/" + path });
+core.notify(settings.webhook, { source: "vcf-operations-findings", bySeverity: bySeverity });
+if (failing > 0) throw new Error(failing + " finding(s) at a failing severity (" + settings.failRegex + "); the report is in the reportJson and reportCsv outputs.");`;
+
+const REALTIME_WORKFLOW = String.raw`${OPS_SESSION}
+var KIND = String(settings.resourceKind || "VirtualMachine");
+var KEY = String(settings.statKey || "cpu|readyPct");
+var topN = Number(settings.topN) > 0 ? Number(settings.topN) : 10;
+var warnAt = Number(settings.warnAt) || 0;
+var max = Number(settings.maxObjects) > 0 ? Number(settings.maxObjects) : 5000;
+var hours = Number(settings.hours) > 0 ? Number(settings.hours) : 4;
+var chartName = objectName || settings.objectName || "";
+var top = [];
+var series = [];
+try {
+  var list = getAll("resources?adapterKind=VMWARE&resourceKind=" + encodeURIComponent(KIND), "resourceList");
+  if (list.length === 0) throw new Error("No " + KIND + " objects returned: nothing to rank.");
+  var ids = [];
+  var nameOf = {};
+  for (var i = 0; i < list.length && i < max; i++) {
+    ids.push(list[i].identifier);
+    nameOf[list[i].identifier] = list[i].resourceKey && list[i].resourceKey.name ? list[i].resourceKey.name : list[i].identifier;
+  }
+  System.log(ids.length + " " + KIND + " object(s)" + (list.length > ids.length ? " of " + list.length + ": raise maxObjects to look at the rest" : ""));
+  var latest = core.http("POST", api + "resources/stats/latest/query", auth, { resourceId: ids, statKey: [KEY] }, SAFE).body;
+  if (!latest || !latest.values) throw new Error("stats/latest/query returned no values list (VERIFY the response shape).");
+  var ranked = [];
+  for (var v = 0; v < latest.values.length; v++) {
+    var stat = statsIn(latest.values[v])[0];
+    var value = lastValue(stat);
+    if (value !== null && !isNaN(value)) ranked.push({ id: latest.values[v].resourceId, name: nameOf[latest.values[v].resourceId] || latest.values[v].resourceId, value: value });
+  }
+  ranked.sort(function (a, b) { return b.value - a.value; });
+  top = ranked.slice(0, topN);
+  if (chartName) {
+    var found = core.http("GET", api + "resources?name=" + encodeURIComponent(chartName) + "&resourceKind=" + encodeURIComponent(KIND), auth, null, SAFE).body || {};
+    var one = found.resourceList && found.resourceList.length > 0 ? found.resourceList[0].identifier : null;
+    if (!one) System.warn("No " + KIND + " named " + chartName);
+    else {
+      var end = new Date().getTime();
+      var begin = end - hours * 3600000;
+      var s = core.http("GET", api + "resources/" + encodeURIComponent(one) + "/stats?statKey=" + encodeURIComponent(KEY) + "&begin=" + begin + "&end=" + end + "&rollUpType=AVG&intervalType=MINUTES&intervalQuantifier=5", auth, null, SAFE).body;
+      var first = statsIn(s)[0];
+      var times = first && first.timestamps ? first.timestamps : [];
+      for (var t = 0; t < times.length; t++) series.push({ at: new Date(Number(times[t])).toISOString(), value: first.data[t] });
+      System.log(chartName + ", last " + hours + "h: " + series.length + " five-minute average(s)");
+    }
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+var over = 0;
+for (var r = 0; r < top.length; r++) {
+  System.log((Math.round(top[r].value * 100) / 100) + "\t" + top[r].name);
+  if (top[r].value > warnAt) over++;
+}
+if (over > 0) System.warn(over + " of the top " + topN + " are above " + warnAt);
+topJson = JSON.stringify(top);
+seriesJson = JSON.stringify(series);
+overCount = over;
+summary = core.audit(null, { kind: KIND, statKey: KEY, ranked: top.length, over: over, warnAt: warnAt });`;
+
+const VSAN_WORKFLOW = String.raw`${OPS_SESSION}${ACTIVE_ALERTS}${FINDINGS_PATH}
+var AK = String(settings.adapterKind || "VirtualAndPhysicalSANAdapter");
+var RK = String(settings.resourceKind || "VirtualSANDCCluster");
+var capRx = new RegExp(String(settings.capacityRegex || "capacity"), "i");
+var below = Number(settings.healthBelow) || 0;
+var problems = [];
+var clusters = [];
+var findings = [];
+try {
+  var list = getAll("resources?adapterKind=" + encodeURIComponent(AK) + "&resourceKind=" + encodeURIComponent(RK), "resourceList");
+  System.log(list.length + " vSAN cluster(s)");
+  if (list.length === 0) throw new Error("No vSAN clusters returned for " + AK + " / " + RK + ": check the kind key and the vSAN adapter.");
+  var byResource = activeAlertsByResource();
+  var fbody = { filter: { adapterKinds: [AK] } };
+  findings = postAll(findingsPath(fbody), "findings", fbody);
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i];
+    var name = c.resourceKey && c.resourceKey.name ? c.resourceKey.name : c.identifier;
+    var stats = statsIn(core.http("GET", api + "resources/" + encodeURIComponent(c.identifier) + "/stats/latest", auth, null, SAFE).body);
+    var capacity = [];
+    for (var s = 0; s < stats.length; s++) {
+      var key = stats[s].statKey && stats[s].statKey.key ? String(stats[s].statKey.key) : "";
+      if (key && capRx.test(key)) capacity.push({ key: key, value: lastValue(stats[s]) });
+    }
+    capacity.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+    var al = byResource[String(c.identifier)] || [];
+    var row = { id: c.identifier, name: name, health: c.resourceHealth || "UNKNOWN", score: c.resourceHealthValue === undefined ? null : c.resourceHealthValue, alerts: al, capacity: capacity };
+    clusters.push(row);
+    var critical = levelCount(al, "CRITICAL");
+    System.log(name + "  health " + row.health + " score " + (row.score === null ? "n/a" : row.score) + "  alerts " + al.length + "  capacity metrics " + capacity.length);
+    if ((row.score !== null && Number(row.score) < below) || critical > 0) problems.push(name + ": health " + row.health + " score " + row.score + ", " + critical + " critical alert(s)");
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+var criticalFindings = 0;
+for (var f = 0; f < findings.length; f++) if (/critical/i.test(String(findings[f].severity || ""))) criticalFindings++;
+if (settings.failOnFindings !== false && criticalFindings > 0) problems.push(criticalFindings + " critical vSAN finding(s)");
+reportJson = JSON.stringify({ clusters: clusters, findings: findings });
+problemCount = problems.length;
+for (var p = 0; p < problems.length; p++) System.log("PROBLEM: " + problems[p]);
+summary = core.audit(null, { source: "vsan-ops", clusters: clusters.length, findings: findings.length, problems: problems.length });
+if (problems.length > 0) {
+  core.notify(settings.webhook, { source: "vsan-ops", problems: problems });
+  throw new Error("vSAN: " + problems.length + " problem(s); each is a PROBLEM line in the log.");
+}`;
+
+/**
+ * The daily audit report. Orchestrator cannot write to S3, scp or a share, so
+ * the workflow hands the report on over HTTPS to auditUrl (a SIEM or log
+ * collector's HTTP input, an object-store gateway) and fails when that post
+ * fails; the copy to S3, a remote host or a share stays with the script.
+ */
+const AUDIT_WORKFLOW = String.raw`${OPS_SESSION}
+var day = new Date(new Date().getTime() - 86400000).toISOString().substring(0, 10);
+var report;
+try {
+  report = core.http("GET", api + "audit/system", auth, null, SAFE).body;
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+if (!report || typeof report !== "object") throw new Error("GET /suite-api/api/audit/system returned an empty report.");
+var reports = report.auditReports || [];
+System.log("Audit report: " + reports.length + " section(s)");
+for (var i = 0; i < reports.length; i++) {
+  var audits = reports[i].audits || [];
+  for (var j = 0; j < audits.length; j++) System.log("  " + reports[i].name + " / " + audits[j].name + ": " + audits[j].count);
+}
+reportJson = JSON.stringify({ exportedFor: day, host: settings.opsHost, report: report });
+if (settings.auditUrl) {
+  // Unlike a notification, a copy that did not arrive fails the run.
+  core.http("POST", String(settings.auditUrl), null, reportJson, { redact: [String(settings.auditUrl).split("?")[1] || ""] });
+  System.log("Audit report for " + day + " posted to " + String(settings.auditUrl).split("?")[0]);
+} else {
+  System.warn("auditUrl is empty: the report is only in the reportJson output. Set it, or copy with the script under scripts/.");
+}
+summary = core.audit(null, { source: "vcf-operations-audit", exportedFor: day, sections: reports.length, sentTo: settings.auditUrl ? String(settings.auditUrl).split("?")[0] : null });`;
+
+/**
+ * Security Posture Management drift, without state: "new" are active
+ * compliance alerts that started in the last sinceDays, "fixed" are alerts of
+ * the same definitions cancelled in that window with no active alert left for
+ * the same object and rule. (The script keeps last week's file instead.) The
+ * CSV mode takes the View Results export, and last week's, as inputs.
+ */
+const POSTURE_WORKFLOW = String.raw`${OPS_SESSION}
+var since = new Date().getTime() - (Number(settings.sinceDays) > 0 ? Number(settings.sinceDays) : 7) * 86400000;
+var current = [];
+var added = [];
+var fixed = [];
+var baseline = false;
+var hosts = [];
+function csvRows(text) {
+  var out = [];
+  var all = String(text || "").split(/\r?\n/);
+  for (var i = 1; i < all.length; i++) if (/non[- ]compliant/i.test(all[i])) out.push(all[i]);
+  return out;
+}
+function minus(a, b) {
+  var seen = {};
+  for (var i = 0; i < b.length; i++) seen[b[i]] = true;
+  var out = [];
+  for (var j = 0; j < a.length; j++) if (!seen[a[j]]) out.push(a[j]);
+  return out;
+}
+function unique(list) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < list.length; i++) if (!seen[list[i]]) { seen[list[i]] = true; out.push(list[i]); }
+  return out.sort();
+}
+try {
+  if (String(settings.source) === "csv") {
+    if (!resultsCsv || String(resultsCsv).split(/\r?\n/).length < 2) throw new Error("Pass the View Results CSV export as resultsCsv: an empty export is not a clean result.");
+    current = unique(csvRows(resultsCsv));
+    if (previousCsv) {
+      var previous = unique(csvRows(previousCsv));
+      added = minus(current, previous);
+      fixed = minus(previous, current);
+    } else baseline = true;
+  } else {
+    var rx = settings.ruleFilter ? new RegExp(String(settings.ruleFilter), "i") : null;
+    var defs = getAll("alertdefinitions", "alertDefinitions");
+    var ids = [];
+    var nameOf = {};
+    for (var d = 0; d < defs.length; d++) {
+      if (Number(defs[d].subType) !== 21) continue;
+      if (rx && !rx.test(String(defs[d].name || ""))) continue;
+      ids.push(defs[d].id);
+      nameOf[defs[d].id] = defs[d].name;
+    }
+    if (ids.length === 0) throw new Error("No compliance alert definition matches /" + (settings.ruleFilter || "") + "/: nothing to compare, which is not the same as compliant.");
+    var active = postAll("alerts/query", "alerts", { activeOnly: true, alertDefinitionId: ids });
+    var activeKeys = {};
+    for (var a = 0; a < active.length; a++) {
+      var key = active[a].resourceId + "\t" + (active[a].alertDefinitionName || nameOf[active[a].alertDefinitionId] || active[a].alertDefinitionId);
+      activeKeys[key] = true;
+      current.push(key);
+      if (Number(active[a].startTimeUTC) >= since) added.push(key);
+    }
+    var everything = postAll("alerts/query", "alerts", { activeOnly: false, alertDefinitionId: ids });
+    for (var e = 0; e < everything.length; e++) {
+      var k2 = everything[e].resourceId + "\t" + (everything[e].alertDefinitionName || nameOf[everything[e].alertDefinitionId] || everything[e].alertDefinitionId);
+      if (Number(everything[e].cancelTimeUTC) >= since && !activeKeys[k2]) fixed.push(k2);
+    }
+    current = unique(current);
+    added = unique(added);
+    fixed = unique(fixed);
+  }
+  if (settings.confidential !== false) {
+    var keyRx = new RegExp(String(settings.confidentialKeyRegex || "sev|snp|tdx|sgx|confidential|trust.?domain"), "i");
+    var maxHosts = Number(settings.maxHosts) > 0 ? Number(settings.maxHosts) : 500;
+    var list = getAll("resources?adapterKind=VMWARE&resourceKind=HostSystem", "resourceList");
+    if (list.length === 0) throw new Error("No ESX hosts returned for the confidential computing report.");
+    for (var h = 0; h < list.length && h < maxHosts; h++) {
+      var props = core.http("GET", api + "resources/" + encodeURIComponent(list[h].identifier) + "/properties", auth, null, SAFE).body || {};
+      var kept = {};
+      var any = false;
+      var all = props.property || [];
+      for (var q = 0; q < all.length; q++) if (keyRx.test(String(all[q].name))) { kept[all[q].name] = all[q].value; any = true; }
+      hosts.push({ id: list[h].identifier, name: list[h].resourceKey && list[h].resourceKey.name ? list[h].resourceKey.name : list[h].identifier, properties: kept, reported: any });
+    }
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+if (baseline) System.log("First run (no previousCsv): this is the baseline, not drift.");
+System.log(settings.benchmark + ": " + current.length + " failing, " + added.length + " new, " + fixed.length + " fixed");
+for (var n = 0; n < added.length; n++) System.log("NEW: " + added[n]);
+for (var x = 0; x < fixed.length; x++) System.log("FIXED: " + fixed[x]);
+var reporting = 0;
+for (var y = 0; y < hosts.length; y++) if (hosts[y].reported) reporting++;
+if (hosts.length > 0) System.log(reporting + " of " + hosts.length + " host(s) report confidential-computing properties" + (reporting === 0 ? ": check Protect > Security Operations, and set confidentialKeyRegex to the property names it uses" : "."));
+var drift = { benchmark: settings.benchmark, failing: current.length, "new": added, fixed: fixed, baseline: baseline };
+driftJson = JSON.stringify(drift);
+confidentialJson = JSON.stringify(hosts);
+failingCount = current.length;
+summary = core.audit(null, { source: "security-posture", benchmark: settings.benchmark, failing: current.length, added: added.length, fixed: fixed.length, hosts: hosts.length });
+core.notify(settings.webhook, drift);
+var failOver = Number(settings.failOver) || 0;
+if ((settings.failOnNew !== false && added.length > 0) || (failOver > 0 && current.length > failOver)) {
+  throw new Error(settings.benchmark + ": " + added.length + " new failure(s), " + current.length + " failing in total; see the NEW lines in the log.");
+}`;
+
+/** The configuration element of a read workflow here: the account, the webhook, and what the automation adds. */
+function opsReadConfig(workflow: string, extra: readonly VroConfigAttribute[]): { name: string; description: string; attributes: VroConfigAttribute[] } {
+  return {
+    name: 'Settings',
+    description: `Settings of ${workflow}. Fill opsPassword after import. The workflow only reads; a read-only account is enough.`,
+    attributes: [...OPS_ACCOUNT, ...extra],
+  };
+}
 
 export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
@@ -1583,6 +2620,31 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         'finish 1',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'health', base),
+        description: 'VCF Health report: health badge and active alerts per ESX host, vCenter, NSX and vSAN object. Reads only. Generated by ArchToolKit.',
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `VCF Health report ${base}`,
+          description: 'Reads every object of the configured kinds and every active alert, and reports health badges and alert counts per object. Changes nothing. Fails when an object is at or above the threshold, when a kind returns nothing, or when a read fails, so a schedule shows it.',
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Problems found' },
+            { name: 'reportJson', type: 'string', description: 'One row per object: kind, name, health, score, alert counts' },
+            { name: 'reportCsv', type: 'string', description: 'kind,name,health,score,critical,immediate,warning,alerts' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: HEALTH_WORKFLOW,
+        },
+        config: opsReadConfig(`VCF Health report ${base}`, [
+          { name: 'kinds', type: 'Array/string', value: kinds, description: 'adapterKind|resourceKind|label for every object kind to report on' },
+          { name: 'failLevels', type: 'Array/string', value: [...levels], description: 'Health badge values that fail the run' },
+          { name: 'failOnCritical', type: 'boolean', value: critical, description: 'Also fail on any critical alert' },
+          { name: 'maxObjects', type: 'number', value: max, description: 'At most this many objects per kind are checked' },
+          { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any' },
+        ]),
+      });
+
       return {
         platform: OPS,
         title: `VCF Health report — ${HEALTH_KINDS.filter((kind) => bool(values, kind.id, true)).map((kind) => kind.label).join(', ') || 'nothing selected'}`,
@@ -1594,18 +2656,22 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           ifWrong: 'An object left out is not checked; an empty kind is reported as a problem precisely so that this is visible.',
         },
         guardrails: [
-          { rule: 'Reads only', because: 'A health check with write rights is a larger risk than the failures it looks for.' },
+          { rule: 'Reads only: GETs and the alerts query POST', because: 'A health check with write rights is a larger risk than the failures it looks for.' },
           { rule: 'Fails when an included object kind returns no objects, or when a read fails', because: 'A misspelt kind key or a broken adapter otherwise reads as "all healthy".' },
           { rule: 'Reads every page of objects and active alerts through files, and says when a kind has more objects than the cap', because: 'An unpaged read stops at one page and the rest of the estate is silently unchecked; a list passed as an argument fails at 128 KB.' },
-          ...(webhook ? [{ rule: 'The webhook post uses curl -f and a failed post exits 3', because: 'A problem report that did not arrive must not look like one that did.' }] : []),
+          ...(webhook ? [{ rule: 'The script’s webhook post uses curl -f and a failed post exits 3; the workflow fails the run whenever there are problems, whether or not the webhook took them', because: 'A problem report that did not arrive must not look like one that did.' }] : []),
         ],
-        dryRun: ['It only reads. Run it once and compare the counts per kind with Operate → VCF Health.'],
+        dryRun: [`It only reads. Run the workflow VCF Health report ${base} once (or scripts/${base}.sh) and compare the counts per kind with Operate → VCF Health.`],
         undo: ['Nothing to undo.'],
-        told: webhook ? [`${webhook}, whenever a check fails.`, 'The JSON and CSV files, every run.'] : ['The exit code and the JSON and CSV files.'],
-        requires: ['jq and bash 4.', 'A read-only VCF Operations account.'],
+        told: webhook ? [`${webhook}, whenever a check fails.`, 'The workflow outputs (JSON and CSV) every run; the script writes the files.'] : ['The failed run and the JSON and CSV outputs (files with the script).'],
+        requires: ['For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1, with the VCF Operations certificate trusted. For the script: jq and bash 4.', 'A read-only VCF Operations account.'],
         files: {
-          [`${base}.sh`]: script,
-          'crontab.txt': `# Hourly. The script logs in for itself from the password file (mode 600);\n# no token or password is in this line.\n0 * * * * cd /var/lib/vcf-health && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-health.log 2>&1\n`,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
+          'crontab.txt': `# Hourly, with the fallback script. With the package, schedule the workflow in Orchestrator instead.\n# The script logs in for itself from the password file (mode 600); no token or password is in this line.\n0 * * * * cd /var/lib/vcf-health && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-health.log 2>&1\n`,
+          'IMPORT.md': packageImportMd('the VCF Health report', pkg, [
+            { heading: 'Or: the script, from a Linux host', files: [`scripts/${base}.sh`, 'crontab.txt'], how: [`Copy scripts/${base}.sh to /usr/local/bin and install the crontab line. It needs bash 4, curl and jq.`] },
+          ], ['the NSX and vSAN kind keys: GET /suite-api/api/adapterkinds/{adapterKind}/resourcekinds lists them; pick the kind VCF Health reports on.', 'that an alert returned by POST /suite-api/api/alerts/query carries alertDefinitionName (the reference example shows alertDefinitionId-level fields only); the workflow falls back to the definition id.']),
         },
         notes: [
           'What 9.1 VCF Health shows beyond a badge — ESX reachability, connectivity, services, hardware (memory and SSD), PSOD history, utilisation; vCenter endpoint monitoring of the vSphere Client and APIs and the 17–18 services (KB 381709), the VM Operations Task ID backtrace and the Error Stack panel; snapshot and vMotion capability checks — is in Operate → VCF Health. This report sees it when it moves the health badge or raises an alert, not otherwise.',
@@ -1712,6 +2778,32 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         'finish 0',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'findings', base),
+        description: 'Open findings report from the VCF Operations 9.1 Findings API, grouped by severity, with affected objects. Reads only. Generated by ArchToolKit.',
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `Open findings report ${base}`,
+          description: 'Reads every open finding through the 9.1 Findings API (the POSTs are queries), with the affected objects of each, groups them by severity and posts the report to the webhook. Changes nothing. Fails when a finding matches the failing severities.',
+          inputs: [],
+          outputs: [
+            { name: 'findingCount', type: 'number', description: 'Findings read' },
+            { name: 'reportJson', type: 'string', description: 'Findings grouped by severity' },
+            { name: 'reportCsv', type: 'string', description: 'severity,rule,category,affected,lastObserved,objects' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: FINDINGS_WORKFLOW,
+        },
+        config: opsReadConfig(`Open findings report ${base}`, [
+          { name: 'severities', type: 'Array/string', value: severities, description: 'Only these severities, as the API returns them; empty reads all' },
+          { name: 'failRegex', type: 'string', value: failRx, description: 'Case-insensitive regex: a finding whose severity matches fails the run; empty never fails' },
+          { name: 'sinceDays', type: 'number', value: since, description: 'Only findings that occurred in the last N days; 0 reads all open findings' },
+          { name: 'includeObjects', type: 'boolean', value: objects, description: 'List the affected objects of each finding' },
+          { name: 'maxRules', type: 'number', value: maxRules, description: 'Fetch affected objects for at most this many findings' },
+          { name: 'webhook', type: 'string', value: webhook, description: 'Where the report is posted, every run' },
+        ]),
+      });
+
       return {
         platform: OPS,
         title: `Open findings report${severities.length > 0 ? ` (${severities.join(', ')})` : ''}${failRx ? `, failing on ${failRx}` : ''}`,
@@ -1728,13 +2820,20 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { rule: 'Every page is read into files, and a failed read of findings or affected objects stops the run (exit 2)', because: 'A list passed as an argument fails at 128 KB, and a failed read turned into an empty list reports "affects nothing".' },
           ...(webhook ? [{ rule: 'The webhook post uses curl -f and a failed post exits 3', because: 'The ticketing system not receiving the report must not look like it did.' }] : []),
         ],
-        dryRun: ['It only reads. Run it and compare the counts with the Findings page.'],
+        dryRun: [`It only reads. Run the workflow Open findings report ${base} (or scripts/${base}.sh) and compare the counts with the Findings page.`],
         undo: ['Nothing to undo.'],
-        told: webhook ? [`${webhook}, daily, with every finding grouped by severity.`] : ['The JSON and CSV files and the exit code.'],
-        requires: ['VCF Operations 9.1 or later (the Findings API is new in 9.1).', 'jq and bash 4.', 'A read-only VCF Operations account.'],
+        told: webhook ? [`${webhook}, daily, with every finding grouped by severity.`] : ['The workflow outputs (JSON and CSV) and a failed run; the files and the exit code with the script.'],
+        requires: ['VCF Operations 9.1 or later (the Findings API is new in 9.1).', 'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1. For the script: jq and bash 4.', 'A read-only VCF Operations account.'],
         files: {
-          [`${base}.sh`]: script,
-          'crontab.txt': `# Daily at 06:15. The script logs in for itself from the password file (mode 600).\n15 6 * * * cd /var/lib/vcf-findings && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-findings.log 2>&1\n`,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
+          'crontab.txt': `# Daily at 06:15, with the fallback script. With the package, schedule the workflow in Orchestrator instead.\n# The script logs in for itself from the password file (mode 600).\n15 6 * * * cd /var/lib/vcf-findings && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-findings.log 2>&1\n`,
+          'IMPORT.md': packageImportMd('the open findings report', pkg, [
+            { heading: 'Or: the script, from a Linux host', files: [`scripts/${base}.sh`, 'crontab.txt'], how: [`Copy scripts/${base}.sh to /usr/local/bin and install the crontab line. It needs bash 4, curl and jq.`] },
+          ], [
+            'the path: the 9.1 reference page for the operation shows POST /suite-api/api/diagnostics/findings/query, the category page /api/findings/query. The workflow and the script try the first, then the second.',
+            'the severity values, and the field on a finding that carries its ruleUuid: the published response schema lists ruleName, ruleDescription, severity, category, capabilities, refreshMode, affectedObjectsCount, findingType and lastObservedTimeInMillis only.',
+          ]),
         },
         notes: [
           'Documented: POST …/findings/query (page, pageSize up to 1000, sortBy RULE_ID|SUBTYPE|SEVERITY|AFFECTED_OBJECTS_COUNT|RESOURCE_ID|RESOURCE_NAME|CHECK_TIME|OCCURRENCE_TIME|COMPONENT; filter by resourceIds, resourceKinds, adapterKinds, capabilities, categories, severities, ruleUuids, refreshTypes, findingTypes, fromOccurrenceTime) and POST …/findings/{ruleUuid}/affectedobjects/query.',
@@ -1906,6 +3005,33 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         '| tcpdump | Capture packets — keep the filter tight and the capture short |',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'realtime', base),
+        description: `Top ${topN} ${kind} by ${label} from the VCF Operations suite API, and one object's series. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `Top ${kind} by ${key.replace(/\|/g, ' ')} ${base}`,
+          description: `Ranks up to ${max} ${kind} objects by the latest ${key} and, when an object is named, returns its last ${hours} hours of five-minute averages. Changes nothing. For an engineer during an investigation; the 20-second series are in metric search.`,
+          inputs: [{ name: 'objectName', type: 'string', description: 'Optional: an object to chart, by name (overrides the setting)' }],
+          outputs: [
+            { name: 'topJson', type: 'string', description: 'The top objects: id, name, value' },
+            { name: 'seriesJson', type: 'string', description: 'The named object\u2019s series: at, value' },
+            { name: 'overCount', type: 'number', description: 'How many of the top are above warnAt' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: REALTIME_WORKFLOW,
+        },
+        config: opsReadConfig(`the real-time investigation workflow ${base}`, [
+          { name: 'resourceKind', type: 'string', value: kind, description: 'Object kind under the VMware adapter' },
+          { name: 'statKey', type: 'string', value: key, description: 'The metric' },
+          { name: 'topN', type: 'number', value: topN, description: 'How many to list' },
+          { name: 'warnAt', type: 'number', value: warnAt, description: 'Flag values above this' },
+          { name: 'objectName', type: 'string', value: objectName, description: 'An object to chart by default; empty skips it' },
+          { name: 'hours', type: 'number', value: hours, description: 'How far back the series goes' },
+          { name: 'maxObjects', type: 'number', value: max, description: 'At most this many objects in the latest-stats query' },
+        ]),
+      });
+
       return {
         platform: OPS,
         title: `Real-time investigation — top ${topN} ${kind === 'HostSystem' ? 'ESX hosts' : 'VMs'} by ${label}`,
@@ -1919,9 +3045,19 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         guardrails: [{ rule: 'Reads only', because: 'An investigation that changes the system while measuring it destroys its own evidence.' }],
         dryRun: ['It only reads.'],
         undo: ['Nothing to undo. If real-time granularity was lowered in a policy for the investigation, set it back.'],
-        told: ['The terminal. Paste the output into the investigation session.'],
-        requires: ['jq and bash 4.', 'A read-only VCF Operations account.'],
-        files: { [`${base}.sh`]: script, 'queries.promql': promql, 'investigation-session.md': session, 'cli-tools.md': tools },
+        told: ['The workflow log and outputs (the terminal with the script). Paste them into the investigation session.'],
+        requires: ['For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1. For the script: jq and bash 4.', 'A read-only VCF Operations account.'],
+        files: {
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
+          'queries.promql': promql,
+          'investigation-session.md': session,
+          'cli-tools.md': tools,
+          'IMPORT.md': packageImportMd('the real-time investigation kit', pkg, [
+            { heading: 'Or: the script, from a Linux host', files: [`scripts/${base}.sh`], how: ['Run it by hand during an investigation. It needs bash 4, curl and jq.'] },
+            { heading: 'The rest is pasted, not imported', files: ['queries.promql', 'investigation-session.md', 'cli-tools.md'], how: ['queries.promql goes into metric search one block at a time; the session template is saved as a 9.1 investigation session; cli-tools.md is for the Actions tab.'] },
+          ], ['no PromQL query API is documented for 9.1, only the metric search interface; the metric names in queries.promql are placeholders to copy from it.', `the stat key ${key} on ${kind}: copy it from the object’s metric picker if it differs.`]),
+        },
         notes: [
           'The suite API returns stats at the collection interval (five minutes by default), not at real-time granularity. The script is for when the PromQL view is not to hand; the 20-second (down to 2-second for ESX) series are in metric search.',
           `VERIFY: the stat key ${key} on ${kind} — copy it from the object’s metric picker if it differs.`,
@@ -2024,6 +3160,31 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         'finish 1',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'vsan', base),
+        description: 'vSAN storage operations report: health, active alerts, findings and capacity metrics per vSAN cluster. Reads only. Generated by ArchToolKit.',
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `vSAN operations report ${base}`,
+          description: 'Reads every vSAN cluster, its active alerts, the findings the vSAN adapter raises and its latest capacity and data-reduction metrics. Changes nothing. Fails on a health score below the threshold, a critical alert or (optionally) a critical finding, and when no cluster or a read fails.',
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Problems found' },
+            { name: 'reportJson', type: 'string', description: 'clusters (health, alerts, capacity) and findings' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: VSAN_WORKFLOW,
+        },
+        config: opsReadConfig(`vSAN operations report ${base}`, [
+          { name: 'adapterKind', type: 'string', value: adapterKind, description: 'The vSAN adapter kind' },
+          { name: 'resourceKind', type: 'string', value: resourceKind, description: 'The vSAN cluster resource kind' },
+          { name: 'capacityRegex', type: 'string', value: capRx, description: 'Case-insensitive regex over stat keys: which metrics the capacity section lists' },
+          { name: 'healthBelow', type: 'number', value: below, description: 'Fail when a cluster\u2019s health score is below this' },
+          { name: 'failOnFindings', type: 'boolean', value: failFindings, description: 'Fail on critical vSAN findings' },
+          { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any' },
+        ]),
+      });
+
       return {
         platform: OPS,
         title: `vSAN operations report — health below ${below}${failFindings ? ' or critical findings' : ''} fails`,
@@ -2039,13 +3200,20 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { rule: 'Fails when no vSAN cluster is returned, and stops (exit 2) when alerts, findings or a cluster’s stats cannot be read', because: 'A broken vSAN adapter or a failed read otherwise produces an empty, reassuring report.' },
           ...(webhook ? [{ rule: 'The webhook post uses curl -f and a failed post exits 3', because: 'A problem report that did not arrive must not look like one that did.' }] : []),
         ],
-        dryRun: ['It only reads. Run it once and compare one cluster’s numbers with Operate → Overview → Storage.'],
+        dryRun: [`It only reads. Run the workflow vSAN operations report ${base} (or scripts/${base}.sh) once and compare one cluster’s numbers with Operate → Overview → Storage.`],
         undo: ['Nothing to undo.'],
-        told: webhook ? [`${webhook}, when a check fails.`, 'The JSON report, daily.'] : ['The JSON report and the exit code.'],
-        requires: ['The vSAN adapter configured in VCF Operations.', 'jq and bash 4.', 'A read-only account.'],
+        told: webhook ? [`${webhook}, when a check fails.`, 'The JSON report, daily.'] : ['The JSON report (workflow output, or the file with the script) and a failed run.'],
+        requires: ['The vSAN adapter configured in VCF Operations.', 'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1. For the script: jq and bash 4.', 'A read-only account.'],
         files: {
-          [`${base}.sh`]: script,
-          'crontab.txt': `# Daily at 06:30. The script logs in for itself from the password file (mode 600).\n30 6 * * * cd /var/lib/vsan-ops && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vsan-ops.log 2>&1\n`,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
+          'crontab.txt': `# Daily at 06:30, with the fallback script. With the package, schedule the workflow in Orchestrator instead.\n# The script logs in for itself from the password file (mode 600).\n30 6 * * * cd /var/lib/vsan-ops && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vsan-ops.log 2>&1\n`,
+          'IMPORT.md': packageImportMd('the vSAN operations report', pkg, [
+            { heading: 'Or: the script, from a Linux host', files: [`scripts/${base}.sh`, 'crontab.txt'], how: [`Copy scripts/${base}.sh to /usr/local/bin and install the crontab line. It needs bash 4, curl and jq.`] },
+          ], [
+            'the vSAN cluster kind key: GET /suite-api/api/adapterkinds/VirtualAndPhysicalSANAdapter/resourcekinds lists it.',
+            'whether vSAN performance insights surface through the Findings API or only in the Performance Insights view; the report lists every finding the vSAN adapter raises.',
+          ]),
         },
         notes: [
           '9.1 vSAN Effective Capacity abstracts RAID policy and system overhead and shows the saving from deduplication and compression. The capacity section of this report lists the raw metrics behind it; the effective number itself is read in Operate → Overview → Storage.',
@@ -2146,7 +3314,7 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         '',
         'The per-action audit records — who did what, across vCenter, NSX, VCF Operations, VKS and the other components — are in the 9.1 audit trail, a centralised, time-sliced view built on log management. The public API does not expose those records; the interface exports them.',
         '',
-        '1. VCF Operations → Protect → Audit (VERIFY the exact menu name in your build).',
+        '1. VCF Operations → Protect → Audit Records (VERIFY the exact menu name in your build).',
         '2. Choose the interval — yesterday, 00:00 to 24:00 — and expand the time slices to check the aggregated action summaries.',
         '3. Export as CSV.',
         `4. Copy the CSV beside the daily JSON in \`${destination || '<destination>'}\`, named \`vcf-audit-trail-<date>.csv\`.`,
@@ -2155,6 +3323,25 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           ? 'Log forwarding (audit-forwarding.json) also streams the underlying audit events to the collector as they happen, so the CSV is a convenience rather than the record.'
           : 'For a record that does not depend on a person exporting it, turn on "Also stream audit events via log forwarding".',
       ]);
+
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'audit', base),
+        description: 'Daily copy of the VCF Operations 9.1 system audit report to an HTTPS receiver. Reads only from VCF Operations. Generated by ArchToolKit.',
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `Audit report export ${base}`,
+          description: 'Reads the system audit report (GET /suite-api/api/audit/system) and posts it, stamped with the day and the host, to auditUrl. Changes nothing in VCF Operations. Fails when the report is empty or the post fails.',
+          inputs: [],
+          outputs: [
+            { name: 'reportJson', type: 'string', description: 'The report as posted: exportedFor, host, report' },
+            { name: 'summary', type: 'string', description: 'The audit record of the run, JSON' },
+          ],
+          script: AUDIT_WORKFLOW,
+        },
+        config: opsReadConfig(`Audit report export ${base}`, [
+          { name: 'auditUrl', type: 'string', value: '', description: 'HTTPS endpoint that stores the report: a SIEM or log collector HTTP input, an object-store gateway. Empty keeps it in the output only' },
+        ]),
+      });
 
       return {
         platform: OPS,
@@ -2168,20 +3355,27 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         },
         guardrails: [
           { rule: 'The export reads from VCF Operations and only copies to the store — it never deletes there', because: 'An audit store a job can prune is not an audit store.' },
+          { rule: 'The workflow fails when the post to auditUrl fails (not a best-effort notification)', because: 'A missing day of audit must show as a failed run, not as a quiet one.' },
           { rule: 'Exits 1 on an empty report or a failed copy, and writes a SHA-256 beside each file', because: 'A missing day is found by the scheduler, and a changed file is found by the checksum.' },
           ...(stream ? [{ rule: 'Forwarded over TLS, filtered to audit events', because: 'Audit events carry user names and source addresses; they cross the network encrypted and nothing else goes with them.' }] : []),
         ],
-        dryRun: ['Run it once by hand with AUDIT_DEST pointing at a scratch location and read the file.', ...(stream ? ['PREVIEW the forwarding filter before CREATE.'] : [])],
+        dryRun: [`Run the workflow Audit report export ${base} once with auditUrl empty and read the reportJson output; or run scripts/${base}.sh with AUDIT_DEST pointing at a scratch location.`, ...(stream ? ['PREVIEW the forwarding filter before CREATE.'] : [])],
         undo: ['Nothing to undo for the export.', ...(stream ? ['Turn the forwarding rule off. Events already sent stay in the store.'] : [])],
         told: [`${destination || 'The store'}, daily.`, ...(stream ? [`${syslogHost}, continuously.`] : [])],
         requires: [
           'jq, bash 4 and sha256sum.',
           store === 's3' ? 'The aws cli, with credentials from its own profile or instance role — write-only to the prefix is enough.' : store === 'scp' ? 'An SSH key for the job’s user, authorised on the destination.' : 'The share mounted before the job runs.',
           'A read-only VCF Operations account.',
+          'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1, and an HTTPS receiver for the report (Orchestrator cannot write to S3, scp or a share; the script does that).',
         ],
         files: {
-          [`${base}.sh`]: script,
-          'crontab.txt': `# Daily. The script logs in for itself from the password file (mode 600).\n10 ${hour} * * * ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-audit.log 2>&1\n`,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
+          'crontab.txt': `# Daily, with the fallback script (the copy to ${store === 's3' ? 'S3' : store === 'scp' ? 'a remote host' : 'a share'} is the script’s job). The script logs in for itself from the password file (mode 600).\n10 ${hour} * * * ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-audit.log 2>&1\n`,
+          'IMPORT.md': packageImportMd('the audit report export', pkg, [
+            { heading: `Or: the copy to ${store === 's3' ? 'S3' : store === 'scp' ? 'a remote host' : 'a share'}, from a Linux host`, files: [`scripts/${base}.sh`, 'crontab.txt'], how: [`scripts/${base}.sh reads the same report and copies it, with a SHA-256 beside it, to ${destination || 'the destination'} — Orchestrator cannot write there, so this is the script’s job even when the workflow runs.`] },
+            { heading: 'The per-action audit trail', files: ['EXPORT-AUDIT-TRAIL.md', ...(stream ? ['audit-forwarding.json'] : [])], how: ['The public API exposes the summary report only; the time-sliced trail is exported in the interface' + (stream ? ', or streamed by the forwarding rule entered from audit-forwarding.json.' : '.')] },
+          ], ['the audit trail menu: Protect → Audit Records in 9.1 (gibsonvirt.com, "VCF 9.1 – What’s New? VCF Operations for Logs"); confirm the name on your build.']),
           'EXPORT-AUDIT-TRAIL.md': exportUi,
           ...(stream ? { 'audit-forwarding.json': json(forwarding) } : {}),
         },
@@ -2361,6 +3555,39 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
         '(( FOUND > 0 )) || echo "None found: check Protect → Security Operations for the capability view, and set CC_KEY_RX to the property names it uses." >&2',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'posture', base),
+        description: `Security Posture Management drift against ${benchmark}${confidential ? ', and confidential computing hosts' : ''}. Reads only; never remediates. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `Security posture drift ${base}`,
+          description: `${source === 'csv' ? 'Compares the View Results CSV export (input resultsCsv) with last week\u2019s (input previousCsv)' : 'Reads the active compliance alerts of the benchmark, and those started or cancelled in the last sinceDays days'}: what fails now, what is new and what was fixed.${confidential ? ' Also reports which ESX hosts expose confidential-computing properties.' : ''} Changes nothing. Fails on a new failure or above the total threshold.`,
+          inputs: [
+            { name: 'resultsCsv', type: 'string', description: 'CSV mode: the View Results export, pasted' },
+            { name: 'previousCsv', type: 'string', description: 'CSV mode: last week\u2019s export; empty makes this run the baseline' },
+          ],
+          outputs: [
+            { name: 'failingCount', type: 'number', description: 'Failing now' },
+            { name: 'driftJson', type: 'string', description: 'benchmark, failing, new, fixed, baseline' },
+            { name: 'confidentialJson', type: 'string', description: 'Per host: the confidential-computing properties it reports' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: POSTURE_WORKFLOW,
+        },
+        config: opsReadConfig(`Security posture drift ${base}`, [
+          { name: 'benchmark', type: 'string', value: benchmark, description: 'The benchmark, as named in Security Posture Management' },
+          { name: 'source', type: 'string', value: source, description: 'alerts: compliance alerts through the suite API; csv: the View Results export passed as input' },
+          { name: 'ruleFilter', type: 'string', value: ruleFilter, description: 'Regex on the compliance alert definition name; empty takes every compliance alert' },
+          { name: 'sinceDays', type: 'number', value: 7, description: 'Alerts mode: what started or was cancelled in the last N days is new or fixed' },
+          { name: 'failOnNew', type: 'boolean', value: failNew, description: 'Fail on any new failure' },
+          { name: 'failOver', type: 'number', value: failOver, description: 'Also fail when total failures exceed this; 0 turns it off' },
+          { name: 'confidential', type: 'boolean', value: confidential, description: 'Include the confidential computing report' },
+          { name: 'maxHosts', type: 'number', value: maxHosts, description: 'At most this many hosts in the confidential computing report' },
+          { name: 'confidentialKeyRegex', type: 'string', value: 'sev|snp|tdx|sgx|confidential|trust.?domain', description: 'Host property names that count as confidential-computing properties' },
+          { name: 'webhook', type: 'string', value: webhook, description: 'Where the drift report is posted, every run' },
+        ]),
+      });
+
       return {
         platform: OPS,
         title: `${benchmark} — weekly drift report${confidential ? ', with confidential computing hosts' : ''}`,
@@ -2377,18 +3604,27 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
           { rule: 'A missing or empty CSV, no matching compliance alert definition, or a failed read stops the run (exit 2) without writing a result', because: 'An empty result saved as this week’s would read as every rule fixed, and next week’s as every rule newly broken.' },
           ...(webhook ? [{ rule: 'The webhook post uses curl -f and a failed post exits 3', because: 'A drift report that did not arrive must not look like one that did.' }] : []),
         ],
-        dryRun: ['It only reads. Run it twice, a day apart, and check the NEW and FIXED lists against the results page.'],
+        dryRun: [`It only reads. Run the workflow Security posture drift ${base} (or scripts/posture-drift.sh) and check the NEW and FIXED lists against the results page.`],
         undo: ['Nothing to undo. Delete the state directory to start a new baseline.'],
         told: webhook ? [`${webhook}, weekly, with failing, new and fixed.`] : ['The drift JSON in the state directory and the exit code.'],
         requires: [
           `${benchmark} enabled: Protect → Security Posture Management → ⋮ → Enable Benchmark → assign "${policy}".`,
           'VERIFY licensing: the 9.1 Security Posture Management pages are published under VMware Advanced Cyber Compliance, and VMware’s 9.1 announcement ties the PCI and baseline benchmarks and remediation to that add-on.',
-          'jq, bash 4 and coreutils comm.',
+          'For the package: VCF Automation 9.1 or VCF Operations orchestrator 9.1. For the scripts: jq, bash 4 and coreutils comm.',
           'A read-only VCF Operations account.',
         ],
         files: {
-          'posture-drift.sh': drift,
-          ...(confidential ? { 'confidential-computing.sh': cc } : {}),
+          ...pkg.files,
+          'scripts/posture-drift.sh': drift,
+          ...(confidential ? { 'scripts/confidential-computing.sh': cc } : {}),
+          'IMPORT.md': packageImportMd(`${benchmark} drift`, pkg, [
+            { heading: 'Or: the scripts, from a Linux host', files: ['scripts/posture-drift.sh', ...(confidential ? ['scripts/confidential-computing.sh'] : []), 'crontab.txt'], how: ['Copy them to /usr/local/bin and install the crontab lines. posture-drift.sh keeps last week\u2019s result in its state directory and compares against it; the workflow needs no state (alerts mode) or takes last week\u2019s export as an input (CSV mode).'] },
+            { heading: 'Before the first run: enable the benchmark', files: [`${base}-ENABLE.md`], how: ['The benchmark is enabled and assigned to a policy in the interface; nothing here imports it.'] },
+          ], [
+            'that 9.1 Security Posture Management results raise compliance alerts (subType 21) in your build; if they do not, use the CSV mode.',
+            'that POST /suite-api/api/alerts/query with activeOnly false returns cancelled alerts for long enough to see last week\u2019s fixes (cancelled alerts are purged after the alert retention period).',
+            'the confidential-computing host property names: 9.1 does not document them; the report keeps the properties whose names match confidentialKeyRegex.',
+          ]),
           'crontab.txt': `# Weekly, Monday 07:00. The scripts log in for themselves from the password file (mode 600).\n0 7 * * 1 ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/posture-drift.sh${source === 'csv' ? ' /var/lib/vcf-posture/latest-results.csv' : ''} >> /var/log/vcf-posture.log 2>&1\n${confidential ? `5 7 * * 1 cd /var/lib/vcf-posture && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/confidential-computing.sh >> /var/log/vcf-posture.log 2>&1\n` : ''}`,
           [`${base}-ENABLE.md`]: md([
             `# ${benchmark} in Security Posture Management (9.1)`,

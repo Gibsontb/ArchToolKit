@@ -339,6 +339,51 @@ const loginNsx: VroActionDef = {
   script: String.raw`return { "Authorization": "Basic " + System.getModule("com.archtoolkit.core").base64(String(username) + ":" + String(password)) };`,
 };
 
+const exchangeVcfOpsToken: VroActionDef = {
+  name: 'exchangeVcfOpsToken',
+  description:
+    'VCF Operations 9.1: exchange an OpsToken session for a JWT that a VCF management service accepts (KB 450054), POST /suite-api/api/auth/token/exchange {"serviceKeys":[<serviceKey>]}. serviceKey "ops-li" is 9.1 log management. Returns { Authorization: "Bearer <jwt>" }.',
+  resultType: 'Any',
+  params: [p('host', 'string', 'VCF Operations host[:port]'), p('headers', 'Any', 'What loginVcfOps returned'), p('serviceKey', 'string', 'The service, e.g. ops-li')],
+  script: String.raw`var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/suite-api/api/auth/token/exchange", headers, { serviceKeys: [String(serviceKey)] }, {});
+var b = r.body || {};
+var jwt = b.token || b.accessToken || b.access_token || (b.tokens && b.tokens.length ? (b.tokens[0].token || b.tokens[0].accessToken) : null);
+if (!jwt) throw new Error("The token exchange for " + serviceKey + " at " + host + " returned no token (VERIFY the response shape on your release).");
+return { "Authorization": "Bearer " + jwt };`,
+};
+
+const loginVcfNetworks: VroActionDef = {
+  name: 'loginVcfNetworks',
+  description:
+    'VCF Operations for Networks: POST /api/ni/auth/token with {username, password, domain:{domain_type, value}} (LOCAL/local for a local account, LDAP and the directory domain otherwise). Returns { Authorization: "NetworkInsight <token>" }.',
+  resultType: 'Any',
+  params: [
+    p('host', 'string', 'VCF Operations for Networks platform host'),
+    p('username', 'string', 'Account'),
+    p('password', 'string', 'From a SecureString attribute'),
+    p('domainType', 'string', 'LOCAL or LDAP; empty = LOCAL'),
+    p('domain', 'string', 'Directory domain; empty = local'),
+  ],
+  script: String.raw`var body = { username: String(username), password: String(password), domain: { domain_type: domainType ? String(domainType) : "LOCAL", value: domain ? String(domain) : "local" } };
+var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/api/ni/auth/token", null, body, { redact: [password] });
+if (!r.body || !r.body.token) throw new Error("VCF Operations for Networks at " + host + " returned no token.");
+return { "Authorization": "NetworkInsight " + r.body.token };`,
+};
+
+const logoutVcfNetworks: VroActionDef = {
+  name: 'logoutVcfNetworks',
+  description: 'VCF Operations for Networks: DELETE /api/ni/auth/token. Never throws; a failed logout is a warning.',
+  resultType: 'boolean',
+  params: [p('host', 'string', 'Platform host'), p('headers', 'Any', 'What loginVcfNetworks returned')],
+  script: String.raw`try {
+  System.getModule("com.archtoolkit.core").http("DELETE", "https://" + host + "/api/ni/auth/token", headers, null, { allow: [404] });
+  return true;
+} catch (e) {
+  System.warn("Could not end the VCF Operations for Networks session (" + e + ")");
+  return false;
+}`,
+};
+
 const loginVcfAutomation: VroActionDef = {
   name: 'loginVcfAutomation',
   description:
@@ -483,6 +528,9 @@ export const CORE_ACTIONS: readonly VroActionDef[] = [
   loginVcenterToken,
   logoutVcenter,
   loginNsx,
+  exchangeVcfOpsToken,
+  loginVcfNetworks,
+  logoutVcfNetworks,
   loginVcfAutomation,
   pageAll,
   begin,

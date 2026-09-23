@@ -28,11 +28,639 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
-import { importMd, withScriptsImportMd } from '../vcfops-import.ts';
+import { importMd, withScriptsImportMd, type ImportStep } from '../vcfops-import.ts';
+import { packageNameOf, toPackage, type AutomationPackage } from '../vro/to-package.ts';
+import type { VroConfigAttribute } from '../../kit/vro-package.ts';
 
 const PLATFORM = 'vcf-operations' as const;
 const SRC = 'ArchToolKit';
 const HDR = authHeader(PLATFORM);
+
+// ---------------------------------------------------------------------------
+// The Orchestrator packages
+//
+// Every blueprint here is one Orchestrator package on the shared core library
+// (src/automation/vro/core.ts): the workflow is the central component, the
+// bash script beside it under scripts/ is the fallback for a Linux host. The
+// VCF Operations calls are the 9.1 suite-api ones (developer.broadcom.com,
+// "VMware Cloud Foundation Operations API", 9.1.1): OpsToken from
+// /suite-api/api/auth/token/acquire, paged lists with page/pageSize and
+// pageInfo.totalCount, and POST /resources/stats/latest/query for stats.
+// ---------------------------------------------------------------------------
+
+/** The VCF Operations account attributes every package here starts with. */
+function opsAttributes(what: string): VroConfigAttribute[] {
+  return [
+    { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host (FQDN)' },
+    { name: 'opsUsername', type: 'string', value: '', description: what },
+    { name: 'opsPassword', type: 'SecureString', description: 'Its password' },
+    { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source for the account; empty for a local account' },
+  ];
+}
+
+/** The attributes of a workflow that changes something: the arming switch, the cap and the audit webhook. */
+function guardAttributes(cap: number, what: string): VroConfigAttribute[] {
+  return [
+    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
+    { name: 'cap', type: 'number', value: cap, description: `The most ${what} one run may make` },
+    { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+  ];
+}
+
+const DRY_RUN_INPUT = { name: 'dryRun', type: 'boolean', description: 'true: report what would change and change nothing' };
+const SUMMARY_OUTPUT = { name: 'summary', type: 'string', description: 'The audit record, JSON' };
+
+/**
+ * ES5 every VCF Operations workflow here opens with, after the prologue:
+ * settings checked, then listAll (every page, or an error — never a partial
+ * list), statKeys (the keys a resource reports that match a pattern, so a key
+ * name is discovered rather than trusted from documentation), latestMap (the
+ * latest value of each key for each resource, 500 resources a query) and
+ * csvLine. auth is set by the workflow's own login line, below this.
+ */
+const OPS_PRELUDE = String.raw`if (!settings.opsHost) throw new Error("Set opsHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUsername and opsPassword in the configuration element " + SETTINGS_NAME + ".");
+var api = "https://" + settings.opsHost + "/suite-api/api/";
+var SAFE = { redact: settings._secrets };
+var auth = null;
+function listAll(path, key) {
+  return core.pageAll(function (page) {
+    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body || {};
+    return { items: r[key] || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+  }, 0);
+}
+function statKeys(resourceId, pattern) {
+  var r = core.http("GET", api + "resources/" + encodeURIComponent(resourceId) + "/statkeys", auth, null, SAFE).body || {};
+  var list = r["stat-key"] || [];
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var key = String(list[i].key);
+    if (pattern.test(key) && out.indexOf(key) < 0) out.push(key);
+  }
+  out.sort();
+  return out;
+}
+function latestMap(ids, keys) {
+  var out = {};
+  for (var i = 0; i < ids.length; i += 500) {
+    var r = core.http("POST", api + "resources/stats/latest/query", auth, { resourceId: ids.slice(i, i + 500), statKey: keys, maxSamples: 1 }, SAFE).body || {};
+    var values = r.values || [];
+    for (var j = 0; j < values.length; j++) {
+      var stats = (values[j]["stat-list"] || {}).stat || [];
+      var m = {};
+      for (var k = 0; k < stats.length; k++) {
+        var data = stats[k].data || [];
+        m[String(stats[k].statKey.key)] = data.length > 0 ? data[data.length - 1] : null;
+      }
+      out[String(values[j].resourceId)] = m;
+    }
+  }
+  return out;
+}
+function csvLine(cells) {
+  var out = [];
+  for (var i = 0; i < cells.length; i++) {
+    var v = cells[i];
+    out.push(v === null || v === undefined ? "" : typeof v === "number" ? String(v) : "\"" + String(v).split("\"").join("\"\"") + "\"");
+  }
+  return out.join(",");
+}
+`;
+
+/** The login line; the logout goes in the workflow's finally. */
+const OPS_LOGIN = 'auth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");';
+
+/** IMPORT.md steps for a package, in the importMd shape: the package first, then the rest. */
+function packageSteps(pkg: AutomationPackage, what: string): ImportStep[] {
+  return pkg.importSteps.map((step, index) => ({
+    heading: index === 0 ? `${step.heading} — ${what}` : step.heading,
+    files: index === 0 ? [pkg.packageDir, 'import/com.archtoolkit.core.package'] : [],
+    how: step.lines.filter((line) => line.trim() !== '').map((line) => line.replace(/^- /, '')),
+  }));
+}
+
+/** A path under import/ never says "polic…": a file there with that word is taken for a policy export (import-vcfops.test.ts). */
+const noPolicyWord = (text: string): string => text.replace(/polic/gi, 'plc');
+
+/**
+ * Cost drivers: the one cost setting 9.1 has an API for is the currency
+ * (GET/POST /suite-api/api/costconfig/currency, "Cost Configuration APIs"),
+ * so the workflow sets it when none is set and refuses when a different one is
+ * — changing it later is not a conversion. The driver values themselves have no
+ * API in the 9.1 reference and are typed in; around that, the workflow takes a
+ * snapshot of every cluster's cost metrics (input baseline empty) or compares
+ * against one (the snapshot output of an earlier run pasted into baseline) and
+ * fails when a cluster moved further than maxSwingPct.
+ */
+const COST_DRIVERS_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${OPS_PRELUDE}
+var swing = Number(settings.maxSwingPct || 0);
+var over = [];
+var rows = [];
+var engineIdle = false;
+snapshot = "";
+${OPS_LOGIN}
+try {
+  var cur = core.http("GET", api + "costconfig/currency", auth, null, { redact: settings._secrets, allow: [204, 404] });
+  var have = cur.statusCode === 200 && cur.body && cur.body.code ? String(cur.body.code) : "";
+  var want = settings.currency ? String(settings.currency) : "";
+  if (!have) {
+    if (!want) throw new Error("No currency is set in VCF Operations and none in the configuration element; the cost engine does not run without one.");
+    core.act(ctx, "set the cost currency to " + want, function () {
+      return core.http("POST", api + "costconfig/currency", auth, { code: want }, SAFE);
+    });
+    engineIdle = true;
+  } else if (want && have !== want) {
+    throw new Error("VCF Operations costs in " + have + ", the configuration element says " + want + ". Changing the currency is not a conversion: every cost already calculated keeps its number with the new symbol. Refusing; change it by hand if that is what you mean.");
+  } else {
+    System.log("Currency " + have + ": left as it is.");
+  }
+
+  var clusters = listAll("resources?adapterKind=VMWARE&resourceKind=ClusterComputeResource", "resourceList");
+  if (clusters.length === 0) throw new Error("No clusters found.");
+  var keys = statKeys(clusters[0].identifier, /^cost\|/i);
+  if (keys.length === 0) {
+    if (!engineIdle) throw new Error("No cost metrics on cluster " + clusters[0].resourceKey.name + ". Either the cost engine has not run (it starts once a currency is set, then runs daily) or this release names them differently.");
+    System.warn("No cost metrics yet: the cost engine starts once the currency is set. Run again after the next daily cost calculation for the baseline.");
+  } else {
+    var costKey = settings.costKey ? String(settings.costKey) : "";
+    if (!costKey) {
+      for (var t = 0; t < keys.length && !costKey; t++) if (/total/i.test(keys[t])) costKey = keys[t];
+      if (!costKey) costKey = keys[0];
+    }
+    System.log("Comparing on " + costKey + " (set costKey to choose another).");
+    var ids = [];
+    for (var c = 0; c < clusters.length; c++) ids.push(String(clusters[c].identifier));
+    var values = latestMap(ids, keys);
+    var now = [];
+    for (var n = 0; n < clusters.length; n++) now.push({ id: ids[n], name: String(clusters[n].resourceKey.name), stats: values[ids[n]] || {} });
+    snapshot = JSON.stringify({ taken: new Date().toISOString(), costKey: costKey, clusters: now });
+
+    if (baseline) {
+      var before = JSON.parse(String(baseline));
+      var old = {};
+      for (var b = 0; b < (before.clusters || []).length; b++) old[before.clusters[b].id] = before.clusters[b].stats[costKey];
+      for (var i = 0; i < now.length; i++) {
+        var was = old[now[i].id];
+        var is = now[i].stats[costKey];
+        var pct = was === undefined || was === null || Number(was) === 0 ? null : Math.round(((Number(is || 0) - Number(was)) / Number(was)) * 1000) / 10;
+        var bad = pct !== null && Math.abs(pct) > swing;
+        if (bad) over.push(now[i].name);
+        rows.push(csvLine([now[i].name, was === undefined ? null : was, is === undefined ? null : is, pct, bad ? "OVER" : ""]));
+        System.log(now[i].name + ": " + was + " -> " + is + " (" + (pct === null ? "n/a" : pct + "%") + ")" + (bad ? " OVER" : ""));
+      }
+    } else {
+      System.log("Baseline of " + now.length + " cluster(s) taken: the snapshot output. Make the cost driver change, let the cost calculation run, then run again with that snapshot as the baseline input.");
+    }
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+report = ["cluster,before,after,pct,over"].concat(rows).join("\n") + "\n";
+summary = core.audit(ctx, { mode: baseline ? "compare" : "baseline", clusters: rows.length, over: over, maxSwingPct: swing });
+core.notify(settings.webhook, summary);
+if (over.length > 0) throw new Error(over.length + " cluster(s) moved more than " + swing + "%: " + over.join(", ") + ". Find out why before a bill goes out.");`;
+
+/**
+ * Showback: a pricing policy cloned from a template made once in the interface,
+ * with the rates of rate-card.json set on the template's own items. What exists
+ * by name is left alone; a rate that matches no item stops the run before
+ * anything is created, because the API drops it without a word. The pricing
+ * API (GET/POST /suite-api/api/pricing, GET /pricing/{id}) is documented for
+ * Aria Operations 8.x and is not listed in the VCF Operations 9.1 API
+ * reference: a 404 says so rather than failing obscurely.
+ */
+const SHOWBACK_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${OPS_PRELUDE}
+var card = JSON.parse(core.resource(RESOURCE_PATH, "rate-card.json"));
+var id = null;
+${OPS_LOGIN}
+try {
+  var listed = core.http("GET", api + "pricing", auth, null, { redact: settings._secrets, allow: [404] });
+  if (listed.statusCode === 404) throw new Error("GET /suite-api/api/pricing returned 404: this build has no pricing API. It is documented for Aria Operations 8.x and is not in the VCF Operations 9.1 API reference; create the pricing card by hand from rate-card.json.");
+  var policies = (listed.body && (listed.body.policies || listed.body.pricingPolicies)) || [];
+  for (var p = 0; p < policies.length; p++) if (String(policies[p].name) === String(card.name)) id = String(policies[p].id);
+  if (id) {
+    System.log("Exists, left as it is: pricing \"" + card.name + "\" (" + id + "). Rename it in the rate card, or change the existing one in the interface.");
+  } else {
+    if (!settings.templatePricingId) throw new Error("Set templatePricingId: create one pricing card in the interface with every item priced, then take its id from GET /suite-api/api/pricing.");
+    var tpl = core.http("GET", api + "pricing/" + encodeURIComponent(settings.templatePricingId), auth, null, SAFE).body || {};
+    var rateFor = function (array, item) {
+      for (var r = 0; r < card.rates.length; r++) {
+        if (card.rates[r].array === array && new RegExp(card.rates[r].match).test(String(item).toLowerCase())) return card.rates[r].rate;
+      }
+      return null;
+    };
+    var missing = [];
+    for (var m = 0; m < card.rates.length; m++) {
+      var items = tpl[card.rates[m].array] || [];
+      var hit = false;
+      for (var q = 0; q < items.length; q++) if (new RegExp(card.rates[m].match).test(String(items[q].itemName).toLowerCase())) hit = true;
+      if (!hit) missing.push(card.rates[m].label + " (" + card.rates[m].array + ", /" + card.rates[m].match + "/)");
+    }
+    if (missing.length > 0) throw new Error("These rates match no item in the template, so the API would drop them silently: " + missing.join("; ") + ". Price those items in the template, or change the match in rate-card.json.");
+    var policy = JSON.parse(JSON.stringify(tpl));
+    delete policy.id;
+    delete policy.links;
+    delete policy.lastUpdateTimestamp;
+    policy.name = card.name;
+    policy.description = card.description;
+    policy.createdBy = "VROPS";
+    var meterings = policy.meterings || [];
+    for (var i = 0; i < meterings.length; i++) {
+      var rate = rateFor("meterings", meterings[i].itemName);
+      if (rate !== null) meterings[i].metering.baseRate = rate;
+      System.log("  " + meterings[i].itemName + "\t" + meterings[i].metering.baseRate);
+    }
+    var fixed = policy.unconditionalMeterings || [];
+    for (var j = 0; j < fixed.length; j++) {
+      var flat = rateFor("unconditionalMeterings", fixed[j].itemName);
+      if (flat !== null) fixed[j].unconditionalMetering.rate = flat;
+      System.log("  " + fixed[j].itemName + "\t" + fixed[j].unconditionalMetering.rate);
+    }
+    id = core.act(ctx, "create pricing \"" + card.name + "\" from template " + settings.templatePricingId, function () {
+      var r = core.http("POST", api + "pricing", auth, policy, SAFE);
+      if (!r.body || !r.body.id) throw new Error("POST /suite-api/api/pricing returned no id; check GET /suite-api/api/pricing before running again.");
+      return String(r.body.id);
+    });
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+pricingId = id || "";
+summary = core.audit(ctx, { pricingId: pricingId, name: card.name, note: "It prices nothing until it is assigned." });
+core.notify(settings.webhook, summary);`;
+
+/**
+ * What-if: reads only. The capacity figures of the cluster on the day (every
+ * OnlineCapacityAnalytics time/capacity-remaining key it reports, discovered),
+ * and whether a scenario of this name is already saved (GET
+ * /suite-api/api/whatif/scenarios, the 9.1 What If APIs). It fails when the
+ * cluster is already under minDays: a what-if on a cluster with no room answers
+ * a question nobody should be asking yet.
+ */
+const WHATIF_WORKFLOW = String.raw`${OPS_PRELUDE}
+if (!settings.cluster) throw new Error("Set cluster in the configuration element " + SETTINGS_NAME + ".");
+var spec = JSON.parse(core.resource(RESOURCE_PATH, "scenario.json"));
+var least = null;
+var stats = {};
+var saved = null;
+${OPS_LOGIN}
+try {
+  var found = listAll("resources?adapterKind=VMWARE&resourceKind=ClusterComputeResource&name=" + encodeURIComponent(settings.cluster), "resourceList");
+  var id = null;
+  for (var i = 0; i < found.length; i++) if (String(found[i].resourceKey.name) === String(settings.cluster)) id = String(found[i].identifier);
+  if (!id) throw new Error("No cluster named " + settings.cluster + ".");
+  var keys = statKeys(id, /^OnlineCapacityAnalytics\|.*(timeRemaining|capacityRemaining|recommendedSize)/i);
+  if (keys.length === 0) throw new Error("Cluster " + settings.cluster + " reports no capacity analytics yet; forecasts need a few weeks of history.");
+  stats = latestMap([id], keys)[id] || {};
+  for (var k in stats) {
+    if (!stats.hasOwnProperty(k)) continue;
+    System.log("  " + k + "\t" + stats[k]);
+    if (/timeRemaining/i.test(k) && typeof stats[k] === "number" && (least === null || stats[k] < least)) least = stats[k];
+  }
+  var scenarios = core.http("GET", api + "whatif/scenarios", auth, null, { redact: settings._secrets, allow: [404] });
+  var list = scenarios.statusCode === 200 && scenarios.body ? scenarios.body.whatIfScenarios || [] : [];
+  for (var s = 0; s < list.length; s++) if (String(list[s].name) === String(spec.name)) saved = list[s];
+  if (saved) System.log("Scenario \"" + spec.name + "\" is saved: " + (saved.whatIfScenarioStatus || "?") + ", " + (saved.state || "?") + ".");
+  else System.log("No scenario named \"" + spec.name + "\" is saved yet. Enter it from the steps file, then run this again.");
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+baseline = JSON.stringify({ cluster: settings.cluster, taken: new Date().toISOString(), stats: stats, scenario: spec.name, scenarioSaved: saved ? { id: saved.id || null, status: saved.whatIfScenarioStatus || null, state: saved.state || null } : null });
+summary = core.audit(null, { cluster: settings.cluster, leastDaysRemaining: least, scenario: spec.name, scenarioSaved: Boolean(saved) });
+core.notify(settings.webhook, summary);
+var floor = Number(settings.minDays || 0);
+if (least !== null && least < floor) throw new Error("Least time remaining on " + settings.cluster + " is " + least + " days, under " + floor + ". Fix the current shortfall before modelling more.");`;
+
+/**
+ * Capacity: the capacity values are set in the policy editor (the 9.1 policy
+ * settings API takes them, but its capacity schema is not generated here), so
+ * the workflow records the policy's settings as they are before the change
+ * (GET /suite-api/api/policies/{id}/settings, output settingsBefore) and does
+ * the part that is an API call: the monthly report schedule, POST
+ * /suite-api/api/reportdefinitions/{id}/schedules with the ReportSchedule body
+ * of the 9.1 reference. An existing monthly schedule of the same report, day
+ * and object is left alone, so a second run makes no second schedule.
+ */
+const CAPACITY_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${OPS_PRELUDE}
+if (!settings.startDate) throw new Error("Set startDate (the first day the schedule may run, in the format GET of an existing schedule shows) in " + SETTINGS_NAME + ".");
+var recipients = settings.recipients || [];
+if (recipients.length === 0) throw new Error("Set recipients: a report nobody receives is not read.");
+var schedule = JSON.parse(core.resource(RESOURCE_PATH, "capacity-report-schedule.json"));
+var scheduleId = null;
+settingsBefore = "";
+${OPS_LOGIN}
+try {
+  if (settings.policyId) {
+    var before = core.http("GET", api + "policies/" + encodeURIComponent(settings.policyId) + "/settings", auth, null, { redact: settings._secrets, allow: [400, 404] });
+    if (before.statusCode === 200) {
+      settingsBefore = before.text;
+      System.log("Recorded the settings of " + settings.policyId + " as they are before the change: the settingsBefore output.");
+    } else {
+      System.warn("Could not read the settings of " + settings.policyId + " (HTTP " + before.statusCode + "). Export the policy before changing it: scripts/export-policy.sh.");
+    }
+  } else {
+    System.warn("No policyId: the settings before the change are not recorded. Export the policy first (scripts/export-policy.sh).");
+  }
+
+  var defId = settings.reportDefinitionId ? String(settings.reportDefinitionId) : null;
+  if (!defId) {
+    var defs = listAll("reportdefinitions", "reportDefinitions");
+    var named = [];
+    for (var d = 0; d < defs.length; d++) if (String(defs[d].name) === String(settings.reportName)) named.push(String(defs[d].id));
+    if (named.length !== 1) throw new Error(named.length + " report definitions are named \"" + settings.reportName + "\"; set reportDefinitionId.");
+    defId = named[0];
+  }
+  var resId = settings.resourceId ? String(settings.resourceId) : null;
+  if (!resId) {
+    var objects = listAll("resources?name=" + encodeURIComponent(settings.resourceName), "resourceList");
+    var exact = [];
+    for (var o = 0; o < objects.length; o++) if (String(objects[o].resourceKey.name) === String(settings.resourceName)) exact.push(String(objects[o].identifier));
+    if (exact.length !== 1) throw new Error(exact.length + " objects are named \"" + settings.resourceName + "\"; set resourceId.");
+    resId = exact[0];
+  }
+
+  var existing = core.http("GET", api + "reportdefinitions/" + encodeURIComponent(defId) + "/schedules", auth, null, SAFE).body || {};
+  var list = existing.reportSchedules || [];
+  for (var s = 0; s < list.length; s++) {
+    var ids = list[s].resourceId || [];
+    if (String(list[s].reportScheduleType) === "MONTHLY" && Number(list[s].dayOfTheMonth) === Number(schedule.dayOfTheMonth) && ids.indexOf(resId) >= 0) scheduleId = String(list[s].id);
+  }
+  if (scheduleId) {
+    System.log("Exists, left as it is: a monthly schedule of this report on day " + schedule.dayOfTheMonth + " for this object (" + scheduleId + ").");
+  } else {
+    schedule.reportDefinitionId = defId;
+    schedule.resourceId = [resId];
+    schedule.startDate = String(settings.startDate);
+    schedule.emailAddresses = recipients;
+    scheduleId = core.act(ctx, "schedule the report \"" + settings.reportName + "\" monthly on day " + schedule.dayOfTheMonth + " to " + recipients.join(", "), function () {
+      var r = core.http("POST", api + "reportdefinitions/" + encodeURIComponent(defId) + "/schedules", auth, schedule, SAFE);
+      return r.body && r.body.id ? String(r.body.id) : "created";
+    });
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+reportScheduleId = scheduleId || "";
+summary = core.audit(ctx, { reportScheduleId: reportScheduleId, report: settings.reportName, settingsRecorded: settingsBefore !== "" });
+core.notify(settings.webhook, summary);`;
+
+/**
+ * VKS cost: reads only. Every object of the namespace kind, the cost and price
+ * keys the first one reports (discovered), their latest values, and — when a
+ * property key is set — the owner each namespace rolls up to. Fails when a
+ * namespace has no cost at all, the sign the cost engine is not covering it.
+ */
+const VKS_WORKFLOW = String.raw`${OPS_PRELUDE}
+var kind = String(settings.nsKind || "Namespace");
+var adapter = String(settings.nsAdapter || "VMWARE");
+var prop = settings.propertyKey ? String(settings.propertyKey) : "";
+var lines = [];
+var uncosted = [];
+var totals = {};
+${OPS_LOGIN}
+try {
+  var ns = listAll("resources?adapterKind=" + encodeURIComponent(adapter) + "&resourceKind=" + encodeURIComponent(kind), "resourceList");
+  if (ns.length === 0) {
+    var kinds = core.http("GET", api + "adapterkinds/" + encodeURIComponent(adapter) + "/resourcekinds", auth, null, { redact: settings._secrets, allow: [404] }).body || {};
+    var candidates = [];
+    var all = kinds["resource-kind"] || [];
+    for (var c = 0; c < all.length; c++) if (/namespace|supervisor|kubernetes|vks|tkc/i.test(String(all[c].key))) candidates.push(String(all[c].key));
+    throw new Error("No " + adapter + "/" + kind + " objects. Resource kinds that look like namespaces or VKS: " + (candidates.join(", ") || "none") + ". Set nsKind (and nsAdapter) to the right one.");
+  }
+  var keys = statKeys(ns[0].identifier, /^(cost|price)\|/i);
+  if (keys.length === 0) throw new Error("No cost metrics on " + ns[0].resourceKey.name + ". Either the cost engine has not run (it starts once a currency is set, then runs daily) or this release names them differently.");
+  var totalKey = null;
+  for (var t = 0; t < keys.length && !totalKey; t++) if (/total/i.test(keys[t])) totalKey = keys[t];
+  if (!totalKey) totalKey = keys[0];
+  var ids = [];
+  for (var i = 0; i < ns.length; i++) ids.push(String(ns[i].identifier));
+  var values = latestMap(ids, keys);
+  lines.push(csvLine(["namespace", "owner"].concat(keys)));
+  for (var n = 0; n < ns.length; n++) {
+    var owner = "";
+    if (prop) {
+      var props = core.http("GET", api + "resources/" + encodeURIComponent(ids[n]) + "/properties", auth, null, SAFE).body || {};
+      var list = props.property || [];
+      owner = "(none)";
+      for (var p = 0; p < list.length; p++) if (String(list[p].name) === prop) { owner = String(list[p].value); break; }
+    }
+    var v = values[ids[n]] || {};
+    var cells = [String(ns[n].resourceKey.name), owner];
+    var costed = false;
+    for (var k = 0; k < keys.length; k++) {
+      cells.push(v[keys[k]] === undefined ? null : v[keys[k]]);
+      if (typeof v[keys[k]] === "number" && v[keys[k]] !== 0) costed = true;
+    }
+    lines.push(csvLine(cells));
+    if (!costed) uncosted.push(String(ns[n].resourceKey.name));
+    if (prop) totals[owner] = (totals[owner] || 0) + (typeof v[totalKey] === "number" ? v[totalKey] : 0);
+  }
+  System.log(ns.length + " namespace(s), " + keys.length + " cost metric(s).");
+  if (prop) for (var o in totals) if (totals.hasOwnProperty(o)) System.log("  " + o + "\t" + totals[o] + " (" + totalKey + ")");
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+reportCsv = lines.join("\n") + "\n";
+uncostedCount = uncosted.length;
+summary = core.audit(null, { namespaces: lines.length - 1, uncosted: uncosted, totals: totals });
+core.notify(settings.webhook, summary);
+if (uncosted.length > 0) {
+  System.warn("Namespaces with no cost at all: " + uncosted.join(", "));
+  if (settings.failOnUncosted !== false && String(settings.failOnUncosted) !== "false") throw new Error(uncosted.length + " namespace(s) have no cost at all: " + uncosted.join(", ") + ". Check the cost drivers of the cluster the Supervisor runs on.");
+}`;
+
+/** The stat keys the pre-run export reads beside each VM (VMware adapter; a missing key exports blank). */
+const RECLAIM_SIGNALS = ['sys|poweredOn', 'summary|oversized', 'summary|undersized', 'summary|idle', 'diskspace|snapshot|age'];
+
+/**
+ * Reclamation jobs, 9.1: the exclusion tag written into every datacenter's
+ * Reclaim and Rightsizing exclusions through the 9.1 Optimization API
+ * (GET/PATCH /suite-api/api/optimization/datacenters/{id}/exclusion/tags/,
+ * DCOptimizationConfiguration {reclaim:[{category,name}], rightsizing:[…]}) —
+ * the tag is added to what is there, never replacing it — then the pre-run
+ * check: the group's VMs and their reclaim signals as CSV, and a failed run
+ * when the group holds more VMs than maxObjects, because Automation Central
+ * has no per-run cap of its own. The Automation Central jobs themselves have
+ * no API in the 9.1 reference and are made in the interface.
+ */
+const RECLAIM_JOBS_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${OPS_PRELUDE}
+var SIGNALS = ${JSON.stringify(RECLAIM_SIGNALS)};
+if (!settings.groupId) throw new Error("Set groupId to the id of the custom group the jobs act on.");
+var tagText = String(settings.excludeTag || "");
+var eq = tagText.indexOf("=");
+if (eq < 1 || eq === tagText.length - 1) throw new Error("Set excludeTag as category=value, e.g. Automation=never.");
+var tag = { category: tagText.substring(0, eq), name: tagText.substring(eq + 1) };
+var limit = Number(settings.maxObjects || 0);
+var vms = [];
+var rows = [];
+function hasTag(list) {
+  for (var i = 0; i < list.length; i++) if (String(list[i].category) === tag.category && String(list[i].name) === tag.name) return true;
+  return false;
+}
+${OPS_LOGIN}
+try {
+  var members = listAll("resources/groups/" + encodeURIComponent(settings.groupId) + "/members", "resourceList");
+  for (var m = 0; m < members.length; m++) if (members[m].resourceKey && members[m].resourceKey.resourceKindKey === "VirtualMachine") vms.push({ id: String(members[m].identifier), name: String(members[m].resourceKey.name) });
+  if (vms.length > 0) {
+    var ids = [];
+    for (var v = 0; v < vms.length; v++) ids.push(vms[v].id);
+    var values = latestMap(ids, SIGNALS);
+    for (var r = 0; r < vms.length; r++) {
+      var cells = [vms[r].name, vms[r].id];
+      for (var s = 0; s < SIGNALS.length; s++) cells.push((values[vms[r].id] || {})[SIGNALS[s]]);
+      rows.push(csvLine(cells));
+    }
+  }
+  System.log(vms.length + " VM(s) in the group; the cap is " + limit + ".");
+
+  var dcs = listAll("resources?adapterKind=VMWARE&resourceKind=Datacenter", "resourceList");
+  for (var d = 0; d < dcs.length; d++) {
+    var dcName = String(dcs[d].resourceKey.name);
+    var path = api + "optimization/datacenters/" + encodeURIComponent(dcs[d].identifier) + "/exclusion/tags/";
+    var now = core.http("GET", path, auth, null, SAFE).body || {};
+    var reclaim = now.reclaim || [];
+    var rightsizing = now.rightsizing || [];
+    if (hasTag(reclaim) && hasTag(rightsizing)) {
+      System.log("Datacenter " + dcName + ": " + tagText + " is already excluded from reclaim and rightsizing.");
+      continue;
+    }
+    var body = { reclaim: hasTag(reclaim) ? reclaim : reclaim.concat([tag]), rightsizing: hasTag(rightsizing) ? rightsizing : rightsizing.concat([tag]) };
+    core.act(ctx, "exclude " + tagText + " from reclaim and rightsizing in datacenter " + dcName, function () {
+      return core.http("PATCH", path, auth, body, SAFE);
+    });
+  }
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+vmCount = vms.length;
+scopeCsv = [csvLine(["name", "id"].concat(SIGNALS))].concat(rows).join("\n") + "\n";
+summary = core.audit(ctx, { group: settings.groupId, vms: vms.length, maxObjects: limit, excludeTag: tagText });
+core.notify(settings.webhook, summary);
+if (vms.length > limit) throw new Error("The group has " + vms.length + " VMs, over the cap of " + limit + ". Pause the Automation Central jobs and narrow the group before they run.");
+if (vms.length === 0) throw new Error("The group is empty; the jobs will do nothing.");`;
+
+/**
+ * Orphaned disks: the verdict, from VCF Automation's Orchestrator, over the
+ * vCenter REST API. Every VM's disks in every vCenter (GET /api/vcenter/host,
+ * /api/vcenter/vm?hosts=, /api/vcenter/vm/{vm} → disks[].backing.vmdk_file)
+ * are read, and a listed disk is refused when a VM refers to it, when a VM
+ * keeps a disk in the same folder (the REST disk list shows only the current
+ * backing of a disk with snapshots, not its parents, so the folder rule stands
+ * in for the parent chain), or on the name rules of the script. Paths are also
+ * compared without the datastore name, so a shared datastore named differently
+ * in two vCenters still matches. It moves and deletes nothing: the vCenter
+ * REST API has no datastore file operations, so the move and the delete stay
+ * with scripts/orphan-disks.sh (govc), which judges again before acting.
+ */
+function orphanWorkflow(mode: 'quarantine' | 'delete'): string {
+  return String.raw`var MODE = ${JSON.stringify(mode)};
+var QDIR = "_orphan_quarantine";
+var hold = Number(settings.holdDays || 0);
+var limit = Number(settings.maxObjects || 0);
+var list = settings.vcenters || [];
+if (list.length === 0) throw new Error("Set vcenters: every vCenter whose hosts mount these datastores.");
+var useToken = Boolean(settings.vcfApiToken);
+if (!useToken && (!settings.vcUsername || !settings.vcPassword)) throw new Error("Set vcfIdbHost and vcfApiToken (VCF 9.1), or vcUsername and vcPassword.");
+var SAFE = { redact: settings._secrets };
+var exact = {};
+var loose = {};
+var folders = {};
+var looseFolders = {};
+function relOf(path) { var m = /^\[([^\]]*)\] ?(.*)$/.exec(String(path)); return m ? { ds: m[1], rel: m[2] } : null; }
+function dirOf(rel) { var i = rel.lastIndexOf("/"); return i < 0 ? "" : rel.substring(0, i); }
+for (var v = 0; v < list.length; v++) {
+  var host = String(list[v]);
+  var base = "https://" + host;
+  var auth = useToken ? core.loginVcenterToken(host, settings.vcfIdbHost, settings.vcfApiToken) : core.loginVcenter(host, settings.vcUsername, settings.vcPassword);
+  try {
+    var hosts = core.http("GET", base + "/api/vcenter/host", auth, null, SAFE).body || [];
+    var count = 0;
+    for (var h = 0; h < hosts.length; h++) {
+      if (hosts[h].connection_state && String(hosts[h].connection_state) !== "CONNECTED") throw new Error("Host " + hosts[h].name + " in " + host + " is " + hosts[h].connection_state + ": its VMs cannot be seen, so no disk can be shown unused. Refusing.");
+      var vms = core.http("GET", base + "/api/vcenter/vm?hosts=" + encodeURIComponent(hosts[h].host), auth, null, SAFE).body || [];
+      for (var i = 0; i < vms.length; i++) {
+        count++;
+        var info = core.http("GET", base + "/api/vcenter/vm/" + encodeURIComponent(vms[i].vm), auth, null, SAFE).body || {};
+        var disks = info.disks || {};
+        for (var k in disks) {
+          if (!disks.hasOwnProperty(k)) continue;
+          var file = disks[k] && disks[k].backing ? disks[k].backing.vmdk_file : null;
+          var p = file ? relOf(file) : null;
+          if (!p) continue;
+          exact["[" + p.ds + "] " + p.rel] = vms[i].name;
+          loose[p.rel] = vms[i].name;
+          folders["[" + p.ds + "] " + dirOf(p.rel)] = vms[i].name;
+          looseFolders[dirOf(p.rel)] = vms[i].name;
+        }
+      }
+    }
+    if (count === 0) throw new Error("vCenter " + host + " returned no VMs. An account that sees nothing makes every disk look orphaned; refusing. It needs read-only at the vCenter root, propagated.");
+    System.log("vCenter " + host + ": " + count + " VM(s), every host connected.");
+  } finally {
+    core.logoutVcenter(host, auth);
+  }
+}
+
+function judge(ds, rel) {
+  if (/[\t\r]/.test(rel)) return "skip: control character in the path";
+  if (/^\//.test(rel) || /(^|\/)\.{1,2}(\/|$)/.test(rel) || rel.indexOf("//") >= 0) return "skip: not a canonical path (//, ./, .. or a leading /)";
+  var name = rel.substring(rel.lastIndexOf("/") + 1);
+  if (/(^|\/)\./.test(rel)) return "skip: hidden system folder";
+  if (/^(fcd|catalog|contentlib-[^\/]*)\//i.test(rel) || /\/fcd\//i.test(rel)) return "skip: First Class Disk or content library folder";
+  if (/(^|\/)hbr/i.test(rel)) return "skip: vSphere Replication file or folder";
+  if (/-(flat|delta|ctk|sesparse|rdm|rdmp|digest)\.vmdk$/i.test(name)) return "skip: an extent, change-tracking, RDM or digest file — list the descriptor, never this";
+  if (MODE === "quarantine") {
+    if (rel.indexOf(QDIR + "/") === 0) return "skip: already in quarantine";
+  } else {
+    var q = /^_orphan_quarantine\/(\d{4})(\d{2})(\d{2})-(\d{6})\/[^\/]+\.vmdk$/.exec(rel);
+    if (!q) return "skip: not exactly " + QDIR + "/<YYYYmmdd-HHMMSS>/<name>.vmdk — only quarantined disks may be deleted";
+    var at = Date.UTC(Number(q[1]), Number(q[2]) - 1, Number(q[3]));
+    if (isNaN(at)) return "skip: " + q[1] + q[2] + q[3] + " is not a date";
+    if ((new Date().getTime() - at) / 86400000 < hold) return "skip: in quarantine for less than " + hold + " days";
+  }
+  var whole = "[" + ds + "] " + rel;
+  if (exact[whole] || loose[rel]) return "skip: VM " + (exact[whole] || loose[rel]) + " refers to it";
+  if ((folders["[" + ds + "] " + dirOf(rel)] || looseFolders[dirOf(rel)])) return "skip: VM " + (folders["[" + ds + "] " + dirOf(rel)] || looseFolders[dirOf(rel)]) + " keeps its disks in this folder; a parent disk of a snapshot is not in the REST disk list";
+  return "ok";
+}
+
+var rows = ["datastore,path,verdict"];
+var eligible = 0;
+var lines = String(diskList || "").split(/\r?\n/);
+for (var l = 0; l < lines.length; l++) {
+  var line = lines[l].replace(/\s+$/, "");
+  if (!line || line.charAt(0) === "#") continue;
+  var m = /^\[([^\]]+)\] (.+\.vmdk)$/.exec(line);
+  var verdict;
+  var ds = "?";
+  var rel = line;
+  if (!m) verdict = "skip: not a [datastore] path.vmdk line";
+  else {
+    ds = m[1];
+    rel = m[2];
+    verdict = judge(ds, rel);
+    if (verdict === "ok") {
+      if (eligible >= limit) verdict = "skip: over the cap of " + limit + "; next run";
+      else { eligible++; verdict = MODE; }
+    }
+  }
+  System.log("[" + ds + "] " + rel + ": " + verdict);
+  rows.push(csvLine([ds, rel, verdict]));
+}
+function csvLine(cells) {
+  var out = [];
+  for (var i = 0; i < cells.length; i++) out.push("\"" + String(cells[i]).split("\"").join("\"\"") + "\"");
+  return out.join(",");
+}
+manifestCsv = rows.join("\n") + "\n";
+eligibleCount = eligible;
+summary = core.audit(null, { mode: MODE, listed: rows.length - 1, eligible: eligible, cap: limit, note: "Nothing was moved or deleted: scripts/orphan-disks.sh acts, and judges again first." });
+core.notify(settings.webhook, summary);`;
+}
 
 const WEEKDAYS: Readonly<Record<string, number>> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
 
@@ -252,15 +880,15 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
         '## Entering it',
         '',
-        '1. Run `cost-check.sh --baseline` first. It saves every cluster’s cost metrics as they are today.',
+        `1. Run the workflow Cost drivers check ${base} with the baseline input empty (or \`scripts/cost-check.sh --baseline\`) first. It saves every cluster’s cost metrics as they are today.`,
         '2. Currency: set once under the global cost settings (Administration → Global Settings → Cost/Price in recent releases). Nothing is costed until it is set, and changing it later does not convert anything.',
         `3. Cost drivers (Manage → Cost → Cost Drivers in 9.1; Infrastructure Operations → Configurations → Cost Drivers before): for each datacenter, enter the values from \`${base}-values.csv\`. Use the 9.1 spreadsheet view for server hardware — it takes purchase date, price and ownership per host.`,
         '4. The CPU:memory ratio is set with the cost drivers in 9.1. Enter the split above.',
         '5. Run the cost calculation once by hand (Administration → Control Panel → Cost Calculation) rather than waiting for the daily run, and wait for it to finish.',
-        `6. Run \`cost-check.sh --compare\`. It fails if any cluster’s cost moved more than ${swing}% — read why before anyone sees a bill.`,
+        `6. Run the workflow again with that snapshot as its baseline input (or \`scripts/cost-check.sh --compare\`). It fails if any cluster’s cost moved more than ${swing}% — read why before anyone sees a bill.`,
         '',
-        'There is no documented suite-API call for cost drivers, so this is entered in the interface. VERIFY against your',
-        'release before scripting anything that claims otherwise.',
+        'The VCF Operations 9.1 API reference has no cost-driver call (its Cost Configuration APIs set the currency only), so the',
+        'drivers are entered in the interface. VERIFY against your release before scripting anything that claims otherwise.',
         '',
       ].join('\n');
 
@@ -328,6 +956,35 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         'esac',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'cost', base),
+        description: `Cost drivers check for ${dcs.join(', ') || '(no datacenter)'}: sets the ${currency} currency if none is set, snapshots every cluster's cost and compares against an earlier snapshot. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/Cost/${base}`,
+        workflow: {
+          name: `Cost drivers check ${base}`,
+          description: `Sets the cost currency to ${currency} when VCF Operations has none (and refuses when it has another), then takes a snapshot of every cluster's cost metrics. With the snapshot of an earlier run as the baseline input, compares and fails when a cluster moved more than ${swing}%. A dry run until dryRun is set to false in the configuration element; the snapshot and comparison are reads and happen in a dry run too.`,
+          inputs: [DRY_RUN_INPUT, { name: 'baseline', type: 'string', description: 'The snapshot output of the run before the change; empty takes a baseline' }],
+          outputs: [
+            { name: 'snapshot', type: 'string', description: 'Every cluster’s cost metrics now, JSON: the baseline input of the next run' },
+            { name: 'report', type: 'string', description: 'cluster,before,after,pct,over — when compared' },
+            SUMMARY_OUTPUT,
+          ],
+          script: COST_DRIVERS_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Cost drivers check ${base} workflow. Fill opsPassword after import; set dryRun to false only after a dry run.`,
+          attributes: [
+            ...opsAttributes('An account that may read cost metrics and set the currency'),
+            { name: 'currency', type: 'string', value: currency, description: 'ISO 4217 code; set only when VCF Operations has none' },
+            { name: 'costKey', type: 'string', value: '', description: 'The cost stat key to compare on; empty picks the first with "total" in it' },
+            { name: 'maxSwingPct', type: 'number', value: swing, description: 'Fail when a cluster’s cost moves more than this' },
+            ...guardAttributes(1, 'changes (setting the currency)'),
+          ],
+        },
+        resources: [{ name: 'cost-drivers.csv', content: csv, mimeType: 'text/csv' }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Cost drivers for ${dcs.join(', ') || 'no datacenter'} — ${currency} ${money(hostMonth)} per host per month, CPU:memory ${cpuShare}:${100 - cpuShare}`,
@@ -339,27 +996,30 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           ifWrong: 'Every VM cost, every showback line and every bill is wrong by the same factor, and looks authoritative. Nothing fails; people pay or budget from it.',
         },
         guardrails: [
-          { rule: 'Baseline before, compare after — cost-check.sh', because: `It fails when a cluster’s cost moves more than ${swing}%, which is how a zero in the wrong field is caught before a tenant sees it on a bill.` },
+          { rule: `Baseline before, compare after — the workflow Cost drivers check ${base} (or scripts/cost-check.sh)`, because: `It fails when a cluster’s cost moves more than ${swing}%, which is how a zero in the wrong field is caught before a tenant sees it on a bill.` },
+          { rule: 'The currency is set only when none is set, and a different one is refused', because: 'Changing the currency does not convert anything: every cost already calculated keeps its number under the new symbol.' },
           { rule: 'Every value has a reason in the design table', because: 'A cost driver nobody can explain is the engine’s default, and the default is an MSRP guess.' },
         ],
         dryRun: [
-          'Enter nothing yet. Run `cost-check.sh --baseline` and read the per-cluster costs it saves — that is what the engine thinks today.',
+          `Run the workflow Cost drivers check ${base} with dryRun = true and the baseline input empty: it logs "DRY RUN: would set the cost currency" if one is missing, and its snapshot output is what the engine thinks today. The fallback is scripts/cost-check.sh --baseline.`,
           'Compare the per-host total in the design with what finance says a host costs. If they differ by more than the swing you set, one of them is wrong.',
         ],
-        undo: ['Re-enter the previous values (the baseline file shows the costs they produced) and run the cost calculation again. Past daily cost metrics already written are not recalculated.'],
-        told: ['Nobody automatically. Cost changes flow into showback and bills silently — record the change, and tell the people who read bills before the next one goes out.'],
-        requires: ['A currency set in VCF Operations — the cost engine does not run without one.', 'jq on the machine that runs cost-check.sh.', 'The real price paid, purchase dates and lease terms from finance, not the engine’s estimates.'],
+        undo: ['Re-enter the previous values (the baseline snapshot shows the costs they produced) and run the cost calculation again. Past daily cost metrics already written are not recalculated.', 'A currency, once set, is changed by hand under the global cost settings; it is not converted.'],
+        told: ['Nobody automatically. Cost changes flow into showback and bills silently — record the change, and tell the people who read bills before the next one goes out. The workflow posts its audit record to webhook when one is set.'],
+        requires: ['VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted in Orchestrator — or jq on the machine that runs scripts/cost-check.sh.', 'The real price paid, purchase dates and lease terms from finance, not the engine’s estimates.'],
         files: {
+          ...pkg.files,
           [`${base}-design.md`]: design,
           [`${base}-values.csv`]: csv,
-          'cost-check.sh': check,
+          'scripts/cost-check.sh': check,
           'IMPORT.md': importMd({
             title: 'the cost drivers',
-            intro: ['Cost drivers are entered in the interface; there is no file import for them. The CSV is the record of what to enter and why, and the script is the check around it.'],
+            intro: [`One Orchestrator package does the API part: the workflow **Cost drivers check ${base}** sets the currency when none is set and takes and compares the cost snapshots. The driver values themselves are typed in: the VCF Operations 9.1 API reference has no cost-driver call (its Cost Configuration APIs are the currency only). The CSV is the record of what to enter and why.`],
             steps: [
-              { heading: 'Baseline', files: ['cost-check.sh'], how: ['./cost-check.sh --baseline — saves what the cost engine calculates today, per cluster.'] },
-              { heading: 'Enter the values', files: [`${base}-design.md`, `${base}-values.csv`], how: ['Operations → Cost → Cost Drivers (8.x: Configure → Cost Settings → Cost Drivers), one datacenter at a time, from the CSV. Per-host prices go in the server hardware editor.'] },
-              { heading: 'Compare', files: ['cost-check.sh'], how: ['After the next daily cost calculation: ./cost-check.sh --compare. It exits 1 when a cluster moved more than the swing you set.'] },
+              ...packageSteps(pkg, 'the workflow that takes the baseline, sets the currency and compares'),
+              { heading: 'Baseline', files: [pkg.packageDir], how: [`Run Cost drivers check ${base} with the baseline input empty. Keep its snapshot output. (Script: ./scripts/cost-check.sh --baseline.)`] },
+              { heading: 'Enter the values', files: [`${base}-design.md`, `${base}-values.csv`], how: ['Manage → Cost → Cost Drivers (8.x: Configure → Cost Settings → Cost Drivers), one datacenter at a time, from the CSV. Per-host prices go in the server hardware editor.'], verify: ['the 9.1 menu path; the 9.1 API reference (developer.broadcom.com, VCF Operations API 9.1.1) has no cost-driver endpoint, so this stays an interface step.'] },
+              { heading: 'Compare', files: [pkg.packageDir], how: [`After the next daily cost calculation, run Cost drivers check ${base} again with the saved snapshot as the baseline input. It fails when a cluster moved more than ${swing}%. (Script: ./scripts/cost-check.sh --compare.)`], verify: ['GET /suite-api/api/costconfig/currency when no currency is set: the workflow takes 204, 404 or a body without code as "none"; confirm on your build.'] },
             ],
           }),
         },
@@ -436,7 +1096,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
       }
 
       const card = {
-        $comment: 'ArchToolKit rate card. build-policy.sh maps each rate onto the item in a template pricing policy whose itemName matches the regex.',
+        $comment: 'ArchToolKit rate card. The Create rate card workflow (and scripts/build-policy.sh) maps each rate onto the item in a template pricing policy whose itemName matches the regex.',
         name: policyName,
         description: `Generated by ArchToolKit. ${basis === 'allocation' ? 'Allocation' : 'Usage'} based; per month.`,
         rates: [
@@ -457,8 +1117,10 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '# interface carries all of them, so this copies its structure and changes only',
         '# the numbers. It refuses if a rate matches no item, rather than guessing.',
         '#',
-        '# Without --execute it prints the policy it would create.',
+        '# Without --execute it prints the policy it would create. It reads rate-card.json',
+        '# beside it.',
         'set -euo pipefail',
+        'cd "$(dirname "$0")"',
         ...authPreamble(PLATFORM),
         ': "${TEMPLATE_POLICY_ID:?set TEMPLATE_POLICY_ID: create one policy in the interface with every item priced, then GET /suite-api/api/pricing and take its id}"',
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
@@ -541,7 +1203,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
         '## 2. Create the real policy from it',
         '',
-        '`build-policy.sh` (dry run), then `build-policy.sh --execute`.',
+        `The workflow Create rate card ${noPolicyWord(base)} with dryRun = true, then armed (or \`scripts/build-policy.sh\`, then \`--execute\`).`,
         '',
         '## 3. Assign it',
         '',
@@ -569,6 +1231,30 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const cardJson = `${JSON.stringify(card, null, 2)}\n`;
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'showback', noPolicyWord(base)),
+        description: `Creates the pricing "${policyName}" in VCF Operations from a template, with the rates of rate-card.json. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/Cost/${noPolicyWord(base)}`,
+        workflow: {
+          name: `Create rate card ${noPolicyWord(base)}`,
+          description: `Clones the template pricing card templatePricingId, sets the rates of rate-card.json on its own items, and creates "${policyName}". Leaves one of that name alone; refuses when a rate matches no item. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: [{ name: 'pricingId', type: 'string', description: 'The id created or found, empty in a dry run' }, SUMMARY_OUTPUT],
+          script: SHOWBACK_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Create rate card workflow. Fill opsPassword and templatePricingId after import; set dryRun to false only after a dry run.`,
+          attributes: [
+            ...opsAttributes('An account that may read and create pricing'),
+            { name: 'templatePricingId', type: 'string', value: '', description: 'The id of the template pricing card made once in the interface (GET /suite-api/api/pricing)' },
+            ...guardAttributes(1, 'pricing cards'),
+          ],
+        },
+        resources: [{ name: 'rate-card.json', content: cardJson }],
+      });
+
       return {
         platform: PLATFORM,
         title: `${policyName} — ${rVcpu}/vCPU, ${rRam}/GB RAM, ${rStorage}/GB storage, ${fixed}/VM, per month`,
@@ -584,12 +1270,12 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           ifWrong: 'A tenant is billed at the wrong rate, or not at all. Bills are documents people pay from; a wrong one is corrected by a credit note and an apology, not an undo.',
         },
         guardrails: [
-          { rule: 'Rates are mapped onto the template’s own items, and the script refuses if one does not match', because: 'A rate that matches no item is silently dropped by the API, and the bill comes out cheaper than the card with no error anywhere.' },
-          { rule: 'Refuses to create a second policy with the same name', because: 'Two identically named policies is how the wrong one gets assigned.' },
-          { rule: 'Dry run unless --execute', because: 'The rates it prints are the review. Nothing is created without it.' },
+          { rule: 'Rates are mapped onto the template’s own items, and the workflow (and the script) refuses if one does not match', because: 'A rate that matches no item is silently dropped by the API, and the bill comes out cheaper than the card with no error anywhere.' },
+          { rule: 'Leaves one of the same name alone rather than creating a second', because: 'Two identically named policies is how the wrong one gets assigned.' },
+          { rule: 'Dry run until dryRun is false in the configuration element (the script: unless --execute); at most one created per run', because: 'The rates it logs are the review. Nothing is created without it.' },
         ],
-        dryRun: ['Run build-policy.sh without --execute and read every item and rate it prints.', 'Generate one bill by hand for one tenant and check it against the card before the recurring bill is turned on.'],
-        undo: ['Unassign the policy, then DELETE /suite-api/api/pricing/{id} with the id in created-pricing-policy-id.txt.', 'Bills already sent cannot be recalled.'],
+        dryRun: [`Run the workflow Create rate card ${noPolicyWord(base)} with dryRun = true (or scripts/build-policy.sh without --execute) and read every item and rate it logs.`, 'Generate one bill by hand for one tenant and check it against the card before the recurring bill is turned on.'],
+        undo: ['Unassign the policy, then DELETE /suite-api/api/pricing/{id} with the id in the workflow’s pricingId output and AUDIT log (created-pricing-policy-id.txt with the script).', 'Bills already sent cannot be recalled.'],
         told: bills ? [`${recipients.join(', ') || 'Nobody'} receives each bill as PDF, ${cadence}.`, ...(alertPct > 0 ? [`Tenants are emailed at ${alertPct}% of quota.`] : [])] : ['Nobody; showback dashboards only.'],
         requires: [
           'A template pricing policy created once in the interface, and its id in TEMPLATE_POLICY_ID.',
@@ -598,22 +1284,28 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           ...(bills ? ['An outbound mail plugin configured in VCF Operations.'] : []),
         ],
         files: {
-          'rate-card.json': `${JSON.stringify(card, null, 2)}\n`,
-          'build-policy.sh': build,
+          ...pkg.files,
+          'scripts/rate-card.json': cardJson,
+          'scripts/build-policy.sh': build,
           'showback-setup.md': setup,
           'IMPORT.md': importMd({
             title: `the pricing policy "${policyName}"`,
-            intro: ['A pricing policy is not imported from a file: the pricing API documents a policy’s shape but not the item names it expects, so build-policy.sh clones a template policy made once in the interface and sets its rates from rate-card.json.'],
+            intro: [`A pricing policy is not imported from a file: the pricing API documents a policy’s shape but not the item names it expects, so the workflow **Create rate card ${noPolicyWord(base)}** clones a template made once in the interface and sets its rates from rate-card.json (a resource element in the package; scripts/build-policy.sh does the same from a Linux host).`],
             steps: [
-              { heading: 'The template policy', files: ['showback-setup.md'], how: ['Create one pricing policy by hand, as showback-setup.md says. It is the template every generated policy is cloned from.'] },
-              { heading: 'The rate card', files: ['rate-card.json', 'build-policy.sh'], how: ['./build-policy.sh prints what it would create; ./build-policy.sh --execute clones the template and sets the rates.'] },
-              { heading: 'Assign it', files: ['showback-setup.md'], how: ['Assign the policy to the organizations, projects or tag as showback-setup.md lists, and set up the bills.'] },
+              { heading: 'The template', files: ['showback-setup.md'], how: ['Create one pricing card by hand, as showback-setup.md says. It is the template every generated one is cloned from; its id goes in templatePricingId.'] },
+              ...packageSteps(pkg, 'the workflow that creates the rate card'),
+              { heading: 'Or: the script', files: ['scripts/rate-card.json', 'scripts/build-policy.sh'], how: ['TEMPLATE_POLICY_ID=… ./scripts/build-policy.sh prints what it would create; add --execute to create it.'] },
+              { heading: 'Assign it', files: ['showback-setup.md'], how: ['Assign it to the organizations, projects or tag as showback-setup.md lists, and set up the bills.'], verify: ['VCF Operations 9.1 has Tenant Billing APIs (POST /suite-api/api/chargeback/bills, …/bills/query, GET …/bills/{id}/download); bills are generated there, not configured, so recurring bills stay an interface step here.'] },
+            ],
+            sources: [
+              'GET/POST /suite-api/api/pricing and GET/DELETE /suite-api/api/pricing/{id}: developer.broadcom.com, VMware vRealize Operations API, "Pricing Policies APIs". The VCF Operations 9.1.1 API reference lists no pricing category — VERIFY on your build; the workflow stops with that message on a 404.',
+              '9.1 pricing cards and their assignment to vCenters and clusters: Broadcom TechDocs 9.1, "Using Pricing Cards in VCF Operations".',
             ],
           }),
         },
         notes: [
           'The pricing API is GET/POST/PUT /suite-api/api/pricing and GET/DELETE /suite-api/api/pricing/{id}, documented for Aria Operations 8.x. VERIFY it against your 9.1 build — the path and createdBy value are the likeliest to differ.',
-          'There is no documented API for pricing assignment, bills or tenant notifications, so those are interface steps.',
+          'The 9.1 API reference has Tenant Billing (POST /suite-api/api/chargeback/bills to generate, …/bills/query, GET …/bills/{id}/download), Tenant Notifications and Tenant Reports APIs, but no call for pricing assignment or for a recurring bill schedule, so those stay interface steps (developer.broadcom.com, VCF Operations API 9.1.1).',
           'VCF Automation 9.1 shows an upfront price estimate when a VM or a VKS node is requested. It comes from the same policy, so a wrong rate is visible to requesters before it is visible on a bill.',
         ],
         findings,
@@ -680,7 +1372,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
       if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) findings.push(warning('vcfops.whatif.date', 'The implementation date is not a YYYY-MM-DD date, so the steps cannot say when to set it for.', { source: SRC }));
 
       const spec = {
-        $comment: 'ArchToolKit what-if scenario. Entered in the interface; there is no documented API for what-if analysis.',
+        $comment: 'ArchToolKit what-if scenario. Entered in the interface; the 9.1 What If API (/suite-api/api/whatif/scenarios) body is not generated from it.',
         name: scenarioName,
         type: scenario,
         cluster,
@@ -702,10 +1394,10 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         `# What-if: ${scenarioName}`,
         '',
         'Generated by ArchToolKit for VCF Operations 9.1. What-if analysis is read-only: it models, and changes',
-        'nothing in the inventory. There is no documented API for it, so the scenario is entered by hand from',
+        'nothing in the inventory. The scenario is entered by hand (the 9.1 What If API body is not generated here) from',
         `\`${base}-scenario.json\`, which is the record of what was asked.`,
         '',
-        '1. Run `baseline.sh` and keep its output beside this file. It is what the cluster looked like the day the question was asked.',
+        `1. Run the workflow What-if baseline ${base} (or \`scripts/baseline.sh\`) and keep its baseline output beside this file. It is what the cluster looked like the day the question was asked.`,
         `2. Manage → Capacity → What-If Analysis (VERIFY the path in your build). Choose **${typeLabel[scenario]}**.`,
         `3. Location: **${cluster || '(cluster)'}**. Implementation date: **${start || '(date)'}**.`,
         ...(workload
@@ -755,6 +1447,31 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         'fi',
       ]);
 
+      const scenarioJson = `${JSON.stringify(spec, null, 2)}\n`;
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'whatif', base),
+        description: `Capacity baseline of ${cluster || '(no cluster)'} for the what-if "${scenarioName}", and whether the scenario is saved. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/Capacity/${base}`,
+        workflow: {
+          name: `What-if baseline ${base}`,
+          description: `Reads the capacity figures of ${cluster || 'the cluster'} (every OnlineCapacityAnalytics time or capacity remaining key it reports) and whether the scenario "${scenarioName}" is saved. Changes nothing. Fails when the least time remaining is under minDays.`,
+          inputs: [],
+          outputs: [{ name: 'baseline', type: 'string', description: 'The cluster’s capacity figures today, JSON: keep it with the result' }, SUMMARY_OUTPUT],
+          script: WHATIF_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the What-if baseline workflow. Fill opsPassword after import.',
+          attributes: [
+            ...opsAttributes('A read-only account'),
+            { name: 'cluster', type: 'string', value: cluster, description: 'The cluster the scenario is measured against' },
+            { name: 'minDays', type: 'number', value: minDays, description: 'Fail when the least time remaining is under this' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+          ],
+        },
+        resources: [{ name: 'scenario.json', content: scenarioJson }],
+      });
+
       return {
         platform: PLATFORM,
         title: `What-if “${scenarioName}” on ${cluster || 'no cluster'} — ${scenario.replace('-', ' ')}`,
@@ -769,19 +1486,28 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           { rule: 'Read-only: what-if models and never changes the inventory', because: 'The platform keeps scenarios separate from the estate, so a mistaken scenario costs nothing but the decision made from it.' },
           { rule: 'Baseline saved with the date', because: 'An answer with no record of the capacity it started from cannot be checked when the hardware arrives and the numbers disagree.' },
         ],
-        dryRun: ['Everything here is a dry run. Run baseline.sh and read what the cluster has today before trusting what the scenario says it will have.'],
+        dryRun: [`Everything here is a dry run. Run the workflow What-if baseline ${base} (or scripts/baseline.sh) and read what the cluster has today before trusting what the scenario says it will have.`],
         undo: ['Nothing to undo. Delete the saved scenario in the interface when it is no longer wanted.'],
-        told: ['Whoever asked the question, with the result file. baseline.sh exits 1 if the cluster is already under the days-remaining floor.'],
-        requires: [`The cluster ${cluster} collected by VCF Operations with at least a few weeks of history — capacity forecasts need it.`, 'jq on the machine that runs baseline.sh.'],
+        told: ['Whoever asked the question, with the result file. The workflow fails (scripts/baseline.sh exits 1) if the cluster is already under the days-remaining floor; webhook gets the summary when set.'],
+        requires: [`The cluster ${cluster} collected by VCF Operations with at least a few weeks of history — capacity forecasts need it.`, 'VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted — or jq on the machine that runs scripts/baseline.sh.'],
         files: {
-          [`${base}-scenario.json`]: `${JSON.stringify(spec, null, 2)}\n`,
+          ...pkg.files,
+          [`${base}-scenario.json`]: scenarioJson,
           [`${base}-steps.md`]: steps,
-          'baseline.sh': baseline,
+          'scripts/baseline.sh': baseline,
+          'IMPORT.md': importMd({
+            title: `the what-if "${scenarioName}"`,
+            intro: [`The workflow **What-if baseline ${base}** takes the cluster’s capacity figures on the day and says whether the scenario is saved; it changes nothing. The scenario itself is entered from ${base}-steps.md.`],
+            steps: [
+              ...packageSteps(pkg, 'the read-only baseline workflow'),
+              { heading: 'Enter the scenario', files: [`${base}-scenario.json`, `${base}-steps.md`], how: [`Manage → Capacity → What-If Analysis, as ${base}-steps.md says. Then run What-if baseline ${base} again: its log says the scenario is saved. (Script: ./scripts/baseline.sh.)`], verify: ['VCF Operations 9.1 has What If APIs (GET/POST/PUT /suite-api/api/whatif/scenarios, POST …/scenarios/run, GET …/serverconfigs). The workflow only reads the saved list; the scenario body (WhatIfScenario: actionType, contentType, workloadCapacityLocation, scenarioContent, serverDetail) is not generated here because the nested location and workload shapes were not confirmed.'] },
+            ],
+          }),
         },
         notes: [
           '9.1 raised the what-if limits to 10,000 VMs and 200 TB of storage per scenario.',
           'The result depends on the capacity policy of the cluster: an allocation-model policy with a 4:1 CPU ratio and a demand-model policy give different answers to the same scenario. Say which one it was in the result file.',
-          'No documented suite-API endpoint runs what-if analysis. If one appears in your build’s API reference, the scenario file has everything it would need.',
+          'VCF Operations 9.1 documents What If APIs (save, update, run and delete scenarios under /suite-api/api/whatif/scenarios). The workflow reads the saved list; saving and running a scenario by API is left out until the nested WhatIfScenario shapes are confirmed on a build — the scenario file has the values they would need.',
         ],
         findings,
       };
@@ -874,6 +1600,8 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           '# Without --execute it writes the manifest and changes nothing.',
           'set -euo pipefail',
           'shopt -s inherit_errexit',
+          '# The list, the manifest and the logs are beside the script.',
+          'cd "$(dirname "$0")"',
           '',
           `MODE=${quarantine ? 'quarantine' : 'delete'}`,
           `MAX_OBJECTS=${cap}  # the cap. Change it here, in review, not on the command line.`,
@@ -1207,6 +1935,38 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           '',
         ].join('\n');
 
+        const listFile = quarantine ? 'orphaned-disks.txt' : 'quarantined-disks.txt';
+        const pkg = toPackage({
+          packageName: packageNameOf('vcfops', 'orphans', mode === 'orphan-quarantine' ? 'quarantine' : 'delete', base),
+          description: `Judges a list of orphaned disks against every VM in every vCenter listed, before ${quarantine ? 'quarantine' : 'deletion'}. Reads only. Generated by ArchToolKit.`,
+          categoryPath: `ArchToolKit/VCF Operations/Reclaim/${base}`,
+          workflow: {
+            name: `Check orphaned disks to ${quarantine ? 'quarantine' : 'delete'} ${base}`,
+            description: `Reads every VM's disks in every vCenter in vcenters, and gives each "[datastore] path.vmdk" line of the diskList input a verdict: ${quarantine ? 'quarantine' : 'delete'}, or skip and why. At most maxObjects eligible. Moves and deletes nothing — scripts/orphan-disks.sh does, and judges again first.`,
+            inputs: [{ name: 'diskList', type: 'string', description: 'One "[datastore] path/to/disk.vmdk" per line, from the Reclaim page export' }],
+            outputs: [
+              { name: 'manifestCsv', type: 'string', description: 'datastore,path,verdict' },
+              { name: 'eligibleCount', type: 'number', description: `Disks that would be ${quarantine ? 'quarantined' : 'deleted'}` },
+              SUMMARY_OUTPUT,
+            ],
+            script: orphanWorkflow(quarantine ? 'quarantine' : 'delete'),
+          },
+          config: {
+            name: 'Settings',
+            description: 'Settings of the orphaned disk check. Fill the secret for your version after import: vcfApiToken (VCF 9.1) or vcPassword.',
+            attributes: [
+              { name: 'vcenters', type: 'Array/string', value: [], description: 'Every vCenter whose hosts mount these datastores' },
+              { name: 'vcfIdbHost', type: 'string', value: '', description: 'VCF 9.1: the VCF Identity Broker host' },
+              { name: 'vcfApiToken', type: 'SecureString', description: 'VCF 9.1: an API token with read access to the vCenters' },
+              { name: 'vcUsername', type: 'string', value: '', description: 'Otherwise: a read-only account, user@domain, the same on every vCenter' },
+              { name: 'vcPassword', type: 'SecureString', description: 'Its password' },
+              { name: 'holdDays', type: 'number', value: hold, description: 'Delete: quarantined at least this many days ago' },
+              { name: 'maxObjects', type: 'number', value: cap, description: 'The most disks one run may pass' },
+              { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+            ],
+          },
+        });
+
         return {
           platform: PLATFORM,
           title: quarantine ? `Quarantine up to ${cap} orphaned disks per run, re-checked against every vCenter` : `Delete up to ${cap} quarantined orphaned disks, after ${hold} days, re-checked first`,
@@ -1244,7 +2004,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
               : [{ rule: `Only disks in quarantine for ${hold}+ days can be deleted`, because: 'The path carries the date it was quarantined; anything newer, not a real date, or outside quarantine, is refused. Deletion is never the first thing that happens to a disk.' }]),
             { rule: 'Each vCenter password comes from its own mode-600 file, checked, and reaches govc through its environment, never its arguments', because: 'The script refuses a readable password file rather than running with one.' },
           ],
-          dryRun: ['Run it without --execute. It writes the manifest with a verdict for every line and changes nothing.', 'Read every “quarantine”/“delete” line. Anything you cannot name the origin of, exclude from the list.'],
+          dryRun: [`Run the workflow Check orphaned disks to ${quarantine ? 'quarantine' : 'delete'} ${base} with the list as its diskList input: its manifestCsv output is a verdict for every line, from every VM in every vCenter, and it changes nothing.`, 'Run scripts/orphan-disks.sh without --execute. It writes its own manifest (by path, disk UUID, First Class Disk and folder) and changes nothing.', 'Read every “quarantine”/“delete” line in both. Anything you cannot name the origin of, or that one passes and the other skips, exclude from the list.'],
           undo: quarantine
             ? ['Run the orphan-restore-<stamp>.sh the run wrote (same GOVC_USERNAME and GOVC_PASSWORD_DIR): it moves each disk back to where it was.']
             : ['A deleted VMDK cannot be restored except from a datastore-level backup or array snapshot. That is why deletion only happens from quarantine.'],
@@ -1257,8 +2017,22 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
             'The orphaned disk list exported from Manage → Capacity → Reclaim → Orphaned Disks.',
           ],
           files: {
-            'orphan-disks.sh': script,
-            [quarantine ? 'orphaned-disks.txt' : 'quarantined-disks.txt']: listTemplate,
+            ...pkg.files,
+            'scripts/orphan-disks.sh': script,
+            [`scripts/${listFile}`]: listTemplate,
+            'IMPORT.md': importMd({
+              title: quarantine ? 'orphaned disks to quarantine' : 'quarantined disks to delete',
+              intro: [`Two parts. The Orchestrator package holds the read-only check: the workflow **Check orphaned disks to ${quarantine ? 'quarantine' : 'delete'} ${base}** judges the list against every VM in every vCenter over the vCenter REST API. The ${quarantine ? 'move' : 'deletion'} itself is scripts/orphan-disks.sh (govc): the vCenter REST API has no datastore file operations, so Orchestrator cannot move or delete a VMDK through the shared core library.`],
+              steps: [
+                ...packageSteps(pkg, 'the read-only check'),
+                { heading: 'The list', files: [`scripts/${listFile}`], how: [quarantine ? 'Manage → Capacity → Reclaim → Orphaned Disks → Export All; one "[datastore] path.vmdk" per line. Paste the same lines into the workflow’s diskList input.' : 'The paths the quarantine run moved, from its log. Paste the same lines into the workflow’s diskList input.'] },
+                { heading: quarantine ? 'Quarantine' : 'Delete', files: ['scripts/orphan-disks.sh'], how: [`./scripts/orphan-disks.sh (dry run, manifest only), then --execute. It re-reads every vCenter and judges each disk again immediately before it ${quarantine ? 'moves it' : 'deletes it'}.`] },
+              ],
+              sources: [
+                'GET /api/vcenter/host, /api/vcenter/vm?hosts=, /api/vcenter/vm/{vm} (disks with backing.vmdk_file): the vSphere Automation REST API.',
+                'VCF Operations 9.1 Optimization APIs: GET /suite-api/api/optimization/datacenters/{id}/reclaim/resources/ ("Reclaim data for VMs or for orphaned disks") and POST …/reclaim/orphaneddisks/{id}/exclude/ and /include/ — there is no delete; the parameter that selects orphaned disks is not in the reference, so the list is still the Reclaim page export (VERIFY).',
+              ],
+            }),
           },
           notes: [
             '9.1 can delete orphaned disks from the Reclaim page itself, behind a confirmation dialog. That deletes directly, with no quarantine and no cap — this script is the slower path with both. Parts of the 9.1 docs still say orphaned disks are only exported; VERIFY which your build does.',
@@ -1287,7 +2061,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
         '## 1. Exclusions first (platform-enforced)',
         '',
-        `- Manage → Capacity → Optimize → Reclaim → settings (gear), and Rightsize → EXCLUSION SETTINGS: select the vSphere tag **${excludeTag || '(none)'}**.`,
+        `- The workflow Reclaim exclusions and pre-run check ${base} adds the vSphere tag **${excludeTag || '(none)'}** to every datacenter’s Reclaim and Rightsizing exclusion tags (9.1 Optimization API). By hand: Manage → Capacity → Optimize → Reclaim → settings (gear), and Rightsize → EXCLUSION SETTINGS.`,
         '  Broadcom’s 9.1 guidance (Brock Peterson, “Rightsizing and Reclamation Exclusions using vSphere Tags in VCF Operations 9.1”) is that a VM excluded on the',
         '  Reclaim or Rightsize page is excluded from Automation Central as well. The techdocs Reclaim page does not say so — VERIFY: tag one test VM and check it',
         '  disappears from each job’s preview before relying on it.',
@@ -1308,7 +2082,7 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
         '## 3. The pre-run check (enforced by preflight.sh)',
         '',
-        `Automation Central has no per-run cap. \`preflight.sh\` runs the day before, exports the group’s members and their reclaim and rightsize signals to CSV, and **exits 1 if the group has more than ${cap} VMs**. It cannot stop the job — wire its exit code to someone who can pause it.`,
+        `Automation Central has no per-run cap. The workflow (or \`scripts/${base}-preflight.sh\`) runs the day before, exports the group’s members and their reclaim and rightsize signals to CSV, and **exits 1 if the group has more than ${cap} VMs**. It cannot stop the job — wire its exit code to someone who can pause it.`,
         '',
         '## 4. The reclamation dashboard (9.1)',
         '',
@@ -1360,10 +2134,38 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
       const crontab = [
         '# Pre-run check, the day before the jobs. Written disabled: uncomment after a first manual run.',
         '# It exits 1 over the cap; route cron mail or the exit code to whoever can pause the jobs.',
-        `# ${dayBefore(window)} ${scheduledEnv(PLATFORM)} GROUP_ID=<id> /opt/archtoolkit/${base}-preflight.sh >>/var/log/archtoolkit/${base}-preflight.log 2>&1`,
+        `# ${dayBefore(window)} ${scheduledEnv(PLATFORM)} GROUP_ID=<id> /opt/archtoolkit/scripts/${base}-preflight.sh >>/var/log/archtoolkit/${base}-preflight.log 2>&1`,
         `# The jobs themselves run in Automation Central at ${window} (cron equivalent: ${cronOf(window)}) — not from cron.`,
         '',
       ].join('\n');
+
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'reclaim', 'jobs', base),
+        description: `Writes the exclusion tag ${excludeTag || '(none)'} into every datacenter's Reclaim and Rightsizing exclusions, then the pre-run check of the group "${group}". Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/Reclaim/${base}`,
+        workflow: {
+          name: `Reclaim exclusions and pre-run check ${base}`,
+          description: `Adds ${excludeTag || 'the exclusion tag'} to the Reclaim and Rightsizing exclusion tags of every datacenter (VCF Operations 9.1 Optimization API), leaving the tags already there; then exports the group's VMs and their reclaim signals and fails when the group holds more than ${cap} VMs. Run it the day before the Automation Central jobs. A dry run until dryRun is set to false in the configuration element; the check is a read and runs in a dry run too.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: [
+            { name: 'vmCount', type: 'number', description: 'VMs in the group' },
+            { name: 'scopeCsv', type: 'string', description: `name,id,${RECLAIM_SIGNALS.join(',')}` },
+            SUMMARY_OUTPUT,
+          ],
+          script: RECLAIM_JOBS_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the reclaim exclusions and pre-run check. Fill opsPassword and groupId after import; set dryRun to false only after a dry run.',
+          attributes: [
+            ...opsAttributes('An account that may read the group and change optimization settings'),
+            { name: 'groupId', type: 'string', value: '', description: `The id of the custom group "${group}"` },
+            { name: 'excludeTag', type: 'string', value: excludeTag, description: 'category=value: the vSphere tag that takes a VM out of reclamation' },
+            { name: 'maxObjects', type: 'number', value: cap, description: 'Fail when the group holds more VMs than this' },
+            ...guardAttributes(20, 'datacenter exclusion updates'),
+          ],
+        },
+      });
 
       return {
         platform: PLATFORM,
@@ -1382,30 +2184,42 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         },
         guardrails: [
           { rule: `VMs tagged ${excludeTag || '(none)'} are excluded — by the platform, once set in the Reclaim and Rightsize exclusion settings`, because: 'Broadcom’s 9.1 guidance is that a VM excluded on the Reclaim or Rightsize page is excluded from Automation Central too, so one tag takes a VM out of every reclamation path at once. The techdocs do not say so yet: check a tagged VM is missing from each job’s preview.' },
-          { rule: `Pre-run check exits 1 when the group has more than ${cap} VMs`, because: 'Automation Central has no cap of its own. The check cannot stop the job, but it fails loudly the day before, when someone can still pause it.' },
+          { rule: 'The exclusion tag is added to each datacenter’s Reclaim and Rightsizing exclusion tags, keeping the ones already there, at most 20 datacenters a run', because: 'Setting it by API on every datacenter means no datacenter is left without it; replacing the list would silently drop someone else’s exclusion.' },
+          { rule: `Pre-run check fails when the group has more than ${cap} VMs`, because: 'Automation Central has no cap of its own. The check cannot stop the job, but it fails loudly the day before, when someone can still pause it.' },
           { rule: 'The scope is exported to CSV before every run', because: 'After a deletion the question is always “what was in scope”; the export is the answer, dated.' },
           { rule: `VMs younger than ${minAge} days excluded from recommendations (Global Settings)`, because: 'A week of history makes every new VM look oversized. Documented for recommendations only — whether Automation Central honours it is the preview’s to show.' },
         ],
-        dryRun: ['Create each job and read its preview of affected VMs before saving it; do not schedule it the same day.', 'Run preflight.sh by hand and read the CSV. Every VM in it is one the jobs may act on.'],
+        dryRun: ['Create each job and read its preview of affected VMs before saving it; do not schedule it the same day.', `Run the workflow Reclaim exclusions and pre-run check ${base} with dryRun = true: it logs each datacenter it would add the exclusion tag to, and its scopeCsv output is every VM the jobs may act on (scripts/${base}-preflight.sh writes the same CSV).`],
         undo: [
           'Deleted snapshots and deleted VMs cannot be restored except from backup.',
           'A downsize or scale-up is reversed by resizing back — the job history in Automation Central records the before and after.',
           'Disable or delete the job in Automation Central to stop the next run.',
         ],
-        told: ['Automation Central keeps a history of each run and the objects it acted on.', 'The pre-run CSV and its exit code, from cron mail or wherever the check is scheduled.', 'The reclamation dashboard, monthly.'],
+        told: ['Automation Central keeps a history of each run and the objects it acted on.', 'The pre-run check: a failed workflow run (or the script’s exit code), its scopeCsv, and the audit record posted to webhook when set.', 'The reclamation dashboard, monthly.'],
         requires: [
           `The custom group "${group}" (opt-in tag, exclusion tag) and its id in GROUP_ID.`,
           `vSphere tag ${excludeTag} created in vCenter and collected by VCF Operations.`,
           'Actions enabled on the vCenter adapter, with an account that has the rights these jobs need and no more.',
         ],
         files: {
+          ...pkg.files,
           [`${base}-design.md`]: design,
-          [`${base}-preflight.sh`]: preflight,
+          [`scripts/${base}-preflight.sh`]: preflight,
           'crontab.txt': crontab,
+          'IMPORT.md': importMd({
+            title: `reclamation on "${group || '(no group)'}"`,
+            intro: [`The Orchestrator package does what 9.1 has an API for: the workflow **Reclaim exclusions and pre-run check ${base}** writes ${excludeTag || 'the exclusion tag'} into every datacenter’s Reclaim and Rightsizing exclusions and runs the pre-run check. The Automation Central jobs have no API in the 9.1 reference and are made in the interface from ${base}-design.md.`],
+            steps: [
+              ...packageSteps(pkg, 'exclusions and the pre-run check'),
+              { heading: 'The jobs', files: [`${base}-design.md`], how: ['Manage → Automation Central, one job per row of the design’s table, each scoped to the group, each preview read before saving.'] },
+              { heading: 'Schedule the check', files: [pkg.packageDir, 'crontab.txt'], how: [`Schedule the workflow for the day before the jobs (${dayBefore(window)} as cron), or use scripts/${base}-preflight.sh with the commented line in crontab.txt.`] },
+            ],
+            sources: ['GET/PATCH /suite-api/api/optimization/datacenters/{dataCenterId}/exclusion/tags/ with DCOptimizationConfiguration {reclaim: [{category, name}], rightsizing: [{category, name}]}: developer.broadcom.com, VCF Operations API 9.1.1, Optimization APIs. VERIFY that dataCenterId is the VCF Operations id of the Datacenter object, and whether PATCH merges or replaces the arrays — the workflow sends the whole list either way.'],
+          }),
         },
         notes: [
           'For snapshot or powered-off deletion with a hard per-run cap enforced by a script instead of Automation Central, use “Reclaim idle and oversized VMs on a schedule”.',
-          'There is no documented suite-API for Automation Central jobs or Reclaim settings in 9.1, so both are interface steps. VERIFY before scripting.',
+          'Automation Central jobs have no API in the 9.1 reference, so they are interface steps. The Reclaim and Rightsizing exclusion tags do (Optimization APIs), and the workflow sets them.',
           'Exclusions, as documented: tag, age and history exclusions and the automatic exclusion of Broadcom appliances apply to rightsizing and reclamation recommendations (9.1 release notes; techdocs “Using Reclaim to Free Up Resources”). That tag exclusions carry to Automation Central comes from Broadcom’s Brock Peterson (brockpeterson.com, 9.1 exclusions post), not the techdocs; nothing documents appliance or age exclusions for Automation Central. VERIFY each in a job preview.',
           'The stat keys the pre-run export reads are the VMware adapter’s as documented for earlier releases; a key that is not present exports blank rather than failing.',
         ],
@@ -1502,12 +2316,12 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
         '## Applying it',
         '',
-        '1. `export-policy.sh` — saves the policy as it is now. That file is the undo.',
+        '1. `scripts/export-policy.sh` — saves the policy as it is now. That file is the undo (the workflow also records the policy settings in its settingsBefore output).',
         `2. Configure → Policies → ${policy} → Capacity: model, overcommit, buffers, risk level and time-remaining thresholds as above.`,
         `3. Workload Automation settings of the same policy: ${eviction ? `turn on storage-based eviction at ${storageThreshold}%` : 'leave storage-based eviction off'}${portGroups ? '; allow placement across equivalent network port groups' : ''}.`,
         `4. Rightsize and Reclaim exclusion settings: tag ${excludeTag || '(none)'}, VM age ${minAge} days.`,
         '5. Export again and commit both exports beside this file.',
-        '6. `apply-report-schedule.sh` — schedules the monthly capacity report.',
+        '6. The workflow Schedule capacity report (or `scripts/apply-report-schedule.sh`) — schedules the monthly capacity report.',
         '',
         'Capacity values are set in the policy editor. Writing policy XML by hand for them is possible and not worth a silently ignored element.',
         '',
@@ -1532,7 +2346,9 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '#',
         '# Schedules created through the API run in GMT. Without --execute this only prints',
         '# what it would send. Not idempotent: a second run makes a second schedule.',
+        '# It reads capacity-report-schedule.json beside it.',
         'set -euo pipefail',
+        'cd "$(dirname "$0")"',
         '',
         ...authPreamble(PLATFORM),
         `: "\${REPORT_DEFINITION_ID:?set REPORT_DEFINITION_ID: GET /suite-api/api/reportdefinitions and match the name \\"${reportName}\\"}"`,
@@ -1577,6 +2393,40 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const reportSlug = noPolicyWord(slugOf(reportName, 'capacity-report'));
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'capacity', 'report', reportSlug),
+        description: `Records the capacity settings before a change and schedules the report "${reportName}" monthly. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/Capacity/${reportSlug}`,
+        workflow: {
+          name: `Schedule capacity report ${reportSlug}`,
+          description: `Records the settings of the policy policyId as they are now (output settingsBefore), then schedules "${reportName}" for "${scopeObject}" monthly on day ${dom} at 07:00 GMT to the recipients — unless such a schedule exists. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: [
+            { name: 'reportScheduleId', type: 'string', description: 'The schedule created or found, empty in a dry run' },
+            { name: 'settingsBefore', type: 'string', description: 'GET /policies/{id}/settings before the change, JSON: keep it with the change' },
+            SUMMARY_OUTPUT,
+          ],
+          script: CAPACITY_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the capacity report workflow. Fill opsPassword and startDate after import; set dryRun to false only after a dry run.',
+          attributes: [
+            ...opsAttributes('An account that may read the policy and schedule reports'),
+            { name: 'policyId', type: 'string', value: '', description: `The id of "${policy}" (GET /suite-api/api/policies), to record its settings before the change` },
+            { name: 'reportName', type: 'string', value: reportName, description: 'The report definition, by name' },
+            { name: 'reportDefinitionId', type: 'string', value: '', description: 'Its id; empty looks it up by name' },
+            { name: 'resourceName', type: 'string', value: scopeObject, description: 'The object the report runs for, by name' },
+            { name: 'resourceId', type: 'string', value: '', description: 'Its id; empty looks it up by name' },
+            { name: 'recipients', type: 'Array/string', value: recipients, description: 'Who receives the report' },
+            { name: 'startDate', type: 'string', value: '', description: 'REQUIRED: the first date it may run, in the format GET of an existing schedule shows' },
+            ...guardAttributes(1, 'report schedules'),
+          ],
+        },
+        resources: [{ name: 'capacity-report-schedule.json', content: `${JSON.stringify({ reportScheduleType: 'MONTHLY', recurrence: 1, dayOfTheMonth: dom, startHour: 7, startMinute: 0, relativePath: [] }, null, 2)}\n` }],
+      });
+
       return {
         platform: PLATFORM,
         title: `${policy} — ${model} capacity, ${trWarn}/${trCrit}-day thresholds${eviction ? ', storage eviction' : ''}, monthly report`,
@@ -1589,25 +2439,28 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         },
         guardrails: [
           { rule: 'Export the policy before changing it — export-policy.sh', because: 'The export is the diff and the undo; a capacity setting changed without one cannot be put back exactly.' },
-          { rule: 'Report schedule is a dry run unless --execute, and refuses a payload with <REQUIRED> in it', because: 'An unfilled start date posts a schedule that never runs, and nobody notices a report that never arrives.' },
+          { rule: 'Report schedule is a dry run until dryRun is false (the script: unless --execute), refuses an empty start date, and leaves an existing monthly schedule of the same report and object alone', because: 'An unfilled start date posts a schedule that never runs, and a second identical schedule sends every report twice.' },
           { rule: `Excluded: ${excludeTag || 'no tag'}, VMs under ${minAge} days, Broadcom appliances`, because: 'The platform leaves excluded VMs out of rightsizing and reclamation recommendations. Whether that also covers the eviction moves this policy turns on is not documented — VERIFY before turning eviction to act.' },
         ],
-        dryRun: ['After assigning, open one cluster in each group and check its policy is this one and its time remaining changed the way the design says.', 'Run apply-report-schedule.sh without --execute and read the payload. Run the report once by hand.', ...(eviction ? ['Set Workload Automation to recommend, not act, for the first month and read what it would have moved.'] : [])],
+        dryRun: ['After assigning, open one cluster in each group and check its policy is this one and its time remaining changed the way the design says.', `Run the workflow Schedule capacity report ${reportSlug} with dryRun = true (or scripts/apply-report-schedule.sh without --execute) and read what it would schedule. Run the report once by hand.`, ...(eviction ? ['Set Workload Automation to recommend, not act, for the first month and read what it would have moved.'] : [])],
         undo: ['Import the export taken by export-policy.sh, or unassign the groups.', 'Delete the report schedule: DELETE /suite-api/api/reportdefinitions/{id}/schedules/{scheduleId}.', ...(eviction ? ['VMs already moved by eviction stay where they are; move them back with vMotion if needed.'] : [])],
         told: [`${recipients.join(', ') || 'Nobody'}, monthly, with the capacity report.`, 'Capacity time-remaining alerts, through whatever notification rules match them.'],
         requires: [`The groups ${groups.join(', ') || '(none)'}, and POLICY_ID for "${policy}".`, `The report definition "${reportName}" and its id; the id of ${scopeObject}.`, 'An outbound mail plugin in VCF Operations.', ...(eviction ? ['Workload Automation enabled for these clusters, and Storage vMotion allowed between their datastores.'] : [])],
         files: {
+          ...pkg.files,
           [`${base}-design.md`]: design,
-          'export-policy.sh': exportPolicy,
-          'capacity-report-schedule.json': `${JSON.stringify(schedule, null, 2)}\n`,
-          'apply-report-schedule.sh': apply,
+          'scripts/export-policy.sh': exportPolicy,
+          'scripts/capacity-report-schedule.json': `${JSON.stringify(schedule, null, 2)}\n`,
+          'scripts/apply-report-schedule.sh': apply,
           'IMPORT.md': importMd({
             title: `capacity settings in "${policy}"`,
             steps: [
-              { heading: 'Save the policy', files: ['export-policy.sh'], how: ['POLICY_ID=… ./export-policy.sh — GET /suite-api/api/policies/export, a zip that re-imports under Policies → Import or POST /suite-api/api/policies/import?forceImport=true. It is the undo.'] },
-              { heading: 'Set the capacity values', files: [`${base}-design.md`], how: ['In the policy editor (Configure → Policies → edit → Capacity), from the design. Capacity settings are not written as policy XML here: an element the release does not know is dropped without a word.', 'Then export the policy again and keep that zip: it is the importable form of the result.'] },
-              { heading: 'Schedule the report', files: ['capacity-report-schedule.json', 'apply-report-schedule.sh'], how: ['./apply-report-schedule.sh --execute — POST /suite-api/api/reportdefinitions/{id}/schedules.'] },
+              ...packageSteps(pkg, 'the workflow that records the settings and schedules the report'),
+              { heading: 'Save the policy', files: ['scripts/export-policy.sh'], how: ['POLICY_ID=… ./scripts/export-policy.sh — GET /suite-api/api/policies/export, a zip that re-imports under Policies → Import or POST /suite-api/api/policies/import?forceImport=true. It is the undo; the workflow’s settingsBefore output is the record beside it.'] },
+              { heading: 'Set the capacity values', files: [`${base}-design.md`], how: ['In the policy editor (Configure → Policies → edit → Capacity), from the design. Capacity settings are not written as policy XML here: an element the release does not know is dropped without a word.', 'Then export the policy again and keep that zip: it is the importable form of the result.'], verify: ['VCF Operations 9.1 has GET/PATCH /suite-api/api/policies/{id}/settings; the capacity part of its schema is not generated here, so the values stay an editor step.'] },
+              { heading: 'Schedule the report', files: [pkg.packageDir], how: [`Run Schedule capacity report ${reportSlug} (dry run, then armed). Or: ./scripts/apply-report-schedule.sh --execute — POST /suite-api/api/reportdefinitions/{id}/schedules; the script is not idempotent, the workflow is.`], verify: ['startDate has no documented format in the 9.1 ReportSchedule model; copy the form GET /suite-api/api/reportdefinitions/{id}/schedules shows for an existing schedule.'] },
             ],
+            sources: ['Reports APIs and the ReportSchedule / ReportSchedules (reportSchedules) and ReportDefinitions (reportDefinitions) models; Policies APIs (export, import, {id}/settings): developer.broadcom.com, VCF Operations API 9.1.1.'],
           }),
         },
         notes: [
@@ -1719,8 +2572,38 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
         'exit 0',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'vks', 'cost', base),
+        description: `Cost per vSphere Namespace from VCF Operations, as CSV${groupBy === 'property' ? `, rolled up by ${propKey}` : ''}. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/Cost/${base}`,
+        workflow: {
+          name: `VKS cost per namespace ${base}`,
+          description: `Reads every ${adapter}/${kind} object, discovers its cost and price metrics, and writes their latest values per namespace as CSV${groupBy === 'property' ? `, with the owner from ${propKey}` : ''}. Changes nothing.${failUncosted ? ' Fails when a namespace has no cost at all.' : ''}`,
+          inputs: [],
+          outputs: [
+            { name: 'reportCsv', type: 'string', description: 'namespace,owner,<cost keys>' },
+            { name: 'uncostedCount', type: 'number', description: 'Namespaces with no cost at all' },
+            SUMMARY_OUTPUT,
+          ],
+          script: VKS_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the VKS cost workflow. Fill opsPassword after import.',
+          attributes: [
+            ...opsAttributes('A read-only account'),
+            { name: 'nsKind', type: 'string', value: kind, description: 'The resource kind of a vSphere Namespace' },
+            { name: 'nsAdapter', type: 'string', value: adapter, description: 'Its adapter kind' },
+            { name: 'propertyKey', type: 'string', value: groupBy === 'property' ? propKey : '', description: 'Roll up by this property of the namespace; empty for none' },
+            { name: 'failOnUncosted', type: 'boolean', value: failUncosted, description: 'Fail the run when a namespace has no cost' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the summary is posted' },
+          ],
+        },
+      });
+
       const files: Record<string, string> = {
-        [`${base}.sh`]: script,
+        ...pkg.files,
+        [`scripts/${base}.sh`]: script,
         [`${base}-showback.md`]: [
           '# VKS showback — setup',
           '',
@@ -1729,16 +2612,16 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           '1. Check the Supervisor and its vSphere Namespaces are collected (the script lists candidate object types if the default finds none).',
           '2. Price VKS separately if it should be: 9.1 has granular pricing for VKS nodes. Create or clone a pricing policy for it with “Showback and chargeback: a rate card” and assign it to the organizations that consume VKS.',
           '3. On the Organization and Project Showback dashboards, filter by service type (Regular VMs, VKS, DSM) so VKS cost is shown once.',
-          `4. Run \`${base}.sh\` and read the CSV. Namespaces with no cost mean the cost engine is not covering them — check the cost drivers for the cluster the Supervisor runs on.`,
+          `4. Run the workflow VKS cost per namespace ${base} (or \`scripts/${base}.sh\`) and read the CSV. Namespaces with no cost mean the cost engine is not covering them — check the cost drivers for the cluster the Supervisor runs on.`,
           '5. VCF Automation 9.1 shows an upfront price when a VKS node is requested; check it against the rate you set.',
           '',
         ].join('\n'),
       };
       if (schedule) {
         files['crontab.txt'] = [
-          '# Monthly VKS cost export, first of the month 06:00. Written disabled: uncomment after a manual run.',
-          '# No secret here: the script logs in from the password file.',
-          `# 0 6 1 * * ${scheduledEnv(PLATFORM)} /opt/archtoolkit/${base}.sh >>/var/log/archtoolkit/${base}.log 2>&1`,
+          '# Monthly VKS cost export with the fallback script, first of the month 06:00. Written disabled: uncomment after a manual run.',
+          '# No secret here: the script logs in from the password file. With the Orchestrator package, schedule the workflow instead.',
+          `# 0 6 1 * * ${scheduledEnv(PLATFORM)} /opt/archtoolkit/scripts/${base}.sh >>/var/log/archtoolkit/${base}.log 2>&1`,
           '',
         ].join('\n');
       }
@@ -1754,11 +2637,21 @@ export const VCF_OPS_COST: readonly AutomationBlueprint[] = [
           ifWrong: 'The CSV covers the wrong objects or the wrong metric, and a showback is built on it. Nothing in the platform changes.',
         },
         guardrails: [{ rule: 'It only reads', because: 'Showback is a report. Charging a tenant is a separate decision made from it, by a person.' }, ...(failUncosted ? [{ rule: 'Exits 1 when a namespace has no cost', because: 'A zero on a showback is read as “free”, not as “not measured”.' }] : [])],
-        dryRun: ['Everything here is read-only. Run it once and compare one namespace against the VCF Operations interface.'],
+        dryRun: [`Everything here is read-only. Run the workflow VKS cost per namespace ${base} once and compare one namespace against the VCF Operations interface.`],
         undo: ['Nothing to undo. Delete the CSV.'],
-        told: ['Whoever reads the CSV or the cron mail; it exits 1 when a namespace is uncosted.'],
-        requires: ['VCF Operations 9.1 collecting the Supervisor, with a currency set and the cost engine running.', 'jq on the machine that runs it.'],
-        files,
+        told: ['Whoever reads the reportCsv output (or the script’s CSV and cron mail); the run fails (exit 1) when a namespace is uncosted, and webhook gets the summary when set.'],
+        requires: ['VCF Operations 9.1 collecting the Supervisor, with a currency set and the cost engine running.', 'VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted — or jq on the machine that runs the script.'],
+        files: {
+          ...files,
+          'IMPORT.md': importMd({
+            title: 'VKS cost per vSphere Namespace',
+            intro: [`The workflow **VKS cost per namespace ${base}** does the whole job and changes nothing; scripts/${base}.sh does the same from a Linux host.`],
+            steps: [
+              ...packageSteps(pkg, 'the read-only cost report'),
+              { heading: 'Schedule it', files: [pkg.packageDir, ...(schedule ? ['crontab.txt'] : [])], how: ['Schedule the workflow monthly in Orchestrator (Library → the workflow → Schedule)' + (schedule ? ', or use the commented line in crontab.txt with the script.' : '.')] },
+            ],
+          }),
+        },
         notes: [
           `The namespace object type (${kind}) and the property key are not in the API reference. VERIFY with GET /suite-api/api/adapterkinds/${adapter}/resourcekinds.`,
           'Cost metric keys are discovered from the first namespace’s stat keys (anything beginning cost| or price|), so the columns are whatever your release reports.',

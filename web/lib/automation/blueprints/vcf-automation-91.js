@@ -28,7 +28,8 @@ import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
-import { importBundle, importMd, kubeStep, manualStep, verifyFor,                 } from '../vcfa-import.js';
+import { blueprintYaml, importBundle, importMd, kubeStep, manualStep, verifyFor,                 } from '../vcfa-import.js';
+import { packageNameOf, toPackage } from '../vro/to-package.js';
 
 const ALL_APPS = 'VCF Automation 9.1 / 9.1.1 All Apps organizations';
 const PROVIDER = 'VCF Automation 9.1 / 9.1.1, provider (System) side';
@@ -36,13 +37,13 @@ const PROVIDER = 'VCF Automation 9.1 / 9.1.1, provider (System) side';
 /** The Terraform route: plan, read, apply exactly the plan. */
 function tfStep(heading        , what        )             {
   return manualStep(heading, [
-    `\`VCFA_URL=https://<vcfa> VCFA_ORG=<org> VCFA_API_TOKEN_FILE=<file> ./plan.sh\` runs terraform init and plan and saves the plan; read it. \`./plan.sh --execute\` applies exactly that saved plan. ${what}`,
+    `\`VCFA_URL=https://<vcfa> VCFA_ORG=<org> VCFA_API_TOKEN_FILE=<file> ./scripts/plan.sh\` runs terraform init and plan on the .tf files beside scripts/ and saves the plan; read it. \`./scripts/plan.sh --execute\` applies exactly that saved plan. ${what}`,
   ]);
 }
 
 /** A read-only check to run after the import. */
 function checkStep(script        , what        )             {
-  return manualStep(`Check it — ${script}`, [`\`./${script}\` reads only and exits 1 when something needs attention: ${what}`]);
+  return manualStep(`Or check it from a Linux host — scripts/${script}`, [`\`./scripts/${script}\` reads only and exits 1 when something needs attention: ${what}`]);
 }
 
 const PLATFORM = 'vcf-automation'         ;
@@ -190,7 +191,9 @@ function kubeScript(purpose        , pre                   , files              
     '# your shell history and the process list (VERIFY the prompt on your CLI version).',
     '#',
     '# Without --execute this is a server-side dry run: the server validates, nothing is created.',
+    '# It reads the manifests beside the scripts/ folder it is in.',
     'set -euo pipefail',
+    'cd "$(dirname "$0")/.."',
     '',
     'command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }',
     ': "${EXPECT_CONTEXT:?set EXPECT_CONTEXT to the kubectl context this is meant for — the context is the scope}"',
@@ -238,7 +241,9 @@ function tfScript(purpose        , undo        )         {
     '#',
     '# Without --execute: init and plan, saved to tfplan. With --execute: apply that saved',
     '# plan and nothing else — Terraform refuses it if anything changed since it was made.',
+    '# Terraform runs in the folder above scripts/, where the .tf files are.',
     'set -euo pipefail',
+    'cd "$(dirname "$0")/.."',
     'command -v terraform >/dev/null || { echo "terraform is required" >&2; exit 2; }',
     ': "${VCFA_URL:?set VCFA_URL, e.g. https://vcfa.example.com}"',
     ': "${VCFA_ORG:?set VCFA_ORG — System for provider work, the organization name for tenant work}"',
@@ -288,8 +293,774 @@ const VERSIONS_TF = [
 function cronLine(schedule        , env        , script        , log        )         {
   return [
     '# Crontab entry. No secret in it: the script reads the API token from the file named.',
-    `${schedule} ${env} /opt/archtoolkit/${script} >>/var/log/archtoolkit/${log} 2>&1`,
+    `${schedule} ${env} /opt/archtoolkit/scripts/${script} >>/var/log/archtoolkit/${log} 2>&1`,
     '',
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// The Orchestrator packages.
+//
+// Every automation here is also one Orchestrator package (to-package.ts): a
+// workflow on the shared core library, with its settings and its payloads.
+// The bash, kubectl and Terraform files stay beside it — the scripts under
+// scripts/, the native files (Kubernetes YAML, .tf, JSON payloads, the
+// blueprint.yaml) where they were — for whoever imports by hand.
+//
+// Three APIs are reached from the workflows, each with the organization (or
+// provider) bearer token core.loginVcfAutomation gets from the API token:
+//
+//   /cloudapi           provider objects: organizations, regions, quotas,
+//                       content libraries, API tokens. Paths follow the
+//                       go-vcloud-director v3 SDK the vmware/vcfa Terraform
+//                       provider is built on (types/v56 constants; govcd/tm_*.go):
+//                       orgs and tokens under /cloudapi/1.0.0/, the region family,
+//                       region quotas (virtualDatacenters), VM classes
+//                       (virtualMachineClasses) and content libraries under
+//                       /cloudapi/vcf/. The Accept header carries the API version:
+//                       the configured one, checked against GET /api/versions, or
+//                       the newest it lists (Broadcom KB 419781 uses 40.0 on 9.0).
+//   /cci/kubernetes     organization-level Kubernetes objects of an All Apps
+//                       organization — SupervisorNamespace, Project — at
+//                       https://<vcfa>/cci/kubernetes (ccitypes.KubernetesSubpath,
+//                       SupervisorNamespacesURL: /apis/infrastructure.cci.vmware.com/
+//                       v1alpha3/namespaces/<project>/supervisornamespaces).
+//   kubeServer          namespace-level objects (VMs, subnets, databases, policies,
+//                       Argo CD): the Kubernetes API server of the namespace
+//                       context, as `vcf context create --type cci` writes it into
+//                       the kubeconfig. The path behind it is not documented, so it
+//                       is a setting copied from the kubeconfig, not a guess.
+//   /iaas/api, /blueprint/api   VM Apps organizations, as in 8.x.
+
+/** A value for YAML: plain when that is unambiguous, otherwise a JSON (double-quoted) string. */
+function yamlScalar(value         )         {
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value === null || value === undefined) return 'null';
+  const s = String(value);
+  const plain = /^[A-Za-z0-9_./][A-Za-z0-9_ ./@+=-]*$/.test(s) && !/\s$/.test(s) && !/^(true|false|null|yes|no|on|off|y|n)$/i.test(s) && !/^[-+]?[0-9][0-9._]*$/.test(s);
+  return plain ? s : JSON.stringify(s);
+}
+
+/** A plain object as block YAML; a string with line breaks as a literal block. */
+function yamlLines(value         , indent        )           {
+  const pad = ' '.repeat(indent);
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      if (item !== null && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length > 0) {
+        const inner = yamlLines(item, indent + 2);
+        return [`${pad}- ${inner[0] .trimStart()}`, ...inner.slice(1)];
+      }
+      if (item !== null && typeof item === 'object') return [`${pad}- ${Array.isArray(item) ? '[]' : '{}'}`];
+      return [`${pad}- ${yamlScalar(item)}`];
+    });
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value                           ).flatMap(([key, v]) => {
+      const k = yamlScalar(key);
+      if (typeof v === 'string' && v.includes('\n')) return [`${pad}${k}: |`, ...v.replace(/\n$/, '').split('\n').map((line) => `${pad}  ${line}`)];
+      if (Array.isArray(v)) return v.length === 0 ? [`${pad}${k}: []`] : [`${pad}${k}:`, ...yamlLines(v, indent + 2)];
+      if (v !== null && typeof v === 'object') return Object.keys(v).length === 0 ? [`${pad}${k}: {}`] : [`${pad}${k}:`, ...yamlLines(v, indent + 2)];
+      return [`${pad}${k}: ${yamlScalar(v)}`];
+    });
+  }
+  return [`${pad}${yamlScalar(value)}`];
+}
+
+/** Kubernetes documents as a multi-document YAML file, each with its comment lines. */
+function k8sYaml(docs                                                                              )         {
+  return `${docs.map((d) => ['---', ...(d.comment ?? []).map((c) => `# ${c}`), ...yamlLines(d.object, 0)].join('\n')).join('\n')}\n`;
+}
+
+/** A Kubernetes object the workflow creates: the object and its resource (plural) name. */
+                      
+                          
+                                                                                                                                                                                                                                   
+ 
+
+const VCFA_HOST_ATTR = { name: 'vcfaHost', type: 'string', value: '', description: 'VCF Automation host (FQDN)' }         ;
+const TOKEN_ATTR = (whose        ) => ({ name: 'vcfaApiToken', type: 'SecureString', description: `An API token of ${whose} (My Account → API Tokens). Stored encrypted, never logged.` })         ;
+const ORG_ATTR = (org        ) => ({ name: 'vcfaOrg', type: 'string', value: org, description: 'The organization name as in its login URL; "provider" for the provider (System) portal' })         ;
+const API_VERSION_ATTR = { name: 'apiVersion', type: 'string', value: '', description: 'The /cloudapi version for the Accept header; empty: the newest GET /api/versions lists' }         ;
+const KUBE_ATTR = { name: 'kubeServer', type: 'string', value: '', description: 'The Kubernetes API server of the namespace context: kubectl config view --minify -o jsonpath=\'{.clusters[0].cluster.server}\' after vcf context use' }         ;
+const GUARD_ATTRS = (cap        ) =>
+  [
+    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
+    { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
+  ]         ;
+const WEBHOOK_ATTR = { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' }         ;
+
+/** What the workflows share: the settings check and the login. */
+const LOGIN_JS = (org               ) => String.raw`var SAFE = { redact: settings._secrets };
+if (!settings.vcfaHost || !settings.vcfaApiToken) throw new Error("Set vcfaHost and vcfaApiToken in the configuration element " + SETTINGS_NAME + ".");
+var ORG = ${org === null ? 'settings.vcfaOrg ? String(settings.vcfaOrg) : ""' : JSON.stringify(org)};
+if (!ORG) throw new Error("Set vcfaOrg in the configuration element " + SETTINGS_NAME + ": the organization name, or provider.");
+`;
+
+/** /cloudapi: the API version, list, probe and send. CLOUD is set once logged in. */
+const CLOUDAPI_JS = String.raw`// The versions GET /api/versions lists (it needs no login), JSON or XML.
+function versionsOffered(host) {
+  var r = core.http("GET", "https://" + host + "/api/versions", null, null, { accept: "application/json", allow: [400, 401, 403, 404, 406] });
+  var found = [];
+  var re = /"version"\s*:\s*"([0-9]+(?:\.[0-9]+)*)"|<Version>([0-9]+(?:\.[0-9]+)*)<\/Version>/g;
+  var m;
+  while ((m = re.exec(String(r.text))) !== null) found.push(m[1] || m[2]);
+  return found;
+}
+function newerVersion(a, b) {
+  var x = String(a).split(".");
+  var y = String(b).split(".");
+  for (var i = 0; i < Math.max(x.length, y.length); i++) {
+    var p = Number(x[i] || 0);
+    var q = Number(y[i] || 0);
+    if (p !== q) return p > q;
+  }
+  return false;
+}
+// The configured version, refused if the server does not offer it; else the newest offered.
+function pickVersion(host, wanted) {
+  var offered = versionsOffered(host);
+  if (wanted) {
+    if (offered.length > 0 && offered.indexOf(String(wanted)) < 0) throw new Error("API version " + wanted + " is not offered by " + host + " (GET /api/versions lists " + offered.join(", ") + "). Set apiVersion to one of them, or leave it empty.");
+    if (offered.length === 0) System.warn("GET /api/versions listed nothing; using API version " + wanted + " unchecked.");
+    return String(wanted);
+  }
+  if (offered.length === 0) throw new Error("GET /api/versions on " + host + " listed no version; set apiVersion in the configuration element " + SETTINGS_NAME + ".");
+  var best = offered[0];
+  for (var i = 1; i < offered.length; i++) if (newerVersion(offered[i], best)) best = offered[i];
+  System.log("Using API version " + best + ", the newest " + host + " offers.");
+  return best;
+}
+var CLOUD = null;
+function cloudUrl(path) { return "https://" + CLOUD.host + "/cloudapi/" + path; }
+function cloudGet(path) {
+  return core.http("GET", cloudUrl(path), CLOUD.auth, null, { accept: CLOUD.type, redact: SAFE.redact }).body || {};
+}
+// A path that answers 404 is reported as VERIFY — the path moved on this release — not ignored.
+function cloudProbe(path) {
+  var r = core.http("GET", cloudUrl(path), CLOUD.auth, null, { accept: CLOUD.type, allow: [404], redact: SAFE.redact });
+  if (r.statusCode === 404) {
+    System.warn("VERIFY: /cloudapi/" + String(path).split("?")[0] + " answered HTTP 404 on this release; check the path in the API explorer.");
+    return null;
+  }
+  return r.body || {};
+}
+// Every page of a /cloudapi list (page is 1-based, resultTotal the count), or null when the path is not there.
+function cloudList(path) {
+  var sep = String(path).indexOf("?") < 0 ? "?" : "&";
+  var first = cloudProbe(path + sep + "page=1&pageSize=128");
+  if (first === null) return null;
+  var items = first.values || [];
+  var total = first.resultTotal === undefined || first.resultTotal === null ? items.length : Number(first.resultTotal);
+  if (items.length >= total) return items;
+  return core.pageAll(function (page) {
+    if (page === 0) return { items: items, total: total };
+    var b = cloudGet(path + sep + "page=" + (page + 1) + "&pageSize=128");
+    return { items: b.values || [], total: total };
+  }, 0);
+}
+function cloudSend(method, path, body) {
+  return core.http(method, cloudUrl(path), CLOUD.auth, body, { contentType: CLOUD.type, accept: CLOUD.type, redact: SAFE.redact });
+}
+function filterOf(expression) { return "filter=" + encodeURIComponent(expression); }
+function exactly(items, field, value) {
+  var out = [];
+  for (var i = 0; i < (items || []).length; i++) if (String(items[i][field]) === String(value)) out.push(items[i]);
+  return out;
+}
+`;
+
+/** Kubernetes through VCF Automation: get, create (POST, never apply), a server-side dry run. KUBE is set once logged in. */
+const KUBE_JS = String.raw`var KUBE = null;
+function kubeCall(method, path, body, allow, contentType) {
+  return core.http(method, KUBE.base + path, KUBE.auth, body, { contentType: contentType || "application/json", allow: allow || [], redact: SAFE.redact });
+}
+function kubeGet(path) {
+  var r = kubeCall("GET", path, null, [404]);
+  return r.statusCode === 404 ? null : r.body;
+}
+function kubeBase(url) {
+  var text = String(url || "").replace(/\/+$/, "");
+  if (!/^https:\/\/[^\/?#]+/.test(text)) throw new Error("Set kubeServer in the configuration element " + SETTINGS_NAME + " to the https:// server of the namespace context (see IMPORT.md).");
+  return text;
+}
+// Stop before anything is sent if the API group and version is not served here.
+function requireServed(groupVersion) {
+  var r = kubeCall("GET", "/apis/" + groupVersion, null, [404]);
+  if (r.statusCode === 404) throw new Error(groupVersion + " is not served at the kubeServer configured: wrong context, or a different version on this release (kubectl api-versions).");
+}
+function collectionPath(apiVersion, namespace, plural) {
+  var root = String(apiVersion).indexOf("/") < 0 ? "/api/" + apiVersion : "/apis/" + apiVersion;
+  return root + (namespace ? "/namespaces/" + encodeURIComponent(namespace) : "") + "/" + plural;
+}
+// kubectl create, not apply: an object that exists is left as it is. A dry run
+// asks the server to validate it (dryRun=All persists nothing), then plans it.
+function ensureObject(ctx, item, label) {
+  var o = item.object;
+  var path = collectionPath(o.apiVersion, o.metadata.namespace, item.plural);
+  var existing = kubeGet(path + "/" + encodeURIComponent(o.metadata.name));
+  if (existing) {
+    System.log("Exists, left as it is: " + label);
+    return false;
+  }
+  if (ctx.dryRun) {
+    kubeCall("POST", path + "?dryRun=All", o);
+    System.log("Server-side dry run passed: " + label);
+  }
+  core.act(ctx, "create " + label, function () { return kubeCall("POST", path, o).body; });
+  return !ctx.dryRun;
+}
+`;
+
+/**
+ * The blueprint API (VM Apps organizations): validate, create or update the
+ * draft of the one template of that name in the project, then version it.
+ * Mirrors import/import-templates.sh.
+ */
+const TEMPLATE_JS = String.raw`function importTemplate(ctx, api, auth, t) {
+  var body = { name: t.name, description: t.description, projectId: t.projectId, requestScopeOrg: false, content: t.content };
+  var v = core.http("POST", api + "/blueprint/api/blueprint-validation", auth, body, { allow: [400, 404, 405], redact: SAFE.redact });
+  if (v.statusCode >= 200 && v.statusCode < 300 && v.body && v.body.valid === false) {
+    var messages = [];
+    for (var i = 0; i < (v.body.validationMessages || []).length; i++) messages.push(String(v.body.validationMessages[i].message || ""));
+    throw new Error("Template " + t.name + " is not valid: " + messages.join("; "));
+  }
+  if (v.statusCode >= 300) System.warn("Template validation answered HTTP " + v.statusCode + "; creating it validates again.");
+  var list = core.http("GET", api + "/blueprint/api/blueprints?name=" + encodeURIComponent(t.name) + "&size=200", auth, null, SAFE).body || {};
+  var same = [];
+  for (var j = 0; j < (list.content || []).length; j++) {
+    var b = list.content[j];
+    if (String(b.name) === String(t.name) && (!b.projectId || String(b.projectId) === String(t.projectId))) same.push(b);
+  }
+  if (same.length > 1) throw new Error("More than one template named " + t.name + " in project " + t.projectId + "; tidy them first.");
+  var id = same.length === 1 ? String(same[0].id) : null;
+  if (id) {
+    var current = core.http("GET", api + "/blueprint/api/blueprints/" + id, auth, null, SAFE).body || {};
+    if (String(current.content) === String(t.content)) System.log("Template " + t.name + " (" + id + "): the draft is already this content, left as it is.");
+    else core.act(ctx, "update the draft of template " + t.name + " (" + id + ")", function () { return core.http("PUT", api + "/blueprint/api/blueprints/" + id, auth, body, SAFE).body; });
+  } else {
+    var made = core.act(ctx, "create template " + t.name + " in project " + t.projectId, function () {
+      var r = core.http("POST", api + "/blueprint/api/blueprints", auth, body, SAFE);
+      if (!r.body || !r.body.id) throw new Error("POST /blueprint/api/blueprints returned no id.");
+      return String(r.body.id);
+    });
+    if (!made) {
+      core.act(ctx, "create version " + t.version + " of template " + t.name + (t.release ? " and release it" : ""), function () { return null; });
+      return null;
+    }
+    id = made;
+  }
+  var versions = core.http("GET", api + "/blueprint/api/blueprints/" + id + "/versions?size=200", auth, null, SAFE).body || {};
+  for (var k = 0; k < (versions.content || []).length; k++) {
+    if (String(versions.content[k].version) === String(t.version)) {
+      System.log("Version " + t.version + " of " + t.name + " exists, left as it is: versions are immutable; raise the version to publish a change.");
+      return id;
+    }
+  }
+  core.act(ctx, "create version " + t.version + " of template " + t.name + (t.release ? " and release it" : ""), function () {
+    return core.http("POST", api + "/blueprint/api/blueprints/" + id + "/versions", auth, { version: t.version, description: t.description, changeLog: t.changeLog || "Imported by ArchToolKit", release: t.release === true }, SAFE).body;
+  });
+  return id;
+}
+`;
+
+/** Where each blueprint's package goes, and its name. */
+const AREA = 'ArchToolKit/VCF Automation 9.1';
+
+const CSV_JS = String.raw`function csv(v) {
+  var s = v === null || v === undefined ? "" : String(v);
+  return /[",\n]/.test(s) ? "\"" + s.split("\"").join("\"\"") + "\"" : s;
+}
+`;
+
+/** The provider or organization login and the /cloudapi version, in that order: no login when the version is wrong. */
+const CLOUD_LOGIN_JS = String.raw`var cloudType = "application/json;version=" + pickVersion(String(settings.vcfaHost), settings.apiVersion);
+var auth = core.loginVcfAutomation(String(settings.vcfaHost), settings.vcfaApiToken, ORG);
+CLOUD = { host: String(settings.vcfaHost), auth: auth, type: cloudType };
+`;
+
+// --- Organization -----------------------------------------------------------
+
+function organizationWorkflow(allApps         )         {
+  return [
+    LOGIN_JS('provider'),
+    CLOUDAPI_JS,
+    String.raw`var ALL_APPS = ${allApps ? 'true' : 'false'};
+var want = JSON.parse(core.resource(RESOURCE_PATH, "org.json"));
+var ctx = core.begin(settings, dryRun);
+${CLOUD_LOGIN_JS}
+var problems = [];
+var found = cloudList("1.0.0/orgs?" + filterOf("name==" + want.name));
+if (found === null) throw new Error("The organization list is not at /cloudapi/1.0.0/orgs on this release (VERIFY); nothing was created.");
+var same = exactly(found, "name", want.name);
+var orgId = "";
+if (same.length === 0) {
+  // POST /cloudapi/1.0.0/orgs, the body of Broadcom KB 419781: isClassicTenant true is VM Apps.
+  orgId = core.act(ctx, "create " + (want.isClassicTenant ? "VM Apps" : "All Apps") + " organization " + want.name, function () {
+    var r = cloudSend("POST", "1.0.0/orgs", want);
+    if (!r.body || !r.body.id) throw new Error("POST /cloudapi/1.0.0/orgs returned no id.");
+    return String(r.body.id);
+  }) || "";
+} else {
+  orgId = String(same[0].id);
+  // The type is fixed at creation; an organization of the other type is not this one.
+  if (Boolean(same[0].isClassicTenant) !== Boolean(want.isClassicTenant)) throw new Error("Organization " + want.name + " exists as " + (same[0].isClassicTenant ? "VM Apps" : "All Apps") + ", and the type cannot be changed. Nothing was changed.");
+  System.log("Exists, left as it is: organization " + want.name + " (" + orgId + ")");
+  if (same[0].isEnabled === false) problems.push("organization " + want.name + " is disabled");
+}
+if (ALL_APPS && orgId) {
+  var quotas = cloudList("vcf/virtualDatacenters?" + filterOf("org.id==" + orgId));
+  if (quotas === null) problems.push("the region quotas could not be read (VERIFY /cloudapi/vcf/virtualDatacenters)");
+  else if (quotas.length === 0) problems.push("no region quota yet: apply main.tf with Terraform for the quota, VM classes, storage policy and networking");
+  else for (var q = 0; q < quotas.length; q++) {
+    System.log("Region quota " + quotas[q].name + ": " + (quotas[q].status || "?"));
+    if (quotas[q].status && String(quotas[q].status) !== "READY") problems.push("region quota " + quotas[q].name + " is " + quotas[q].status);
+  }
+} else if (ALL_APPS) {
+  System.log("The region quota is checked once the organization exists.");
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+organizationId = orgId;
+problemCount = problems.length;
+summary = core.audit(ctx, { organization: want.name, id: orgId, allApps: ALL_APPS, problems: problems });
+core.notify(settings.webhook, summary);`,
+  ].join('\n');
+}
+
+// --- Region inventory -------------------------------------------------------
+
+function regionWorkflow()         {
+  return [
+    LOGIN_JS('provider'),
+    CLOUDAPI_JS,
+    String.raw`var want = JSON.parse(core.resource(RESOURCE_PATH, "region.json"));
+${CLOUD_LOGIN_JS}
+var problems = [];
+var inv = { region: want.region };
+function names(list) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) out.push(String(list[i].name));
+  return out;
+}
+// A list that is not where the SDK has it is a problem, so a moved path shows up rather than passing.
+function listOrProblem(path, what) {
+  var list = cloudList(path);
+  if (list === null) problems.push(what + " could not be read (VERIFY /cloudapi/" + path.split("?")[0] + ")");
+  return list;
+}
+var regions = cloudList("vcf/regions?" + filterOf("name==" + want.region));
+if (regions === null) throw new Error("The region list is not at /cloudapi/vcf/regions on this release (VERIFY); nothing was read.");
+var match = exactly(regions, "name", want.region);
+if (match.length !== 1) {
+  problems.push("region " + want.region + " not found");
+} else {
+  var region = match[0];
+  var rid = String(region.id);
+  inv.status = region.status || "?";
+  inv.cpuCapacityMHz = region.cpuCapacityMHz === undefined ? null : region.cpuCapacityMHz;
+  inv.memoryCapacityMiB = region.memoryCapacityMiB === undefined ? null : region.memoryCapacityMiB;
+  System.log("Region " + want.region + ": status " + inv.status + ", " + inv.cpuCapacityMHz + " MHz, " + inv.memoryCapacityMiB + " MiB.");
+  if (String(inv.status) !== "READY") problems.push("region " + want.region + " is " + inv.status);
+  var byRegion = "?" + filterOf("region.id==" + rid);
+  var zones = listOrProblem("vcf/zones" + byRegion, "zones");
+  if (zones !== null) {
+    inv.zones = names(zones);
+    if (zones.length === 0) problems.push("no zones: the supervisors have none VCF Automation can use");
+  }
+  var supervisors = listOrProblem("vcf/supervisors" + byRegion, "supervisors");
+  if (supervisors !== null) inv.supervisors = names(supervisors);
+  var classes = listOrProblem("vcf/virtualMachineClasses" + byRegion, "VM classes");
+  if (classes !== null) {
+    inv.vmClasses = names(classes);
+    for (var c = 0; c < want.expectedVmClasses.length; c++) {
+      if (inv.vmClasses.indexOf(want.expectedVmClasses[c]) < 0) problems.push("VM class " + want.expectedVmClasses[c] + " is missing (make it on the supervisor in vCenter)");
+    }
+  }
+  var policies = listOrProblem("vcf/regionStoragePolicies" + byRegion, "storage policies");
+  if (policies !== null) inv.storagePolicies = names(policies);
+  var storageClasses = listOrProblem("vcf/storageClasses" + byRegion, "storage classes");
+  if (storageClasses !== null) inv.storageClasses = names(storageClasses);
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+inventory = JSON.stringify(inv);
+problemCount = problems.length;
+summary = core.audit(null, { inventory: inv, problems: problems });
+core.notify(settings.webhook, summary);
+if (problems.length > 0) throw new Error(problems.length + " problem(s) in region " + want.region + ": " + problems.join("; ") + ".");`,
+  ].join('\n');
+}
+
+// --- Tag placement ----------------------------------------------------------
+
+function tagPlacementWorkflow(writeZones         , template                                                        )         {
+  return [
+    LOGIN_JS(null),
+    TEMPLATE_JS,
+    String.raw`var WRITE_ZONES = ${writeZones ? 'true' : 'false'};
+var WANT = JSON.parse(core.resource(RESOURCE_PATH, "zone-tags.json"));
+var REQUIRED = JSON.parse(core.resource(RESOURCE_PATH, "required-tags.json"));
+var TEMPLATE = ${JSON.stringify(template)};
+var ctx = core.begin(settings, dryRun);
+var api = "https://" + settings.vcfaHost;
+var auth = core.loginVcfAutomation(String(settings.vcfaHost), settings.vcfaApiToken, ORG);
+// VERIFY: PATCH is what the IaaS API reference lists for a zone update; zoneMethod PUT switches it.
+var ZONE_METHOD = settings.zoneMethod ? String(settings.zoneMethod).toUpperCase() : "PATCH";
+if (ZONE_METHOD !== "PATCH" && ZONE_METHOD !== "PUT") throw new Error("zoneMethod is PATCH or PUT.");
+function tagKey(t) { return String(t.key) + ":" + (t.value === undefined || t.value === null ? "" : String(t.value)); }
+function hasTag(tags, key) {
+  for (var i = 0; i < (tags || []).length; i++) if (tagKey(tags[i]) === key) return true;
+  return false;
+}
+var zones = core.pageAll(function (page) {
+  var b = core.http("GET", api + "/iaas/api/zones?$top=200&$skip=" + page * 200, auth, null, SAFE).body || {};
+  return { items: b.content || [], total: b.totalElements === undefined ? null : b.totalElements };
+}, 0);
+var after = {};
+for (var z = 0; z < zones.length; z++) after[String(zones[z].id)] = zones[z].tags || [];
+var zonesChanged = [];
+if (WRITE_ZONES) {
+  for (var w = 0; w < WANT.length; w++) {
+    var named = [];
+    for (var n = 0; n < zones.length; n++) if (String(zones[n].name) === String(WANT[w].zone)) named.push(zones[n]);
+    // One zone of that name, or it is skipped: two zones called Production is how production tags land on the lab.
+    if (named.length !== 1) {
+      System.warn("Zone \"" + WANT[w].zone + "\": " + (named.length === 0 ? "not found" : named.length + " zones have that name") + " — skipped.");
+      continue;
+    }
+    var id = String(named[0].id);
+    // The zone read fresh is both the base of the update and, in the log, what it was.
+    var cur = core.http("GET", api + "/iaas/api/zones/" + id, auth, null, SAFE).body || {};
+    var regionId = cur.regionId || (cur._links && cur._links.region && cur._links.region.href ? String(cur._links.region.href).split("/").pop() : "");
+    if (!regionId) {
+      System.warn("Zone " + WANT[w].zone + ": no region id in GET /iaas/api/zones/" + id + "; skipped rather than sending a zone without one.");
+      continue;
+    }
+    var tags = (cur.tags || []).slice(0);
+    var added = [];
+    for (var t = 0; t < WANT[w].tags.length; t++) {
+      if (!hasTag(tags, tagKey(WANT[w].tags[t]))) {
+        tags.push(WANT[w].tags[t]);
+        added.push(tagKey(WANT[w].tags[t]));
+      }
+    }
+    after[id] = tags;
+    if (added.length === 0) {
+      System.log("Zone " + WANT[w].zone + ": already has every tag, left as it is.");
+      continue;
+    }
+    System.log("Zone " + WANT[w].zone + " (" + id + ") had: " + JSON.stringify(cur.tags || []));
+    // The whole zone, not only its tags: older releases require name and regionId, and a partial body can reset what it leaves out.
+    var body = { name: cur.name, regionId: regionId, tags: tags };
+    var keep = ["description", "placementPolicy", "folder", "customProperties", "tagsToMatch"];
+    for (var k = 0; k < keep.length; k++) if (cur[keep[k]] !== undefined && cur[keep[k]] !== null) body[keep[k]] = cur[keep[k]];
+    (function (zoneId, zoneBody) {
+      core.act(ctx, "add capability tags " + added.join(", ") + " to zone " + WANT[w].zone, function () {
+        return core.http(ZONE_METHOD, api + "/iaas/api/zones/" + zoneId, auth, zoneBody, SAFE).body;
+      });
+    })(id, body);
+    zonesChanged.push(String(WANT[w].zone));
+  }
+}
+// Every tag a hard constraint can ask for must be on some zone, or those requests fail placement.
+var missing = [];
+for (var r = 0; r < REQUIRED.length; r++) {
+  var carried = false;
+  for (var zid in after) if (after.hasOwnProperty(zid) && hasTag(after[zid], REQUIRED[r])) carried = true;
+  if (!carried) missing.push(REQUIRED[r]);
+}
+for (var m = 0; m < missing.length; m++) System.warn("NO ZONE carries " + missing[m] + " — requests asking for it will fail placement.");
+var templateId = "";
+if (settings.projectId) {
+  templateId = importTemplate(ctx, api, auth, { name: TEMPLATE.name, description: TEMPLATE.description, version: TEMPLATE.version, content: core.resource(RESOURCE_PATH, "example-template.yaml"), projectId: String(settings.projectId), release: settings.releaseTemplate === true, changeLog: "Imported by ArchToolKit" }) || "";
+} else {
+  System.log("projectId is empty in " + SETTINGS_NAME + ": the example template is not imported.");
+}
+missingTags = missing.join(", ");
+summary = core.audit(ctx, { zonesChanged: zonesChanged, missingTags: missing, templateId: templateId });
+core.notify(settings.webhook, summary);
+if (missing.length > 0) throw new Error(missing.length + " tag(s) a hard constraint can ask for are on no cloud zone: " + missing.join(", ") + ".");`,
+  ].join('\n');
+}
+
+// --- Template versions ------------------------------------------------------
+
+function templateVersionWorkflow()         {
+  return [
+    LOGIN_JS(null),
+    String.raw`var T = JSON.parse(core.resource(RESOURCE_PATH, "template.json"));
+var V = JSON.parse(core.resource(RESOURCE_PATH, "version.json"));
+var ctx = core.begin(settings, dryRun);
+var api = "https://" + settings.vcfaHost;
+if (T.target) {
+  if (String(T.target) === ORG) throw new Error("The target organization is the source organization; nothing to import.");
+  if (!settings.targetApiToken || !settings.targetProjectId) throw new Error("Set targetApiToken and targetProjectId in " + SETTINGS_NAME + " for the import into " + T.target + ".");
+}
+function named(authHeader, name) {
+  var list = core.http("GET", api + "/blueprint/api/blueprints?name=" + encodeURIComponent(name) + "&size=200", authHeader, null, SAFE).body || {};
+  var out = [];
+  for (var i = 0; i < (list.content || []).length; i++) if (String(list.content[i].name) === String(name)) out.push(list.content[i]);
+  return out;
+}
+var auth = core.loginVcfAutomation(String(settings.vcfaHost), settings.vcfaApiToken, ORG);
+// The name filter is loose; the exact match is made here, and it must be one template.
+var matches = named(auth, T.name);
+if (matches.length !== 1) throw new Error(matches.length === 0 ? "No template named \"" + T.name + "\" in " + ORG + "." : matches.length + " templates are named \"" + T.name + "\" in " + ORG + "; versioning one of them by name would be a guess.");
+var id = String(matches[0].id);
+var full = core.http("GET", api + "/blueprint/api/blueprints/" + id, auth, null, SAFE).body || {};
+var content = String(full.content || "");
+var versions = core.http("GET", api + "/blueprint/api/blueprints/" + id + "/versions?size=200", auth, null, SAFE).body || {};
+var have = [];
+for (var i = 0; i < (versions.content || []).length; i++) have.push(String(versions.content[i].version));
+System.log("Template " + T.name + " (" + id + "), versions: " + (have.length ? have.join(", ") : "none"));
+if (have.indexOf(String(V.version)) >= 0) {
+  System.warn("Version " + V.version + " exists, left as it is: versions are immutable; pick the next number for a change.");
+} else {
+  core.act(ctx, "create version " + V.version + " of template " + T.name + (V.release ? " and release it to the catalog" : ""), function () {
+    return core.http("POST", api + "/blueprint/api/blueprints/" + id + "/versions", auth, V, SAFE).body;
+  });
+}
+var imported = "";
+if (T.target) {
+  var targetAuth = core.loginVcfAutomation(String(settings.vcfaHost), settings.targetApiToken, String(T.target));
+  var there = named(targetAuth, T.name);
+  if (there.length > 0) {
+    System.warn("A template named \"" + T.name + "\" already exists in " + T.target + " (" + there[0].id + "), left as it is: add a version there instead of a second copy.");
+    imported = String(there[0].id);
+  } else {
+    imported = core.act(ctx, "import template " + T.name + " into project " + settings.targetProjectId + " of " + T.target + " as a draft", function () {
+      var r = core.http("POST", api + "/blueprint/api/blueprints", targetAuth, { name: T.name, description: "Imported by ArchToolKit", projectId: String(settings.targetProjectId), requestScopeOrg: false, content: content }, SAFE);
+      if (!r.body || !r.body.id) throw new Error("POST /blueprint/api/blueprints in " + T.target + " returned no id.");
+      return String(r.body.id);
+    }) || "";
+  }
+}
+templateId = id;
+templateYaml = content;
+importedId = imported;
+summary = core.audit(ctx, { template: T.name, id: id, version: V.version, released: V.release === true, target: T.target || null, importedId: imported });
+core.notify(settings.webhook, summary);`,
+  ].join('\n');
+}
+
+// --- Namespace day 2 --------------------------------------------------------
+
+function namespaceDay2Workflow(ns        )         {
+  return [
+    LOGIN_JS(null),
+    String.raw`var NS = ${JSON.stringify(ns)};
+var PATCH = JSON.parse(core.resource(RESOURCE_PATH, "patch.json"));
+if (!settings.project) throw new Error("Set project in " + SETTINGS_NAME + ": the VCF Automation project the namespace " + NS + " belongs to.");
+var ctx = core.begin(settings, dryRun);
+var auth = core.loginVcfAutomation(String(settings.vcfaHost), settings.vcfaApiToken, ORG);
+// SupervisorNamespace objects of an All Apps organization (go-vcloud-director ccitypes: KubernetesSubpath + SupervisorNamespacesURL).
+var url = "https://" + settings.vcfaHost + "/cci/kubernetes/apis/infrastructure.cci.vmware.com/v1alpha3/namespaces/" + encodeURIComponent(String(settings.project)) + "/supervisornamespaces/" + encodeURIComponent(NS);
+var MERGE = { contentType: "application/merge-patch+json", redact: SAFE.redact };
+function covers(have, want) {
+  if (want === null || typeof want !== "object") return have !== undefined && have !== null && String(have) === String(want);
+  if (Object.prototype.toString.call(want) === "[object Array]") {
+    if (!have || have.length !== want.length) return false;
+    for (var i = 0; i < want.length; i++) if (!covers(have[i], want[i])) return false;
+    return true;
+  }
+  if (!have || typeof have !== "object") return false;
+  for (var k in want) if (want.hasOwnProperty(k) && !covers(have[k], want[k])) return false;
+  return true;
+}
+var r = core.http("GET", url, auth, null, { allow: [404], redact: SAFE.redact });
+if (r.statusCode === 404) throw new Error("Namespace " + NS + " is not in project " + settings.project + "; not changing what could not be read and saved.");
+// The namespace as it was is the undo: it is the before output, and in the log.
+before = r.text;
+System.log("Namespace " + NS + " before the change: " + r.text);
+var patched = false;
+if (covers(r.body, PATCH)) {
+  System.log("Namespace " + NS + " already has every value in patch.json, left as it is.");
+} else {
+  // A server-side dry run every time, before the real patch: quota and class checks happen on the server.
+  core.http("PATCH", url + "?dryRun=All", auth, PATCH, MERGE);
+  System.log("Server-side dry run passed.");
+  core.act(ctx, "patch namespace " + NS + " with patch.json: " + JSON.stringify(PATCH.spec), function () {
+    return core.http("PATCH", url, auth, PATCH, MERGE).body;
+  });
+  patched = !ctx.dryRun;
+}
+summary = core.audit(ctx, { namespace: NS, project: String(settings.project), patched: patched });
+core.notify(settings.webhook, summary);`,
+  ].join('\n');
+}
+
+// --- Estate health check ----------------------------------------------------
+
+function estateWorkflow()         {
+  return [
+    LOGIN_JS('provider'),
+    CLOUDAPI_JS,
+    String.raw`var WARN_DAYS = Number(settings.expiryWarnDays || 14);
+${CLOUD_LOGIN_JS}
+var problems = [];
+var counts = {};
+// Each list: every page, and a path that is not there is a problem rather than a silent pass.
+function check(path, what, bad) {
+  var list = cloudList(path);
+  if (list === null) {
+    problems.push(what + ": could not be read (VERIFY /cloudapi/" + path.split("?")[0] + ")");
+    return;
+  }
+  counts[what] = list.length;
+  System.log(what + ": " + list.length);
+  for (var i = 0; i < list.length; i++) {
+    var why = bad(list[i]);
+    if (why) problems.push(what + " " + list[i].name + " " + why);
+  }
+}
+function notReady(o) { return o.status && String(o.status) !== "READY" ? "is " + o.status : null; }
+var now = new Date().getTime();
+check("1.0.0/orgs", "organizations", function (o) { return o.isEnabled === false ? "is disabled" : null; });
+check("vcf/regions", "regions", notReady);
+check("vcf/virtualDatacenters", "region quotas", notReady);
+check("vcf/contentLibraries", "content libraries", function (o) { return notReady(o) ? notReady(o) + " (subscribed library 401s are a 9.1.1 known issue)" : null; });
+check("1.0.0/tokens?" + filterOf("type==REFRESH"), "API tokens", function (o) {
+  if (!o.expirationDate) return null;
+  var at = Date.parse(String(o.expirationDate));
+  return !isNaN(at) && at - now < WARN_DAYS * 86400000 ? "expires within " + WARN_DAYS + " days (" + o.expirationDate + ")" : null;
+});
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+problemCount = problems.length;
+summary = core.audit(null, { counts: counts, problems: problems });
+core.notify(settings.webhook, summary);
+if (problems.length > 0) throw new Error(problems.length + " problem(s): " + problems.join("; ") + ".");
+System.log("All checks passed.");`,
+  ].join('\n');
+}
+
+// --- Content library check --------------------------------------------------
+
+function libraryWorkflow()         {
+  return [
+    LOGIN_JS(null),
+    CLOUDAPI_JS,
+    CSV_JS,
+    String.raw`var LIB = JSON.parse(core.resource(RESOURCE_PATH, "library.json")).name;
+${CLOUD_LOGIN_JS}
+var problems = [];
+var rows = ["name,type,imageIdentifier,status"];
+var libs = cloudList("vcf/contentLibraries?" + filterOf("name==" + LIB));
+if (libs === null) throw new Error("The content library list is not at /cloudapi/vcf/contentLibraries on this release (VERIFY); nothing was read.");
+var match = exactly(libs, "name", LIB);
+if (match.length === 0) problems.push("library " + LIB + " not found");
+else if (match.length > 1) problems.push("more than one library named " + LIB + " is visible; check which one VM Service uses");
+if (match.length > 0) {
+  var lib = match[0];
+  System.log("Library " + LIB + ": status " + (lib.status || "?") + ", type " + (lib.libraryType || "?") + ", subscribed " + (lib.isSubscribed === true) + ".");
+  if (String(lib.status || "") !== "READY") problems.push("library " + LIB + " is " + (lib.status || "of unknown status"));
+  var items = cloudList("vcf/contentLibraryItems?" + filterOf("contentLibrary.id==" + lib.id));
+  if (items === null) problems.push("the items could not be read (VERIFY /cloudapi/vcf/contentLibraryItems)");
+  else for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    rows.push([csv(it.name), csv(it.itemType || "?"), csv(it.imageIdentifier || ""), csv(it.status || "?")].join(","));
+    if (it.status && String(it.status) !== "READY") problems.push("item " + it.name + " is " + it.status);
+  }
+}
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+itemReport = rows.join("\n") + "\n";
+problemCount = problems.length;
+summary = core.audit(null, { library: LIB, items: rows.length - 1, problems: problems });
+core.notify(settings.webhook, summary);
+if (problems.length > 0) throw new Error(problems.length + " problem(s) with content library " + LIB + ": " + problems.join("; ") + ".");`,
+  ].join('\n');
+}
+
+// --- Kubernetes objects in a namespace ---------------------------------------
+
+/**
+ * The workflow of every "create these Kubernetes objects" automation: log in,
+ * check each API group is served, run the automation's own checks, then
+ * create each object that does not exist, in order.
+ */
+function kubeWorkflow(opts                                                                                                                   )         {
+  return [
+    LOGIN_JS(null),
+    KUBE_JS,
+    String.raw`var items = JSON.parse(core.resource(RESOURCE_PATH, ${JSON.stringify(opts.resource)}));
+var ctx = core.begin(settings, dryRun);
+var base = kubeBase(settings.kubeServer);
+var auth = core.loginVcfAutomation(String(settings.vcfaHost), settings.vcfaApiToken, ORG);
+KUBE = { base: base, auth: auth };
+var SERVED = ${JSON.stringify(opts.served)};
+for (var g = 0; g < SERVED.length; g++) requireServed(SERVED[g]);
+${opts.pre ?? ''}
+var created = [];
+for (var i = 0; i < items.length; i++) {
+  var o = items[i].object;
+  var label = ${opts.label ?? 'o.kind + " " + o.metadata.name + (o.metadata.namespace ? " in " + o.metadata.namespace : "")'};
+  if (ensureObject(ctx, items[i], label)) created.push(o.kind + "/" + o.metadata.name);
+}
+createdObjects = created.join(", ");
+summary = core.audit(ctx, { kubeServer: base, created: created });
+core.notify(settings.webhook, summary);`,
+  ].join('\n');
+}
+
+/** The settings of a workflow that creates namespace objects. */
+function kubeConfig(what        , org        , cap        , extra                                                                                                                                              = []) {
+  return {
+    name: 'Settings',
+    description: `Settings of the ${what} workflow. Fill kubeServer and vcfaApiToken after import; set dryRun to false only after a dry run.`,
+    attributes: [VCFA_HOST_ATTR, ORG_ATTR(org), TOKEN_ATTR('a project member of the organization'), KUBE_ATTR, ...extra, ...GUARD_ATTRS(cap), WEBHOOK_ATTR],
+  };
+}
+
+const KUBE_OUTPUTS = [
+  { name: 'createdObjects', type: 'string', description: 'What this run created, kind/name; empty in a dry run' },
+  { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+];
+const DRY_RUN_INPUT = { name: 'dryRun', type: 'boolean', description: 'true: validate on the server and report what would be created; change nothing' };
+
+const KUBE_VERIFY =
+  'VERIFY: the namespace objects go to kubeServer, the Kubernetes API server of the namespace context that `vcf context create --type cci` writes into the kubeconfig, with the bearer token from the organization API token exchange. The server URL is copied from the kubeconfig rather than built, because the path behind it is not in Broadcom documentation; that the endpoint takes the exchanged token (as the vcf CLI context does) is the part to verify on first use — a 401 says so.';
+
+// --- API tokens -------------------------------------------------------------
+
+function tokensWorkflow(org               , revoke         )         {
+  return [
+    LOGIN_JS(org),
+    CLOUDAPI_JS,
+    CSV_JS,
+    String.raw`var WARN_DAYS = Number(settings.expiryWarnDays || 30);
+${revoke ? 'var ctx = core.begin(settings, dryRun);' : 'var ctx = null;'}
+${CLOUD_LOGIN_JS}
+var tokens = cloudList("1.0.0/tokens?" + filterOf("type==REFRESH"));
+if (tokens === null) throw new Error("The token list is not at /cloudapi/1.0.0/tokens on this release; nothing was audited (VERIFY the path).");
+var now = new Date().getTime();
+var rows = ["name,owner,expires,id"];
+var soon = [];
+for (var i = 0; i < tokens.length; i++) {
+  var t = tokens[i];
+  rows.push([csv(t.name), csv(t.owner && t.owner.name ? t.owner.name : "?"), csv(t.expirationDate || "never"), csv(t.id)].join(","));
+  if (t.expirationDate) {
+    var at = Date.parse(String(t.expirationDate));
+    if (!isNaN(at) && at - now < WARN_DAYS * 86400000) soon.push(String(t.name));
+  }
+}
+System.log(tokens.length + " API token(s); " + soon.length + " expire within " + WARN_DAYS + " days" + (soon.length ? ": " + soon.join(", ") : "") + ".");
+var revoked = "";
+${
+  revoke
+    ? String.raw`if (revokeId) {
+  if (!revokeName) throw new Error("Give revokeName as well: a token is revoked only when its id and its exact name both match.");
+  var target = cloudProbe("1.0.0/tokens/" + encodeURIComponent(String(revokeId)));
+  if (target === null) throw new Error("No token " + revokeId + ". Nothing was revoked.");
+  if (String(target.name) !== String(revokeName)) throw new Error("Token " + revokeId + " is named \"" + target.name + "\", not \"" + revokeName + "\". Nothing was revoked.");
+  core.act(ctx, "revoke API token \"" + target.name + "\" (" + revokeId + ", owner " + (target.owner && target.owner.name ? target.owner.name : "?") + "); whatever still uses it fails at its next exchange", function () {
+    return cloudSend("DELETE", "1.0.0/tokens/" + encodeURIComponent(String(revokeId)), null).statusCode;
+  });
+  if (!ctx.dryRun) revoked = String(revokeId);
+}`
+    : ''
+}
+tokenReport = rows.join("\n") + "\n";
+expiringCount = soon.length;
+summary = core.audit(ctx, { tokens: tokens.length, expiring: soon, warnDays: WARN_DAYS, revoked: revoked });
+core.notify(settings.webhook, summary);
+if (soon.length > 0${revoke ? ' && !revokeId' : ''}) throw new Error(soon.length + " API token(s) expire within " + WARN_DAYS + " days: " + soon.join(", ") + ". Make a replacement, put it in the configuration elements that use the old one, then revoke the old one.");`,
   ].join('\n');
 }
 
@@ -435,21 +1206,66 @@ export const VCF_AUTOMATION_91                                 = [
       });
 
       const env = `VCFA_HOST=vcfa.example.com${scope === 'tenant' ? ` VCFA_ORG=${org}` : ''} VCFA_API_TOKEN_FILE=${tokenFile} VCFA_ACCESS_FILE=${accessFile}`;
+
+      // In Orchestrator the exchange is core.loginVcfAutomation on every run, so
+      // the package is the audit (and, when asked for, the revoke).
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'tokens', scope === 'provider' ? 'provider' : org),
+        description: `Audits the VCF Automation API tokens of ${scope === 'provider' ? 'the provider account' : `an account in organization ${org}`}${revoke ? ', and revokes one by id and exact name' : ''}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/API tokens/${scope === 'provider' ? 'provider' : org}`,
+        workflow: {
+          name: 'Audit VCF Automation API tokens',
+          description: `Exchanges the API token at ${tokenPath} (which proves it still works, and warns when rotation replaced it), lists the account's API tokens and flags those expiring within the configured days; fails the run when one does, so a schedule alerts.${revoke ? ' With revokeId and revokeName, revokes that one token — only when both match, and only once dryRun is false in the configuration element.' : ''}`,
+          inputs: revoke
+            ? [
+                { name: 'dryRun', type: 'boolean', description: 'true: report what would be revoked and change nothing' },
+                { name: 'revokeId', type: 'string', description: 'The id of the token to revoke (from the report); empty to only audit' },
+                { name: 'revokeName', type: 'string', description: 'Its exact name; nothing is revoked unless it matches' },
+              ]
+            : [],
+          outputs: [
+            { name: 'tokenReport', type: 'string', description: 'CSV: name, owner, expires, id' },
+            { name: 'expiringCount', type: 'number', description: 'Tokens expiring within the warning period' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: tokensWorkflow(scope === 'provider' ? 'provider' : null, revoke),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the Audit VCF Automation API tokens workflow. Fill vcfaApiToken after import.',
+          attributes: [
+            VCFA_HOST_ATTR,
+            ...(scope === 'provider' ? [] : [ORG_ATTR(org)]),
+            TOKEN_ATTR(scope === 'provider' ? 'a provider administrator' : `the account in ${org}`),
+            API_VERSION_ATTR,
+            { name: 'expiryWarnDays', type: 'number', value: warnDays, description: 'Flag tokens expiring within this many days' },
+            ...(revoke ? GUARD_ATTRS(1) : []),
+            WEBHOOK_ATTR,
+          ],
+        },
+      });
+
       const files                         = {
+        ...pkg.files,
         'IMPORT.md': importMd({
-          subject: 'The API token exchange every other VCF Automation 9 script on this page authenticates with. Nothing here is imported into VCF Automation; it produces the token the imports use.',
+          subject: `The API token handling every other VCF Automation 9 automation on this page authenticates with: an Orchestrator workflow that audits the account's API tokens${revoke ? ' and revokes one' : ''}, and the scripts that exchange, audit${revoke ? ' and revoke' : ''} from a Linux host. Nothing is imported into VCF Automation itself.`,
           orgs: scope === 'provider' ? PROVIDER : 'VCF Automation 9.1 / 9.1.1 organizations, VM Apps and All Apps',
           steps: [
-            manualStep('Make the API token', [`Log in to https://<vcfa>/${scope === 'provider' ? 'provider' : `tenant/${org}`}, My Account → API Tokens → New. Write it once to a mode-600 file: \`( umask 077; cat > ${tokenFile} )\`, paste, Ctrl-D.`]),
-            manualStep('Exchange it', ['`./vcfa-token-exchange.sh` writes a one-hour access token to the access file. The import scripts (`import/*.sh`) take the API token file directly as VCFA_API_TOKEN_FILE with VCFA_ORG; `apply.sh` scripts take VCFA_TOKEN="$(cat <access file>)".']),
-            checkStep('vcfa-tokens-audit.sh', 'tokens that expire within 30 days.'),
+            manualStep('Make the API token', [`Log in to https://<vcfa>/${scope === 'provider' ? 'provider' : `tenant/${org}`}, My Account → API Tokens → New. It is shown once: paste it into the configuration element (step 4 below), or for the scripts write it to a mode-600 file: \`( umask 077; cat > ${tokenFile} )\`, paste, Ctrl-D.`]),
+            ...pkg.importSteps,
+            manualStep('Or from a Linux host — exchange it', ['`./scripts/vcfa-token-exchange.sh` writes a one-hour access token to the access file. The import scripts (`import/*.sh`) take the API token file directly as VCFA_API_TOKEN_FILE with VCFA_ORG; `apply.sh` scripts take VCFA_TOKEN="$(cat <access file>)".']),
+            checkStep('vcfa-tokens-audit.sh', `tokens that expire within ${warnDays} days.`),
           ],
           auth: ['vcfa91'],
-          verify: ['The exchange (/oauth/tenant/<org>/token, /oauth/provider/token, grant_type=refresh_token) is from Broadcom TechDocs 9.1.'],
+          verify: [
+            'The exchange (/oauth/tenant/<org>/token, /oauth/provider/token, grant_type=refresh_token) is from Broadcom TechDocs 9.1 and vrealize.it, "VCF Automation 9 API Access".',
+            'VERIFY: /cloudapi/1.0.0/tokens (list, GET and DELETE by id) and its fields name, owner.name and expirationDate come from the Cloud Director token API VCF Automation inherited (go-vcloud-director OpenApiEndpointTokens); a 404 is reported, never read as "no tokens".',
+            'VERIFY: with token rotation on, the exchange returns a new API token and the configuration element still holds the old one; the workflow warns, and the SecureString has to be replaced by hand (core.loginVcfAutomation cannot write it back).',
+          ],
         }),
-        'vcfa-token-exchange.sh': exchange,
-        'vcfa-tokens-audit.sh': audit,
-        ...(revoke ? { 'vcfa-token-revoke.sh': revokeScript } : {}),
+        'scripts/vcfa-token-exchange.sh': exchange,
+        'scripts/vcfa-tokens-audit.sh': audit,
+        ...(revoke ? { 'scripts/vcfa-token-revoke.sh': revokeScript } : {}),
         ...(schedule ? { 'crontab.txt': cronLine('*/45 * * * *', env, 'vcfa-token-exchange.sh', 'vcfa-token.log') } : {}),
         'rotation-runbook.txt': [
           'Rotating a VCF Automation API token without an outage',
@@ -458,9 +1274,10 @@ export const VCF_AUTOMATION_91                                 = [
           '2. My Account → API Tokens → NEW. Name it with the date, e.g. archtoolkit-2026-09. Copy it once;',
           '   it is not shown again.',
           `3. Write it to ${tokenFile}.new with umask 077, then mv it over ${tokenFile}.`,
-          '4. Run vcfa-token-exchange.sh by hand and confirm it writes the access token.',
-          '5. Wait one scheduled cycle, then list tokens with vcfa-tokens-audit.sh and revoke the old one',
-          `   by id and exact name${revoke ? ' with vcfa-token-revoke.sh' : ' (enable the revoke script, or use My Account → API Tokens)'}.`,
+          '4. Run scripts/vcfa-token-exchange.sh by hand and confirm it writes the access token. In',
+          '   Orchestrator: replace vcfaApiToken in every configuration element that holds the old one.',
+          '5. Wait one scheduled cycle, then list tokens with the Audit VCF Automation API tokens workflow',
+          `   (or scripts/vcfa-tokens-audit.sh) and revoke the old one by id and exact name${revoke ? ' with the workflow\'s revokeId and revokeName, or scripts/vcfa-token-revoke.sh' : ' (enable the revoke option, or use My Account → API Tokens)'}.`,
           '',
           'If the organization has token rotation on, step 3 is done for you on every exchange: the',
           'script writes the new token back. Do not copy the file to a second machine in that case.',
@@ -490,28 +1307,29 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'The API token file must be mode 600 or 400, or the scripts stop', because: 'A world-readable token file is a standing credential for anyone with a shell on the host.' },
           { rule: 'The API token is sent on stdin, and the bearer token to curl on a file descriptor', because: 'Neither shows in ps, /proc or the shell history.' },
           { rule: 'A rotated API token is written back atomically before anything else', because: 'With rotation on, the old token dies at the exchange; losing the new one means a trip to the interface and a failed night of jobs.' },
-          ...(revoke ? [{ rule: 'Revoke needs the id, the exact name and --execute', because: 'Two tokens called "automation" on one account is common; revoking by name alone takes the wrong one.' }] : []),
+          { rule: 'In Orchestrator the API token is a SecureString, redacted from every error and never logged', because: 'The workflow log is readable by everyone who can see the workflow run.' },
+          ...(revoke ? [{ rule: 'Revoke needs the id, the exact name, and the arming switch (dryRun false in the configuration element; --execute for the script), and at most one per run', because: 'Two tokens called "automation" on one account is common; revoking by name alone takes the wrong one.' }] : []),
         ],
         dryRun: [
-          'vcfa-tokens-audit.sh only reads: run it first to see what tokens exist and when they expire.',
-          ...(revoke ? ['vcfa-token-revoke.sh without --execute shows which token it would revoke and stops.'] : []),
+          'The Audit VCF Automation API tokens workflow only reads unless a revoke is asked for; scripts/vcfa-tokens-audit.sh the same from a Linux host.',
+          ...(revoke ? ['A revoke is a dry run until dryRun is false in the configuration element: the log says which token it would revoke. scripts/vcfa-token-revoke.sh without --execute does the same.'] : []),
           'The exchange has no dry run — the exchange is the operation. With rotation on it replaces the API token file every time.',
         ],
         undo: [
           'An exchange needs no undo: the access token expires within the hour.',
           'A revoked API token cannot be restored. Create a new one and replace the file.',
         ],
-        told: ['VCF Automation records token creation and use against the user in its event log.', schedule ? 'The cron log, /var/log/archtoolkit/vcfa-token.log.' : 'The terminal it was run in.'],
+        told: ['VCF Automation records token creation and use against the user in its event log.', 'The workflow log and its AUDIT lines, the summary output, and the webhook when one is set; a run with tokens about to expire fails.', schedule ? 'The cron log, /var/log/archtoolkit/vcfa-token.log.' : 'The terminal it was run in.'],
         requires: [
           'VCF Automation 9.x, with the account the token belongs to able to log in to the portal.',
-          'An API token made in My Account → API Tokens, saved to the token file.',
-          'curl and jq on the host.',
+          'An API token made in My Account → API Tokens, in the configuration element (Orchestrator) or the token file (scripts).',
+          'Orchestrator in VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Automation certificate trusted; or curl and jq on a Linux host for the scripts.',
         ],
         files,
         notes: [
           'Provider: POST https://<vcfa>/oauth/provider/token. Organization: POST https://<vcfa>/oauth/tenant/<org>/token. Both form-encoded grant_type=refresh_token&refresh_token=<API token>, Accept: application/*; the answer has access_token and token_type Bearer, valid one hour (Broadcom TechDocs, 9.1).',
           'Which login to use: /iaas/api/login with a refresh token is the Aria Automation 8.x method, still answered for VM Apps organizations upgraded from 8.x. A fresh 9.x organization — VM Apps or All Apps — authenticates like a tenant, at /oauth/tenant/<org>/token (vrealize.it, VCF Automation 9 API Access). When unsure, try the OAuth exchange first.',
-          'The /cloudapi calls send Accept: application/json;version=<VCFA_API_VERSION>, default 9.1.0. 9.0 examples use 9.0.0. GET /api/versions lists what your system offers.',
+          'The /cloudapi calls send Accept: application/json;version=<version>. The workflow uses apiVersion when set (refused if GET /api/versions does not list it), otherwise the newest version listed; the scripts use VCFA_API_VERSION, default 9.1.0. Broadcom KB 419781 uses 40.0 on 9.0, vrealize.it uses 9.0.0 — GET /api/versions is the authority.',
           'Service accounts (Administration → Access Control → Service Accounts) use the OAuth device flow at /oauth/tenant/<org>/device_authorization and then the same token endpoint. The Terraform provider reads their token with service_account_token_file.',
           'The token list and revoke calls use /cloudapi/1.0.0/tokens, inherited from Cloud Director. VERIFY on your release: the probe prints the HTTP status if the path moved.',
           'The vcf CLI takes the token as --api-token. Omit it and let the CLI ask, so it does not land in history.',
@@ -720,8 +1538,8 @@ export const VCF_AUTOMATION_91                                 = [
           ...(allApps
             ? [
                 "ORG_ID=$(jq -r '.values[0].id' <<<\"$O\")",
-                '# VERIFY: region quotas are virtual datacenters underneath (go-vcloud-director: virtualDatacenters/).',
-                'if Q=$(probe "/cloudapi/1.0.0/virtualDatacenters?filter=org.id==${ORG_ID}"); then',
+                '# Region quotas are virtual datacenters underneath: /cloudapi/vcf/virtualDatacenters (go-vcloud-director tm_region_quota.go).',
+                'if Q=$(probe "/cloudapi/vcf/virtualDatacenters?filter=org.id==${ORG_ID}"); then',
                 "  jq -r '.values[]? | \"  quota \\(.name): \\(.status // \"?\")\"' <<<\"$Q\"",
                 "  BAD=$(jq '[.values[]? | select(.status != \"READY\")] | length' <<<\"$Q\")",
                 "  [[ \"$(jq '.values | length' <<<\"$Q\")\" -gt 0 ]] || { echo '  no region quota'; PROBLEMS=$((PROBLEMS+1)); }",
@@ -766,6 +1584,30 @@ export const VCF_AUTOMATION_91                                 = [
         '',
       ].join('\n');
 
+      const orgBody = { name: orgName, displayName: display, description: 'Managed by ArchToolKit', isEnabled: true, canManageOrgs: false, isClassicTenant: !allApps };
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'org', orgName),
+        description: `Creates the ${allApps ? 'All Apps' : 'VM Apps'} organization ${orgName} in VCF Automation 9.1 if it does not exist${allApps ? ', and checks its region quota' : ''}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Organizations/${orgName}`,
+        workflow: {
+          name: `Create organization ${label(orgName, 'org')}`,
+          description: `Provider work. Creates the organization ${orgName} (${allApps ? 'All Apps' : 'VM Apps'}) through POST /cloudapi/1.0.0/orgs when no organization of that name exists; leaves an existing one as it is and refuses one of the other type.${allApps ? ' Then reports whether its region quota exists and is READY — the quota, VM classes, storage policy and networking are applied with the Terraform in main.tf.' : ''} A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
+          outputs: [
+            { name: 'organizationId', type: 'string', description: 'The organization id, empty when a dry run would create it' },
+            { name: 'problemCount', type: 'number', description: 'Things that need attention: disabled, no quota, quota not READY' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: organizationWorkflow(allApps),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the organization workflow. Fill vcfaApiToken (a provider API token) after import; set dryRun to false only after a dry run.',
+          attributes: [VCFA_HOST_ATTR, TOKEN_ATTR('a provider administrator'), API_VERSION_ATTR, ...GUARD_ATTRS(1), WEBHOOK_ATTR],
+        },
+        resources: [{ name: 'org.json', content: json(orgBody) }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Organization ${orgName} (${allApps ? 'All Apps' : 'VM Apps'})`,
@@ -783,30 +1625,45 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'Apply only a saved, read plan (plan.sh --execute applies tfplan and nothing else)', because: 'A plan re-made at apply time can differ from the one that was reviewed.' },
           { rule: 'prevent_destroy on the organization', because: 'A terraform destroy, or a rename that forces replacement, would delete every namespace and VM in it.' },
           ...(allApps && cpuLimit > 0 && memLimit > 0 && storageGib > 0 ? [{ rule: `Explicit limits: ${cpuLimit} MHz and ${memLimit} MiB per zone, ${storageGib} GiB of ${storagePolicy}`, because: 'Without limits one tenant can consume the region.' }] : []),
-          { rule: 'check-org.sh stops if the server does not offer the API version it asks for', because: 'A version mismatch returns fields renamed or missing, and the check reports a healthy organization it did not read.' },
+          { rule: 'The workflow and check-org.sh stop if the server does not offer the API version they ask for', because: 'A version mismatch returns fields renamed or missing, and the check reports a healthy organization it did not read.' },
+          { rule: 'The workflow creates the organization only when none of that name exists, refuses one of the other type, and makes at most cap changes', because: 'The type (VM Apps or All Apps) cannot be changed after creation; a second organization of the same name is not possible and a retry must not try.' },
         ],
-        dryRun: ['plan.sh without --execute: terraform plan, saved to tfplan, changes nothing.', 'check-org.sh reads only.'],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it reads, and logs "DRY RUN: would create organization …".', 'scripts/plan.sh without --execute: terraform plan, saved to tfplan, changes nothing.', 'scripts/check-org.sh reads only.'],
         undo: [
           allApps ? 'Region quota and networking: remove them from main.tf and apply. Namespaces using the quota must be deleted first.' : 'Nothing but the organization was created.',
           'The organization: remove prevent_destroy on purpose, then terraform destroy -target. That deletes everything the organization contains.',
         ],
-        told: ['VCF Automation provider events record who created or changed the organization.', 'The Terraform state and whatever holds it.'],
+        told: ['VCF Automation provider events record who created or changed the organization.', 'The workflow log (AUDIT lines, PROBLEM warnings), its summary output and the webhook when set.', 'The Terraform state and whatever holds it.'],
         requires: [
           'VCF Automation 9.1 with the region, supervisors, zones and provider gateway already set up (see "Regions, zones and supervisors").',
           'Terraform 1.5+, network access to registry.terraform.io or a mirror, and a provider API token.',
         ],
         files: {
+          ...pkg.files,
           'versions.tf': VERSIONS_TF,
           'main.tf': main,
-          'plan.sh': tfScript(`Create organization ${orgName}.`, 'remove the resource from main.tf and apply; see the README for the organization itself.'),
-          'check-org.sh': check,
+          'org.json': json(orgBody),
+          'scripts/plan.sh': tfScript(`Create organization ${orgName}.`, 'remove the resource from main.tf and apply; see the README for the organization itself.'),
+          'scripts/check-org.sh': check,
           'onboarding-checklist.md': checklist,
           'IMPORT.md': importMd({
-            subject: `The organization ${orgName} and its region quota, through the vmware/vcfa Terraform provider.`,
+            subject: `The organization ${orgName}${allApps ? ' and its region quota' : ''}: an Orchestrator workflow that creates the organization through the /cloudapi API${allApps ? ' and checks its quota' : ''}, and the vmware/vcfa Terraform for the whole of it.`,
             orgs: PROVIDER,
-            steps: [tfStep('Create the organization', 'Run it with VCFA_ORG=System and a provider API token.'), checkStep('check-org.sh', 'the organization is enabled and its region quota READY.'), manualStep('Then', ['Work through onboarding-checklist.md; the tenant-side blueprints on this page start once the organization has an administrator and an API token.'])],
+            steps: [
+              ...pkg.importSteps,
+              allApps
+                ? tfStep('The region quota, VM classes, storage policy and networking — Terraform', `Run it with VCFA_ORG=System and a provider API token. If the workflow already created the organization, first \`terraform import vcfa_org.${tf} ${orgName}\` so Terraform manages it rather than making a second one. Run the workflow again afterwards: its problemCount goes to 0 once the quota is READY.`)
+                : tfStep('Or: the organization with Terraform', 'Run it with VCFA_ORG=System and a provider API token. It is the same organization; use one route or the other, or terraform import what the workflow created.'),
+              manualStep('Or by the API, by hand', ['POST https://<vcfa>/cloudapi/1.0.0/orgs with `org.json` as the body, Accept and Content-Type `application/json;version=<version from GET /api/versions>`, and a provider bearer token (Broadcom KB 419781).']),
+              checkStep('check-org.sh', `the organization is enabled${allApps ? ' and its region quota READY' : ''}.`),
+              manualStep('Then', ['Work through onboarding-checklist.md; the tenant-side blueprints on this page start once the organization has an administrator and an API token.']),
+            ],
             auth: ['terraform', 'vcfa91'],
-            verify: ['Arguments follow the vmware/vcfa provider documentation (1.2.x, which states support for 9.1).'],
+            verify: [
+              'Creating an organization: POST /cloudapi/1.0.0/orgs with name, displayName, description, isEnabled, canManageOrgs and isClassicTenant (true = VM Apps) is Broadcom KB 419781 (VCF Automation 9.0); the same TmOrg fields are in the go-vcloud-director v3 SDK. VERIFY on 9.1 with a dry run and GET /api/versions.',
+              ...(allApps ? ['Region quotas are read at /cloudapi/vcf/virtualDatacenters (go-vcloud-director govcd/tm_region_quota.go: OpenApiPathVcf + virtualDatacenters/); earlier versions of this kit read /cloudapi/1.0.0/virtualDatacenters, which is not where the SDK has them.'] : []),
+              'Terraform arguments follow the vmware/vcfa provider documentation (1.2.x, which states support for 9.1).',
+            ],
           }),
         },
         notes: [
@@ -913,7 +1770,8 @@ export const VCF_AUTOMATION_91                                 = [
           "probe \"/cloudapi/vcf/supervisors?filter=region.id==${RID}\" | jq -r '.values[]? | \"  \\(.name)  \\(.status // \"\")\"' || true",
           '',
           'echo; echo "VM classes:"',
-          'if C=$(probe "/cloudapi/vcf/regionVirtualMachineClasses?filter=region.id==${RID}&pageSize=128"); then',
+          '# VM classes: /cloudapi/vcf/virtualMachineClasses (go-vcloud-director tm_region_vm_class.go).',
+          'if C=$(probe "/cloudapi/vcf/virtualMachineClasses?filter=region.id==${RID}&pageSize=128"); then',
           "  jq -r '.values[]? | \"  \\(.name)  cpu=\\(.cpuCount // \"?\") memory=\\(.memoryMiB // \"?\")MiB reserved=\\(.reserved // \"?\")\"' <<<\"$C\"",
           '  for c in "${EXPECTED_CLASSES[@]}"; do',
           "    jq -e --arg c \"$c\" '[.values[]?.name] | index($c)' <<<\"$C\" >/dev/null || { echo \"  MISSING: $c\"; PROBLEMS=$((PROBLEMS+1)); }",
@@ -941,6 +1799,29 @@ export const VCF_AUTOMATION_91                                 = [
         'fi',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'region', region),
+        description: `Inventories region ${region} of VCF Automation 9.1 from the provider side: status, zones, supervisors, VM classes, storage policies and classes. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Regions/${region}`,
+        workflow: {
+          name: `Inventory region ${label(region, 'region')}`,
+          description: `Reads region ${region} through /cloudapi/vcf: its status, zones, supervisors, VM classes (against the ${expected.length} expected), storage policies and storage classes. Reads only; fails the run when something needs attention, so a schedule alerts.${create ? ' The region itself is created with the Terraform in region.tf.' : ''}`,
+          inputs: [],
+          outputs: [
+            { name: 'inventory', type: 'string', description: 'What the region offers, JSON' },
+            { name: 'problemCount', type: 'number', description: 'Things that need attention' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: regionWorkflow(),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the region inventory workflow. Fill vcfaApiToken (a provider API token; a read-only provider role is enough) after import.',
+          attributes: [VCFA_HOST_ATTR, TOKEN_ATTR('a provider account'), API_VERSION_ATTR, WEBHOOK_ATTR],
+        },
+        resources: [{ name: 'region.json', content: json({ region, expectedVmClasses: expected }) }],
+      });
+
       return {
         platform: PLATFORM,
         title: create ? `Region ${region} and its inventory` : `Inventory of region ${region}`,
@@ -961,24 +1842,29 @@ export const VCF_AUTOMATION_91                                 = [
               { rule: 'prevent_destroy on the region', because: 'Every organization quota in the region depends on it.' },
             ]
           : [],
-        dryRun: create ? ['plan.sh without --execute.', 'inventory.sh and namespace-classes.sh only read.'] : ['Everything here reads only.'],
+        dryRun: create ? ['scripts/plan.sh without --execute.', 'The Inventory region workflow, scripts/inventory.sh and scripts/namespace-classes.sh only read.'] : ['Everything here reads only.'],
         undo: create ? ['Remove the region from main.tf and apply after every organization quota in it is removed. prevent_destroy has to be taken off first.'] : ['Nothing to undo.'],
-        told: ['Provider events in VCF Automation.', 'The inventory output — run it weekly and it becomes the record.'],
+        told: ['Provider events in VCF Automation.', 'The workflow log and its inventory output, and the webhook when set; a run with problems fails — schedule it weekly and it becomes the record.'],
         requires: ['VCF Automation 9.1 with the vCenter and NSX Manager connected in the provider portal.', 'Supervisors enabled with VPC networking (or 9.1.1 VLAN-backed VPC).'],
         files: {
-          ...(create ? { 'versions.tf': VERSIONS_TF, 'region.tf': regionTf, 'plan.sh': tfScript(`Create region ${region}.`, 'remove it from region.tf and apply, after its quotas are gone.') } : {}),
-          'inventory.sh': inventory,
-          'namespace-classes.sh': nsClasses,
+          ...pkg.files,
+          ...(create ? { 'versions.tf': VERSIONS_TF, 'region.tf': regionTf, 'scripts/plan.sh': tfScript(`Create region ${region}.`, 'remove it from region.tf and apply, after its quotas are gone.') } : {}),
+          'scripts/inventory.sh': inventory,
+          'scripts/namespace-classes.sh': nsClasses,
           'IMPORT.md': importMd({
-            subject: `Region ${region}: ${create ? 'created through the vmware/vcfa Terraform provider, then inventoried' : 'inventoried'}.`,
+            subject: `Region ${region}: ${create ? 'created through the vmware/vcfa Terraform provider, then inventoried by an Orchestrator workflow' : 'inventoried by an Orchestrator workflow'} (or the script).`,
             orgs: PROVIDER,
             steps: [
-              ...(create ? [tfStep('Create the region', 'Provider work: VCFA_ORG=System.')] : []),
+              ...(create ? [tfStep('Create the region', 'Provider work: VCFA_ORG=System. Creating a region names an NSX Manager, supervisors and storage policies; the vmware/vcfa provider is the documented client for it, so it is not repeated in the workflow.')] : []),
+              ...pkg.importSteps,
               checkStep('inventory.sh', 'the region, its zones, supervisors, VM classes and storage.'),
-              manualStep('Namespace classes', ['`./namespace-classes.sh` lists them from an organization kubectl context. To create one, see "A Supervisor namespace, requested from All Apps".']),
+              manualStep('Namespace classes', ['`./scripts/namespace-classes.sh` lists them from an organization kubectl context. To create one, see "A Supervisor namespace, requested from All Apps".']),
             ],
             auth: ['terraform', 'vcfa91', 'kube'],
-            verify: ['The /cloudapi/vcf inventory paths are inferred; inventory.sh reports an HTTP status instead of failing silently when one differs.'],
+            verify: [
+              'The /cloudapi/vcf paths follow the go-vcloud-director v3 SDK (OpenApiPathVcf with regions/, zones/, supervisors/, virtualMachineClasses/, regionStoragePolicies/, storageClasses/). VM classes are at virtualMachineClasses — earlier versions of this kit read regionVirtualMachineClasses. The filter field region.id is VERIFY; a path that answers 404 is reported as a problem, not passed.',
+              'The response fields status, cpuCapacityMHz and memoryCapacityMiB are the SDK\'s Region type.',
+            ],
           }),
         },
         notes: [
@@ -1062,27 +1948,30 @@ export const VCF_AUTOMATION_91                                 = [
         findings.push(error('vcfa91.vpc.cidr', `"${blockCidr}" is not an IPv4 CIDR.`, { source: SRC }));
       }
 
-      const yaml = subnets
-        .map((s) =>
-          [
-            '---',
-            '# VERIFY apiVersion and field names: kubectl explain subnet.spec (crd.nsx.vmware.com)',
-            'apiVersion: crd.nsx.vmware.com/v1alpha1',
-            'kind: Subnet',
-            'metadata:',
-            `  name: ${s.name}`,
-            `  namespace: ${namespace}`,
-            '  labels:',
-            '    archtoolkit/managed: "true"',
-            'spec:',
-            `  accessMode: ${s.mode}`,
-            `  ipv4SubnetSize: ${Number.isFinite(s.size) ? s.size : 16}`,
-            '  subnetDHCPConfig:',
-            `    mode: ${dhcp ? 'DHCPServer' : 'DHCPDeactivated'}`,
-          ].join('\n'),
-        )
-        .join('\n')
-        .concat('\n');
+      const subnetObjects               = subnets.map((sn) => ({
+        plural: 'subnets',
+        object: {
+          apiVersion: 'crd.nsx.vmware.com/v1alpha1',
+          kind: 'Subnet',
+          metadata: { name: sn.name, namespace, labels: { 'archtoolkit/managed': 'true' } },
+          spec: { accessMode: sn.mode, ipv4SubnetSize: Number.isFinite(sn.size) ? sn.size : 16, subnetDHCPConfig: { mode: dhcp ? 'DHCPServer' : 'DHCPDeactivated' } },
+        },
+      }));
+      const yaml = k8sYaml(subnetObjects.map((o) => ({ comment: ['VERIFY apiVersion and field names: kubectl explain subnet.spec (crd.nsx.vmware.com)'], object: o.object })));
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'vpc', namespace),
+        description: `Creates ${subnets.length} VPC subnet(s) in the All Apps namespace ${namespace}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/VPC subnets/${namespace}`,
+        workflow: {
+          name: `Create VPC subnets in ${label(namespace, 'namespace')}`,
+          description: `Creates the NSX operator Subnet objects ${subnets.map((sn) => sn.name).join(', ')} in namespace ${namespace}, through the namespace's Kubernetes API: each that does not exist, never changing one that does. A dry run validates each on the server (dryRun=All) and changes nothing, until dryRun is false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: KUBE_OUTPUTS,
+          script: kubeWorkflow({ resource: 'subnets.json', served: ['crd.nsx.vmware.com/v1alpha1'], label: '"subnet " + o.metadata.name + " (" + o.spec.accessMode + ", " + o.spec.ipv4SubnetSize + " addresses) in " + o.metadata.namespace' }),
+        },
+        config: kubeConfig('VPC subnets', '', Math.max(1, subnets.length)),
+        resources: [{ name: 'subnets.json', content: json(subnetObjects) }],
+      });
 
       const discover = kubeReadScript(`Show the VPC networking of namespace ${namespace}: API versions, VPC, subnets and subnet sets.`, [
         `NS=${q(namespace)}`,
@@ -1140,30 +2029,32 @@ export const VCF_AUTOMATION_91                                 = [
           ifWrong: 'A Public subnet exposes its VMs to whatever the Tier-0 advertises to; a wrong namespace puts the subnet in another team’s VPC.',
         },
         guardrails: [
-          { rule: 'The script stops unless the current context is EXPECT_CONTEXT', because: 'The context is the scope; a subnet created in the wrong organization is a routing change in someone else’s VPC.' },
+          { rule: 'The script stops unless the current context is EXPECT_CONTEXT; the workflow sends only to the kubeServer of its configuration element', because: 'The context is the scope; a subnet created in the wrong organization is a routing change in someone else’s VPC.' },
           { rule: 'kubectl create, not apply', because: 'create refuses to change a subnet that already exists; resizing a live subnet renumbers what is on it.' },
           { rule: 'Server-side dry run unless --execute', because: 'The NSX operator’s admission checks the access mode, size and quota before anything is allocated.' },
           ...(withBlock ? [{ rule: 'Apply only a saved, read plan for the IP block, with prevent_destroy', because: 'Destroying an external block withdraws addresses in use.' }] : []),
         ],
-        dryRun: ['create-subnets.sh without --execute runs a server-side dry run.', 'discover.sh only reads.', ...(withBlock ? ['plan.sh without --execute.'] : [])],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it sends each subnet with dryRun=All, so the NSX operator validates it, and creates nothing.', 'scripts/create-subnets.sh without --execute runs the same server-side dry run.', 'scripts/discover.sh only reads.', ...(withBlock ? ['scripts/plan.sh without --execute.'] : [])],
         undo: ['kubectl delete subnet <name> -n ' + namespace + ' — refused while VMs are attached. Public addresses go back to the organization’s quota.'],
-        told: ['NSX Manager audit log for the subnet and its segment.', 'Kubernetes events on the Subnet object.'],
+        told: ['NSX Manager audit log for the subnet and its segment.', 'Kubernetes events on the Subnet object.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An All Apps organization with regional networking set, and a namespace attached to a VPC.', 'kubectl and the VCF CLI, logged in to the organization and namespace.'],
         files: {
+          ...pkg.files,
           'subnets.k8s.yaml': yaml,
-          'create-subnets.sh': kubeScript(`Create the VPC subnets for ${namespace}.`, [], ['subnets.k8s.yaml'], `kubectl delete -f subnets.k8s.yaml (after the VMs on them are gone).`),
-          'discover.sh': discover,
-          ...(withBlock ? { 'versions.tf': VERSIONS_TF, 'ip-block.tf': blockTf, 'plan.sh': tfScript(`Create the external IP block ${blockName}.`, 'remove it from ip-block.tf and apply once nothing uses it.') } : {}),
+          'scripts/create-subnets.sh': kubeScript(`Create the VPC subnets for ${namespace}.`, [], ['subnets.k8s.yaml'], `kubectl delete -f subnets.k8s.yaml (after the VMs on them are gone).`),
+          'scripts/discover.sh': discover,
+          ...(withBlock ? { 'versions.tf': VERSIONS_TF, 'ip-block.tf': blockTf, 'scripts/plan.sh': tfScript(`Create the external IP block ${blockName}.`, 'remove it from ip-block.tf and apply once nothing uses it.') } : {}),
           'IMPORT.md': importMd({
-            subject: `VPC subnets for the namespace ${namespace}.`,
+            subject: `VPC subnets for the namespace ${namespace}: an Orchestrator workflow that creates them through the namespace's Kubernetes API, and the same objects as subnets.k8s.yaml for kubectl.`,
             orgs: ALL_APPS,
             steps: [
-              ...(withBlock ? [tfStep(`External IP block ${blockName} (provider)`, 'Provider work: VCFA_ORG=System.')] : []),
-              manualStep('Look first', ['`./discover.sh` shows the namespace’s VPC, subnets and the API versions the server offers.']),
-              kubeStep('Subnets', 'create-subnets.sh', ['subnets.k8s.yaml']),
+              ...(withBlock ? [tfStep(`External IP block ${blockName} (provider)`, 'Provider work: VCFA_ORG=System. The external IP block is a provider object the vmware/vcfa provider manages (vcfa_ip_space); it comes before the Public subnets drawn from it.')] : []),
+              manualStep('Look first', ['`./scripts/discover.sh` shows the namespace’s VPC, subnets and the API versions the server offers.']),
+              ...pkg.importSteps,
+              kubeStep('Or: the subnets with kubectl', 'scripts/create-subnets.sh', ['subnets.k8s.yaml']),
             ],
-            auth: ['kube', ...(withBlock ? (['terraform']         ) : [])],
-            verify: ['The subnet apiVersion and accessMode names: kubectl explain subnet.spec.'],
+            auth: ['kube', 'vcfa91', ...(withBlock ? (['terraform']         ) : [])],
+            verify: ['The subnet apiVersion (crd.nsx.vmware.com/v1alpha1) and accessMode names: kubectl explain subnet.spec. The workflow stops before sending anything if the group is not served.', KUBE_VERIFY],
           }),
         },
         notes: [
@@ -1350,6 +2241,29 @@ export const VCF_AUTOMATION_91                                 = [
         ],
       });
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'library', lib),
+        description: `Checks the VCF Automation 9.1 content library ${lib} and lists its items with their VM image identifiers. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Content libraries/${lib}`,
+        workflow: {
+          name: `Check content library ${label(lib, 'library')}`,
+          description: `Reads the content library ${lib} and its items through /cloudapi/vcf: fails the run unless the library and every item are READY, and lists each item's VM image identifier (vmi-…), which is what a VM Service request names. Reads only; the library and its uploads are created with the Terraform in content-library.tf.`,
+          inputs: [],
+          outputs: [
+            { name: 'itemReport', type: 'string', description: 'CSV: name, type, imageIdentifier, status' },
+            { name: 'problemCount', type: 'number', description: 'Things that are not READY or not found' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: libraryWorkflow(),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the content library check. Fill vcfaApiToken after import.',
+          attributes: [VCFA_HOST_ATTR, ORG_ATTR(owner === 'provider' ? 'provider' : org), TOKEN_ATTR(owner === 'provider' ? 'a provider account' : `an account in ${org}`), API_VERSION_ATTR, WEBHOOK_ATTR],
+        },
+        resources: [{ name: 'library.json', content: json({ name: lib }) }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Content library ${lib}`,
@@ -1368,21 +2282,29 @@ export const VCF_AUTOMATION_91                                 = [
           ...(needsPassword ? [{ rule: 'The subscription password comes from TF_VAR_subscription_password, marked sensitive', because: 'It never lands in a .tf file or the plan output.' }] : []),
           { rule: 'check-library.sh fails unless the library and every item are READY', because: 'A PARTIALLY_READY library still appears in the picker and fails at VM creation.' },
         ],
-        dryRun: ['plan.sh without --execute.', 'check-library.sh reads only.'],
+        dryRun: ['scripts/plan.sh without --execute.', 'The Check content library workflow and scripts/check-library.sh read only.'],
         undo: ['Remove the items or library from content-library.tf and apply. VMs already deployed from an image keep running; new requests naming its vmi fail.'],
-        told: ['VCF Automation events, and vCenter content library tasks, which VCF Operations collects.'],
+        told: ['VCF Automation events, and vCenter content library tasks, which VCF Operations collects.', 'The Check content library workflow log and its itemReport output, and the webhook when set; a run fails unless everything is READY.'],
         requires: ['VCF Automation 9.1 (project content libraries and Canonical subscriptions are 9.1).', 'A storage class granted to the organization in the region.', 'Terraform 1.5+ and the image files on the host that runs plan.sh.'],
         files: {
+          ...pkg.files,
           'versions.tf': VERSIONS_TF,
           'content-library.tf': tfLines,
-          'plan.sh': tfScript(`Create content library ${lib}.`, 'remove it from content-library.tf and apply.'),
-          'check-library.sh': check,
+          'scripts/plan.sh': tfScript(`Create content library ${lib}.`, 'remove it from content-library.tf and apply.'),
+          'scripts/check-library.sh': check,
           'IMPORT.md': importMd({
-            subject: `The content library ${lib} and its images.`,
+            subject: `The content library ${lib} and its images: created with the vmware/vcfa Terraform provider (which uploads the OVA/OVF/ISO files), then checked by an Orchestrator workflow.`,
             orgs: ALL_APPS,
-            steps: [tfStep('Create the library', `Run with VCFA_ORG=${org}.`), checkStep('check-library.sh', 'the library is READY, with the image identifiers VM Service will use.')],
+            steps: [
+              tfStep('Create the library', `Run with VCFA_ORG=${org}. The uploads stream the image files from the host plan.sh runs on, which an Orchestrator workflow cannot do; so creating the library stays with Terraform.`),
+              ...pkg.importSteps,
+              checkStep('check-library.sh', 'the library is READY, with the image identifiers VM Service will use.'),
+            ],
             auth: ['terraform', 'vcfa91'],
-            verify: ['Arguments follow vcfa_content_library and vcfa_content_library_item in the vmware/vcfa provider documentation.'],
+            verify: [
+              'Arguments follow vcfa_content_library and vcfa_content_library_item in the vmware/vcfa provider documentation.',
+              'The check reads /cloudapi/vcf/contentLibraries (go-vcloud-director OpenApiPathVcf + contentLibraries/, fields name, status, libraryType, isSubscribed) and /cloudapi/vcf/contentLibraryItems; the item fields itemType, imageIdentifier and status and the filter contentLibrary.id are VERIFY.',
+            ],
           }),
         },
         notes: [
@@ -1477,69 +2399,76 @@ export const VCF_AUTOMATION_91                                 = [
         ...(disk > 0 ? ['disk_setup:', '  /dev/sdb:', '    table_type: gpt', '    layout: true', 'fs_setup:', '  - device: /dev/sdb1', '    filesystem: xfs', '    label: data', 'mounts:', '  - [LABEL=data, /data, xfs, "defaults,nofail", "0", "2"]'] : []),
       ];
 
-      const docs           = [];
+      const vmObjects                                             = [];
       if (ci) {
-        docs.push(
-          [
-            '---',
-            '# cloud-init user-data. A public key only; no password is ever set here.',
-            'apiVersion: v1',
-            'kind: Secret',
-            'metadata:',
-            `  name: ${secretName}`,
-            `  namespace: ${ns}`,
-            'type: Opaque',
-            'stringData:',
-            '  user-data: |',
-            ...cloudConfig.map((l) => `    ${l}`),
-          ].join('\n'),
-        );
+        vmObjects.push({
+          comment: ['cloud-init user-data. A public key only; no password is ever set here.'],
+          item: { plural: 'secrets', object: { apiVersion: 'v1', kind: 'Secret', metadata: { name: secretName, namespace: ns }, type: 'Opaque', stringData: { 'user-data': `${cloudConfig.join('\n')}\n` } } },
+        });
       }
       if (disk > 0) {
-        docs.push(['---', 'apiVersion: v1', 'kind: PersistentVolumeClaim', 'metadata:', `  name: ${vm}-data`, `  namespace: ${ns}`, 'spec:', '  accessModes: [ReadWriteOnce]', `  storageClassName: ${sc}`, '  resources:', '    requests:', `      storage: ${disk}Gi`].join('\n'));
+        vmObjects.push({
+          item: { plural: 'persistentvolumeclaims', object: { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: `${vm}-data`, namespace: ns }, spec: { accessModes: ['ReadWriteOnce'], storageClassName: sc, resources: { requests: { storage: `${disk}Gi` } } } } },
+        });
       }
-      docs.push(
-        [
-          '---',
-          `apiVersion: vmoperator.vmware.com/${api}`,
-          'kind: VirtualMachine',
-          'metadata:',
-          `  name: ${vm}`,
-          `  namespace: ${ns}`,
-          '  labels:',
-          `    app: ${vm}`,
-          '    archtoolkit/managed: "true"',
-          'spec:',
-          `  className: ${cls}`,
-          `  imageName: ${image || '<REQUIRED — vmi-… from kubectl get vmi>'}`,
-          `  storageClass: ${sc}`,
-          '  powerState: PoweredOn',
-          ...(netKind !== 'default'
-            ? ['  network:', '    interfaces:', '      - name: eth0', '        network:', `          name: ${netName}`, `          kind: ${netKind}`, '          apiVersion: crd.nsx.vmware.com/v1alpha1']
-            : []),
-          ...(ci ? ['  bootstrap:', '    cloudInit:', '      rawCloudConfig:', `        name: ${secretName}`, '        key: user-data'] : []),
-          ...(disk > 0 ? ['  volumes:', '    - name: data', '      persistentVolumeClaim:', `        claimName: ${vm}-data`] : []),
-        ].join('\n'),
-      );
+      vmObjects.push({
+        item: {
+          plural: 'virtualmachines',
+          object: {
+            apiVersion: `vmoperator.vmware.com/${api}`,
+            kind: 'VirtualMachine',
+            metadata: { name: vm, namespace: ns, labels: { app: vm, 'archtoolkit/managed': 'true' } },
+            spec: {
+              className: cls,
+              imageName: image || '<REQUIRED — vmi-… from kubectl get vmi>',
+              storageClass: sc,
+              powerState: 'PoweredOn',
+              ...(netKind !== 'default' ? { network: { interfaces: [{ name: 'eth0', network: { name: netName, kind: netKind, apiVersion: 'crd.nsx.vmware.com/v1alpha1' } }] } } : {}),
+              ...(ci ? { bootstrap: { cloudInit: { rawCloudConfig: { name: secretName, key: 'user-data' } } } } : {}),
+              ...(disk > 0 ? { volumes: [{ name: 'data', persistentVolumeClaim: { claimName: `${vm}-data` } }] } : {}),
+            },
+          },
+        },
+      });
       if (lb) {
-        docs.push(
-          [
-            '---',
-            `apiVersion: vmoperator.vmware.com/${api}`,
-            'kind: VirtualMachineService',
-            'metadata:',
-            `  name: ${vm}-lb`,
-            `  namespace: ${ns}`,
-            'spec:',
-            '  type: LoadBalancer',
-            '  selector:',
-            `    app: ${vm}`,
-            '  ports:',
-            ...ports.flatMap((p) => [`    - name: tcp-${p}`, '      protocol: TCP', `      port: ${p}`, `      targetPort: ${p}`]),
-          ].join('\n'),
-        );
+        vmObjects.push({
+          item: {
+            plural: 'virtualmachineservices',
+            object: {
+              apiVersion: `vmoperator.vmware.com/${api}`,
+              kind: 'VirtualMachineService',
+              metadata: { name: `${vm}-lb`, namespace: ns },
+              spec: { type: 'LoadBalancer', selector: { app: vm }, ports: ports.map((p) => ({ name: `tcp-${p}`, protocol: 'TCP', port: p, targetPort: p })) },
+            },
+          },
+        });
       }
-      const yaml = `${docs.join('\n')}\n`;
+      const yaml = k8sYaml(vmObjects.map((d) => ({ comment: d.comment, object: d.item.object })));
+      // The same checks create-vm.sh makes, before anything is sent: the image
+      // is visible to the namespace (vmi) or cluster-wide (clustervmi), and the
+      // VM class is bound (a warning: the create itself says whether it is).
+      const vmPre = String.raw`var NS = ${JSON.stringify(ns)};
+var VMOP = ${JSON.stringify(`vmoperator.vmware.com/${api}`)};
+var IMAGE = ${JSON.stringify(image)};
+var VM_CLASS = ${JSON.stringify(cls)};
+if (IMAGE && !kubeGet(collectionPath(VMOP, NS, "virtualmachineimages") + "/" + encodeURIComponent(IMAGE)) && !kubeGet(collectionPath(VMOP, "", "clustervirtualmachineimages") + "/" + encodeURIComponent(IMAGE))) {
+  throw new Error("Image " + IMAGE + " is not visible in " + NS + " (kubectl get vmi -n " + NS + "); nothing was created.");
+}
+if (!kubeGet(collectionPath(VMOP, NS, "virtualmachineclasses") + "/" + encodeURIComponent(VM_CLASS))) System.warn("VM class " + VM_CLASS + " is not listed in " + NS + "; the create will say whether it is bound.");`;
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'vm', ns, vm),
+        description: `Creates the VM Service virtual machine ${vm} in the All Apps namespace ${ns}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/VM Service/${ns}/${vm}`,
+        workflow: {
+          name: `Create VM ${vm}`,
+          description: `Creates, in namespace ${ns} through its Kubernetes API, ${vmObjects.map((d) => `the ${d.item.object.kind} ${d.item.object.metadata.name}`).join(', ')} — each that does not exist, in that order, never changing one that does. Stops first unless vmoperator.vmware.com/${api} is served and the image is visible. A dry run validates each on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: KUBE_OUTPUTS,
+          script: kubeWorkflow({ resource: 'objects.json', served: [`vmoperator.vmware.com/${api}`], pre: vmPre }),
+        },
+        config: kubeConfig(`Create VM ${vm}`, '', vmObjects.length),
+        resources: [{ name: 'objects.json', content: json(vmObjects.map((d) => d.item)) }],
+      });
 
       const pre = [
         `NS=${q(ns)}`,
@@ -1567,19 +2496,27 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'kubectl create, never apply', because: 'create refuses to overwrite an existing VM of the same name; apply would change its class or image in place.' },
           { rule: 'cloud-init sets no password and disables SSH password login', because: 'The Secret is readable by anyone who can read Secrets in the namespace.' },
         ],
-        dryRun: ['create-vm.sh without --execute: server-side dry run — class binding, image, storage class and quota are all checked.'],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: each object is sent with dryRun=All, so class binding, image, storage class and quota are all checked, and nothing is created.', 'scripts/create-vm.sh without --execute: the same server-side dry run.'],
         undo: [`kubectl delete -f ${vm}.k8s.yaml. The VM and its data disk are deleted with it.`],
-        told: ['Kubernetes events on the VirtualMachine.', 'vCenter tasks for the VM, which VCF Operations collects.'],
+        told: ['Kubernetes events on the VirtualMachine.', 'vCenter tasks for the VM, which VCF Operations collects.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An All Apps namespace with the VM class, storage class and image available to it.', 'kubectl and the VCF CLI logged in to the namespace context.', ...(lb ? ['Avi load balancing delegated to the organization (9.1).'] : [])],
         files: {
+          ...pkg.files,
           [`${vm}.k8s.yaml`]: yaml,
-          'create-vm.sh': kubeScript(`Create VM ${vm} in ${ns}.`, pre, [`${vm}.k8s.yaml`], `kubectl delete -f ${vm}.k8s.yaml`),
+          'scripts/create-vm.sh': kubeScript(`Create VM ${vm} in ${ns}.`, pre, [`${vm}.k8s.yaml`], `kubectl delete -f ${vm}.k8s.yaml`),
           'IMPORT.md': importMd({
-            subject: `The VM Service virtual machine ${vm} in ${ns}.`,
+            subject: `The VM Service virtual machine ${vm} in ${ns}: an Orchestrator workflow that creates it through the namespace's Kubernetes API, and the same objects as ${vm}.k8s.yaml for kubectl.`,
             orgs: ALL_APPS,
-            steps: [kubeStep('The virtual machine', 'create-vm.sh', [`${vm}.k8s.yaml`], ['To offer it in the catalogue instead, wrap the manifest in a blueprint (formatVersion 2, a CCI.Supervisor.Resource whose manifest is this file) and import that through Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import (VERIFY the resource type against a blueprint made in the designer).'])],
-            auth: ['kube'],
-            verify: ['The vmoperator apiVersion: kubectl api-versions | grep vmoperator, and use the newest.'],
+            steps: [
+              ...pkg.importSteps,
+              kubeStep('Or: the virtual machine with kubectl', 'scripts/create-vm.sh', [`${vm}.k8s.yaml`], ['To offer it in the catalogue instead, wrap the manifest in a blueprint (formatVersion 2, a CCI.Supervisor.Resource whose manifest is this file) and import that through Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import (VERIFY the resource type against a blueprint made in the designer).']),
+            ],
+            auth: ['kube', 'vcfa91'],
+            verify: [
+              `The vmoperator apiVersion: kubectl api-versions | grep vmoperator, and use the newest (VCF Automation 9.x examples use v1alpha5 — theaistack.blog, 2026). The workflow stops before sending anything if vmoperator.vmware.com/${api} is not served.`,
+              'The resource names virtualmachineimages and clustervirtualmachineimages (kubectl vmi / clustervmi), virtualmachineclasses and virtualmachineservices are VM Operator\'s; kubectl api-resources --api-group=vmoperator.vmware.com lists them.',
+              KUBE_VERIFY,
+            ],
           }),
         },
         notes: [
@@ -1669,36 +2606,46 @@ export const VCF_AUTOMATION_91                                 = [
       if (!pg) findings.push(info('vcfa91.db.mysql-ui', 'On 9.0.1 MySQL databases were made through kubectl only and did not appear in the VCF Automation UI.', { remediation: 'VERIFY on 9.1 whether they show under Data Services; manage them with kubectl either way.', source: 'Cormac Hogan, DSM 9.0.1 MySQL through VCF Automation' }));
       if (!pg && ha) findings.push(info('vcfa91.db.mysql-members', 'MySQL HA is three members.', { source: SRC }));
 
-      const yaml = [
-        '# VERIFY: kubectl explain ' + kind.toLowerCase() + '.spec — field names follow DSM 9.0.x examples.',
-        'apiVersion: databases.dataservices.vmware.com/v1alpha1',
-        `kind: ${kind}`,
-        'metadata:',
-        `  name: ${db}`,
-        `  namespace: ${ns}`,
-        '  labels:',
-        '    archtoolkit/managed: "true"',
-        'spec:',
-        `  version: ${q(version)}`,
-        `  adminUsername: ${user}`,
-        '  adminPasswordRef:',
-        `    name: ${secret}`,
-        ...(pg ? [`  databaseName: ${db.replace(/-/g, '_')}`, `  replicas: ${ha ? 1 : 0}`] : [`  members: ${ha ? 3 : 1}`]),
-        '  vmClass:',
-        `    name: ${cls}`,
-        `  storagePolicyName: ${q(sp)}`,
-        `  storageSpace: ${gib}Gi`,
-        '  infrastructurePolicy:',
-        `    name: ${infra}`,
-        '  maintenanceWindow:',
-        `    startDay: ${day}`,
-        '    startTime: "23:59"',
-        '    duration: 6h',
-        ...(backup
-          ? ['  backupLocation:', `    name: ${loc}`, '  backupConfig:', `    backupRetentionDays: ${days}`, '    schedules:', '      - name: full-weekly', `        schedule: ${q(cron)}`, '        type: full']
-          : []),
-        '',
-      ].join('\n');
+      const dbObject             = {
+        plural: pg ? 'postgresclusters' : 'mysqlclusters',
+        object: {
+          apiVersion: 'databases.dataservices.vmware.com/v1alpha1',
+          kind,
+          metadata: { name: db, namespace: ns, labels: { 'archtoolkit/managed': 'true' } },
+          spec: {
+            version,
+            adminUsername: user,
+            adminPasswordRef: { name: secret },
+            ...(pg ? { databaseName: db.replace(/-/g, '_'), replicas: ha ? 1 : 0 } : { members: ha ? 3 : 1 }),
+            vmClass: { name: cls },
+            storagePolicyName: sp,
+            storageSpace: `${gib}Gi`,
+            infrastructurePolicy: { name: infra },
+            maintenanceWindow: { startDay: day, startTime: '23:59', duration: '6h' },
+            ...(backup ? { backupLocation: { name: loc }, backupConfig: { backupRetentionDays: days, schedules: [{ name: 'full-weekly', schedule: cron, type: 'full' }] } } : {}),
+          },
+        },
+      };
+      const yaml = k8sYaml([{ comment: [`VERIFY: kubectl explain ${kind.toLowerCase()}.spec — field names follow DSM 9.0.x examples.`], object: dbObject.object }]);
+      // The admin password Secret is made in the workflow from the SecureString,
+      // so the password is in no file, resource or log.
+      const dbPre = String.raw`var adminSecretName = ${JSON.stringify(secret)};
+if (!settings.dbAdminPassword) throw new Error("Set dbAdminPassword in the configuration element " + SETTINGS_NAME + ": it becomes the Secret " + adminSecretName + " the database reads its admin password from.");
+items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", metadata: { name: adminSecretName, namespace: ${JSON.stringify(ns)} }, type: "Opaque", stringData: { username: ${JSON.stringify(user)}, password: String(settings.dbAdminPassword) } } });`;
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'db', ns, db),
+        description: `Creates the ${pg ? 'PostgreSQL' : 'MySQL'} database ${db} from VCF Data Services Manager in the All Apps namespace ${ns}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Data Services/${ns}/${db}`,
+        workflow: {
+          name: `Create database ${db}`,
+          description: `Creates, in namespace ${ns} through its Kubernetes API, the Secret ${secret} with the admin password from the configuration element, then the ${kind} ${db} — each that does not exist, never changing one that does. Stops first unless databases.dataservices.vmware.com/v1alpha1 is served. A dry run validates both on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: KUBE_OUTPUTS,
+          script: kubeWorkflow({ resource: 'database.json', served: ['databases.dataservices.vmware.com/v1alpha1'], pre: dbPre }),
+        },
+        config: kubeConfig(`Create database ${db}`, '', 2, [{ name: 'dbAdminPassword', type: 'SecureString', description: `The admin password of ${db}; it goes only into the Secret ${secret}` }]),
+        resources: [{ name: 'database.json', content: json([dbObject]) }],
+      });
 
       const pre = [
         `NS=${q(ns)}`,
@@ -1736,27 +2683,29 @@ export const VCF_AUTOMATION_91                                 = [
         },
         guardrails: [
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'The context is the scope.' },
-          { rule: 'Admin password only from a mode-600 file, into a Secret, never in YAML or argv', because: 'A password in a manifest ends up in Git.' },
+          { rule: 'Admin password only from a SecureString (Orchestrator) or a mode-600 file (script), into a Secret, never in YAML, a resource element, argv or a log', because: 'A password in a manifest ends up in Git.' },
           { rule: 'Stops if Data Services is not served in the context', because: 'Otherwise the error is a confusing "no matches for kind".' },
           { rule: 'kubectl create, not apply', because: 'apply to an existing database changes it in place — a version or class change is a restart.' },
         ],
-        dryRun: ['create-db.sh without --execute: server-side dry run of the Secret and the database.', 'check-db.sh reads only.'],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: the Secret and the database are sent with dryRun=All and nothing is created.', 'scripts/create-db.sh without --execute: server-side dry run of the Secret and the database.', 'scripts/check-db.sh reads only.'],
         undo: [`kubectl delete ${kind.toLowerCase()} ${db} -n ${ns} deletes the database and its data. Backups are kept for their retention (VERIFY in DSM before relying on it).`],
         told: ['DSM’s own events and alerts, and VCF Operations if the DSM management pack is installed.', 'Kubernetes events on the object.'],
         requires: ['VCF Data Services Manager 9.x integrated with VCF Automation, with a data service policy for this organization.', ...(backup ? [`Backup location ${loc} configured in DSM.`] : []), 'kubectl logged in to the namespace.'],
         files: {
+          ...pkg.files,
           [`${db}.k8s.yaml`]: yaml,
-          'create-db.sh': kubeScript(`Create ${kind} ${db} in ${ns}.`, pre, [`${db}.k8s.yaml`], `kubectl delete ${kind.toLowerCase()} ${db} -n ${ns} — deletes the data.`),
-          'check-db.sh': check,
+          'scripts/create-db.sh': kubeScript(`Create ${kind} ${db} in ${ns}.`, pre, [`${db}.k8s.yaml`], `kubectl delete ${kind.toLowerCase()} ${db} -n ${ns} — deletes the data.`),
+          'scripts/check-db.sh': check,
           'IMPORT.md': importMd({
-            subject: `The ${kind} ${db} in ${ns}.`,
+            subject: `The ${kind} ${db} in ${ns}: an Orchestrator workflow that creates its admin Secret and the database through the namespace's Kubernetes API, and the same object as ${db}.k8s.yaml for kubectl.`,
             orgs: ALL_APPS,
             steps: [
-              kubeStep('The database', 'create-db.sh', [`${db}.k8s.yaml`], ['The script creates the admin password Secret first, from DB_ADMIN_PASSWORD_FILE (a mode-600 file), so the password is never on a command line or in the manifest.']),
+              ...pkg.importSteps,
+              kubeStep('Or: the database with kubectl', 'scripts/create-db.sh', [`${db}.k8s.yaml`], ['The script creates the admin password Secret first, from DB_ADMIN_PASSWORD_FILE (a mode-600 file, given as an absolute path: the script works from the folder above scripts/), so the password is never on a command line or in the manifest.']),
               checkStep('check-db.sh', 'the database is Ready, and when it was last backed up.'),
             ],
-            auth: ['kube'],
-            verify: ['Field names follow the DSM 9.0.x examples; kubectl explain on your release is the check.'],
+            auth: ['kube', 'vcfa91'],
+            verify: [`Field names follow the DSM 9.0.x examples; kubectl explain ${kind.toLowerCase()}.spec on your release is the check, and the resource name ${dbObject.plural} is kubectl api-resources --api-group=databases.dataservices.vmware.com.`, KUBE_VERIFY],
           }),
         },
         notes: [
@@ -1968,7 +2917,7 @@ export const VCF_AUTOMATION_91                                 = [
         scope: 'tenant',
         act: true,
         body: [
-          'HERE=$(cd "$(dirname "$0")" && pwd)',
+          'HERE=$(cd "$(dirname "$0")/.." && pwd)',
           '# The update sends the whole zone, not only its tags: the zone update',
           '# (ZoneSpecification) requires name and regionId on older IaaS API releases,',
           '# and a body with tags alone is refused there or, worse, clears other fields.',
@@ -2012,49 +2961,93 @@ export const VCF_AUTOMATION_91                                 = [
       const exampleTemplate = snippet
         .replace(/^inputs:\n(?=resources:)/m, '')
         .replace('\n    properties:\n', '\n    properties:\n      image: "<REQUIRED — an image mapping name>"\n      flavor: "<REQUIRED — a flavor mapping name>"\n');
-      const imported = importBundle({
-        templates: [{ name: 'Tag placement example', description: 'Generated by ArchToolKit. Placement constraints and resource tags from the tag standard.', yaml: exampleTemplate }],
+      const exampleArtifact = { name: 'Tag placement example', description: 'Generated by ArchToolKit. Placement constraints and resource tags from the tag standard.', yaml: exampleTemplate };
+      const imported = importBundle({ templates: [exampleArtifact] });
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'tag', 'placement'),
+        description: `Adds the tag standard's capability tags to ${zones.length} cloud zone(s), checks every hard constraint can be met, and imports the example template. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Tag placement`,
+        workflow: {
+          name: 'Tag placement',
+          description: `VM Apps organization. ${writeZones ? 'Adds the capability tags in zone-tags.json to each cloud zone named (exactly one match, or it is skipped), keeping every tag the zone has and sending the whole zone read fresh. ' : ''}Checks that every tag a hard template constraint can ask for is on some zone, and fails the run when one is not. With projectId set, imports the example template through the blueprint API — validated, created or its draft updated, then versioned (released only if releaseTemplate is true). A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would change and change nothing' }],
+          outputs: [
+            { name: 'missingTags', type: 'string', description: 'Tags a hard constraint can ask for that no zone carries' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: tagPlacementWorkflow(writeZones, { name: exampleArtifact.name, description: exampleArtifact.description, version: '1.0.0' }),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the Tag placement workflow. Fill vcfaOrg, vcfaApiToken and (to import the template) projectId after import; set dryRun to false only after a dry run.',
+          attributes: [
+            VCFA_HOST_ATTR,
+            ORG_ATTR(''),
+            TOKEN_ATTR('an organization administrator of the VM Apps organization'),
+            { name: 'projectId', type: 'string', value: '', description: 'Project the example template is imported into (GET /iaas/api/projects); empty: not imported' },
+            { name: 'releaseTemplate', type: 'boolean', value: false, description: 'Release the imported version to the catalog' },
+            { name: 'zoneMethod', type: 'string', value: 'PATCH', description: 'PATCH (the IaaS API reference) or PUT for the zone update' },
+            ...GUARD_ATTRS(zones.length + 3),
+            WEBHOOK_ATTR,
+          ],
+        },
+        resources: [
+          { name: 'zone-tags.json', content: zoneJson },
+          { name: 'required-tags.json', content: json([...new Set(required)]) },
+          // The same bytes as import/templates/<name>/blueprint.yaml.
+          { name: 'example-template.yaml', content: blueprintYaml(exampleArtifact), mimeType: 'text/plain' },
+        ],
       });
 
       return {
         platform: PLATFORM,
         title: `Tag placement from a ${standard.length}-category standard across ${zones.length} zone(s)`,
-        effect: writeZones ? 'reversible' : 'read',
-        trigger: { kind: 'manual', detail: 'When the tag standard changes, a zone is added, or a template is written: regenerate and re-run the check.' },
+        effect: 'reversible',
+        trigger: { kind: 'manual', detail: 'When the tag standard changes, a zone is added, or a template is written: regenerate and re-run the workflow (or the check).' },
         scope: {
-          what: writeZones ? `Capability tags on ${zones.length} cloud zone(s), added and never removed; template snippets for copying.` : 'Nothing is changed; snippets and a check.',
-          decidedBy: ['The zone names, matched exactly — one match or the zone is skipped.', 'The tag standard: only its categories and values are written.', 'The organization the token belongs to.'],
+          what: `${writeZones ? `Capability tags on ${zones.length} cloud zone(s), added and never removed` : 'No zone is changed'}; the example template "${exampleArtifact.name}" in the project named by projectId, when it is set; snippets for copying.`,
+          decidedBy: ['The zone names, matched exactly — one match or the zone is skipped.', 'The tag standard: only its categories and values are written.', 'The organization the token belongs to, and the project in projectId.'],
           ifWrong: 'A capability tag on the wrong zone lets production requests land on it: placement is by tag, not by name, and it is silent.',
         },
-        guardrails: writeZones
-          ? [
-              { rule: 'Tags are added to what the zone has, never replaced', because: 'Replacing a zone’s tags drops the ones other templates rely on, and their next request fails placement.' },
-              { rule: 'A zone name must match exactly one zone, or it is skipped', because: 'Two zones called "Production" is how production tags end up on the lab.' },
-              { rule: 'Dry run by default, printing each tag it would add and the diff of the zone it would send', because: 'The diff is small and readable, so it gets read — and it shows nothing but tags changes.' },
-              { rule: 'Reads the zone fresh and sends it whole (name, regionId and every other field), saving the previous zone first', because: 'A body with only tags is refused by releases that require name and regionId, or resets fields it leaves out; the saved copy is the undo.' },
-            ]
-          : [],
-        dryRun: [writeZones ? 'apply-zone-tags.sh without --execute prints, per zone, the tags it would add.' : 'Nothing here acts.', 'check-tags.sh reads only and exits 1 if a hard constraint can ask for a tag no zone has.'],
-        undo: ['Each zone is saved to zone-before-<id>-<time>.json before it is changed; send that zone back (its tags, with name and regionId) to remove what was added. The dry run lists the tags per zone. Deployments already placed stay where they are.'],
-        told: ['VCF Automation audit of the zone change.', 'check-tags.sh output, which can run on a schedule and fail when someone untags a zone.'],
+        guardrails: [
+          ...(writeZones
+            ? [
+                { rule: 'Tags are added to what the zone has, never replaced', because: 'Replacing a zone’s tags drops the ones other templates rely on, and their next request fails placement.' },
+                { rule: 'A zone name must match exactly one zone, or it is skipped', because: 'Two zones called "Production" is how production tags end up on the lab.' },
+                { rule: 'Dry run by default, printing each tag it would add (the script also the diff of the zone it would send)', because: 'The diff is small and readable, so it gets read — and it shows nothing but tags changes.' },
+                { rule: 'Reads the zone fresh and sends it whole (name, regionId and every other field); the script saves the previous zone first, the workflow logs it', because: 'A body with only tags is refused by releases that require name and regionId, or resets fields it leaves out; the saved copy is the undo.' },
+              ]
+            : []),
+          { rule: 'The template is validated first, updated only when its draft differs, and a version that exists is left alone; it is released only when releaseTemplate is true', because: 'Versions are immutable and a release reaches every catalog that imports the template.' },
+          { rule: 'At most cap changes per run; the first failure stops it', because: 'A run against the wrong organization stops early rather than tagging every zone.' },
+        ],
+        dryRun: ['The Tag placement workflow is a dry run until dryRun is false in the configuration element: it logs every tag it would add and the template it would create or version.', writeZones ? 'scripts/apply-zone-tags.sh without --execute prints, per zone, the tags it would add.' : 'No zone is changed.', 'scripts/check-tags.sh reads only and exits 1 if a hard constraint can ask for a tag no zone has.'],
+        undo: ['Each zone as it was is in the workflow log (and saved to zone-before-<id>-<time>.json by the script) before it is changed; send that zone back (its tags, with name and regionId) to remove what was added. Deployments already placed stay where they are.', 'The template: unrelease the version, or DELETE /blueprint/api/blueprints/{id} while nothing is deployed from it.'],
+        told: ['VCF Automation audit of the zone change.', 'The workflow log (AUDIT lines), its summary output and the webhook when set; a run fails when a hard constraint cannot be met.', 'scripts/check-tags.sh output, which can run on a schedule and fail when someone untags a zone.'],
         requires: ['A VM Apps organization with cloud zones, and an organization token (see "API tokens").', 'The vCenter tag standard, with cardinality, as it is actually configured.'],
         files: {
+          ...pkg.files,
           'zone-tags.json': zoneJson,
           'template-constraints.yaml': snippet,
           'tag-mapping.csv': csv,
-          'check-tags.sh': check,
-          ...(writeZones ? { 'apply-zone-tags.sh': apply } : {}),
+          'scripts/check-tags.sh': check,
+          ...(writeZones ? { 'scripts/apply-zone-tags.sh': apply } : {}),
           ...imported.files,
           'IMPORT.md': importMd({
-            subject: 'Tag-based placement: capability tags on the cloud zones, and a template whose constraints match them.',
+            subject: 'Tag-based placement: capability tags on the cloud zones, and a template whose constraints match them — one Orchestrator workflow for both, or the scripts and the template import by hand.',
             steps: [
-              ...(writeZones ? [manualStep('Zone capability tags', ['`./apply-zone-tags.sh` prints, per zone, the tags it would add and the diff of the zone; `--execute` sends it, saving each zone first. By hand: Infrastructure → Cloud Zones → the zone → Capability tags.'])] : []),
+              ...pkg.importSteps,
+              ...(writeZones ? [manualStep('Or: zone capability tags from a Linux host', ['`./scripts/apply-zone-tags.sh` prints, per zone, the tags it would add and the diff of the zone; `--execute` sends it, saving each zone first. By hand: Infrastructure → Cloud Zones → the zone → Capability tags.'])] : []),
               checkStep('check-tags.sh', 'a hard constraint that can ask for a tag no zone carries.'),
               imported.steps.templates,
               manualStep('Use it in your own templates', ['template-constraints.yaml is the fragment to paste into existing templates; the imported example is the same fragment made whole. Fill its image and flavor before versioning it.']),
             ],
             auth: ['vcfa91', 'import'],
-            verify: [...verifyFor(imported), 'The zone update method (PATCH, or PUT with VCFA_ZONE_METHOD) and to_lower() in expressions are VERIFY; see the notes.'],
+            verify: [
+              ...verifyFor(imported),
+              'The workflow imports the template through the same blueprint API calls as import/import-templates.sh (POST /blueprint/api/blueprint-validation, GET/POST/PUT /blueprint/api/blueprints, POST …/versions), with the VM Apps organization token. Capability tags and cloud zones are VM Apps objects.',
+              'The zone update method (PATCH, or PUT with the zoneMethod setting / VCFA_ZONE_METHOD) and to_lower() in expressions are VERIFY; see the notes.',
+            ],
           }),
         },
         notes: [
@@ -2140,7 +3133,7 @@ export const VCF_AUTOMATION_91                                 = [
         act: false,
         body: [
           `NAME=${q(tpl)}`,
-          'HERE=$(cd "$(dirname "$0")" && pwd); mkdir -p "$HERE/export"',
+          'HERE=$(cd "$(dirname "$0")/.." && pwd); mkdir -p "$HERE/export"',
           '# The name filter is loose; the exact match is done here.',
           "B=$(get \"/blueprint/api/blueprints?name=$(jq -rn --arg n \"$NAME\" '$n|@uri')&size=100\" application/json)",
           "MATCH=$(jq --arg n \"$NAME\" '[.content[] | select(.name == $n)]' <<<\"$B\")",
@@ -2160,7 +3153,7 @@ export const VCF_AUTOMATION_91                                 = [
         act: true,
         body: [
           `NAME=${q(tpl)}; VERSION=${q(version)}`,
-          'HERE=$(cd "$(dirname "$0")" && pwd)',
+          'HERE=$(cd "$(dirname "$0")/.." && pwd)',
           "B=$(get \"/blueprint/api/blueprints?name=$(jq -rn --arg n \"$NAME\" '$n|@uri')&size=100\" application/json)",
           "ID=$(jq -r --arg n \"$NAME\" '[.content[] | select(.name == $n)] | if length == 1 then .[0].id else empty end' <<<\"$B\")",
           '[[ -n "$ID" ]] || { echo "Template \\"$NAME\\" not found, or not unique" >&2; exit 2; }',
@@ -2183,7 +3176,7 @@ export const VCF_AUTOMATION_91                                 = [
           `NAME=${q(tpl)}`,
           ...(target ? [`[[ "$VCFA_ORG" == ${q(target)} ]] || { echo "VCFA_ORG is $VCFA_ORG; this import is for ${target}. Use that organization's token file." >&2; exit 2; }`] : []),
           ': "${TARGET_PROJECT_ID:?set TARGET_PROJECT_ID — GET /iaas/api/projects in the target organization}"',
-          'HERE=$(cd "$(dirname "$0")" && pwd)',
+          'HERE=$(cd "$(dirname "$0")/.." && pwd)',
           `[[ -f "$HERE/export/${base}.yaml" ]] || { echo "Run export-template.sh against the source organization first" >&2; exit 2; }`,
           "B=$(get \"/blueprint/api/blueprints?name=$(jq -rn --arg n \"$NAME\" '$n|@uri')&size=100\" application/json)",
           "if jq -e --arg n \"$NAME\" 'any(.content[]; .name == $n)' <<<\"$B\" >/dev/null; then",
@@ -2196,6 +3189,45 @@ export const VCF_AUTOMATION_91                                 = [
           'echo "Imported as a draft. Test it in the target, then create and release a version there."',
         ],
         undo: 'DELETE /blueprint/api/blueprints/{id} in the target organization, while it has no deployments.',
+      });
+
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'template', base),
+        description: `Creates version ${version} of the template "${tpl}"${release ? ' and releases it' : ''}${target ? `, and imports it into organization ${target}` : ''}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Templates/${base}`,
+        workflow: {
+          name: `Version template ${base}`,
+          description: `VM Apps organization (the blueprint API). Finds the one template named "${tpl}", exports its YAML (output templateYaml), creates version ${version} with its change log${release ? ' and releases it' : ''} unless that version exists${target ? `, then — with the token of ${target} — creates it as a draft in targetProjectId unless a template of that name is already there` : ''}. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
+          outputs: [
+            { name: 'templateId', type: 'string', description: 'The source template id' },
+            { name: 'templateYaml', type: 'string', description: 'Its YAML as exported: keep it, it is the undo' },
+            { name: 'importedId', type: 'string', description: 'The template id in the target organization, when one is named' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: templateVersionWorkflow(),
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Version template ${base} workflow. Fill vcfaOrg and vcfaApiToken${target ? `, and targetApiToken and targetProjectId for ${target},` : ''} after import; set dryRun to false only after a dry run.`,
+          attributes: [
+            VCFA_HOST_ATTR,
+            ORG_ATTR(''),
+            TOKEN_ATTR('a template author in the source organization'),
+            ...(target
+              ? [
+                  { name: 'targetApiToken', type: 'SecureString'         , description: `An API token of ${target}, whose project receives the copy` },
+                  { name: 'targetProjectId', type: 'string'         , value: '', description: `The project in ${target} (GET /iaas/api/projects with its token)` },
+                ]
+              : []),
+            ...GUARD_ATTRS(target ? 2 : 1),
+            WEBHOOK_ATTR,
+          ],
+        },
+        resources: [
+          { name: 'template.json', content: json({ name: tpl, target }) },
+          { name: 'version.json', content: json(versionPayload) },
+        ],
       });
 
       return {
@@ -2214,28 +3246,33 @@ export const VCF_AUTOMATION_91                                 = [
           ...(target ? [{ rule: `Import refuses when VCFA_ORG is not ${target} or the name already exists there`, because: 'An import with the wrong token lands in the source organization as a duplicate.' }] : []),
           { rule: 'Dry run by default', because: 'The script reads first and says what it would post.' },
         ],
-        dryRun: ['export-template.sh reads only.', 'version-template.sh and import-template.sh without --execute look everything up and stop before posting.'],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it looks everything up, exports the YAML and logs what it would post.', 'scripts/export-template.sh reads only.', 'scripts/version-template.sh and scripts/import-template.sh without --execute look everything up and stop before posting.'],
         undo: ['Unrelease the version (POST …/versions/{version}/actions/unrelease). Deployments made from it keep their version.', ...(target ? ['Delete the imported draft in the target.'] : [])],
-        told: ['The template’s version history in the design canvas.', 'Catalogue item change in Service Broker at the next content source sync.'],
+        told: ['The template’s version history in the design canvas.', 'Catalogue item change in Service Broker at the next content source sync.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An organization token for the source (and one for the target) — see "API tokens".', 'The template already exists in the source organization.'],
         files: {
-          'export-template.sh': exportScript,
+          ...pkg.files,
+          'scripts/export-template.sh': exportScript,
           [`${base}-version.json`]: json(versionPayload),
-          'version-template.sh': versionScript,
-          ...(target ? { 'import-template.sh': importScript } : {}),
+          'scripts/version-template.sh': versionScript,
+          ...(target ? { 'scripts/import-template.sh': importScript } : {}),
           'IMPORT.md': importMd({
-            subject: `Version ${version} of the template "${tpl}"${target ? `, and a copy imported into ${target}` : ''}.`,
+            subject: `Version ${version} of the template "${tpl}"${target ? `, and a copy imported into ${target}` : ''}: one Orchestrator workflow through the blueprint API, or the scripts.`,
             orgs: 'VCF Automation 9.1 / 9.1.1 organizations (VM Apps; All Apps where /blueprint/api answers)',
             steps: [
-              manualStep('Export (read only)', ['`./export-template.sh` writes export/<template>.yaml and its version list. Keep them: they are the undo.']),
-              manualStep('Version', [`\`./version-template.sh\` looks the template up by exact name and stops if version ${version} exists; \`--execute\` posts \`${base}-version.json\`${release ? ', which releases it' : ''}. By hand: the design page → Version, ${release ? 'with Release to catalog ticked' : 'then release it from Version History when ready'}.`]),
+              ...pkg.importSteps,
+              manualStep('Or: export (read only)', ['`./scripts/export-template.sh` writes export/<template>.yaml and its version list. Keep them: they are the undo.']),
+              manualStep('Version', [`\`./scripts/version-template.sh\` looks the template up by exact name and stops if version ${version} exists; \`--execute\` posts \`${base}-version.json\`${release ? ', which releases it' : ''}. By hand: the design page → Version, ${release ? 'with Release to catalog ticked' : 'then release it from Version History when ready'}.`]),
               ...(target
-                ? [manualStep(`Import into ${target}`, [`With VCFA_ORG=${target} and that organization’s token, \`TARGET_PROJECT_ID=<id> ./import-template.sh\`; \`--execute\` creates the draft there. By hand in the target: ${tgtType === 'all-apps' ? 'Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import' : 'Design → Templates → New from → Upload'}, choosing export/<template>.yaml.`])]
+                ? [manualStep(`Import into ${target}`, [`With VCFA_ORG=${target} and that organization’s token, \`TARGET_PROJECT_ID=<id> ./scripts/import-template.sh\`; \`--execute\` creates the draft there. By hand in the target: ${tgtType === 'all-apps' ? 'Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import' : 'Design → Templates → New from → Upload'}, choosing export/<template>.yaml.`])]
                 : []),
               manualStep('Templates from this page', ['Every template blueprint here also writes import/templates/<name>/blueprint.yaml with its own import/import-templates.sh, which creates or updates, versions and (with --release) releases in one pass.']),
             ],
             auth: ['vcfa91'],
-            verify: ['The /blueprint/api paths under a 9.x tenant token are VERIFY for your organization type; the UI routes are documented (Broadcom 9.1, Import and Export a Blueprint).'],
+            verify: [
+              'The /blueprint/api paths are the Aria Automation 8.18 API (blueprints, versions with {version, description, changeLog, release}), which VM Apps organizations keep. Under a 9.x All Apps organization token they are VERIFY; the UI routes are documented (Broadcom 9.1, Import and Export a Blueprint).',
+              ...(target ? [`The import logs in to ${target} with its own API token (targetApiToken): a template made with the source organization's token would land in the source organization.`] : []),
+            ],
           }),
         },
         notes: [
@@ -2303,7 +3340,7 @@ export const VCF_AUTOMATION_91                                 = [
         ': "${EXPECT_CONTEXT:?set EXPECT_CONTEXT to the organization/project context that owns the namespace}"',
         '[[ "$(kubectl config current-context)" == "$EXPECT_CONTEXT" ]] || { echo "Wrong context: $(kubectl config current-context)" >&2; exit 2; }',
         `NS=${q(ns)}`,
-        'HERE=$(cd "$(dirname "$0")" && pwd)',
+        'HERE=$(cd "$(dirname "$0")/.." && pwd)',
         'STAMP=$(date +%Y%m%d-%H%M%S)',
         '# VERIFY the resource name: kubectl api-resources | grep -i supervisornamespace',
         'kubectl get supervisornamespace "$NS" -o yaml > "$HERE/before-${NS}-${STAMP}.yaml" || { echo "Could not read $NS — not changing what could not be saved" >&2; exit 2; }',
@@ -2316,6 +3353,35 @@ export const VCF_AUTOMATION_91                                 = [
         '# Undo: kubectl replace -f before-<namespace>-<stamp>.yaml (after removing status and resourceVersion), or patch the old values back.',
         '',
       ].join('\n');
+
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'namespace', ns),
+        description: `Changes the existing Supervisor namespace ${ns} (VCF Automation 9.1 day 2). Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Namespaces/${ns}`,
+        workflow: {
+          name: `Change namespace ${label(ns, 'namespace')}`,
+          description: `All Apps organization. Reads the SupervisorNamespace ${ns} through /cci/kubernetes (output before: the undo), leaves it alone if it already has every value in patch.json, otherwise runs a server-side dry run of the merge patch and then — once dryRun is false in the configuration element — applies it.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: read, validate on the server, and change nothing' }],
+          outputs: [
+            { name: 'before', type: 'string', description: 'The namespace as it was, JSON: the undo' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: namespaceDay2Workflow(ns),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the namespace day-2 workflow. Fill vcfaOrg, vcfaApiToken and project after import; set dryRun to false only after a dry run.',
+          attributes: [
+            VCFA_HOST_ATTR,
+            ORG_ATTR(''),
+            TOKEN_ATTR('an account allowed to edit namespaces in the project'),
+            { name: 'project', type: 'string', value: '', description: `The VCF Automation project that owns ${ns}` },
+            ...GUARD_ATTRS(1),
+            WEBHOOK_ATTR,
+          ],
+        },
+        resources: [{ name: 'patch.json', content: json(patch) }],
+      });
 
       return {
         platform: PLATFORM,
@@ -2332,19 +3398,26 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'Server-side dry run every time, before the real patch', because: 'Quota and class checks happen on the server; a typo in a field name fails here rather than half-applying.' },
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'Namespace names are unique only within an organization.' },
         ],
-        dryRun: ['change-namespace.sh without --execute: saves the namespace and runs the dry run.'],
-        undo: ['Apply the saved before-*.yaml, or patch the old values back.'],
-        told: ['vCenter events for the namespace limit change.', 'Kubernetes events on the SupervisorNamespace.'],
+        dryRun: ['The workflow reads the namespace and runs the server-side dry run of the patch every time; it patches only once dryRun is false in the configuration element.', 'scripts/change-namespace.sh without --execute: saves the namespace and runs the dry run.'],
+        undo: ['Patch the old values back from the workflow\'s before output (or its log line), or apply the saved before-*.yaml from the script.'],
+        told: ['vCenter events for the namespace limit change.', 'Kubernetes events on the SupervisorNamespace.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['VCF Automation 9.1 (namespace day-2 changes are new in 9.1).', 'Rights to edit namespaces in the project.'],
         files: {
+          ...pkg.files,
           'patch.json': json(patch),
-          'change-namespace.sh': script,
+          'scripts/change-namespace.sh': script,
           'IMPORT.md': importMd({
-            subject: `A change to the existing namespace ${ns}.`,
+            subject: `A change to the existing namespace ${ns}: an Orchestrator workflow that patches the SupervisorNamespace through the VCF Automation Kubernetes API, or the kubectl script.`,
             orgs: ALL_APPS,
-            steps: [manualStep('Change it', ['`./change-namespace.sh` saves the namespace as it is, then runs a server-side dry run of patch.json; `--execute` applies the patch. The saved copy is the undo.'])],
-            auth: ['kube'],
-            verify: ['The field names in patch.json: kubectl explain on the namespace kind in your release.'],
+            steps: [
+              ...pkg.importSteps,
+              manualStep('Or: change it with kubectl', ['`./scripts/change-namespace.sh` saves the namespace as it is, then runs a server-side dry run of patch.json; `--execute` applies the patch. The saved copy is the undo.']),
+            ],
+            auth: ['kube', 'vcfa91'],
+            verify: [
+              'The SupervisorNamespace path — https://<vcfa>/cci/kubernetes/apis/infrastructure.cci.vmware.com/v1alpha3/namespaces/<project>/supervisornamespaces/<name> — is the go-vcloud-director v3 SDK\'s (ccitypes.KubernetesSubpath and SupervisorNamespacesURL), which the vmware/vcfa provider uses with the same organization bearer token.',
+              'VERIFY the field names in patch.json with kubectl explain supervisornamespace.spec: the SDK names the Go field ClassConfigOverrides (zones with cpuLimit and memoryLimit, vmClasses, storageClasses with limit) and SharedSubnetNames; the JSON key of the overrides (initialClassConfigOverrides here, as in the Terraform provider) is the one to confirm. The server-side dry run rejects an unknown field before anything changes.',
+            ],
           }),
         },
         notes: ['9.1 what’s new: application teams can change resource limits, VM classes, storage classes and shared subnets on existing namespaces.', 'The existing "A Supervisor namespace, requested from All Apps" blueprint creates namespaces; this one changes them.'],
@@ -2443,6 +3516,47 @@ export const VCF_AUTOMATION_91                                 = [
 
       const install = kubeScript(`Create Argo CD instance ${inst} in ${ns}.`, [], ['argocd-instance.k8s.yaml'], `kubectl delete argocd ${inst} -n ${ns} — the Applications it manages keep running; only the controller goes.`);
 
+      // The same two objects as the YAML files, for the workflow.
+      const argoObjects               = [
+        { plural: 'argocds', object: { apiVersion: 'argocd-service.vsphere.vmware.com/v1alpha1', kind: 'ArgoCD', metadata: { name: inst, namespace: ns }, spec: { version } } },
+        {
+          plural: 'applications',
+          object: {
+            apiVersion: 'argoproj.io/v1alpha1',
+            kind: 'Application',
+            metadata: { name: app, namespace: ns },
+            spec: {
+              project: 'default',
+              source: { repoURL: repo, path, targetRevision: rev },
+              destination: { name: dest, namespace: destNs },
+              syncPolicy: { ...(auto ? { automated: { prune, selfHeal: true } } : {}), syncOptions: ['CreateNamespace=true'] },
+            },
+          },
+        },
+      ];
+      // The Application only when asked: Argo CD must already know the target
+      // cluster (argocd cluster add), which the workflow cannot do.
+      const argoPre = String.raw`if (settings.createApplication !== true) {
+  items = [items[0]];
+  System.log("createApplication is off: create the Application with scripts/connect-and-create-app.sh once the instance is up and the target cluster is added.");
+} else {
+  requireServed("argoproj.io/v1alpha1");
+}`;
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'argocd', ns, inst),
+        description: `Creates the Argo CD instance ${inst} in the All Apps namespace ${ns}, and optionally the Application ${app}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Argo CD/${ns}/${inst}`,
+        workflow: {
+          name: `Create Argo CD ${inst}`,
+          description: `Creates, in namespace ${ns} through its Kubernetes API, the ArgoCD instance ${inst} (version ${version}) unless it exists; with createApplication set, then the Argo CD Application ${app} (${auto ? `automatic sync${prune ? ' with prune' : ''}` : 'manual sync'}) unless it exists. A dry run validates on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: KUBE_OUTPUTS,
+          script: kubeWorkflow({ resource: 'objects.json', served: ['argocd-service.vsphere.vmware.com/v1alpha1'], pre: argoPre }),
+        },
+        config: kubeConfig(`Create Argo CD ${inst}`, '', 2, [{ name: 'createApplication', type: 'boolean', value: false, description: `Also create the Application ${app}; only after argocd cluster add for ${dest}` }]),
+        resources: [{ name: 'objects.json', content: json(argoObjects) }],
+      });
+
       const connect = [
         '#!/usr/bin/env bash',
         `# After the instance is up: log in, change the admin password, add the target cluster, create ${app}.`,
@@ -2458,7 +3572,7 @@ export const VCF_AUTOMATION_91                                 = [
         `echo "Add the target cluster (its kubeconfig context must be current in kubectl: vcf cluster kubeconfig get ${dest}):"`,
         `echo "  argocd cluster add <kubeconfig-context> --name ${dest}"`,
         'if [[ " $* " == *" --execute "* ]]; then',
-        '  argocd app create -f "$(dirname "$0")/application.yaml" --upsert=false',
+        '  argocd app create -f "$(dirname "$0")/../application.yaml" --upsert=false',
         `  argocd app diff ${app} || true`,
         'else',
         '  echo "DRY RUN: would create the application from application.yaml. Re-run with --execute."',
@@ -2484,24 +3598,30 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'The application is created only with --execute, and never upserts over an existing one', because: 'An upsert silently repoints an existing application at a different repository.' },
           { rule: 'The admin password is changed at first login', because: 'The initial password sits in a Secret anyone with read access to the namespace can decode.' },
         ],
-        dryRun: ['install-argocd.sh without --execute: server-side dry run.', 'connect-and-create-app.sh without --execute logs in and stops before creating the application.'],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: each object is sent with dryRun=All and nothing is created.', 'scripts/install-argocd.sh without --execute: server-side dry run.', 'scripts/connect-and-create-app.sh without --execute logs in and stops before creating the application.'],
         undo: [`argocd app delete ${app} --cascade=false keeps the deployed resources.`, `kubectl delete argocd ${inst} -n ${ns} removes Argo CD itself.`],
-        told: ['Argo CD’s own history per application, and its notifications if configured.', 'Git history, which is the record of what was deployed.'],
+        told: ['Argo CD’s own history per application, and its notifications if configured.', 'Git history, which is the record of what was deployed.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: [vcfService ? 'VCF Automation 9.1.1 with Argo CD installed through Provider Management → Service Management.' : 'The Argo CD Supervisor Service installed on the Supervisor (1.2.0 adds auto-discovery of VKS clusters).', 'The argocd CLI, kubectl and the VCF CLI.', `Read access to ${repo || 'the repository'} for Argo CD.`],
         files: {
+          ...pkg.files,
           'argocd-instance.k8s.yaml': instance,
           'application.yaml': application,
-          'install-argocd.sh': install,
-          'connect-and-create-app.sh': connect,
+          'scripts/install-argocd.sh': install,
+          'scripts/connect-and-create-app.sh': connect,
           'IMPORT.md': importMd({
-            subject: `Argo CD instance ${inst} in ${ns}, and the application ${app}.`,
+            subject: `Argo CD instance ${inst} in ${ns}, and the application ${app}: an Orchestrator workflow that creates them through the namespace's Kubernetes API, and the YAML and scripts for kubectl and the argocd CLI.`,
             orgs: ALL_APPS,
             steps: [
-              kubeStep('The Argo CD instance', 'install-argocd.sh', ['argocd-instance.k8s.yaml']),
-              manualStep('Connect and create the application', ['When the instance is up, `./connect-and-create-app.sh` logs in with the argocd CLI, has you change the admin password, adds the target cluster and creates the application from application.yaml.']),
+              ...pkg.importSteps,
+              kubeStep('Or: the Argo CD instance with kubectl', 'scripts/install-argocd.sh', ['argocd-instance.k8s.yaml']),
+              manualStep('Connect and create the application', ['When the instance is up, `./scripts/connect-and-create-app.sh` logs in with the argocd CLI, has you change the admin password, adds the target cluster and creates the application from application.yaml. After the cluster is added, the workflow can create the application instead: set createApplication to true and run it again.']),
             ],
-            auth: ['kube'],
-            verify: ['The ArgoCD resource apiVersion (argocd-service.vsphere.vmware.com/v1alpha1) and version string follow a 9.0.2 example: kubectl api-resources | grep -i argocd.'],
+            auth: ['kube', 'vcfa91'],
+            verify: [
+              'The ArgoCD resource apiVersion (argocd-service.vsphere.vmware.com/v1alpha1), its resource name argocds and the version string follow a 9.0.2 example: kubectl api-resources | grep -i argocd. The workflow stops before sending anything if the group is not served.',
+              'VERIFY: creating the Application as an argoproj.io/v1alpha1 object in the instance namespace (the declarative Argo CD route) through the namespace endpoint; if the namespace does not serve argoproj.io to you, keep createApplication off and use the argocd CLI.',
+              KUBE_VERIFY,
+            ],
           }),
         },
         notes: [
@@ -2561,33 +3681,53 @@ export const VCF_AUTOMATION_91                                 = [
         .filter((r)                             => r !== undefined);
       if (!drop) findings.push(info('vcfa91.sp.no-drop', 'Without a drop rule the allows change nothing — everything else is still allowed by the default rule.', { source: SRC }));
 
-      const yaml = [
-        '# VERIFY: kubectl explain securitypolicy.spec (crd.nsx.vmware.com). Field names follow the NSX operator v1alpha1 CRD.',
-        'apiVersion: crd.nsx.vmware.com/v1alpha1',
-        'kind: SecurityPolicy',
-        'metadata:',
-        `  name: ${pol}`,
-        `  namespace: ${ns}`,
-        'spec:',
-        `  priority: ${priority}`,
-        '  appliedTo:',
-        '    - vmSelector:',
-        '        matchLabels:',
-        ...Object.entries(appliedLabels).map(([k, v]) => `          ${k}: ${q(v)}`),
-        '  rules:',
-        ...rules.flatMap((r) => [
-          `    - name: ${r.name}`,
-          '      direction: In',
-          '      action: Allow',
-          '      sources:',
-          ...(r.cidr ? ['        - ipBlocks:', `            - cidr: ${r.from}`] : ['        - vmSelector:', '            matchLabels:', ...Object.entries(kv(r.from)).map(([k, v]) => `              ${k}: ${q(v)}`)]),
-          '      ports:',
-          `        - protocol: ${r.proto}`,
-          `          port: ${r.port}`,
-        ]),
-        ...(drop ? ['    - name: drop-other-inbound', '      direction: In', '      action: Drop'] : []),
-        '',
-      ].join('\n');
+      const policy             = {
+        plural: 'securitypolicies',
+        object: {
+          apiVersion: 'crd.nsx.vmware.com/v1alpha1',
+          kind: 'SecurityPolicy',
+          metadata: { name: pol, namespace: ns },
+          spec: {
+            priority,
+            appliedTo: [{ vmSelector: { matchLabels: appliedLabels } }],
+            rules: [
+              ...rules.map((r) => ({
+                name: r.name,
+                direction: 'In',
+                action: 'Allow',
+                sources: [r.cidr ? { ipBlocks: [{ cidr: r.from }] } : { vmSelector: { matchLabels: kv(r.from) } }],
+                ports: [{ protocol: r.proto, port: r.port }],
+              })),
+              ...(drop ? [{ name: 'drop-other-inbound', direction: 'In', action: 'Drop' }] : []),
+            ],
+          },
+        },
+      };
+      const yaml = k8sYaml([{ comment: ['VERIFY: kubectl explain securitypolicy.spec (crd.nsx.vmware.com). Field names follow the NSX operator v1alpha1 CRD.'], object: policy.object }]);
+      const selector = Object.entries(appliedLabels).map(([k, v]) => `${k}=${v}`).join(',');
+      // The scope, in the log before the policy exists: the VMs its selector matches.
+      const policyPre = String.raw`var SELECTOR = ${JSON.stringify(selector)};
+var vmList = kubeCall("GET", collectionPath("vmoperator.vmware.com/" + (settings.vmOperatorApi || "v1alpha5"), ${JSON.stringify(ns)}, "virtualmachines") + "?labelSelector=" + encodeURIComponent(SELECTOR), null, [404]);
+if (vmList.statusCode === 404) System.warn("Could not list VMs with vmoperator.vmware.com/" + (settings.vmOperatorApi || "v1alpha5") + "; set vmOperatorApi to the version kubectl api-versions shows.");
+else {
+  var covered = [];
+  for (var v = 0; v < ((vmList.body && vmList.body.items) || []).length; v++) covered.push(String(vmList.body.items[v].metadata.name));
+  System.log("VMs the policy will cover (" + SELECTOR + "): " + (covered.length ? covered.join(", ") : "none yet"));
+}`;
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'security', ns, pol),
+        description: `Creates the vDefend security policy ${pol} for VMs in the All Apps namespace ${ns}. Generated by ArchToolKit.`,
+        categoryPath: `${AREA}/Security policies/${ns}/${pol}`,
+        workflow: {
+          name: `Create security policy ${pol}`,
+          description: `Lists the VMs labelled ${selector} in namespace ${ns} (the scope), then creates the NSX operator SecurityPolicy ${pol} through the namespace's Kubernetes API unless it exists — never changing one that does. A dry run validates it on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          inputs: [DRY_RUN_INPUT],
+          outputs: KUBE_OUTPUTS,
+          script: kubeWorkflow({ resource: 'policy.json', served: ['crd.nsx.vmware.com/v1alpha1'], pre: policyPre }),
+        },
+        config: kubeConfig(`Create security policy ${pol}`, '', 1, [{ name: 'vmOperatorApi', type: 'string', value: 'v1alpha5', description: 'The vmoperator.vmware.com version used to list the VMs the policy covers' }]),
+        resources: [{ name: 'policy.json', content: json([policy]) }],
+      });
 
       return {
         platform: PLATFORM,
@@ -2603,19 +3743,23 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'The context is the scope.' },
           { rule: 'Server-side dry run before creating, and create rather than apply', because: 'The NSX operator validates selectors and ports; create refuses to overwrite a policy another team maintains.' },
         ],
-        dryRun: ['create-policy.sh without --execute runs a server-side dry run.', 'Before --execute, kubectl get vm -n ' + ns + ' -l ' + applied.replace(/\s/g, '') + ' shows which VMs it will cover.'],
+        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it logs the VMs the selector matches and sends the policy with dryRun=All, creating nothing.', 'scripts/create-policy.sh without --execute runs a server-side dry run.', 'Before --execute, kubectl get vm -n ' + ns + ' -l ' + applied.replace(/\s/g, '') + ' shows which VMs it will cover.'],
         undo: [`kubectl delete securitypolicy ${pol} -n ${ns} — traffic falls back to the default rule immediately.`],
-        told: ['NSX Manager audit log, and the DFW rule hit counts in VCF Operations for Networks.'],
+        told: ['NSX Manager audit log, and the DFW rule hit counts in VCF Operations for Networks.', 'The workflow log (the VMs covered, AUDIT lines), its summary output and the webhook when set.'],
         requires: ['vDefend firewall delegated to the organization by the provider (9.1).', 'VMs carrying the labels.'],
         files: {
+          ...pkg.files,
           [`${pol}.k8s.yaml`]: yaml,
-          'create-policy.sh': kubeScript(`Create security policy ${pol} in ${ns}.`, [`echo "VMs it will cover:"; kubectl get vm -n ${q(ns)} -l ${q(Object.entries(appliedLabels).map(([k, v]) => `${k}=${v}`).join(','))} || true`], [`${pol}.k8s.yaml`], `kubectl delete securitypolicy ${pol} -n ${ns}`),
+          'scripts/create-policy.sh': kubeScript(`Create security policy ${pol} in ${ns}.`, [`echo "VMs it will cover:"; kubectl get vm -n ${q(ns)} -l ${q(Object.entries(appliedLabels).map(([k, v]) => `${k}=${v}`).join(','))} || true`], [`${pol}.k8s.yaml`], `kubectl delete securitypolicy ${pol} -n ${ns}`),
           'IMPORT.md': importMd({
-            subject: `The vDefend security policy ${pol} in ${ns}.`,
+            subject: `The vDefend security policy ${pol} in ${ns}: an Orchestrator workflow that creates it through the namespace's Kubernetes API, and the same object as ${pol}.k8s.yaml for kubectl.`,
             orgs: ALL_APPS,
-            steps: [kubeStep('The policy', 'create-policy.sh', [`${pol}.k8s.yaml`], ['The script first lists the VMs the policy’s selector matches: that list is the scope.'])],
-            auth: ['kube'],
-            verify: ['The SecurityPolicy apiVersion: kubectl api-resources | grep -i securitypolic.'],
+            steps: [
+              ...pkg.importSteps,
+              kubeStep('Or: the policy with kubectl', 'scripts/create-policy.sh', [`${pol}.k8s.yaml`], ['The script first lists the VMs the policy’s selector matches: that list is the scope.']),
+            ],
+            auth: ['kube', 'vcfa91'],
+            verify: ['The SecurityPolicy apiVersion and resource name (crd.nsx.vmware.com/v1alpha1, securitypolicies): kubectl api-resources | grep -i securitypolic. The workflow stops before sending anything if the group is not served.', KUBE_VERIFY],
           }),
         },
         notes: ['9.1 what’s new: providers can delegate vDefend Distributed and Gateway Firewall to organization administrators, with RBAC labels for dynamic groups. Gateway firewall on a transit gateway is set in the organization portal.'],
@@ -2663,7 +3807,7 @@ export const VCF_AUTOMATION_91                                 = [
           'else PROBLEMS=$((PROBLEMS+1)); fi',
           '',
           'echo "Region quotas:"',
-          "if Q=$(probe '/cloudapi/1.0.0/virtualDatacenters?pageSize=128'); then",
+          "if Q=$(probe '/cloudapi/vcf/virtualDatacenters?pageSize=128'); then",
           "  for q in $(jq -r '.values[] | select((.status // \"READY\") != \"READY\") | \"\\(.name)=\\(.status)\"' <<<\"$Q\"); do note \"quota $q\"; done",
           'else PROBLEMS=$((PROBLEMS+1)); fi',
           '',
@@ -2683,6 +3827,27 @@ export const VCF_AUTOMATION_91                                 = [
         ],
       });
 
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfa91', 'health'),
+        description: 'A daily provider-side health check of VCF Automation 9.1: organizations, regions, region quotas, content libraries and the provider account\'s API tokens. Reads only. Generated by ArchToolKit.',
+        categoryPath: `${AREA}/Health`,
+        workflow: {
+          name: 'VCF Automation health check',
+          description: `Reads, as the provider: the API version is offered, every organization is enabled, regions, region quotas and content libraries are READY, and no API token of the account expires within ${warn} days. Fails the run on anything worth a look, so a schedule alerts; a path that answers 404 is a problem, not a pass.`,
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Things worth a look' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: estateWorkflow(),
+        },
+        config: {
+          name: 'Settings',
+          description: 'Settings of the health check. Fill vcfaApiToken (a provider API token for a read-only provider role) after import.',
+          attributes: [VCFA_HOST_ATTR, TOKEN_ATTR('a read-only provider account'), API_VERSION_ATTR, { name: 'expiryWarnDays', type: 'number', value: warn, description: 'Flag API tokens expiring within this many days' }, WEBHOOK_ATTR],
+        },
+      });
+
       return {
         platform: PLATFORM,
         title: 'VCF Automation 9.1 provider health check',
@@ -2696,26 +3861,31 @@ export const VCF_AUTOMATION_91                                 = [
         guardrails: [],
         dryRun: ['It only reads.'],
         undo: ['Nothing to undo.'],
-        told: [schedule ? 'The cron log and whatever alerts on the exit code.' : 'The terminal.'],
-        requires: ['A provider API token for a read-only provider role, in a mode-600 file.', 'curl and jq.'],
+        told: ['The workflow log (PROBLEM warnings), its summary output and the webhook when set; a run with problems fails, which is what a schedule alerts on.', schedule ? 'The cron log and whatever alerts on the exit code.' : 'The terminal.'],
+        requires: ['A provider API token for a read-only provider role: in the configuration element (Orchestrator) or a mode-600 file (script).', 'Orchestrator in VCF Automation 9.1 with the VCF Automation certificate trusted; or curl and jq for the script.'],
         files: {
+          ...pkg.files,
           'IMPORT.md': importMd({
-            subject: 'A daily provider-side health check. Nothing is imported into VCF Automation: it reads.',
+            subject: 'A daily provider-side health check, as an Orchestrator workflow (schedule it daily) or a script for cron. It reads; nothing is imported into VCF Automation itself.',
             orgs: PROVIDER,
             steps: [
+              ...pkg.importSteps,
               checkStep('vcfa-health.sh', 'organizations, regions, quotas, content libraries and API tokens (what-it-checks.txt).'),
-              ...(schedule ? [manualStep('Schedule it', ['crontab.txt holds the line, with no secret in it: the script reads the provider API token from the file it names.'])] : []),
+              ...(schedule ? [manualStep('Schedule the script', ['crontab.txt holds the line, with no secret in it: the script reads the provider API token from the file it names.'])] : []),
             ],
             auth: ['vcfa91'],
-            verify: ['Paths marked VERIFY in what-it-checks.txt are inferred; the script reports their HTTP status.'],
+            verify: [
+              'Paths follow the go-vcloud-director v3 SDK: /cloudapi/1.0.0/orgs and /cloudapi/1.0.0/tokens; /cloudapi/vcf/regions, /cloudapi/vcf/virtualDatacenters (region quotas — earlier versions of this kit read /cloudapi/1.0.0/virtualDatacenters) and /cloudapi/vcf/contentLibraries. A path that answers anything but 200 is reported and counted.',
+              'VERIFY: the tokens list (type==REFRESH filter, expirationDate field) is the Cloud Director token API as inherited.',
+            ],
           }),
-          'vcfa-health.sh': script,
+          'scripts/vcfa-health.sh': script,
           ...(schedule ? { 'crontab.txt': cronLine('30 6 * * *', 'VCFA_HOST=vcfa.example.com VCFA_API_TOKEN_FILE=/etc/archtoolkit/vcfa-provider-api-token', 'vcfa-health.sh', 'vcfa-health.log') } : {}),
           'what-it-checks.txt': [
             'GET /api/versions                       the API version the scripts use is offered',
             'GET /cloudapi/1.0.0/orgs                every organization enabled',
             'GET /cloudapi/vcf/regions               every region READY            (VERIFY path)',
-            'GET /cloudapi/1.0.0/virtualDatacenters  every region quota READY      (VERIFY path)',
+            'GET /cloudapi/vcf/virtualDatacenters    every region quota READY      (SDK path)',
             'GET /cloudapi/vcf/contentLibraries      every library READY           (VERIFY path)',
             'GET /cloudapi/1.0.0/tokens              no own API token expiring soon (VERIFY path)',
             '',

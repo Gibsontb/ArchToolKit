@@ -20,6 +20,7 @@ import { automationBlueprint,                          } from '../from-automatio
 import { listOf, slugOf,                 } from '../automation.js';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.js';
 import { importGuide,                     } from './vcf-networks-logs.js';
+import { packageNameOf, toPackage } from '../vro/to-package.js';
 
 const PLATFORM = 'vcf-fleet'         ;
 const SRC = 'ArchToolKit';
@@ -92,6 +93,374 @@ const STORAGE_TYPES = [
   { value: 'VMFS_FC', label: 'VMFS on Fibre Channel' },
   { value: 'VVOL', label: 'vVols' },
 ];
+
+// ---------------------------------------------------------------------------
+// The same jobs as Orchestrator packages
+// ---------------------------------------------------------------------------
+
+/** The SDDC Manager login every package here carries. */
+const SDDC_ATTRIBUTES = [
+  { name: 'sddcHost', type: 'string', value: '', description: 'SDDC Manager host (FQDN)' },
+  { name: 'sddcUsername', type: 'string', value: '', description: 'An SDDC Manager account (see requires in the README for the role)' },
+  { name: 'sddcPassword', type: 'SecureString', description: 'Its password' },
+]         ;
+
+/**
+ * The lines every SDDC Manager workflow starts with: POST /v1/tokens, a GET
+ * helper, and the guard every acting script here makes — nothing else running.
+ */
+const SDDC_PRELUDE = String.raw`var SAFE = { redact: settings._secrets };
+if (!settings.sddcHost || !settings.sddcUsername || !settings.sddcPassword) throw new Error("Set sddcHost, sddcUsername and sddcPassword in " + SETTINGS_NAME + ".");
+var api = "https://" + settings.sddcHost;
+var auth = core.loginSddcManager(settings.sddcHost, settings.sddcUsername, settings.sddcPassword);
+function get(path) { return core.http("GET", api + path, auth, null, SAFE).body || {}; }
+function upper(s) { return String(s === undefined || s === null ? "" : s).toUpperCase(); }
+// Nothing else running: rotating, commissioning or reconfiguring while an
+// upgrade or a domain operation is in flight is how a resource ends up locked.
+function busyGuard() {
+  var tasks = get("/v1/tasks").elements || [];
+  var busy = 0;
+  for (var i = 0; i < tasks.length; i++) if (/IN_PROGRESS|IN PROGRESS|PENDING/.test(upper(tasks[i].status))) busy++;
+  if (busy > 0) throw new Error("Refusing: " + busy + " SDDC Manager task(s) in progress. Wait for them to finish. Nothing was changed.");
+}
+`;
+
+const ROTATION_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${SDDC_PRELUDE}
+var TYPE = String(settings.resourceType), ACCOUNT = String(settings.accountType);
+var MODE = String(mode || "ROTATE");
+if (MODE !== "ROTATE" && MODE !== "UPDATE_AUTO_ROTATE_POLICY") throw new Error("mode is ROTATE or UPDATE_AUTO_ROTATE_POLICY, not " + MODE + ".");
+var DAYS = Number(settings.autoRotateDays || 0);
+if (MODE === "UPDATE_AUTO_ROTATE_POLICY" && !(DAYS > 0)) throw new Error("No auto-rotate policy is configured: set autoRotateDays in " + SETTINGS_NAME + ".");
+// A failed rotation leaves resources locked; remediate it (operationType REMEDIATE) first.
+var credentialTasks = get("/v1/credentials/tasks").elements || [];
+var failedTasks = 0;
+for (var f = 0; f < credentialTasks.length; f++) if (upper(credentialTasks[f].status) === "FAILED") failedTasks++;
+if (failedTasks > 0) throw new Error("Refusing: " + failedTasks + " failed credential task(s) in SDDC Manager. Resolve them first. Nothing was changed.");
+busyGuard();
+var domains = settings.domains || [], users = settings.usernames || [];
+var all = get("/v1/credentials?resourceType=" + encodeURIComponent(TYPE) + "&accountType=" + encodeURIComponent(ACCOUNT)).elements || [];
+var selected = [];
+for (var i = 0; i < all.length; i++) {
+  var c = all[i];
+  var domain = c.resource && c.resource.domainName ? String(c.resource.domainName) : "";
+  if (domains.length && domains.indexOf(domain) < 0) continue;
+  if (users.length && users.indexOf(String(c.username)) < 0) continue;
+  selected.push(c);
+  System.log("Selected: " + (domain || "-") + "  " + c.resource.resourceName + "  " + c.username);
+}
+requestBody = "";
+var taskId = "";
+if (!selected.length) {
+  System.log("Nothing matched. Check the domain and username filters.");
+} else {
+  var max = Number(settings.maxResources || 0);
+  if (selected.length > max) throw new Error("Refusing: " + selected.length + " accounts is more than maxResources (" + max + "). Narrow the scope or raise it on purpose. Nothing was changed.");
+  // One element per resource, each listing the accounts to rotate (CredentialsUpdateSpec).
+  var byResource = {};
+  var elements = [];
+  for (var s = 0; s < selected.length; s++) {
+    var name = String(selected[s].resource.resourceName);
+    if (!byResource[name]) { byResource[name] = { resourceName: name, resourceType: selected[s].resource.resourceType, credentials: [] }; elements.push(byResource[name]); }
+    byResource[name].credentials.push({ credentialType: selected[s].credentialType, username: selected[s].username });
+  }
+  var body = { operationType: MODE, elements: elements };
+  if (MODE === "UPDATE_AUTO_ROTATE_POLICY") body.autoRotatePolicy = { frequencyInDays: DAYS, enableAutoRotatePolicy: true };
+  requestBody = JSON.stringify(body, null, 2);
+  var polls = Number(settings.taskPolls || 120);
+  taskId = core.act(ctx, (MODE === "ROTATE" ? "rotate " : "set the auto-rotate policy (every " + DAYS + " days) of ") + selected.length + " " + TYPE + " " + ACCOUNT + " password(s)", function () {
+    var r = core.http("PATCH", api + "/v1/credentials", auth, body, SAFE);
+    var id = r.body && r.body.id;
+    if (!id) throw new Error("PATCH /v1/credentials returned no task id.");
+    for (var p = 0; p < polls; p++) {
+      var status = upper(get("/v1/credentials/tasks/" + encodeURIComponent(id)).status || "UNKNOWN");
+      System.log("Credential task " + id + ": " + status);
+      if (/^(SUCCESSFUL|SUCCEEDED|COMPLETED)$/.test(status)) return String(id);
+      if (status === "FAILED") throw new Error("Credential task " + id + " failed: resources may be locked; remediate before anything else.");
+      System.sleep(15000);
+    }
+    throw new Error("Credential task " + id + " is still running after " + polls + " polls; follow it under Security > Password Management.");
+  }) || "";
+}
+credentialTaskId = taskId;
+summary = core.audit(ctx, { resourceType: TYPE, accountType: ACCOUNT, mode: MODE, accounts: selected.length, taskId: taskId });
+core.notify(settings.webhook, summary);`;
+
+const CERTIFICATE_WORKFLOW = String.raw`${SDDC_PRELUDE}
+var WITHIN = Number(settings.withinDays);
+var now = new Date().getTime();
+function daysLeft(c) {
+  if (c.numberOfDaysToExpire !== undefined && c.numberOfDaysToExpire !== null) return Number(c.numberOfDaysToExpire);
+  var text = c.expirationDate || c.notAfter;
+  if (!text) return null;
+  var t = Date.parse(String(text).replace(/\.[0-9]+/, "").replace(/\+00:00$/, "Z"));
+  return isNaN(t) ? null : Math.floor((t - now) / 86400000);
+}
+var problems = [];
+var rows = ["domain,resource,days_left"];
+var domains = get("/v1/domains").elements || [];
+for (var d = 0; d < domains.length; d++) {
+  var certs = get("/v1/domains/" + encodeURIComponent(domains[d].id) + "/resource-certificates").elements || [];
+  for (var c = 0; c < certs.length; c++) {
+    var resource = certs[c].issuedTo || certs[c].resourceFqdn || certs[c].resourceName || "unknown";
+    var days = daysLeft(certs[c]);
+    rows.push([domains[d].name, resource, days === null ? "" : days].join(","));
+    if (days === null) problems.push(domains[d].name + ": " + resource + " — expiry date could not be read");
+    else if (days <= WITHIN) problems.push(domains[d].name + ": " + resource + " expires in " + days + " days");
+  }
+}
+certificatesCsv = rows.join("\n") + "\n";
+problemCount = problems.length;
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+summary = core.audit(null, { source: "vcf-certificates", within: WITHIN, problems: problems });
+if (problems.length) {
+  core.notify(settings.webhook, { source: "vcf-certificates", problems: problems });
+  throw new Error(problems.length + " certificate(s) expire within " + WITHIN + " days or could not be read: " + problems.join("; "));
+}
+System.log("No certificate expires within " + WITHIN + " days.");`;
+
+const HEALTH_WORKFLOW = String.raw`${SDDC_PRELUDE}
+var now = new Date().getTime();
+var problems = [];
+function ts(text) { if (!text) return null; var t = Date.parse(String(text).replace(/\.[0-9]+/, "").replace(/\+00:00$/, "Z")); return isNaN(t) ? null : t; }
+// 1. It answers, and says what it is.
+try {
+  var managers = get("/v1/sddc-managers").elements || [];
+  for (var m = 0; m < managers.length; m++) System.log("SDDC Manager " + managers[m].fqdn + " " + managers[m].version);
+} catch (e) { problems.push("SDDC Manager API is not answering: " + (e && e.message ? e.message : e)); }
+// 2. Failed and stuck tasks.
+var tasks = get("/v1/tasks").elements || [];
+for (var t = 0; t < tasks.length; t++) {
+  var at = ts(tasks[t].creationTimestamp);
+  if (at === null) continue;
+  var status = upper(tasks[t].status);
+  var name = tasks[t].name || tasks[t].type || tasks[t].id;
+  if (status === "FAILED" && now - at < Number(settings.failedHours) * 3600000) problems.push("failed task: " + name);
+  else if (/IN_PROGRESS|IN PROGRESS/.test(status) && now - at > Number(settings.stuckHours) * 3600000) problems.push("stuck task (over " + settings.stuckHours + "h): " + name);
+}
+// 3. Hosts SDDC Manager cannot use.
+var hosts = get("/v1/hosts").elements || [];
+for (var h = 0; h < hosts.length; h++) if (/UNUSEABLE|UNUSABLE|ERROR/.test(upper(hosts[h].status))) problems.push("host not usable: " + hosts[h].fqdn + " (" + hosts[h].status + ")");
+// 4. Backup configured, and recent: the newest task whose name or type mentions backup.
+var backup = {};
+try { backup = get("/v1/system/backup-configuration"); } catch (e2) { backup = {}; }
+if (!(backup.backupLocations || []).length) problems.push("no backup location is configured");
+var last = null;
+for (var b = 0; b < tasks.length; b++) {
+  if (!/backup/i.test(String(tasks[b].name || "") + String(tasks[b].type || ""))) continue;
+  if (!last || String(tasks[b].creationTimestamp) > String(last.creationTimestamp)) last = tasks[b];
+}
+if (!last) problems.push("no backup task found");
+else {
+  var lastAt = ts(last.creationTimestamp) || 0;
+  if (now - lastAt >= Number(settings.backupHours) * 3600000) problems.push("last backup is older than " + settings.backupHours + " hours (" + last.creationTimestamp + ")");
+  if (upper(last.status) === "FAILED") problems.push("last backup failed (" + last.creationTimestamp + ")");
+}
+// 5. Optionally start a health summary (a SoS run): the one POST, and it only starts it.
+if (settings.startHealthSummary === true || String(settings.startHealthSummary) === "true") {
+  try {
+    var run = core.http("POST", api + "/v1/system/health-summary", auth, {}, SAFE).body || {};
+    System.log("health summary task: " + (run.id || "none"));
+  } catch (e3) { problems.push("could not start a health summary"); }
+}
+problemCount = problems.length;
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+summary = core.audit(null, { source: "sddc-manager-health", problems: problems });
+if (problems.length) {
+  core.notify(settings.webhook, { source: "sddc-manager-health", problems: problems });
+  throw new Error("SDDC Manager: " + problems.join("; "));
+}
+System.log("SDDC Manager: healthy");`;
+
+const BACKUP_CONFIG_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${SDDC_PRELUDE}
+function clean(o) {
+  // The previous configuration is an output: never let a secret ride along in it.
+  if (o === null || typeof o !== "object") return o;
+  var out = Object.prototype.toString.call(o) === "[object Array]" ? [] : {};
+  for (var k in o) if (o.hasOwnProperty(k) && !/password|passphrase/i.test(k)) out[k] = clean(o[k]);
+  return out;
+}
+var wanted = JSON.parse(core.resource(RESOURCE_PATH, "backup-configuration.json"));
+var FP = String(settings.sshFingerprint || "");
+if (!FP) {
+  // Orchestrator cannot read the key from the server, and trusting whatever
+  // answers is how a backup goes to the wrong server.
+  if (!ctx.dryRun) throw new Error("Refusing: set sshFingerprint in " + SETTINGS_NAME + " (ssh-keygen -lf of the SFTP server key, SHA256:...). Nothing was changed.");
+  System.warn("sshFingerprint is empty; an armed run refuses until it is set.");
+}
+wanted.backupLocations[0].sshFingerprint = FP;
+var current = get("/v1/system/backup-configuration");
+previousConfiguration = JSON.stringify(clean(current), null, 2);
+function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+var now0 = (current.backupLocations || [])[0] || {};
+var want0 = wanted.backupLocations[0];
+var unchanged = !!now0.server && now0.server === want0.server && Number(now0.port) === Number(want0.port) && now0.directoryPath === want0.directoryPath && now0.username === want0.username && now0.sshFingerprint === want0.sshFingerprint && same(current.backupSchedules, wanted.backupSchedules);
+if (unchanged && !(resend === true || String(resend) === "true")) {
+  System.log("Already configured as generated (target, fingerprint and schedule); left as it is. Run with resend = true to send it again, for example after changing the SFTP password or the passphrase.");
+} else {
+  if (!ctx.dryRun && (!settings.sftpPassword || !settings.backupPassphrase)) throw new Error("Set sftpPassword and backupPassphrase in " + SETTINGS_NAME + ": without the passphrase the backups cannot be restored. Nothing was changed.");
+  busyGuard();
+  core.act(ctx, "configure SDDC Manager backup to sftp://" + want0.server + ":" + want0.port + want0.directoryPath, function () {
+    var body = JSON.parse(JSON.stringify(wanted));
+    body.backupLocations[0].password = String(settings.sftpPassword);
+    body.encryption.passphrase = String(settings.backupPassphrase);
+    var r = core.http("PUT", api + "/v1/system/backup-configuration", auth, body, SAFE);
+    return r.body && r.body.id ? String(r.body.id) : "";
+  });
+  System.log("Then take one backup (POST /v1/backups/tasks, or Backup Now) and check it lands on the server.");
+}
+summary = core.audit(ctx, { server: want0.server, directory: want0.directoryPath, unchanged: unchanged });
+core.notify(settings.webhook, summary);`;
+
+const PRECHECK_WORKFLOW = String.raw`${SDDC_PRELUDE}
+var DOMAIN = String(settings.domainName), TARGET = String(settings.targetVersion || "");
+var problems = [];
+var domainId = null;
+var domains = get("/v1/domains").elements || [];
+for (var d = 0; d < domains.length; d++) if (domains[d].name === DOMAIN) domainId = String(domains[d].id);
+if (!domainId) throw new Error("No workload domain named " + DOMAIN + ".");
+System.log("Domain " + DOMAIN + " is " + domainId);
+if (TARGET) {
+  var bundles = get("/v1/bundles").elements || [];
+  var found = 0;
+  for (var b = 0; b < bundles.length; b++) {
+    var bundle = bundles[b];
+    var hit = String(bundle.version || "").indexOf(TARGET) === 0;
+    var comps = bundle.components || [];
+    for (var c = 0; c < comps.length; c++) if (String(comps[c].toVersion || "").indexOf(TARGET) === 0) hit = true;
+    if (!hit) continue;
+    found++;
+    System.log("bundle " + bundle.id + "  " + (bundle.type || "") + "  " + (bundle.downloadStatus || "UNKNOWN"));
+    if (bundle.downloadStatus !== "SUCCESSFUL") problems.push("bundle not downloaded: " + bundle.id);
+  }
+  if (!found) problems.push("no bundle found for " + TARGET);
+}
+function failures(node, out) {
+  if (node === null || typeof node !== "object") return;
+  var status = upper(node.resultStatus || node.status || "");
+  if (/FAILED|ERROR|COMPLETED_WITH_FAILURE/.test(status) && (node.name || node.description)) {
+    var first = node.errors && node.errors.length ? node.errors[0].message : null;
+    var line = (node.name || node.description) + ": " + (first || node.errorMessage || "see SDDC Manager");
+    if (out.indexOf(line) < 0) out.push(line);
+  }
+  for (var k in node) if (node.hasOwnProperty(k)) failures(node[k], out);
+}
+// Start the precheck: it runs checks and changes nothing. VCF 5.2 and 9.x run
+// them as check-sets (query, then run the selection); /v1/system/prechecks is
+// deprecated in 5.2 and not in the 9.1 reference, and is used only when the
+// check-sets query is not there (404).
+var polls = Number(settings.pollCount || 120);
+var result = null;
+var query = core.http("POST", api + "/v1/system/check-sets/queries", auth, { checkSetType: "UPGRADE", domains: [{ domainId: domainId }] }, { allow: [404], redact: settings._secrets });
+if (query.statusCode === 404) {
+  var legacy = core.http("POST", api + "/v1/system/prechecks", auth, { resources: [{ resourceId: domainId, type: "DOMAIN" }] }, SAFE).body || {};
+  if (!legacy.id) throw new Error("POST /v1/system/prechecks returned no task id.");
+  for (var i = 0; i < polls; i++) {
+    result = get("/v1/system/prechecks/tasks/" + encodeURIComponent(legacy.id));
+    if (!/IN_PROGRESS|IN PROGRESS|PENDING/.test(upper(result.status))) break;
+    System.sleep(30000);
+  }
+} else {
+  var q = query.body || {};
+  var selection = [];
+  var resources = q.resources || [];
+  for (var r = 0; r < resources.length; r++) {
+    var sets = [];
+    for (var s = 0; s < (resources[r].checkSets || []).length; s++) sets.push({ checkSetId: resources[r].checkSets[s].checkSetId });
+    if (sets.length) selection.push({ resourceName: resources[r].resourceName, resourceId: resources[r].resourceId, resourceType: resources[r].resourceType, domain: resources[r].domain, checkSets: sets });
+  }
+  if (!selection.length) throw new Error("SDDC Manager offers no UPGRADE check-sets for " + DOMAIN + ".");
+  var runBody = { queryId: q.queryId, resources: selection };
+  if (TARGET) runBody.metadata = { targetVersion: TARGET };
+  var run = core.http("POST", api + "/v1/system/check-sets", auth, runBody, SAFE).body || {};
+  if (!run.id) throw new Error("POST /v1/system/check-sets returned no id.");
+  System.log("precheck run " + run.id);
+  for (var j = 0; j < polls; j++) {
+    result = get("/v1/system/check-sets/" + encodeURIComponent(run.id));
+    if (!/IN_PROGRESS|PENDING/.test(upper(result.status))) break;
+    System.sleep(30000);
+  }
+}
+if (/IN_PROGRESS|IN PROGRESS|PENDING/.test(upper(result && result.status))) problems.push("precheck still running after " + polls + " polls");
+var found2 = [];
+failures(result, found2);
+for (var f = 0; f < found2.length; f++) problems.push(found2[f]);
+precheckResult = JSON.stringify(result, null, 2);
+problemCount = problems.length;
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+summary = core.audit(null, { source: "vcf-upgrade-precheck", domain: DOMAIN, target: TARGET, problems: problems });
+if (problems.length) {
+  core.notify(settings.webhook, { source: "vcf-upgrade-precheck", problems: problems });
+  throw new Error("Precheck of " + DOMAIN + ": " + problems.join("; "));
+}
+System.log("Precheck passed for " + DOMAIN + ".");`;
+
+const COMMISSION_WORKFLOW = String.raw`var ctx = core.begin(settings, dryRun);
+${SDDC_PRELUDE}
+var hosts = JSON.parse(core.resource(RESOURCE_PATH, "hosts.json"));
+var missing = [];
+for (var m = 0; m < hosts.length; m++) if (!settings[hosts[m].envVar]) missing.push(hosts[m].envVar);
+if (missing.length) throw new Error("Fill these SecureString attributes in " + SETTINGS_NAME + " from your vault: " + missing.join(", ") + ". Nothing was sent.");
+busyGuard();
+var POOL = String(settings.networkPool);
+var poolId = null;
+var pools = get("/v1/network-pools").elements || [];
+for (var p = 0; p < pools.length; p++) if (pools[p].name === POOL) poolId = String(pools[p].id);
+if (!poolId) throw new Error("No network pool named " + POOL + ".");
+// Idempotent: a host SDDC Manager already has is left alone.
+var known = {};
+var inventory = get("/v1/hosts").elements || [];
+for (var k = 0; k < inventory.length; k++) known[String(inventory[k].fqdn).toLowerCase()] = inventory[k].status || "known";
+var todo = [];
+for (var h = 0; h < hosts.length; h++) {
+  if (known[hosts[h].fqdn.toLowerCase()]) System.log("Already in SDDC Manager (" + known[hosts[h].fqdn.toLowerCase()] + "), left alone: " + hosts[h].fqdn);
+  else todo.push(hosts[h]);
+}
+var validationId = "";
+var taskId = "";
+if (!todo.length) {
+  System.log("Every host is commissioned already. Nothing to do.");
+} else {
+  var spec = [];
+  for (var t = 0; t < todo.length; t++) spec.push({ fqdn: todo[t].fqdn, username: todo[t].username, storageType: todo[t].storageType, networkPoolId: poolId, networkPoolName: POOL, password: String(settings[todo[t].envVar]) });
+  var polls = Number(settings.pollCount || 60);
+  // 1. Validate. Not optional, and also in a dry run — it is the dry run: SDDC
+  //    Manager connects to each host and checks it, and changes nothing.
+  var v = core.http("POST", api + "/v1/hosts/validations", auth, spec, SAFE).body || {};
+  if (!v.id) throw new Error("POST /v1/hosts/validations returned no id.");
+  validationId = String(v.id);
+  var result = {};
+  for (var i = 0; i < polls; i++) {
+    result = get("/v1/hosts/validations/" + encodeURIComponent(validationId));
+    if (upper(result.executionStatus) === "COMPLETED") break;
+    System.sleep(10000);
+  }
+  var checks = result.validationChecks || [];
+  for (var c = 0; c < checks.length; c++) System.log("  " + checks[c].resultStatus + "  " + checks[c].description);
+  if (upper(result.resultStatus) !== "SUCCEEDED") throw new Error("Validation " + validationId + " did not succeed (" + (result.resultStatus || result.executionStatus || "no result") + "). Nothing was commissioned.");
+  // 2. Commission, only when every host passed.
+  taskId = core.act(ctx, "commission " + todo.length + " host(s) into network pool " + POOL, function () {
+    var r = core.http("POST", api + "/v1/hosts", auth, spec, SAFE).body || {};
+    if (!r.id) throw new Error("POST /v1/hosts returned no task id.");
+    for (var j = 0; j < polls * 2; j++) {
+      var status = upper(get("/v1/tasks/" + encodeURIComponent(r.id)).status);
+      System.log("Commission task " + r.id + ": " + status);
+      if (status === "SUCCESSFUL") return String(r.id);
+      if (status === "FAILED") throw new Error("Commission task " + r.id + " failed; see it under Tasks in SDDC Manager.");
+      System.sleep(20000);
+    }
+    throw new Error("Commission task " + r.id + " is still running; follow it under Tasks in SDDC Manager.");
+  }) || "";
+}
+commissionTaskId = taskId;
+summary = core.audit(ctx, { hosts: todo.length, alreadyKnown: hosts.length - todo.length, validationId: validationId, taskId: taskId });
+core.notify(settings.webhook, summary);`;
+
+/** IMPORT.md steps for an SDDC Manager package, then the script's own. */
+function withPackage(pkg                                                                           , steps                                         )                                 {
+  return [...pkg.importSteps, ...steps.map((step) => (step ? { ...step, heading: `Or, with the script: ${step.heading.charAt(0).toLowerCase()}${step.heading.slice(1)}` } : undefined))];
+}
 
 export const VCF_FLEET                                 = [
   // -------------------------------------------------------------------------
@@ -187,10 +556,11 @@ export const VCF_FLEET                                 = [
         '#',
         '# Without --execute it lists the accounts it would rotate and writes the body',
         '# it would send. Nothing is rotated until you pass --execute.',
-        '#   ./rotate.sh              dry run',
+        '#   ./rotate.sh              dry run (from scripts/; reads select.jq and body.jq beside it)',
         '#   ./rotate.sh --execute    rotate now',
         ...(auto ? ['#   ./rotate.sh --execute --policy   set the auto-rotate policy instead of rotating'] : []),
         'set -euo pipefail',
+        'cd "$(dirname "$0")"',
         ...authPreamble('sddc-manager'),
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
         '',
@@ -257,6 +627,43 @@ export const VCF_FLEET                                 = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: packageNameOf('fleet', 'password_rotation', base),
+        description: `Rotates the ${typeLabel} ${account} passwords SDDC Manager holds${domains.length ? ` in ${domains.join(', ')}` : ''}${auto ? `, or sets their auto-rotate policy (every ${days} days)` : ''}. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/SDDC Manager/${base}`,
+        workflow: {
+          name: `Rotate passwords ${base}`,
+          description: `Selects the ${typeLabel} ${account} accounts SDDC Manager manages (GET /v1/credentials, filtered by domain and username), refuses while any credential task has failed or any task is running, or above maxResources, then PATCH /v1/credentials (operationType ${auto ? 'ROTATE, or UPDATE_AUTO_ROTATE_POLICY with the mode input' : 'ROTATE'}) and follows the task. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: select and show the request body, change nothing' },
+            { name: 'mode', type: 'string', description: auto ? 'ROTATE (default) or UPDATE_AUTO_ROTATE_POLICY' : 'ROTATE (default)' },
+          ],
+          outputs: [
+            { name: 'requestBody', type: 'string', description: 'The PATCH /v1/credentials body (no passwords: SDDC Manager generates them)' },
+            { name: 'credentialTaskId', type: 'string', description: 'The credential task, empty in a dry run' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: ROTATION_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Rotate passwords ${base} workflow. Fill sddcPassword after import (an ADMIN account); set dryRun to false only after a dry run.`,
+          attributes: [
+            ...SDDC_ATTRIBUTES,
+            { name: 'resourceType', type: 'string', value: type, description: 'ESXI, VCENTER, NSXT_MANAGER, NSXT_EDGE or BACKUP: one type per run' },
+            { name: 'accountType', type: 'string', value: account, description: 'USER, SYSTEM or SERVICE' },
+            { name: 'domains', type: 'Array/string', value: domains, description: 'Workload domains; empty means every domain' },
+            { name: 'usernames', type: 'Array/string', value: users, description: 'Usernames; empty means every account of that type' },
+            { name: 'maxResources', type: 'number', value: max, description: 'Refuse above this many accounts' },
+            { name: 'autoRotateDays', type: 'number', value: auto ? days : 0, description: 'The auto-rotate policy for mode UPDATE_AUTO_ROTATE_POLICY; 0: none' },
+            { name: 'taskPolls', type: 'number', value: 120, description: 'How many times to poll the credential task, 15 seconds apart' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is rotated while this is true' },
+            { name: 'cap', type: 'number', value: 1, description: 'The most PATCH /v1/credentials calls one run may make' },
+            { name: 'webhook', type: 'string', value: webhook, description: 'Where the audit record is posted' },
+          ],
+        },
+      });
+
       return {
         platform: PLATFORM,
         title: `Rotate ${typeLabel} ${account.toLowerCase()} passwords${domains.length ? ` in ${domains.join(', ')}` : ' across the fleet'}`,
@@ -264,8 +671,8 @@ export const VCF_FLEET                                 = [
         trigger: {
           kind: auto ? 'schedule' : 'manual',
           detail: auto
-            ? `Run by hand to rotate now; the auto-rotate policy then rotates every ${days} days inside SDDC Manager.`
-            : 'Run by hand, in a change window, one resource type at a time.',
+            ? `Run by hand (the workflow Rotate passwords ${base}, or scripts/rotate.sh) to rotate now; the auto-rotate policy then rotates every ${days} days inside SDDC Manager.`
+            : `Run by hand (the workflow Rotate passwords ${base}, or scripts/rotate.sh), in a change window, one resource type at a time.`,
           worstCase: auto ? `every ${days} days per account, for as long as the policy stays set` : 'once per run',
         },
         scope: {
@@ -284,32 +691,33 @@ export const VCF_FLEET                                 = [
           { rule: 'Refuses while any earlier credential task has failed', because: 'A failed rotation leaves resources locked. Adding a second one on top buries the first.' },
           { rule: `Refuses above ${max} accounts`, because: 'A filter that went wrong should stop, not rotate the fleet.' },
         ],
-        dryRun: ['Run rotate.sh without --execute. It lists every account and writes request-body.json, and sends nothing.'],
+        dryRun: [`The workflow Rotate passwords ${base} is a dry run until dryRun is set to false in its configuration element: it lists every account and returns the request body in requestBody, and sends nothing.`, 'Run scripts/rotate.sh without --execute. It lists every account and writes request-body.json, and sends nothing.'],
         undo: [
           'A rotation cannot be undone: the old password is gone.',
           'SDDC Manager holds the new one. Retrieve it with GET /v1/credentials?resourceName=<name> as an ADMIN, or lookup_passwords on the appliance.',
           'To put a known value back, PATCH /v1/credentials with operationType UPDATE and the password read from your vault — never typed into a file.',
           ...(auto ? ['To stop scheduled rotation, run the same selection with UPDATE_AUTO_ROTATE_POLICY and enableAutoRotatePolicy false.'] : []),
         ],
-        told: [webhook ? `${webhook}, when a rotation task fails.` : 'The exit code only.', 'SDDC Manager records the task under Credentials > Password Management.'],
-        requires: ['An SDDC Manager account with the ADMIN role for the token.', 'jq and bash 4 on the machine running it.'],
+        told: [webhook ? `${webhook}: the workflow posts its audit record every run; the script posts when a rotation task fails.` : 'The workflow’s log and audit record; the script’s exit code.', 'SDDC Manager records the task under Credentials > Password Management.'],
+        requires: ['An SDDC Manager account with the ADMIN role for the token.', 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the SDDC Manager certificate trusted in Orchestrator. For the script: jq and bash 4.'],
         files: {
-          'rotate.sh': rotate,
-          'select.jq': selectJq,
-          'body.jq': bodyJq,
+          ...pkg.files,
+          'scripts/rotate.sh': rotate,
+          'scripts/select.jq': selectJq,
+          'scripts/body.jq': bodyJq,
           'IMPORT.md': sddcImport(
-            'Nothing is uploaded as a file: the request body is built at run time from the accounts SDDC Manager reports, because each rotation names the exact resources and usernames it touches.',
-            [
+            `Nothing is uploaded as a file: the request body is built at run time from the accounts SDDC Manager reports, because each rotation names the exact resources and usernames it touches. The Orchestrator package \`${pkg.packageDir}\` (on the shared core library) does it with the workflow **Rotate passwords ${base}**; scripts/rotate.sh does the same from a host.`,
+            withPackage(pkg, [
               {
                 heading: 'Build and check the body',
-                lines: ['`./rotate.sh` selects the accounts (GET /v1/credentials, filtered by select.jq) and writes `request-body.json` — exactly the PATCH /v1/credentials body (CredentialsUpdateSpec: operationType ROTATE, elements [{resourceName, resourceType, credentials [{credentialType, username}]}]). Read it.'],
+                lines: ['`./scripts/rotate.sh` selects the accounts (GET /v1/credentials, filtered by select.jq) and writes `request-body.json` — exactly the PATCH /v1/credentials body (CredentialsUpdateSpec: operationType ROTATE, elements [{resourceName, resourceType, credentials [{credentialType, username}]}]). Read it.'],
               },
-              { heading: 'Rotate', lines: ['`./rotate.sh --execute` sends request-body.json to PATCH /v1/credentials and follows the task (GET /v1/credentials/tasks/{id}).'] },
+              { heading: 'Rotate', lines: ['`./scripts/rotate.sh --execute` sends request-body.json to PATCH /v1/credentials and follows the task (GET /v1/credentials/tasks/{id}).'] },
               auto
-                ? { heading: 'Set the auto-rotate policy', lines: [`\`./rotate.sh --execute --policy\` sends the same selection with operationType UPDATE_AUTO_ROTATE_POLICY and autoRotatePolicy {frequencyInDays: ${days}, enableAutoRotatePolicy: true} — the body Broadcom KB 370275 gives.`] }
+                ? { heading: 'Set the auto-rotate policy', lines: [`\`./scripts/rotate.sh --execute --policy\` (or the workflow with mode UPDATE_AUTO_ROTATE_POLICY) sends the same selection with operationType UPDATE_AUTO_ROTATE_POLICY and autoRotatePolicy {frequencyInDays: ${days}, enableAutoRotatePolicy: true} — the body Broadcom KB 370275 gives.`] }
                 : undefined,
-            ],
-            ['operationType values (UPDATE, ROTATE, REMEDIATE, UPDATE_AUTO_ROTATE_POLICY) and the element fields are in the CredentialsUpdateSpec schema.'],
+            ]),
+            ['operationType values (UPDATE, ROTATE, REMEDIATE, UPDATE_AUTO_ROTATE_POLICY) and the element fields are in the CredentialsUpdateSpec schema.', 'GET /v1/credentials is read as one page (elements); on an instance with more credentials than one page holds, check the pageMetadata of your release.', 'VCF 9.1: SDDC Manager still manages these passwords (techdocs "Using SDDC Manager to Manage Passwords"), but VCF Operations is the preferred place; see fleet91_password_rotate.'],
             [SDDC_API, 'Broadcom KB 370275, "Change password rotation to a custom value, in SDDC manager, via Developer center".'],
           ),
         },
@@ -465,11 +873,37 @@ export const VCF_FLEET                                 = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: packageNameOf('fleet', 'certificate_check', base),
+        description: `Reports the SDDC Manager resource certificates expiring within ${within} days. Reads only. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/SDDC Manager/${base}`,
+        workflow: {
+          name: `Certificate check ${base}`,
+          description: `Reads every workload domain (GET /v1/domains) and the certificates of every resource in it (GET /v1/domains/{id}/resource-certificates), and fails when any expires within withinDays or its date cannot be read, so a schedule shows it. Changes nothing.`,
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Certificates inside the window, or unreadable' },
+            { name: 'certificatesCsv', type: 'string', description: 'domain,resource,days_left for every certificate' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: CERTIFICATE_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Certificate check ${base} workflow. Fill sddcPassword after import (a read-only account is enough).`,
+          attributes: [
+            ...SDDC_ATTRIBUTES,
+            { name: 'withinDays', type: 'number', value: within, description: 'Report certificates expiring within this many days' },
+            { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any' },
+          ],
+        },
+      });
+
       return {
         platform: PLATFORM,
         title: `Report VCF certificates expiring within ${within} days`,
         effect: 'read',
-        trigger: { kind: 'schedule', detail: 'Daily, from a scheduler outside SDDC Manager', worstCase: 'once a day, for every certificate inside the window, until it is replaced' },
+        trigger: { kind: 'schedule', detail: `Daily: the workflow Certificate check ${base} on the Orchestrator scheduler, or the fallback script from cron — either way outside SDDC Manager`, worstCase: 'once a day, for every certificate inside the window, until it is replaced' },
         scope: {
           what: 'Every resource certificate SDDC Manager knows about, in every workload domain. The check reads; the replacement plan is a separate script run by hand.',
           decidedBy: ['GET /v1/domains — every domain this SDDC Manager manages.', 'GET /v1/domains/{id}/resource-certificates for each.', `Kept when it expires within ${within} days, or its date cannot be read.`],
@@ -480,33 +914,35 @@ export const VCF_FLEET                                 = [
           { rule: 'The replacement plan is dry-run by default, refuses placeholders, and refuses while another task runs', because: 'A half-filled install body or an overlapping task leaves a component with the wrong certificate and no one watching.' },
         ],
         dryRun: [
-          'The check only reads. Run it once by hand and compare against Security > Certificate Management in SDDC Manager.',
-          'replace-plan.sh prints what it would send unless given --execute.',
+          'The check only reads (the workflow and scripts/' + base + '.sh alike). Run it once by hand and compare against Security > Certificate Management in SDDC Manager.',
+          'scripts/replace-plan.sh prints what it would send unless given --execute.',
         ],
         undo: [
           'The check changes nothing.',
           'A replaced certificate can be put back only if you kept the previous chain and key. Export them before running the install step.',
         ],
-        told: [webhook ? `${webhook}, whenever anything is inside the window.` : 'The exit code only.'],
-        requires: ['A read-only SDDC Manager account for the check; an ADMIN one for the replacement plan.', 'jq and bash 4.', 'For replacement: a CA that will sign the CSRs, or a Microsoft CA configured in SDDC Manager.'],
+        told: [webhook ? `${webhook}, whenever anything is inside the window; and a failed workflow run (or exit code) that the scheduler shows.` : 'A failed workflow run, or the exit code, that the scheduler shows.'],
+        requires: ['A read-only SDDC Manager account for the check; an ADMIN one for the replacement plan.', 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the SDDC Manager certificate trusted in Orchestrator. For the scripts: jq and bash 4.', 'For replacement: a CA that will sign the CSRs, or a Microsoft CA configured in SDDC Manager.'],
         files: {
-          [`${base}.sh`]: check,
-          'expiring.jq': expiringJq,
-          'replace-plan.sh': plan,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: check.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")"\n'),
+          'scripts/expiring.jq': expiringJq,
+          'scripts/replace-plan.sh': plan.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")/.."\n'),
           'csr-request.json': `${JSON.stringify(csrSpec, null, 2)}\n`,
           'install-certificates.json': `${JSON.stringify(install, null, 2)}\n`,
-          'crontab.txt': `# Daily at 07:00, from the directory holding ${base}.sh and expiring.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
+          'crontab.txt': `# Daily at 07:00, with the fallback script (schedule the workflow in Orchestrator instead if you use the package).\n# The password file is mode 600 and owned by the account that runs this.\n0 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./scripts/${base}.sh\n`,
           'IMPORT.md': sddcImport(
-            'The check reads; replacing a certificate is two calls whose bodies are the two JSON files here, filled in from the check’s output.',
+            `The check reads — the Orchestrator package \`${pkg.packageDir}\` (workflow **Certificate check ${base}**, on the shared core library) or scripts/${base}.sh. Replacing a certificate is two calls whose bodies are the two JSON files here, filled in from the check’s output; scripts/replace-plan.sh sends them (it works from this folder).`,
             [
-              scheduleStep(`${base}.sh`, base),
+              ...pkg.importSteps,
+              { ...scheduleStep(`scripts/${base}.sh`, base), heading: 'Or: run the script once, then schedule it' },
               {
                 heading: 'When something is in the window: generate CSRs',
-                lines: ['Fill `resources` in csr-request.json (fqdn and type of each resource from the check), then `./replace-plan.sh csrs <domain-id>` and `--execute`: PUT /v1/domains/{id}/csrs with csr-request.json as the body. Fetch them with GET /v1/domains/{id}/csrs and have them signed.'],
+                lines: ['Fill `resources` in csr-request.json (fqdn and type of each resource from the check), then `./scripts/replace-plan.sh csrs <domain-id>` and `--execute`: PUT /v1/domains/{id}/csrs with csr-request.json as the body. Fetch them with GET /v1/domains/{id}/csrs and have them signed.'],
               },
               {
                 heading: 'Install the signed certificates',
-                lines: ['Put one element per resource in install-certificates.json (resourceFqdn and certificateChain — leaf, intermediates, root; resourceCertificate and caCertificate are the alternative), then `./replace-plan.sh install <domain-id> --execute`: PUT /v1/domains/{id}/resource-certificates. Services restart.'],
+                lines: ['Put one element per resource in install-certificates.json (resourceFqdn and certificateChain — leaf, intermediates, root; resourceCertificate and caCertificate are the alternative), then `./scripts/replace-plan.sh install <domain-id> --execute`: PUT /v1/domains/{id}/resource-certificates. Services restart.'],
               },
             ],
             ['CsrsGenerationSpec (keySize is a string: "2048", "3072" or "4096") and the ResourceCertificateSpec array are as the 5.2 and 9.x references give them. On VCF 4.x the install call was a PATCH on the same path.'],
@@ -620,11 +1056,39 @@ export const VCF_FLEET                                 = [
         'exit 1',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('fleet', 'health', base),
+        description: 'Checks SDDC Manager: it answers, no failed or stuck task, no unusable host, a backup configured and recent. Reads only. Generated by ArchToolKit.',
+        categoryPath: `ArchToolKit/SDDC Manager/${base}`,
+        workflow: {
+          name: `SDDC Manager health ${base}`,
+          description: `GET /v1/sddc-managers, /v1/tasks (failed in the last failedHours, running over stuckHours), /v1/hosts (unusable) and /v1/system/backup-configuration with the newest backup task; fails when anything is wrong, so a schedule shows it.${summary ? ' Optionally starts a health summary (POST /v1/system/health-summary).' : ''}`,
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Problems found' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: HEALTH_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the SDDC Manager health ${base} workflow. Fill sddcPassword after import (read-only is enough, unless startHealthSummary is on).`,
+          attributes: [
+            ...SDDC_ATTRIBUTES,
+            { name: 'failedHours', type: 'number', value: failedHours, description: 'Report failed tasks from the last this many hours' },
+            { name: 'stuckHours', type: 'number', value: stuckHours, description: 'A task running longer than this is stuck' },
+            { name: 'backupHours', type: 'number', value: backupHours, description: 'The last backup must be newer than this' },
+            { name: 'startHealthSummary', type: 'boolean', value: summary, description: 'Also start a SoS health summary run' },
+            { name: 'webhook', type: 'string', value: webhook, description: 'Where the problems are posted when there are any; somewhere that is not SDDC Manager' },
+          ],
+        },
+      });
+
       return {
         platform: PLATFORM,
         title: 'SDDC Manager health — tasks, hosts and backup',
         effect: 'read',
-        trigger: { kind: 'schedule', detail: 'Every hour, from a scheduler outside SDDC Manager', worstCase: 'every hour while something is wrong' },
+        trigger: { kind: 'schedule', detail: `Every hour, from a scheduler outside SDDC Manager: the workflow SDDC Manager health ${base} on the Orchestrator scheduler, or the fallback script from cron`, worstCase: 'every hour while something is wrong' },
         scope: {
           what: 'One SDDC Manager instance: its tasks, its host inventory and its backup configuration. Nothing is changed.',
           decidedBy: [
@@ -636,15 +1100,16 @@ export const VCF_FLEET                                 = [
           ifWrong: 'Only this instance is checked. A fleet with several SDDC Manager instances needs one run per instance.',
         },
         guardrails: [{ rule: 'Runs outside SDDC Manager and reports to an independent destination', because: 'A manager that is down cannot report that it is down.' }],
-        dryRun: ['It only reads. Run it by hand once and compare with the SDDC Manager dashboard.'],
+        dryRun: ['It only reads (the optional health summary starts a SoS run and changes no component). Run it by hand once and compare with the SDDC Manager dashboard.'],
         undo: ['Nothing to undo.', ...(summary ? ['The health summary run leaves a bundle on the appliance; clear old ones as you would any SoS bundle.'] : [])],
-        told: [webhook ? `${webhook}, whenever any check fails.` : 'The exit code only.'],
-        requires: ['A read-only SDDC Manager account for the token (an ADMIN one if the health summary is on).', 'jq, bash 4 and GNU date.'],
+        told: [webhook ? `${webhook}, whenever any check fails; and a failed workflow run (or exit code) that the scheduler shows.` : 'A failed workflow run, or the exit code, that the scheduler shows.'],
+        requires: ['A read-only SDDC Manager account for the token (an ADMIN one if the health summary is on).', 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the SDDC Manager certificate trusted in Orchestrator. For the script: jq, bash 4 and GNU date.'],
         files: {
-          [`${base}.sh`]: script,
-          'tasks.jq': tasksJq,
-          'crontab.txt': `# Hourly, from the directory holding ${base}.sh and tasks.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
-          'IMPORT.md': sddcImport('Nothing is imported: this reads SDDC Manager on a schedule.', [scheduleStep(`${base}.sh`, base)]),
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")"\n'),
+          'scripts/tasks.jq': tasksJq,
+          'crontab.txt': `# Hourly, with the fallback script (schedule the workflow in Orchestrator instead if you use the package).\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./scripts/${base}.sh\n`,
+          'IMPORT.md': sddcImport(`Nothing is imported into SDDC Manager: this reads it on a schedule — the Orchestrator package \`${pkg.packageDir}\` (workflow **SDDC Manager health ${base}**, on the shared core library), or scripts/${base}.sh.`, [...pkg.importSteps, { ...scheduleStep(`scripts/${base}.sh`, base), heading: 'Or: run the script once, then schedule it' }], ['Host status names (ASSIGNED, UNASSIGNED_USEABLE, UNASSIGNED_UNUSEABLE) and the task fields are read as the 5.2 and 9.x references give them; the last backup is found in the task list because the backup configuration does not report its last run in every release.']),
         },
         notes: [
           'On VCF 9.1 the management components VCF Operations now owns are checked through fleet lifecycle: see "fleet91_lifecycle" and "fleet91_cloud_proxy" in this kit. SDDC Manager still owns its own tasks, which this checks.',
@@ -759,7 +1224,9 @@ export const VCF_FLEET                                 = [
         '# The SFTP password and the encryption passphrase are read from the',
         '# environment and merged into the request in memory; neither is written to',
         '# disk. Without --execute it prints the request with both masked.',
+        '# Works from the folder above scripts/, where the body is.',
         'set -euo pipefail',
+        'cd "$(dirname "$0")/.."',
         ...authPreamble('sddc-manager'),
         ': "${SFTP_PASSWORD:?set SFTP_PASSWORD from your vault}"',
         ': "${BACKUP_PASSPHRASE:?set BACKUP_PASSPHRASE from your vault — without it the backups cannot be restored}"',
@@ -799,45 +1266,82 @@ export const VCF_FLEET                                 = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: packageNameOf('fleet', 'backup_config', base),
+        description: `Configures SDDC Manager (and NSX Manager) backup to sftp://${server}${directory}, the host key pinned, the secrets from SecureString attributes. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/SDDC Manager/${base}`,
+        workflow: {
+          name: `Configure backup ${base}`,
+          description: 'Reads the current backup configuration (the previousConfiguration output, secrets removed), leaves it alone when target, fingerprint and schedule are already as generated, and otherwise — refusing while any task is running, or without the fingerprint and both secrets — PUT /v1/system/backup-configuration with the payload in the resource element, the SFTP password and passphrase filled in from the configuration element in memory. A dry run until dryRun is set to false in the configuration element.',
+          inputs: [
+            { name: 'dryRun', type: 'boolean', description: 'true: compare and report, change nothing' },
+            { name: 'resend', type: 'boolean', description: 'true: send it even when it looks the same (after changing the SFTP password or the passphrase)' },
+          ],
+          outputs: [
+            { name: 'previousConfiguration', type: 'string', description: 'The configuration before, without secrets: PUT it back (with the secrets) to undo' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: BACKUP_CONFIG_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Configure backup ${base} workflow. Fill sddcPassword (ADMIN), sftpPassword and backupPassphrase after import, and sshFingerprint from the SFTP server's own console.`,
+          attributes: [
+            ...SDDC_ATTRIBUTES,
+            { name: 'sshFingerprint', type: 'string', value: fingerprint, description: 'The SFTP server host key fingerprint, SHA256:... (ssh-keygen -lf on the server)' },
+            { name: 'sftpPassword', type: 'SecureString', description: `The password of ${user} on ${server}` },
+            { name: 'backupPassphrase', type: 'SecureString', description: 'The encryption passphrase; keep a copy where it survives losing SDDC Manager' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is sent while this is true' },
+            { name: 'cap', type: 'number', value: 1, description: 'The most configuration changes one run may make' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [{ name: 'backup-configuration.json', content: `${JSON.stringify(payload, null, 2)}\n` }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Back up SDDC Manager to sftp://${server}${directory}`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'Run once when the backup target is built or changes; SDDC Manager then runs the schedule itself.', worstCase: onChange ? 'on the schedule, plus after every state change' : 'on the schedule' },
+        trigger: { kind: 'manual', detail: `Run once (the workflow Configure backup ${base}, or scripts/apply.sh) when the backup target is built or changes; SDDC Manager then runs the schedule itself.`, worstCase: onChange ? 'on the schedule, plus after every state change' : 'on the schedule' },
         scope: {
           what: 'The backup configuration of one SDDC Manager instance, which also sets the target NSX Manager backups use for the domains it manages.',
           decidedBy: ['The SDDC_HOST the script is pointed at.', 'PUT /v1/system/backup-configuration replaces the whole configuration, not one field.'],
           ifWrong: 'Backups go to the wrong server, or to one that does not exist — and nothing fails loudly until a backup task does. The health check in this kit is what notices.',
         },
         guardrails: [
-          { rule: 'Credentials only from the environment', because: 'A backup password in a file is a password in every copy of that repository.' },
-          { rule: 'The host key is pinned by fingerprint', because: 'Without it, whoever answers on that address receives the backup, encrypted or not.' },
+          { rule: 'Credentials only from SecureString attributes (the workflow) or the environment (the script), merged in memory', because: 'A backup password in a file is a password in every copy of that repository.' },
+          { rule: 'The host key is pinned by fingerprint; the workflow refuses an armed run without one', because: 'Without it, whoever answers on that address receives the backup, encrypted or not.' },
+          { rule: 'Leaves a configuration that already matches alone', because: 'A PUT replaces the whole configuration; sending it for nothing is a change record with no change.' },
           { rule: 'Refuses while another task is running', because: 'Changing the target during a backup or an upgrade leaves that run pointing at a half-configured location.' },
         ],
-        dryRun: ['Run apply.sh without --execute. It prints the request with the password and passphrase masked, and changes nothing.'],
+        dryRun: [`The workflow Configure backup ${base} is a dry run until dryRun is set to false in its configuration element: it compares, logs "DRY RUN: would configure …", and sends nothing.`, 'Run scripts/apply.sh without --execute. It prints the request with the password and passphrase masked, and changes nothing.'],
         undo: [
-          'previous-backup-configuration.json is the configuration before the change. PUT it back — with its password re-supplied from the vault, because the API does not return it.',
+          'The workflow’s previousConfiguration output (scripts/previous-backup-configuration.json for the script) is the configuration before the change. PUT it back — with its password re-supplied from the vault, because the API does not return it.',
           'Backups already written to the new target stay there; remove them on the SFTP server if the change is abandoned.',
         ],
         told: ['SDDC Manager records the reconfiguration task. Nothing else is told — pair this with the SDDC Manager health check.'],
         requires: [
           'An SFTP server reachable from SDDC Manager and the NSX managers, with the directory created and writable by the user.',
-          'SFTP_PASSWORD and BACKUP_PASSPHRASE in the environment, read from a vault.',
+          'The SFTP password and the passphrase in the SecureString attributes sftpPassword and backupPassphrase (the workflow), or SFTP_PASSWORD and BACKUP_PASSPHRASE in the environment from a vault (the script).',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the SDDC Manager certificate trusted in Orchestrator.',
           'The passphrase stored somewhere that survives losing SDDC Manager. Without it the backup is unreadable.',
         ],
         files: {
+          ...pkg.files,
           [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
-          'apply.sh': apply,
+          'scripts/apply.sh': apply,
           'IMPORT.md': sddcImport(
-            `${base}.json is the BackupConfigurationSpec that PUT /v1/system/backup-configuration takes — backupLocations, backupSchedules and encryption — with the two secrets left as <REQUIRED> placeholders. apply.sh fills them (and the SSH fingerprint) from the SFTP_PASSWORD and BACKUP_PASSPHRASE environment variables in memory and never writes the filled body to disk.`,
+            `The Orchestrator package \`${pkg.packageDir}\` (workflow **Configure backup ${base}**, on the shared core library) sends it. ${base}.json is the BackupConfigurationSpec that PUT /v1/system/backup-configuration takes — backupLocations, backupSchedules and encryption — with the two secrets left as <REQUIRED> placeholders. apply.sh fills them (and the SSH fingerprint) from the SFTP_PASSWORD and BACKUP_PASSPHRASE environment variables in memory and never writes the filled body to disk.`,
             [
+              ...pkg.importSteps,
               {
-                heading: 'Apply the configuration',
-                lines: ['`./apply.sh` saves the current configuration to previous-backup-configuration.json and shows the body without secrets; `./apply.sh --execute` sends it. In the interface the same is Administration > Backup > Site Settings.'],
+                heading: 'Or: apply the configuration with the script',
+                lines: ['`./scripts/apply.sh` (it reads the body one level up) saves the current configuration to previous-backup-configuration.json and shows the body without secrets; `./scripts/apply.sh --execute` sends it. In the interface the same is Administration > Backup > Site Settings (VCF 9.1: VCF Operations > Administration > SDDC Manager > Backup Settings > Site Settings).'],
               },
               { heading: 'Prove it', lines: ['Take one backup now (POST /v1/backups/tasks, or Backup Now in the interface) and check the file lands on the SFTP server.'] },
             ],
-            ['PUT replaces the whole configuration; PATCH on the same path updates it. The script uses PUT with the complete body.'],
+            ['PUT replaces the whole configuration; PATCH on the same path updates it. Both use the complete body here.', 'VCF 9.1.1 also has POST /v1/system/backup-configuration/validations; its response shape is not used here — validate by taking a backup.'],
           ),
         },
         notes: [
@@ -880,8 +1384,9 @@ export const VCF_FLEET                                 = [
       }
 
       const failuresJq = [
-        '# Every failed sub-check, flattened. The task shape nests validations under',
-        '# subTasks or validationChecks depending on release; both are walked.',
+        '# Every failed sub-check, flattened. The result nests checks under subTasks,',
+        '# validationChecks or (check-sets) the assessment output depending on release;',
+        '# every object is walked.',
         '[ .. | objects',
         '  | select(((.resultStatus // .status // "") | ascii_upcase) | test("FAILED|ERROR"))',
         '  | select(.name != null or .description != null)',
@@ -908,16 +1413,31 @@ export const VCF_FLEET                                 = [
         '  get "/v1/upgradables/domains/${DOMAIN_ID}" 2>/dev/null | jq -r \'.elements[]? | "upgradable: \\(.bundleId // .bundle.id // "?") \\(.status // "")"\' || true',
         'fi',
         '',
-        '# Start the precheck. The one write: it runs checks and changes nothing.',
-        '# 9.x may use /v1/system/check-sets for targeted prechecks instead; verify.',
-        'TASK=$(curl -sS -f -X POST "https://${SDDC_HOST}/v1/system/prechecks" \\',
-        `  -H "${authHeader('sddc-manager')}" -H "Content-Type: application/json" \\`,
-        '  --data "$(jq -n --arg id "$DOMAIN_ID" \'{resources: [{resourceId: $id, type: "DOMAIN"}]}\')" | jq -r .id)',
-        'echo "precheck task ${TASK}"',
+        '# Start the precheck. It runs checks and changes nothing. VCF 5.2 and 9.x run',
+        '# them as check-sets: query the UPGRADE check-sets for the domain, then run',
+        '# all of them. /v1/system/prechecks is deprecated in 5.2 and not in the 9.1',
+        '# reference; it is used only when the check-sets query is not there (404).',
+        `CS_CODE=$(curl -sS -o check-set-query.json -w '%{http_code}' -X POST "https://\${SDDC_HOST}/v1/system/check-sets/queries" \\`,
+        `  -H "${authHeader('sddc-manager')}" -H "Content-Type: application/json" -H "Accept: application/json" \\`,
+        '  --data "$(jq -n --arg id "$DOMAIN_ID" \'{checkSetType: "UPGRADE", domains: [{domainId: $id}]}\')" || echo 000)',
+        'if [[ "$CS_CODE" == 200 ]]; then',
+        '  RUN_BODY=$(jq -c --arg t "$TARGET" \'{queryId, resources: [.resources[]? | select((.checkSets // []) | length > 0) | {resourceName, resourceId, resourceType, domain, checkSets: [.checkSets[] | {checkSetId}]}]} + (if $t != "" then {metadata: {targetVersion: $t}} else {} end)\' check-set-query.json)',
+        '  [[ "$(jq \'.resources | length\' <<<"$RUN_BODY")" != 0 ]] || { echo "SDDC Manager offers no UPGRADE check-sets for ${DOMAIN_NAME}" >&2; exit 2; }',
+        `  TASK=$(curl -sS -f -X POST "https://\${SDDC_HOST}/v1/system/check-sets" -H "${authHeader('sddc-manager')}" -H "Content-Type: application/json" --data "$RUN_BODY" | jq -r .id)`,
+        '  RESULT_PATH="/v1/system/check-sets/${TASK}"',
+        'elif [[ "$CS_CODE" == 404 ]]; then',
+        '  TASK=$(curl -sS -f -X POST "https://${SDDC_HOST}/v1/system/prechecks" \\',
+        `    -H "${authHeader('sddc-manager')}" -H "Content-Type: application/json" \\`,
+        '    --data "$(jq -n --arg id "$DOMAIN_ID" \'{resources: [{resourceId: $id, type: "DOMAIN"}]}\')" | jq -r .id)',
+        '  RESULT_PATH="/v1/system/prechecks/tasks/${TASK}"',
+        'else',
+        '  echo "The check-sets query answered HTTP ${CS_CODE}; see check-set-query.json" >&2; exit 2',
+        'fi',
+        'echo "precheck ${TASK}"',
         '',
         `DEADLINE=$(( $(date +%s) + ${timeout} * 60 ))`,
         'while :; do',
-        '  RESULT=$(get "/v1/system/prechecks/tasks/${TASK}")',
+        '  RESULT=$(get "$RESULT_PATH")',
         '  STATUS=$(echo "$RESULT" | jq -r \'.status // "UNKNOWN"\' | tr a-z A-Z)',
         '  [[ "$STATUS" =~ IN_PROGRESS|IN\\ PROGRESS|PENDING ]] || break',
         '  (( $(date +%s) < DEADLINE )) || { PROBLEMS+=("precheck still running after ' + timeout + ' minutes"); break; }',
@@ -935,14 +1455,42 @@ export const VCF_FLEET                                 = [
         'exit 1',
       ]);
 
+      const pkg = toPackage({
+        packageName: packageNameOf('fleet', 'upgrade_precheck', base),
+        description: `Prechecks workload domain ${domain}${target ? ` for ${target}` : ''} in SDDC Manager and lists every failed check. Starts a precheck and reads; upgrades nothing. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/SDDC Manager/${base}`,
+        workflow: {
+          name: `Upgrade precheck ${base}`,
+          description: 'Resolves the domain by name, checks the target bundles are there and downloaded, then runs the UPGRADE check-sets for the domain (POST /v1/system/check-sets/queries, then POST /v1/system/check-sets, then GET /v1/system/check-sets/{runId}) — or, where check-sets are not there, the older POST /v1/system/prechecks — and fails listing every failed check, so a schedule shows it. Changes no component.',
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Failed checks and missing bundles' },
+            { name: 'precheckResult', type: 'string', description: 'The full precheck result, JSON' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: PRECHECK_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Upgrade precheck ${base} workflow. Fill sddcPassword after import (OPERATOR or ADMIN).`,
+          attributes: [
+            ...SDDC_ATTRIBUTES,
+            { name: 'domainName', type: 'string', value: domain, description: 'The workload domain, by name' },
+            { name: 'targetVersion', type: 'string', value: target, description: 'The target VCF version, as the bundle list names it; empty: no bundle check' },
+            { name: 'pollCount', type: 'number', value: timeout * 2, description: 'How many times to poll the precheck, 30 seconds apart' },
+            { name: 'webhook', type: 'string', value: webhook, description: 'Where the failed checks are posted when there are any' },
+          ],
+        },
+      });
+
       return {
         platform: PLATFORM,
         title: `Upgrade precheck — ${domain}${target ? ` to ${target}` : ''}`,
         effect: 'read',
-        trigger: { kind: 'schedule', detail: 'Daily in the week before an upgrade window, and once by hand the morning of it', worstCase: 'once a day' },
+        trigger: { kind: 'schedule', detail: `Daily in the week before an upgrade window (the workflow Upgrade precheck ${base} on the Orchestrator scheduler, or the fallback script), and once by hand the morning of it`, worstCase: 'once a day' },
         scope: {
           what: `The workload domain ${domain}: its components, as the SDDC Manager precheck sees them, and the bundle list.`,
-          decidedBy: [`GET /v1/domains, matched by name ${domain}.`, 'POST /v1/system/prechecks with that domain as the only resource.', target ? `GET /v1/bundles filtered to ${target}.` : 'No bundle check.'],
+          decidedBy: [`GET /v1/domains, matched by name ${domain}.`, 'The UPGRADE check-sets SDDC Manager offers for that domain (POST /v1/system/check-sets/queries), all of them selected; on a release without check-sets, POST /v1/system/prechecks with that domain as the only resource.', target ? `GET /v1/bundles filtered to ${target}.` : 'No bundle check.'],
           ifWrong: 'A precheck of the wrong domain passes and reassures nobody usefully. The script prints the domain id it resolved; check it.',
         },
         guardrails: [
@@ -951,18 +1499,27 @@ export const VCF_FLEET                                 = [
         ],
         dryRun: ['The precheck is itself the dry run of the upgrade. It changes no component.'],
         undo: ['Nothing to undo. The precheck result stays in SDDC Manager’s task list.'],
-        told: [webhook ? `${webhook}, with each failed check.` : 'The exit code, and precheck-result.json.'],
-        requires: ['An SDDC Manager account allowed to run prechecks (OPERATOR or ADMIN).', 'The target bundles downloaded, or a depot configured, for the bundle part to mean anything.'],
+        told: [webhook ? `${webhook}, with each failed check; and a failed workflow run (or exit code) that the scheduler shows.` : 'A failed workflow run with the precheckResult output, or the script’s exit code and precheck-result.json.'],
+        requires: ['An SDDC Manager account allowed to run prechecks (OPERATOR or ADMIN).', 'The target bundles downloaded, or a depot configured, for the bundle part to mean anything.', 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the SDDC Manager certificate trusted in Orchestrator.'],
         files: {
-          [`${base}.sh`]: script,
-          'failures.jq': failuresJq,
-          'IMPORT.md': sddcImport('Nothing is imported. The script starts a precheck (POST /v1/system/prechecks with a body naming the domain, built at run time) and reads its result.', [
-            { heading: 'Run the precheck', lines: [`\`./${base}.sh\` from a host that reaches SDDC Manager, a day or more before the upgrade window. In the interface: Lifecycle Management > the domain > Precheck.`] },
-          ]),
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")"\n'),
+          'scripts/failures.jq': failuresJq,
+          'IMPORT.md': sddcImport(
+            `Nothing is imported into SDDC Manager: the Orchestrator package \`${pkg.packageDir}\` (workflow **Upgrade precheck ${base}**, on the shared core library) starts a precheck and reads its result; scripts/${base}.sh does the same from a host.`,
+            [
+              ...pkg.importSteps,
+              { heading: 'Or: run the precheck with the script', lines: [`\`./scripts/${base}.sh\` from a host that reaches SDDC Manager, a day or more before the upgrade window. In the interface: Lifecycle Management > the domain > Precheck (VCF 9.1 reaches the SDDC Manager pages from VCF Operations; VERIFY the menu on your release).`] },
+            ],
+            [
+              'POST /v1/system/prechecks is marked deprecated in the VCF 5.2 API reference and is not in the SDDC Manager 9.1.1 reference, which has check-sets instead; the workflow and the script use check-sets and fall back to prechecks only on a 404.',
+              'The check-sets run is read back with GET /v1/system/check-sets/{runId}, taking the id the run call returned as the run id, and its status values (IN_PROGRESS, COMPLETED_WITH_SUCCESS, COMPLETED_WITH_FAILURE) from the 9.1.1 reference; where the failed checks sit inside that result is not spelt out there, so every object with a FAILED or ERROR status and a name is reported. Check one run by hand.',
+            ],
+          ),
         },
         notes: [
           'On VCF 9.1 the management components are upgraded through the fleet lifecycle upgrade plan: see "fleet91_lifecycle" in this kit. Workload domains are still prechecked in SDDC Manager, as here.',
-          'Newer releases split prechecks into check-sets (POST /v1/system/check-sets/queries, then /v1/system/check-sets) so you can precheck against a specific target. If /v1/system/prechecks is deprecated in yours, move to those.',
+          'Newer releases split prechecks into check-sets (POST /v1/system/check-sets/queries, then /v1/system/check-sets) so you can precheck against a specific target: the workflow and the script use them, and /v1/system/prechecks (deprecated since 5.2, gone from the 9.1 reference) only where they are not there.',
           'Run it early enough to fix what it finds. A precheck on the morning of the window only tells you the window is lost.',
         ],
         findings,
@@ -1050,6 +1607,7 @@ export const VCF_FLEET                                 = [
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
         '',
         'DRY_RUN=1; [[ "${1:-}" == "--execute" ]] && DRY_RUN=0',
+        'cd "$(dirname "$0")"',
         ...apiHelper(),
         '',
         'MISSING=()',
@@ -1102,11 +1660,41 @@ export const VCF_FLEET                                 = [
         '',
       ].join('\n');
 
+      const pkg = toPackage({
+        packageName: packageNameOf('fleet', 'host_commission', base),
+        description: `Commissions ${hosts.length} ESXi host(s) into SDDC Manager, network pool ${pool}: validates every host first and commissions only when all pass. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/SDDC Manager/${base}`,
+        workflow: {
+          name: `Commission hosts ${base}`,
+          description: 'Refuses while any task is running or a host password is missing; leaves alone a host SDDC Manager already has; validates the rest (POST /v1/hosts/validations — the dry run, it changes nothing) and, only when every host passed and dryRun is false in the configuration element, commissions them (POST /v1/hosts) and follows the task.',
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: validate only' }],
+          outputs: [
+            { name: 'commissionTaskId', type: 'string', description: 'The commission task, empty in a dry run' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: COMMISSION_WORKFLOW,
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Commission hosts ${base} workflow. Fill sddcPassword (ADMIN) and each host's ${user} password after import, from your vault.`,
+          attributes: [
+            ...SDDC_ATTRIBUTES,
+            { name: 'networkPool', type: 'string', value: pool, description: 'The network pool, by name' },
+            ...hosts.map((host) => ({ name: host.envVar, type: 'SecureString'         , description: `${host.fqdn}: the ${user} password` })),
+            { name: 'pollCount', type: 'number', value: 60, description: 'How many times to poll the validation (10 s apart; the commission task twice as many, 20 s apart)' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is commissioned while this is true' },
+            { name: 'cap', type: 'number', value: 1, description: 'The most commission calls one run may make (one call commissions the whole batch)' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [{ name: 'hosts.json', content: `${JSON.stringify(hosts, null, 2)}\n` }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Commission ${hosts.length} ESXi host${hosts.length === 1 ? '' : 's'} (${types.join(', ') || defaultType}) into ${pool}`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: 'Run by hand when hosts have been racked, imaged and given DNS.', worstCase: 'once per batch' },
+        trigger: { kind: 'manual', detail: `Run by hand (the workflow Commission hosts ${base}, or scripts/${base}.sh) when hosts have been racked, imaged and given DNS.`, worstCase: 'once per batch' },
         scope: {
           what: `Exactly the hosts listed: ${hosts.map((host) => host.fqdn).join(', ') || 'none'}.`,
           decidedBy: ['hosts.json, written from the list in this blueprint.', `Network pool ${pool}, resolved to its id at run time.`],
@@ -1114,29 +1702,33 @@ export const VCF_FLEET                                 = [
         },
         guardrails: [
           { rule: 'Always validates, and commissions only if every host passed', because: 'Validation catches the wrong VLAN, a bad password, an unsupported build — before the host is in the pool.' },
-          { rule: 'One password variable per host, all present before anything is sent', because: 'A shared root password across hosts is one leak away from all of them, and a missing one should stop the run at the start.' },
+          { rule: 'One password per host (a SecureString attribute in the workflow, a variable for the script), all present before anything is sent', because: 'A shared root password across hosts is one leak away from all of them, and a missing one should stop the run at the start.' },
+          { rule: 'A host SDDC Manager already has is left alone', because: 'Running the batch again after a partial success must not try to commission a host twice.' },
           { rule: 'Refuses while another task is running', because: 'Commissioning during a domain operation competes for the network pool’s addresses.' },
         ],
-        dryRun: ['Run without --execute. It validates every host with SDDC Manager and stops there.'],
+        dryRun: [`The workflow Commission hosts ${base} is a dry run until dryRun is set to false in its configuration element: it validates every host with SDDC Manager and stops there. The script does the same without --execute.`],
         undo: [
           'Decommission: DELETE /v1/hosts with a body listing each FQDN (verify the shape for your release), or Hosts > Decommission in SDDC Manager.',
           'A decommissioned host has to be reimaged before it is commissioned again.',
         ],
-        told: ['SDDC Manager records the validation and the commission task. Nothing else is told.'],
+        told: ['SDDC Manager records the validation and the commission task; the workflow’s audit record goes to the webhook if set.'],
         requires: [
           'Each host imaged at a supported ESXi build, with forward and reverse DNS, NTP, and SSH enabled.',
           `The network pool ${pool} with free addresses for vMotion and storage for every host.`,
-          ...hosts.map((host) => `${host.envVar} set to ${host.fqdn}’s ${user} password, from your vault.`),
+          ...hosts.map((host) => `${host.envVar} (the attribute of that name in the workflow's configuration element, or the variable for the script) set to ${host.fqdn}’s ${user} password, from your vault.`),
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the SDDC Manager certificate trusted in Orchestrator.',
         ],
         files: {
-          [`${base}.sh`]: script,
-          'hosts.json': `${JSON.stringify(hosts, null, 2)}\n`,
-          'spec.jq': specJq,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
+          'scripts/hosts.json': `${JSON.stringify(hosts, null, 2)}\n`,
+          'scripts/spec.jq': specJq,
           'IMPORT.md': sddcImport(
-            'hosts.json lists the hosts without passwords; spec.jq turns it into exactly the HostCommissionSpec array POST /v1/hosts and POST /v1/hosts/validations take (fqdn, username, password, storageType, networkPoolId, networkPoolName), each password read from the variable named in hosts.json.',
+            `The Orchestrator package \`${pkg.packageDir}\` (workflow **Commission hosts ${base}**, on the shared core library) builds the body from its resource element hosts.json and the per-host SecureString attributes. scripts/hosts.json lists the hosts without passwords; scripts/spec.jq turns it into exactly the HostCommissionSpec array POST /v1/hosts and POST /v1/hosts/validations take (fqdn, username, password, storageType, networkPoolId, networkPoolName), each password read from the variable named in hosts.json.`,
             [
-              { heading: 'Validate', lines: [`Export each host’s password variable (${hosts.map((host) => host.envVar).join(', ')}), then \`./${base}.sh\`: it resolves the network pool id and runs POST /v1/hosts/validations.`] },
-              { heading: 'Commission', lines: [`\`./${base}.sh --execute\` sends the same body to POST /v1/hosts and follows the task. In the interface: Inventory > Hosts > Commission Hosts, which also accepts a JSON file of the same host list.`] },
+              ...pkg.importSteps,
+              { heading: 'Or: validate with the script', lines: [`Export each host’s password variable (${hosts.map((host) => host.envVar).join(', ')}), then \`./scripts/${base}.sh\`: it resolves the network pool id and runs POST /v1/hosts/validations.`] },
+              { heading: 'Or: commission with the script', lines: [`\`./scripts/${base}.sh --execute\` sends the same body to POST /v1/hosts and follows the task. In the interface: Inventory > Hosts > Commission Hosts, which also accepts a JSON file of the same host list.`] },
             ],
             ['The interface’s Commission Hosts JSON import uses its own template (downloadable from that dialog); the file to upload there is not hosts.json — VERIFY its fields against the template before using that route.'],
           ),

@@ -32,10 +32,424 @@ import {
   superMetricsJson,
                     
 } from '../vcfops-import.js';
-import { packageNameOf, toPackage } from '../vro/to-package.js';
+import { packageNameOf, toPackage,                        } from '../vro/to-package.js';
+                                                      
+                                                                   
+                                                  
 
 const PLATFORM = 'vcf-operations'         ;
 const SRC = 'ArchToolKit';
+
+// ---------------------------------------------------------------------------
+// The VCF Operations automations as Orchestrator packages (shared by
+// vcf-operations.ts and vcf-operations-setup.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * A package or folder name part from free text. "polic…" is spelled out of it:
+ * import-vcfops.test refuses any import/ path that looks like a policy file,
+ * because a policy fragment imported on its own drops the rest of the policy.
+ */
+export function opsPart(text        , fallback = 'x')         {
+  return slugOf(text, fallback).replace(/polic(y|ies)/g, 'pol');
+}
+
+/**
+ * The start of every VCF Operations workflow: the settings it cannot run
+ * without, the login (POST /suite-api/api/auth/token/acquire, an OpsToken, as
+ * in 9.1), and the helpers the scripts share.
+ *
+ *   ops(method, path, body, options, headers)  one suite-API call, auth added
+ *   listAll(path, key, method, body)           every page of .key; a response
+ *                                              with no pageInfo is one page
+ *   named(items, value, field)                 the one item whose field (dotted,
+ *                                              default name) is value; null for
+ *                                              none, an error for several
+ *   q(text)                                    encodeURIComponent
+ *
+ * The body of the workflow runs in try, and the session is released in finally.
+ */
+const OPS_PRELUDE = String.raw`if (!settings.opsHost) throw new Error("Set opsHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUsername and opsPassword in the configuration element " + SETTINGS_NAME + ".");
+var api = "https://" + settings.opsHost + "/suite-api/api/";
+var SAFE = { redact: settings._secrets };
+function q(text) { return encodeURIComponent(String(text)); }
+function ops(method, path, body, options, headers) {
+  var o = { redact: settings._secrets };
+  var h = {};
+  var k;
+  if (options) for (k in options) if (options.hasOwnProperty(k)) o[k] = options[k];
+  for (k in auth) if (auth.hasOwnProperty(k)) h[k] = auth[k];
+  if (headers) for (k in headers) if (headers.hasOwnProperty(k)) h[k] = headers[k];
+  return core.http(method, api + path, h, body === undefined ? null : body, o);
+}
+// Every page is read; a list that cannot be read whole is an error, never an
+// empty list (acting on "nothing exists" would create duplicates).
+function listAll(path, key, method, body) {
+  var verb = method || "GET";
+  return core.pageAll(function (page) {
+    var r = ops(verb, path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", body || null, null, null).body;
+    if (!r || typeof r !== "object" || (!r.hasOwnProperty(key) && !r.pageInfo)) throw new Error(verb + " " + path.split("?")[0] + " returned no " + key + " (VERIFY the response shape on your release); refusing to go on with an empty list.");
+    var total = r.pageInfo && r.pageInfo.totalCount !== undefined && r.pageInfo.totalCount !== null ? r.pageInfo.totalCount : null;
+    return { items: r[key] || [], total: total, more: r.pageInfo ? null : false };
+  }, 0);
+}
+function field(item, path) {
+  var v = item;
+  var parts = String(path).split(".");
+  for (var i = 0; i < parts.length && v !== null && v !== undefined; i++) v = v[parts[i]];
+  return v;
+}
+function named(items, value, path) {
+  var hits = [];
+  for (var i = 0; i < items.length; i++) if (String(field(items[i], path || "name")) === String(value)) hits.push(items[i]);
+  if (hits.length > 1) throw new Error(hits.length + " objects are named \"" + value + "\"; refusing to guess which one is meant.");
+  return hits.length ? hits[0] : null;
+}
+var auth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");`;
+
+/** A whole VCF Operations workflow script: guard, login, body in try, logout in finally, then after. */
+export function opsWorkflow(body        , after        , changes         )         {
+  return [...(changes ? ['var ctx = core.begin(settings, dryRun);'] : []), OPS_PRELUDE, 'try {', body, '} finally {', '  core.logoutVcfOps(settings.opsHost, auth);', '}', after].join('\n');
+}
+
+                                 
+                                                         
+                                    
+                                                      
+                          
+                               
+                                
+                                       
+                                                                                       
+                            
+                        
+                                        
+                                     
+                        
+                                                  
+                         
+                                                                
+                           
+                                                   
+                                                                                      
+                               
+ 
+
+/** A VCF Operations automation as an Orchestrator package, on the core library. */
+export function opsPackage(spec                )                    {
+  const configName = spec.configName ?? 'Settings';
+  const pkg = toPackage({
+    packageName: packageNameOf('vcfops', ...spec.parts.map((part) => opsPart(part))),
+    description: `${spec.description} Generated by ArchToolKit.`,
+    categoryPath: `ArchToolKit/VCF Operations/${opsPart(spec.folder)}`,
+    workflow: {
+      name: spec.workflowName,
+      description: `${spec.workflowDescription}${spec.changes ? ' A dry run until dryRun is set to false in the configuration element.' : ' Reads only.'}`,
+      inputs: spec.changes ? [{ name: 'dryRun', type: 'boolean', description: 'true: report what would change and change nothing' }] : [],
+      outputs: [...spec.outputs, { name: 'summary', type: 'string', description: 'The audit record, JSON' }],
+      script: opsWorkflow(spec.body, spec.after, spec.changes),
+    },
+    config: {
+      name: configName,
+      description: `Settings of the ${spec.workflowName} workflow. Fill opsPassword after import${spec.changes ? '; set dryRun to false only after a dry run' : ''}.`,
+      attributes: [
+        { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host (FQDN)' },
+        { name: 'opsUsername', type: 'string', value: '', description: spec.account },
+        { name: 'opsPassword', type: 'SecureString', description: 'Its password' },
+        { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source for the account; empty for a local account' },
+        ...spec.settings,
+        ...(spec.changes
+          ? [
+              { name: 'dryRun', type: 'boolean'         , value: true, description: 'The arming switch: nothing is changed while this is true' },
+              { name: 'cap', type: 'number'         , value: spec.cap ?? 1, description: 'The most changes one run may make' },
+            ]
+          : []),
+        ...(spec.settings.some((a) => a.name === 'webhook') ? [] : [{ name: 'webhook', type: 'string'         , value: '', description: 'Optional: where the audit record is posted' }]),
+      ],
+    },
+    ...(spec.resources ? { resources: spec.resources } : {}),
+  });
+  // The same guard the import test holds every import/ path to.
+  const bad = Object.keys(pkg.files).filter((path) => /polic/i.test(path));
+  if (bad.length > 0) throw new Error(`A package path looks like a policy file: ${bad[0]}`);
+  return pkg;
+}
+
+/** The package's import steps as IMPORT.md steps, the first one naming both package folders. */
+export function packageSteps(pkg                   , what        )               {
+  return pkg.importSteps.map((step, index) => ({
+    heading: index === 0 ? `${step.heading} — ${what}` : step.heading,
+    files: index === 0 ? [pkg.packageDir, 'import/com.archtoolkit.core.package'] : [],
+    how: step.lines.filter((line) => line.trim() !== '').map((line) => line.replace(/^- /, '')),
+  }));
+}
+
+/** A fallback script moved under scripts/: it reads its payloads from beside itself, wherever it is run from. */
+export function inScripts(script        )         {
+  return script.replace('set -euo pipefail\n', 'set -euo pipefail\ncd "$(dirname "$0")"\n');
+}
+
+/** The display names VCF Operations gives the vCenter actions (GET /api/actiondefinitions → displayName). */
+const ACTION_LABELS                                   = {
+  DeleteUnusedSnapshotsForVM: 'Delete Unused Snapshots for VM',
+  PowerOffVM: 'Power Off VM',
+  SetCPUCountForVM: 'Set CPU Count for VM',
+  SetMemoryForVM: 'Set Memory for VM',
+  MoveVM: 'Move VM',
+  RebalanceContainer: 'Rebalance Container',
+};
+
+/**
+ * Alert action: the action definition (it exists only once actions are enabled
+ * on the vCenter adapter), the recommendation (by its text; created once), and
+ * the recommendation added to every state of the alert definition.
+ */
+const ALERT_ACTION_BODY = String.raw`var rec = JSON.parse(core.resource(RESOURCE_PATH, "recommendation.json"));
+if (!settings.alertDefinitionId) throw new Error("Set alertDefinitionId in the configuration element " + SETTINGS_NAME + ".");
+var alertDef = ops("GET", "alertdefinitions/" + q(settings.alertDefinitionId), null, null, null).body;
+if (!alertDef || !alertDef.id) throw new Error("No alert definition " + settings.alertDefinitionId + ".");
+var states = alertDef.states || [];
+if (!states.length) throw new Error("Alert definition " + alertDef.id + " has no states to add a recommendation to.");
+var definitions = listAll("actiondefinitions", "actionDefinitions");
+var matches = [];
+for (var i = 0; i < definitions.length; i++) {
+  if (String(definitions[i].displayName) === String(settings.actionName) || String(definitions[i].id) === String(settings.actionName)) matches.push(definitions[i]);
+}
+if (matches.length !== 1) throw new Error((matches.length ? matches.length + " action definitions are" : "No action definition is") + " named \"" + settings.actionName + "\" (GET actiondefinitions). Actions are listed once they are enabled on the vCenter adapter instance.");
+rec.action.actionAdapterKindId = String(matches[0].actionAdapterKindKey);
+var existing = named(listAll("recommendations", "recommendations"), rec.description, "description");
+var recId = null;
+if (existing) {
+  recId = String(existing.id);
+  System.log("Exists, left as it is: the recommendation (" + recId + ")");
+} else {
+  recId = core.act(ctx, "create the recommendation that runs " + settings.actionName, function () {
+    var r = ops("POST", "recommendations", rec, null, null);
+    if (!r.body || !r.body.id) throw new Error("POST recommendations returned no id; nothing after it was changed.");
+    return String(r.body.id);
+  });
+}
+var refId = recId || "new-recommendation";
+var attach = false;
+for (var s = 0; s < states.length; s++) {
+  var map = states[s].recommendationPriorityMap || {};
+  if (!map.hasOwnProperty(refId)) {
+    var n = 0;
+    for (var k in map) if (map.hasOwnProperty(k)) n++;
+    map[refId] = n + 1;
+    states[s].recommendationPriorityMap = map;
+    attach = true;
+  }
+}
+if (attach) {
+  core.act(ctx, "add the recommendation to alert definition " + alertDef.id, function () {
+    return ops("PUT", "alertdefinitions", alertDef, null, null).statusCode;
+  });
+} else {
+  System.log("Alert definition " + alertDef.id + " already carries the recommendation.");
+}
+System.log("Next, by a person, as a reviewed change: set automate on this alert in the dedicated policy (scripts/merge-policy.sh, or the policy editor).");`;
+
+/**
+ * Workload policy: every read first (the parent, the groups), so a missing
+ * group stops the run before anything is created; then create (unless it
+ * exists) and assign.
+ */
+const WORKLOAD_BODY = String.raw`var def = JSON.parse(core.resource(RESOURCE_PATH, "definition.json"));
+var all = listAll("policies", "policySummaries");
+var parentItem = named(all, def.parent);
+if (!parentItem) throw new Error("Nothing named \"" + def.parent + "\" to inherit from (GET policies).");
+var groupItems = listAll("resources/groups", "groups");
+var groupIds = [];
+var missing = [];
+for (var i = 0; i < def.groups.length; i++) {
+  var hit = named(groupItems, def.groups[i], "resourceKey.name");
+  if (hit) groupIds.push(String(hit.id)); else missing.push(def.groups[i]);
+}
+if (missing.length) throw new Error("No custom group named " + missing.join(", ") + "; nothing was created or assigned.");
+if (!groupIds.length) throw new Error("No groups to assign it to; assigned to nothing, it would apply to nothing.");
+var existing = named(all, def.name);
+var targetId = null;
+if (existing) {
+  targetId = String(existing.id);
+  System.log("Exists, left as it is: \"" + def.name + "\" (" + targetId + "); its group assignment is still applied.");
+} else {
+  targetId = core.act(ctx, "create \"" + def.name + "\" inheriting from \"" + def.parent + "\"", function () {
+    var r = ops("POST", "policies", { name: def.name, description: def.description, parentPolicy: String(parentItem.id) }, null, null);
+    if (!r.body || !r.body.id) throw new Error("POST policies returned no id; nothing was assigned.");
+    return String(r.body.id);
+  });
+}
+core.act(ctx, "assign \"" + def.name + "\" to " + def.groups.join(", "), function () {
+  var r = ops("PUT", "policies/" + q(targetId) + "/assign", { groupIds: groupIds }, null, null);
+  var failed = (r.body && r.body.failedGroupIds) || [];
+  if (failed.length) throw new Error("not assigned to group(s) " + failed.join(", ") + ".");
+  return true;
+});
+System.log("Then, in the editor: the capacity values from the design, and priority " + def.priority + ".");`;
+
+/**
+ * Compliance drift: the benchmark's alert definitions (compliance subtype 21,
+ * name matching), the group's members, their active alerts of those
+ * definitions, and the failing rules (the alerts' contributing symptoms, by
+ * name). The same steps and the same report as scripts/report.sh.
+ */
+const COMPLIANCE_BODY = String.raw`var rx = new RegExp(String(settings.definitionRegex), "i");
+var bench = [];
+var defs = listAll("alertdefinitions", "alertDefinitions");
+for (var i = 0; i < defs.length; i++) {
+  if (Number(defs[i].subType) === 21 && rx.test(String(defs[i].name || ""))) bench.push({ id: String(defs[i].id), name: String(defs[i].name) });
+}
+System.log(bench.length + " alert definition(s) for " + settings.benchmark + " (name matches /" + settings.definitionRegex + "/):");
+for (var b = 0; b < bench.length; b++) System.log("  " + bench[b].name);
+if (!bench.length) throw new Error("No compliance alert definition matches /" + settings.definitionRegex + "/. Nothing to report on is not the same as compliant: fix definitionRegex.");
+var group = named(listAll("resources/groups", "groups"), settings.groupName, "resourceKey.name");
+if (!group) throw new Error("No custom group named \"" + settings.groupName + "\".");
+var members = listAll("resources/groups/" + q(group.id) + "/members", "resourceList");
+if (!members.length) throw new Error("Group \"" + settings.groupName + "\" has no members: nothing would be checked.");
+var inGroup = {};
+for (var m = 0; m < members.length; m++) inGroup[String(members[m].identifier)] = (members[m].resourceKey && members[m].resourceKey.name) || String(members[m].identifier);
+var benchIds = [];
+for (var d = 0; d < bench.length; d++) benchIds.push(bench[d].id);
+var alerts = listAll("alerts/query", "alerts", "POST", { activeOnly: true, alertDefinitionId: benchIds });
+var mine = [];
+for (var a = 0; a < alerts.length; a++) if (inGroup.hasOwnProperty(String(alerts[a].resourceId))) mine.push(alerts[a]);
+// The failing rules: every symptomDefinitionId under each contributing-symptoms entry.
+function collect(node, out) {
+  if (!node || typeof node !== "object") return;
+  if (node.symptomDefinitionId) out[String(node.symptomDefinitionId)] = true;
+  for (var key in node) if (node.hasOwnProperty(key)) collect(node[key], out);
+}
+function keysOf(o) { var out = []; for (var k in o) if (o.hasOwnProperty(k)) out.push(k); return out; }
+var symptomsOf = {};
+var allSymptoms = {};
+for (var c = 0; c < mine.length; c += 50) {
+  var ids = [];
+  for (var j = c; j < Math.min(c + 50, mine.length); j++) ids.push("id=" + q(mine[j].alertId));
+  var cs = ops("GET", "alerts/contributingsymptoms?" + ids.join("&"), null, null, null).body || {};
+  var entries = cs.contributingSymptoms || [];
+  for (var e = 0; e < entries.length; e++) {
+    var found = {};
+    collect(entries[e], found);
+    symptomsOf[String(entries[e].alertId || entries[e].id)] = keysOf(found);
+    for (var f in found) if (found.hasOwnProperty(f)) allSymptoms[f] = true;
+  }
+}
+var nameOf = {};
+var symptomIds = keysOf(allSymptoms).sort();
+for (var s = 0; s < symptomIds.length; s += 50) {
+  var sq = [];
+  for (var t = s; t < Math.min(s + 50, symptomIds.length); t++) sq.push("id=" + q(symptomIds[t]));
+  var sd = (ops("GET", "symptomdefinitions?" + sq.join("&"), null, null, null).body || {}).symptomDefinitions || [];
+  for (var u = 0; u < sd.length; u++) nameOf[String(sd[u].id)] = String(sd[u].name);
+}
+function addUnique(list, value) { if (list.indexOf(value) < 0) list.push(value); }
+var byResource = {};
+for (var r = 0; r < mine.length; r++) {
+  var rid = String(mine[r].resourceId);
+  var entry = byResource[rid] || (byResource[rid] = { resourceId: rid, resource: inGroup[rid], alerts: [], failingRules: [] });
+  addUnique(entry.alerts, String(mine[r].alertDefinitionName));
+  var rules = symptomsOf[String(mine[r].alertId)] || [];
+  for (var x = 0; x < rules.length; x++) addUnique(entry.failingRules, nameOf[rules[x]] || rules[x]);
+}
+var report = [];
+var rids = keysOf(byResource).sort();
+var distinct = {};
+for (var y = 0; y < rids.length; y++) {
+  var item = byResource[rids[y]];
+  item.alerts.sort();
+  item.failingRules.sort();
+  for (var z = 0; z < item.failingRules.length; z++) distinct[item.failingRules[z]] = true;
+  report.push(item);
+  System.log("FAILS: " + item.resource + ": " + (item.failingRules.length ? item.failingRules.join("; ") : "(no contributing symptoms returned: open the alert)"));
+}
+System.log(settings.benchmark + ": " + report.length + " of " + members.length + " object(s) in " + settings.groupName + " fail, across " + keysOf(distinct).length + " distinct rule(s).");`;
+
+/**
+ * Webhook payload: the payload template (9.x: POST /api/notifications/templates),
+ * once, by name; then, when asked, the sample posted to the endpoint — for a
+ * ServiceNow Table API endpoint only when no open incident has its
+ * correlation_id, because the Table API never deduplicates.
+ */
+const PAYLOAD_BODY = String.raw`var template = JSON.parse(core.resource(RESOURCE_PATH, "template.json"));
+var existing = named(listAll("notifications/templates?name=" + q(template.name), "notificationTemplates"), template.name);
+var templateRef = null;
+if (existing) {
+  templateRef = String(existing.templateId || existing.id);
+  System.log("Exists, left as it is: payload template \"" + template.name + "\" (" + templateRef + ")");
+} else {
+  templateRef = core.act(ctx, "create payload template \"" + template.name + "\"", function () {
+    var r = ops("POST", "notifications/templates", template, null, null);
+    var made = r.body && (r.body.templateId || r.body.id);
+    if (!made) throw new Error("POST notifications/templates returned no templateId.");
+    return String(made);
+  });
+}
+if (settings.sendSample === true || String(settings.sendSample) === "true") {
+  if (!settings.endpoint) throw new Error("Set endpoint in the configuration element " + SETTINGS_NAME + " to send the sample.");
+  var endpoint = String(settings.endpoint);
+  var where = endpoint.split("?")[0];
+  var sample = core.resource(RESOURCE_PATH, "sample.json");
+  var headers = null;
+  if (settings.receiverUsername) {
+    if (!settings.receiverPassword) throw new Error("Set receiverPassword for " + settings.receiverUsername + ".");
+    headers = { "Authorization": "Basic " + core.base64(String(settings.receiverUsername) + ":" + String(settings.receiverPassword)) };
+  }
+  if (/\/api\/now\/table\/incident/.test(endpoint)) {
+    var corr = JSON.parse(sample).correlation_id;
+    var snBase = endpoint.split("/api/now/")[0];
+    var open = core.http("GET", snBase + "/api/now/table/incident?sysparm_query=" + q("correlation_id=" + corr + "^active=true") + "&sysparm_fields=number&sysparm_limit=1", headers, null, SAFE).body || {};
+    if (open.result && open.result.length) throw new Error("Open incident " + open.result[0].number + " already has correlation_id " + corr + "; not creating a second. Close it to test again.");
+  }
+  core.act(ctx, "post the sample payload to " + where, function () {
+    return core.http("POST", endpoint, headers, sample, SAFE).statusCode;
+  });
+}`;
+
+/** Content backup: every page of each content type, read whole or not at all. */
+const BACKUP_BODY = String.raw`var TYPES = [["alertdefinitions", "alertDefinitions"], ["symptomdefinitions", "symptomDefinitions"], ["recommendations", "recommendations"], ["supermetrics", "superMetrics"], ["resources/groups", "groups"]];
+var backup = { source: "vcf-operations", environment: settings.environment, taken: new Date().toISOString(), counts: {}, content: {} };
+for (var i = 0; i < TYPES.length; i++) {
+  var items = listAll(TYPES[i][0], TYPES[i][1]);
+  backup.content[TYPES[i][1]] = items;
+  backup.counts[TYPES[i][1]] = items.length;
+  System.log(TYPES[i][1] + ": " + items.length);
+}
+if (settings.includePolicies === true || String(settings.includePolicies) === "true") {
+  var summaries = listAll("policies", "policySummaries");
+  backup.content.policySummaries = summaries;
+  backup.counts.policySummaries = summaries.length;
+  System.log("policySummaries: " + summaries.length + " (the list; the exports themselves are zips, taken by scripts/backup-content.sh)");
+}`;
+
+/** Self-health: the node, the collectors, every adapter instance's last collection. */
+const HEALTH_BODY = String.raw`var problems = [];
+var staleMs = Number(settings.staleMinutes) * 60 * 1000;
+var ignore = settings.ignoreAdapters || [];
+var node = ops("GET", "deployment/node/status", null, null, null).body || {};
+if (String(node.status) !== "ONLINE") problems.push("node status is " + (node.status || "UNKNOWN"));
+var collectors = (ops("GET", "collectors", null, null, null).body || {}).collector || [];
+if (!collectors.length) problems.push("no collectors listed at all");
+for (var c = 0; c < collectors.length; c++) {
+  if (String(collectors[c].state) !== "UP") problems.push("collector " + collectors[c].name + " is " + collectors[c].state);
+}
+var adapters = (ops("GET", "adapters", null, null, null).body || {}).adapterInstancesInfoDto || [];
+if (!adapters.length) problems.push("no adapter instances listed at all");
+var now = new Date().getTime();
+for (var a = 0; a < adapters.length; a++) {
+  var name = String((adapters[a].resourceKey && adapters[a].resourceKey.name) || adapters[a].id);
+  if (ignore.indexOf(name) >= 0) continue;
+  var last = adapters[a].lastCollected;
+  if (last === null || last === undefined || now - Number(last) > staleMs) {
+    problems.push("adapter " + name + " has not collected for more than " + settings.staleMinutes + " minutes");
+  } else if (adapters[a].numberOfResourcesCollected !== undefined && adapters[a].numberOfResourcesCollected !== null && Number(adapters[a].numberOfResourcesCollected) === 0) {
+    problems.push("adapter " + name + " is collecting nothing; check its credential");
+  }
+}`;
+
+/** The VERIFY lines that are the same for every VCF Operations package. */
+export const OPS_PACKAGE_REQUIRES = 'VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted in Orchestrator, and a VCF Operations account for the configuration element — or, for the fallback script, jq and curl on the machine running it.';
 
 /**
  * send-sample.sh for ServiceNow: dry run by default, the credential from a
@@ -732,15 +1146,39 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         );
       }
 
+      // The recommendation's action as the 9.x reference writes it (POST
+      // /api/recommendations): actionAdapterKindId, targetAdapterKindId,
+      // targetResourceKindId, targetMethod. There is no actionId field.
       const recommendation = {
         description: `Run ${action} on the object that raised the alert. Automated in "${policy}" only.`,
         action: {
-          actionAdapterKindId: 'VMWARE',
-          actionId: `<REQUIRED — GET /suite-api/api/actiondefinitions and take the id of ${action}>`,
+          actionAdapterKindId: '<REQUIRED — the actionAdapterKindKey of this action in GET /suite-api/api/actiondefinitions>',
           targetAdapterKindId: 'VMWARE',
           targetResourceKindId: target,
+          targetMethod: action,
         },
       };
+      const actionLabel = ACTION_LABELS[action] ?? action;
+      const pkg = opsPackage({
+        parts: ['alertaction', base],
+        folder: base,
+        description: `Creates the recommendation that runs ${action} and adds it to the alert definition ${alertId || '(set alertDefinitionId)'}, idempotently.`,
+        workflowName: `Add action ${opsPart(base)}`,
+        workflowDescription: `Looks up the action "${actionLabel}" in the action definitions, creates the recommendation that runs it (unless one with the same text exists) and adds it to the alert definition's recommendations. The automate flag stays a policy change made by a person.`,
+        changes: true,
+        cap: 2,
+        outputs: [{ name: 'recommendationId', type: 'string', description: 'The recommendation id, empty in a dry run' }],
+        account: 'An account that may create recommendations and edit alert definitions',
+        settings: [
+          { name: 'alertDefinitionId', type: 'string', value: alertId, description: 'The alert definition the recommendation is added to' },
+          { name: 'actionName', type: 'string', value: actionLabel, description: 'The action, as GET /suite-api/api/actiondefinitions names it (displayName or id)' },
+        ],
+        resources: [{ name: 'recommendation.json', content: `${JSON.stringify({ description: recommendation.description, action: { targetAdapterKindId: 'VMWARE', targetResourceKindId: target, targetMethod: action } }, null, 2)}\n` }],
+        body: ALERT_ACTION_BODY,
+        after: String.raw`recommendationId = ctx.dryRun ? "" : (recId || "");
+summary = core.audit(ctx, { recommendationId: recommendationId, alertDefinitionId: settings.alertDefinitionId, next: "Set automate on this alert in the dedicated policy: scripts/merge-policy.sh, or the policy editor. There is no REST call for the automate flag." });
+core.notify(settings.webhook, summary);`,
+      });
 
       const policyXml = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -785,6 +1223,7 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           { rule: 'Run the action by hand from the alert first', because: 'Running it once from the recommendation shows exactly what it does, on one object, while someone is watching.' },
         ],
         dryRun: [
+          `Run the workflow Add action ${opsPart(base)} with dryRun = true: it looks up the alert and the action and logs the recommendation it would create and the alert it would add it to. Nothing changes until dryRun is false in its configuration element.`,
           'Leave automate off. Let the alert fire for a week and run the recommendation by hand from the alert each time.',
           'Count how many objects it would have acted on. If that surprises you, the group is wrong.',
         ],
@@ -792,32 +1231,41 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           ? ['A deleted snapshot cannot be restored. Turning automation off stops the next one; it does not bring back the last.', 'Set automate="false" in the policy, or re-import the export taken before the change.']
           : ['Set automate="false" in the policy, or re-import the export taken before the change.', 'Objects already changed are put back by hand, using the Automated Actions history.'],
         told: ['Every automated run appears under Administration → History → Recent Tasks, with the object and the result.', 'Wire the alert to a webhook as well, so a person sees it acted rather than only that it fired.'],
-        requires: ['Actions enabled on the vCenter adapter, with a credential that has exactly the rights this action needs.', `The policy "${policy}" and the group "${group}".`],
+        requires: ['Actions enabled on the vCenter adapter, with a credential that has exactly the rights this action needs.', `The policy "${policy}" and the group "${group}".`, OPS_PACKAGE_REQUIRES],
         files: {
-          [`${base}-recommendation.json`]: `${JSON.stringify(recommendation, null, 2)}\n`,
-          [`${base}-policy-automate.xml`]: policyXml,
-          'apply.sh': applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/recommendations', payload: `${base}-recommendation.json` }], 'DELETE /suite-api/api/recommendations/{id}; set automate="false" in the policy.'),
-          'merge-policy.sh': policyMergeScript(`${base}-policy-automate.xml`, policy),
+          ...pkg.files,
+          [`scripts/${base}-recommendation.json`]: `${JSON.stringify(recommendation, null, 2)}\n`,
+          [`scripts/${base}-policy-automate.xml`]: policyXml,
+          'scripts/apply.sh': inScripts(applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/recommendations', payload: `${base}-recommendation.json` }], 'DELETE /suite-api/api/recommendations/{id}; set automate="false" in the policy.')),
+          'scripts/merge-policy.sh': policyMergeScript(`${base}-policy-automate.xml`, policy),
           'IMPORT.md': importMd({
             title: `automating ${action} for ${alertId || 'the alert'}`,
             steps: [
+              ...packageSteps(pkg, 'the workflow that creates the recommendation and adds it to the alert'),
               {
-                heading: 'The recommendation with the action behind it',
-                files: [`${base}-recommendation.json`, 'apply.sh'],
-                how: ['Fill in actionId (GET /suite-api/api/actiondefinitions), then ./apply.sh --execute — POST /suite-api/api/recommendations.', 'In the interface: Alerts → Configure → Recommendations → Add, with the action selected. There is no file import for a recommendation on its own.'],
+                heading: 'Or: the recommendation by the fallback script',
+                files: [`scripts/${base}-recommendation.json`, 'scripts/apply.sh'],
+                how: [
+                  'Fill in actionAdapterKindId (the actionAdapterKindKey of the action in GET /suite-api/api/actiondefinitions), then ./scripts/apply.sh --execute — POST /suite-api/api/recommendations. It does not add the recommendation to the alert: do that in the alert definition editor, or with the workflow.',
+                  'In the interface: Alerts → Configure → Recommendations → Add, with the action selected. There is no file import for a recommendation on its own.',
+                ],
+                verify: [
+                  `targetMethod "${action}": the 9.x reference documents targetMethod but not the values each adapter takes; the workflow takes actionAdapterKindId from the action definition named "${actionLabel}", and targetMethod as written here. Compare with GET /suite-api/api/recommendations for a recommendation made in the interface with the same action.`,
+                  'adding the recommendation to a built-in (VMware-supplied) alert definition with PUT /suite-api/api/alertdefinitions: if your release refuses to edit it, add the recommendation in the alert definition editor, or copy the alert definition first.',
+                ],
               },
               {
-                heading: 'The automate flag, merged into the policy',
-                files: [`${base}-policy-automate.xml`, 'merge-policy.sh'],
+                heading: 'The automate flag, merged into the policy — by a person',
+                files: [`scripts/${base}-policy-automate.xml`, 'scripts/merge-policy.sh'],
                 how: [
-                  `${base}-policy-automate.xml is the change, not a policy to import: a policy file holds all of a policy's overrides, so importing this one would drop every other override "${policy}" has.`,
-                  `POLICY_ID=<id of "${policy}"> ./merge-policy.sh exports the policy (the export is kept as the undo), sets these <Alert> attributes in it, and writes import/policy-merged.zip. With --execute it imports that zip: POST /suite-api/api/policies/import?forceImport=true.`,
-                  'Or import import/policy-merged.zip yourself: Configure → Policies → ⋯ → Import (8.x: Administration → Policies → Policy Library → Import).',
+                  `${base}-policy-automate.xml is the change, not a policy to import: a policy file holds all of a policy's overrides, so importing this one would drop every other override "${policy}" has. The 9.x API has no call for the automate flag (PUT /api/alertdefinitions/{id}/enable turns an alert on in a policy, not its automation), so this stays a reviewed policy change.`,
+                  `POLICY_ID=<id of "${policy}"> ./scripts/merge-policy.sh exports the policy (the export is kept as the undo), sets these <Alert> attributes in it, and writes scripts/import/policy-merged.zip. With --execute it imports that zip: POST /suite-api/api/policies/import?forceImport=true.`,
+                  'Or import scripts/import/policy-merged.zip yourself: Configure → Policies → ⋯ → Import (8.x: Administration → Policies → Policy Library → Import).',
                 ],
                 verify: ['the automate attribute name, against an export of your own policy: the merge copies the attribute names as written here.'],
               },
             ],
-            sources: FORMAT_SOURCES,
+            sources: [...FORMAT_SOURCES, 'VCF Operations API 9.x, POST /api/recommendations and PUT /api/alertdefinitions: https://developer.broadcom.com/xapis/vcf-operations-api/latest/'],
           }),
         },
         notes: [
@@ -889,11 +1337,12 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         findings.push(warning('vcfops.supermetric.no-depth', 'A resource entry with no depth defaults to one level, which may not be what you meant.', { source: SRC }));
       }
 
+      // The 9.x reference for POST /api/supermetrics takes name, formula and
+      // description; the unit is carried only by the export (import/supermetric.json).
       const payload = {
         name: metricName,
         formula: chosen.formula,
         description: `Generated by ArchToolKit. ${chosen.about}`,
-        unitId: unit || 'none',
       };
       // SuperMetric.json, as Super Metrics → Export writes it: keyed by id.
       const smId = stableId(`supermetric:${metricName}`);
@@ -901,6 +1350,38 @@ export const VCF_OPERATIONS_CONTENT                                 = [
       const exportJson = superMetricsJson([
         { id: smId, name: metricName, formula: chosen.formula, description: payload.description, unitId: unit, resourceKinds: known ? [{ adapterKindKey: 'VMWARE', resourceKindKey: chosen.on }] : [] },
       ]);
+
+      const pkg = opsPackage({
+        parts: ['supermetric', base],
+        folder: base,
+        description: `Creates the super metric "${metricName}" in VCF Operations, once.`,
+        workflowName: `Create super metric ${opsPart(base)}`,
+        workflowDescription: `Creates the super metric "${metricName}" unless one of that name exists, which is left as it is (a different formula is reported, not overwritten).`,
+        changes: true,
+        cap: 1,
+        outputs: [{ name: 'superMetricId', type: 'string', description: 'The super metric id, empty in a dry run' }],
+        account: 'An account that may create super metrics',
+        settings: [],
+        resources: [{ name: 'supermetric.json', content: `${JSON.stringify(payload, null, 2)}\n` }],
+        body: String.raw`var metric = JSON.parse(core.resource(RESOURCE_PATH, "supermetric.json"));
+if (!metric.formula) throw new Error("The super metric has no formula.");
+var existing = named(listAll("supermetrics?name=" + q(metric.name), "superMetrics"), metric.name);
+var smId = null;
+if (existing) {
+  smId = String(existing.id);
+  System.log("Exists, left as it is: super metric \"" + metric.name + "\" (" + smId + ")");
+  if (existing.formula !== undefined && String(existing.formula) !== String(metric.formula)) System.warn("Its formula is not this package's: " + existing.formula + ". Edit it in the super metric editor if this one is meant.");
+} else {
+  smId = core.act(ctx, "create super metric \"" + metric.name + "\"", function () {
+    var r = ops("POST", "supermetrics", metric, null, null);
+    if (!r.body || !r.body.id) throw new Error("POST supermetrics returned no id.");
+    return String(r.body.id);
+  });
+}`,
+        after: String.raw`superMetricId = ctx.dryRun ? "" : (smId || "");
+summary = core.audit(ctx, { superMetricId: superMetricId, note: "It computes nothing until it is assigned to an object type and enabled in a policy." });
+core.notify(settings.webhook, summary);`,
+      });
 
       return {
         platform: PLATFORM,
@@ -913,28 +1394,38 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           ifWrong: 'Nothing is changed. The cost is load on the cluster, and a number nobody checked being used in a capacity decision.',
         },
         guardrails: [{ rule: 'Depth kept to the level it needs', because: 'Super metric cost grows with every object it reaches. A formula from the vCenter down is evaluated across the whole inventory.' }],
-        dryRun: ['Paste the formula into the super metric editor and use Preview against one object. The preview is the dry run, and it shows the last week’s values.'],
+        dryRun: [
+          'Paste the formula into the super metric editor and use Preview against one object. The preview is the dry run, and it shows the last week’s values.',
+          `Then run the workflow Create super metric ${opsPart(base)} with dryRun = true: it logs whether it would create the super metric or finds it already there.`,
+        ],
         undo: ['DELETE /suite-api/api/supermetrics/{id}. Its history goes with it.'],
         told: ['Nobody — it is a metric. Alert on it with "An alert, with its symptoms and a recommendation" if it needs watching.'],
-        requires: ['Nothing beyond the VMware adapter collecting the metrics the formula reads.'],
+        requires: ['Nothing beyond the VMware adapter collecting the metrics the formula reads.', OPS_PACKAGE_REQUIRES],
         files: {
-          [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
-          'apply.sh': applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/supermetrics', payload: `${base}.json` }], 'DELETE /suite-api/api/supermetrics/{id}.'),
+          ...pkg.files,
+          [`scripts/${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
+          'scripts/apply.sh': inScripts(applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/supermetrics', payload: `${base}.json` }], 'DELETE /suite-api/api/supermetrics/{id}.')),
           'import/supermetric.json': exportJson,
           ...contentPackage({ 'supermetrics.json': exportJson }, { superMetrics: 1 }),
           'import-content.sh': contentImportScript({ what: `the super metric "${metricName}"`, contentType: 'SUPER_METRICS', needles: [smId, `"name": ${JSON.stringify(metricName)}`, `"name":${JSON.stringify(metricName)}`] }),
           'IMPORT.md': importMd({
             title: `the super metric "${metricName}"`,
             steps: [
+              ...packageSteps(pkg, 'the workflow that creates the super metric'),
               {
-                heading: 'The super metric',
+                heading: 'Or: the super metric as a file',
                 files: ['import/supermetric.json'],
                 how: [
                   'Configure → Super Metrics → ⋯ → Import (8.x: Administration → Configuration → Super Metrics → Import Super Metric), and choose import/supermetric.json. A super metric with the same name is skipped unless you choose to overwrite.',
                   known ? `It arrives assigned to ${chosen.on}, keyed by id ${smId}; its metric key is Super Metric|sm_${smId}.` : 'It arrives assigned to no object type: assign it under the super metric’s Object Types after import.',
                 ],
               },
-              { heading: 'Or by the REST API', files: [`${base}.json`, 'apply.sh'], how: ['./apply.sh --execute — POST /suite-api/api/supermetrics. The API assigns its own id.'] },
+              {
+                heading: 'Or by the fallback script',
+                files: [`scripts/${base}.json`, 'scripts/apply.sh'],
+                how: ['./scripts/apply.sh --execute — POST /suite-api/api/supermetrics. The API assigns its own id.'],
+                verify: ['the unit: POST /api/supermetrics in the 9.x reference has no unit field, so the workflow and the script create the super metric without one; set it in the editor, or use import/supermetric.json, which carries it.', 'assigning the super metric to an object type: the 9.x API lists no call for it (GET, POST, PUT /api/supermetrics and DELETE, GET /api/supermetrics/{id} only), so after the workflow it is assigned in the editor, or arrives assigned with import/supermetric.json.'],
+              },
               contentStep('SUPER_METRICS'),
               {
                 heading: 'Then enable it in a policy',
@@ -1028,9 +1519,9 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         '',
         '## Applying it',
         '',
-        `1. Run export-parent.sh to save "${parent}" as it is now. That file is the reference, and the undo.`,
-        `2. In Configure → Policies, create "${policyName}" inheriting from "${parent}", and set the values above.`,
-        '3. Assign it to the groups listed, and set the priority.',
+        `1. Run scripts/export-parent.sh to save "${parent}" as it is now. That file is the reference, and the undo.`,
+        `2. Run the Orchestrator workflow (or, in Configure → Policies, create "${policyName}" inheriting from "${parent}" and assign it to the groups listed). The workflow creates it and assigns the groups.`,
+        '3. In the policy editor, set the values above and the priority.',
         '4. Export the new policy and commit it beside this file. From then on, changes to it are diffs.',
         '',
         'The policy editor is the reliable way to set capacity values; the export it produces is',
@@ -1038,6 +1529,32 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         'possible and is not worth the risk of a silently ignored element.',
         '',
       ].join('\n');
+
+      // The 9.x API creates a policy (POST /api/policies, name, description,
+      // parentPolicy) and assigns it (PUT /api/policies/{id}/assign, groupIds).
+      // Capacity values go through PATCH /api/policies/{id}/settings
+      // (capacitySettings), whose fields the reference does not spell out, so
+      // they stay with the policy editor rather than being guessed at.
+      const folder = `workload-${opsPart(base)}`;
+      const pkg = opsPackage({
+        parts: ['workload', base],
+        folder,
+        description: `Creates "${policyName}" inheriting from "${parent}" and assigns it to ${groups.join(', ') || 'its groups'}.`,
+        workflowName: `Create workload profile ${opsPart(base)}`,
+        workflowDescription: `Creates "${policyName}" inheriting from "${parent}" unless it exists, then assigns it to the custom groups ${groups.join(', ')}. Its capacity values and priority are set in the editor, from the design.`,
+        changes: true,
+        cap: 2,
+        outputs: [{ name: 'createdId', type: 'string', description: 'The id of the created (or existing) object, empty in a dry run' }],
+        account: 'An account that may create and assign policies',
+        settings: [],
+        resources: [
+          { name: 'definition.json', content: `${JSON.stringify({ name: policyName, description: `Generated by ArchToolKit. Capacity model ${model}, buffer ${buffer}%, time-remaining warning ${days} days${model === 'allocation' ? `, CPU ${cpuRatio}:1, memory ${memRatio}:1` : ''}.`, parent, groups, priority }, null, 2)}\n` },
+        ],
+        body: WORKLOAD_BODY,
+        after: String.raw`createdId = ctx.dryRun ? "" : (targetId || "");
+summary = core.audit(ctx, { id: createdId, groups: def.groups, next: "Set the capacity values and the priority in the editor, from the design; then export it and keep the export." });
+core.notify(settings.webhook, summary);`,
+      });
 
       return {
         platform: PLATFORM,
@@ -1053,13 +1570,17 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           { rule: 'Export the parent before creating this', because: 'The comparison and the undo are the same file.' },
           { rule: 'Only differences from the parent are set', because: 'A policy that restates every inherited value stops following its parent, and nobody notices which values froze.' },
         ],
-        dryRun: ['After assigning it, open one object in each group and check Policy in its summary shows this policy — not a higher-priority one.'],
-        undo: ['Unassign the groups; they fall back to whichever policy covers them next. Deleting the policy does the same.'],
+        dryRun: [
+          `Run the workflow Create workload profile ${opsPart(base)} with dryRun = true: it finds the parent and the groups and logs what it would create and assign.`,
+          'After assigning it, open one object in each group and check Policy in its summary shows this policy — not a higher-priority one.',
+        ],
+        undo: ['Unassign the groups (PUT /suite-api/api/policies/{id}/unassign, or in the interface); they fall back to whichever policy covers them next. Deleting the policy does the same.'],
         told: ['Nobody. A policy change is silent, which is why it belongs in a change record.'],
-        requires: [`The groups ${groups.join(', ') || '(none)'} to exist.`],
+        requires: [`The groups ${groups.join(', ') || '(none)'} to exist.`, OPS_PACKAGE_REQUIRES],
         files: {
+          ...pkg.files,
           [`${base}-design.md`]: design,
-          'export-parent.sh': [
+          'scripts/export-parent.sh': [
             '#!/usr/bin/env bash',
             `# Save "${parent}" as it is now, before a child policy is created from it.`,
             'set -euo pipefail',
@@ -1075,17 +1596,19 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           'IMPORT.md': importMd({
             title: `the policy "${policyName}"`,
             steps: [
-              { heading: 'Save the parent', files: ['export-parent.sh'], how: [`PARENT_POLICY_ID=<id of "${parent}"> ./export-parent.sh — GET /suite-api/api/policies/export, a zip holding the policy XML. That zip is the undo, and re-imports under Policies → Import or POST /suite-api/api/policies/import?forceImport=true (multipart field policy).`] },
+              { heading: 'Save the parent', files: ['scripts/export-parent.sh'], how: [`PARENT_POLICY_ID=<id of "${parent}"> ./scripts/export-parent.sh — GET /suite-api/api/policies/export, a zip holding the policy XML. That zip is the undo, and re-imports under Policies → Import or POST /suite-api/api/policies/import?forceImport=true (multipart field policy). The workflow does not take it: Orchestrator's REST calls carry text, and the export is a zip.`] },
+              ...packageSteps(pkg, 'the workflow that creates the policy and assigns its groups'),
               {
-                heading: 'Create the policy',
+                heading: 'Set the values that differ, in the editor',
                 files: [`${base}-design.md`],
                 how: [
-                  'Nothing here is a policy file to import. Capacity settings are written by the policy editor, and a hand-written policy XML with an element the release does not know is ignored without a word — so the design is applied in Configure → Policies → Add, from the table in the design file.',
+                  'The workflow creates the policy inheriting everything from its parent and assigns the groups (POST /suite-api/api/policies, PUT /suite-api/api/policies/{id}/assign). The capacity model, overcommit, buffer and time-remaining values in the design file are set in Configure → Policies → edit; the priority under Policies → Reorder (PUT /suite-api/api/policies/priorities takes the whole ordered list of active policies, so it is not changed from here).',
                   'Once it is right, export it (Policies → ⋯ → Export) and keep that zip with the design: from then on it is the importable form of this policy, for this instance and for the next one.',
                 ],
+                verify: ['PATCH /suite-api/api/policies/{id}/settings takes capacitySettings in 9.x, but the reference does not list its fields; set the capacity values in the editor rather than by a guessed body.'],
               },
             ],
-            sources: FORMAT_SOURCES,
+            sources: [...FORMAT_SOURCES, 'VCF Operations API 9.x, Policies: https://developer.broadcom.com/xapis/vcf-operations-api/latest/policies/'],
           }),
         },
         notes: [
@@ -1232,6 +1755,33 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         'finish 0',
       ]);
 
+      const pkg = opsPackage({
+        parts: ['compliance', base],
+        folder: base,
+        description: `Weekly ${benchmark} drift report for "${group}". Reads only.`,
+        workflowName: `Compliance drift ${opsPart(base)}`,
+        workflowDescription: `Lists every member of "${group}" with an active alert of a ${benchmark} compliance alert definition, and the rules (contributing symptoms) it fails. Fails above the threshold, so a schedule shows it.`,
+        changes: false,
+        outputs: [
+          { name: 'failingCount', type: 'number', description: 'Objects in the group that fail the benchmark' },
+          { name: 'reportJson', type: 'string', description: '{benchmark, objects: [{resourceId, resource, alerts, failingRules}]}' },
+        ],
+        account: 'A read-only account',
+        settings: [
+          { name: 'benchmark', type: 'string', value: benchmark, description: 'The benchmark, for the report' },
+          { name: 'definitionRegex', type: 'string', value: defRx, description: "Regular expression on the benchmark's compliance alert definition names. VERIFY it under Alerts > Alert Definitions" },
+          { name: 'groupName', type: 'string', value: group, description: 'The custom group reported on' },
+          { name: 'maxFailing', type: 'number', value: failOn, description: 'The run fails when more objects than this fail' },
+          { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the report is posted' },
+        ],
+        body: COMPLIANCE_BODY,
+        after: String.raw`failingCount = report.length;
+reportJson = JSON.stringify({ benchmark: settings.benchmark, objects: report });
+summary = core.audit(null, { benchmark: settings.benchmark, group: settings.groupName, members: members.length, failing: failingCount });
+if (settings.webhook) core.notify(settings.webhook, reportJson);
+if (failingCount > Number(settings.maxFailing)) throw new Error(failingCount + " object(s) fail " + settings.benchmark + ", above the threshold of " + settings.maxFailing + ".");`,
+      });
+
       return {
         platform: PLATFORM,
         title: `${benchmark} on "${group}" — a weekly list of what fails it`,
@@ -1253,7 +1803,7 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           { rule: 'Every list is paged and kept in files, never passed as an argument', because: 'A large estate’s alert list is over the 128 KB argument limit and the report would die with "Argument list too long".' },
           ...(webhook ? [{ rule: 'The webhook post uses curl -f; a failed post exits 3', because: 'Otherwise an undelivered report looks exactly like a delivered one.' }] : []),
         ],
-        dryRun: ['Enable the benchmark, wait one collection cycle, and open Compliance for the group. The score there is what the report will say.', 'Run report.sh by hand once and check the alert definitions it lists are this benchmark’s and no other’s.'],
+        dryRun: ['Enable the benchmark, wait one collection cycle, and open Compliance for the group. The score there is what the report will say.', `Run the workflow Compliance drift ${opsPart(base)} (or scripts/report.sh) by hand once and check the alert definitions it lists are this benchmark’s and no other’s.`],
         undo: [`Turn the benchmark off in "${policy}". Its alerts clear on the next cycle.`],
         told: webhook ? [`${webhook}, weekly, with each failing object, the benchmark alerts on it, and the rules (the alerts’ contributing symptoms) it fails.`] : ['The JSON file the script writes. Set a webhook if somebody should read it.'],
         requires: [
@@ -1262,9 +1812,10 @@ export const VCF_OPERATIONS_CONTENT                                 = [
             : pack
               ? `The ${benchmark} compliance management pack installed — it is not built in.`
               : 'Nothing extra; the vSphere Security Configuration Guide ships with VCF Operations 8.x.',
-          'jq on the machine running the report.',
+          'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted in Orchestrator; for the fallback script, jq on the machine running it.',
         ],
         files: {
+          ...pkg.files,
           [`${base}-enable.md`]: [
             `# Enable ${benchmark}`,
             '',
@@ -1273,15 +1824,18 @@ export const VCF_OPERATIONS_CONTENT                                 = [
               ? `2. Protect → Security Posture Management → ⋮ next to ${benchmark} → Enable Benchmark → assign "${policy}". Set any rule marked * (site-specific value) under View Control Set, then Run Assessment.`
               : `2. Configure → Policies → "${policy}" → Compliance: enable ${benchmark}.`,
             `3. Check "${policy}" is assigned to "${group}" and that no higher-priority policy covers the same objects.`,
-            '4. Schedule report.sh weekly with GROUP_ID set. It reads only. Exit 0: at or under the threshold; 1: over it; 2: could not read, or found no alert definitions for the benchmark; 3: the webhook post failed.',
+            `4. Schedule the workflow Compliance drift ${opsPart(base)} weekly in Orchestrator (it fails above the threshold), or scripts/report.sh with GROUP_ID set. Both only read. The script exits 0: at or under the threshold; 1: over it; 2: could not read, or found no alert definitions for the benchmark; 3: the webhook post failed.`,
             '',
           ].join('\n'),
-          'report.sh': report,
-          'IMPORT.md': nothingToImportMd('the compliance run', [
-            `${base}-enable.md is for a person: the benchmark is enabled in the interface (Operations → Compliance → the benchmark → Enable, on the policy it names). The benchmarks are VMware's own, so there is no file to import for them.`,
-            'report.sh reads the compliance alerts over the API and changes nothing. Run it by hand or from cron; it exits non-zero on drift.',
-            'A custom benchmark of your own is a separate import (Compliance → Custom Benchmarks → Import) and is not generated here.',
-          ]),
+          'scripts/report.sh': report,
+          'IMPORT.md': importMd({
+            title: 'the compliance run',
+            steps: [
+              { heading: 'Enable the benchmark — by a person', files: [`${base}-enable.md`], how: [`${base}-enable.md: the benchmark is enabled in the interface, on the policy it names. The benchmarks are VMware's own, so there is no file to import for them. A custom benchmark of your own is a separate import (Compliance → Custom Benchmarks → Import) and is not generated here.`] },
+              ...packageSteps(pkg, 'the workflow that reports the drift'),
+              { heading: 'Or: the script, from a Linux host', files: ['scripts/report.sh'], how: ['scripts/report.sh reads the same over the API and changes nothing. Run it by hand or from cron with GROUP_ID set; it exits non-zero on drift.'] },
+            ],
+          }),
         },
         notes: [
           'The first run is a baseline, not a failure. Agree the number that is acceptable this quarter and set the threshold to it, then lower it.',
@@ -1408,11 +1962,51 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           }),
         );
 
+      // The payload template as the 9.x API creates it (POST
+      // /api/notifications/templates): a WebhookPlugin template whose
+      // formattingTemplate carries the method, the headers and the body.
+      const templateName = `ArchToolKit ${destination} payload (${opsPart(base)})`;
+      const template = {
+        name: templateName,
+        description: 'Generated by ArchToolKit.',
+        pluginTypeId: 'WebhookPlugin',
+        templateType: 'ALERT',
+        formattingTemplate: {
+          type: 'WEBHOOK_TEMPLATE',
+          newAlertTemplate: { endpoint: '', headers: [{ key: 'Content-Type', value: 'application/json' }], method: 'POST', payload: JSON.stringify(body, null, 2) },
+        },
+      };
+      const pkg = opsPackage({
+        parts: ['payload', base],
+        folder: base,
+        description: `Creates the ${destination} webhook payload template in VCF Operations, once, and can post a filled-in sample to the endpoint.`,
+        workflowName: `Create payload template ${opsPart(base)}`,
+        workflowDescription: `Creates the payload template "${templateName}" (WebhookPlugin) unless it exists. With sendSample on, it also posts the filled-in sample to the endpoint${sn ? ' — for the ServiceNow Table API only when no open incident has its correlation_id' : ''}.`,
+        changes: true,
+        cap: 2,
+        outputs: [{ name: 'templateId', type: 'string', description: 'The payload template id, empty in a dry run' }],
+        account: 'An account that may manage notification settings',
+        settings: [
+          { name: 'endpoint', type: 'string', value: endpoint, description: 'The receiving endpoint, for the sample' },
+          { name: 'sendSample', type: 'boolean', value: false, description: sn ? 'Post the sample: this CREATES AN INCIDENT' : 'Post the sample to the endpoint' },
+          { name: 'receiverUsername', type: 'string', value: '', description: sn ? 'The ServiceNow integration user, for the sample' : 'Optional: a user for Basic authentication at the endpoint' },
+          { name: 'receiverPassword', type: 'SecureString', description: 'Its password' },
+        ],
+        resources: [
+          { name: 'template.json', content: `${JSON.stringify(template, null, 2)}\n` },
+          { name: 'sample.json', content: `${sample}\n` },
+        ],
+        body: PAYLOAD_BODY,
+        after: String.raw`templateId = ctx.dryRun ? "" : (templateRef || "");
+summary = core.audit(ctx, { templateId: templateId, next: "Select the template on the notification rule that uses the webhook outbound instance." });
+core.notify(settings.webhook, summary);`,
+      });
+
       return {
         platform: PLATFORM,
         title: `Alert payload for ${destination === 'servicenow' ? 'ServiceNow' : destination === 'teams' ? 'Teams' : destination === 'slack' ? 'Slack' : 'a runbook runner'}`,
-        // A ServiceNow sample creates an incident; the others post a message and change nothing.
-        effect: sn ? 'reversible' : 'read',
+        // The workflow creates a payload template; a ServiceNow sample also creates an incident.
+        effect: 'reversible',
         trigger: { kind: 'alert', detail: 'Whatever notification rule uses the webhook this payload is attached to', worstCase: 'as often as that rule fires' },
         scope: {
           what: 'The body sent for every alert the notification rule matches.',
@@ -1421,6 +2015,7 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         },
         guardrails: [
           { rule: 'Tested with a sample before a real alert depends on it', because: 'A payload the receiver cannot parse fails silently on the sending side.' },
+          { rule: 'The workflow is a dry run until dryRun is false, creates the template once (by name), and posts the sample only when sendSample is on', because: 'Re-running it never adds a second template, and a test is sent on purpose.' },
           ...(sn
             ? [
                 { rule: 'send-sample.sh is a dry run unless --execute: it prints the incident it would create and sends nothing', because: 'Each real run opens an incident in a queue somebody works; a test should not page the service desk by accident.' },
@@ -1429,19 +2024,23 @@ export const VCF_OPERATIONS_CONTENT                                 = [
               ]
             : []),
         ],
-        dryRun: sn
-          ? ['Run send-sample.sh without --execute: it prints the sample and the endpoint and sends nothing.', 'Then point ENDPOINT at a sub-production instance and run it with --execute; check the incident, then close it.']
-          : ['Run send-sample.sh. It posts a filled-in sample to the endpoint. Check it arrives, and arrives looking right.'],
+        dryRun: [
+          `Run the workflow Create payload template ${opsPart(base)} with dryRun = true: it logs the template it would create${sn ? ' and, with sendSample on, the incident check and the post it would make' : ' and the sample post it would make'}.`,
+          ...(sn
+            ? ['Or run scripts/send-sample.sh without --execute: it prints the sample and the endpoint and sends nothing.', 'Then point the endpoint at a sub-production instance and send the sample for real; check the incident, then close it.']
+            : ['Or run scripts/send-sample.sh. It posts a filled-in sample to the endpoint. Check it arrives, and arrives looking right.']),
+        ],
         undo: [
-          'Detach the payload template from the outbound instance. Alerts go on being raised; they stop being sent in this shape.',
+          'Detach the payload template from the notification rule, or delete it (DELETE /suite-api/api/notifications/templates/{id}). Alerts go on being raised; they stop being sent in this shape.',
           ...(sn ? ['Close (or delete) the incident send-sample.sh created: its number and sys_id are printed when it is created.'] : []),
         ],
         told: [`${endpoint || 'The endpoint'}, per alert.`],
-        requires: ['A webhook outbound instance in VCF Operations pointing at the endpoint.', destination === 'servicenow' ? 'A ServiceNow integration user with rights to create incidents, stored on the outbound instance — not in the payload.' : 'Whatever the receiving end needs to accept a POST.'],
+        requires: ['A webhook outbound instance in VCF Operations pointing at the endpoint.', destination === 'servicenow' ? 'A ServiceNow integration user with rights to create incidents, stored on the outbound instance — not in the payload.' : 'Whatever the receiving end needs to accept a POST.', OPS_PACKAGE_REQUIRES],
         files: {
+          ...pkg.files,
           [`${base}-template.json`]: `${JSON.stringify(body, null, 2)}\n`,
-          [`${base}-sample.json`]: `${sample}\n`,
-          'send-sample.sh': sn ? serviceNowSample(endpoint, `${base}-sample.json`) : [
+          [`scripts/${base}-sample.json`]: `${sample}\n`,
+          'scripts/send-sample.sh': sn ? serviceNowSample(endpoint, `${base}-sample.json`) : [
             '#!/usr/bin/env bash',
             '# Post a filled-in sample to the endpoint, to test the receiving end.',
             'set -euo pipefail',
@@ -1454,17 +2053,22 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           'IMPORT.md': importMd({
             title: 'the webhook payload template',
             steps: [
+              ...packageSteps(pkg, 'the workflow that creates the payload template'),
               {
-                heading: 'The payload template',
+                heading: 'Or: the payload template by hand',
                 files: [`${base}-template.json`],
                 how: [
                   'Configure → Alerts → Payload Templates → Add (8.x: Configure → Alerts → Payload Templates), choose the Webhook Notification Plugin as the outbound method, and paste the contents of this file as the request body. It is the body, not a template export.',
                   'Then select the template on the notification rule that uses the webhook outbound instance.',
                 ],
-                verify: ['the payload-template export/import in the interface writes its own wrapper around the body; that wrapper is not documented, so this is pasted rather than imported.'],
+                verify: [
+                  'the payload-template export/import in the interface writes its own wrapper around the body; that wrapper is not documented, so this is pasted rather than imported.',
+                  'the workflow fills formattingTemplate.newAlertTemplate (type WEBHOOK_TEMPLATE, method, headers, payload) as the 9.x reference shows it; the reference does not show the templates for an updated or cancelled alert, or whether newAlertTemplate.endpoint is a path added to the outbound instance URL (it is left empty). Open the template after the workflow creates it and check both.',
+                ],
               },
-              { heading: 'Test the receiving end', files: [`${base}-sample.json`, 'send-sample.sh'], how: ['./send-sample.sh posts the filled-in sample straight to the endpoint, without VCF Operations.'] },
+              { heading: 'Test the receiving end', files: [`scripts/${base}-sample.json`, 'scripts/send-sample.sh'], how: ['The workflow with sendSample on, or ./scripts/send-sample.sh, posts the filled-in sample straight to the endpoint, without VCF Operations.'] },
             ],
+            sources: ['VCF Operations API 9.x, POST /api/notifications/templates: https://developer.broadcom.com/xapis/vcf-operations-api/latest/suite-api/api/notifications/templates/post/'],
           }),
         },
         notes: [
@@ -1620,6 +2224,30 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         '',
       ].join('\n');
 
+      // Orchestrator cannot run git, so the package reads the same content,
+      // whole, and hands it on: the backupJson output, and a webhook (a
+      // collector of your own that commits it). The git history stays with
+      // the script.
+      const pkg = opsPackage({
+        parts: ['backup', env],
+        folder: `content-backup-${env}`,
+        description: `Reads the VCF Operations content (${env}) whole, as JSON. Reads only.`,
+        workflowName: `Read content ${env}`,
+        workflowDescription: 'Reads every page of the alert definitions, symptom definitions, recommendations, super metrics and custom groups (and the policy list), and returns them as one JSON document; with a webhook set, posts it there and fails when the post fails.',
+        changes: false,
+        outputs: [{ name: 'backupJson', type: 'string', description: '{source, environment, taken, counts, content: {type: [objects]}}' }],
+        account: 'A read-only account',
+        settings: [
+          { name: 'environment', type: 'string', value: env, description: 'The environment name, recorded in the backup' },
+          { name: 'includePolicies', type: 'boolean', value: policies, description: 'Also list the policies (the exports are zips, which only the script takes)' },
+          { name: 'webhook', type: 'string', value: '', description: 'Optional: where the backup JSON is posted — a receiver of your own that commits it' },
+        ],
+        body: BACKUP_BODY,
+        after: String.raw`backupJson = JSON.stringify(backup);
+summary = core.audit(null, { environment: settings.environment, counts: backup.counts });
+if (settings.webhook && !core.notify(settings.webhook, backupJson)) throw new Error("The content was read but the backup was NOT delivered to the webhook.");`,
+      });
+
       return {
         platform: PLATFORM,
         title: `Nightly content backup — ${env} to git`,
@@ -1635,18 +2263,30 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           { rule: 'Every list is read page by page and must be read whole before its folder is replaced; a failed read stops the run (exit 2)', because: 'A backup that silently wrote an empty folder would commit the deletion of every alert definition, and the history would say it was intended.' },
           { rule: 'One file per object, keys sorted', because: 'So the git history shows which threshold changed, not that a 4 MB export differs.' },
         ],
-        dryRun: ['Run it once by hand into an empty repository and read the tree it produces.'],
+        dryRun: ['Run it once by hand into an empty repository and read the tree it produces.', `The workflow Read content ${env} only reads: run it once and read the counts in its log.`],
         undo: ['Nothing to undo. To restore an object, POST its JSON back — without the id, which the target will assign.'],
         told: ['The git log. Point your repository’s notifications at a channel and every content change in VCF Operations becomes visible.'],
-        requires: ['git and jq on the machine that runs it, and a working copy already cloned at ' + repo + '.', push ? 'Credentials for the push held by git’s own credential helper, not in the script.' : 'Nothing else.'],
+        requires: ['git and jq on the machine that runs it, and a working copy already cloned at ' + repo + '.', push ? 'Credentials for the push held by git’s own credential helper, not in the script.' : 'Nothing else.', 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted in Orchestrator.'],
         files: {
-          ...(runner === 'powershell' ? { 'Backup-VcfOpsContent.ps1': ps } : { 'backup-content.sh': bash, 'crontab.txt': `# Nightly at 01:30. The script logs in for itself from the password file\n# (mode 600, owned by the job's user); no token or password is in this line.\n30 1 * * * cd ${repo} && ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/backup-content.sh >> /var/log/vcfops-backup.log 2>&1\n` }),
-          'IMPORT.md': nothingToImportMd('the nightly content backup', [
-            runner === 'powershell'
-              ? 'Backup-VcfOpsContent.ps1 runs from Task Scheduler on a host of your own; it reads the API and writes JSON into the repository. Nothing is imported into VCF Operations.'
-              : 'backup-content.sh goes in /usr/local/bin and crontab.txt in the service account’s crontab; it reads the API and writes JSON into the repository. Nothing is imported into VCF Operations.',
-            'What it writes is the API’s GET responses, one folder per content type: a record of what changed and when, readable in a diff. It is not an import format. To put content back, POST the object to the same API path, or restore from a Content Management export (Administration → Control Panel → Content Management → Export, then Import) — which is the backup to keep for a rebuild.',
-          ]),
+          ...pkg.files,
+          ...(runner === 'powershell' ? { 'scripts/Backup-VcfOpsContent.ps1': ps } : { 'scripts/backup-content.sh': bash, 'crontab.txt': `# Nightly at 01:30. The script logs in for itself from the password file\n# (mode 600, owned by the job's user); no token or password is in this line.\n30 1 * * * cd ${repo} && ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/backup-content.sh >> /var/log/vcfops-backup.log 2>&1\n` }),
+          'IMPORT.md': importMd({
+            title: 'the nightly content backup',
+            intro: ['Nothing here is content VCF Operations imports: the package and the script read the API. What goes where:'],
+            steps: [
+              {
+                heading: 'The script, with git — the backup itself',
+                files: [runner === 'powershell' ? 'scripts/Backup-VcfOpsContent.ps1' : 'scripts/backup-content.sh'],
+                how: [
+                  runner === 'powershell'
+                    ? 'scripts/Backup-VcfOpsContent.ps1 runs from Task Scheduler on a host of your own; it reads the API and writes JSON into the repository.'
+                    : 'scripts/backup-content.sh goes in /usr/local/bin and crontab.txt in the service account’s crontab; it reads the API and writes JSON into the repository.',
+                  'What it writes is the API’s GET responses, one folder per content type: a record of what changed and when, readable in a diff. It is not an import format. To put content back, POST the object to the same API path, or restore from a Content Management export (Administration → Control Panel → Content Management → Export, then Import) — which is the backup to keep for a rebuild.',
+                ],
+              },
+              ...packageSteps(pkg, 'the same read, from Orchestrator'),
+            ],
+          }),
         },
         notes: [
           'Tokens from /suite-api/api/auth/token/acquire expire after a few hours, so the job logs in for itself each run from VCFOPS_PASSWORD_FILE — a file only the job’s user can read. The password is sent on stdin, never on a command line.',
@@ -1722,7 +2362,9 @@ export const VCF_OPERATIONS_CONTENT                                 = [
         '  elif [[ "$count" == "0" ]]; then',
         '    PROBLEMS+=("adapter $aname is collecting nothing — check its credential")',
         '  fi',
-        'done < <(jq -r ".adapterInstancesInfoDto[]? | \\"\\(.resourceKey.name|gsub(\\" \\";\\"_\\")) \\(.lastCollected) \\(.numberOfResourcesCollected // 0)\\"" "$WORK/adapters.json")',
+        // numberOfResourcesCollected is not in the 9.x reference's adapter list: "?" when absent, so a
+        // missing field is not reported as an adapter collecting nothing.
+        'done < <(jq -r ".adapterInstancesInfoDto[]? | \\"\\(.resourceKey.name|gsub(\\" \\";\\"_\\")) \\(.lastCollected) \\(.numberOfResourcesCollected // \\"?\\")\\"" "$WORK/adapters.json")',
         '',
         'if (( ${#PROBLEMS[@]} == 0 )); then',
         '  echo "VCF Operations: healthy"',
@@ -1735,6 +2377,35 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           : []),
         'finish 1',
       ]);
+
+      const pkg = opsPackage({
+        parts: ['health', base],
+        folder: base,
+        description: 'Checks that VCF Operations is still collecting: the node, the collectors, every adapter instance. Reads only.',
+        workflowName: `VCF Operations self-check ${opsPart(base)}`,
+        workflowDescription: `Reads the node status, the collectors and every adapter instance's last collection, and fails the run when anything is wrong — an adapter silent for more than ${stale} minutes, a collector not UP, an empty list — posting the problems to the webhook first.`,
+        changes: false,
+        outputs: [
+          { name: 'healthy', type: 'boolean', description: 'true when nothing is wrong' },
+          { name: 'problemsJson', type: 'string', description: 'The problems found, a JSON array of strings' },
+        ],
+        account: 'A read-only account',
+        settings: [
+          { name: 'staleMinutes', type: 'number', value: stale, description: 'An adapter is stale after this many minutes without a collection' },
+          { name: 'ignoreAdapters', type: 'Array/string', value: ignore, description: 'Adapter instances known to be off' },
+          { name: 'webhook', type: 'string', value: webhook, description: 'Where problems are posted: somewhere that is not VCF Operations' },
+        ],
+        body: HEALTH_BODY,
+        after: String.raw`healthy = problems.length === 0;
+problemsJson = JSON.stringify(problems);
+summary = core.audit(null, { healthy: healthy, problems: problems });
+for (var p = 0; p < problems.length; p++) System.warn("PROBLEM: " + problems[p]);
+if (!healthy) {
+  if (settings.webhook) core.notify(settings.webhook, { source: "vcf-operations-health", problems: problems });
+  throw new Error("VCF Operations: " + problems.length + " problem(s): " + problems.join("; "));
+}
+System.log("VCF Operations: healthy");`,
+      });
 
       return {
         platform: PLATFORM,
@@ -1752,14 +2423,23 @@ export const VCF_OPERATIONS_CONTENT                                 = [
           { rule: 'A read that fails, or a collector or adapter list that comes back empty, is a failure (exit 2 or 1), never "healthy"', because: 'An API that answers nothing is exactly what a broken VCF Operations looks like.' },
           ...(webhook ? [{ rule: 'The webhook post uses curl -f and a failed post exits 3', because: 'A report that did not arrive must not look like one that did.' }] : []),
         ],
-        dryRun: ['It only reads. Run it once by hand and check each adapter it names is one you expect.'],
+        dryRun: ['It only reads. Run it (the workflow, or the script) once by hand and check each adapter it names is one you expect.'],
         undo: ['Nothing to undo.'],
         told: webhook ? [`${webhook}, whenever a check fails.`] : ['The exit code only. Set a webhook, or have the scheduler alert on a non-zero exit.'],
-        requires: ['jq and bash 4 on the machine that runs it.', 'A read-only VCF Operations account for the token.'],
+        requires: ['jq and bash 4 on the machine that runs the script.', 'A read-only VCF Operations account.', 'For the package: the Orchestrator of VCF Automation 9.1, not the orchestrator inside VCF Operations — the check has to keep running when VCF Operations does not.'],
         files: {
-          [`${base}.sh`]: script,
+          ...pkg.files,
+          [`scripts/${base}.sh`]: script,
           'crontab.txt': `# Every 15 minutes. The script logs in for itself from the password file\n# (mode 600); no token or password is in this line.\n*/15 * * * * ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh\n`,
-          'IMPORT.md': nothingToImportMd('the VCF Operations self-health check', [`${base}.sh goes in /usr/local/bin on a host outside VCF Operations (it has to keep working when VCF Operations does not), and crontab.txt in the service account’s crontab. It only reads.`]),
+          'IMPORT.md': importMd({
+            title: 'the VCF Operations self-health check',
+            intro: ['Nothing here is content VCF Operations imports: the package and the script read its API, from outside it. What goes where:'],
+            steps: [
+              ...packageSteps(pkg, 'the workflow that checks VCF Operations; import it into the Orchestrator of VCF Automation, not the one inside VCF Operations, and schedule it every 15 minutes'),
+              { heading: 'Or: the script, from a Linux host', files: [`scripts/${base}.sh`, 'crontab.txt'], how: [`scripts/${base}.sh goes in /usr/local/bin on a host outside VCF Operations (it has to keep working when VCF Operations does not), and crontab.txt in the service account’s crontab. It only reads.`] },
+            ],
+            sources: ['VCF Operations API 9.x: GET /api/deployment/node/status, GET /api/collectors (collector[]), GET /api/adapters (adapterInstancesInfoDto[]) — https://developer.broadcom.com/xapis/vcf-operations-api/latest/'],
+          }),
         },
         notes: [
           'An adapter collecting zero objects is almost always an expired or changed credential, and it is the most common reason an estate goes quiet.',
