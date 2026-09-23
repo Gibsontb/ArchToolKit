@@ -32,6 +32,7 @@ import {
   superMetricsJson,
   type AlertContent,
 } from '../vcfops-import.ts';
+import { packageNameOf, toPackage } from '../vro/to-package.ts';
 
 const PLATFORM = 'vcf-operations' as const;
 const SRC = 'ArchToolKit';
@@ -270,6 +271,76 @@ const OPERATORS = [
   { value: 'LT_EQ', label: 'is at or below' },
 ];
 
+/**
+ * The alert-definition workflow: symptoms, then the recommendation, then the
+ * alert that refers to them, each id passed along. Idempotent: an object that
+ * already exists (symptoms and the alert by name, the recommendation by its
+ * text) is left as it is and its id used. Every create goes through core.act,
+ * so a dry run creates nothing and the cap bounds a run.
+ */
+function alertDefinitionWorkflow(kind: string, hasRecommendation: boolean): string {
+  return String.raw`var RESOURCE_KIND = ${JSON.stringify(kind)};
+var HAS_RECOMMENDATION = ${hasRecommendation ? 'true' : 'false'};
+var ctx = core.begin(settings, dryRun);
+if (!settings.opsHost) throw new Error("Set opsHost in the configuration element " + SETTINGS_NAME + ".");
+if (!settings.opsUsername || !settings.opsPassword) throw new Error("Set opsUsername and opsPassword in the configuration element " + SETTINGS_NAME + ".");
+var api = "https://" + settings.opsHost + "/suite-api/api/";
+var auth = core.loginVcfOps(settings.opsHost, settings.opsUsername, settings.opsPassword, settings.opsAuthSource || "");
+var SAFE = { redact: settings._secrets };
+
+function listAll(path, key) {
+  return core.pageAll(function (page) {
+    var r = core.http("GET", api + path + (path.indexOf("?") < 0 ? "?" : "&") + "page=" + page + "&pageSize=1000", auth, null, SAFE).body || {};
+    return { items: r[key] || [], total: r.pageInfo ? r.pageInfo.totalCount : null };
+  }, 0);
+}
+function find(items, field, value) {
+  for (var i = 0; i < items.length; i++) if (String(items[i][field]) === String(value)) return String(items[i].id);
+  return null;
+}
+// key names the object in a dry run's placeholder id, which ends up inside
+// the alert's JSON: letters and hyphens only.
+function ensure(key, label, existing, path, body) {
+  if (existing) {
+    System.log("Exists, left as it is: " + label + " (" + existing + ")");
+    return existing;
+  }
+  var id = core.act(ctx, "create " + label, function () {
+    var r = core.http("POST", api + path, auth, body, SAFE);
+    if (!r.body || !r.body.id) throw new Error("POST " + path + " returned no id; nothing after it was created.");
+    return String(r.body.id);
+  });
+  return id || "new-" + key;
+}
+
+var alertId = null;
+try {
+  var warning = JSON.parse(core.resource(RESOURCE_PATH, "symptom-warning.json"));
+  var critical = JSON.parse(core.resource(RESOURCE_PATH, "symptom-critical.json"));
+  var alertText = core.resource(RESOURCE_PATH, "alert.json");
+  var alertName = JSON.parse(alertText).name;
+
+  var symptoms = listAll("symptomdefinitions?adapterKind=VMWARE&resourceKind=" + encodeURIComponent(RESOURCE_KIND), "symptomDefinitions");
+  var warningId = ensure("warning-symptom", "warning symptom \"" + warning.name + "\"", find(symptoms, "name", warning.name), "symptomdefinitions", warning);
+  var criticalId = ensure("critical-symptom", "critical symptom \"" + critical.name + "\"", find(symptoms, "name", critical.name), "symptomdefinitions", critical);
+  var recommendationId = "";
+  if (HAS_RECOMMENDATION) {
+    var recommendation = JSON.parse(core.resource(RESOURCE_PATH, "recommendation.json"));
+    var recommendations = listAll("recommendations", "recommendations");
+    recommendationId = ensure("recommendation", "recommendation", find(recommendations, "description", recommendation.description), "recommendations", recommendation);
+  }
+
+  var alerts = listAll("alertdefinitions?adapterKind=VMWARE&resourceKind=" + encodeURIComponent(RESOURCE_KIND), "alertDefinitions");
+  var alertBody = JSON.parse(alertText.split("__WARNING_SYMPTOM_ID__").join(warningId).split("__CRITICAL_SYMPTOM_ID__").join(criticalId).split("__RECOMMENDATION_ID__").join(recommendationId));
+  alertId = ensure("alert-definition", "alert definition \"" + alertName + "\"", find(alerts, "name", alertName), "alertdefinitions", alertBody);
+} finally {
+  core.logoutVcfOps(settings.opsHost, auth);
+}
+alertDefinitionId = ctx.dryRun ? "" : alertId;
+summary = core.audit(ctx, { alertDefinitionId: alertDefinitionId, note: "The alert is enabled only where a policy enables it." });
+core.notify(settings.webhook, summary);`;
+}
+
 export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -417,8 +488,10 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '# and the alert that refers to all three. Order matters — each step needs',
         '# the id the previous one returned, which is why this is one script.',
         '#',
-        '# Without --execute it only prints what it would send.',
+        '# Without --execute it only prints what it would send. It reads the payloads',
+        '# beside it, in scripts/.',
         'set -euo pipefail',
+        'cd "$(dirname "$0")"',
         ...authPreamble('vcf-operations'),
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
         '',
@@ -462,6 +535,42 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const hasRecommendation = Boolean(recommendation.trim());
+      const pkg = toPackage({
+        packageName: packageNameOf('vcfops', 'alert', base),
+        description: `Creates the VCF Operations alert "${alertName}" with its two symptoms${hasRecommendation ? ' and its recommendation' : ''}, in order, idempotently. Generated by ArchToolKit.`,
+        categoryPath: `ArchToolKit/VCF Operations/${base}`,
+        workflow: {
+          name: `Create alert ${base}`,
+          description: `Creates in VCF Operations the symptoms${hasRecommendation ? ', the recommendation' : ''} and the alert definition "${alertName}", each id passed to the next. What already exists (by name; the recommendation by its text) is left as it is. A dry run until dryRun is set to false in the configuration element.`,
+          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
+          outputs: [
+            { name: 'alertDefinitionId', type: 'string', description: 'The alert definition id, empty in a dry run' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: alertDefinitionWorkflow(metric.kind, hasRecommendation),
+        },
+        config: {
+          name: 'Settings',
+          description: `Settings of the Create alert ${base} workflow. Fill opsPassword after import; set dryRun to false only after a dry run.`,
+          attributes: [
+            { name: 'opsHost', type: 'string', value: '', description: 'VCF Operations host (FQDN)' },
+            { name: 'opsUsername', type: 'string', value: '', description: 'An account that may create alert content' },
+            { name: 'opsPassword', type: 'SecureString', description: 'Its password' },
+            { name: 'opsAuthSource', type: 'string', value: '', description: 'Authentication source for the account; empty for a local account' },
+            { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
+            { name: 'cap', type: 'number', value: hasRecommendation ? 4 : 3, description: 'The most objects one run may create' },
+            { name: 'webhook', type: 'string', value: '', description: 'Optional: where the audit record is posted' },
+          ],
+        },
+        resources: [
+          { name: 'symptom-warning.json', content: `${JSON.stringify(symptom('WARNING', warnAt), null, 2)}\n` },
+          { name: 'symptom-critical.json', content: `${JSON.stringify(symptom('CRITICAL', critAt), null, 2)}\n` },
+          ...(hasRecommendation ? [{ name: 'recommendation.json', content: `${JSON.stringify({ description: recommendation }, null, 2)}\n` }] : []),
+          { name: 'alert.json', content: `${JSON.stringify(alert, null, 2)}\n` },
+        ],
+      });
+
       return {
         platform: PLATFORM,
         title: `${alertName} — ${metric.label} on ${KINDS[metric.kind]?.label.toLowerCase() ?? metric.kind}`,
@@ -488,21 +597,22 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
           ...(recommendation.trim() ? [{ rule: 'Carries a recommendation', because: 'The person receiving it knows the first thing to check without opening a runbook.' }] : []),
         ],
         dryRun: [
-          'Run apply.sh without --execute to see what would be created.',
+          `Run the workflow Create alert ${base} with dryRun = true (the configuration element keeps it a dry run until its dryRun is set to false). The log lists every "DRY RUN: would create …". The fallback scripts/apply.sh does the same without --execute.`,
           `Before enabling it anywhere, open a ${metric.kind} in the interface, chart ${metric.key} over the last 30 days, and count how often it crossed ${warnAt}. That is how often this will fire.`,
         ],
         undo: [
-          'DELETE /suite-api/api/alertdefinitions/{id}, then the symptoms and the recommendation, using the ids in created-ids.txt.',
+          'DELETE /suite-api/api/alertdefinitions/{id}, then the symptoms and the recommendation, using the ids in the workflow\'s AUDIT log lines and summary output (scripts/created-ids.txt with the script).',
           'Delete the alert first: a symptom that an alert still refers to cannot be deleted.',
         ],
         told: ['Nobody until a notification rule matches it. Pair it with "Send an alert to a webhook" in this kit, filtered to this alert id.'],
-        requires: ['jq on the machine running apply.sh.', 'A policy to enable it in — see "Turn alert definitions on or off in a policy".'],
+        requires: ['VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the VCF Operations certificate trusted in Orchestrator — or, for the fallback script, jq on the machine running it.', 'A policy to enable it in — see "Turn alert definitions on or off in a policy".'],
         files: {
-          [`${base}-symptom-warning.json`]: `${JSON.stringify(symptom('WARNING', warnAt), null, 2)}\n`,
-          [`${base}-symptom-critical.json`]: `${JSON.stringify(symptom('CRITICAL', critAt), null, 2)}\n`,
-          ...(recommendation.trim() ? { [`${base}-recommendation.json`]: `${JSON.stringify({ description: recommendation }, null, 2)}\n` } : {}),
-          [`${base}-alert.json`]: `${JSON.stringify(alert, null, 2)}\n`,
-          'apply.sh': apply,
+          ...pkg.files,
+          [`scripts/${base}-symptom-warning.json`]: `${JSON.stringify(symptom('WARNING', warnAt), null, 2)}\n`,
+          [`scripts/${base}-symptom-critical.json`]: `${JSON.stringify(symptom('CRITICAL', critAt), null, 2)}\n`,
+          ...(recommendation.trim() ? { [`scripts/${base}-recommendation.json`]: `${JSON.stringify({ description: recommendation }, null, 2)}\n` } : {}),
+          [`scripts/${base}-alert.json`]: `${JSON.stringify(alert, null, 2)}\n`,
+          'scripts/apply.sh': apply,
           'import/alert-definitions.xml': alertContentXml(content),
           ...contentPackage(
             {
@@ -516,8 +626,14 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
           'IMPORT.md': importMd({
             title: `the alert "${alertName}"`,
             steps: [
+              // The Orchestrator package first: one unit that creates all of it, in order.
+              ...pkg.importSteps.map((step, index) => ({
+                heading: index === 0 ? `${step.heading} — the workflow that creates the alert` : step.heading,
+                files: index === 0 ? [pkg.packageDir, 'import/com.archtoolkit.core.package'] : [],
+                how: step.lines.filter((line) => line.trim() !== '').map((line) => line.replace(/^- /, '')),
+              })),
               {
-                heading: 'The alert, its symptoms and its recommendation — one file',
+                heading: 'Or: the alert, its symptoms and its recommendation — one file',
                 files: ['import/alert-definitions.xml'],
                 how: [
                   'Alerts → Configure → Alert Definitions → ⋯ → Import (8.x: Configure → Alerts → Alert Definitions → Import), and choose import/alert-definitions.xml. The symptoms and the recommendation it refers to are in the same file and are created with it.',
@@ -526,8 +642,8 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
               },
               {
                 heading: 'Or by the REST API',
-                files: [`${base}-symptom-warning.json`, `${base}-symptom-critical.json`, ...(recommendation.trim() ? [`${base}-recommendation.json`] : []), `${base}-alert.json`, 'apply.sh'],
-                how: ['./apply.sh --execute creates the symptoms, the recommendation and then the alert, in that order, through /suite-api/api/symptomdefinitions, /recommendations and /alertdefinitions. The API assigns its own ids.'],
+                files: [`scripts/${base}-symptom-warning.json`, `scripts/${base}-symptom-critical.json`, ...(recommendation.trim() ? [`scripts/${base}-recommendation.json`] : []), `scripts/${base}-alert.json`, 'scripts/apply.sh'],
+                how: ['./scripts/apply.sh --execute creates the symptoms, the recommendation and then the alert, in that order, through /suite-api/api/symptomdefinitions, /recommendations and /alertdefinitions. The API assigns its own ids.'],
               },
               contentStep('ALERT_DEFINITIONS'),
               {

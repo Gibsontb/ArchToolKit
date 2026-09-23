@@ -35,6 +35,8 @@ import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, authHeader, authPreamble, scheduledEnv } from '../apply.ts';
 import { importGuide, type ImportStepSpec } from './vcf-networks-logs.ts';
 import { blueprintYaml, templatePath } from '../vcfa-import.ts';
+import type { VroActionDef } from '../vro/core.ts';
+import { toPackage } from '../vro/to-package.ts';
 
 const PLATFORM = 'vcf-fleet' as const;
 const SRC = 'ArchToolKit';
@@ -1086,6 +1088,294 @@ function createFleetScript(mode: 'import' | 'create'): string {
     '',
   ].join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Tag compliance as an Orchestrator package
+// ---------------------------------------------------------------------------
+
+/**
+ * The tag compliance checks as Orchestrator actions: the same checks, in the
+ * same order and with the same CSV rows, as the jq program in tag-compliance.sh
+ * (the parity test in src/automation/vro/vro.test.ts runs both against the
+ * same fake vCenters and compares).
+ */
+const TAGS_COMPLIANCE_PACKAGE = 'com.archtoolkit.tags.compliance';
+
+const TAGS_COMPLIANCE_ACTIONS: readonly VroActionDef[] = [
+  {
+    name: 'readVcenter',
+    description: 'Read one vCenter: the tag catalogue, every tag association (100 tags a request) and every object tags can be on (VMs host by host, since the VM list refuses rather than pages past its limit). Reads only.',
+    resultType: 'Any',
+    params: [
+      { name: 'host', type: 'string', description: 'vCenter host' },
+      { name: 'headers', type: 'Any', description: 'Session header from core.loginVcenter or core.loginVcenterToken' },
+    ],
+    script: String.raw`var core = System.getModule("com.archtoolkit.core");
+var base = "https://" + host;
+function get(path) { return core.http("GET", base + path, headers, null, null).body || []; }
+function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+var categories = [];
+var categoryIds = get("/api/cis/tagging/category");
+for (var i = 0; i < categoryIds.length; i++) {
+  var c = get("/api/cis/tagging/category/" + encodeURIComponent(categoryIds[i]));
+  categories.push({ id: c.id, name: c.name, description: c.description, cardinality: c.cardinality, associable_types: (c.associable_types || []).slice().sort(cmp) });
+}
+categories.sort(function (a, b) { return cmp(a.name, b.name); });
+var categoryName = {};
+for (var j = 0; j < categories.length; j++) categoryName[categories[j].id] = categories[j].name;
+var tags = [];
+var tagIds = get("/api/cis/tagging/tag");
+for (var k = 0; k < tagIds.length; k++) {
+  var t = get("/api/cis/tagging/tag/" + encodeURIComponent(tagIds[k]));
+  tags.push({ id: t.id, name: t.name, description: t.description, category_id: t.category_id, category: categoryName[t.category_id] || "?" });
+}
+tags.sort(function (a, b) { return cmp(a.category, b.category) || cmp(a.name, b.name); });
+var associations = [];
+for (var from = 0; from < tags.length; from += 100) {
+  var batch = [];
+  for (var n = from; n < Math.min(from + 100, tags.length); n++) batch.push(tags[n].id);
+  var attached = core.http("POST", base + "/api/cis/tagging/tag-association?action=list-attached-objects-on-tags", headers, { tag_ids: batch }, null).body || [];
+  for (var a = 0; a < attached.length; a++) {
+    var objects = attached[a].object_ids || [];
+    for (var o = 0; o < objects.length; o++) associations.push({ tag_id: attached[a].tag_id, type: objects[o].type, id: objects[o].id });
+  }
+}
+associations.sort(function (x, y) { return cmp(x.type, y.type) || cmp(x.id, y.id) || cmp(x.tag_id, y.tag_id); });
+var inventory = [];
+var seen = {};
+function add(type, id, name) {
+  var key = type + "/" + id;
+  if (seen[key]) return;
+  seen[key] = true;
+  inventory.push({ type: type, id: id, name: name });
+}
+var hosts = get("/api/vcenter/host");
+for (var h = 0; h < hosts.length; h++) add("HostSystem", hosts[h].host, hosts[h].name);
+for (var h2 = 0; h2 < hosts.length; h2++) {
+  var vms = get("/api/vcenter/vm?hosts=" + encodeURIComponent(hosts[h2].host));
+  for (var v = 0; v < vms.length; v++) add("VirtualMachine", vms[v].vm, vms[v].name);
+}
+var lists = [["/api/vcenter/cluster", "ClusterComputeResource", "cluster"], ["/api/vcenter/datastore", "Datastore", "datastore"], ["/api/vcenter/folder", "Folder", "folder"], ["/api/vcenter/resource-pool", "ResourcePool", "resource_pool"], ["/api/vcenter/datacenter", "Datacenter", "datacenter"]];
+for (var l = 0; l < lists.length; l++) {
+  var items = get(lists[l][0]);
+  for (var m = 0; m < items.length; m++) add(lists[l][1], items[m][lists[l][2]], items[m].name);
+}
+var networks = get("/api/vcenter/network");
+for (var w = 0; w < networks.length; w++) {
+  var kind = networks[w].type === "DISTRIBUTED_PORTGROUP" ? "DistributedVirtualPortgroup" : networks[w].type === "OPAQUE_NETWORK" ? "OpaqueNetwork" : "Network";
+  add(kind, networks[w].network, networks[w].name);
+}
+inventory.sort(function (x, y) { return cmp(x.type, y.type) || cmp(x.name, y.name); });
+return { catalogue: { categories: categories, tags: tags }, associations: associations, inventory: inventory };`,
+  },
+  {
+    name: 'checkVcenter',
+    description: 'Every problem in one vCenter against the standard, as rows [check, vcenter, object_type, object_id, object_name, category, tag, detail]: category-not-in-standard, category-missing, cardinality-mismatch, object-types-mismatch, value-not-in-standard, tag-unused, cardinality-violation, missing-required.',
+    resultType: 'Any',
+    params: [
+      { name: 'vc', type: 'string', description: 'vCenter host, for the rows' },
+      { name: 'standard', type: 'Any', description: 'The parsed tag-standard.json' },
+      { name: 'data', type: 'Any', description: 'What readVcenter returned' },
+      { name: 'ignore', type: 'Any', description: 'Category names to leave out, or null' },
+      { name: 'exclude', type: 'string', description: 'Regular expression: objects whose name matches are never required to carry a tag' },
+    ],
+    script: String.raw`var S = standard.categories || [];
+var C = data.catalogue;
+var inventory = data.inventory || [];
+var skip = ignore || [];
+function has(list, value) {
+  for (var i = 0; i < list.length; i++) if (list[i] === value) return true;
+  return false;
+}
+function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+var standardNames = [];
+for (var i = 0; i < S.length; i++) standardNames.push(S[i].name);
+var vcenterNames = [];
+for (var j = 0; j < C.categories.length; j++) vcenterNames.push(C.categories[j].name);
+var tagById = {};
+for (var k = 0; k < C.tags.length; k++) tagById[C.tags[k].id] = C.tags[k];
+var nameOf = {};
+for (var n = 0; n < inventory.length; n++) nameOf[inventory[n].type + "/" + inventory[n].id] = inventory[n].name;
+var A = [];
+var uses = {};
+var categoriesOn = {};
+var raw = data.associations || [];
+for (var a = 0; a < raw.length; a++) {
+  var tag = tagById[raw[a].tag_id];
+  var entry = { tag_id: raw[a].tag_id, type: raw[a].type, id: raw[a].id, category: tag ? tag.category : "?", tag: tag ? tag.name : "?" };
+  A.push(entry);
+  uses[entry.tag_id] = (uses[entry.tag_id] || 0) + 1;
+  var on = entry.type + "/" + entry.id;
+  (categoriesOn[on] = categoriesOn[on] || []).push(entry.category);
+}
+var excluded = exclude ? new RegExp(String(exclude)) : null;
+var rows = [];
+function row(check, type, id, category, tagName, detail) { rows.push([check, vc, type, id, "", category, tagName, detail]); }
+for (var c1 = 0; c1 < C.categories.length; c1++) {
+  var cat = C.categories[c1];
+  if (!has(standardNames, cat.name) && !has(skip, cat.name)) row("category-not-in-standard", "", "", cat.name, "", "exists in vCenter, not in the standard");
+}
+for (var s1 = 0; s1 < S.length; s1++) {
+  if (!has(vcenterNames, S[s1].name)) row("category-missing", "", "", S[s1].name, "", "in the standard, not in this vCenter");
+}
+for (var s2 = 0; s2 < S.length; s2++) {
+  for (var c2 = 0; c2 < C.categories.length; c2++) {
+    if (C.categories[c2].name === S[s2].name && C.categories[c2].cardinality !== S[s2].cardinality) row("cardinality-mismatch", "", "", C.categories[c2].name, "", "vCenter says " + C.categories[c2].cardinality + ", the standard says " + S[s2].cardinality);
+  }
+}
+for (var s3 = 0; s3 < S.length; s3++) {
+  for (var c3 = 0; c3 < C.categories.length; c3++) {
+    var types = C.categories[c3].associable_types || [];
+    if (C.categories[c3].name !== S[s3].name || types.length === 0) continue;
+    var missingTypes = [];
+    for (var t3 = 0; t3 < S[s3].associable_types.length; t3++) if (!has(types, S[s3].associable_types[t3])) missingTypes.push(S[s3].associable_types[t3]);
+    if (missingTypes.length > 0) row("object-types-mismatch", "", "", C.categories[c3].name, "", "cannot go on " + missingTypes.join(" "));
+  }
+}
+for (var t4 = 0; t4 < C.tags.length; t4++) {
+  for (var s4 = 0; s4 < S.length; s4++) {
+    if (S[s4].name === C.tags[t4].category && !S[s4].free_text && !has(S[s4].values, C.tags[t4].name)) row("value-not-in-standard", "", "", C.tags[t4].category, C.tags[t4].name, "on " + (uses[C.tags[t4].id] || 0) + " object(s)");
+  }
+}
+for (var t5 = 0; t5 < C.tags.length; t5++) {
+  var t = C.tags[t5];
+  if ((uses[t.id] || 0) !== 0 || has(skip, t.category)) continue;
+  var inStandard = false;
+  for (var s5 = 0; s5 < S.length; s5++) if (S[s5].name === t.category && has(S[s5].values, t.name)) inStandard = true;
+  if (!inStandard) row("tag-unused", "", "", t.category, t.name, "attached to nothing");
+}
+var groups = {};
+var keys = [];
+for (var g = 0; g < A.length; g++) {
+  var key = JSON.stringify([A[g].type, A[g].id, A[g].category]);
+  if (!groups[key]) { groups[key] = []; keys.push(key); }
+  groups[key].push(A[g]);
+}
+keys.sort(function (x, y) {
+  var p = JSON.parse(x), q = JSON.parse(y);
+  return cmp(p[0], q[0]) || cmp(p[1], q[1]) || cmp(p[2], q[2]);
+});
+for (var g2 = 0; g2 < keys.length; g2++) {
+  var group = groups[keys[g2]];
+  if (group.length < 2) continue;
+  var single = false;
+  for (var s6 = 0; s6 < S.length; s6++) if (S[s6].name === group[0].category && S[s6].cardinality === "SINGLE") single = true;
+  if (!single) continue;
+  var values = [];
+  for (var v = 0; v < group.length; v++) values.push(group[v].tag);
+  row("cardinality-violation", group[0].type, group[0].id, group[0].category, values.join(" "), group.length + " values in a one-value category");
+}
+for (var s7 = 0; s7 < S.length; s7++) {
+  var required = S[s7].required_on || [];
+  for (var r = 0; r < required.length; r++) {
+    for (var o = 0; o < inventory.length; o++) {
+      var object = inventory[o];
+      if (object.type !== required[r]) continue;
+      if (excluded && excluded.test(object.name)) continue;
+      if (!has(categoriesOn[object.type + "/" + object.id] || [], S[s7].name)) row("missing-required", object.type, object.id, S[s7].name, "", "no " + S[s7].name + " tag");
+    }
+  }
+}
+for (var x = 0; x < rows.length; x++) rows[x][4] = nameOf[rows[x][2] + "/" + rows[x][3]] || "";
+return rows;`,
+  },
+  {
+    name: 'compareCatalogues',
+    description: 'Tags of standard categories that exist on some vCenters and not others, as missing-in-vcenter rows: a VM moved or restored across them loses the tag, and a group keyed on it covers half the fleet.',
+    resultType: 'Any',
+    params: [
+      { name: 'standard', type: 'Any', description: 'The parsed tag-standard.json' },
+      { name: 'catalogues', type: 'Any', description: 'Array of { vc, tags } where tags is readVcenter().catalogue.tags' },
+    ],
+    script: String.raw`function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+var standardNames = {};
+var S = standard.categories || [];
+for (var i = 0; i < S.length; i++) standardNames[S[i].name] = true;
+var all = [];
+var groups = {};
+var keys = [];
+for (var c = 0; c < catalogues.length; c++) {
+  all.push(catalogues[c].vc);
+  var tags = catalogues[c].tags || [];
+  for (var t = 0; t < tags.length; t++) {
+    var key = JSON.stringify([tags[t].category, tags[t].name]);
+    if (!groups[key]) { groups[key] = { c: tags[t].category, t: tags[t].name, has: [] }; keys.push(key); }
+    groups[key].has.push(catalogues[c].vc);
+  }
+}
+keys.sort(function (x, y) {
+  var p = JSON.parse(x), q = JSON.parse(y);
+  return cmp(p[0], q[0]) || cmp(p[1], q[1]);
+});
+var rows = [];
+for (var k = 0; k < keys.length; k++) {
+  var g = groups[keys[k]];
+  if (g.has.length >= all.length || !standardNames[g.c]) continue;
+  for (var a = 0; a < all.length; a++) {
+    var present = false;
+    for (var h = 0; h < g.has.length; h++) if (g.has[h] === all[a]) present = true;
+    if (!present) rows.push(["missing-in-vcenter", all[a], "", "", "", g.c, g.t, "exists on " + g.has.join(" ")]);
+  }
+}
+return rows;`,
+  },
+  {
+    name: 'toCsv',
+    description: 'The rows as CSV with a header line, every value quoted as jq @csv quotes it.',
+    resultType: 'string',
+    params: [{ name: 'rows', type: 'Any', description: 'Array of rows' }],
+    script: String.raw`var lines = ["check,vcenter,object_type,object_id,object_name,category,tag,detail"];
+for (var i = 0; i < rows.length; i++) {
+  var cells = [];
+  for (var j = 0; j < rows[i].length; j++) cells.push('"' + String(rows[i][j]).split('"').join('""') + '"');
+  lines.push(cells.join(","));
+}
+return lines.join("\n") + "\n";`,
+  },
+];
+
+const TAGS_COMPLIANCE_WORKFLOW = String.raw`var vcenters = settings.vcenters || [];
+if (vcenters.length === 0) throw new Error("No vCenters: set vcenters in the configuration element " + SETTINGS_NAME + ".");
+var useToken = !!settings.vcfApiToken;
+if (useToken && !settings.vcfIdbHost) throw new Error("vcfApiToken is set but vcfIdbHost is not: set the VCF Identity Broker host in " + SETTINGS_NAME + ".");
+if (!useToken && !(settings.vcUsername && settings.vcPassword)) throw new Error("Set vcfIdbHost and vcfApiToken (VCF 9.1), or vcUsername and vcPassword (8.x and 9.0), in " + SETTINGS_NAME + ".");
+var standard = JSON.parse(core.resource(RESOURCE_PATH, "tag-standard.json"));
+var ignoreCategories = settings.ignoreCategories || [];
+var rows = [];
+var catalogues = [];
+for (var i = 0; i < vcenters.length; i++) {
+  var host = String(vcenters[i]);
+  System.log("Reading " + host + " ...");
+  var headers = useToken ? core.loginVcenterToken(host, settings.vcfIdbHost, settings.vcfApiToken) : core.loginVcenter(host, settings.vcUsername, settings.vcPassword);
+  var data;
+  try {
+    data = mod.readVcenter(host, headers);
+  } finally {
+    core.logoutVcenter(host, headers);
+  }
+  var found = mod.checkVcenter(host, standard, data, ignoreCategories, settings.excludeNames || "");
+  for (var j = 0; j < found.length; j++) rows.push(found[j]);
+  catalogues.push({ vc: host, tags: data.catalogue.tags });
+}
+if (settings.crossVcenter !== false) {
+  var cross = mod.compareCatalogues(standard, catalogues);
+  for (var k = 0; k < cross.length; k++) rows.push(cross[k]);
+}
+var counts = {};
+for (var r = 0; r < rows.length; r++) counts[rows[r][0]] = (counts[rows[r][0]] || 0) + 1;
+var threshold = settings.maxProblems === null || settings.maxProblems === undefined ? 0 : Number(settings.maxProblems);
+problemCount = rows.length;
+reportCsv = mod.toCsv(rows);
+System.log("Tag compliance: " + problemCount + " problem(s) (threshold " + threshold + ")");
+for (var check in counts) System.log("  " + counts[check] + "\t" + check);
+var shown = Math.min(rows.length, 500);
+for (var p = 0; p < shown; p++) System.log("PROBLEM: " + rows[p].join(" | "));
+if (rows.length > shown) System.log("... and " + (rows.length - shown) + " more in the reportCsv output.");
+summary = core.audit(null, { source: "archtoolkit-tag-compliance", total: problemCount, threshold: threshold, counts: counts, vcenters: vcenters });
+core.notify(settings.webhook, summary);
+if (problemCount > threshold && settings.failAboveThreshold !== false) {
+  throw new Error("Tag compliance: " + problemCount + " problem(s), above the threshold of " + threshold + ". Every problem is in the log above.");
+}`;
 
 export const VCF_TAGS: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
@@ -2203,38 +2493,83 @@ export const VCF_TAGS: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      // The same report as one Orchestrator package: the workflow, its actions,
+      // the settings and the standard, on top of the shared core library.
+      const pkg = toPackage({
+        packageName: TAGS_COMPLIANCE_PACKAGE,
+        description: `Tag compliance report: ${vcenters.length} vCenter(s) against ${categories.length} tag categories. Reads only. Generated by ArchToolKit.`,
+        categoryPath: 'ArchToolKit/Tags',
+        workflow: {
+          name: 'Tag compliance report',
+          description: 'Reads the tag catalogue, every tag assignment and the inventory of every vCenter in the settings, and reports every departure from the tag standard. Changes nothing. Fails above the threshold, so a schedule shows it.',
+          inputs: [],
+          outputs: [
+            { name: 'problemCount', type: 'number', description: 'Problems found' },
+            { name: 'reportCsv', type: 'string', description: 'check,vcenter,object_type,object_id,object_name,category,tag,detail' },
+            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
+          ],
+          script: TAGS_COMPLIANCE_WORKFLOW,
+        },
+        actions: TAGS_COMPLIANCE_ACTIONS,
+        config: {
+          name: 'Tag compliance',
+          description: 'Settings of the Tag compliance report workflow. Fill the secret for your version after import: vcfApiToken (VCF 9.1) or vcPassword (8.x and 9.0).',
+          attributes: [
+            { name: 'vcenters', type: 'Array/string', value: vcenters, description: 'Every vCenter to read' },
+            { name: 'vcfIdbHost', type: 'string', value: '', description: 'VCF 9.1: the VCF Identity Broker host' },
+            { name: 'vcfApiToken', type: 'SecureString', description: 'VCF 9.1: an API token issued to an API client in VCF Operations with read access to the vCenters' },
+            { name: 'vcUsername', type: 'string', value: '', description: '8.x and 9.0: a read-only account, user@domain, the same on every vCenter' },
+            { name: 'vcPassword', type: 'SecureString', description: '8.x and 9.0: its password' },
+            { name: 'maxProblems', type: 'number', value: maxProblems, description: 'The run fails above this many problems' },
+            { name: 'failAboveThreshold', type: 'boolean', value: true, description: 'Fail the run above maxProblems, so a schedule shows it' },
+            { name: 'crossVcenter', type: 'boolean', value: cross, description: 'Compare the catalogue between vCenters' },
+            { name: 'ignoreCategories', type: 'Array/string', value: listOf(ignore), description: 'Categories another product owns' },
+            { name: 'excludeNames', type: 'string', value: exclude, description: 'Regular expression: objects never required to carry a tag' },
+            { name: 'webhook', type: 'string', value: webhook, description: 'Optional: where the summary is posted' },
+          ],
+        },
+        resources: [{ name: 'tag-standard.json', content: standardJson(categories) }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Tag compliance — ${vcenters.length} vCenter(s) against ${categories.length} categories`,
         effect: 'read',
-        trigger: { kind: 'schedule', detail: `Daily at ${String(hour).padStart(2, '0')}:00 from cron; also worth running before and after any bulk tagging change.`, worstCase: 'once a day; each run reads every tag, every assignment and every VM once' },
+        trigger: { kind: 'schedule', detail: `Daily at ${String(hour).padStart(2, '0')}:00, from the Orchestrator scheduler (or cron, with the fallback script); also worth running before and after any bulk tagging change.`, worstCase: 'once a day; each run reads every tag, every assignment and every VM once' },
         scope: {
           what: `Reads the tag catalogue, every tag assignment, and the inventory of ${vcenters.join(', ')}. Changes nothing.`,
           decidedBy: [
-            'VCENTERS, or the list baked into the script.',
-            'tag-standard.json: which categories exist, their values and cardinality, and which object types must carry each.',
-            `IGNORE_CATEGORIES${ignore ? ` (${ignore})` : ''} and EXCLUDE_NAMES (${exclude || 'none'}).`,
+            'vcenters in the configuration element Tag compliance (VCENTERS for the script).',
+            'The resource element tag-standard.json (scripts/tag-standard.json for the script): which categories exist, their values and cardinality, and which object types must carry each.',
+            `ignoreCategories${ignore ? ` (${ignore})` : ''} and excludeNames (${exclude || 'none'}).`,
           ],
           ifWrong: 'A standard that does not match reality reports thousands of problems and gets ignored. Start with the threshold where the estate is and lower it; do not start at zero.',
         },
         guardrails: [
           { rule: 'Reads only: GET and the tagging list-* actions, nothing else', because: 'A compliance report that can change what it reports on stops being evidence.' },
-          { rule: `Exits 1 above ${maxProblems} problems`, because: 'The scheduler alerts on the exit code; a report nobody opens is the usual end of a tagging programme.' },
-          { rule: 'The password file must be mode 600 or the script refuses to start', because: 'A scheduled job’s credential file is the one most often left world-readable.' },
+          { rule: `Fails above ${maxProblems} problems (the script exits 1)`, because: 'The scheduler shows a failed run; a report nobody opens is the usual end of a tagging programme.' },
+          { rule: 'Secrets are SecureString attributes in Orchestrator, never logged; the script refuses a password file that is not mode 600', because: 'A scheduled job’s credential is the one most often left readable.' },
         ],
-        dryRun: ['It is a read. Run it by hand once and read the CSV before scheduling it.'],
+        dryRun: ['It is a read. Run the workflow by hand once and read the log (every problem is a PROBLEM line) before scheduling it.'],
         undo: ['Nothing to undo. Delete old reports when you no longer need them.'],
-        told: [`reports/tag-compliance-<run>.csv every run${webhook ? `, a summary to ${webhook}` : ''}, and the exit code to whatever scheduled it.`],
-        requires: [...VC_REQUIRES, 'Read-only access to every object and read on every tag and category — a read-only role at the vCenter root is enough.'],
+        told: [`The workflow's log and its reportCsv output every run${webhook ? `, a summary to ${webhook}` : ''}, and a failed run above the threshold to whatever scheduled it. The fallback script writes scripts/reports/tag-compliance-<run>.csv and exits 1 instead.`],
+        requires: [...VC_REQUIRES, 'Read-only access to every object and read on every tag and category — a read-only role at the vCenter root is enough.', 'For the package: VCF Automation 9.1 (or VCF Operations orchestrator 9.1) with the vCenter certificates trusted in Orchestrator.'],
         files: {
-          'IMPORT.md': tagsImport('Nothing is imported: tag-compliance.sh reads every vCenter (or the fleet API) and compares against tag-standard.json.', [
-            { heading: 'Run it, then schedule it', lines: ['`./tag-compliance.sh` from /opt/archtoolkit/tag-compliance, then install the line in crontab.txt with `crontab -e`.'] },
-          ]),
-          'tag-standard.json': standardJson(categories),
-          'tag-compliance.sh': script,
+          'IMPORT.md': tagsImport(
+            `One Orchestrator package does the whole job: the workflow **Tag compliance report** with its actions, its settings and the tag standard, on the shared ArchToolKit core library — \`${pkg.packageDir}\` and \`import/com.archtoolkit.core.package\`, each built and signed as a .package in the .zip download. The bash script under scripts/ does the same from a Linux host, if you would rather not use Orchestrator.`,
+            [
+              ...pkg.importSteps,
+              { heading: 'Or: the script, from a Linux host', lines: ['`./scripts/tag-compliance.sh` (it reads scripts/tag-standard.json beside it and writes scripts/reports/), then install the line in crontab.txt with `crontab -e`. It needs bash 4, curl and jq.'] },
+            ],
+            ['The VCF 9.1 API-token login to vCenter (identity broker token, exchanged for a SAML token, presented as SIGN) follows davidwzhang.com "VCF 9.1 API Access (4)"; confirm it against your vCenter, or use vcUsername and vcPassword.'],
+          ),
+          ...pkg.files,
+          'scripts/tag-standard.json': standardJson(categories),
+          'scripts/tag-compliance.sh': script,
           'crontab.txt': [
-            '# Tag compliance, daily. No secret here: VCF_API_TOKEN_FILE is a path to a mode-600 file (VC_USER + VC_PASSWORD_FILE on 8.x/9.0).',
-            `0 ${hour} * * * cd /opt/archtoolkit/tag-compliance && ${vcScheduledEnv(vcenters)} ./tag-compliance.sh >> reports/tag-compliance.log 2>&1 || echo "tag compliance over threshold" | logger -t archtoolkit`,
+            '# Tag compliance with the fallback script, daily. No secret here: VCF_API_TOKEN_FILE is a path to a mode-600 file (VC_USER + VC_PASSWORD_FILE on 8.x/9.0).',
+            '# With the Orchestrator package, schedule the workflow in Orchestrator instead and leave this out.',
+            `0 ${hour} * * * cd /opt/archtoolkit/tag-compliance && ${vcScheduledEnv(vcenters)} ./scripts/tag-compliance.sh >> scripts/reports/tag-compliance.log 2>&1 || echo "tag compliance over threshold" | logger -t archtoolkit`,
             '',
           ].join('\n'),
         },

@@ -13,9 +13,15 @@
 
 declare module 'node:test' {
   type TestFn = () => void | Promise<void>;
+  interface TestOptions {
+    readonly skip?: boolean | string;
+  }
   export function describe(name: string, fn: () => void): void;
+  export function describe(name: string, options: TestOptions, fn: () => void): void;
   export function it(name: string, fn: TestFn): void;
+  export function it(name: string, options: TestOptions, fn: TestFn): void;
   export function before(fn: TestFn): void;
+  export function after(fn: TestFn): void;
 }
 
 declare module 'node:assert/strict' {
@@ -74,4 +80,60 @@ declare module 'node:module' {
 
 declare module 'node:url' {
   export function fileURLToPath(url: string | URL): string;
+}
+
+/* The Orchestrator emulator (src/testing/vro-emulator.ts) runs package scripts
+   in a VM context, makes its synchronous REST calls through curl, and starts a
+   fake REST server in a child process; the package tests verify signatures
+   and gunzip a SIGN header. */
+
+declare module 'node:vm' {
+  export function createContext(sandbox?: object): object;
+  export function runInContext(code: string, context: object, options?: { filename?: string }): unknown;
+  export class Script {
+    constructor(code: string, options?: { filename?: string });
+  }
+}
+
+declare module 'node:child_process' {
+  export function execFileSync(file: string, args: readonly string[], options: { input?: string; encoding: 'utf8'; maxBuffer?: number; stdio?: readonly string[]; env?: Readonly<Record<string, string>>; cwd?: string }): string;
+  interface Readable {
+    on(event: 'data', listener: (chunk: { toString(): string }) => void): void;
+  }
+  export interface ChildProcess {
+    readonly stdout: Readable;
+    readonly stderr: Readable;
+    kill(): boolean;
+    on(event: 'exit', listener: (code: number | null) => void): void;
+  }
+  export function spawn(command: string, args: readonly string[], options?: { stdio?: readonly string[] }): ChildProcess;
+}
+
+declare module 'node:os' {
+  export function tmpdir(): string;
+}
+
+declare module 'node:fs' {
+  export function writeFileSync(path: string, data: string | Uint8Array): void;
+  export function mkdtempSync(prefix: string): string;
+  export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
+  export function chmodSync(path: string, mode: number): void;
+  export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
+}
+
+declare module 'node:crypto' {
+  export class X509Certificate {
+    constructor(der: Uint8Array);
+    readonly publicKey: object;
+    readonly subject: string;
+  }
+  interface Verify {
+    update(data: Uint8Array): Verify;
+    verify(key: object, signature: Uint8Array): boolean;
+  }
+  export function createVerify(algorithm: string): Verify;
+}
+
+declare module 'node:zlib' {
+  export function gunzipSync(data: Uint8Array): Uint8Array;
 }

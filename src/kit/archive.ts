@@ -18,6 +18,8 @@
  * every current browser and in Node.
  */
 
+import { buildVroPackage, readPackageSpec } from './vro-package.ts';
+
 export type ArchiveInput = Readonly<Record<string, string | Uint8Array>>;
 
 const encoder = new TextEncoder();
@@ -33,7 +35,7 @@ function isExecutable(path: string): boolean {
 
 // --- nested archives ---------------------------------------------------------
 
-const NESTED = /^(.*?[^/]+\.(zip|tgz|spl|tar\.gz))\/(.+)$/i;
+const NESTED = /^(.*?[^/]+\.(zip|tgz|spl|tar\.gz|package))\/(.+)$/i;
 
 /**
  * Turn `a/b.zip/c/d.json` entries into a single `a/b.zip` entry whose content
@@ -54,7 +56,14 @@ export async function packNested(files: ArchiveInput): Promise<Record<string, Ui
     groups.set(archive, group);
   }
   for (const [archive, group] of groups) {
-    flat[archive] = group.kind === 'zip' ? await zip(group.files) : await tarGz(group.files);
+    if (group.kind === 'package') {
+      // An Orchestrator package: its text files describe it; it is built and
+      // signed here. See vro-package.ts.
+      const text = Object.fromEntries(Object.entries(group.files).map(([k, v]) => [k, typeof v === 'string' ? v : new TextDecoder().decode(v)]));
+      flat[archive] = await buildVroPackage(readPackageSpec(text));
+    } else {
+      flat[archive] = group.kind === 'zip' ? await zip(group.files) : await tarGz(group.files);
+    }
   }
   return flat;
 }
@@ -86,8 +95,12 @@ function dosDateTime(date: Date): { time: number; date: number } {
 }
 
 /** A stored (uncompressed) zip, UTF-8 names, Unix permissions. */
-export async function zip(files: ArchiveInput, when = new Date()): Promise<Uint8Array> {
-  const entries = Object.entries(await packNested(files)).sort(([a], [b]) => a.localeCompare(b));
+export async function zip(files: ArchiveInput, when = new Date(), options: { keepOrder?: boolean } = {}): Promise<Uint8Array> {
+  // keepOrder writes entries as given, with no nested packing: an Orchestrator
+  // package lists its signatures after the files they sign, as vropkg does.
+  const entries = options.keepOrder
+    ? Object.entries(files).map(([path, content]) => [path, bytesOf(content)] as [string, Uint8Array])
+    : Object.entries(await packNested(files)).sort(([a], [b]) => a.localeCompare(b));
   const { time, date } = dosDateTime(when);
   const locals: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
