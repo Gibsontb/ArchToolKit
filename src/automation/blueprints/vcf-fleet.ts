@@ -76,7 +76,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_password_rotation',
     platform: PLATFORM,
-    label: 'Rotate managed passwords',
+    label: 'Rotate managed passwords (SDDC Manager, VCF 5.x / 9.0)',
     group: 'Credentials',
     description:
       'Rotate the passwords SDDC Manager holds for one kind of resource — ESXi root, vCenter, NSX — and optionally set the policy that rotates them on a schedule. It refuses to start while another task is running or a previous rotation has failed, because a rotation that fails half way leaves the resource and SDDC Manager disagreeing about the password, and that is the state you least want to add to.',
@@ -273,6 +273,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         requires: ['An SDDC Manager account with the ADMIN role for the token.', 'jq and bash 4 on the machine running it.'],
         files: { 'rotate.sh': rotate, 'select.jq': selectJq, 'body.jq': bodyJq },
         notes: [
+          'On VCF 9.1 the fleet-wide equivalent is in VCF Operations fleet management: see "fleet91_password_rotate" and "fleet91_password_policy" in this kit, against /suite-api/api/fleet-management/password-management.',
           'The UPDATE_AUTO_ROTATE_POLICY operation type and the autoRotatePolicy block are the shape in recent releases. Verify both against the API reference for your release before running --policy.',
           'Anything outside VCF that uses these passwords — backup products, monitoring, scripts — should read them from SDDC Manager or a vault. If they are typed into those tools, rotation breaks them.',
         ],
@@ -285,7 +286,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_certificate_check',
     platform: PLATFORM,
-    label: 'Report certificates about to expire',
+    label: 'Report certificates about to expire (SDDC Manager, VCF 5.x / 9.0)',
     group: 'Certificates',
     description:
       'Walk every workload domain, read the certificates of every resource in it, and report the ones expiring inside the window. It exits non-zero when any are found, so a scheduler can page. A replacement plan comes with it — CSR generation and installation — as a separate script that does nothing unless told to.',
@@ -454,6 +455,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
           'crontab.txt': `# Daily at 07:00, from the directory holding ${base}.sh and expiring.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
         },
         notes: [
+          'On VCF 9.1 the fleet-wide equivalent is in VCF Operations fleet management: see "fleet91_certificates" in this kit, against /suite-api/api/fleet-management/certificate-management.',
           'The resource-certificates response has named its expiry field differently across releases. expiring.jq tries numberOfDaysToExpire, expirationDate and notAfter; an entry it cannot read is reported rather than ignored.',
           'The ESXi host certificates are managed by vCenter, not by this API in most releases. Check them from vCenter as well.',
         ],
@@ -466,7 +468,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_health',
     platform: PLATFORM,
-    label: 'Check SDDC Manager health',
+    label: 'Check SDDC Manager health (SDDC Manager, VCF 5.x / 9.0)',
     group: 'Health',
     description:
       'The morning question, answered on a schedule: is SDDC Manager answering, has any task failed, is anything stuck, is any host unusable, and did last night’s backup happen? It reads, lists what it found, and exits non-zero when any of it is wrong.',
@@ -582,6 +584,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         requires: ['A read-only SDDC Manager account for the token (an ADMIN one if the health summary is on).', 'jq, bash 4 and GNU date.'],
         files: { [`${base}.sh`]: script, 'tasks.jq': tasksJq, 'crontab.txt': `# Hourly, from the directory holding ${base}.sh and tasks.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n` },
         notes: [
+          'On VCF 9.1 the management components VCF Operations now owns are checked through fleet lifecycle: see "fleet91_lifecycle" and "fleet91_cloud_proxy" in this kit. SDDC Manager still owns its own tasks, which this checks.',
           'The last-backup test reads the task list, because the backup configuration does not report the last run in every release. If your release exposes it directly, use that instead.',
           'A failed task that has since been retried successfully is still reported until it leaves the window. That is on purpose: someone should look at why it failed.',
         ],
@@ -594,7 +597,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_backup_config',
     platform: PLATFORM,
-    label: 'Configure SDDC Manager backup to SFTP',
+    label: 'Configure SDDC Manager backup to SFTP (SDDC Manager, VCF 5.x / 9.0)',
     group: 'Backup',
     description:
       'Point SDDC Manager — and the NSX managers it registers — at an SFTP server, with a schedule, a retention and an encryption passphrase. Credentials come from the environment at apply time, the server’s host key is pinned by fingerprint, and the current configuration is saved first so it can be put back.',
@@ -761,6 +764,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         ],
         files: { [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`, 'apply.sh': apply },
         notes: [
+          'On VCF 9.1 backups of the management components (VCF Operations, identity broker, management services) are scheduled through the fleet lifecycle API: see "fleet91_lifecycle" in this kit. SDDC Manager backup is still configured here.',
           'Field names follow the SDDC Manager API BackupConfigurationSpec. The retention fields in particular have been renamed between releases; verify against yours before --execute.',
           'Taking a backup on every state change is what makes a restore land just before the change that broke things, rather than the night before.',
         ],
@@ -773,7 +777,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_upgrade_precheck',
     platform: PLATFORM,
-    label: 'Precheck a workload domain before an upgrade',
+    label: 'Precheck a workload domain before an upgrade (SDDC Manager, VCF 5.x / 9.0)',
     group: 'Lifecycle',
     description:
       'Run the SDDC Manager precheck against one workload domain, wait for it, and list every check that failed — with the bundles that are available and downloaded for the target version beside it. It starts a precheck and reads; it upgrades nothing.',
@@ -874,6 +878,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         requires: ['An SDDC Manager account allowed to run prechecks (OPERATOR or ADMIN).', 'The target bundles downloaded, or a depot configured, for the bundle part to mean anything.'],
         files: { [`${base}.sh`]: script, 'failures.jq': failuresJq },
         notes: [
+          'On VCF 9.1 the management components are upgraded through the fleet lifecycle upgrade plan: see "fleet91_lifecycle" in this kit. Workload domains are still prechecked in SDDC Manager, as here.',
           'Newer releases split prechecks into check-sets (POST /v1/system/check-sets/queries, then /v1/system/check-sets) so you can precheck against a specific target. If /v1/system/prechecks is deprecated in yours, move to those.',
           'Run it early enough to fix what it finds. A precheck on the morning of the window only tells you the window is lost.',
         ],
@@ -886,7 +891,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_host_commission',
     platform: PLATFORM,
-    label: 'Commission ESXi hosts',
+    label: 'Commission ESXi hosts (SDDC Manager, VCF 5.x / 9.0)',
     group: 'Hosts',
     description:
       'Add prepared ESXi hosts to SDDC Manager’s inventory so a domain or cluster can use them. It always validates first — validation is the dry run — reads each host’s root password from its own environment variable, and commissions only when every host has passed.',
@@ -1042,6 +1047,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         ],
         files: { [`${base}.sh`]: script, 'hosts.json': `${JSON.stringify(hosts, null, 2)}\n`, 'spec.jq': specJq },
         notes: [
+          'VCF 9.1 has no fleet-management equivalent for commissioning: hosts are still commissioned through SDDC Manager, as here. The fleet-level jobs that moved to VCF Operations are the "fleet91_" blueprints in this kit.',
           'The storageType values follow the SDDC Manager HostCommissionSpec. VSAN_ESA is how recent releases name ESA; some take VSAN with a separate ESA flag instead. Verify against your release.',
           'Commissioning does not put a host in a cluster. It makes it available; adding it to a cluster or a new domain is a separate operation.',
         ],

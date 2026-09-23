@@ -284,11 +284,36 @@ describe('automation: every choice, not just the defaults', () => {
     expect(problems).toEqual([]);
   });
 
+  it('never puts a token or session id on a command line', () => {
+    // An argument is visible to every user on the host through ps and /proc.
+    // Headers carrying a secret come from a private file or a process
+    // substitution instead.
+    const onArgv = /-H "?(Authorization|x-hm-authorization|vmware-api-session-id): *[A-Za-z]* *\$/;
+    const problems: string[] = [];
+    for (const blueprint of AUTOMATIONS) {
+      const base = defaultValues(blueprint);
+      const variants: Record<string, string | number | boolean | undefined>[] = [{ ...base }];
+      for (const input of blueprint.inputs) {
+        if (input.control === 'select') for (const option of input.options ?? []) variants.push({ ...base, [input.id]: option.value });
+        if (input.control === 'toggle') variants.push({ ...base, [input.id]: !base[input.id] });
+      }
+      for (const values of variants) {
+        for (const [file, body] of Object.entries(blueprint.automation(values, blueprint.id).files)) {
+          if (!/\.(sh|bash)$/.test(file) && !body.startsWith('#!/usr/bin/env bash')) continue;
+          body.split('\n').forEach((line, index) => {
+            if (onArgv.test(line)) problems.push(`${blueprint.id} → ${file}:${index + 1}`);
+          });
+        }
+      }
+    }
+    expect([...new Set(problems)]).toEqual([]);
+  });
+
   it('covers setup, content and automation on every VCF platform', () => {
     const count = (target: string) => AUTOMATION_BLUEPRINTS.find((group) => group.target === target)?.blueprints.length ?? 0;
-    expect(count('vcf-operations')).toBeGreaterThan(15);
-    expect(count('vcf-automation')).toBeGreaterThan(15);
-    expect(count('vcf-fleet')).toBeGreaterThan(4);
+    expect(count('vcf-operations')).toBeGreaterThan(30);
+    expect(count('vcf-automation')).toBeGreaterThan(30);
+    expect(count('vcf-fleet')).toBeGreaterThan(20);
     expect(count('pipeline')).toBeGreaterThan(8);
   });
 });
@@ -314,5 +339,46 @@ describe('automation: traps in the setup and fleet kits', () => {
 
   it('catches a retired Teams connector URL', () => {
     expect(findingsOf('vcfops_webhook_payload', { destination: 'teams', endpoint: 'https://example.webhook.office.com/webhookb2/abc' }).includes('vcfops.payload.teams-connector')).toBe(true);
+  });
+});
+
+describe('automation: tags, which everything else scopes by', () => {
+  const build = (id: string, overrides: Record<string, string | number | boolean> = {}) => {
+    const blueprint = automationFor(id);
+    if (!blueprint) throw new Error(`missing ${id}`);
+    return blueprint.build({ ...defaultValues(blueprint), ...overrides }, 'x');
+  };
+  const codes = (id: string, overrides: Record<string, string | number | boolean>) => (build(id, overrides).findings ?? []).map((finding) => finding.code);
+
+  it('has the whole tagging programme: standard, assign, rules, govern, use, clean', () => {
+    for (const id of ['tags_taxonomy', 'tags_bulk_assign', 'tags_rules', 'tags_compliance', 'tags_sync_control', 'tags_backup', 'tags_consume', 'tags_cleanup']) {
+      expect(automationFor(id)?.platform).toBe('vcf-fleet');
+    }
+    const group = AUTOMATION_BLUEPRINTS.find((candidate) => candidate.target === 'vcf-fleet');
+    expect(group?.blueprints[0]?.id).toBe('tags_taxonomy');
+  });
+
+  it('says so when a category that must hold one value allows many', () => {
+    expect(codes('tags_taxonomy', { standard: 'Environment | multiple | VirtualMachine | prod,test,dev | VirtualMachine | Where it runs' }).includes('tags.standard.should-be-single')).toBe(true);
+  });
+
+  it('refuses a standard with the same category twice', () => {
+    const line = 'Environment | single | VirtualMachine | prod,test | VirtualMachine | Where it runs';
+    expect(codes('tags_taxonomy', { standard: `${line}\n${line}` }).includes('tags.standard.duplicate-category')).toBe(true);
+  });
+
+  it('warns when placement or NSX groups hang off a category that allows many values', () => {
+    const found = codes('tags_consume', {});
+    const standard = 'Environment | multiple | VirtualMachine | prod,test | VirtualMachine | x\nApplication | multiple | VirtualMachine | pay,web | VirtualMachine | x\nCostCenter | single | VirtualMachine | CC1 | VirtualMachine | x';
+    expect(found.includes('tags.consume.placement-multiple')).toBe(false);
+    expect(codes('tags_consume', { standard }).includes('tags.consume.placement-multiple')).toBe(true);
+  });
+
+  it('never deletes a tag without exporting first, and never one still attached', () => {
+    const files = build('tags_cleanup').files;
+    const script = Object.entries(files).find(([name]) => name.endsWith('.sh') && /cleanup/.test(name))?.[1] ?? Object.values(files).join('\n');
+    expect(/export|backup/i.test(script)).toBe(true);
+    expect(/attached/i.test(script)).toBe(true);
+    expect(/--execute/.test(script)).toBe(true);
   });
 });

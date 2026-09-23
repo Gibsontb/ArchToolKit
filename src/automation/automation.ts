@@ -89,7 +89,7 @@ export const AUTOMATION_PLATFORMS: Readonly<Record<AutomationPlatform, Automatio
   },
   'vcf-fleet': {
     id: 'vcf-fleet',
-    label: 'VCF fleet operations',
+    label: 'Fleet management and tags',
     formerly: 'SDDC Manager, Aria Suite Lifecycle, vRealize Suite Lifecycle Manager',
     appliedWith: 'The SDDC Manager API at /v1 for each instance, and fleet management in VCF Operations for the components it now owns.',
     dryRun: 'Every script here reads first and prints what it would rotate, replace or check. The acting half is behind --execute.',

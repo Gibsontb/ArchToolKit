@@ -23,11 +23,19 @@ import { VCF_AUTOMATION_EXTEND } from './vcf-automation-extend.ts';
 import { VCF_FLEET } from './vcf-fleet.ts';
 import { PIPELINE_AUTOMATIONS } from './pipeline.ts';
 import { PIPELINE_VCF } from './pipeline-vcf.ts';
+import { VCF_TAGS } from './vcf-tags.ts';
+import { VCF_FLEET_91 } from './vcf-fleet-91.ts';
+import { VCF_OPS_COST } from './vcf-ops-cost.ts';
+import { VCF_OPS_OPERATE, VCF_OPS_LOGS_91 } from './vcf-ops-operate.ts';
+import { VCF_OPS_BUILD, NETWORKS_91 } from './vcf-ops-build.ts';
+import { VCF_AUTOMATION_91 } from './vcf-automation-91.ts';
 
-const OPERATIONS = [...VCF_OPERATIONS_SETUP, ...VCF_OPERATIONS_CONTENT, ...VCF_OPERATIONS_AUTOMATIONS];
-const NETWORKS = [...NETWORKS_MORE, ...NETWORKS_AUTOMATIONS];
-const LOGS = [...LOGS_MORE, ...LOGS_AUTOMATIONS];
-const AUTOMATION = [...VCF_AUTOMATION_SETUP, ...VCF_AUTOMATION_AUTOMATIONS, ...VCF_AUTOMATION_EXTEND];
+const OPERATIONS = [...VCF_OPERATIONS_SETUP, ...VCF_OPERATIONS_CONTENT, ...VCF_OPS_BUILD, ...VCF_OPERATIONS_AUTOMATIONS, ...VCF_OPS_OPERATE, ...VCF_OPS_COST];
+const NETWORKS = [...NETWORKS_MORE, ...NETWORKS_91, ...NETWORKS_AUTOMATIONS];
+const LOGS = [...VCF_OPS_LOGS_91, ...LOGS_MORE, ...LOGS_AUTOMATIONS];
+const AUTOMATION = [...VCF_AUTOMATION_91, ...VCF_AUTOMATION_SETUP, ...VCF_AUTOMATION_AUTOMATIONS, ...VCF_AUTOMATION_EXTEND];
+// Tags first: they are what every other fleet automation scopes by.
+const FLEET = [...VCF_TAGS, ...VCF_FLEET_91, ...VCF_FLEET];
 const PIPELINES = [...PIPELINE_VCF, ...PIPELINE_AUTOMATIONS];
 
 export const AUTOMATION_BLUEPRINTS: readonly BlueprintGroup[] = [
@@ -35,12 +43,12 @@ export const AUTOMATION_BLUEPRINTS: readonly BlueprintGroup[] = [
   { target: 'vcf-operations-networks', label: AUTOMATION_PLATFORMS['vcf-operations-networks'].label, blueprints: NETWORKS },
   { target: 'vcf-operations-logs', label: AUTOMATION_PLATFORMS['vcf-operations-logs'].label, blueprints: LOGS },
   { target: 'vcf-automation', label: AUTOMATION_PLATFORMS['vcf-automation'].label, blueprints: AUTOMATION },
-  { target: 'vcf-fleet', label: AUTOMATION_PLATFORMS['vcf-fleet'].label, blueprints: VCF_FLEET },
+  { target: 'vcf-fleet', label: AUTOMATION_PLATFORMS['vcf-fleet'].label, blueprints: FLEET },
   { target: 'pipeline', label: AUTOMATION_PLATFORMS.pipeline.label, blueprints: PIPELINES },
 ];
 
 /** Every automation blueprint, with its structured builder, in one list. */
-export const AUTOMATIONS: readonly AutomationBlueprint[] = [...OPERATIONS, ...NETWORKS, ...LOGS, ...AUTOMATION, ...VCF_FLEET, ...PIPELINES];
+export const AUTOMATIONS: readonly AutomationBlueprint[] = [...OPERATIONS, ...NETWORKS, ...LOGS, ...AUTOMATION, ...FLEET, ...PIPELINES];
 
 export function automationFor(id: string): AutomationBlueprint | undefined {
   return AUTOMATIONS.find((blueprint) => blueprint.id === id);

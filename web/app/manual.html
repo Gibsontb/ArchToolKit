@@ -47,7 +47,7 @@
         <a href="scripts.html">Scripts</a>
         <a href="splunk.html">Splunk</a>
         <a href="aria.html">Aria Ops</a>
-        <a href="automation.html">Automation</a>
+        <a href="automation.html">Automation and Operations</a>
         <a href="data-editor.html">Data Editor</a>
         <a href="manual.html" aria-current="page">Manual</a>
       </nav>
@@ -83,7 +83,7 @@
             <li><a href="#scripts">Scripts</a></li>
             <li><a href="#splunk">Splunk</a></li>
             <li><a href="#aria">Aria Operations content</a></li>
-            <li><a href="#automation">Automation</a></li>
+            <li><a href="#automation">Automation and Operations</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -137,7 +137,7 @@
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
             <tr><td><a href="aria.html">Aria Ops</a></td><td>Read a vROps 8.x or VCF Operations 9.x content export and find out what is wrong with the monitoring.</td></tr>
-            <tr><td><a href="automation.html">Automation</a></td><td>Set up and automate VCF Operations, for Networks, for Logs, VCF Automation and the fleet, plus the pipelines that drive them &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
+            <tr><td><a href="automation.html">Automation and Operations</a></td><td>Set up and automate VCF Operations, for Networks, for Logs, VCF Automation and the fleet, plus the pipelines that drive them &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
           </table>
 
           <!-- ================================================================ -->
@@ -945,9 +945,9 @@
             something to say wins &mdash; rather than the last one read replacing the whole record.
           </p>
 
-          <h2 id="automation">17. Automation</h2>
+          <h2 id="automation">17. Automation and Operations</h2>
           <p>
-            <a href="automation.html">Automation</a> writes the automations the rest of the toolkit
+            <a href="automation.html">Automation and Operations</a> writes the automations the rest of the toolkit
             implies: the notification rule that closes the gap the Aria Ops page keeps finding, the
             scheduled reclamation, the cloud template people can request, the pipeline that runs the
             Terraform. Six targets, which in VCF 9.1 are capabilities of one platform rather than
@@ -981,27 +981,61 @@
 
           <h3>What it can write</h3>
           <p>
-            Sixty-three automations across six targets. Within each target they run in the order the
-            work is done: set it up, write the content, then automate on top of it.
+            One hundred and twenty-four automations across six targets, written for VCF 9.1 and 9.1.1,
+            with the 8.x and SDDC Manager routes kept alongside and labelled for estates that still
+            run them. Within each target they run in the order the work is done: set it up, write the
+            content, then automate and operate on top of it.
           </p>
           <table>
             <tr><th>Target</th><th>Automations</th></tr>
-            <tr><td>VCF Operations <em>(17)</em></td><td>
-              <strong>Setup:</strong> collect from a vCenter on a service account; outbound email, webhook, syslog and SNMP instances with a test step; a directory group given a scoped role.<br/>
-              <strong>Content:</strong> an alert with its symptoms and a recommendation, applied in the order they refer to each other; acting on an alert automatically, only in a dedicated policy; super metrics; a policy for a class of workload; a compliance benchmark with a weekly drift report; the payload a webhook receives (ServiceNow, Teams, Slack, a runbook runner).<br/>
-              <strong>Operations:</strong> the notification rule, the scoping group, scheduled reclamation, maintenance windows with an overrun check, report schedules, policy overrides, a nightly content backup to git, and a self-check that VCF Operations is still collecting.
+            <tr><td>Fleet management and tags <em>(24)</em></td><td>
+              <strong>Tags</strong> come first because everything else scopes by them: a tag standard with
+              cardinality and object types, and the idempotent script that creates it; bulk assignment from
+              CSV with a before-and-after record; rule-based tagging on a schedule that fills gaps without
+              overwriting; a compliance report across every vCenter; import, push and disengage in fleet tag
+              management; backup to git and restore; clean-up of unused and near-duplicate tags; and tags
+              driving VCF Operations groups, VCF Automation placement, NSX security groups and showback.<br/>
+              <strong>9.1 fleet management:</strong> password policies and rotation, certificates (external CA,
+              Microsoft CA, VMCA), DNS and NTP, identity providers and custom roles, API clients and token
+              rotation, licensing, configuration drift, lifecycle and backup of the management components,
+              cloud proxies.<br/>
+              <strong>SDDC Manager (5.x and 9.0):</strong> the same jobs through the older API.
             </td></tr>
-            <tr><td>VCF Operations for Networks <em>(5)</em></td><td>Data sources, application definitions from tags, a reachability check against intent, a flow check across a closed boundary, and a watch for NSX changes made outside the expected accounts. The checks report; none of them acts.</td></tr>
-            <tr><td>VCF Operations for Logs <em>(6)</em></td><td>A content pack with extracted fields, forwarding to Splunk or another instance over TLS, agent configuration for a group of servers, index partitions with retention and archiving, a rate-limited log alert, and an audit trail exported off the platform it audits.</td></tr>
-            <tr><td>VCF Automation <em>(20)</em></td><td>
-              <strong>Setup:</strong> vSphere and NSX cloud accounts, cloud zones, projects with quotas and groups, image and flavor mappings, network and storage profiles, catalogue content sources and sharing, custom naming, property groups.<br/>
-              <strong>Catalogue and governance:</strong> a cloud template with a lease and constrained inputs, an approval policy that can say no, a day-2 actions policy.<br/>
-              <strong>Extensibility:</strong> an ABX action on a deployment event, Orchestrator workflows and actions with a dry run and a failure path, custom day-2 actions, custom resource types with their whole lifecycle, and Terraform run from a template.<br/>
-              <strong>Modern apps:</strong> Supervisor namespaces and VKS clusters, requested from All Apps.
+            <tr><td>VCF Operations <em>(36)</em></td><td>
+              <strong>Setup and content:</strong> adapters, outbound plugins, access, alerts with symptoms and
+              recommendations, super metrics, policies, compliance, webhook payloads with the 9.1 symptom
+              object, dashboards the Aria Ops page can read back, views, reports, management packs, Management
+              Pack Builder, Orchestrator workflows in Python or PowerShell.<br/>
+              <strong>Operate:</strong> VCF Health for ESX, vCenter, NSX and vSAN; Findings; real-time
+              investigation; audit; Security Posture Management against the VCF Security Configuration Guide
+              and PCI DSS 4.0.1; alert remediation, maintenance windows, content backup and the self-check.<br/>
+              <strong>Cost and capacity:</strong> cost drivers, showback and emailed bills, what-if,
+              reclamation including orphaned disks, capacity policy, VKS cost.
             </td></tr>
-            <tr><td>VCF fleet operations <em>(6)</em></td><td>Through SDDC Manager: password rotation one resource type at a time, a certificate expiry report with a separate replacement plan, a health check, backup to SFTP, an upgrade precheck, and host commissioning that always validates first.</td></tr>
-            <tr><td>Pipelines and runners <em>(9)</em></td><td>VCF Automation Pipelines (formerly Code Stream) in its own YAML, for 8.x estates; cloud templates as code in GitHub Actions, GitLab, Azure Pipelines or Jenkins, test-deployed and deleted before a version is released; ABX actions and Orchestrator packages tested in CI; VCF Operations content promoted from test to production by pull request; the read-only checks run on a schedule; and the Azure Automation, SSM, AWX and Terraform runners.</td></tr>
+            <tr><td>VCF Operations for Logs <em>(13)</em></td><td>Log management inside VCF Operations 9.1 &mdash; masking, filtering, forwarding, partitions, agent configuration, alert queries with extracted fields, and the move from standalone Logs &mdash; plus the standalone Logs API for 8.x.</td></tr>
+            <tr><td>VCF Operations for Networks <em>(9)</em></td><td>Data sources, applications, VPC planning, migration waves that feed the Migration page, assessment, health, and the reachability, flow and change checks.</td></tr>
+            <tr><td>VCF Automation <em>(33)</em></td><td>
+              <strong>9.1:</strong> provider and organization API tokens, organizations, regions and zones, VPC
+              subnets, content libraries, VM Service, Data Services, tag-based placement from the fleet tag
+              standard, template versions, namespace changes, Argo CD, firewall policy, a daily health check.<br/>
+              <strong>Setup, catalogue and extensibility:</strong> cloud accounts through to property groups,
+              templates, approval and day-2 policies, ABX, Orchestrator, custom actions and resources,
+              Supervisor namespaces and VKS clusters, Terraform.
+            </td></tr>
+            <tr><td>Pipelines and runners <em>(9)</em></td><td>Automation Pipelines for 8.x; templates, ABX and Orchestrator tested in CI; VCF Operations content promoted by pull request; the read-only checks on a schedule; Azure Automation, SSM, AWX and Terraform runners.</td></tr>
           </table>
+          <div class="tip">
+            <strong>Signing in, in 9.1.</strong> The fleet-wide APIs take a short-lived Bearer token from the
+            VCF Identity Broker, exchanged for an API token issued to an API client in VCF Operations. Every
+            generated script does that exchange itself from a file only its account can read, so no token
+            sits in a crontab. The API clients automation sets that up and rotates it.
+          </div>
+          <div class="tip">
+            <strong>Where 9.1 has no API.</strong> Some of 9.1 is configured in the interface only &mdash; log
+            masking and forwarding, cost drivers, fleet DNS and NTP among them. There the output is the
+            setting written down, the steps to enter it, and a local test of it, rather than an API call
+            that does not exist.
+          </div>
           <div class="tip">
             <strong>Check the API shapes against your release.</strong> Every payload follows the documented
             API as far as it is known, and anything that differs between releases is marked

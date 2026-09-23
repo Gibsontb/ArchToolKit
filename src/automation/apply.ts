@@ -11,7 +11,7 @@
  * run it again when unsure.
  */
 
-export type ApplyTarget = 'vcf-operations' | 'vcf-operations-logs' | 'vcf-automation' | 'sddc-manager';
+export type ApplyTarget = 'vcf-operations' | 'vcf-operations-logs' | 'vcf-automation' | 'sddc-manager' | 'vcf-fleet';
 
 interface TargetAuth {
   readonly host: string;
@@ -21,7 +21,17 @@ interface TargetAuth {
   readonly header: string;
   readonly label: string;
   /** Where a script can get its own short-lived token, and how. */
-  readonly login: { readonly path: string; readonly body: string; readonly pick: string; readonly secretVar: string; readonly secretHint: string };
+  readonly login: {
+    readonly path: string;
+    readonly body: string;
+    readonly pick: string;
+    readonly secretVar: string;
+    readonly secretHint: string;
+    /** When the token comes from somewhere other than the host being called. */
+    readonly hostVar?: string;
+    /** Form-encoded rather than JSON: the OAuth token endpoint wants a form. */
+    readonly form?: boolean;
+  };
 }
 
 const AUTH: Readonly<Record<ApplyTarget, TargetAuth>> = {
@@ -51,6 +61,27 @@ const AUTH: Readonly<Record<ApplyTarget, TargetAuth>> = {
     header: 'Authorization: Bearer ${VCFA_TOKEN}',
     label: 'VCF Automation',
     login: { path: '/iaas/api/login', body: '{refreshToken: $p}', pick: '.token', secretVar: 'VCFA_REFRESH_TOKEN_FILE', secretHint: 'a file holding an API refresh token, mode 600' },
+  },
+  // VCF 9.1: the fleet-wide APIs in VCF Operations (fleet management, tags,
+  // certificates, passwords, lifecycle) take a Bearer token from the VCF
+  // Identity Broker, exchanged for an API token issued to an API client in
+  // VCF Operations. The access token lasts about half an hour.
+  'vcf-fleet': {
+    host: 'VCFOPS_HOST',
+    token: 'VCF_ACCESS_TOKEN',
+    hostExample: 'vcfops.example.com',
+    acquire: 'POST https://<identity broker>/acs/t/CUSTOMER/token, exchanging an API token',
+    header: 'Authorization: Bearer ${VCF_ACCESS_TOKEN}',
+    label: 'VCF Operations fleet management',
+    login: {
+      path: '/acs/t/CUSTOMER/token',
+      body: 'grant_type=urn:custom:vcf:params:oauth:grant-type:api-token',
+      pick: '.access_token',
+      secretVar: 'VCF_API_TOKEN_FILE',
+      secretHint: 'a file holding an API token issued to an API client in VCF Operations, mode 600',
+      hostVar: 'VCF_IDB_HOST',
+      form: true,
+    },
   },
   'sddc-manager': {
     host: 'SDDC_HOST',
@@ -86,16 +117,27 @@ export function authPreamble(target: ApplyTarget): string[] {
   const login = auth.login;
   const user = auth.token.replace(/_TOKEN$/, '_USER');
   const needsUser = login.body.includes('$u');
+  const loginHost = login.hostVar ?? auth.host;
+  const exchange = login.form
+    ? [
+        // The API token goes in the form body on stdin, never on the command line.
+        `  ${auth.token}=$( { printf '%s&api_token=' '${login.body}'; jq -jn --rawfile p "$${login.secretVar}" '$p | rtrimstr("\\n") | @uri'; } |`,
+        `    curl -sS -f -X POST "https://\${${loginHost}}${login.path}" -H "Accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" --data-binary @- | jq -r '${login.pick}')`,
+      ]
+    : [
+        `  ${auth.token}=$(jq -n ${needsUser ? `--arg u "$${user}" ` : ''}--rawfile p "$${login.secretVar}" '($p | rtrimstr("\\n")) as $p | ${login.body}' |`,
+        `    curl -sS -f -X POST "https://\${${loginHost}}${login.path}" -H "Accept: application/json" -H "Content-Type: application/json" --data @- | jq -r '${login.pick}')`,
+      ];
   return [
     `if [[ -z "\${${auth.token}:-}" && -n "\${${login.secretVar}:-}" ]]; then`,
-    `  : "\${${auth.host}:?set ${auth.host}, e.g. ${auth.hostExample}}"`,
+    `  : "\${${loginHost}:?set ${loginHost}${login.hostVar ? ' to the VCF Identity Broker host (often the management vCenter)' : `, e.g. ${auth.hostExample}`}}"`,
     ...(needsUser ? [`  : "\${${user}:?set ${user} to the service account that ${login.secretVar} belongs to}"`] : []),
     '  command -v jq >/dev/null || { echo "jq is required to log in" >&2; exit 2; }',
-    `  ${auth.token}=$(jq -n ${needsUser ? `--arg u "$${user}" ` : ''}--rawfile p "$${login.secretVar}" '($p | rtrimstr("\\n")) as $p | ${login.body}' |`,
-    `    curl -sS -f -X POST "https://\${${auth.host}}${login.path}" -H "Accept: application/json" -H "Content-Type: application/json" --data @- | jq -r '${login.pick}')`,
+    ...exchange,
     'fi',
     `: "\${${auth.host}:?set ${auth.host}, e.g. ${auth.hostExample}}"`,
     `: "\${${auth.token}:?set ${auth.token} (${auth.acquire}), or set ${login.secretVar} to ${login.secretHint}}"`,
+    ...headerFileLines(target),
   ];
 }
 
@@ -105,12 +147,38 @@ export function scheduledEnv(target: ApplyTarget, account = 'svc-archtoolkit'): 
   const user = auth.token.replace(/_TOKEN$/, '_USER');
   const needsUser = auth.login.body.includes('$u');
   const name = auth.login.secretVar.toLowerCase().replace(/_file$/, '').replace(/_/g, '-');
-  return `${auth.host}=${auth.hostExample.split(':')[0]}${needsUser ? ` ${user}=${account}` : ''} ${auth.login.secretVar}=/etc/archtoolkit/${name}`;
+  const idb = auth.login.hostVar ? ` ${auth.login.hostVar}=vcenter-mgmt.example.com` : '';
+  return `${auth.host}=${auth.hostExample.split(':')[0]}${idb}${needsUser ? ` ${user}=${account}` : ''} ${auth.login.secretVar}=/etc/archtoolkit/${name}`;
 }
 
-/** The header an authenticated call carries, for scripts that build their own. */
+/**
+ * The header an authenticated call carries, for scripts that build their own:
+ * a reference to the private header file authPreamble writes, used as
+ * `-H "${authHeader(target)}"`, so the token itself is never an argument. Only
+ * valid in a script that has run authPreamble for the same target.
+ */
 export function authHeader(target: ApplyTarget): string {
-  return AUTH[target].header;
+  return `@\${${headerVar(target)}}`;
+}
+
+/**
+ * The token goes to curl as `-H @file`, from a file only this user can read,
+ * rather than as an argument: an argument is visible to every user on the host
+ * through ps and /proc for as long as the call runs. The file is removed when
+ * the script exits. Needs curl 7.55 or later.
+ */
+function headerFileLines(target: ApplyTarget): string[] {
+  const auth = AUTH[target];
+  const name = headerVar(target);
+  return [
+    `${name}="$(umask 077; mktemp "\${TMPDIR:-/tmp}/atk-auth.XXXXXX")"`,
+    `trap 'rm -f "$${name}"' EXIT`,
+    `printf '%s\\n' "${auth.header}" > "$${name}"`,
+  ];
+}
+
+function headerVar(target: ApplyTarget): string {
+  return `ATK_AUTH_${target.replace(/[^a-z]/gi, '_').toUpperCase()}`;
 }
 
 export function hostVar(target: ApplyTarget): string {
@@ -150,7 +218,7 @@ export function applyScript(target: ApplyTarget, calls: readonly ApplyCall[], un
     `  echo "\${method} \${path}"`,
     '  curl -sS -f \\',
     `    -X "\${method}" "https://\${${auth.host}}\${path}" \\`,
-    `    -H "${auth.header}" \\`,
+    `    -H "${authHeader(target)}" \\`,
     '    -H "Accept: application/json" \\',
     '    -H "Content-Type: ${type}" \\',
     '    --data @"${file}"',
@@ -185,7 +253,7 @@ export function readScript(target: ApplyTarget, purpose: string, body: readonly 
     ...authPreamble(target),
     '',
     'get() {',
-    `  curl -sS -f "https://\${${AUTH[target].host}}$1" -H "${AUTH[target].header}" -H "Accept: application/json"`,
+    `  curl -sS -f "https://\${${AUTH[target].host}}$1" -H "${authHeader(target)}" -H "Accept: application/json"`,
     '}',
     '',
     'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',

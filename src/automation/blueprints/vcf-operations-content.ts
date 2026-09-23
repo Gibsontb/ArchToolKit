@@ -16,10 +16,169 @@ import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
-import { applyScript, authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
+import { applyScript, authHeader, authPreamble, readScript, scheduledEnv, type ApplyTarget } from '../apply.ts';
 
 const PLATFORM = 'vcf-operations' as const;
 const SRC = 'ArchToolKit';
+
+/**
+ * send-sample.sh for ServiceNow: dry run by default, the credential from a
+ * mode-600 file on stdin, and no second incident for the same correlation_id.
+ */
+function serviceNowSample(endpoint: string, sampleFile: string): string {
+  return [
+    '#!/usr/bin/env bash',
+    '# Post the filled-in sample to ServiceNow, to test the receiving end.',
+    '#',
+    '# This CREATES AN INCIDENT. Without --execute it only prints what it would send.',
+    '# The Table API needs a credential: SN_USER, and SN_PASSWORD_FILE, a file holding',
+    '# the password with mode 600. It goes to curl as a config on stdin (curl -K -),',
+    '# never as an argument.',
+    '#',
+    '# The Table API does not deduplicate: every POST is a new incident. Against it,',
+    '# this first looks for an open incident with the same correlation_id and stops',
+    '# if there is one.',
+    'set -euo pipefail',
+    `ENDPOINT="\${ENDPOINT:-${endpoint.replace(/["$`\\]/g, '\\$&')}}"`,
+    `SAMPLE="$(cd "$(dirname "$0")" && pwd)/${sampleFile}"`,
+    'EXECUTE=0',
+    '[[ "${1:-}" == "--execute" ]] && EXECUTE=1',
+    'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+    'CORR=$(jq -r \'.correlation_id // empty\' "$SAMPLE")',
+    '[[ -n "$CORR" ]] || { echo "The sample has no correlation_id." >&2; exit 2; }',
+    '',
+    'if (( ! EXECUTE )); then',
+    '  echo "DRY RUN: would POST $SAMPLE to $ENDPOINT, creating one incident with correlation_id $CORR:"',
+    '  jq . "$SAMPLE"',
+    '  echo "Nothing was sent. Re-run with --execute, against a sub-production instance first."',
+    '  exit 0',
+    'fi',
+    '',
+    ': "${SN_USER:?set SN_USER to the ServiceNow integration user}"',
+    ': "${SN_PASSWORD_FILE:?set SN_PASSWORD_FILE to a file holding its password, mode 600}"',
+    '[[ -r "$SN_PASSWORD_FILE" ]] || { echo "Cannot read $SN_PASSWORD_FILE" >&2; exit 2; }',
+    'PERM=$(stat -c %a "$SN_PASSWORD_FILE" 2>/dev/null || stat -f %Lp "$SN_PASSWORD_FILE")',
+    '[[ "$PERM" == 600 || "$PERM" == 400 ]] || { echo "$SN_PASSWORD_FILE is mode $PERM: make it 600 so only you can read it." >&2; exit 2; }',
+    '',
+    '# user:password as a curl config on stdin; quotes and backslashes escaped for it.',
+    'sn() {',
+    '  { printf \'user = "%s:\' "$SN_USER"; tr -d \'\\n\' < "$SN_PASSWORD_FILE" | sed \'s/[\\\\"]/\\\\&/g\'; printf \'"\\n\'; } |',
+    '    curl -sS -f -K - "$@"',
+    '}',
+    '',
+    'if [[ "$ENDPOINT" == */api/now/table/incident* ]]; then',
+    '  BASE="${ENDPOINT%%/api/now/*}"',
+    '  EXISTING=$(sn -G "$BASE/api/now/table/incident" -H "Accept: application/json" \\',
+    '    --data-urlencode "sysparm_query=correlation_id=${CORR}^active=true" \\',
+    '    --data-urlencode "sysparm_fields=number" --data-urlencode "sysparm_limit=1" | jq -r \'.result[0].number // empty\')',
+    '  if [[ -n "$EXISTING" ]]; then',
+    '    echo "Open incident $EXISTING already has correlation_id $CORR; not creating a second. Close it to test again." >&2',
+    '    exit 1',
+    '  fi',
+    'else',
+    '  echo "Not the Table API incident endpoint: this cannot check for an existing incident first. The receiving Import Set or Scripted REST API must upsert on correlation_id."',
+    'fi',
+    '',
+    'sn -X POST "$ENDPOINT" -H "Content-Type: application/json" -H "Accept: application/json" --data-binary @"$SAMPLE" |',
+    '  jq -r \'"created \\(.result.number // "?") (sys_id \\(.result.sys_id // "?"))"\'',
+    'echo "Check it reads correctly, then close it."',
+    '',
+  ].join('\n');
+}
+
+/** How each benchmark's compliance alert definitions are usually named. VERIFY per release. */
+const BENCHMARK_ALERT_RX: Readonly<Record<string, string>> = {
+  'VCF 9.x Security Configuration Guide v1.0': 'VCF 9.*Security Configuration Guide',
+  'PCI DSS v4.0.1 for VCF 9 v1.0': 'PCI DSS',
+  'VCF 9 General Controls v1.0': 'General Controls',
+  'vSphere Security Configuration Guide': 'vSphere Security Configuration Guide',
+  CIS: '\\bCIS\\b',
+  'DISA STIG': 'DISA|STIG',
+  'PCI DSS': 'PCI DSS',
+  HIPAA: 'HIPAA',
+  'ISO 27001': 'ISO ?27001',
+};
+
+// ---------------------------------------------------------------------------
+// Shared bash helpers (also used by vcf-ops-operate.ts and vcf-ops-build.ts)
+// ---------------------------------------------------------------------------
+
+/** Escape for a bash single-quoted string. */
+export function shq(text: string): string {
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
+/** The variable authPreamble keeps its private header file in. */
+export function authFileVar(target: ApplyTarget): string {
+  return authHeader(target).slice(3, -1);
+}
+
+/**
+ * A private work directory, removed on exit together with the auth header file.
+ * One trap for both: a second `trap … EXIT` would replace the one authPreamble
+ * set, and the token file would be left behind.
+ */
+export function workDirLines(target: ApplyTarget = PLATFORM, extra: readonly string[] = []): string[] {
+  const files = [`"$WORK"`, `"\${${authFileVar(target)}:-}"`, ...extra.map((name) => `"\${${name}:-}"`)].join(' ');
+  return ['WORK=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/atk-work.XXXXXX")', `trap 'rm -rf ${files}' EXIT`];
+}
+
+/**
+ * Paged reads for a readScript, all through files so no list is ever an argument
+ * (an argument over 128 KB fails with "Argument list too long").
+ *
+ * get_all and post_all follow page= until a short page or pageInfo.totalCount,
+ * and fail — rather than return an empty list — when a page cannot be read or
+ * has neither the list key nor pageInfo. They need WORK (workDirLines).
+ */
+export const PAGED_HELPERS: readonly string[] = [
+  'post() {',
+  `  curl -sS -f -X POST "https://\${VCFOPS_HOST}$1" -H "${authHeader(PLATFORM)}" \\`,
+  '    -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @-',
+  '}',
+  '',
+  '# pages METHOD PATH KEY OUT [BODYFILE]: every item of .KEY across all pages, as',
+  '# one JSON array in the file OUT.',
+  'pages() {',
+  '  local method="$1" path="$2" key="$3" out="$4" body="${5:-}" page=0 size="${PAGE_SIZE:-1000}" sep="?" n total',
+  '  [[ "$path" == *\\?* ]] && sep="&"',
+  '  : > "$out.items"',
+  '  while :; do',
+  '    if [[ "$method" == GET ]]; then',
+  '      get "${path}${sep}page=${page}&pageSize=${size}" > "$WORK/page.json" || { echo "GET ${path} (page ${page}) failed" >&2; return 1; }',
+  '    else',
+  '      post "${path}${sep}page=${page}&pageSize=${size}" < "$body" > "$WORK/page.json" || { echo "POST ${path} (page ${page}) failed" >&2; return 1; }',
+  '    fi',
+  '    jq -e --arg k "$key" \'type == "object" and (has($k) or has("pageInfo"))\' "$WORK/page.json" >/dev/null \\',
+  '      || { echo "${path}: the response has no .${key} — VERIFY the response shape" >&2; return 1; }',
+  '    jq -c --arg k "$key" \'(.[$k] // [])[]\' "$WORK/page.json" >> "$out.items" || return 1',
+  '    n=$(jq --arg k "$key" \'(.[$k] // []) | length\' "$WORK/page.json") || return 1',
+  '    total=$(jq \'.pageInfo.totalCount // -1\' "$WORK/page.json") || return 1',
+  '    page=$((page + 1))',
+  '    if (( n < size )) || (( total >= 0 && page * size >= total )); then break; fi',
+  '    (( page < 10000 )) || { echo "${path}: still paging after 10000 pages" >&2; return 1; }',
+  '  done',
+  '  jq -s . "$out.items" > "$out" || return 1',
+  '  rm -f "$out.items"',
+  '}',
+  'get_all() { pages GET "$@"; }',
+  'post_all() { pages POST "$1" "$2" "$3" "$4"; }',
+];
+
+/**
+ * Posting a report to a webhook. curl -f makes an HTTP error a failure, and a
+ * failed post turns the exit code into 3, so an undelivered report is never
+ * mistaken for a delivered one (1 stays "problems found", 2 "could not run").
+ */
+export const WEBHOOK_HELPER: readonly string[] = [
+  'WEBHOOK_FAILED=0',
+  'post_webhook() {',
+  '  curl -sS -f -X POST "$1" -H "Content-Type: application/json" --data-binary @"$2" >/dev/null \\',
+  '    || { echo "webhook post to $1 failed: the report was NOT delivered" >&2; WEBHOOK_FAILED=1; }',
+  '}',
+  '# Exit with $1, or with 3 when a webhook post failed.',
+  'finish() { if (( WEBHOOK_FAILED )); then exit 3; fi; exit "$1"; }',
+];
 
 /** Object kinds people write alerts against, with the metrics that matter on each. */
 const KINDS: Readonly<Record<string, { label: string; metrics: readonly { key: string; label: string; unit: string }[] }>> = {
@@ -223,7 +382,15 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '  curl -sS -f -X POST "https://${VCFOPS_HOST}/suite-api/api/$1" \\',
         `    -H "${authHeader('vcf-operations')}" \\`,
         '    -H "Accept: application/json" -H "Content-Type: application/json" \\',
-        '    --data "$2"',
+        '    --data-binary @-',
+        '}',
+        '# The id of what was created, or stop: a missing id is not a success, and',
+        '# the next step would otherwise refer to "null".',
+        'created() {',
+        '  local kind="$1" file="$2" id',
+        '  id=$(post "$kind" < "$file" | jq -r \'.id // empty\')',
+        '  [[ -n "$id" ]] || { echo "POST $kind returned no id; see created-ids.txt for what exists so far." >&2; return 1; }',
+        '  echo "$id"',
         '}',
         '',
         'if (( DRY_RUN )); then',
@@ -232,23 +399,18 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '  exit 0',
         'fi',
         '',
-        `WARN_ID=$(post symptomdefinitions "$(cat ${base}-symptom-warning.json)" | jq -r .id)`,
-        `CRIT_ID=$(post symptomdefinitions "$(cat ${base}-symptom-critical.json)" | jq -r .id)`,
-        'echo "symptoms: $WARN_ID $CRIT_ID"',
+        ': > created-ids.txt',
+        `WARN_ID=$(created symptomdefinitions ${base}-symptom-warning.json)`,
+        'echo "warning symptom   $WARN_ID" | tee -a created-ids.txt',
+        `CRIT_ID=$(created symptomdefinitions ${base}-symptom-critical.json)`,
+        'echo "critical symptom  $CRIT_ID" | tee -a created-ids.txt',
         ...(recommendation.trim()
-          ? [`REC_ID=$(post recommendations "$(cat ${base}-recommendation.json)" | jq -r .id)`, 'echo "recommendation: $REC_ID"']
+          ? [`REC_ID=$(created recommendations ${base}-recommendation.json)`, 'echo "recommendation    $REC_ID" | tee -a created-ids.txt']
           : ['REC_ID=""']),
         '',
-        `ALERT=$(sed -e "s/__WARNING_SYMPTOM_ID__/$WARN_ID/" -e "s/__CRITICAL_SYMPTOM_ID__/$CRIT_ID/" -e "s/__RECOMMENDATION_ID__/$REC_ID/" ${base}-alert.json)`,
-        'ALERT_ID=$(post alertdefinitions "$ALERT" | jq -r .id)',
-        'echo "alert: $ALERT_ID"',
-        '',
-        'cat > created-ids.txt <<IDS',
-        'warning symptom   $WARN_ID',
-        'critical symptom  $CRIT_ID',
-        'recommendation    $REC_ID',
-        'alert definition  $ALERT_ID',
-        'IDS',
+        `sed -e "s/__WARNING_SYMPTOM_ID__/$WARN_ID/" -e "s/__CRITICAL_SYMPTOM_ID__/$CRIT_ID/" -e "s/__RECOMMENDATION_ID__/$REC_ID/" ${base}-alert.json > created-alert.json`,
+        'ALERT_ID=$(created alertdefinitions created-alert.json)',
+        'echo "alert definition  $ALERT_ID" | tee -a created-ids.txt',
         'echo "Ids written to created-ids.txt. The alert is not enabled in any policy yet — see the README."',
         '',
       ].join('\n');
@@ -683,30 +845,46 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         label: 'Benchmark',
         control: 'select',
         options: [
-          { value: 'vSphere Security Configuration Guide', label: 'vSphere Security Configuration Guide (built in)' },
-          { value: 'CIS', label: 'CIS benchmark (compliance pack)' },
-          { value: 'DISA STIG', label: 'DISA STIG (compliance pack)' },
-          { value: 'PCI DSS', label: 'PCI DSS (compliance pack)' },
-          { value: 'HIPAA', label: 'HIPAA (compliance pack)' },
-          { value: 'ISO 27001', label: 'ISO 27001 (compliance pack)' },
+          // 9.1 Security Posture Management: the three benchmarks it ships with.
+          { value: 'VCF 9.x Security Configuration Guide v1.0', label: 'VCF Security Configuration Guide (VCF 9.x SCG v1.0)', group: 'VCF 9.1 Security Posture Management' },
+          { value: 'PCI DSS v4.0.1 for VCF 9 v1.0', label: 'PCI DSS v4.0.1 for VCF 9', group: 'VCF 9.1 Security Posture Management' },
+          { value: 'VCF 9 General Controls v1.0', label: 'VCF 9 General Controls', group: 'VCF 9.1 Security Posture Management' },
+          { value: 'vSphere Security Configuration Guide', label: 'vSphere Security Configuration Guide (8.x compliance pack)', group: 'VCF Operations 8.x' },
+          { value: 'CIS', label: 'CIS benchmark (8.x compliance pack)', group: 'VCF Operations 8.x' },
+          { value: 'DISA STIG', label: 'DISA STIG (8.x compliance pack)', group: 'VCF Operations 8.x' },
+          { value: 'PCI DSS', label: 'PCI DSS (8.x compliance pack)', group: 'VCF Operations 8.x' },
+          { value: 'HIPAA', label: 'HIPAA (8.x compliance pack)', group: 'VCF Operations 8.x' },
+          { value: 'ISO 27001', label: 'ISO 27001 (8.x compliance pack)', group: 'VCF Operations 8.x' },
         ],
-        default: 'vSphere Security Configuration Guide',
+        default: 'VCF 9.x Security Configuration Guide v1.0',
       },
       { id: 'group_name', label: 'For group', control: 'text', default: 'Production hosts' },
       { id: 'policy_name', label: 'Enabled in policy', control: 'text', default: 'Tier 1 production' },
       { id: 'webhook', label: 'Weekly drift report to', control: 'text', default: 'https://runbooks.example.com/hooks/compliance' },
       { id: 'fail_on', label: 'Exit non-zero when more than (failing objects)', control: 'number', default: 0, min: 0, max: 100000 },
+      { id: 'definition_regex', label: 'Benchmark alert definitions named like', control: 'text', default: '', hint: 'Regex on the compliance alert definition name. Empty uses the usual name for the chosen benchmark — VERIFY it under Alerts > Alert Definitions' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
-      const benchmark = str(values, 'benchmark', 'vSphere Security Configuration Guide');
+      const benchmark = str(values, 'benchmark', 'VCF 9.x Security Configuration Guide v1.0');
       const group = str(values, 'group_name', '');
       const policy = str(values, 'policy_name', '');
       const webhook = str(values, 'webhook', '');
       const failOn = num(values, 'fail_on', 0);
       const base = slugOf(name || `${benchmark}-compliance`, 'compliance');
-      const pack = benchmark !== 'vSphere Security Configuration Guide';
+      // 9.1 Security Posture Management benchmarks ship with the platform; the 8.x
+      // vSphere guide was built in; the rest are compliance packs to install.
+      const spm = / for VCF 9 |VCF 9\.x |VCF 9 General/.test(benchmark);
+      const pack = !spm && benchmark !== 'vSphere Security Configuration Guide';
 
       const findings: Finding[] = [];
+      if (!str(values, 'definition_regex', '') && spm) {
+        findings.push(
+          warning('vcfops.compliance.spm-names', `The name pattern for ${benchmark}'s alert definitions is a guess: 9.1 does not document how Security Posture Management names them.`, {
+            remediation: 'Open Alerts > Alert Definitions, filter on the benchmark, and set "Benchmark alert definitions named like" to match. The report stops (exit 2) rather than reporting "compliant" when nothing matches.',
+            source: SRC,
+          }),
+        );
+      }
       if (/default/i.test(policy)) {
         findings.push(
           warning('vcfops.compliance.default-policy', 'Enabling a benchmark in the default policy applies it to every object in the estate.', {
@@ -716,26 +894,77 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         );
       }
 
+      const defRx = str(values, 'definition_regex', '') || BENCHMARK_ALERT_RX[benchmark] || benchmark;
       const report = readScript('vcf-operations', `Weekly ${benchmark} drift report for "${group}".`, [
         `THRESHOLD=${failOn}`,
-        '',
-        '# Active compliance alerts (subtype 21) across the estate, then narrowed to the',
-        '# members of the group. Two calls, so the filter is visible rather than implied.',
+        `BENCH=${shq(benchmark)}`,
+        `DEF_RX="\${DEF_RX:-${defRx.replace(/["$`\\]/g, '\\$&')}}"`,
         ': "${GROUP_ID:?set GROUP_ID — GET /suite-api/api/resources/groups?name=... and take its id}"',
-        'MEMBERS=$(get "/suite-api/api/resources/groups/${GROUP_ID}/members?pageSize=10000" | jq -r ".resourceList[].identifier")',
-        'ALERTS=$(get "/suite-api/api/alerts?activeOnly=true&pageSize=10000" | jq "[.alerts[] | select(.subType == 21)]")',
+        ...workDirLines(),
+        ...PAGED_HELPERS,
+        ...WEBHOOK_HELPER,
+        'STAMP=$(date +%Y%m%d)',
+        'OUT="compliance-$STAMP.json"',
         '',
-        'REPORT=$(jq -n --argjson alerts "$ALERTS" --arg members "$MEMBERS" \'',
-        '  ($members | split("\\n")) as $m',
-        '  | [$alerts[] | select(.resourceId as $r | $m | index($r))]',
-        '  | group_by(.resourceId) | map({resource: .[0].resourceId, failing: length, rules: map(.alertDefinitionName)})\')',
+        '# 1. This benchmark’s alert definitions: compliance (subType 21) definitions whose',
+        '#    name matches DEF_RX. The API has no name filter, so every page is read and',
+        '#    filtered here. VERIFY DEF_RX against the names under Alerts > Alert',
+        '#    Definitions (compliance packs name them "<object> is violating <benchmark>").',
+        'get_all /suite-api/api/alertdefinitions alertDefinitions "$WORK/defs.json" || exit 2',
+        'jq --arg rx "$DEF_RX" \'[.[] | select(.subType == 21 and ((.name // "") | test($rx; "i"))) | {id, name}]\' "$WORK/defs.json" > "$WORK/bench-defs.json"',
+        'ND=$(jq length "$WORK/bench-defs.json")',
+        'echo "$ND alert definition(s) for $BENCH (name matches /$DEF_RX/):"',
+        'jq -r \'.[].name | "  " + .\' "$WORK/bench-defs.json"',
+        '(( ND > 0 )) || { echo "No compliance alert definition matches /$DEF_RX/. Nothing to report on is not the same as compliant: fix DEF_RX." >&2; exit 2; }',
         '',
-        'COUNT=$(echo "$REPORT" | jq length)',
-        `echo "${benchmark}: $COUNT object(s) in ${group} have failing rules"`,
-        'echo "$REPORT" > "compliance-$(date +%Y%m%d).json"',
-        ...(webhook ? ['', `curl -sS -f -X POST "${webhook}" -H "Content-Type: application/json" --data "$(jq -n --argjson r "$REPORT" --arg b "${benchmark}" '{benchmark: $b, objects: $r}')"`] : []),
+        '# 2. The group, so the report covers it and nothing else.',
+        'get_all "/suite-api/api/resources/groups/${GROUP_ID}/members" resourceList "$WORK/members.json" || exit 2',
+        'NM=$(jq length "$WORK/members.json")',
+        '(( NM > 0 )) || { echo "Group $GROUP_ID has no members: nothing would be checked." >&2; exit 2; }',
         '',
-        '(( COUNT > THRESHOLD )) && exit 1 || exit 0',
+        '# 3. Active alerts of those definitions only, paged, then narrowed to the group.',
+        'jq \'{activeOnly: true, alertDefinitionId: [.[].id]}\' "$WORK/bench-defs.json" > "$WORK/alert-query.json"',
+        'post_all /suite-api/api/alerts/query alerts "$WORK/alerts.json" "$WORK/alert-query.json" || exit 2',
+        'jq --slurpfile m "$WORK/members.json" \'($m[0] | map({key: .identifier, value: (.resourceKey.name // .identifier)}) | from_entries) as $in',
+        '  | [.[] | select($in[.resourceId] != null) | . + {resourceName: $in[.resourceId]}]\' "$WORK/alerts.json" > "$WORK/group-alerts.json"',
+        '',
+        '# 4. The failing rules are the alert’s contributing symptoms, 50 alerts a call.',
+        '#    VERIFY the nesting of contributingSymptoms on your release: the ids are',
+        '#    found wherever symptomDefinitionId appears under each entry.',
+        'jq -r \'.[].alertId\' "$WORK/group-alerts.json" > "$WORK/alert-ids.txt"',
+        ': > "$WORK/symptoms.items"',
+        'while mapfile -t -n 50 batch && (( ${#batch[@]} )); do',
+        '  q=$(printf "id=%s&" "${batch[@]}")',
+        '  get "/suite-api/api/alerts/contributingsymptoms?${q%&}" > "$WORK/cs.json" || { echo "Could not read contributing symptoms." >&2; exit 2; }',
+        '  jq -c \'(.contributingSymptoms // [])[] | {alertId: (.alertId // .id), defs: ([.. | objects | .symptomDefinitionId? // empty] | unique)}\' "$WORK/cs.json" >> "$WORK/symptoms.items"',
+        'done < "$WORK/alert-ids.txt"',
+        'jq -s . "$WORK/symptoms.items" > "$WORK/symptoms.json"',
+        'jq -r \'[.[].defs[]] | unique[]\' "$WORK/symptoms.json" > "$WORK/symptom-ids.txt"',
+        ': > "$WORK/names.items"',
+        'while mapfile -t -n 50 batch && (( ${#batch[@]} )); do',
+        '  q=$(printf "id=%s&" "${batch[@]}")',
+        '  get "/suite-api/api/symptomdefinitions?${q%&}" > "$WORK/sd.json" || { echo "Could not read symptom definitions." >&2; exit 2; }',
+        '  jq -c \'(.symptomDefinitions // [])[] | {id, name}\' "$WORK/sd.json" >> "$WORK/names.items"',
+        'done < "$WORK/symptom-ids.txt"',
+        'jq -s . "$WORK/names.items" > "$WORK/names.json"',
+        '',
+        'jq -n --slurpfile a "$WORK/group-alerts.json" --slurpfile s "$WORK/symptoms.json" --slurpfile n "$WORK/names.json" \'',
+        '  ($s[0] | map({key: .alertId, value: .defs}) | from_entries) as $sym',
+        '  | ($n[0] | map({key: .id, value: .name}) | from_entries) as $name',
+        '  | $a[0] | group_by(.resourceId)',
+        '  | map({resourceId: .[0].resourceId, resource: .[0].resourceName, alerts: (map(.alertDefinitionName) | unique),',
+        '         failingRules: ([.[] | ($sym[.alertId] // [])[] | ($name[.] // .)] | unique)})\' > "$OUT"',
+        '',
+        'COUNT=$(jq length "$OUT")',
+        'RULES=$(jq \'[.[].failingRules[]] | unique | length\' "$OUT")',
+        `echo "$BENCH: $COUNT of $NM object(s) in ${group.replace(/["$`\\]/g, '')} fail, across $RULES distinct rule(s). Report: $OUT"`,
+        'jq -r \'.[] | "\\(.resource): \\(if (.failingRules | length) > 0 then (.failingRules | join("; ")) else "(no contributing symptoms returned: open the alert)" end)"\' "$OUT"',
+        ...(webhook
+          ? ['', `jq -n --arg b "$BENCH" --slurpfile r "$OUT" '{benchmark: $b, objects: $r[0]}' > "$WORK/webhook.json"`, `post_webhook ${shq(webhook)} "$WORK/webhook.json"`]
+          : []),
+        '',
+        'if (( COUNT > THRESHOLD )); then finish 1; fi',
+        'finish 0',
       ]);
 
       return {
@@ -745,18 +974,29 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         trigger: { kind: 'schedule', detail: 'Weekly, from wherever the report script is scheduled', worstCase: 'once a week' },
         scope: {
           what: `Objects in "${group}", checked against ${benchmark}.`,
-          decidedBy: [`The policy "${policy}", where the benchmark is enabled.`, `The group "${group}", which the policy covers.`, 'The benchmark’s own rules, per object type.'],
+          decidedBy: [
+            `The policy "${policy}", where the benchmark is enabled.`,
+            `The group "${group}" (GROUP_ID): only its members are reported.`,
+            `The benchmark's compliance alert definitions, found by name (/${defRx}/); only their active alerts count, not every compliance alert.`,
+          ],
           ifWrong: 'The report covers the wrong objects. Nothing is changed either way, which is why this stops at reporting.',
         },
         guardrails: [
           { rule: 'Reports; never remediates', because: 'Hardening changes break things — SSH disabled on a host an engineer is in, a TLS setting a backup agent needed. They go through change.' },
           { rule: 'Enabled for a group, not the estate', because: 'A benchmark across everything is thousands of alerts on day one, and alert fatigue before the first fix.' },
+          { rule: 'report.sh exits 2 when no alert definition matches the benchmark name pattern, the group is empty, or any read fails', because: 'A report built from nothing says "0 failing", which reads as compliant.' },
+          { rule: 'Every list is paged and kept in files, never passed as an argument', because: 'A large estate’s alert list is over the 128 KB argument limit and the report would die with "Argument list too long".' },
+          ...(webhook ? [{ rule: 'The webhook post uses curl -f; a failed post exits 3', because: 'Otherwise an undelivered report looks exactly like a delivered one.' }] : []),
         ],
-        dryRun: ['Enable the benchmark, wait one collection cycle, and open Compliance for the group. The score there is what the report will say.'],
+        dryRun: ['Enable the benchmark, wait one collection cycle, and open Compliance for the group. The score there is what the report will say.', 'Run report.sh by hand once and check the alert definitions it lists are this benchmark’s and no other’s.'],
         undo: [`Turn the benchmark off in "${policy}". Its alerts clear on the next cycle.`],
-        told: webhook ? [`${webhook}, weekly, with each failing object and the rules it fails.`] : ['The JSON file the script writes. Set a webhook if somebody should read it.'],
+        told: webhook ? [`${webhook}, weekly, with each failing object, the benchmark alerts on it, and the rules (the alerts’ contributing symptoms) it fails.`] : ['The JSON file the script writes. Set a webhook if somebody should read it.'],
         requires: [
-          pack ? `The ${benchmark} compliance management pack installed — it is not built in.` : 'Nothing extra; the vSphere Security Configuration Guide ships with VCF Operations.',
+          spm
+            ? `VCF Operations 9.1 or later; ${benchmark} ships with Security Posture Management. VERIFY licensing — the 9.1 Security Posture Management documentation is published under VMware Advanced Cyber Compliance.`
+            : pack
+              ? `The ${benchmark} compliance management pack installed — it is not built in.`
+              : 'Nothing extra; the vSphere Security Configuration Guide ships with VCF Operations 8.x.',
           'jq on the machine running the report.',
         ],
         files: {
@@ -764,14 +1004,20 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
             `# Enable ${benchmark}`,
             '',
             `1. ${pack ? `Install the ${benchmark} compliance pack from the Integrations repository.` : 'Nothing to install.'}`,
-            `2. Configure → Policies → "${policy}" → Compliance: enable ${benchmark}.`,
+            spm
+              ? `2. Protect → Security Posture Management → ⋮ next to ${benchmark} → Enable Benchmark → assign "${policy}". Set any rule marked * (site-specific value) under View Control Set, then Run Assessment.`
+              : `2. Configure → Policies → "${policy}" → Compliance: enable ${benchmark}.`,
             `3. Check "${policy}" is assigned to "${group}" and that no higher-priority policy covers the same objects.`,
-            '4. Schedule report.sh weekly. It reads only and exits 1 when the threshold is exceeded.',
+            '4. Schedule report.sh weekly with GROUP_ID set. It reads only. Exit 0: at or under the threshold; 1: over it; 2: could not read, or found no alert definitions for the benchmark; 3: the webhook post failed.',
             '',
           ].join('\n'),
           'report.sh': report,
         },
-        notes: ['The first run is a baseline, not a failure. Agree the number that is acceptable this quarter and set the threshold to it, then lower it.'],
+        notes: [
+          'The first run is a baseline, not a failure. Agree the number that is acceptable this quarter and set the threshold to it, then lower it.',
+          'Documented calls: GET /api/alertdefinitions (paged; no name filter, so names are matched here), POST /api/alerts/query {activeOnly, alertDefinitionId} (paged), GET /api/alerts/contributingsymptoms?id=… (reports symptoms defined on SELF), GET /api/symptomdefinitions?id=…. GET /api/alerts has no activeOnly parameter, which is why the query form is used.',
+          'VERIFY: that compliance alert definitions carry subType 21 and are named after the benchmark (8.x packs: "ESXi Host is violating …"), and the nesting of contributingSymptoms entries.',
+        ],
         findings,
       };
     },
@@ -808,6 +1054,7 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
       const assignment = str(values, 'assignment_group', 'Platform Operations');
       const link = bool(values, 'include_link', true);
       const base = slugOf(name || `${destination}-payload`, 'payload');
+      const sn = destination === 'servicenow';
 
       const findings: Finding[] = [];
       if (destination === 'teams' && /outlook\.office\.com\/webhook|webhook\.office\.com/i.test(endpoint)) {
@@ -834,10 +1081,12 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
       };
 
       const bodies: Record<string, unknown> = {
-        runbook: { source: 'vcf-operations', ...fields, recommendations: '${ALERT_RECOMMENDATIONS}' },
+        // 9.1: ${SYMPTOMS} is a structured JSON object and must be the whole value of its own key.
+        runbook: { source: 'vcf-operations', ...fields, recommendations: '${ALERT_RECOMMENDATIONS}', symptoms: '${SYMPTOMS}' },
         servicenow: {
           short_description: '[VCF Operations] ${ALERT_DEFINITION} on ${RESOURCE_NAME}',
-          description: `Criticality: \${ALERT_CRITICALITY}\\nStatus: \${STATUS}\\nRaised: \${CREATE_TIME}\\nRecommendation: \${ALERT_RECOMMENDATIONS}${link ? '\\n${ALERT_URL}' : ''}`,
+          // Real newlines: JSON.stringify writes them as \n, which ServiceNow renders as a line break.
+          description: `Criticality: \${ALERT_CRITICALITY}\nStatus: \${STATUS}\nRaised: \${CREATE_TIME}\nRecommendation: \${ALERT_RECOMMENDATIONS}${link ? '\n${ALERT_URL}' : ''}`,
           assignment_group: assignment,
           correlation_id: '${ALERT_ID}',
           urgency: '2',
@@ -863,7 +1112,7 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         slack: {
           text: '${ALERT_CRITICALITY}: ${ALERT_DEFINITION} on ${RESOURCE_NAME}',
           blocks: [
-            { type: 'section', text: { type: 'mrkdwn', text: `*\${ALERT_DEFINITION}*\\n\${RESOURCE_NAME} — \${ALERT_CRITICALITY}, \${STATUS}${link ? '\\n<${ALERT_URL}|Open in VCF Operations>' : ''}` } },
+            { type: 'section', text: { type: 'mrkdwn', text: `*\${ALERT_DEFINITION}*\n\${RESOURCE_NAME} — \${ALERT_CRITICALITY}, \${STATUS}${link ? '\n<${ALERT_URL}|Open in VCF Operations>' : ''}` } },
           ],
         },
       };
@@ -878,32 +1127,56 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         .replaceAll('${ALERT_ID}', 'sample-0000')
         .replaceAll('${CREATE_TIME}', '2026-01-01T00:00:00Z')
         .replaceAll('${ALERT_URL}', 'https://vcfops.example.com/ui/')
-        .replaceAll('${ALERT_RECOMMENDATIONS}', 'This is a test payload from ArchToolKit.');
+        .replaceAll('${ALERT_RECOMMENDATIONS}', 'This is a test payload from ArchToolKit.')
+        // The object VCF Operations 9.1 substitutes for "${SYMPTOMS}", quotes and all.
+        .replaceAll(
+          '"${SYMPTOMS}"',
+          JSON.stringify({
+            definedOn: 'self',
+            symptoms: [{ name: 'Host memory usage above 95% (critical)', resourceName: 'esx-test-01.example.com', resourceId: '00000000-0000-0000-0000-000000000000', metricName: 'mem|host_usagePct', messageInfo: '96.2 > 95' }],
+            conditions: [],
+          }),
+        );
 
       return {
         platform: PLATFORM,
         title: `Alert payload for ${destination === 'servicenow' ? 'ServiceNow' : destination === 'teams' ? 'Teams' : destination === 'slack' ? 'Slack' : 'a runbook runner'}`,
-        effect: 'read',
+        // A ServiceNow sample creates an incident; the others post a message and change nothing.
+        effect: sn ? 'reversible' : 'read',
         trigger: { kind: 'alert', detail: 'Whatever notification rule uses the webhook this payload is attached to', worstCase: 'as often as that rule fires' },
         scope: {
           what: 'The body sent for every alert the notification rule matches.',
           decidedBy: ['The notification rule the outbound instance is attached to — this payload changes the shape, not the scope.'],
           ifWrong: 'The receiving end rejects it and nobody knows, because a rejected webhook is logged on the sender and read by nobody.',
         },
-        guardrails: [{ rule: 'Tested with a sample before a real alert depends on it', because: 'A payload the receiver cannot parse fails silently on the sending side.' }],
-        dryRun: ['Run send-sample.sh. It posts a filled-in sample to the endpoint. Check it arrives, and arrives looking right.'],
-        undo: ['Detach the payload template from the outbound instance. Alerts go on being raised; they stop being sent in this shape.'],
+        guardrails: [
+          { rule: 'Tested with a sample before a real alert depends on it', because: 'A payload the receiver cannot parse fails silently on the sending side.' },
+          ...(sn
+            ? [
+                { rule: 'send-sample.sh is a dry run unless --execute: it prints the incident it would create and sends nothing', because: 'Each real run opens an incident in a queue somebody works; a test should not page the service desk by accident.' },
+                { rule: 'Against the Table API, send-sample.sh refuses when an open incident already has the sample’s correlation_id', because: 'The Table API never deduplicates, so re-running a test would open a second incident for the same alert.' },
+                { rule: 'The ServiceNow password is read from a mode-600 file (checked) and given to curl as a config on stdin', because: 'On a command line it would be visible to every user of the host through ps.' },
+              ]
+            : []),
+        ],
+        dryRun: sn
+          ? ['Run send-sample.sh without --execute: it prints the sample and the endpoint and sends nothing.', 'Then point ENDPOINT at a sub-production instance and run it with --execute; check the incident, then close it.']
+          : ['Run send-sample.sh. It posts a filled-in sample to the endpoint. Check it arrives, and arrives looking right.'],
+        undo: [
+          'Detach the payload template from the outbound instance. Alerts go on being raised; they stop being sent in this shape.',
+          ...(sn ? ['Close (or delete) the incident send-sample.sh created: its number and sys_id are printed when it is created.'] : []),
+        ],
         told: [`${endpoint || 'The endpoint'}, per alert.`],
         requires: ['A webhook outbound instance in VCF Operations pointing at the endpoint.', destination === 'servicenow' ? 'A ServiceNow integration user with rights to create incidents, stored on the outbound instance — not in the payload.' : 'Whatever the receiving end needs to accept a POST.'],
         files: {
           [`${base}-template.json`]: `${JSON.stringify(body, null, 2)}\n`,
           [`${base}-sample.json`]: `${sample}\n`,
-          'send-sample.sh': [
+          'send-sample.sh': sn ? serviceNowSample(endpoint, `${base}-sample.json`) : [
             '#!/usr/bin/env bash',
             '# Post a filled-in sample to the endpoint, to test the receiving end.',
             'set -euo pipefail',
             `ENDPOINT="\${ENDPOINT:-${endpoint}}"`,
-            `curl -sS -f -X POST "$ENDPOINT" -H "Content-Type: application/json" --data @${base}-sample.json`,
+            `curl -sS -f -X POST "$ENDPOINT" -H "Content-Type: application/json" --data-binary @"$(dirname "$0")/${base}-sample.json"`,
             'echo',
             'echo "Sent. Check it arrived and reads correctly before attaching the template to a rule."',
             '',
@@ -912,7 +1185,16 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         notes: [
           'In the interface: Configure → Payload Templates → Add, choose the webhook outbound method, and paste the template. Then select the template on the notification rule.',
           'The ${...} fields are substituted by VCF Operations. If one arrives literally, it is not a field your version supports — check the list in the payload template editor.',
-          ...(destination === 'servicenow' ? ['correlation_id carries the alert id, so an update to the same alert can find its incident rather than opening a second one.'] : []),
+          ...(destination === 'runbook'
+            ? ['9.1: ${SYMPTOMS} is now a structured JSON object (symptom sets, conditions and context), not a string. It must be the whole value of its own key — "symptoms": "${SYMPTOMS}" — and embedding it inside a longer string no longer works. VERIFY the object’s fields against a real alert: the sample uses definedOn, symptoms[] (name, resourceName, resourceId, metricName, messageInfo) and conditions[], as published examples show.']
+            : []),
+          ...(sn
+            ? [
+                'correlation_id carries the alert id, but the Table API (POST /api/now/table/incident) does not deduplicate on it: every post is a new incident, including the update and the cancel VCF Operations sends for the same alert. To get one incident per alert, point the outbound instance at an Import Set (POST /api/now/import/<staging table>) whose Transform Map coalesces on correlation_id, so a second post updates the open incident; or at a Scripted REST API that looks the incident up by correlation_id and updates it, creating one only when none is open.',
+                'send-sample.sh needs the ServiceNow credential for a real Table API endpoint: SN_USER and SN_PASSWORD_FILE (the password, mode 600). The script checks the mode and passes user:password to curl as a config on stdin (curl -K -), never as an argument.',
+                'The description uses real line breaks (\\n in the JSON), which ServiceNow shows as new lines. A literal backslash-n would show as the two characters.',
+              ]
+            : []),
         ],
         findings,
       };
@@ -953,22 +1235,32 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         `REPO="${repo}"`,
         `OUT="$REPO/${env}"`,
         'mkdir -p "$OUT"',
+        ...workDirLines(),
+        ...PAGED_HELPERS,
         '',
+        '# Every page of each list is read into a file first; only when the whole list',
+        '# was read is the folder replaced, so an object deleted in VCF Operations shows',
+        '# as a deletion in git and a failed read never empties the backup.',
         '# One file per object, sorted keys, so a diff is about the change and not the order.',
         ...types.flatMap(([path, key]) => [
-          `mkdir -p "$OUT/${key}"`,
-          `get "/suite-api/api/${path}?pageSize=10000" | jq -c '.${key}[]?' | while read -r item; do`,
-          `  id=$(echo "$item" | jq -r '.id // .resourceKey.name' | tr -c 'A-Za-z0-9._-' '_')`,
-          `  echo "$item" | jq -S . > "$OUT/${key}/$id.json"`,
-          'done',
+          `get_all /suite-api/api/${path} ${key} "$WORK/${key}.json" || exit 2`,
+          `rm -rf "$OUT/${key}" && mkdir -p "$OUT/${key}"`,
+          `jq -c '.[]' "$WORK/${key}.json" > "$WORK/${key}.items"`,
+          'while IFS= read -r item; do',
+          `  id=$(jq -r '.id // .resourceKey.name' <<<"$item" | tr -c 'A-Za-z0-9._-' '_')`,
+          `  jq -S . <<<"$item" > "$OUT/${key}/$id.json"`,
+          `done < "$WORK/${key}.items"`,
+          `echo "${key}: $(jq length "$WORK/${key}.json")"`,
         ]),
         ...(policies
           ? [
               '',
-              'mkdir -p "$OUT/policies"',
-              "get '/suite-api/api/policies' | jq -r '.policySummaries[]? | \"\\(.id) \\(.name)\"' | while read -r id pname; do",
+              'get_all /suite-api/api/policies policySummaries "$WORK/policies.json" || exit 2',
+              'rm -rf "$OUT/policies" && mkdir -p "$OUT/policies"',
+              'jq -r \'.[].id\' "$WORK/policies.json" > "$WORK/policy-ids.txt"',
+              'while IFS= read -r id; do',
               `  curl -sS -f "https://\${VCFOPS_HOST}/suite-api/api/policies/export?id=$id" -H "${authHeader('vcf-operations')}" -o "$OUT/policies/$id.zip"`,
-              'done',
+              'done < "$WORK/policy-ids.txt"',
             ]
           : []),
         '',
@@ -1012,8 +1304,21 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '    $key = $types[$path]',
         '    $dir = Join-Path $out $key',
         '    New-Item -ItemType Directory -Force -Path $dir | Out-Null',
-        '    $resp = Invoke-RestMethod -Uri "https://$($env:VCFOPS_HOST)/suite-api/api/$($path)?pageSize=10000" -Headers $headers',
-        '    foreach ($item in @($resp.$key)) {',
+        '    # Every page, and stop rather than back up nothing when the list key is missing.',
+        '    $items = @(); $page = 0; $size = 1000',
+        '    do {',
+        '        $resp = Invoke-RestMethod -Uri "https://$($env:VCFOPS_HOST)/suite-api/api/$($path)?page=$page&pageSize=$size" -Headers $headers',
+        '        $prop = $resp.PSObject.Properties[$key]',
+        '        $info = $resp.PSObject.Properties[\'pageInfo\']',
+        '        if (-not $prop -and -not $info) { throw "No $key in the response from $path" }',
+        '        $batch = if ($prop -and $null -ne $prop.Value) { @($prop.Value) } else { @() }',
+        '        $items += $batch',
+        '        $page++',
+        '        $total = if ($info -and $info.Value.PSObject.Properties[\'totalCount\']) { [int]$info.Value.totalCount } else { -1 }',
+        '    } while ($batch.Count -eq $size -and ($total -lt 0 -or $page * $size -lt $total))',
+        '    Remove-Item -Recurse -Force $dir',
+        '    New-Item -ItemType Directory -Force -Path $dir | Out-Null',
+        '    foreach ($item in $items) {',
         "        $id = ($item.id, $item.resourceKey.name | Where-Object { $_ } | Select-Object -First 1) -replace '[^A-Za-z0-9._-]', '_'",
         '        $item | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 (Join-Path $dir "$id.json")',
         '    }',
@@ -1042,6 +1347,7 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         },
         guardrails: [
           { rule: 'Reads only, with a read-only account', because: 'A backup job holding an administrator token is a larger risk than the one it mitigates.' },
+          { rule: 'Every list is read page by page and must be read whole before its folder is replaced; a failed read stops the run (exit 2)', because: 'A backup that silently wrote an empty folder would commit the deletion of every alert definition, and the history would say it was intended.' },
           { rule: 'One file per object, keys sorted', because: 'So the git history shows which threshold changed, not that a 4 MB export differs.' },
         ],
         dryRun: ['Run it once by hand into an empty repository and read the tree it produces.'],
@@ -1095,16 +1401,27 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         `IGNORE='${JSON.stringify(ignore)}'`,
         'PROBLEMS=()',
         '',
+        ...workDirLines(),
+        ...WEBHOOK_HELPER,
+        '',
+        '# Each answer is saved to a file first: a read that fails stops the check',
+        '# (exit 2) instead of feeding an empty list into a loop that then finds',
+        '# nothing wrong.',
         '# 1. The node answering this call.',
-        'NODE=$(get /suite-api/api/deployment/node/status | jq -r ".status // \\"UNKNOWN\\"")',
+        'get /suite-api/api/deployment/node/status > "$WORK/node.json" || { echo "Cannot read the node status." >&2; exit 2; }',
+        'NODE=$(jq -r ".status // \\"UNKNOWN\\"" "$WORK/node.json")',
         '[[ "$NODE" == "ONLINE" ]] || PROBLEMS+=("node status is $NODE")',
         '',
         '# 2. Collectors and cloud proxies.',
+        'get /suite-api/api/collectors > "$WORK/collectors.json" || { echo "Cannot read the collectors." >&2; exit 2; }',
+        '(( $(jq "[.collector[]?] | length" "$WORK/collectors.json") > 0 )) || PROBLEMS+=("no collectors listed at all")',
         'while read -r cname cstate; do',
         '  [[ "$cstate" == "UP" ]] || PROBLEMS+=("collector $cname is $cstate")',
-        'done < <(get /suite-api/api/collectors | jq -r ".collector[]? | \\"\\(.name|gsub(\\" \\";\\"_\\")) \\(.state)\\"")',
+        'done < <(jq -r ".collector[]? | \\"\\(.name|gsub(\\" \\";\\"_\\")) \\(.state)\\"" "$WORK/collectors.json")',
         '',
         '# 3. Every adapter instance: when did it last collect?',
+        'get /suite-api/api/adapters > "$WORK/adapters.json" || { echo "Cannot read the adapter instances." >&2; exit 2; }',
+        '(( $(jq "[.adapterInstancesInfoDto[]?] | length" "$WORK/adapters.json") > 0 )) || PROBLEMS+=("no adapter instances listed at all")',
         'while read -r aname last count; do',
         '  echo "$IGNORE" | jq -e --arg n "$aname" "index(\\$n)" >/dev/null && continue',
         '  if [[ "$last" == "null" ]] || (( NOW_MS - last > STALE_MS )); then',
@@ -1112,7 +1429,7 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '  elif [[ "$count" == "0" ]]; then',
         '    PROBLEMS+=("adapter $aname is collecting nothing — check its credential")',
         '  fi',
-        'done < <(get /suite-api/api/adapters | jq -r ".adapterInstancesInfoDto[]? | \\"\\(.resourceKey.name|gsub(\\" \\";\\"_\\")) \\(.lastCollected) \\(.numberOfResourcesCollected // 0)\\"")',
+        'done < <(jq -r ".adapterInstancesInfoDto[]? | \\"\\(.resourceKey.name|gsub(\\" \\";\\"_\\")) \\(.lastCollected) \\(.numberOfResourcesCollected // 0)\\"" "$WORK/adapters.json")',
         '',
         'if (( ${#PROBLEMS[@]} == 0 )); then',
         '  echo "VCF Operations: healthy"',
@@ -1121,9 +1438,9 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         '',
         'printf "VCF Operations: %s\\n" "${PROBLEMS[@]}" >&2',
         ...(webhook
-          ? [`curl -sS -X POST "${webhook}" -H "Content-Type: application/json" --data "$(printf '%s\\n' "\${PROBLEMS[@]}" | jq -R . | jq -s '{source: "vcf-operations-health", problems: .}')" || true`]
+          ? [`printf '%s\\n' "\${PROBLEMS[@]}" | jq -R . | jq -s '{source: "vcf-operations-health", problems: .}' > "$WORK/webhook.json"`, `post_webhook ${shq(webhook)} "$WORK/webhook.json"`]
           : []),
-        'exit 1',
+        'finish 1',
       ]);
 
       return {
@@ -1139,6 +1456,8 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         guardrails: [
           { rule: 'Runs outside VCF Operations', because: 'A monitoring system cannot reliably report its own failure.' },
           { rule: 'Reports to an independent destination', because: 'Otherwise the failure report is queued behind the failure.' },
+          { rule: 'A read that fails, or a collector or adapter list that comes back empty, is a failure (exit 2 or 1), never "healthy"', because: 'An API that answers nothing is exactly what a broken VCF Operations looks like.' },
+          ...(webhook ? [{ rule: 'The webhook post uses curl -f and a failed post exits 3', because: 'A report that did not arrive must not look like one that did.' }] : []),
         ],
         dryRun: ['It only reads. Run it once by hand and check each adapter it names is one you expect.'],
         undo: ['Nothing to undo.'],

@@ -193,7 +193,7 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
             '# POST /api/ni/search/ql takes the search bar’s language: {query, size}.',
             `HTTP=$(jq '{query: .search, size: 100}' ${base}.json | curl -sS -o "$RESULT" -w '%{http_code}' \\`,
             '  -X POST "https://${VCFNET_HOST}/api/ni/search/ql" \\',
-            '  -H "Authorization: NetworkInsight ${VCFNET_TOKEN}" \\',
+            '  -H @<(printf \'Authorization: NetworkInsight %s\\n\' "$VCFNET_TOKEN") \\',
             '  -H "Accept: application/json" -H "Content-Type: application/json" \\',
             '  --data @-) || { echo "Networks did not answer" >&2; exit 2; }',
             'if [[ "$HTTP" != 2* ]]; then',

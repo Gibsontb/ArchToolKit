@@ -536,7 +536,7 @@ function netPreamble(): string[] {
     'ni() {',
     '  local method="$1" path="$2"; shift 2',
     '  curl -sS -f -X "$method" "https://${VCFNET_HOST}/api/ni${path}" \\',
-    '    -H "Authorization: NetworkInsight ${VCFNET_TOKEN}" \\',
+    '    -H @<(printf \'Authorization: NetworkInsight %s\\n\' "$VCFNET_TOKEN") \\',
     '    -H "Accept: application/json" -H "Content-Type: application/json" "$@"',
     '}',
   ];
