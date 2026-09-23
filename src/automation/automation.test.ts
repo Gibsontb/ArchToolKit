@@ -49,7 +49,7 @@ describe('automation: the vocabulary', () => {
     for (const group of AUTOMATION_BLUEPRINTS) {
       expect(group.blueprints.length).toBeGreaterThan(0);
     }
-    expect(AUTOMATION_BLUEPRINTS.length).toBe(5);
+    expect(AUTOMATION_BLUEPRINTS.length).toBe(6);
   });
 
   it('finds a blueprint by id', () => {
@@ -192,10 +192,12 @@ describe('automation: the ones with a known trap in them', () => {
     expect(hasErrors(out.findings ?? [])).toBe(true);
   });
 
-  it('calls a log alert with no rate limit an error', () => {
+  it('calls a log alert whose window is too short to limit it an error', () => {
     const blueprint = automationFor('vcflog_alert_webhook');
     if (!blueprint) throw new Error('missing blueprint');
-    const out = blueprint.build({ ...defaultValues(blueprint), rate_limit_minutes: 0 }, 'x');
+    // Logs snoozes a count alert for its own window, so the window is the rate
+    // limit; a window of a minute or two is the one that floods.
+    const out = blueprint.build({ ...defaultValues(blueprint), window_minutes: 1 }, 'x');
     expect((out.findings ?? []).some((finding) => finding.code === 'vcflog.alert.no-rate-limit')).toBe(true);
   });
 
@@ -233,7 +235,84 @@ describe('automation: the ones with a known trap in them', () => {
       const blueprint = automationFor(id);
       if (!blueprint) throw new Error(`missing ${id}`);
       const text = Object.values(blueprint.build(defaultValues(blueprint), id).files).join('\n');
-      expect(/"enabled":\s*false|isEnabled: false|enabled: false/.test(text)).toBe(true);
+      const files = blueprint.build(defaultValues(blueprint), id).files;
+      // Either the platform object is created disabled, or the only schedule is
+      // a cron line that is written commented out.
+      const cronIsOff = (files['crontab.txt'] ?? '').split('\n').every((line) => !line.trim() || line.trim().startsWith('#'));
+      expect(/"enabled":\s*false|isEnabled: false|enabled: false/.test(text) || ('crontab.txt' in files && cronIsOff)).toBe(true);
     }
+  });
+});
+
+describe('automation: every choice, not just the defaults', () => {
+  it('has one id per blueprint', () => {
+    const ids = AUTOMATIONS.map((blueprint) => blueprint.id);
+    expect(ids.filter((id, index) => ids.indexOf(id) !== index)).toEqual([]);
+  });
+
+  it('keeps the contract and writes no credential whichever option is picked', () => {
+    // Defaults are what the page opens on; the other options are what people
+    // actually choose. Each select option and each toggle flipped is built once.
+    const assignsLiteral = /\b(password|passwd|secret|api[_-]?key|token|credential)\w*\s*[:=]+\s*["'][^"'$%{<@]/i;
+    const problems: string[] = [];
+    for (const blueprint of AUTOMATIONS) {
+      const base = defaultValues(blueprint);
+      const variants: Record<string, string | number | boolean | undefined>[] = [{ ...base }];
+      for (const input of blueprint.inputs) {
+        if (input.control === 'select') for (const option of input.options ?? []) variants.push({ ...base, [input.id]: option.value });
+        if (input.control === 'toggle') variants.push({ ...base, [input.id]: !base[input.id] });
+      }
+      for (const values of variants) {
+        let automation: Automation;
+        try {
+          automation = blueprint.automation(values, blueprint.id);
+        } catch (failure) {
+          problems.push(`${blueprint.id} ${JSON.stringify(values)}: threw ${String(failure)}`);
+          continue;
+        }
+        if (!automation.trigger.detail.trim() || !automation.scope.what.trim() || automation.undo.length === 0 || automation.told.length === 0) {
+          problems.push(`${blueprint.id}: contract field empty for ${JSON.stringify(values)}`);
+        }
+        if (automation.effect !== 'read' && (automation.guardrails.length === 0 || automation.dryRun.length === 0)) {
+          problems.push(`${blueprint.id}: changes something with no guardrail or dry run for ${JSON.stringify(values)}`);
+        }
+        for (const [file, body] of Object.entries(automation.files)) {
+          for (const line of body.split('\n')) if (assignsLiteral.test(line)) problems.push(`${blueprint.id} → ${file}: ${line.trim().slice(0, 80)}`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('covers setup, content and automation on every VCF platform', () => {
+    const count = (target: string) => AUTOMATION_BLUEPRINTS.find((group) => group.target === target)?.blueprints.length ?? 0;
+    expect(count('vcf-operations')).toBeGreaterThan(15);
+    expect(count('vcf-automation')).toBeGreaterThan(15);
+    expect(count('vcf-fleet')).toBeGreaterThan(4);
+    expect(count('pipeline')).toBeGreaterThan(8);
+  });
+});
+
+describe('automation: traps in the setup and fleet kits', () => {
+  const findingsOf = (id: string, overrides: Record<string, string | number | boolean>) => {
+    const blueprint = automationFor(id);
+    if (!blueprint) throw new Error(`missing ${id}`);
+    return (blueprint.build({ ...defaultValues(blueprint), ...overrides }, 'x').findings ?? []).map((finding) => finding.code);
+  };
+
+  it('refuses to collect from a vCenter as its built-in administrator', () => {
+    expect(findingsOf('vcfops_adapter_instance', { account: 'administrator@vsphere.local' }).includes('vcfops.adapter.admin-account')).toBe(true);
+  });
+
+  it('refuses to automate an action in the default policy', () => {
+    expect(findingsOf('vcfops_alert_action', { policy_name: 'Default Policy' }).includes('vcfops.action.default-policy')).toBe(true);
+  });
+
+  it('catches an alert whose critical threshold is not beyond its warning', () => {
+    expect(findingsOf('vcfops_alert_definition', { warning_at: 90, critical_at: 80 }).includes('vcfops.alert.inverted')).toBe(true);
+  });
+
+  it('catches a retired Teams connector URL', () => {
+    expect(findingsOf('vcfops_webhook_payload', { destination: 'teams', endpoint: 'https://example.webhook.office.com/webhookb2/abc' }).includes('vcfops.payload.teams-connector')).toBe(true);
   });
 });

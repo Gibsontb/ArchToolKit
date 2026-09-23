@@ -137,7 +137,7 @@
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
             <tr><td><a href="aria.html">Aria Ops</a></td><td>Read a vROps 8.x or VCF Operations 9.x content export and find out what is wrong with the monitoring.</td></tr>
-            <tr><td><a href="automation.html">Automation</a></td><td>Automations for VCF Operations, for Networks, for Logs, VCF Automation, and the runners &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
+            <tr><td><a href="automation.html">Automation</a></td><td>Set up and automate VCF Operations, for Networks, for Logs, VCF Automation and the fleet, plus the pipelines that drive them &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
           </table>
 
           <!-- ================================================================ -->
@@ -950,10 +950,10 @@
             <a href="automation.html">Automation</a> writes the automations the rest of the toolkit
             implies: the notification rule that closes the gap the Aria Ops page keeps finding, the
             scheduled reclamation, the cloud template people can request, the pipeline that runs the
-            Terraform. Five targets, which in VCF 9.1 are capabilities of one platform rather than
+            Terraform. Six targets, which in VCF 9.1 are capabilities of one platform rather than
             separate products &mdash; <strong>VCF Operations</strong>, <strong>VCF Operations for
-            Networks</strong>, <strong>VCF Operations for Logs</strong>, <strong>VCF Automation</strong>
-            and the runners.
+            Networks</strong>, <strong>VCF Operations for Logs</strong>, <strong>VCF Automation</strong>,
+            <strong>fleet operations</strong> through SDDC Manager, and the pipelines and runners.
           </p>
 
           <h3>Why an automation is not a script</h3>
@@ -980,19 +980,34 @@
           </p>
 
           <h3>What it can write</h3>
+          <p>
+            Sixty-three automations across six targets. Within each target they run in the order the
+            work is done: set it up, write the content, then automate on top of it.
+          </p>
           <table>
             <tr><th>Target</th><th>Automations</th></tr>
-            <tr><td>VCF Operations <em>(6)</em></td><td>
-              <strong>Notification:</strong> a rule that posts alerts to a webhook rather than a mailbox &mdash; the piece that closes the gap the Aria Ops page finds, where thousands of alert definitions fire and tell nobody.<br/>
-              <strong>Scope:</strong> a custom group built with an exclusion tag from the start, so an object leaves the automation by being tagged rather than by somebody editing the automation at 2am.<br/>
-              <strong>Automation Central:</strong> scheduled reclamation of snapshots, powered-off VMs, orphaned disks and oversized VMs, with a cap on objects per run; and a maintenance window with the overrun check nobody remembers &mdash; a window that never closes is an estate with no alerting and no symptom.<br/>
-              <strong>Reporting and policy:</strong> a report schedule, and a policy override that exports the current state first because that export is the only undo.
+            <tr><td>VCF Operations <em>(17)</em></td><td>
+              <strong>Setup:</strong> collect from a vCenter on a service account; outbound email, webhook, syslog and SNMP instances with a test step; a directory group given a scoped role.<br/>
+              <strong>Content:</strong> an alert with its symptoms and a recommendation, applied in the order they refer to each other; acting on an alert automatically, only in a dedicated policy; super metrics; a policy for a class of workload; a compliance benchmark with a weekly drift report; the payload a webhook receives (ServiceNow, Teams, Slack, a runbook runner).<br/>
+              <strong>Operations:</strong> the notification rule, the scoping group, scheduled reclamation, maintenance windows with an overrun check, report schedules, policy overrides, a nightly content backup to git, and a self-check that VCF Operations is still collecting.
             </td></tr>
-            <tr><td>VCF Operations for Networks <em>(2)</em></td><td>A scheduled flow check for traffic crossing a boundary that should be closed, and a watch for NSX changes made outside the expected service accounts. Both report and neither acts &mdash; an automation that closes a flow on its own findings will close a load-bearing one.</td></tr>
-            <tr><td>VCF Operations for Logs <em>(2)</em></td><td>A log alert with a rate limit on it, because the failure is never the query &mdash; it is that the query matches ten thousand events an hour and the alert becomes its own incident. Plus an audit trail exported off the platform it audits.</td></tr>
-            <tr><td>VCF Automation <em>(3)</em></td><td>A cloud template with a lease, constrained inputs, and an owner and cost code asked for at request time; an extensibility action with the failure path that stops a blocking topic wedging every deployment in the estate; and an approval policy that can actually say no.</td></tr>
-            <tr><td>Pipelines and runners <em>(4)</em></td><td>An Azure Automation runbook on a managed identity with the schedule created disabled; an AWS SSM document targeted by tag with rate and error control; an AWX job template with check mode first; and plan-on-pull-request, apply-on-merge for Terraform, applying the plan that was reviewed rather than a fresh one.</td></tr>
+            <tr><td>VCF Operations for Networks <em>(5)</em></td><td>Data sources, application definitions from tags, a reachability check against intent, a flow check across a closed boundary, and a watch for NSX changes made outside the expected accounts. The checks report; none of them acts.</td></tr>
+            <tr><td>VCF Operations for Logs <em>(6)</em></td><td>A content pack with extracted fields, forwarding to Splunk or another instance over TLS, agent configuration for a group of servers, index partitions with retention and archiving, a rate-limited log alert, and an audit trail exported off the platform it audits.</td></tr>
+            <tr><td>VCF Automation <em>(20)</em></td><td>
+              <strong>Setup:</strong> vSphere and NSX cloud accounts, cloud zones, projects with quotas and groups, image and flavor mappings, network and storage profiles, catalogue content sources and sharing, custom naming, property groups.<br/>
+              <strong>Catalogue and governance:</strong> a cloud template with a lease and constrained inputs, an approval policy that can say no, a day-2 actions policy.<br/>
+              <strong>Extensibility:</strong> an ABX action on a deployment event, Orchestrator workflows and actions with a dry run and a failure path, custom day-2 actions, custom resource types with their whole lifecycle, and Terraform run from a template.<br/>
+              <strong>Modern apps:</strong> Supervisor namespaces and VKS clusters, requested from All Apps.
+            </td></tr>
+            <tr><td>VCF fleet operations <em>(6)</em></td><td>Through SDDC Manager: password rotation one resource type at a time, a certificate expiry report with a separate replacement plan, a health check, backup to SFTP, an upgrade precheck, and host commissioning that always validates first.</td></tr>
+            <tr><td>Pipelines and runners <em>(9)</em></td><td>VCF Automation Pipelines (formerly Code Stream) in its own YAML, for 8.x estates; cloud templates as code in GitHub Actions, GitLab, Azure Pipelines or Jenkins, test-deployed and deleted before a version is released; ABX actions and Orchestrator packages tested in CI; VCF Operations content promoted from test to production by pull request; the read-only checks run on a schedule; and the Azure Automation, SSM, AWX and Terraform runners.</td></tr>
           </table>
+          <div class="tip">
+            <strong>Check the API shapes against your release.</strong> Every payload follows the documented
+            API as far as it is known, and anything that differs between releases is marked
+            <code>&lt;REQUIRED&gt;</code> or noted in the README. The quickest check is a GET of an
+            existing object of the same kind in your instance, compared field by field.
+          </div>
           <div class="tip warn">
             <strong>No credentials, anywhere.</strong> Every generated automation reads its secret from a
             managed identity, the runner&rsquo;s own store or an environment variable, or leaves

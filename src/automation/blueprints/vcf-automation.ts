@@ -428,8 +428,18 @@ export const VCF_AUTOMATION_AUTOMATIONS: readonly AutomationBlueprint[] = [
         default: 'size',
       },
       { id: 'threshold', label: 'Threshold', control: 'text', default: '8 vCPU or 32 GB', hint: 'What counts as large, or the cost figure' },
-      { id: 'approvers', label: 'Approvers', control: 'text', default: 'platform-leads@example.com' },
-      { id: 'auto_expire_hours', label: 'Auto-decide after (hours)', control: 'number', default: 48, min: 0, max: 336 },
+      { id: 'approvers', label: 'Approvers', control: 'text', default: 'platform-leads@example.com', hint: 'Comma separated. Prefix an entry with user: or group: to override the setting below' },
+      {
+        id: 'approvers_are',
+        label: 'Unprefixed approvers are',
+        control: 'select',
+        options: [
+          { value: 'GROUP', label: 'Groups — approve to a team' },
+          { value: 'USER', label: 'Users — named people' },
+        ],
+        default: 'GROUP',
+      },
+      { id: 'auto_expire_days', label: 'Auto-decide after (days)', control: 'number', default: 2, min: 1, max: 30, hint: 'The API counts in whole days' },
       {
         id: 'on_expiry',
         label: 'When it expires',
@@ -445,8 +455,14 @@ export const VCF_AUTOMATION_AUTOMATIONS: readonly AutomationBlueprint[] = [
       const policyName = str(values, 'policy_name', 'Approval policy');
       const when = str(values, 'when', 'size');
       const threshold = str(values, 'threshold', '8 vCPU or 32 GB');
-      const approvers = listOf(str(values, 'approvers', ''));
-      const expiry = num(values, 'auto_expire_hours', 48);
+      const approversAre = str(values, 'approvers_are', 'GROUP') === 'USER' ? 'USER' : 'GROUP';
+      // Each entry becomes USER:<id> or GROUP:<id>. An explicit user:/group: prefix wins.
+      const approvers = listOf(str(values, 'approvers', '')).map((entry) => {
+        const match = /^(user|group)\s*:\s*(.+)$/i.exec(entry);
+        return match ? { kind: match[1]!.toUpperCase() as 'USER' | 'GROUP', id: match[2]!.trim() } : { kind: approversAre, id: entry };
+      });
+      const approverNames = approvers.map((approver) => approver.id);
+      const expiry = Math.max(1, Math.round(num(values, 'auto_expire_days', 2)));
       const onExpiry = str(values, 'on_expiry', 'REJECT');
       const base = slugOf(name || policyName, 'approval-policy');
 
@@ -467,7 +483,7 @@ export const VCF_AUTOMATION_AUTOMATIONS: readonly AutomationBlueprint[] = [
           }),
         );
       }
-      if (approvers.length === 1) {
+      if (approvers.length === 1 && approvers[0]!.kind === 'USER') {
         findings.push(
           warning('vcfa.approval.single-approver', 'One approver is one holiday away from a stalled catalogue.', {
             remediation: 'Approve to a group rather than a person.',
@@ -491,9 +507,12 @@ export const VCF_AUTOMATION_AUTOMATIONS: readonly AutomationBlueprint[] = [
         enforcementType: 'HARD',
         definition: {
           level: 1,
+          // USER covers named users and groups; ROLE is the role-based form (project administrators and the like).
+          approverType: 'USER',
           approvalMode: 'ANY_OF',
-          approvers: approvers.map((approver) => `USER:${approver}`),
-          autoApprovalDecision: onExpiry === 'APPROVE' ? 'APPROVE_ON_EXPIRE' : 'REJECT_ON_EXPIRE',
+          approvers: approvers.map((approver) => `${approver.kind}:${approver.id}`),
+          // What happens when nobody answers, and after how many days.
+          autoApprovalDecision: onExpiry === 'APPROVE' ? 'APPROVE' : 'REJECT',
           autoApprovalExpiry: expiry,
           actions: ['Deployment.Create'],
         },
@@ -503,7 +522,7 @@ export const VCF_AUTOMATION_AUTOMATIONS: readonly AutomationBlueprint[] = [
 
       return {
         platform: PLATFORM,
-        title: `${policyName} — ${criteria.toLowerCase()} wait for ${approvers.join(', ') || 'nobody'}`,
+        title: `${policyName} — ${criteria.toLowerCase()} wait for ${approverNames.join(', ') || 'nobody'}`,
         effect: 'reversible',
         trigger: { kind: 'request', detail: criteria, worstCase: 'as often as people request something matching the criteria' },
         scope: {
@@ -512,17 +531,20 @@ export const VCF_AUTOMATION_AUTOMATIONS: readonly AutomationBlueprint[] = [
           ifWrong: 'Either everything waits for approval and the catalogue stops being used, or nothing does and the policy is decoration.',
         },
         guardrails: [
-          { rule: `Decides automatically after ${expiry} hours, by ${onExpiry === 'APPROVE' ? 'approving' : 'rejecting'}`, because: 'A request that waits forever is a request that gets raised as a ticket instead, and then the catalogue is not used.' },
+          { rule: `Decides automatically after ${expiry} day${expiry === 1 ? '' : 's'}, by ${onExpiry === 'APPROVE' ? 'approving' : 'rejecting'}`, because: 'A request that waits forever is a request that gets raised as a ticket instead, and then the catalogue is not used.' },
           { rule: 'Scoped to a project', because: 'An unscoped approval policy applies to every request in the organisation, which is discovered on the first busy morning.' },
-          ...(approvers.length > 1 ? [{ rule: 'Any one of several approvers', because: 'One named approver is a single point of failure with a holiday calendar.' }] : []),
+          ...(approvers.length > 1 || approvers.some((approver) => approver.kind === 'GROUP')
+            ? [{ rule: approvers.length > 1 ? 'Any one of several approvers' : 'Any member of the approving group', because: 'One named approver is a single point of failure with a holiday calendar.' }]
+            : []),
         ],
         dryRun: ['Apply it to a test project and request something that should need approval, then something that should not. Both halves are worth checking.'],
         undo: ['DELETE the policy, or set enforcementType to SOFT. Requests already waiting keep waiting — decide them before removing it.'],
-        told: [`${approvers.join(', ') || 'Nobody'}, at request time, through whatever notification the deployment is configured for.`],
+        told: [`${approverNames.join(', ') || 'Nobody'}, at request time, through whatever notification the deployment is configured for.`],
         requires: ['The project it is scoped to.', 'The approvers to exist as users or groups in VCF Automation.'],
         files: { [`${base}.json`]: `${JSON.stringify(policy, null, 2)}\n` },
         notes: [
           'Approval policies are evaluated by priority, and the highest priority wins outright rather than combining. Two policies on the same project is usually one policy too many.',
+          'The definition follows the approval-policy example in the Aria Automation 8.16 API programming guide: approverType USER, approvers as USER:<id>, autoApprovalDecision APPROVE or REJECT, autoApprovalExpiry in days. The GROUP:<id> form for groups and the 30-day ceiling on the input are not in that example; make one policy with a group approver in the UI, GET it on your own release and match its shape before relying on either.',
           'The criteria expression is the part to test. It is easy to write one that matches nothing, and a policy that matches nothing looks exactly like a policy that is working.',
         ],
         findings,

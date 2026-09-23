@@ -4,32 +4,43 @@
  * The platform here is a capability of VCF rather than a cloud, so this page
  * keeps its own selection: "I am writing a VCF Operations automation" says
  * nothing about which cloud the Terraform page should open on.
+ *
+ * Within each platform the order is the order the work is done in: set it up,
+ * write the content, then automate on top of it.
  */
 
 import type { BlueprintGroup } from '../../kit/blueprint.ts';
 import { AUTOMATION_PLATFORMS } from '../automation.ts';
 import type { AutomationBlueprint } from '../from-automation.ts';
 import { VCF_OPERATIONS_AUTOMATIONS } from './vcf-operations.ts';
+import { VCF_OPERATIONS_SETUP } from './vcf-operations-setup.ts';
+import { VCF_OPERATIONS_CONTENT } from './vcf-operations-content.ts';
 import { NETWORKS_AUTOMATIONS, LOGS_AUTOMATIONS } from './vcf-networks-logs.ts';
+import { LOGS_MORE, NETWORKS_MORE } from './vcf-logs-networks-more.ts';
 import { VCF_AUTOMATION_AUTOMATIONS } from './vcf-automation.ts';
+import { VCF_AUTOMATION_SETUP } from './vcf-automation-setup.ts';
+import { VCF_AUTOMATION_EXTEND } from './vcf-automation-extend.ts';
+import { VCF_FLEET } from './vcf-fleet.ts';
 import { PIPELINE_AUTOMATIONS } from './pipeline.ts';
+import { PIPELINE_VCF } from './pipeline-vcf.ts';
+
+const OPERATIONS = [...VCF_OPERATIONS_SETUP, ...VCF_OPERATIONS_CONTENT, ...VCF_OPERATIONS_AUTOMATIONS];
+const NETWORKS = [...NETWORKS_MORE, ...NETWORKS_AUTOMATIONS];
+const LOGS = [...LOGS_MORE, ...LOGS_AUTOMATIONS];
+const AUTOMATION = [...VCF_AUTOMATION_SETUP, ...VCF_AUTOMATION_AUTOMATIONS, ...VCF_AUTOMATION_EXTEND];
+const PIPELINES = [...PIPELINE_VCF, ...PIPELINE_AUTOMATIONS];
 
 export const AUTOMATION_BLUEPRINTS: readonly BlueprintGroup[] = [
-  { target: 'vcf-operations', label: AUTOMATION_PLATFORMS['vcf-operations'].label, blueprints: VCF_OPERATIONS_AUTOMATIONS },
-  { target: 'vcf-operations-networks', label: AUTOMATION_PLATFORMS['vcf-operations-networks'].label, blueprints: NETWORKS_AUTOMATIONS },
-  { target: 'vcf-operations-logs', label: AUTOMATION_PLATFORMS['vcf-operations-logs'].label, blueprints: LOGS_AUTOMATIONS },
-  { target: 'vcf-automation', label: AUTOMATION_PLATFORMS['vcf-automation'].label, blueprints: VCF_AUTOMATION_AUTOMATIONS },
-  { target: 'pipeline', label: AUTOMATION_PLATFORMS.pipeline.label, blueprints: PIPELINE_AUTOMATIONS },
+  { target: 'vcf-operations', label: AUTOMATION_PLATFORMS['vcf-operations'].label, blueprints: OPERATIONS },
+  { target: 'vcf-operations-networks', label: AUTOMATION_PLATFORMS['vcf-operations-networks'].label, blueprints: NETWORKS },
+  { target: 'vcf-operations-logs', label: AUTOMATION_PLATFORMS['vcf-operations-logs'].label, blueprints: LOGS },
+  { target: 'vcf-automation', label: AUTOMATION_PLATFORMS['vcf-automation'].label, blueprints: AUTOMATION },
+  { target: 'vcf-fleet', label: AUTOMATION_PLATFORMS['vcf-fleet'].label, blueprints: VCF_FLEET },
+  { target: 'pipeline', label: AUTOMATION_PLATFORMS.pipeline.label, blueprints: PIPELINES },
 ];
 
 /** Every automation blueprint, with its structured builder, in one list. */
-export const AUTOMATIONS: readonly AutomationBlueprint[] = [
-  ...VCF_OPERATIONS_AUTOMATIONS,
-  ...NETWORKS_AUTOMATIONS,
-  ...LOGS_AUTOMATIONS,
-  ...VCF_AUTOMATION_AUTOMATIONS,
-  ...PIPELINE_AUTOMATIONS,
-];
+export const AUTOMATIONS: readonly AutomationBlueprint[] = [...OPERATIONS, ...NETWORKS, ...LOGS, ...AUTOMATION, ...VCF_FLEET, ...PIPELINES];
 
 export function automationFor(id: string): AutomationBlueprint | undefined {
   return AUTOMATIONS.find((blueprint) => blueprint.id === id);

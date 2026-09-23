@@ -32,7 +32,7 @@
 
 import { info, warning, type Finding } from '../core/findings.ts';
 
-export type AutomationPlatform = 'vcf-operations' | 'vcf-operations-networks' | 'vcf-operations-logs' | 'vcf-automation' | 'pipeline';
+export type AutomationPlatform = 'vcf-operations' | 'vcf-operations-networks' | 'vcf-operations-logs' | 'vcf-automation' | 'vcf-fleet' | 'pipeline';
 
 export interface AutomationPlatformInfo {
   readonly id: AutomationPlatform;
@@ -86,6 +86,13 @@ export const AUTOMATION_PLATFORMS: Readonly<Record<AutomationPlatform, Automatio
     formerly: 'Aria Automation, vRealize Automation, vRA',
     appliedWith: 'The Assembler and Service Broker APIs, or a content source pointed at the repository these files live in.',
     dryRun: 'Deploy to a project with no real cloud zone, or run the action with its dry-run input set.',
+  },
+  'vcf-fleet': {
+    id: 'vcf-fleet',
+    label: 'VCF fleet operations',
+    formerly: 'SDDC Manager, Aria Suite Lifecycle, vRealize Suite Lifecycle Manager',
+    appliedWith: 'The SDDC Manager API at /v1 for each instance, and fleet management in VCF Operations for the components it now owns.',
+    dryRun: 'Every script here reads first and prints what it would rotate, replace or check. The acting half is behind --execute.',
   },
   pipeline: {
     id: 'pipeline',

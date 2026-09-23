@@ -5,17 +5,24 @@
  * the Aria Ops page reads — same objects, same scope, same four indirections
  * between "power off idle VMs" and which VMs that turns out to be tonight.
  *
- * Almost everything here is a suite-API payload rather than a script, because
- * that is what the platform actually takes: a notification rule with a webhook
- * on it, a custom group that decides a scope, a policy that turns an alert on.
- * Each one comes with the `curl` that applies it and the one that puts it back,
+ * Most of it is a suite-API payload rather than a script, because that is what
+ * the platform actually takes: a notification rule pointed at a webhook plugin,
+ * a custom group that decides a scope, a policy that turns an alert on. Each
+ * one comes with the script that applies it and the call that puts it back,
  * because a payload with no way to apply it is a screenshot.
+ *
+ * Where the documented API stops — which policy a maintenance schedule sits
+ * in, which metric says a VM has been off for ninety days — the output says so
+ * and marks the value to check, rather than inventing a field that looks right.
+ * Every script logs in the same way (apply.ts), so the ones that run on a
+ * schedule need no token in a crontab.
  */
 
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
+import { applyScript, authHeader, authPreamble, readScript, scheduledEnv } from '../apply.js';
 
 const PLATFORM = 'vcf-operations'         ;
 
@@ -29,38 +36,14 @@ function alertScope(group        , policy        )           {
   ];
 }
 
-function applyScript(path        , payload        , undoPath        )         {
-  return [
-    '#!/usr/bin/env bash',
-    '# Apply the payload beside this script to VCF Operations.',
-    '#',
-    '# The token is read from the environment. Nothing here writes a credential',
-    '# to disk, and nothing here is idempotent — run it once and check the id it',
-    '# returns, rather than running it again when you are not sure.',
-    'set -euo pipefail',
-    '',
-    ': "${VCFOPS_HOST:?set VCFOPS_HOST, e.g. vcfops.example.com}"',
-    ': "${VCFOPS_TOKEN:?set VCFOPS_TOKEN — acquire with POST /suite-api/api/auth/token/acquire}"',
-    '',
-    'DRY_RUN=1',
-    '[[ "${1:-}" == "--execute" ]] && DRY_RUN=0',
-    '',
-    'if (( DRY_RUN )); then',
-    `  echo "DRY RUN: would POST ${payload} to https://\${VCFOPS_HOST}${path}"`,
-    `  echo "Nothing is changed. Re-run with --execute once you have read ${payload}."`,
-    '  exit 0',
-    'fi',
-    '',
-    'curl -sS -f \\',
-    '  -X POST "https://${VCFOPS_HOST}' + path + '" \\',
-    '  -H "Authorization: vRealizeOpsToken ${VCFOPS_TOKEN}" \\',
-    '  -H "Accept: application/json" \\',
-    '  -H "Content-Type: application/json" \\',
-    `  --data @${payload}`,
-    '',
-    `# Undo: see ${undoPath}`,
-    '',
-  ].join('\n');
+const WEEKDAYS                                   = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+
+/** "Sunday 02:00" as a cron schedule, or a marked placeholder when it will not parse. */
+function cronOf(when        )         {
+  const match = /^\s*([a-z]+)\s+(\d{1,2}):(\d{2})\s*$/i.exec(when);
+  const day = match ? WEEKDAYS[match[1] .toLowerCase()] : undefined;
+  if (!match || day === undefined) return '<REQUIRED: minute hour * * weekday>';
+  return `${Number(match[3])} ${Number(match[2])} * * ${day}`;
 }
 
 export const VCF_OPERATIONS_AUTOMATIONS                                 = [
@@ -70,10 +53,10 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
     label: 'Send an alert to a webhook',
     group: 'Notification',
     description:
-      'A notification rule that posts an alert to a webhook — a runbook, a ticket queue, a chat channel — rather than to a mailbox nobody reads. This is the piece that closes the gap the Aria Ops page keeps finding: alert definitions that fire and tell nobody.',
+      'A notification rule that sends matching alerts to a webhook plugin — a runbook, a ticket queue, a chat channel — rather than to a mailbox nobody reads. The rule decides which alerts; the plugin instance holds the URL. This is the piece that closes the gap the Aria Ops page keeps finding: alert definitions that fire and tell nobody.',
     inputs: [
       { id: 'rule_name', label: 'Rule name', control: 'text', default: 'Critical infrastructure to runbook' },
-      { id: 'endpoint', label: 'Webhook URL', control: 'text', default: 'https://runbooks.example.com/hooks/vcfops', hint: 'Where the alert is posted. No secret in the URL — see the note' },
+      { id: 'endpoint', label: 'Webhook URL (on the plugin)', control: 'text', default: 'https://runbooks.example.com/hooks/vcfops', hint: 'Set on the webhook plugin instance, not on this rule. Used here to check it and to name the plugin to use' },
       {
         id: 'criticality',
         label: 'Only these severities',
@@ -88,7 +71,7 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
       },
       { id: 'resource_kinds', label: 'Only these object kinds', control: 'text', default: 'HostSystem, Datastore, ClusterComputeResource', hint: 'Empty means every kind, which is wider than it sounds' },
       { id: 'alert_ids', label: 'Only these alert definitions', control: 'textarea', default: '', hint: 'One id per line. Empty means every alert definition that passes the filters above' },
-      { id: 'resend_minutes', label: 'Resend every (minutes)', control: 'number', default: 60, min: 0, max: 1440, hint: '0 sends once and never again' },
+      { id: 'on_cancel', label: 'Also send when the alert is cancelled', control: 'toggle', default: true, hint: 'So a ticket the alert opened can be closed by the same channel' },
     ],
     automation: (values                 , name        )             => {
       const ruleName = str(values, 'rule_name', 'Alert to webhook');
@@ -96,7 +79,7 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
       const criticalities = listOf(str(values, 'criticality', ''));
       const kinds = listOf(str(values, 'resource_kinds', ''));
       const alertIds = listOf(str(values, 'alert_ids', ''));
-      const resend = num(values, 'resend_minutes', 60);
+      const onCancel = bool(values, 'on_cancel', true);
       const base = slugOf(name || ruleName, 'notification-rule');
 
       const findings            = [];
@@ -111,25 +94,23 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
       if (/[?&](token|key|secret|signature)=/i.test(endpoint)) {
         findings.push(
           error('vcfops.rule.secret-in-url', 'The webhook URL carries a secret in its query string.', {
-            remediation: 'It will be stored in the rule, exported with the content, and written to every log along the way. Use a header on the webhook plugin instead.',
+            remediation: 'It will be stored on the plugin instance, exported with the content, and written to every log along the way. Put the secret in the plugin’s authentication or a header instead.',
             source: 'ArchToolKit',
           }),
         );
       }
 
+      // Fields as documented for POST /api/notifications/rules. There is no
+      // enabled flag and no URL here: the URL belongs to the plugin instance.
       const payload = {
         name: ruleName,
-        pluginId: '<REQUIRED — the id of the webhook plugin instance>',
-        enabled: true,
-        ruleType: 'ALERT',
-        alertStatuses: ['NEW', 'UPDATED'],
-        criticalities,
-        resourceKindFilters: kinds.map((kind) => ({ resourceKind: kind, adapterKind: 'VMWARE' })),
-        alertDefinitionIdFilters: { values: alertIds },
-        properties: [
-          { name: 'url', value: endpoint },
-          { name: 'resend', value: String(resend) },
-        ],
+        pluginId: `<REQUIRED — the id of the webhook plugin instance that posts to ${endpoint || 'your endpoint'}>`,
+        templateId: '<VERIFY — the payload template id, if your webhook plugin uses payload templates; delete this line if it does not>',
+        alertControlStates: ['OPEN'],
+        alertStatuses: ['NEW', 'UPDATED', ...(onCancel ? ['CANCELED'] : [])],
+        ...(criticalities.length > 0 ? { criticalities } : {}),
+        ...(kinds.length > 0 ? { resourceKindFilters: kinds.map((kind) => ({ adapterKind: 'VMWARE', resourceKind: kind })) } : {}),
+        ...(alertIds.length > 0 ? { alertDefinitionIdFilters: { values: alertIds } } : {}),
       };
 
       return {
@@ -139,7 +120,7 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
         trigger: {
           kind: 'alert',
           detail: alertIds.length > 0 ? `${alertIds.length} named alert definitions, at ${criticalities.join(' or ') || 'any severity'}` : `Any alert definition at ${criticalities.join(' or ') || 'any severity'}${kinds.length > 0 ? ` on ${kinds.join(', ')}` : ''}`,
-          worstCase: resend > 0 ? `once per alert and again every ${resend} minutes while it stays open` : 'once per alert',
+          worstCase: `once when each alert is raised, again each time it is updated${onCancel ? ', and once when it is cancelled' : ''}`,
         },
         scope: {
           what: kinds.length > 0 ? `Alerts on ${kinds.join(', ')}.` : 'Alerts on every object kind.',
@@ -153,27 +134,28 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
         },
         guardrails: [
           { rule: 'Severity and object kind are filtered', because: 'An unfiltered rule posts every informational alert in the estate and trains people to ignore the channel.' },
-          ...(resend > 0 ? [{ rule: `Resends every ${resend} minutes rather than continuously`, because: 'A resend of zero means one message, which is missed; a resend of one minute means a thousand, which is muted.' }] : []),
+          { rule: 'Open alerts only', because: 'alertControlStates is OPEN, so an alert somebody has suspended or suppressed stops posting.' },
         ],
         dryRun: [
-          'Point the URL at a request bin first and let it run for an hour.',
+          'Point the webhook plugin at a request bin first, apply this rule, and let it run for an hour.',
           'Count what arrives. That count is what the endpoint has to survive on a bad night, not on a quiet one.',
         ],
         undo: [
-          'DELETE /suite-api/api/notifications/rules/{id} with the id the apply script printed.',
-          'Or set enabled to false and leave it, which keeps the configuration visible to the next person.',
+          'DELETE /suite-api/api/notifications/rules/{id} with the id the apply script printed (verify the call on your release), or delete the rule in the interface.',
+          'Deleting the rule leaves the webhook plugin in place for anything else that uses it.',
         ],
         told: ['The webhook endpoint itself. Nothing else is notified — this rule replaces no mailbox unless you delete the mailbox rule as well.'],
         requires: [
-          'A webhook plugin instance configured in VCF Operations, and its id.',
-          'A token from POST /suite-api/api/auth/token/acquire, in VCFOPS_TOKEN.',
+          `A webhook plugin instance whose URL is ${endpoint || 'your endpoint'} — the outbound plugin automation in this kit generates one — and its id.`,
+          'VCFOPS_TOKEN, or VCFOPS_USER with VCFOPS_PASSWORD_FILE so the script logs in for itself.',
         ],
         files: {
           [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
-          'apply.sh': applyScript('/suite-api/api/notifications/rules', `${base}.json`, 'README.md'),
+          'apply.sh': applyScript(PLATFORM, [{ method: 'POST', path: '/suite-api/api/notifications/rules', payload: `${base}.json` }], 'DELETE /suite-api/api/notifications/rules/{id}, or delete the rule in the interface.'),
         },
         notes: [
-          'The plugin id is not guessable. GET /suite-api/api/notifications/plugins and take the id of the webhook instance you mean.',
+          'The plugin id is not guessable. GET /suite-api/api/alertplugins and take the pluginId of the webhook instance you mean.',
+          'The URL, any authentication and how often a message may be repeated are properties of the plugin instance, not of this rule. The documented rule has no resend setting; if your release offers one in the interface, set it there and record that you did.',
           'Filters are "empty means everything" in both directions: a rule with nothing set covers the estate, and a rule with an object-kind filter silently stops covering an adapter somebody adds next year.',
         ],
         findings,
@@ -291,7 +273,7 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
         requires: [`The policy "${policy}" to exist, and its id — GET /suite-api/api/policies.`],
         files: {
           [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
-          'apply.sh': applyScript('/suite-api/api/resources/groups', `${base}.json`, 'README.md'),
+          'apply.sh': applyScript(PLATFORM, [{ method: 'POST', path: '/suite-api/api/resources/groups', payload: `${base}.json` }], 'DELETE /suite-api/api/resources/groups/{id}. Deleting a group does not touch its members.'),
         },
         notes: [
           `Put the group on "${policy}" rather than the default policy. A group on the default policy gets the same thresholds as everything else, which makes the group pointless.`,
@@ -308,7 +290,7 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
     label: 'Reclaim idle and oversized VMs on a schedule',
     group: 'Automation Central',
     description:
-      'The reclamation most estates talk about and few turn on: powered-off VMs, idle VMs, oversized VMs, orphaned disks and old snapshots. Generated as a scheduled job with a cap on how much one run may touch, because the failure mode is not "it did nothing" — it is "it did all of it at once".',
+      'The reclamation most estates talk about and few turn on: old snapshots, long powered-off VMs, oversized VMs. Generated as a script rather than a job, because the guardrails that matter — a cap on how much one run may touch, a list read before anything acts — are only real if something enforces them. The script does; Automation Central has no per-run cap.',
     inputs: [
       { id: 'job_name', label: 'Job name', control: 'text', default: 'Monthly reclamation' },
       {
@@ -318,16 +300,14 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
         options: [
           { value: 'snapshots', label: 'Delete snapshots older than N days' },
           { value: 'powered-off', label: 'Delete VMs powered off for N days' },
-          { value: 'orphaned', label: 'Delete orphaned disks' },
-          { value: 'oversized', label: 'Right-size oversized VMs' },
+          { value: 'oversized', label: 'List oversized VMs (report only)' },
         ],
         default: 'snapshots',
       },
-      { id: 'older_than', label: 'Older than (days)', control: 'number', default: 30, min: 1, max: 365 },
+      { id: 'older_than', label: 'Older than (days)', control: 'number', default: 30, min: 1, max: 365, showWhen: { input: 'what', equals: ['snapshots', 'powered-off'] } },
       { id: 'group_name', label: 'Only within group', control: 'text', default: 'Automation — safe to act on' },
       { id: 'max_objects', label: 'Never touch more than (objects per run)', control: 'number', default: 25, min: 1, max: 500 },
-      { id: 'snapshot_first', label: 'Snapshot before changing a VM', control: 'toggle', default: true, showWhen: { input: 'what', equals: ['oversized'] } },
-      { id: 'window', label: 'Run at', control: 'text', default: 'Sunday 02:00', hint: 'Outside the change freeze, inside the maintenance window' },
+      { id: 'window', label: 'Run at', control: 'text', default: 'Sunday 02:00', hint: 'Day and 24-hour time, in the time zone of the host that runs it. Outside the change freeze, inside the maintenance window' },
     ],
     automation: (values                 , name        )             => {
       const jobName = str(values, 'job_name', 'Reclamation');
@@ -335,40 +315,61 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
       const olderThan = num(values, 'older_than', 30);
       const group = str(values, 'group_name', 'Automation — safe to act on');
       const cap = num(values, 'max_objects', 25);
-      const snapshotFirst = bool(values, 'snapshot_first', true);
       const window = str(values, 'window', 'Sunday 02:00');
       const base = slugOf(name || jobName, 'reclaim');
 
-      const WHAT                                                                                                          = {
+                      
+                               
+                                                 
+                                
+                               
+                                                                                        
+                                 
+                                  
+                                   
+                                     
+                                
+       
+      const WHAT                       = {
         snapshots: {
           title: `delete snapshots older than ${olderThan} days`,
           effect: 'irreversible',
           undo: ['A deleted snapshot cannot be restored. What it protected is gone with it.', 'The only real undo is a backup of the VM taken before the run.'],
-          query: `snapshot age > ${olderThan} days`,
+          query: `the stat Disk Space|Snapshot|Age (Days) is ${olderThan} or more`,
+          statKey: 'diskspace|snapshot|age',
+          statNote: 'VERIFY: the key of "Disk Space|Snapshot|Age (Days)". Check it with GET /suite-api/api/resources/{id}/statkeys on one VM that has a snapshot.',
+          threshold: olderThan,
+          requireOff: false,
+          action: 'Delete Unused Snapshots for VM',
         },
         'powered-off': {
           title: `delete VMs powered off for more than ${olderThan} days`,
           effect: 'irreversible',
-          undo: ['Restore from backup. There is no other way back.', 'Consider moving to a folder and waiting a further 30 days instead of deleting — the generated job supports that as its first phase.'],
-          query: `power state = off for > ${olderThan} days`,
-        },
-        orphaned: {
-          title: 'delete orphaned virtual disks',
-          effect: 'irreversible',
-          undo: ['Restore from backup. An orphaned disk that turns out not to be orphaned is somebody’s data.'],
-          query: 'disk not attached to any registered VM',
+          undo: ['Restore from backup. There is no other way back.'],
+          query: `powered off now (sys|poweredOn is 0), and a powered-off-duration stat of ${olderThan * 1440} minutes or more`,
+          statKey: '',
+          statNote: 'REQUIRED: VCF Operations has no built-in "powered off for N days" metric. Create a super metric that counts minutes powered off (reset when sys|poweredOn is 1) and set STAT_KEY to its key. It only counts from the day it is created.',
+          threshold: olderThan * 1440,
+          requireOff: true,
+          action: 'Delete Powered Off VM',
         },
         oversized: {
-          title: 'right-size oversized VMs',
-          effect: 'reversible',
-          undo: ['Set the CPU and memory back to what the run recorded. The job writes the previous values into its own log before changing anything.'],
-          query: 'demand well below allocation over the last 30 days',
+          title: 'list oversized VMs',
+          effect: 'read',
+          undo: ['Nothing to undo. It lists; it does not resize.'],
+          query: 'the stat summary|oversized is 1',
+          statKey: 'summary|oversized',
+          statNote: 'VERIFY: the key of the Oversized flag on a VM, with GET /suite-api/api/resources/{id}/statkeys.',
+          threshold: 1,
+          requireOff: false,
+          action: '',
         },
       };
       const spec = WHAT[what] ?? WHAT['snapshots'] ;
+      const acts = spec.effect !== 'read';
 
       const findings            = [];
-      if (cap > 100) {
+      if (acts && cap > 100) {
         findings.push(
           warning('vcfops.reclaim.cap', `A cap of ${cap} objects in one run is high for something that cannot be undone.`, {
             remediation: 'The cap exists so that a wrong scope is a small incident rather than a large one. Twenty-five is a sensible first number.',
@@ -384,60 +385,169 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
           }),
         );
       }
+      if (what === 'powered-off') {
+        findings.push(
+          info('vcfops.reclaim.no-off-metric', 'How long a VM has been powered off is not a built-in metric, so this needs a super metric before it can find anything.', {
+            remediation: 'Create the super metric, let it run past the threshold, and only then schedule this. Until it has, every VM looks recently powered off.',
+            source: 'ArchToolKit',
+          }),
+        );
+      }
 
-      const job = {
-        name: jobName,
-        description: `ArchToolKit — ${spec.title}, within "${group}", at most ${cap} per run.`,
-        schedule: { recurrence: window, timeZone: '<REQUIRED — e.g. America/New_York>' },
-        enabled: false,
-        scope: { customGroup: group, objectQuery: spec.query },
-        limits: { maxObjectsPerRun: cap, requireDryRunFirst: true },
-        ...(what === 'oversized' ? { safety: { snapshotBefore: snapshotFirst, recordPreviousSizing: true } } : {}),
-      };
+      const cron = cronOf(window);
+      const script = [
+        '#!/usr/bin/env bash',
+        `# ${jobName}: ${spec.title}, within the custom group "${group}".`,
+        '#',
+        acts
+          ? `# Without --execute this lists what it would act on and changes nothing. With it, it acts on at most ${cap} of them, largest first, through the VCF Operations action API, and writes what it sent to a log.`
+          : '# Reads only. It lists; there is no --execute.',
+        '#',
+        '# Scope is the group members, filtered by one stat. Members that do not report the stat are left out.',
+        'set -euo pipefail',
+        '',
+        ...authPreamble(PLATFORM),
+        `: "\${GROUP_ID:?set GROUP_ID to the id of the custom group \\"${group}\\"}"`,
+        'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+        '',
+        `MAX_OBJECTS=${cap}  # the cap. Change it here, in review, not on the command line.`,
+        `THRESHOLD=${spec.threshold}`,
+        `# ${spec.statNote}`,
+        spec.statKey ? `STAT_KEY="\${STAT_KEY:-${spec.statKey}}"` : ': "${STAT_KEY:?set STAT_KEY to the key of your powered-off-duration super metric, in minutes}"',
+        `REQUIRE_OFF=${spec.requireOff}`,
+        'LOG_DIR="${LOG_DIR:-.}"',
+        '',
+        'EXECUTE=0',
+        ...(acts ? ['[[ "${1:-}" == "--execute" ]] && EXECUTE=1'] : ['[[ "${1:-}" == "--execute" ]] && { echo "This one is report only." >&2; exit 2; }']),
+        '',
+        'api() {',
+        '  local method="$1" path="$2"; shift 2',
+        `  curl -sS -f -X "$method" "https://\${VCFOPS_HOST}\${path}" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" "$@"`,
+        '}',
+        '',
+        'members=$(api GET "/suite-api/api/resources/groups/${GROUP_ID}/members?pageSize=10000" |',
+        `  jq -c '[.resourceList[]? | select(.resourceKey.resourceKindKey == "VirtualMachine") | {id: .identifier, name: .resourceKey.name}]')`,
+        'if [[ "$(jq length <<<"$members")" == 0 ]]; then',
+        '  echo "The group has no VM members. Nothing to do."',
+        '  exit 0',
+        'fi',
+        '',
+        'stats=$(jq -n --argjson m "$members" --arg k "$STAT_KEY" \'{resourceId: [$m[].id], statKey: [$k, "sys|poweredOn"], maxSamples: 1}\' |',
+        '  api POST /suite-api/api/resources/stats/latest/query -H "Content-Type: application/json" --data @-)',
+        '',
+        'candidates=$(jq -c --argjson m "$members" --arg k "$STAT_KEY" --argjson t "$THRESHOLD" --argjson off "$REQUIRE_OFF" \'',
+        '  ($m | map({(.id): .name}) | add) as $names',
+        '  | [ .values[]?',
+        '      | .resourceId as $id',
+        '      | ([."stat-list".stat[]? | {(.statKey.key): ((.data // []) | last)}] | add // {}) as $s',
+        '      | {id: $id, name: $names[$id], value: $s[$k], on: $s["sys|poweredOn"]}',
+        '      | select(.value != null and .value >= $t)',
+        '      | select(($off | not) or .on == 0) ]',
+        '  | sort_by(-.value)\' <<<"$stats")',
+        '',
+        'total=$(jq length <<<"$candidates")',
+        'echo "${total} of the group\'s VMs match (${STAT_KEY} >= ${THRESHOLD})."',
+        'jq -r \'.[] | "  \\(.value)\\t\\(.name)\\t\\(.id)"\' <<<"$candidates"',
+        ...(acts
+          ? [
+              'selected=$(jq -c --argjson n "$MAX_OBJECTS" \'.[:$n]\' <<<"$candidates")',
+              'if (( total > MAX_OBJECTS )); then',
+              '  echo "WARNING: ${total} match; only the first ${MAX_OBJECTS} would be acted on. The rest wait for the next run." >&2',
+              'fi',
+              '',
+              'if (( ! EXECUTE )); then',
+              '  if [[ -n "${ACTION_ID:-}" && "$total" != 0 ]]; then',
+              '    echo "What the action would be sent for the first of them (populated, not run):"',
+              '    jq -n --arg id "$(jq -r \'.[0].id\' <<<"$selected")" \'{contextResourceId: [$id]}\' |',
+              '      api POST "/suite-api/api/actions/${ACTION_ID}/query" -H "Content-Type: application/json" --data @- | jq \'.actionExecution // .["action-execution"]\'',
+              '  fi',
+              '  echo "DRY RUN: nothing was changed. Read the list in full, then re-run with --execute."',
+              '  exit 0',
+              'fi',
+              '',
+              `: "\${ACTION_ID:?set ACTION_ID: GET /suite-api/api/actiondefinitions and take the id of the action named like \\"${spec.action}\\"}"`,
+              'LOG="${LOG_DIR}/reclaim-$(date +%Y%m%d-%H%M%S).log"',
+              'for id in $(jq -r \'.[].id\' <<<"$selected"); do',
+              '  body=$(jq -n --arg id "$id" \'{contextResourceId: [$id]}\' |',
+              '    api POST "/suite-api/api/actions/${ACTION_ID}/query" -H "Content-Type: application/json" --data @- |',
+              '    jq -c \'.actionExecution // .["action-execution"]\')',
+              '  if [[ -z "$body" || "$body" == null ]]; then',
+              '    echo "The action could not be populated for ${id}; stopping here." >&2',
+              '    exit 1',
+              '  fi',
+              '  echo "$(date -u +%FT%TZ) send ${id} ${body}" >>"$LOG"',
+              '  task=$(api POST "/suite-api/api/actions/${ACTION_ID}" -H "Content-Type: application/json" --data "$body" | jq -r \'.values[]?\')',
+              '  echo "$(date -u +%FT%TZ) ${id} task ${task}" | tee -a "$LOG"',
+              'done',
+              'echo "Done. Check each task with GET /suite-api/api/actions/{taskId}/status; the log is ${LOG}."',
+            ]
+          : ['(( total > 0 )) && exit 1', 'exit 0']),
+        '',
+      ].join('\n');
+
+      const crontab = [
+        `# ${jobName}. Written disabled: the line below is commented out.`,
+        '# Uncomment it only after a dry run has been read in full, and after GROUP_ID',
+        `# and ${acts ? 'ACTION_ID' : 'STAT_KEY if you changed it'} have been checked. Cron runs in the host's time zone.`,
+        '# No secret here: the script logs in from the password file.',
+        `# ${cron} ${scheduledEnv(PLATFORM)} GROUP_ID=<id>${acts ? ' ACTION_ID=<id>' : ''}${spec.statKey ? '' : ' STAT_KEY=<key>'} LOG_DIR=/var/log/archtoolkit /opt/archtoolkit/${base}.sh${acts ? ' --execute' : ''} >>/var/log/archtoolkit/${base}.log 2>&1`,
+        '',
+      ].join('\n');
 
       return {
         platform: PLATFORM,
         title: `${jobName} — ${spec.title}`,
         effect: spec.effect,
-        trigger: { kind: 'schedule', detail: `${window}, in the time zone you set`, worstCase: `once a week, up to ${cap} objects each time` },
+        trigger: { kind: 'schedule', detail: `${window}, from cron on the host that runs it`, worstCase: acts ? `once a week, up to ${cap} objects each time` : 'once a week, a list' },
         scope: {
-          what: `Objects in the custom group "${group}" matching: ${spec.query}.`,
+          what: `VMs in the custom group "${group}" where ${spec.query}.`,
           decidedBy: [
-            `Membership of the custom group "${group}".`,
-            `The query: ${spec.query}.`,
-            `The cap: at most ${cap} objects in any one run.`,
+            `Membership of the custom group "${group}", read at the start of each run.`,
+            `The stat: ${spec.query}. A VM that does not report it is left out.`,
+            ...(acts ? [`The cap: at most ${cap} objects in any one run, largest value first.`] : []),
+            ...(acts ? [`What the action "${spec.action}" does with the parameters VCF Operations populates for it — the dry run prints them.`] : []),
           ],
-          ifWrong: spec.effect === 'irreversible'
-            ? `Up to ${cap} objects are destroyed per run, and they do not come back. This is why the cap is here and why the job is created disabled.`
-            : `Up to ${cap} VMs are resized, which is reversible but will be noticed.`,
+          ifWrong: acts
+            ? `Up to ${cap} objects are destroyed per run, and they do not come back. This is why the cap is in the script and the schedule is written commented out.`
+            : 'A wrong list, read by somebody who then acts on it by hand.',
         },
         guardrails: [
-          { rule: `At most ${cap} objects in one run`, because: 'A wrong scope with a cap is an incident; a wrong scope without one is an outage.' },
-          { rule: 'Created disabled', because: 'Nothing generated here starts running because a file was applied. Somebody has to turn it on deliberately.' },
-          { rule: 'Dry run required before the first real run', because: 'The list it prints is the only place a wrong scope is visible before it acts.' },
-          ...(what === 'oversized' && snapshotFirst ? [{ rule: 'Snapshot before resizing', because: 'A resize that needs backing out at 3am needs something to back out to — and the snapshot is deleted by the job on success.' }] : []),
-          ...(what === 'powered-off' ? [{ rule: 'Move to a holding folder before deleting', because: 'A VM in a folder for thirty days is recoverable by anyone; a deleted VM needs the backup team.' }] : []),
+          ...(acts
+            ? [
+                { rule: `At most ${cap} objects in one run, enforced by the script`, because: 'A wrong scope with a cap is an incident; a wrong scope without one is an outage.' },
+                { rule: 'Dry run unless --execute is given', because: 'The list it prints is the only place a wrong scope is visible before it acts.' },
+                { rule: 'The crontab line is written commented out', because: 'Nothing generated here starts running because a file was copied. Somebody has to turn it on deliberately.' },
+                { rule: 'Stops at the first object the action cannot be populated for', because: 'An action that does not fit one VM is a sign it does not fit the rest.' },
+              ]
+            : [{ rule: 'It only reads', because: 'Resizing is a change a person makes from this list, not something a schedule does.' }]),
+          ...(spec.requireOff ? [{ rule: 'Powered off now, as well as for long enough', because: 'A super metric that has stopped updating still says ninety days. The live power state is the second check.' }] : []),
+          { rule: 'VMs that do not report the stat are left out', because: 'A missing number is not a zero, and it is not a match either.' },
         ],
         dryRun: [
-          'The job is generated with enabled:false and requireDryRunFirst:true.',
-          'Run it once in report mode and read the object list in full — not the count, the list.',
+          'Run the script with no arguments. It prints every match with its value, and, if ACTION_ID is set, the action body it would send for the first.',
+          'Read the list in full — not the count, the list.',
           'Expect to find something in it that should not be. That is what the exclusion tag on the group is for.',
         ],
         undo: spec.undo,
-        told: [
-          'The job writes what it touched to its own run log.',
-          'Wire it to the notification rule in this kit so that the record leaves the appliance — a run log nobody reads is not a record.',
-        ],
+        told: acts
+          ? ['The script writes each object and the task id it started to a log in LOG_DIR.', 'Wire the log or the cron mail somewhere a person reads — a run log nobody reads is not a record.']
+          : ['Whoever reads the cron output. It exits 1 when it finds anything, so a scheduler can alert on that.'],
         requires: [
-          `The custom group "${group}" to exist and to be narrower than you first think.`,
-          'Actions enabled in VCF Operations, with a vCenter account that has the rights to do what this job does — and no more.',
+          `The custom group "${group}" to exist and to be narrower than you first think, and its id in GROUP_ID.`,
+          'jq, curl, and VCFOPS_USER with VCFOPS_PASSWORD_FILE for the scheduled run.',
+          ...(acts ? [`The action "${spec.action}" (name as in your release — verify it) enabled, with a vCenter account that has the rights to do this and no more.`] : []),
+          ...(spec.statKey ? [] : ['A super metric that measures how long a VM has been powered off.']),
         ],
         files: {
-          [`${base}.json`]: `${JSON.stringify(job, null, 2)}\n`,
-          'apply.sh': applyScript('/suite-api/api/actions/jobs', `${base}.json`, 'README.md'),
+          [`${base}.sh`]: script,
+          'crontab.txt': crontab,
         },
         notes: [
           'Reclamation is where automation earns its keep and where it does the most damage. Both facts are about the same property: it acts on many objects at once.',
+          `Scope comes from ${spec.statKey ? `the stat ${spec.statKey}` : 'STAT_KEY'}. ${spec.statNote}`,
+          ...(acts ? ['The action body is whatever POST /suite-api/api/actions/{id}/query populates for each VM, sent back unchanged. If the populated parameters are not what you expect — which snapshots, which age — this script is not right for your release; stop and use the interface.'] : []),
+          'Automation Central in the interface has a Reclaim job that does the same on a schedule, with a preview of the affected VMs. It has no per-run cap, which is why this is a script.',
+          'Orphaned disks are not here: there is no documented suite-API call that lists them. Use the Reclaim page in the interface.',
           'The account the action runs as decides what is actually possible. Give it exactly the rights for this job rather than an administrator, and the blast radius is bounded by vCenter as well as by the cap.',
         ],
         findings,
@@ -455,18 +565,21 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
     inputs: [
       { id: 'window_name', label: 'Window name', control: 'text', default: 'Monthly patching' },
       { id: 'group_name', label: 'Applies to group', control: 'text', default: 'Production hosts' },
-      { id: 'starts', label: 'Starts', control: 'text', default: 'Third Saturday 22:00' },
+      { id: 'policy_name', label: 'Through the policy', control: 'text', default: 'Production hosts — maintenance', hint: 'A maintenance schedule takes effect only as part of a policy, on every object that policy covers' },
+      { id: 'starts', label: 'Starts', control: 'text', default: 'Third Saturday 22:00', hint: 'First, second, third, fourth or last; a weekday; a 24-hour time' },
       { id: 'hours', label: 'Length (hours)', control: 'number', default: 6, min: 1, max: 24 },
       { id: 'alert_on_overrun', label: 'Raise an alert if it has not ended', control: 'toggle', default: true },
     ],
     automation: (values                 , name        )             => {
       const windowName = str(values, 'window_name', 'Maintenance');
       const group = str(values, 'group_name', 'Production hosts');
+      const policy = str(values, 'policy_name', 'Production hosts — maintenance');
       const starts = str(values, 'starts', 'Third Saturday 22:00');
       const hours = num(values, 'hours', 6);
       const overrun = bool(values, 'alert_on_overrun', true);
       const base = slugOf(name || windowName, 'maintenance-window');
 
+      const parsed = /^\s*(first|second|third|fourth|last)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+(\d{1,2}):(\d{2})\s*$/i.exec(starts);
       const findings            = [];
       if (!overrun) {
         findings.push(
@@ -484,65 +597,115 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
           }),
         );
       }
+      if (!parsed) {
+        findings.push(
+          warning('vcfops.window.unparsed', `"${starts}" is not in the form "Third Saturday 22:00", so the schedule in the payload is left for you to fill in.`, {
+            source: 'ArchToolKit',
+          }),
+        );
+      }
 
+      const hour = parsed ? Number(parsed[3]) : 0;
+      const minute = parsed ? Number(parsed[4]) : 0;
+      // Fields as documented for the maintenance-schedule and schedule data
+      // structures. How MONTHLY combines weeksOfTheMonth with daysOfTheWeek is
+      // not spelled out in the reference; the note says to check it.
       const schedule = {
-        name: windowName,
-        description: `ArchToolKit — suppress alerting on "${group}" for ${hours} hours from ${starts}.`,
-        recurrence: starts,
-        durationMinutes: hours * 60,
-        timeZone: '<REQUIRED — e.g. America/New_York>',
-        appliesTo: { customGroup: group },
-        suppressNotifications: true,
+        key: windowName,
+        schedule: parsed
+          ? {
+              scheduleType: 'MONTHLY',
+              months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+              weeksOfTheMonth: [parsed[1] .toUpperCase()],
+              daysOfTheWeek: [parsed[2] .toUpperCase()],
+              hour,
+              minuteOfTheHour: minute,
+              duration: hours * 60,
+              timeZone: '<REQUIRED — the time zone the window is written in; the API defaults to the server’s. Check the accepted format against an existing schedule>',
+            }
+          : {
+              scheduleType: '<REQUIRED — ONCE, DAILY, WEEKLY, MONTHLY or YEARLY>',
+              hour: '<REQUIRED>',
+              minuteOfTheHour: '<REQUIRED>',
+              duration: hours * 60,
+              timeZone: '<REQUIRED>',
+            },
       };
+
+      const checkAt = `${minute} ${(hour + hours + 1) % 24} * * *`;
+      const check = readScript(PLATFORM, `Is anything still in maintenance that should not be? Run daily, an hour after "${windowName}" is due to end.`, [
+        '# Every object VCF Operations has in maintenance right now, scheduled or manual.',
+        '# This is estate-wide, not just this window: outside a window nothing should be',
+        '# in maintenance, and anything that is has alerting off without a symptom.',
+        'found=$(get "/suite-api/api/resources?resourceState=MAINTAINED&resourceState=MAINTAINED_MANUAL&pageSize=1000" |',
+        '  jq -r \'.resourceList[]? | "\\(.resourceKey.resourceKindKey)\\t\\(.resourceKey.name)\\t\\(.identifier)"\')',
+        'if [[ -n "$found" ]]; then',
+        `  echo "WARNING: still in maintenance after \\"${windowName}\\" should have ended:" >&2`,
+        '  echo "$found" >&2',
+        '  echo "To end it for an object: DELETE /suite-api/api/resources/maintained?id=<identifier>" >&2',
+        '  exit 1',
+        'fi',
+        'echo "Nothing is in maintenance."',
+      ]);
 
       return {
         platform: PLATFORM,
         title: `${windowName} — stop alerting on "${group}" for ${hours} hours`,
         effect: 'reversible',
-        trigger: { kind: 'schedule', detail: `${starts}, for ${hours} hours`, worstCase: `${hours} hours a month with no alerting on that group` },
+        trigger: { kind: 'schedule', detail: `${starts}, for ${hours} hours`, worstCase: `${hours} hours a month with no alerting and no collection on everything the policy covers` },
         scope: {
-          what: `Every object in the custom group "${group}".`,
-          decidedBy: [`Membership of "${group}" at the moment the window opens.`, 'Objects added to the group mid-window are covered from the next evaluation.'],
-          ifWrong: 'Alerting is off for objects you did not mean to include, for the length of the window, and nothing reports that it is off.',
+          what: `Every object the policy "${policy}" covers, of the object type the schedule is set on in that policy — which should be exactly the group "${group}".`,
+          decidedBy: [
+            `The policy "${policy}": the schedule has no effect until it is part of a policy.`,
+            `The groups that policy is assigned to — "${group}" and nothing else, if this is right.`,
+            'The object type the schedule is selected on inside the policy.',
+            'Policy priority: a higher-priority policy on the same object wins, and then this window does not apply to it.',
+          ],
+          ifWrong: 'Collection and alerting are off for objects you did not mean to include, for the length of the window, and nothing reports that they are off.',
         },
         guardrails: [
           { rule: `Bounded to ${hours} hours`, because: 'A maintenance schedule with no end is the commonest way an estate ends up unmonitored for a month.' },
-          ...(overrun ? [{ rule: 'An alert fires if the window has not closed on time', because: 'This is the only symptom of a window that stuck open. Without it, nothing is wrong and nothing is watching.' }] : []),
+          ...(overrun ? [{ rule: 'A daily check exits 1 if anything is still in maintenance', because: 'This is the only symptom of a window that stuck open. Without it, nothing is wrong and nothing is watching.' }] : []),
         ],
-        dryRun: ['Create it, then check the objects it covers before the first window opens — a group is easy to widen by accident.'],
-        undo: ['DELETE the schedule, or end the window early from the interface. Alerts resume immediately; anything that fired during the window was suppressed, not queued.'],
-        told: overrun ? ['An overrun alert, if the window does not close. Send it somewhere a human reads at the weekend, because that is when this runs.'] : ['Nobody. Consider turning the overrun check on.'],
-        requires: [`The custom group "${group}".`],
+        dryRun: [
+          'Run apply.sh with no arguments; it prints what it would send.',
+          `After attaching it to "${policy}", open two or three objects in "${group}" and check that the policy shown is "${policy}" — then one object outside the group, to check it is not.`,
+        ],
+        undo: [
+          'Remove the schedule from the policy, or delete it: DELETE /suite-api/api/maintenanceschedules with its id (check the parameter name on your release), or Delete under Maintenance Schedules in the interface.',
+          'To end a window early for an object: DELETE /suite-api/api/resources/maintained?id=<identifier>. Collection resumes; what happened during the window was not collected and is not replayed.',
+        ],
+        told: overrun ? ['Whoever reads the overrun check’s output. It exits 1, so the scheduler that runs it can alert. Send it somewhere a human reads at the weekend, because that is when this runs.'] : ['Nobody. Consider turning the overrun check on.'],
+        requires: [`The custom group "${group}".`, `A policy "${policy}" assigned to that group and nothing else.`],
         files: {
           [`${base}.json`]: `${JSON.stringify(schedule, null, 2)}\n`,
+          'apply.sh': applyScript(PLATFORM, [{ method: 'POST', path: '/suite-api/api/maintenanceschedules', payload: `${base}.json` }], 'remove it from the policy, or DELETE /suite-api/api/maintenanceschedules with its id.'),
+          'attach-to-policy.txt': [
+            `Attach "${windowName}" to "${policy}" — in the interface; there is no documented API call for this step.`,
+            '',
+            '1. Operate > Administration > Configurations > Maintenance Schedules: check the schedule is listed with the right day, time, length and time zone.',
+            `2. Open the policy "${policy}" for editing (Configure > Policies in older releases).`,
+            `3. In the policy, select the object type the objects in "${group}" are, and set its maintenance schedule to "${windowName}". The label differs between releases — look for Maintenance Schedule.`,
+            `4. Check the policy is assigned to "${group}" and to nothing else, and that no higher-priority policy covers the same objects.`,
+            '5. Save. The window applies from its next start.',
+            '',
+          ].join('\n'),
           ...(overrun
             ? {
-                'overrun-check.sh': [
-                  '#!/usr/bin/env bash',
-                  '# Does a maintenance window that should have closed still look open?',
-                  '#',
-                  '# Run this an hour after the window was due to end. It reads only; it',
-                  '# changes nothing and closes nothing, because closing a window that is',
-                  '# genuinely still needed is its own incident.',
-                  'set -euo pipefail',
-                  ': "${VCFOPS_HOST:?}"',
-                  ': "${VCFOPS_TOKEN:?}"',
-                  '',
-                  'curl -sS -f \\',
-                  '  "https://${VCFOPS_HOST}/suite-api/api/maintenanceschedules" \\',
-                  '  -H "Authorization: vRealizeOpsToken ${VCFOPS_TOKEN}" \\',
-                  '  -H "Accept: application/json" |',
-                  `  grep -q '"name"[[:space:]]*:[[:space:]]*"${windowName}"' &&`,
-                  `  echo "WARNING: ${windowName} still present — check whether the window closed" >&2`,
+                'overrun-check.sh': check,
+                'crontab.txt': [
+                  `# Daily, an hour after "${windowName}" is due to end. Cron runs in the host's time zone —`,
+                  '# make that the same zone as the schedule. No secret here: the script logs in from the password file.',
+                  `${checkAt} ${scheduledEnv(PLATFORM)} /opt/archtoolkit/overrun-check.sh >>/var/log/archtoolkit/overrun-check.log 2>&1 || logger -t archtoolkit "maintenance overrun: ${windowName}"`,
                   '',
                 ].join('\n'),
               }
             : {}),
-          'apply.sh': applyScript('/suite-api/api/maintenanceschedules', `${base}.json`, 'README.md'),
         },
         notes: [
-          'Suppressed is not the same as not raised. The alerts still exist in the interface afterwards, which is useful the morning after a patching run that went badly.',
-          'A maintenance window silences alerting. It does not stop an automation firing — check whether anything scheduled overlaps it.',
+          'A maintenance schedule does more than silence alerts: while an object is in maintenance VCF Operations stops collecting from it and cancels its active alerts. The morning after, there is a gap in the charts, not a queue of suppressed alerts.',
+          `VERIFY: the payload asks for the ${parsed ? `${parsed[1] .toLowerCase()} ${parsed[2] .toLowerCase()}` : 'given day'} of every month. The API reference lists the fields but not how MONTHLY combines weeksOfTheMonth with daysOfTheWeek — after applying, read the schedule back in the interface and check it says what you meant.`,
+          'A maintenance window stops alerting. It does not stop an automation firing — check whether anything scheduled overlaps it.',
         ],
         findings,
       };
@@ -595,25 +758,64 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
         findings.push(error('vcfops.report.no-recipient', 'No recipients, so this report is generated and delivered to nobody.', { source: 'ArchToolKit' }));
       }
 
+      // Fields as documented for POST /api/reportdefinitions/{id}/schedules.
+      // The ids are filled in by apply.sh from the environment.
       const schedule = {
-        reportSchedules: [
-          {
-            reportDefinitionID: '<REQUIRED — GET /suite-api/api/reportdefinitions and match by name>',
-            resourceRef: { name: scopeObject, resourceKind: 'vSphere World', adapterKind: 'VMWARE' },
-            recurrence: { recurrenceType: cadence === 'weekly' ? 'WeeklyRecurrence' : cadence === 'quarterly' ? 'MonthlyDayRecurrence' : 'MonthlyDayRecurrence', recurrencePeriod: cadence === 'quarterly' ? 3 : 1, recurrenceStartHour: 7, recurrenceStartMinute: 0, recurrenceTimeZoneID: '<REQUIRED>' },
-            emailRecipients: recipients.join(';'),
-            sendEmail: recipients.length > 0,
-            uploadReport: false,
-            locale: 'en',
-          },
-        ],
+        reportDefinitionId: '<set by apply.sh from REPORT_DEFINITION_ID>',
+        resourceId: ['<set by apply.sh from RESOURCE_ID>'],
+        reportScheduleType: cadence === 'weekly' ? 'WEEKLY' : 'MONTHLY',
+        recurrence: cadence === 'quarterly' ? 3 : 1,
+        ...(cadence === 'weekly' ? { daysOfTheWeek: ['MONDAY'] } : {}),
+        dayOfTheMonth: 1,
+        startDate: '<REQUIRED — the first date it may run, e.g. 2026-10-01; check the format against GET of an existing schedule>',
+        startHour: 7,
+        startMinute: 0,
+        emailAddresses: recipients,
+        relativePath: [],
       };
+      const apply = [
+        '#!/usr/bin/env bash',
+        `# Schedule the report "${reportName}" in VCF Operations.`,
+        '#',
+        '# Schedules created through the API run in GMT, whatever the interface shows',
+        '# for schedules made by hand. 07:00 here is 07:00 GMT.',
+        '#',
+        '# Without --execute this only prints what it would send. Not idempotent: a',
+        '# second run makes a second schedule, and a second email.',
+        'set -euo pipefail',
+        '',
+        ...authPreamble(PLATFORM),
+        `: "\${REPORT_DEFINITION_ID:?set REPORT_DEFINITION_ID: GET /suite-api/api/reportdefinitions and match the name \\"${reportName}\\"}"`,
+        `: "\${RESOURCE_ID:?set RESOURCE_ID to the id of \\"${scopeObject}\\": GET /suite-api/api/resources?name=...}"`,
+        'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+        '',
+        `body=$(jq --arg d "$REPORT_DEFINITION_ID" --arg r "$RESOURCE_ID" '.reportDefinitionId = $d | .resourceId = [$r]' ${base}.json)`,
+        'if grep -q "<REQUIRED" <<<"$body"; then',
+        `  echo "${base}.json still has a <REQUIRED> value in it. Fill it in first." >&2`,
+        '  exit 2',
+        'fi',
+        '',
+        'path="/suite-api/api/reportdefinitions/${REPORT_DEFINITION_ID}/schedules"',
+        'if [[ "${1:-}" != "--execute" ]]; then',
+        '  echo "DRY RUN: would POST to https://${VCFOPS_HOST}${path}:"',
+        '  echo "$body"',
+        '  echo "Nothing was changed. Re-run with --execute."',
+        '  exit 0',
+        'fi',
+        '',
+        `curl -sS -f -X POST "https://\${VCFOPS_HOST}\${path}" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data "$body"`,
+        'echo',
+        '',
+        '# Undo: GET ${path} to find the schedule id, then',
+        '#   DELETE /suite-api/api/reportdefinitions/${REPORT_DEFINITION_ID}/schedules/{scheduleId}',
+        '',
+      ].join('\n');
 
       return {
         platform: PLATFORM,
         title: `${reportName} — sent ${cadence} to ${recipients.join(', ') || 'nobody'}`,
         effect: 'read',
-        trigger: { kind: 'schedule', detail: `${cadence}, at 07:00 in the time zone you set`, worstCase: cadence === 'weekly' ? 'once a week' : 'once a month' },
+        trigger: { kind: 'schedule', detail: `${cadence}, at 07:00 GMT — schedules made through the API run in GMT`, worstCase: cadence === 'weekly' ? 'once a week' : cadence === 'quarterly' ? 'once a quarter' : 'once a month' },
         scope: {
           what: `The report "${reportName}", run against ${scopeObject}.`,
           decidedBy: ['The report definition itself and the views in it.', `The object it is run for: ${scopeObject}.`],
@@ -624,15 +826,23 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
           ...(recipients.length > 0 ? [{ rule: 'Goes to a named list', because: 'A scheduled report with no recipient is a file generated onto an appliance and deleted by retention.' }] : []),
         ],
         dryRun: ['Run the report once by hand for the same object and read it. A report nobody has read once will not be read monthly.'],
-        undo: ['DELETE /suite-api/api/reports/schedules/{id}. Nothing else changes.'],
+        undo: [
+          'GET /suite-api/api/reportdefinitions/{id}/schedules to find the schedule id, then DELETE /suite-api/api/reportdefinitions/{id}/schedules/{scheduleId}.',
+          'Or delete it from the report definition’s schedules in the interface. Nothing else changes.',
+        ],
         told: recipients.length > 0 ? [`${recipients.join(', ')}, every ${cadence === 'weekly' ? 'week' : cadence === 'quarterly' ? 'quarter' : 'month'}.`] : ['Nobody, which makes this schedule pointless.'],
-        requires: [`The report definition "${reportName}" to exist, and its id.`, 'An outbound mail plugin configured, and allowed through to your relay.'],
+        requires: [
+          `The report definition "${reportName}" to exist, and its id in REPORT_DEFINITION_ID.`,
+          `The id of ${scopeObject} in RESOURCE_ID. The API takes one resource per schedule.`,
+          'An outbound mail plugin configured, and allowed through to your relay. If there is more than one, add emailPluginId to the payload.',
+        ],
         files: {
           [`${base}.json`]: `${JSON.stringify(schedule, null, 2)}\n`,
-          'apply.sh': applyScript('/suite-api/api/reports/schedules', `${base}.json`, 'README.md'),
+          'apply.sh': apply,
         },
         notes: [
-          `Formats requested: ${formats.join(', ')}. PDF is what people read; CSV is what they actually use, because the first thing anybody does with a capacity report is sort it.`,
+          `Formats: ${formats.join(', ')}. The schedule has no format field — formats are set on the report definition itself, so check them there. PDF is what people read; CSV is what they actually use, because the first thing anybody does with a capacity report is sort it.`,
+          'The time is GMT. For a report that should land at 07:00 somewhere else, change startHour, and remember that GMT does not move for daylight saving.',
           'If the report has never been scheduled before, check the mail plugin first. A schedule that silently fails to send looks identical to one that is working.',
         ],
         findings,
@@ -720,10 +930,10 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
           { rule: 'Named definitions only, on one object kind', because: 'A policy edit that changes a whole package changes settings nobody reviewed.' },
         ],
         dryRun: [
-          'GET the policy and save it. That file is both the dry run and the undo.',
+          'Run export-first.sh and keep the zip. That file is both the dry run and the undo.',
           'Diff it against this override so that what changes is exactly the list above and nothing else.',
         ],
-        undo: ['Re-import the policy export taken before the change. Keep it with the change record; it is small and it is the only way back.'],
+        undo: ['Re-import the policy export taken before the change (POST /suite-api/api/policies/import?forceImport=true with the zip, or Import under Policies). Keep it with the change record; it is small and it is the only way back.'],
         told: ['Nobody automatically. A policy change is silent, which is why it belongs in a change record rather than in somebody’s afternoon.'],
         requires: [`The policy "${policy}" and its id.`, 'An export of the policy as it is now.'],
         files: {
@@ -731,17 +941,19 @@ export const VCF_OPERATIONS_AUTOMATIONS                                 = [
           'export-first.sh': [
             '#!/usr/bin/env bash',
             '# Take the export that is your only undo, before changing anything.',
+            '#',
+            '# The export is a zip, meant to be re-imported into the same version only.',
             'set -euo pipefail',
-            ': "${VCFOPS_HOST:?}"',
-            ': "${VCFOPS_TOKEN:?}"',
+            ...authPreamble(PLATFORM),
             ': "${POLICY_ID:?set POLICY_ID — GET /suite-api/api/policies and match by name}"',
             '',
+            'out="policy-before-$(date +%Y%m%d-%H%M%S).zip"',
             'curl -sS -f \\',
-            '  "https://${VCFOPS_HOST}/suite-api/api/policies/${POLICY_ID}/export" \\',
-            '  -H "Authorization: vRealizeOpsToken ${VCFOPS_TOKEN}" \\',
-            '  -o "policy-before-$(date +%Y%m%d-%H%M%S).xml"',
+            '  "https://${VCFOPS_HOST}/suite-api/api/policies/export?id=${POLICY_ID}" \\',
+            `  -H "${authHeader(PLATFORM)}" \\`,
+            '  -o "$out"',
             '',
-            'echo "Saved. Keep this with the change record — it is the undo."',
+            'echo "Saved ${out}. Keep it with the change record — it is the undo."',
             '',
           ].join('\n'),
         },
