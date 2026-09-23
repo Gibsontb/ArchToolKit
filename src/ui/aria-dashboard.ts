@@ -15,8 +15,9 @@
  * rectangle pretending to be a graph.
  */
 
-import { el, append, clear, replace } from './dom.ts';
+import { el, append, clear, replace, downloadFile } from './dom.ts';
 import { card } from './components.ts';
+import { dashboardSheet } from '../aria/contact-sheet.ts';
 import { DASHBOARD_COLUMNS, dashboardRows, widgetFamily, type Dashboard, type ViewDefinition } from '../aria/aria.ts';
 
 /** Row height in pixels. Aria's rows are short; this reads at a glance. */
@@ -167,6 +168,14 @@ export function dashboardViewer(dashboards: readonly Dashboard[], views: readonl
       el('button', { class: 'btn btn-small', text: '← Previous', on: { click: () => show(at - 1) } }),
       el('button', { class: 'btn btn-small', text: 'Next →', on: { click: () => show(at + 1) } }),
       position,
+      // The whole set as one file: no toolkit, no login, prints to PDF. It is
+      // one button rather than a card because it is one thing you do once.
+      el('button', {
+        class: 'btn btn-small',
+        text: 'Save all as one page…',
+        attrs: { title: `One self-contained HTML file with all ${ordered.length} drawn in it. It carries estate names — treat it like the export.` },
+        on: { click: () => downloadFile('aria-dashboards.html', dashboardSheet(ordered, views), 'text/html') },
+      }),
     ),
   );
 
@@ -184,47 +193,14 @@ export function dashboardViewer(dashboards: readonly Dashboard[], views: readonl
   };
 }
 
-/** A small drawing of every dashboard, for scanning the whole set at once. */
-export function contactGrid(dashboards: readonly Dashboard[], onPick: (dashboard: Dashboard) => void): HTMLElement {
-  const grid = el('div', { class: 'dash-contact' });
-  for (const dashboard of [...dashboards].sort((a, b) => a.name.localeCompare(b.name))) {
-    const thumb = el('button', {
-      class: 'dash-thumb',
-      attrs: { type: 'button', title: `${dashboard.name} — ${dashboard.widgets.length} widgets` },
-      on: { click: () => onPick(dashboard) },
-    });
-    const mini = dashboardCanvas(dashboard);
-    mini.classList.add('is-mini');
-    append(
-      thumb,
-      mini,
-      el(
-        'span',
-        { class: 'dash-thumb-label' },
-        el('strong', { text: dashboard.name || '(unnamed)' }),
-        el('span', { class: 'muted', text: `${dashboard.widgets.length} widgets${dashboard.shared ? '' : ' · private'}` }),
-      ),
-    );
-    append(grid, thumb);
-  }
-  return grid;
-}
-
-/** The viewer and the wall of thumbnails, wired to each other. */
+/** The Dashboards tab: the viewer, and nothing else. */
 export function mountDashboardView(
   container: HTMLElement,
   dashboards: readonly Dashboard[],
   views: readonly ViewDefinition[],
 ): DashboardViewer {
   const viewer = dashboardViewer(dashboards, views);
-  const one = card('Dashboard', viewer.element);
-  const all = card(
-    `All ${dashboards.length}`,
-    el('p', { class: 'muted', text: 'Click any of them to open it above. The drawing is the dashboard’s real layout — every widget is where it was arranged.' }),
-    contactGrid(dashboards, (dashboard) => viewer.show(dashboard.id)),
-  );
-
   clear(container);
-  append(container, one, all);
+  append(container, card('Dashboard', viewer.element));
   return viewer;
 }

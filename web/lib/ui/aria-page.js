@@ -22,8 +22,6 @@ import { countBy, isEmpty, merge, EMPTY_CONTENT, SEVERITY_MEANING,              
 import { readAriaFile } from '../aria/parse.js';
 import { ariaFindings, ariaSummary, unnotifiedAlerts } from '../aria/findings.js';
 import { mountDashboardView } from './aria-dashboard.js';
-import { dashboardSheet } from '../aria/contact-sheet.js';
-import { downloadFile } from './dom.js';
 
 // ---------------------------------------------------------------------------
 // Small shared pieces
@@ -378,68 +376,14 @@ function panesFor(content             )         {
   }
 
   if (content.dashboards.length > 0) {
-    const byName = new Map(countBy(content.dashboards, (dashboard) => dashboard.name).map((row) => [row.name, row.count]));
     panes.push({
       id: 'dashboards',
       label: `Dashboards (${content.dashboards.length})`,
-      mount: (container) => {
-        // Seeing one dashboard is the point of this tab, so the drawing comes
-        // first and the table that searches across them comes after it.
-        const drawn = el('div', {});
-        const viewer = mountDashboardView(drawn, content.dashboards, content.views);
-        append(
-          container,
-          drawn,
-          card(
-            'Take it with you',
-            el('p', { class: 'muted', text: 'One HTML file with every dashboard drawn in it — opens in any browser with no toolkit and nothing to install, and prints to PDF. It carries estate names, so treat it like the export it came from.' }),
-            el(
-              'div',
-              { class: 'btn-row' },
-              el('button', {
-                class: 'btn',
-                text: `Save all ${content.dashboards.length} as one page…`,
-                on: {
-                  click: () => downloadFile('aria-dashboards.html', dashboardSheet(content.dashboards, content.views), 'text/html'),
-                },
-              }),
-            ),
-          ),
-          card(
-            'Dashboards',
-            browser({
-              items: [...content.dashboards].sort((a, b) => a.name.localeCompare(b.name)),
-              note: 'A dashboard that is not shared lives in one person’s account, and leaves when they do.',
-              search: (dashboard) => `${dashboard.name} ${dashboard.widgets.map((widget) => `${widget.type} ${widget.title}`).join(' ')}`,
-              filters: [
-                { label: 'Shared', keep: (dashboard) => dashboard.shared },
-                { label: 'Not shared', keep: (dashboard) => !dashboard.shared },
-                { label: 'A copy of another', keep: (dashboard) => (byName.get(dashboard.name) ?? 0) > 1 },
-                { label: 'Empty', keep: (dashboard) => dashboard.widgets.length === 0 },
-              ],
-              empty: 'No dashboards match.',
-              columns: [
-                { header: 'Dashboard', cell: (dashboard) => dashboard.name || '(unnamed)' },
-                { header: 'Shared', cell: (dashboard) => (dashboard.shared ? el('span', { class: 'pill', text: 'shared' }) : el('span', { class: 'pill warn', text: 'private' })) },
-                { header: 'Copies', cell: (dashboard) => String(byName.get(dashboard.name) ?? 1) },
-                { header: 'Widgets', cell: (dashboard) => String(dashboard.widgets.length) },
-                { header: 'Made of', cell: (dashboard) => el('code', { text: [...new Set(dashboard.widgets.map((widget) => widget.type))].slice(0, 6).join(', ') || '—' }) },
-                {
-                  header: '',
-                  cell: (dashboard) =>
-                    el('button', {
-                      class: 'btn btn-small',
-                      text: 'View',
-                      attrs: { type: 'button' },
-                      on: { click: () => viewer.show(dashboard.id) },
-                    }),
-                },
-              ],
-            }),
-          ),
-          census('Widgets in use', countBy(content.dashboards.flatMap((dashboard) => dashboard.widgets), (widget) => widget.type)),
-        );
-      },
+      // One dashboard at a time, and a way to get to any other. Everything
+      // else that was here — a searchable table, a wall of thumbnails, a
+      // widget census — was a second and third way to do the same job, and
+      // three ways to do one job is not a feature.
+      mount: (container) => mountDashboardView(container, content.dashboards, content.views),
     });
   }
 
