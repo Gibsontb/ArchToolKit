@@ -19,6 +19,8 @@ import { decodeEntities, elements, readAriaFile, sniffJson, textOf, AriaError } 
 import { ariaFindings, ariaSummary, ruleCovers, unnotifiedAlerts } from './findings.ts';
 import { zip } from '../testing/xlsx-fixture.ts';
 import { openZip, looksLikeZip, stripBom } from '../core/zip.ts';
+import { DASHBOARD_COLUMNS, dashboardRows, widgetFamily } from './aria.ts';
+import { dashboardSheet } from './contact-sheet.ts';
 
 const encoder = new TextEncoder();
 const bytes = (text: string): Uint8Array => encoder.encode(text);
@@ -500,5 +502,64 @@ describe('aria/parse: the content package', () => {
     expect(codes.includes('aria.dashboards.missing-view')).toBe(true);
     expect(codes.includes('aria.views.unused')).toBe(true);
     expect(codes.includes('aria.dashboards.unshared')).toBe(true);
+  });
+});
+
+// --- drawing a dashboard ----------------------------------------------------
+
+describe('aria: a dashboard as a drawing', () => {
+  const laidOut = JSON.stringify({
+    dashboards: [
+      {
+        id: 'dash-3',
+        name: 'Cluster capacity',
+        shared: true,
+        widgets: [
+          { type: 'View', title: 'Clusters', gridsterCoords: { x: 1, y: 1, w: 12, h: 8 }, config: { viewDefinitionId: 'view-1' } },
+          { type: 'Scoreboard', title: 'Headroom', gridsterCoords: { x: 1, y: 9, w: 4, h: 8 } },
+          { type: 'AlertList', title: 'Open alerts', gridsterCoords: { x: 5, y: 9, w: 8, h: 4 }, collapsed: true },
+          { type: 'Nonsense', title: 'Off the edge', gridsterCoords: { x: 30, y: 2, w: 40, h: 2 } },
+        ],
+      },
+    ],
+  });
+
+  it('keeps every widget’s position, which is what makes it recognisable', async () => {
+    const content = await read('dash-3.json', laidOut);
+    const dashboard = content.dashboards[0];
+    expect(dashboard?.widgets[0]).toEqual({ type: 'View', title: 'Clusters', x: 1, y: 1, w: 12, h: 8, collapsed: false });
+    expect(dashboard?.widgets[2]?.collapsed).toBe(true);
+    // Rows are one-based, so the height is the furthest bottom edge minus one.
+    expect(dashboardRows(dashboard!)).toBe(16);
+  });
+
+  it('groups widget types into families, because twenty-nine colours is a mosaic', () => {
+    expect(widgetFamily('MetricChart')).toBe('chart');
+    expect(widgetFamily('ResourceList')).toBe('table');
+    expect(widgetFamily('ProblemAlertsList')).toBe('alert');
+    expect(widgetFamily('TopologyGraph')).toBe('topology');
+    expect(widgetFamily('SomethingNew')).toBe('other');
+  });
+
+  it('writes one self-contained page with every dashboard on it', async () => {
+    const content = await read('dash-3.json', laidOut);
+    const html = dashboardSheet(content.dashboards, [{ id: 'view-1', name: 'Cluster capacity table', subjects: [] }]);
+
+    expect(html.startsWith('<!doctype html>')).toBe(true);
+    // Self-contained: no script, and nothing fetched from anywhere.
+    expect(html.includes('<script')).toBe(false);
+    expect(/https?:\/\//.test(html)).toBe(false);
+    expect(html.includes('Cluster capacity')).toBe(true);
+    expect(html.includes('shows: Cluster capacity table')).toBe(true);
+    // It says what it is before someone mails it to a vendor.
+    expect(html.includes('describes a production estate')).toBe(true);
+  });
+
+  it('keeps a widget dragged off the edge inside the twelve columns', async () => {
+    const content = await read('dash-3.json', laidOut);
+    const html = dashboardSheet(content.dashboards, []);
+    // Column 30 span 40 would otherwise push the whole row sideways.
+    expect(html.includes('grid-column:30')).toBe(false);
+    expect(html.includes(`grid-column:${DASHBOARD_COLUMNS} / span 1`)).toBe(true);
   });
 });

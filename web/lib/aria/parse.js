@@ -508,10 +508,21 @@ function dashboardsFrom(file        , json      )              {
         owner: str(dashboard['owner']) || undefined,
         created: num(dashboard['creationTime']),
         columnCount: num(dashboard['columnCount']) ?? 1,
-        widgets: widgets.map((widget)                  => ({
-          type: str(widget['type']) || 'Unknown',
-          title: str(widget['title']),
-        })),
+        widgets: widgets.map((widget)                  => {
+          // gridsterCoords is where the widget actually sits. The x/y on the
+          // widget itself is set on some and not others, so it cannot be relied
+          // on; the coords are present on every widget in every export seen.
+          const coords = isRecord(widget['gridsterCoords']) ? widget['gridsterCoords'] : {};
+          return {
+            type: str(widget['type']) || 'Unknown',
+            title: str(widget['title']),
+            x: num(coords['x']) ?? num(widget['x']) ?? 1,
+            y: num(coords['y']) ?? num(widget['y']) ?? 1,
+            w: num(coords['w']) ?? 4,
+            h: num(coords['h']) ?? 4,
+            collapsed: widget['collapsed'] === true,
+          };
+        }),
         viewIds: widgets
           .map((widget) => (isRecord(widget['config']) ? str(widget['config']['viewDefinitionId']) : ''))
           .filter(Boolean),

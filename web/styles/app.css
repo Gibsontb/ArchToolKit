@@ -2340,3 +2340,152 @@ textarea {
 .pill.severity-unknown {
   font-style: italic;
 }
+
+/* --- A dashboard, drawn ------------------------------------------------ */
+/* The export carries every widget's grid position, so the layout can be shown
+   as it was arranged. Boxes rather than charts: the data is not in an export,
+   and a labelled box beats a blank rectangle pretending to be a graph. */
+
+.dash-canvas {
+  display: grid;
+  gap: 3px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+}
+
+.dash-widget {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--text-muted);
+  border-radius: 3px;
+  background: var(--surface);
+  padding: 0.2rem 0.45rem;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.dash-widget.is-collapsed {
+  opacity: 0.7;
+}
+
+.dash-widget-type {
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.dash-widget-title {
+  font-size: 0.76rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-widget-view {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-widget-view.is-missing {
+  color: var(--danger, #b3261e);
+  font-style: normal;
+}
+
+/* Families rather than types: twenty-nine colours is a mosaic nobody reads. */
+.family-chart { border-left-color: #3f6fb5; }
+.family-table { border-left-color: #3d7f63; }
+.family-alert { border-left-color: var(--danger, #b3261e); }
+.family-topology { border-left-color: #7a5ba6; }
+.family-text { border-left-color: var(--text-muted); }
+.family-picker { border-left-color: var(--warning, #b8860b); }
+.family-other { border-left-color: #8a8a8a; }
+
+.dash-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.dash-key-item {
+  border-left: 4px solid;
+  padding: 0.1rem 0.5rem;
+  background: var(--surface);
+  border-radius: 2px;
+}
+
+.dash-heading h3 {
+  margin: 0 0 var(--space-1);
+}
+
+.dash-controls {
+  align-items: end;
+}
+
+/* The wall of thumbnails: the shape is what identifies a dashboard when
+   ninety-four of them share a name. */
+.dash-contact {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--space-3);
+}
+
+.dash-thumb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.dash-thumb:hover {
+  border-color: var(--accent);
+}
+
+.dash-thumb-label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.76rem;
+  overflow: hidden;
+}
+
+.dash-thumb-label strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-canvas.is-mini {
+  grid-auto-rows: 3px !important;
+  gap: 1px;
+  padding: 2px;
+  max-height: 120px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.dash-canvas.is-mini .dash-widget {
+  padding: 0;
+  border-left-width: 3px;
+  border-radius: 1px;
+}
+
+.dash-canvas.is-mini .dash-widget-type,
+.dash-canvas.is-mini .dash-widget-title,
+.dash-canvas.is-mini .dash-widget-view {
+  display: none;
+}

@@ -148,7 +148,75 @@
                                   
                         
                          
+     
+                                                                                
+                                            
+    
+                                                                           
+                                                                                
+                                                                                
+                        
+     
+                     
+                     
+                     
+                     
+                                                                              
+                              
  
+
+/** Aria lays dashboards out on twelve columns, whatever the column count says. */
+export const DASHBOARD_COLUMNS = 12;
+
+/** The height of the grid a dashboard occupies, in rows. */
+export function dashboardRows(dashboard           )         {
+  return dashboard.widgets.reduce((rows, widget) => Math.max(rows, widget.y + widget.h - 1), 0);
+}
+
+/**
+ * The widget kinds, grouped so a wireframe can colour them.
+ *
+ * Not decoration: the point of the drawing is to recognise a dashboard at a
+ * glance, and "three charts and a table" is the shape you recognise. Twenty-nine
+ * widget types in twenty-nine colours is a mosaic nobody can read.
+ */
+                                                                                                  
+
+const WIDGET_FAMILIES                                         = {
+  MetricChart: 'chart',
+  SparklineChart: 'chart',
+  RollingViewChart: 'chart',
+  MashupChart: 'chart',
+  HealthChart: 'chart',
+  Heatmap: 'chart',
+  ParetoChart: 'chart',
+  ParetoAnalysis: 'chart',
+  Scoreboard: 'chart',
+  ScoreboardHealth: 'chart',
+  Skittles: 'chart',
+  WorkloadBalance: 'chart',
+  Geo: 'chart',
+  View: 'table',
+  ResourceList: 'table',
+  PropertyList: 'table',
+  IntSummaryStress: 'table',
+  IntSummaryCapacity: 'table',
+  IntSummaryTimeRemaining: 'table',
+  IntSummaryFaults: 'table',
+  IntSummaryAlertVolume: 'alert',
+  AlertList: 'alert',
+  ProblemAlertsList: 'alert',
+  ResourceRelationship: 'topology',
+  ResourceRelationshipAdvanced: 'topology',
+  TopologyGraph: 'topology',
+  TextDisplay: 'text',
+  TagPicker: 'picker',
+  MetricPicker: 'picker',
+};
+
+export function widgetFamily(type        )               {
+  return WIDGET_FAMILIES[type] ?? 'other';
+}
 
                                  
                       
