@@ -40,6 +40,7 @@ describe('a site playbook', () => {
       '02-add-the-data-disk.yml',
       '03-harden-ssh.yml',
       'README.md',
+      'ansible.cfg',
       'group_vars/all.yml',
       'inventory/hosts.yml',
       'requirements.yml',

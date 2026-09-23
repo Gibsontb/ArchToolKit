@@ -25,10 +25,29 @@ import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.js';
+import { importGuide,                     } from './vcf-networks-logs.js';
 
 const PLATFORM = 'vcf-fleet'         ;
 const SRC = 'ArchToolKit';
 const FM = '/suite-api/api/fleet-management';
+
+const FLEET_API = 'VCF Operations API reference at developer.broadcom.com (/suite-api/api/fleet-management) and the davidwzhang.com VCF 9.1 series, as cited in each script.';
+
+/** IMPORT.md for a 9.1 fleet blueprint: VCF Operations, through the API or the interface. */
+function fleetImport(intro        , steps                                         , verify                    = [], sources                    = [FLEET_API])         {
+  return importGuide({
+    product: 'VCF Operations fleet management (VCF 9.1)',
+    intro: `${intro} Scripts read VCFOPS_HOST, VCF_IDB_HOST and VCF_API_TOKEN_FILE (mode 600) unless they say otherwise.`,
+    steps,
+    verify,
+    sources,
+  });
+}
+
+/** The step for a read-only script run on a schedule. */
+function cronStep(script        )                 {
+  return { heading: 'Run it once, then schedule it', lines: [`Run \`./${script}\` by hand and compare with the VCF Operations interface, then install the line in crontab.txt with \`crontab -e\`.`] };
+}
 
 /** Single-quote a value for bash. */
 function sq(value        )         {
@@ -509,6 +528,17 @@ export const VCF_FLEET_91                                 = [
         files['password-policy.sh'] = policyScript;
         if (mode === 'apply') files['policy.json'] = json(policy);
       }
+      files['IMPORT.md'] = fleetImport(
+        mode === 'apply'
+          ? 'policy.json is exactly the body of POST .../fleet-management/password-policies (a PUT to update adds the existing id). Password policies have no file import in the interface.'
+          : 'Nothing is imported: the report reads the policies and accounts.',
+        [
+          cronStep('password-policy-report.sh'),
+          mode !== 'report'
+            ? { heading: mode === 'apply' ? 'Create or update the policy, then apply it' : 'Apply the policy', lines: ['`./password-policy.sh` (dry run), then `--execute`. In the interface: Manage > Fleet management > Passwords > Password policies (VERIFY the menu name on your build).'] }
+            : undefined,
+        ],
+      );
 
       return {
         platform: PLATFORM,
@@ -835,7 +865,10 @@ export const VCF_FLEET_91                                 = [
         ],
         told: [webhook ? `${webhook}, when a change is refused or does not complete.` : 'The exit code only.', 'rotation-<time>.log beside the script, without passwords.', 'VCF Operations records each request under its password management tasks (all local account operations are audited in 9.1.1).'],
         requires: ['An API client with vcf_password.manage — see fleet91_api_clients.', 'The current passwords, from your vault, in a mode-600 file.', 'jq, bash 4' + (source === 'generate' ? ' and openssl.' : '.')],
-        files: { 'rotate-passwords.sh': rotate },
+        files: {
+          'rotate-passwords.sh': rotate,
+          'IMPORT.md': fleetImport('Nothing is uploaded as a file: the rotation request names accounts read from the fleet at run time.', [{ heading: 'Rotate', lines: ['`./rotate-passwords.sh` (dry run: lists the accounts), then `--execute`.'] }]),
+        },
         notes: [
           'Confirmed: POST /password-management/accounts/query and PUT /password-management/accounts/{passwordAccountKey}/password {currentPassword, newPassword} returning a requestId, followed at /suite-api/api/workflows/requests/{requestId} (davidwzhang.com part 3; VCF Operations API reference).',
           'VERIFY: credentialType values other than SSH. The reference documents pageSize (default 10) but no maximum; the script asks for 1000 per page and keeps paging until an empty page or pageInfo.totalCount, and stops rather than rotate from a partial list.',
@@ -1066,6 +1099,16 @@ export const VCF_FLEET_91                                 = [
         if (action !== 'vmca') files['csr-spec.json'] = json(csrSpec);
         if (action === 'msca') files['configure-msca.sh'] = configureMsca;
       }
+      files['IMPORT.md'] = fleetImport(
+        replacing
+          ? `The report reads; replace-certificate.sh does the replacement.${action !== 'vmca' ? ' csr-spec.json is the CSR request body with the certificate id and subject alternative names left for the script to fill from the certificate it replaces.' : ''}`
+          : 'Nothing is imported: the report reads the fleet’s certificates.',
+        [
+          cronStep('certificate-report.sh'),
+          ...(action === 'msca' ? [{ heading: 'Configure the Microsoft CA', lines: ['`./configure-msca.sh` (dry run), then `--execute`.'] }] : []),
+          replacing ? { heading: 'Replace', lines: ['`./replace-certificate.sh` (dry run), then `--execute`, in a change window.'] } : undefined,
+        ],
+      );
 
       return {
         platform: PLATFORM,
@@ -1239,13 +1282,13 @@ export const VCF_FLEET_91                                 = [
         ...(doDns ? [': "${DNS_SETTINGS_PATH:?VERIFY: set DNS_SETTINGS_PATH to the fleet DNS settings endpoint from the API reference for your release}"'] : []),
         ...(doNtp ? [': "${NTP_SETTINGS_PATH:?VERIFY: set NTP_SETTINGS_PATH to the fleet NTP settings endpoint from the API reference for your release}"'] : []),
         'if (( DRY_RUN )); then',
-        ...(doDns ? ['  echo "DRY RUN: would POST fleet-setting.json (DNS) to ${DNS_SETTINGS_PATH}"'] : []),
-        ...(doNtp ? ['  echo "DRY RUN: would POST fleet-setting.json (NTP) to ${NTP_SETTINGS_PATH}"'] : []),
+        ...(doDns ? ['  echo "DRY RUN: would POST dns-setting.json to ${DNS_SETTINGS_PATH}"'] : []),
+        ...(doNtp ? ['  echo "DRY RUN: would POST ntp-setting.json to ${NTP_SETTINGS_PATH}"'] : []),
         '  echo "Nothing was changed. Check the body shape against the reference, then re-run with --execute."',
         '  exit 0',
         'fi',
-        ...(doDns ? ['api POST "$DNS_SETTINGS_PATH" --data "$(jq \'del(.ntpServers)\' fleet-setting.json)" | jq .'] : []),
-        ...(doNtp ? ['api POST "$NTP_SETTINGS_PATH" --data "$(jq \'del(.dnsServers)\' fleet-setting.json)" | jq .'] : []),
+        ...(doDns ? ['api POST "$DNS_SETTINGS_PATH" --data @"$HERE/dns-setting.json" | jq .'] : []),
+        ...(doNtp ? ['api POST "$NTP_SETTINGS_PATH" --data @"$HERE/ntp-setting.json" | jq .'] : []),
         'echo "Submitted. Follow it in VCF Operations; a component that fails is rolled back to its previous setting."',
         '',
       ].join('\n');
@@ -1302,10 +1345,26 @@ export const VCF_FLEET_91                                 = [
         undo: ['Assign the previous setting to the same instances. Record it from Fleet settings before you start: this generates the new one only.'],
         told: ['VCF Operations records the update under fleet management tasks.', 'precheck.sh output is the evidence for the change record.'],
         requires: ['dig; and one of ntpdate, sntp or chronyd.', 'An API client with administration.fleetSettings.manage (or the .dns / .ntp sub-privileges) — see fleet91_api_clients.'],
-        files: { 'precheck.sh': precheck, 'apply-settings.sh': apply, 'fleet-setting.json': json(payload), 'apply-in-ui.txt': ui },
+        files: {
+          'precheck.sh': precheck,
+          'apply-settings.sh': apply,
+          // One body per call, exactly as sent: the DNS setting without the NTP
+          // servers and the other way round.
+          ...(doDns ? { 'dns-setting.json': json({ ...payload, ntpServers: undefined }) } : {}),
+          ...(doNtp ? { 'ntp-setting.json': json({ ...payload, dnsServers: undefined }) } : {}),
+          'apply-in-ui.txt': ui,
+          'IMPORT.md': fleetImport(
+            'Fleet settings have no file import. The documented route is the interface (apply-in-ui.txt, step by step); the API route sends dns-setting.json and ntp-setting.json as they stand, once the paths are known.',
+            [
+              { heading: 'Precheck', lines: ['`./precheck.sh` from the management network. Do not continue unless it prints "Precheck passed."'] },
+              { heading: 'Apply', lines: ['Either follow apply-in-ui.txt (Manage > Fleet management > Fleet settings), or set DNS_SETTINGS_PATH / NTP_SETTINGS_PATH from the API reference for your release and run `./apply-settings.sh --execute` (VERIFY: the paths and bodies are not in the public reference).'] },
+            ],
+            ['The body shape of both files (name, description, dnsServers or ntpServers, instances) is not documented; compare with what the interface sends before using the API route.'],
+          ),
+        },
         notes: [
           'Confirmed: the UI path and the prerequisites (Broadcom techdocs 9.1, Update DNS / NTP Server Configuration); the privileges administration.fleetSettings.dns.* and .ntp.* (davidwzhang.com API Access part 6).',
-          'VERIFY: the fleet settings REST path and body. They are not in the public API reference; fleet-setting.json is a reasonable shape, not a documented one.',
+          'VERIFY: the fleet settings REST path and body. They are not in the public API reference; dns-setting.json and ntp-setting.json are a reasonable shape, not a documented one.',
         ],
         findings,
       };
@@ -1491,7 +1550,10 @@ export const VCF_FLEET_91                                 = [
       } else if (task === 'group') {
         files['groups-query.json'] = json({ searchTerms: { allOf: [{ field: 'NAME', terms: [group], operator: 'LIKE' }], anyOf: [] } });
         const assignment = scopeType === 'VCF_INSTANCE' ? { roleName, roleScope: { scopeType, resources: [{ id: instanceId }] }, expiresAt: null } : { roleName, roleScope: { scopeType }, expiresAt: null };
-        files['role-assignment.json'] = json(assignment);
+        // The PUT .../principals/{id}/roles body: this group's new assignment. The
+        // script adds the group's current assignments to it before sending,
+        // because the PUT replaces them all.
+        files['role-assignment.json'] = json({ vcfRoleAssignments: [assignment] });
         script = [
           ...head(`Give directory group "${group}" the VCF role ${roleName} (${scopeType}).`, [
             'The roles endpoint replaces every assignment of a principal, so this reads',
@@ -1513,7 +1575,7 @@ export const VCF_FLEET_91                                 = [
           'CURRENT=$(api GET "${FM}/iam/ssorealms/${REALM}/principals/${GID}/roles" \\',
           '  | jq -c \'if type == "object" and has("vcfRoleAssignments") and ((.vcfRoleAssignments | type) == "array" or .vcfRoleAssignments == null) then (.vcfRoleAssignments // []) else error("no vcfRoleAssignments in the response") end\')',
           'echo "Current roles: $(jq -r \'[.[].roleName] | join(", ")\' <<<"$CURRENT")"',
-          'NEW=$(jq -c --slurpfile a role-assignment.json \'if any(.[]; .roleName == $a[0].roleName and .roleScope == $a[0].roleScope) then . else . + $a end\' <<<"$CURRENT")',
+          'NEW=$(jq -c --slurpfile a role-assignment.json \'. as $cur | ($a[0].vcfRoleAssignments) as $add | if all($add[]; . as $n | any($cur[]; .roleName == $n.roleName and .roleScope == $n.roleScope)) then $cur else $cur + $add end\' <<<"$CURRENT")',
           'if [[ "$NEW" == "$CURRENT" ]]; then echo "The group already has that role at that scope."; exit 0; fi',
           'if (( DRY_RUN )); then echo "DRY RUN: would PUT the roles of group ${GID}:"; jq \'{vcfRoleAssignments: .}\' <<<"$NEW"; exit 0; fi',
           'STAMP=$(date +%Y%m%d-%H%M%S)',
@@ -1559,6 +1621,12 @@ export const VCF_FLEET_91                                 = [
         ];
       }
       files['identity.sh'] = script.join('\n');
+      files['IMPORT.md'] = fleetImport(
+        task === 'group'
+          ? 'role-assignment.json is the PUT .../iam/ssorealms/{realm}/principals/{groupId}/roles body with the one new assignment; because that PUT replaces every assignment, identity.sh sends it together with the group’s current ones (groups-query.json is the body of the group lookup).'
+          : 'identity.sh sends the JSON beside it; values it cannot know in advance (the realm id, the client secret) are filled in memory at run time.',
+        [{ heading: 'Apply', lines: ['`./identity.sh` (dry run), then `./identity.sh --execute`. In the interface: Manage > Identity & Access (VERIFY the menu name on your build).'] }],
+      );
 
       const titles                         = {
         oidc: `Configure ${idpType} OIDC for the VCF Identity Broker`,
@@ -1794,7 +1862,7 @@ export const VCF_FLEET_91                                 = [
         '      [[ -n "$EXISTING" ]] || { echo "The API client was sent but no clientUuid came back; check Identity > API clients." >&2; exit 1; }',
         '      echo "Created API client ${CLIENT_ID} (${EXISTING})"',
         '    fi',
-        '    jq \'{vcfRoleAssignments: [.]}\' role-assignment.json | api PUT "${FM}/iam/ssorealms/${REALM}/principals/${EXISTING}/roles" --data @- >/dev/null',
+        '    api PUT "${FM}/iam/ssorealms/${REALM}/principals/${EXISTING}/roles" --data @role-assignment.json >/dev/null',
         '    echo "Roles: $(api GET "${FM}/iam/ssorealms/${REALM}/principals/${EXISTING}/roles" | jq -r \'[.vcfRoleAssignments[]?.roleName] | join(", ")\')"',
         '    RESP=$(issue)',
         '    install_token "$RESP" || exit 1',
@@ -1899,7 +1967,18 @@ export const VCF_FLEET_91                                 = [
           `The role ${roleName} existing, with the privileges the other scripts need: vcf_certificates.*, vcf_password.*, identity.management.*, administration.fleetSettings.*, configuration_drifts.*, and always ops.administration.management_tasks.* and administration.api.read_access.`,
           'VCF_IDB_HOST (the identity broker) and VCFOPS_HOST set; jq, curl and bash 4.',
         ],
-        files: { 'api-token.sh': script, 'role-assignment.json': json(assignment), 'crontab.txt': crontab },
+        files: {
+          'api-token.sh': script,
+          'role-assignment.json': json({ vcfRoleAssignments: [assignment] }),
+          'crontab.txt': crontab,
+          'IMPORT.md': fleetImport(
+            'The API client, its roles and its token are created through the API; role-assignment.json is exactly the body of PUT .../iam/ssorealms/{realm}/principals/{clientUuid}/roles.',
+            [
+              { heading: 'Bootstrap the client', lines: ['`./api-token.sh bootstrap` (dry run), then `--execute`: creates the API client, PUTs role-assignment.json as its roles, issues a token and writes it to the token file (mode 600). In the interface: Manage > Identity & Access > API clients (VERIFY the menu name on your build).'] },
+              { heading: 'Rotate on a schedule', lines: ['Install the line in crontab.txt with `crontab -e`.'] },
+            ],
+          ),
+        },
         notes: [
           'Confirmed (davidwzhang.com API Access part 8; VCF Operations API reference, IAM APIs): GET /iam/ssorealms; POST /iam/ssorealms/{id}/api-clients {clientId, clientName, clientDescription} returning clientUuid; PUT /iam/ssorealms/{id}/principals/{clientUuid}/roles {vcfRoleAssignments}; POST /iam/ssorealms/{id}/api-tokens {apiClientId, tokenName, tokenType API_CLIENT, apiTokenTtl, accessTokenTtl in minutes} returning token, tokenLastChars, expirationDate; POST api-tokens/query; POST api-tokens/{id}/regenerate; DELETE api-tokens/{id}.',
           'Confirmed: the exchange POST https://<identity broker>/acs/t/CUSTOMER/token, grant_type urn:custom:vcf:params:oauth:grant-type:api-token, returning an access token of about 1,800 seconds.',
@@ -2014,7 +2093,12 @@ export const VCF_FLEET_91                                 = [
         undo: ['Nothing to undo.'],
         told: [webhook ? `${webhook}, when anything reports expired, over-used or non-compliant.` : 'The exit code only.'],
         requires: ['An API client with read access to licensing (vcf_viewer is enough for the info endpoint) — see fleet91_api_clients.', 'jq and bash 4.'],
-        files: { 'license-report.sh': report, 'license-steps.txt': steps, 'crontab.txt': cron(base, '0 8 * * 1', 'license-report.sh') },
+        files: {
+          'license-report.sh': report,
+          'license-steps.txt': steps,
+          'crontab.txt': cron(base, '0 8 * * 1', 'license-report.sh'),
+          'IMPORT.md': fleetImport('Licences are assigned in the interface; license-steps.txt is the click path. The report only reads.', [cronStep('license-report.sh'), { heading: 'Assign', lines: ['Follow license-steps.txt.'] }]),
+        },
         notes: [
           'Confirmed: GET /suite-api/api/product/licensing/info and /edition (VCF Operations API reference). Licensing APIs are available to all customers from 9.1 (VMware blog, May 2026).',
           'VERIFY: the license server usage and assignment endpoints; they are not in the public reference at the time of writing, so the report takes the path from LICENSE_USAGE_PATH and flattens whatever it returns.',
@@ -2222,6 +2306,10 @@ export const VCF_FLEET_91                                 = [
       const files                         = remediate
         ? { 'remediate-drift.sh': remediateScript, 'salt-status.sh': salt }
         : { 'detect-drift.sh': detect, 'salt-status.sh': salt, 'crontab.txt': [`# ${base}: daily drift check. vCenter login comes from the mode-600 password file;`, '# no password is in this line.', `30 6 * * * cd /opt/archtoolkit/${base} && VCENTER_USER=svc-drift@vsphere.local VCENTER_PASSWORD_FILE=/etc/archtoolkit/vcenter-password ./detect-drift.sh >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n') };
+      files['IMPORT.md'] = fleetImport(
+        'Nothing is imported: the scripts call the vCenter configuration-profile API and the VCF Operations Salt API.',
+        [remediate ? { heading: 'Remediate one cluster', lines: ['`./remediate-drift.sh` (precheck and export of the current configuration), then `--execute`.'] } : cronStep('detect-drift.sh')],
+      );
 
       return {
         platform: PLATFORM,
@@ -2546,6 +2634,17 @@ export const VCF_FLEET_91                                 = [
         'crontab.txt': [`# ${base}: backup freshness every morning. The script logs in from the password`, '# file (mode 600); no password or token is in this line.', `0 8 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh backup-status >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n'),
       };
       if (doBackup) files['backup-config.json'] = json(backupSpec);
+      files['IMPORT.md'] = fleetImport(
+        doBackup
+          ? 'backup-config.json is the PATCH /fleet-lcm/v1/sddc-lcms/{id} body (backupConfigSpec) without its two secrets: fleet-lifecycle.sh adds the SFTP password and the encryption passphrase from their mode-600 files in memory, then sends it to each VCF instance.'
+          : 'Nothing is imported: the script drives the fleet lifecycle API.',
+        [
+          doBackup ? { heading: 'Set the backup schedule', lines: ['Replace the <REQUIRED> SSH host-key fingerprint in backup-config.json, then `./fleet-lifecycle.sh backup-config` (dry run) and `--execute`. In the interface: Fleet management > Lifecycle > the instance > Backup settings.'] } : undefined,
+          { heading: 'Check backups every morning', lines: ['Install the line in crontab.txt with `crontab -e`; it runs `fleet-lifecycle.sh backup-status`.'] },
+          doUpgrade ? { heading: 'Upgrade', lines: ['`./fleet-lifecycle.sh` with the upgrade commands its header lists, dry run first; the apply step needs `--execute --change <ref>`.'] } : undefined,
+        ],
+        ['The backupConfigSpec field names follow the 9.1 fleet lifecycle API as the script cites it; the restore body is not public (restore-notes.txt).'],
+      );
 
       return {
         platform: PLATFORM,
@@ -2620,7 +2719,7 @@ export const VCF_FLEET_91                                 = [
       if (outbound && !/^https?:\/\/[^\s:]+:\d+/.test(outbound)) findings.push(warning('fleet91.cp.outbound', `"${outbound}" does not look like http(s)://host:port.`, { source: SRC }));
       if (/@/.test(outbound)) findings.push(error('fleet91.cp.outbound-creds', 'Do not put proxy credentials in the URL; they end up in files and logs. Enter them in the OVA properties at deploy time.', { source: SRC }));
 
-      const group = { name: groupName, description: 'Written by ArchToolKit.', collectorId: ['__IDS__'], haEnabled: true, lbEnabled: lb, ...(vip ? { virtualIP: vip } : {}) };
+      const group = { name: groupName, description: 'Written by ArchToolKit.', collectorId: ['<REQUIRED — cloud proxy ids; collector-group.sh fills them from the names>'], haEnabled: true, lbEnabled: lb, ...(vip ? { virtualIP: vip } : {}) };
 
       const apply = [
         ...head(`Create or update the HA collector group "${groupName}" with ${proxies.join(', ')}.`, [
@@ -2724,7 +2823,20 @@ export const VCF_FLEET_91                                 = [
         undo: ['PUT collector-group-before-<time>.json back to /suite-api/api/collectorgroups, or DELETE /suite-api/api/collectorgroups/{id} for a group this created.'],
         told: [webhook ? `${webhook}, when a proxy is down, late, or an HA group has no spare.` : 'The exit code only.'],
         requires: ['Two or more cloud proxies deployed at the same site, able to reach the same endpoints.', 'An API client with collector group rights — see fleet91_api_clients.', 'jq and bash 4.'],
-        files: { 'collector-group.sh': apply, 'collector-group.json': json(group), 'proxy-health.sh': health, 'outbound-proxy.txt': outboundNotes, 'crontab.txt': cron(base, '*/15 * * * *', 'proxy-health.sh') },
+        files: {
+          'collector-group.sh': apply,
+          'collector-group.json': json(group),
+          'proxy-health.sh': health,
+          'outbound-proxy.txt': outboundNotes,
+          'crontab.txt': cron(base, '*/15 * * * *', 'proxy-health.sh'),
+          'IMPORT.md': fleetImport(
+            'collector-group.json is the collector group body; collectorId is left as a placeholder because the cloud proxy ids exist only in your VCF Operations — collector-group.sh looks them up by name and fills them (and the id, when the group exists) before sending.',
+            [
+              { heading: 'Create the collector group', lines: ['`./collector-group.sh` (dry run), then `--execute`. In the interface: Administration > Collector Groups > Add.'] },
+              cronStep('proxy-health.sh'),
+            ],
+          ),
+        },
         notes: [
           'Confirmed (VCF Operations API reference): /suite-api/api/collectorgroups (POST, PUT, GET, DELETE) with name, collectorId, haEnabled, lbEnabled, virtualIP; GET /suite-api/api/collectors. 9.1 adds load balancing for cloud proxies in HA-enabled collector groups.',
           'VERIFY: the list keys of GET collectors (collector) and collectorgroups (collectorGroups), the state value UP and lastHeartbeat in epoch milliseconds; the body of PUT collectorgroups (this sends the full group with its id).',

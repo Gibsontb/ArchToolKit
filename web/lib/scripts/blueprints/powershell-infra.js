@@ -1173,7 +1173,7 @@ export const POWERSHELL_INFRA                             = [
           '    .EXAMPLE',
           "        $function -Name 'example'",
           '    #>',
-          "    [CmdletBinding($(if (`$verb -in @('Set','New','Remove','Restart','Stop','Start')) { 'SupportsShouldProcess' } else { '' }))]",
+          "    [CmdletBinding($(if ($verb -in @('Set','New','Remove','Restart','Stop','Start')) { 'SupportsShouldProcess' } else { '' }))]",
           '    [OutputType([pscustomobject])]',
           '    param(',
           '        [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]',

@@ -120,7 +120,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         }),
         verify: [`tmsh show ltm pool /${tenant}/${app}/${app}_pool members`, `tmsh show ltm virtual /${tenant}/${app}/service`, `dig @${address} ${str(values, 'monitor_query', 'health.corp.local')}`],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
-        push: { module: 'f5networks.f5_modules.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' }, hosts: 'bigips' },
+        push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
         findings,
       };
     },
@@ -177,7 +177,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         }),
         verify: [`curl -skI http://${address}/`, `tmsh show ltm virtual /${tenant}/${app}/service`],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
-        push: { module: 'f5networks.f5_modules.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' }, hosts: 'bigips' },
+        push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
         findings,
       };
     },
@@ -241,7 +241,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         }),
         verify: [`tmsh list ltm monitor http /${tenant}/${app}/http_health`, 'tmsh show ltm pool <pool> members', 'Watch the pool members stay up for one full interval cycle.'],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
-        push: { module: 'f5networks.f5_modules.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' }, hosts: 'bigips' },
+        push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
         findings,
       };
     },
@@ -286,7 +286,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         }),
         verify: ['tmsh list ltm snatpool', 'tmsh show sys connection | head', 'Check the servers see the new source addresses.'],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
-        push: { module: 'f5networks.f5_modules.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' }, hosts: 'bigips' },
+        push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
         findings,
       };
     },
@@ -355,7 +355,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
           'Check an older client can still connect, if you support any.',
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
-        push: { module: 'f5networks.f5_modules.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' }, hosts: 'bigips' },
+        push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
         findings,
       };
     },
@@ -453,8 +453,8 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         verify: [`curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant}`, `tmsh list ltm virtual /${tenant}/`, 'Confirm nothing is still trying to reach the virtual addresses.'],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: {
-          module: 'f5networks.f5_modules.bigip_as3_deploy',
-          args: { tenant, provider: '{{ provider }}', state: 'absent' },
+          module: 'f5networks.f5_bigip.bigip_as3_deploy',
+          args: { tenant, state: 'absent' },
           hosts: 'bigips',
         },
         findings,
@@ -505,7 +505,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         }),
         verify: [`tmsh list ltm profile http /${tenant}/${app}/${app}_http`, 'curl -skI https://<virtual>/ | grep -i encoding', 'Check the application logs show the real client addresses.'],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
-        push: { module: 'f5networks.f5_modules.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' }, hosts: 'bigips' },
+        push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
       };
     },
   }),

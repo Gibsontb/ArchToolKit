@@ -17,6 +17,7 @@
  */
 
 import { el, append, replace, clear, downloadFile } from './dom.js';
+import { tarGz, zip } from '../kit/archive.js';
 import { card, findingsList } from './components.js';
 import { getTarget, setTarget,               } from '../kit/target.js';
 import { estateOptionsFor } from '../kit/estate.js';
@@ -47,6 +48,16 @@ import { isRecord,           } from '../editor/doc.js';
                             
                                              
                                      
+     
+                                                                              
+                                                                            
+     
+                                
+                           
+                                                             
+                                                                       
+                                                 
+      
      
                                                                           
                                                                          
@@ -951,19 +962,53 @@ export function mountGeneratorPage(root             , options                  )
 
       if (builds && builds.length > 0) children.push(buildsPanel(builds));
 
-      if (Object.keys(generated).length > 1) {
+      if (Object.keys(generated).length > 0) {
         const all = generated;
+        const base = String(values.__name ?? blueprint?.id ?? 'generated')
+          .trim()
+          .replace(/[^A-Za-z0-9._-]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'generated';
+        const archive = async (button                   , extension        , include                            ) => {
+          const label = button.textContent;
+          button.disabled = true;
+          button.textContent = 'Building…';
+          try {
+            const chosen = Object.fromEntries(Object.entries(all).filter(([path]) => (include ? include(path) : true)));
+            const bytes = extension === '.zip' ? await zip(chosen) : await tarGz(chosen);
+            downloadFile(`${base}${extension}`, bytes, extension === '.zip' ? 'application/zip' : 'application/gzip');
+          } finally {
+            button.disabled = false;
+            button.textContent = label;
+          }
+        };
         children.push(
           el(
             'div',
             { class: 'btn-row', style: { marginTop: 'var(--space-3)' } },
+            // The zip is the import format: every file keeps its name, its
+            // folder and, for scripts, its executable bit, and anything the
+            // target takes as a package inside it is already packaged.
+            el('button', {
+              class: 'btn btn-primary',
+              text: 'Download as .zip',
+              attrs: { title: 'Every file with its real name and folder — unzip and import or run as it stands' },
+              on: { click: (event       ) => void archive(event.currentTarget                     , '.zip') },
+            }),
+            ...(options.packages ?? []).map((pkg) =>
+              el('button', {
+                class: 'btn',
+                text: pkg.label,
+                on: { click: (event       ) => void archive(event.currentTarget                     , pkg.extension, pkg.include) },
+              }),
+            ),
             el('button', {
               class: 'btn',
-              text: 'Download all as one file',
+              text: 'Download all as one text file',
+              attrs: { title: 'For reading or attaching to a change record. Not an import format.' },
               on: {
                 click: () =>
                   downloadFile(
-                    `${String(values.__name ?? blueprint?.id ?? 'generated')}${options.downloadExtension}`,
+                    `${base}${options.downloadExtension}`,
                     Object.entries(all)
                       .map(([n, b]) => `# ===== ${n} =====\n${b}`)
                       .join('\n'),

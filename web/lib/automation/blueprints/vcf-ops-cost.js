@@ -28,6 +28,7 @@ import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.js';
+import { importMd, withScriptsImportMd } from '../vcfops-import.js';
 
 const PLATFORM = 'vcf-operations'         ;
 const SRC = 'ArchToolKit';
@@ -352,6 +353,15 @@ export const VCF_OPS_COST                                 = [
           [`${base}-design.md`]: design,
           [`${base}-values.csv`]: csv,
           'cost-check.sh': check,
+          'IMPORT.md': importMd({
+            title: 'the cost drivers',
+            intro: ['Cost drivers are entered in the interface; there is no file import for them. The CSV is the record of what to enter and why, and the script is the check around it.'],
+            steps: [
+              { heading: 'Baseline', files: ['cost-check.sh'], how: ['./cost-check.sh --baseline — saves what the cost engine calculates today, per cluster.'] },
+              { heading: 'Enter the values', files: [`${base}-design.md`, `${base}-values.csv`], how: ['Operations → Cost → Cost Drivers (8.x: Configure → Cost Settings → Cost Drivers), one datacenter at a time, from the CSV. Per-host prices go in the server hardware editor.'] },
+              { heading: 'Compare', files: ['cost-check.sh'], how: ['After the next daily cost calculation: ./cost-check.sh --compare. It exits 1 when a cluster moved more than the swing you set.'] },
+            ],
+          }),
         },
         notes: [
           'VCF 9.1 applies additional cost drivers to clusters, hosts and datacenters, not only VMs — an “additional cost” entered at datacenter level is spread across what is in it.',
@@ -591,6 +601,15 @@ export const VCF_OPS_COST                                 = [
           'rate-card.json': `${JSON.stringify(card, null, 2)}\n`,
           'build-policy.sh': build,
           'showback-setup.md': setup,
+          'IMPORT.md': importMd({
+            title: `the pricing policy "${policyName}"`,
+            intro: ['A pricing policy is not imported from a file: the pricing API documents a policy’s shape but not the item names it expects, so build-policy.sh clones a template policy made once in the interface and sets its rates from rate-card.json.'],
+            steps: [
+              { heading: 'The template policy', files: ['showback-setup.md'], how: ['Create one pricing policy by hand, as showback-setup.md says. It is the template every generated policy is cloned from.'] },
+              { heading: 'The rate card', files: ['rate-card.json', 'build-policy.sh'], how: ['./build-policy.sh prints what it would create; ./build-policy.sh --execute clones the template and sets the rates.'] },
+              { heading: 'Assign it', files: ['showback-setup.md'], how: ['Assign the policy to the organizations, projects or tag as showback-setup.md lists, and set up the bills.'] },
+            ],
+          }),
         },
         notes: [
           'The pricing API is GET/POST/PUT /suite-api/api/pricing and GET/DELETE /suite-api/api/pricing/{id}, documented for Aria Operations 8.x. VERIFY it against your 9.1 build — the path and createdBy value are the likeliest to differ.',
@@ -1582,6 +1601,14 @@ export const VCF_OPS_COST                                 = [
           'export-policy.sh': exportPolicy,
           'capacity-report-schedule.json': `${JSON.stringify(schedule, null, 2)}\n`,
           'apply-report-schedule.sh': apply,
+          'IMPORT.md': importMd({
+            title: `capacity settings in "${policy}"`,
+            steps: [
+              { heading: 'Save the policy', files: ['export-policy.sh'], how: ['POLICY_ID=… ./export-policy.sh — GET /suite-api/api/policies/export, a zip that re-imports under Policies → Import or POST /suite-api/api/policies/import?forceImport=true. It is the undo.'] },
+              { heading: 'Set the capacity values', files: [`${base}-design.md`], how: ['In the policy editor (Configure → Policies → edit → Capacity), from the design. Capacity settings are not written as policy XML here: an element the release does not know is dropped without a word.', 'Then export the policy again and keep that zip: it is the importable form of the result.'] },
+              { heading: 'Schedule the report', files: ['capacity-report-schedule.json', 'apply-report-schedule.sh'], how: ['./apply-report-schedule.sh --execute — POST /suite-api/api/reportdefinitions/{id}/schedules.'] },
+            ],
+          }),
         },
         notes: [
           'The report schedule uses POST /suite-api/api/reportdefinitions/{id}/schedules, the same as “Email a capacity report on a schedule”. Formats are set on the report definition, not the schedule.',
@@ -1740,4 +1767,4 @@ export const VCF_OPS_COST                                 = [
       };
     },
   }),
-];
+].map(withScriptsImportMd);

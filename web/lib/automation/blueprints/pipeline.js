@@ -51,7 +51,6 @@ export const PIPELINE_AUTOMATIONS                                 = [
       const identity = str(values, 'identity', 'system');
       const scope = str(values, 'scope', 'the subscription');
       const changes = bool(values, 'changes_things', false);
-      const base = slugOf(name || runbookName, 'runbook');
 
       const findings            = [];
       if (identity === 'runas') {
@@ -131,14 +130,44 @@ export const PIPELINE_AUTOMATIONS                                 = [
         '',
       ].join('\n');
 
+      // Azure Automation names an imported runbook after its file: letters,
+      // digits, - and _, starting with a letter, at most 63 characters.
+      const rbSlug = slugOf(runbookName, 'runbook');
+      const rb = (/^[a-z]/.test(rbSlug) ? rbSlug : `rb-${rbSlug}`).slice(0, 63);
+      const time = /(\d{1,2}):(\d{2})/.exec(schedule);
+      const hh = String(Math.min(23, Number(time?.[1] ?? 2))).padStart(2, '0');
+      const mm = String(Math.min(59, Number(time?.[2] ?? 0))).padStart(2, '0');
+      const frequency = /hour/i.test(schedule) ? 'Hour' : /week|monday|tuesday|wednesday|thursday|friday|saturday|sunday/i.test(schedule) ? 'Week' : /month/i.test(schedule) ? 'Month' : 'Day';
+      const scheduleName = `${rb}-schedule`;
+      const scheduleDescription = `${schedule} — ${whatItDoes}`;
+      const bicepString = (text        )         => `'${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\$\{/g, '\\${')}'`;
+
       const bicep = [
-        '// Schedule and job for the runbook. Created disabled, on purpose.',
+        '// Schedule for the runbook, and the job schedule that links the two.',
         '//',
-        '// A schedule that starts the moment it is deployed is how an automation',
-        '// first runs before anybody has read what it does.',
-        "param automationAccountName string",
-        "param location string = resourceGroup().location",
-        `param runbookName string = '${runbookName}'`,
+        '// Azure has no create-time switch for a schedule — isEnabled: false can',
+        '// only be set by an update — so "created disabled" is done the documented',
+        '// way: the job schedule that makes the runbook run is only deployed when',
+        '// linkRunbook is true. Deploy with the default, start the runbook by hand',
+        '// and read its output, then deploy again with linkRunbook=true.',
+        '//',
+        `//   az deployment group create -g <resource group> -f ${rb}-schedule.bicep -p automationAccountName=<account>`,
+        '',
+        "@description('The Automation account the runbook was imported into.')",
+        'param automationAccountName string',
+        '',
+        "@description('The runbook, exactly as imported.')",
+        `param runbookName string = ${bicepString(rb)}`,
+        '',
+        `@description('First run. Defaults to tomorrow ${hh}:${mm} UTC; must be at least 5 minutes after the deployment.')`,
+        `param startTime string = dateTimeAdd('\${utcNow('yyyy-MM-dd')}T${hh}:${mm}:00Z', 'P1D')`,
+        '',
+        "@description('Time zone for startTime, e.g. UTC or Europe/London.')",
+        "param timeZone string = 'UTC'",
+        '',
+        "@description('False: the schedule exists and nothing runs. True: the runbook runs on it.')",
+        'param linkRunbook bool = false',
+        ...(identity === 'user' ? ['', "@description('Client id of the user-assigned identity the runbook connects as.')", 'param userAssignedClientId string'] : []),
         '',
         "resource account 'Microsoft.Automation/automationAccounts@2023-11-01' existing = {",
         '  name: automationAccountName',
@@ -146,20 +175,123 @@ export const PIPELINE_AUTOMATIONS                                 = [
         '',
         "resource schedule 'Microsoft.Automation/automationAccounts/schedules@2023-11-01' = {",
         '  parent: account',
-        `  name: '${base}-schedule'`,
+        `  name: ${bicepString(scheduleName)}`,
         '  properties: {',
-        `    description: '${schedule} — ${whatItDoes}'`,
-        '    frequency: \'Day\'',
+        `    description: ${bicepString(scheduleDescription)}`,
+        `    frequency: '${frequency}'`,
         '    interval: 1',
-        '    // Disabled until somebody turns it on deliberately.',
-        '    isEnabled: false',
-        '    startTime: \'<REQUIRED — an ISO 8601 time at least 5 minutes from deployment>\'',
-        '    timeZone: \'<REQUIRED — e.g. America/New_York>\'',
+        '    startTime: startTime',
+        '    timeZone: timeZone',
         '  }',
         '}',
         '',
+        "resource jobSchedule 'Microsoft.Automation/automationAccounts/jobSchedules@2023-11-01' = if (linkRunbook) {",
+        '  parent: account',
+        '  name: guid(account.id, runbookName, schedule.name)',
+        '  properties: {',
+        '    runbook: { name: runbookName }',
+        '    schedule: { name: schedule.name }',
+        identity === 'user' ? '    parameters: { UserAssignedClientId: userAssignedClientId }' : '    parameters: {}',
+        '  }',
+        '}',
         '',
         'output scheduleName string = schedule.name',
+        'output linked bool = linkRunbook',
+        '',
+      ].join('\n');
+
+      // The same deployment as ARM JSON, for the portal's "Deploy a custom
+      // template" (which takes JSON only) and for anyone without Bicep.
+      const arm = {
+        $schema: 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#',
+        contentVersion: '1.0.0.0',
+        parameters: {
+          automationAccountName: { type: 'string', metadata: { description: 'The Automation account the runbook was imported into.' } },
+          runbookName: { type: 'string', defaultValue: rb, metadata: { description: 'The runbook, exactly as imported.' } },
+          startTime: { type: 'string', defaultValue: `[dateTimeAdd(concat(utcNow('yyyy-MM-dd'), 'T${hh}:${mm}:00Z'), 'P1D')]`, metadata: { description: 'First run; at least 5 minutes after the deployment.' } },
+          timeZone: { type: 'string', defaultValue: 'UTC' },
+          linkRunbook: { type: 'bool', defaultValue: false, metadata: { description: 'False: the schedule exists and nothing runs. True: the runbook runs on it.' } },
+          ...(identity === 'user' ? { userAssignedClientId: { type: 'string' } } : {}),
+        },
+        resources: [
+          {
+            type: 'Microsoft.Automation/automationAccounts/schedules',
+            apiVersion: '2023-11-01',
+            name: `[format('{0}/{1}', parameters('automationAccountName'), '${scheduleName}')]`,
+            properties: {
+              description: scheduleDescription.replace(/^\[/, '[['),
+              frequency,
+              interval: 1,
+              startTime: "[parameters('startTime')]",
+              timeZone: "[parameters('timeZone')]",
+            },
+          },
+          {
+            condition: "[parameters('linkRunbook')]",
+            type: 'Microsoft.Automation/automationAccounts/jobSchedules',
+            apiVersion: '2023-11-01',
+            name: `[format('{0}/{1}', parameters('automationAccountName'), guid(resourceId('Microsoft.Automation/automationAccounts', parameters('automationAccountName')), parameters('runbookName'), '${scheduleName}'))]`,
+            properties: {
+              runbook: { name: "[parameters('runbookName')]" },
+              schedule: { name: scheduleName },
+              parameters: identity === 'user' ? { UserAssignedClientId: "[parameters('userAssignedClientId')]" } : {},
+            },
+            dependsOn: [`[resourceId('Microsoft.Automation/automationAccounts/schedules', parameters('automationAccountName'), '${scheduleName}')]`],
+          },
+        ],
+        outputs: { scheduleName: { type: 'string', value: scheduleName } },
+      };
+
+      const importMd = [
+        '# Importing this into Azure Automation',
+        '',
+        'Do the steps in order. `RG` is the resource group and `ACCT` the Automation account.',
+        '',
+        `## 1. The runbook — \`import/azure/${rb}.ps1\``,
+        '',
+        `Portal: Automation account → Process Automation → **Runbooks** → **Import a runbook** → browse for \`${rb}.ps1\`, Runbook type **PowerShell**, Runtime version 7.2 (5.1 also works) → **Import**, then **Publish**. The runbook is named after the file.`,
+        '',
+        'Azure CLI (the `automation` extension: `az extension add --name automation`):',
+        '',
+        '```bash',
+        `az automation runbook create -g RG --automation-account-name ACCT --name ${rb} --type PowerShell`,
+        `az automation runbook replace-content -g RG --automation-account-name ACCT --name ${rb} --content @import/azure/${rb}.ps1`,
+        `az automation runbook publish -g RG --automation-account-name ACCT --name ${rb}`,
+        '```',
+        '',
+        'Or Az PowerShell:',
+        '',
+        '```powershell',
+        `Import-AzAutomationRunbook -Path ./import/azure/${rb}.ps1 -Type PowerShell -ResourceGroupName RG -AutomationAccountName ACCT -Published`,
+        '```',
+        '',
+        '## 2. Run it once by hand',
+        '',
+        `Portal: the runbook → **Start** with Execute left empty, or \`az automation runbook start -g RG --automation-account-name ACCT --name ${rb}\`. Read the output stream: it is a dry run.`,
+        '',
+        `## 3. The schedule — \`import/azure/${rb}-schedule.bicep\` (or \`${rb}-schedule.json\`)`,
+        '',
+        '```bash',
+        `az deployment group create -g RG --template-file import/azure/${rb}-schedule.bicep --parameters automationAccountName=ACCT${identity === 'user' ? ' userAssignedClientId=<client id>' : ''}`,
+        '```',
+        '',
+        `Portal alternative: **Deploy a custom template** → **Build your own template in the editor** → **Load file** → \`${rb}-schedule.json\`.`,
+        '',
+        'This creates the schedule and does not link the runbook to it, so nothing runs yet.',
+        '',
+        '## 4. Turn it on',
+        '',
+        '```bash',
+        `az deployment group create -g RG --template-file import/azure/${rb}-schedule.bicep --parameters automationAccountName=ACCT linkRunbook=true${identity === 'user' ? ' userAssignedClientId=<client id>' : ''}`,
+        '```',
+        '',
+        'The scheduled run is still a dry run: the job schedule passes no `Execute`. When the reports read right, add `Execute: \'true\'` to the job schedule parameters (a job schedule cannot be changed in place — delete it and deploy again).',
+        '',
+        '## Confirmed, and what to verify',
+        '',
+        '- `az automation runbook create / replace-content --content @file / publish` and the `--type` values: Microsoft Learn, az automation runbook (extension).',
+        '- The schedules and jobSchedules resource shapes (a job schedule name is a GUID; `isEnabled` is not a create property): Microsoft Learn, Microsoft.Automation template reference.',
+        '- startTime defaults to tomorrow ${hh}:${mm} UTC (the time in the schedule text, read as UTC). To run in local time, pass startTime without the Z and timeZone as an IANA name such as `Europe/London` — VERIFY the result in the schedule blade before linking.',
         '',
       ].join('\n');
 
@@ -190,7 +322,12 @@ export const PIPELINE_AUTOMATIONS                                 = [
           'An Automation account with the Az modules imported — the built-in versions lag, and a runbook that works locally can fail there on a missing cmdlet.',
           `${identity === 'user' ? 'A user-assigned identity and its client id' : identity === 'system' ? 'A system-assigned identity on the account' : 'A Run As account, which is retired'}, with exactly the roles this needs.`,
         ],
-        files: { [`${base}.ps1`]: ps, [`${base}-schedule.bicep`]: bicep },
+        files: {
+          [`import/azure/${rb}.ps1`]: ps,
+          [`import/azure/${rb}-schedule.bicep`]: bicep,
+          [`import/azure/${rb}-schedule.json`]: `${JSON.stringify(arm, null, 2)}\n`,
+          'IMPORT.md': importMd,
+        },
         notes: [
           'Module versions in Azure Automation are not the versions on your laptop. Pin them in the account and test there, not locally.',
           'The output stream is the record. Write what you did to it, not just that you finished.',
@@ -223,6 +360,10 @@ export const PIPELINE_AUTOMATIONS                                 = [
       const errorThreshold = str(values, 'error_threshold', '1');
       const reboot = bool(values, 'reboot', false);
       const base = slugOf(name || docName, 'ssm-document');
+      // SSM document names: letters, digits, _ - and ., 3 to 128 characters, and
+      // not starting with aws or amazon (those prefixes are reserved).
+      const cleanName = docName.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+      const ssmName = (/^(aws|amazon)/i.test(cleanName) || cleanName.length < 3 ? `ATK-${cleanName || 'Document'}` : cleanName).slice(0, 128);
 
       const findings            = [];
       if (!targetTag) {
@@ -272,19 +413,32 @@ export const PIPELINE_AUTOMATIONS                                 = [
         '    inputs:',
         '      timeoutSeconds: 3600',
         '      runCommand:',
-        '        - set -euo pipefail',
+        '        # runShellScript runs the lines with sh, which may be dash: no pipefail.',
+        '        - set -eu',
         '        - |',
         '          if [ "{{ DryRun }}" = "true" ]; then',
         `            echo "DRY RUN: would ${whatItDoes.toLowerCase()} on $(hostname)"`,
         '            exit 0',
         '          fi',
-        `        - '# --- the work: ${whatItDoes} ---'`,
+        `        - '# --- the work: ${whatItDoes.replace(/'/g, "''")} ---'`,
         '        - echo "replace this step"',
+        ...(reboot
+          ? [
+              '        # Exit code 194 asks the agent to reboot and run the document again;',
+              '        # the second pass finds no reboot pending and ends.',
+              '        - |',
+              '          if [ "{{ RebootOption }}" = "RebootIfNeeded" ] && [ -f /var/run/reboot-required ]; then',
+              '            exit 194',
+              '          fi',
+            ]
+          : []),
         '',
       ].join('\n');
 
+      // The CreateAssociation request, as aws ssm create-association --cli-input-json takes it.
       const association = {
-        Name: docName,
+        Name: ssmName,
+        DocumentVersion: '$DEFAULT',
         AssociationName: `${base}-association`,
         Targets: targetTag
           ? [{ Key: `tag:${targetTag.split('=')[0]}`, Values: [targetTag.split('=')[1] ?? '<REQUIRED>'] }]
@@ -320,7 +474,45 @@ export const PIPELINE_AUTOMATIONS                                 = [
           : ['Depends on the work. Record enough in the output to put it back, and treat that output as the undo.'],
         told: ['Command history in Systems Manager, and compliance status on the association. Neither pages anybody — wire a CloudWatch Events rule to the failure if somebody needs to know.'],
         requires: ['The SSM agent and an instance profile with the managed policy on every target.', 'The tag actually applied to the instances you mean — check with a Resource Groups query first.'],
-        files: { [`${base}.yaml`]: doc, [`${base}-association.json`]: `${JSON.stringify(association, null, 2)}\n` },
+        files: {
+          [`import/ssm/${ssmName}.yaml`]: doc,
+          [`import/ssm/${base}-association.json`]: `${JSON.stringify(association, null, 2)}\n`,
+          'IMPORT.md': [
+            '# Importing this into AWS Systems Manager',
+            '',
+            'Run from the folder this file is in, with credentials for the target account and region.',
+            '',
+            `## 1. The document — \`import/ssm/${ssmName}.yaml\``,
+            '',
+            '```bash',
+            `aws ssm create-document --name ${ssmName} --document-type Command --document-format YAML --content file://import/ssm/${ssmName}.yaml`,
+            '```',
+            '',
+            `Console alternative: Systems Manager → Documents → **Create document** → **Command or Session**, name \`${ssmName}\`, Document type Command, Content **YAML**, paste the file.`,
+            '',
+            `To change it later: \`aws ssm update-document --name ${ssmName} --document-format YAML --content file://import/ssm/${ssmName}.yaml --document-version '$LATEST'\`, then \`aws ssm update-document-default-version --name ${ssmName} --document-version <n>\`.`,
+            '',
+            '## 2. Try it on one instance',
+            '',
+            '```bash',
+            `aws ssm send-command --document-name ${ssmName} --targets Key=InstanceIds,Values=<one instance id> --parameters DryRun=true`,
+            '```',
+            '',
+            `## 3. The association — \`import/ssm/${base}-association.json\``,
+            '',
+            '```bash',
+            `aws ssm create-association --cli-input-json file://import/ssm/${base}-association.json`,
+            '```',
+            '',
+            'It is created with DryRun=true and ApplyOnlyAtCronInterval, so it runs first at the next scheduled time and only reports. When the reports read right: `aws ssm update-association --association-id <id> --parameters DryRun=false` (update-association replaces the parameters you pass).',
+            '',
+            '## Confirmed',
+            '',
+            '- create-document with `--document-format YAML --content file://…` and schema 2.2 `mainSteps` / `aws:runShellScript`: AWS CLI reference and the SSM document syntax reference.',
+            '- The association file uses only CreateAssociation request members (Name, DocumentVersion, AssociationName, Targets, Parameters, ScheduleExpression, MaxConcurrency, MaxErrors, ComplianceSeverity, ApplyOnlyAtCronInterval), which is what `--cli-input-json` takes.',
+            '',
+          ].join('\n'),
+        },
         notes: [
           'Targeting by tag means the estate can add itself to the automation by tagging. That is the feature and the risk in the same sentence.',
           'ApplyOnlyAtCronInterval stops the association running the moment it is created, which is otherwise the default and a surprise.',
@@ -340,7 +532,10 @@ export const PIPELINE_AUTOMATIONS                                 = [
     inputs: [
       { id: 'template_name', label: 'Template name', control: 'text', default: 'Patch Linux — standard group' },
       { id: 'playbook', label: 'Playbook', control: 'text', default: 'playbooks/patch.yml' },
+      { id: 'organization', label: 'Organization', control: 'text', default: 'Default' },
+      { id: 'project', label: 'Project (where the playbook lives)', control: 'text', default: 'Infrastructure playbooks' },
       { id: 'inventory', label: 'Inventory', control: 'text', default: 'Production Linux' },
+      { id: 'machine_credential', label: 'Machine credential', control: 'text', default: 'Linux — patching service account', hint: 'The name of a credential already in AWX. Nothing secret goes in the file' },
       { id: 'limit', label: 'Limit to', control: 'text', default: 'linux_standard', hint: 'A group. An empty limit is the whole inventory' },
       { id: 'forks', label: 'Hosts at a time', control: 'number', default: 10, min: 1, max: 200 },
       { id: 'check_first', label: 'Run in check mode first', control: 'toggle', default: true },
@@ -350,6 +545,9 @@ export const PIPELINE_AUTOMATIONS                                 = [
       const templateName = str(values, 'template_name', 'Job template');
       const playbook = str(values, 'playbook', 'site.yml');
       const inventory = str(values, 'inventory', 'Production');
+      const organization = str(values, 'organization', 'Default');
+      const project = str(values, 'project', 'Playbooks');
+      const machineCredential = str(values, 'machine_credential', 'Machine credential');
       const limit = str(values, 'limit', '');
       const forks = num(values, 'forks', 10);
       const checkFirst = bool(values, 'check_first', true);
@@ -366,32 +564,147 @@ export const PIPELINE_AUTOMATIONS                                 = [
         );
       }
 
+      // The awxkit export format — what `awx export` writes and `awx import`
+      // reads: one key per resource type, every reference a natural key (names,
+      // qualified by organization) rather than an id, so it imports into any
+      // instance that has objects with those names.
+      const org = { name: organization, type: 'organization' };
+      const jtKey = { organization: org, name: templateName, type: 'job_template' };
+      const workflowName = `${templateName} — workflow`;
+      const wfKey = { organization: org, name: workflowName, type: 'workflow_job_template' };
+      const nodeKey = (identifier        ) => ({ workflow_job_template: wfKey, identifier, type: 'workflow_job_template_node' });
+
       const template = {
         name: templateName,
+        description: 'ArchToolKit. Credentials are attached in AWX, never in the repository.',
         job_type: 'run',
-        inventory,
+        inventory: { organization: org, name: inventory, type: 'inventory' },
+        project: { organization: org, name: project, type: 'project' },
         playbook,
-        limit,
+        scm_branch: '',
         forks,
+        limit,
+        verbosity: 1,
+        extra_vars: '---',
+        job_tags: '',
+        skip_tags: '',
+        timeout: 0,
+        become_enabled: true,
+        diff_mode: true,
+        allow_simultaneous: false,
         ask_limit_on_launch: true,
         ask_variables_on_launch: true,
-        job_tags: '',
-        become_enabled: true,
-        // Credentials are attached in AWX, never in the repository.
-        credentials: ['<REQUIRED — machine credential>', '<OPTIONAL — vault credential>'],
+        // A workflow node can only run the template in check mode if the
+        // template prompts for the job type.
+        ask_job_type_on_launch: checkFirst,
         survey_enabled: true,
-        verbosity: 1,
+        related: {
+          credentials: [{ organization: org, name: machineCredential, credential_type: { name: 'Machine', kind: 'ssh', type: 'credential_type' }, type: 'credential' }],
+          labels: [],
+          survey_spec: {
+            name: '',
+            description: '',
+            spec: [
+              {
+                question_name: 'Change reference',
+                question_description: 'The change or ticket this run belongs to. It is written into the job so the record says why.',
+                required: true,
+                type: 'text',
+                variable: 'change_reference',
+                min: 1,
+                max: 128,
+                default: '',
+                choices: '',
+                new_question: true,
+              },
+            ],
+          },
+        },
+        natural_key: jtKey,
+      };
+
+      const order = [...(checkFirst ? ['check'] : []), ...(approval ? ['approve'] : []), 'run'];
+      const node = (identifier        ) => {
+        const next = order[order.indexOf(identifier) + 1];
+        const base = {
+          identifier,
+          all_parents_must_converge: false,
+          extra_data: {},
+          job_type: identifier === 'check' ? 'check' : null,
+          limit: null,
+          inventory: null,
+          scm_branch: null,
+          job_tags: null,
+          skip_tags: null,
+          diff_mode: null,
+          verbosity: null,
+          workflow_job_template: wfKey,
+          natural_key: nodeKey(identifier),
+        };
+        const related = { success_nodes: next ? [nodeKey(next)] : [], failure_nodes: [], always_nodes: [], credentials: [] };
+        // An approval node has no job template: awxkit exports it with the
+        // approval template's own fields under create_approval_template.
+        return identifier === 'approve'
+          ? { ...base, related: { ...related, create_approval_template: { name: `${templateName} — read the check-mode output before approving`, description: 'The check-mode job is the node before this one. Open it and read what would change.', timeout: 86400 } } }
+          : { ...base, unified_job_template: jtKey, related };
       };
 
       const workflow = {
-        name: `${templateName} — workflow`,
+        name: workflowName,
         description: 'ArchToolKit: check mode, then approval, then the real run.',
-        nodes: [
-          ...(checkFirst ? [{ identifier: 'check', unified_job_template: templateName, job_type: 'check', success_nodes: approval ? ['approve'] : ['run'] }] : []),
-          ...(approval ? [{ identifier: 'approve', approval_node: { name: 'Read the check-mode output before approving', timeout: 86400 }, success_nodes: ['run'] }] : []),
-          { identifier: 'run', unified_job_template: templateName, job_type: 'run' },
-        ],
+        organization: org,
+        extra_vars: '---',
+        inventory: null,
+        limit: null,
+        scm_branch: null,
+        allow_simultaneous: false,
+        ask_variables_on_launch: false,
+        ask_inventory_on_launch: false,
+        ask_limit_on_launch: false,
+        survey_enabled: false,
+        related: { workflow_nodes: order.map(node), labels: [] },
+        natural_key: wfKey,
       };
+
+      const exportJson = { job_templates: [template], workflow_job_templates: [workflow] };
+
+      const importMd = [
+        '# Importing this into AWX or Automation Platform',
+        '',
+        `\`import/awx/${base}.json\` is in the format \`awx export\` writes and \`awx import\` reads (awxkit): a job template and a workflow, every reference by name.`,
+        '',
+        '## 1. What must exist first, with exactly these names',
+        '',
+        `- Organization **${organization}**`,
+        `- Project **${project}**, containing \`${playbook}\``,
+        `- Inventory **${inventory}**${limit ? ` with a group **${limit}**` : ''}`,
+        `- Machine credential **${machineCredential}** (and a vault credential, attached by hand afterwards, if the playbook uses one)`,
+        '',
+        'The import resolves each of these by name and stops if one is missing.',
+        '',
+        '## 2. Import',
+        '',
+        '```bash',
+        'pip install awxkit            # the version that matches your AWX / controller',
+        'export CONTROLLER_HOST=https://awx.example.com',
+        'export CONTROLLER_USERNAME=<an account that can create templates in the organization>',
+        'read -rs CONTROLLER_PASSWORD && export CONTROLLER_PASSWORD',
+        '# Automation Platform 2.5 and later, through the gateway:',
+        '# export AWXKIT_API_BASE_PATH=/api/controller/',
+        `awx import < import/awx/${base}.json`,
+        '```',
+        '',
+        '## 3. Before the first real run',
+        '',
+        `Launch **${workflowName}**${checkFirst ? ' and read the check-mode job' : ''}${approval ? ', then approve or deny the approval node' : ''}. Attach a failure notification in the template’s Notifications tab.`,
+        '',
+        '## Confirmed, and what to verify',
+        '',
+        '- The top-level keys (`job_templates`, `workflow_job_templates`), natural keys, `related.credentials`, `related.survey_spec` and `related.workflow_nodes` with `success_nodes` as node natural keys: awxkit (awxkit/api/pages/api.py) and exports shown in ansible/awx issues #7946 and #14292.',
+        ...(approval ? ['- VERIFY: the approval node. awxkit exports approval nodes through `create_approval_template` (name, description, timeout) rather than a natural key; if your awxkit version rejects it, delete that node from the file and add the approval in the workflow visualizer.'] : []),
+        '- awxkit 22.4.0 to 23.x had a bug that dropped success_nodes on export (issue #14292). Import with a current awxkit.',
+        '',
+      ].join('\n');
 
       return {
         platform: PLATFORM,
@@ -412,8 +725,8 @@ export const PIPELINE_AUTOMATIONS                                 = [
         dryRun: ['Launch the check-mode node on its own and read the changed list.', 'Not every module supports check mode — the ones that do not are the ones to read twice.'],
         undo: ['Ansible does not roll back. The undo is another playbook, and if the change is significant it should be written before the change is run.'],
         told: ['The job output in AWX, kept per its retention. Set a notification on failure — a silent failed job is worse than a loud one.'],
-        requires: [`The inventory "${inventory}" and the group "${limit || '(none)'}".`, 'A machine credential in AWX, and a vault credential if the playbook uses one.'],
-        files: { [`${base}.json`]: `${JSON.stringify(template, null, 2)}\n`, [`${base}-workflow.json`]: `${JSON.stringify(workflow, null, 2)}\n` },
+        requires: [`The organization "${organization}", project "${project}", inventory "${inventory}" and the group "${limit || '(none)'}".`, `The machine credential "${machineCredential}" in AWX, and a vault credential if the playbook uses one.`],
+        files: { [`import/awx/${base}.json`]: `${JSON.stringify(exportJson, null, 2)}\n`, 'IMPORT.md': importMd },
         notes: [
           'ask_limit_on_launch is on, which lets somebody narrow the run at launch. It also lets them widen it — the limit on the template is a default, not a ceiling.',
           'A dynamic inventory means the scope is decided at launch by something else entirely. Check what populates it before trusting the limit.',
@@ -545,7 +858,9 @@ export const PIPELINE_AUTOMATIONS                                 = [
         '      - run: terraform validate',
         '      - name: Plan',
         '        id: plan',
-        '        run: terraform plan -no-color -lock-timeout=5m -out=tfplan',
+        '        run: |',
+        '          terraform plan -no-color -lock-timeout=5m -out=tfplan',
+        '          terraform show -no-color tfplan > "$GITHUB_WORKSPACE/plan.txt"',
         '      - name: Post the plan on the pull request',
         "        if: github.event_name == 'pull_request'",
         '        uses: actions/github-script@v7',
@@ -662,7 +977,31 @@ export const PIPELINE_AUTOMATIONS                                 = [
           'A remote backend with locking. Local state in CI is a corrupted state file waiting for a concurrent run.',
           cloud === 'vsphere' ? 'A vSphere service account in the secret store.' : 'A federated identity credential trusting this repository, and the roles it needs.',
         ],
-        files: ci === 'github' ? { '.github/workflows/terraform.yml': githubYaml } : { 'azure-pipelines-terraform.yml': azdoYaml },
+        files: {
+          ...(ci === 'github' ? { '.github/workflows/terraform.yml': githubYaml } : { 'azure-pipelines.yml': azdoYaml }),
+          'IMPORT.md': [
+            `# Putting this pipeline into ${ci === 'github' ? 'GitHub Actions' : 'Azure Pipelines'}`,
+            '',
+            'The pipeline file is not uploaded anywhere: it is committed to the repository that holds the Terraform, at exactly the path it has here.',
+            '',
+            ...(ci === 'github'
+              ? [
+                  '1. Commit `.github/workflows/terraform.yml` to the default branch (main). GitHub picks up every workflow in `.github/workflows/` on its own; there is nothing to import.',
+                  `2. ${cloud === 'azure' ? 'Add repository variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (Settings → Secrets and variables → Actions → Variables), and a federated credential on the app registration for this repository.' : cloud === 'aws' ? 'Add repository variables AWS_ROLE_ARN and AWS_REGION, and an IAM role that trusts token.actions.githubusercontent.com for this repository.' : 'Add repository secrets VSPHERE_USER and VSPHERE_PASSWORD (Settings → Secrets and variables → Actions).'}`,
+                  ...(approval ? ['3. Create the environment **production** (Settings → Environments) with required reviewers — that is the approval the apply job waits on.'] : []),
+                  `${approval ? '4' : '3'}. Open a pull request that touches \`${dir}\` and check that the plan is posted on it.`,
+                ]
+              : [
+                  '1. Commit `azure-pipelines.yml` to the root of the repository.',
+                  '2. Azure DevOps → Pipelines → **New pipeline** → your repository → **Existing Azure Pipelines YAML file** → branch main, path `/azure-pipelines.yml` → **Save**. Or: `az pipelines create --name terraform --repository <repo> --branch main --yml-path azure-pipelines.yml --skip-first-run true`.',
+                  `3. Create the environment **${approval ? 'production' : 'production-unattended'}** (Pipelines → Environments)${approval ? ' and add an Approvals check to it — that is the approval the apply stage waits on' : ''}.`,
+                  '4. Install the "Terraform" extension (TerraformInstaller@1) from the Visual Studio Marketplace in the organization if it is not there, and give the pipeline its cloud credential through a service connection.',
+                ]),
+            '',
+            'Sources: GitHub Docs, "Workflow syntax for GitHub Actions" (workflows live in .github/workflows); Microsoft Learn, "Create your first pipeline" and az pipelines create (--yml-path).',
+            '',
+          ].join('\n'),
+        },
         notes: [
           'Apply the saved plan rather than re-planning. It is the difference between applying what was reviewed and applying what is true now.',
           'terraform fmt -check in the plan job keeps the diff about the change rather than about whitespace.',

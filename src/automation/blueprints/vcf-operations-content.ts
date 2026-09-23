@@ -17,6 +17,21 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, authHeader, authPreamble, readScript, scheduledEnv, type ApplyTarget } from '../apply.ts';
+import {
+  CONTENT_ZIP,
+  FORMAT_SOURCES,
+  XML_OPERATOR,
+  alertContentXml,
+  contentImportScript,
+  contentPackage,
+  contentStep,
+  importMd,
+  nothingToImportMd,
+  policyMergeScript,
+  stableId,
+  superMetricsJson,
+  type AlertContent,
+} from '../vcfops-import.ts';
 
 const PLATFORM = 'vcf-operations' as const;
 const SRC = 'ArchToolKit';
@@ -358,10 +373,42 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
               symptomSetOperator: 'OR',
               symptomDefinitionIds: ['__WARNING_SYMPTOM_ID__', '__CRITICAL_SYMPTOM_ID__'],
             },
-            impact: { impactType: 'BADGE', detail: subType === 20 ? 'CAPACITY' : subType === 21 || subType === 22 ? 'RISK' : 'HEALTH' },
+            // The three badges an alert can affect: HEALTH, RISK, EFFICIENCY.
+            impact: { impactType: 'BADGE', detail: subType === 20 ? 'EFFICIENCY' : subType === 21 || subType === 22 ? 'RISK' : 'HEALTH' },
             ...(recommendation.trim() ? { recommendationPriorityMap: { __RECOMMENDATION_ID__: 1 } } : {}),
           },
         ],
+      };
+
+      // The same three objects as Alerts → Alert Definitions → Import takes them.
+      const ids = {
+        warn: `SymptomDefinition-${stableId(`symptom:${alertName}:warning`)}`,
+        crit: `SymptomDefinition-${stableId(`symptom:${alertName}:critical`)}`,
+        alert: `AlertDefinition-${stableId(`alert:${alertName}`)}`,
+        rec: `Recommendation-ud-${stableId(`recommendation:${alertName}`)}`,
+      };
+      const xmlSymptom = (id: string, severity: 'WARNING' | 'CRITICAL', value: number) => {
+        const json = symptom(severity, value);
+        return { id, name: json.name, adapterKind: 'VMWARE', resourceKind: metric.kind, severity: severity === 'WARNING' ? ('warning' as const) : ('critical' as const), waitCycle: wait, cancelCycle: cancel, key: metric.key, operator: XML_OPERATOR[operator] ?? '>', value };
+      };
+      const content: AlertContent = {
+        alerts: [
+          {
+            id: ids.alert,
+            name: alertName,
+            description: alert.description,
+            adapterKind: 'VMWARE',
+            resourceKind: metric.kind,
+            type,
+            subType,
+            impact: subType === 20 ? 'efficiency' : subType === 21 || subType === 22 ? 'risk' : 'health',
+            symptomOperator: 'or',
+            symptomRefs: [ids.warn, ids.crit],
+            recommendationRefs: recommendation.trim() ? [ids.rec] : [],
+          },
+        ],
+        symptoms: [xmlSymptom(ids.warn, 'WARNING', warnAt), xmlSymptom(ids.crit, 'CRITICAL', critAt)],
+        recommendations: recommendation.trim() ? [{ key: ids.rec, description: recommendation }] : [],
       };
 
       const apply = [
@@ -456,6 +503,41 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
           ...(recommendation.trim() ? { [`${base}-recommendation.json`]: `${JSON.stringify({ description: recommendation }, null, 2)}\n` } : {}),
           [`${base}-alert.json`]: `${JSON.stringify(alert, null, 2)}\n`,
           'apply.sh': apply,
+          'import/alert-definitions.xml': alertContentXml(content),
+          ...contentPackage(
+            {
+              'alertdefs.xml': alertContentXml(content, 'alerts'),
+              'symptomdefs.xml': alertContentXml(content, 'symptoms'),
+              ...(content.recommendations.length > 0 ? { 'recommendationdefs.xml': alertContentXml(content, 'recommendations') } : {}),
+            },
+            { alertDefinitions: 1, symptomDefinitions: 2, recommendationDefinitions: content.recommendations.length },
+          ),
+          'import-content.sh': contentImportScript({ what: `the alert "${alertName}" with its symptoms${recommendation.trim() ? ' and recommendation' : ''}`, contentType: 'ALERT_DEFINITIONS', needles: [ids.alert, `name="${alertName.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"`] }),
+          'IMPORT.md': importMd({
+            title: `the alert "${alertName}"`,
+            steps: [
+              {
+                heading: 'The alert, its symptoms and its recommendation — one file',
+                files: ['import/alert-definitions.xml'],
+                how: [
+                  'Alerts → Configure → Alert Definitions → ⋯ → Import (8.x: Configure → Alerts → Alert Definitions → Import), and choose import/alert-definitions.xml. The symptoms and the recommendation it refers to are in the same file and are created with it.',
+                  `Ids in the file are fixed (${ids.alert}), so importing it again with "Overwrite" replaces this alert and nothing else.`,
+                ],
+              },
+              {
+                heading: 'Or by the REST API',
+                files: [`${base}-symptom-warning.json`, `${base}-symptom-critical.json`, ...(recommendation.trim() ? [`${base}-recommendation.json`] : []), `${base}-alert.json`, 'apply.sh'],
+                how: ['./apply.sh --execute creates the symptoms, the recommendation and then the alert, in that order, through /suite-api/api/symptomdefinitions, /recommendations and /alertdefinitions. The API assigns its own ids.'],
+              },
+              contentStep('ALERT_DEFINITIONS'),
+              {
+                heading: 'Then enable it in a policy',
+                files: [],
+                how: ['An imported alert definition is enabled only where a policy enables it. Use "Turn alert definitions on or off in a policy" in this kit with the id above, or Policies → edit → Alerts and Symptoms.'],
+              },
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           `Metric key ${metric.key} is the VMware adapter’s. If an object shows it under a different key in your version, open the object’s metric picker and copy the key from there.`,
@@ -599,6 +681,28 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
           [`${base}-recommendation.json`]: `${JSON.stringify(recommendation, null, 2)}\n`,
           [`${base}-policy-automate.xml`]: policyXml,
           'apply.sh': applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/recommendations', payload: `${base}-recommendation.json` }], 'DELETE /suite-api/api/recommendations/{id}; set automate="false" in the policy.'),
+          'merge-policy.sh': policyMergeScript(`${base}-policy-automate.xml`, policy),
+          'IMPORT.md': importMd({
+            title: `automating ${action} for ${alertId || 'the alert'}`,
+            steps: [
+              {
+                heading: 'The recommendation with the action behind it',
+                files: [`${base}-recommendation.json`, 'apply.sh'],
+                how: ['Fill in actionId (GET /suite-api/api/actiondefinitions), then ./apply.sh --execute — POST /suite-api/api/recommendations.', 'In the interface: Alerts → Configure → Recommendations → Add, with the action selected. There is no file import for a recommendation on its own.'],
+              },
+              {
+                heading: 'The automate flag, merged into the policy',
+                files: [`${base}-policy-automate.xml`, 'merge-policy.sh'],
+                how: [
+                  `${base}-policy-automate.xml is the change, not a policy to import: a policy file holds all of a policy's overrides, so importing this one would drop every other override "${policy}" has.`,
+                  `POLICY_ID=<id of "${policy}"> ./merge-policy.sh exports the policy (the export is kept as the undo), sets these <Alert> attributes in it, and writes import/policy-merged.zip. With --execute it imports that zip: POST /suite-api/api/policies/import?forceImport=true.`,
+                  'Or import import/policy-merged.zip yourself: Configure → Policies → ⋯ → Import (8.x: Administration → Policies → Policy Library → Import).',
+                ],
+                verify: ['the automate attribute name, against an export of your own policy: the merge copies the attribute names as written here.'],
+              },
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           'The automate attribute is set on the alert inside the policy, not on the alert definition. The same alert can be automated in one policy and only reported in another — that is the mechanism for scoping it.',
@@ -675,6 +779,12 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         description: `Generated by ArchToolKit. ${chosen.about}`,
         unitId: unit || 'none',
       };
+      // SuperMetric.json, as Super Metrics → Export writes it: keyed by id.
+      const smId = stableId(`supermetric:${metricName}`);
+      const known = preset !== 'custom';
+      const exportJson = superMetricsJson([
+        { id: smId, name: metricName, formula: chosen.formula, description: payload.description, unitId: unit, resourceKinds: known ? [{ adapterKindKey: 'VMWARE', resourceKindKey: chosen.on }] : [] },
+      ]);
 
       return {
         platform: PLATFORM,
@@ -694,6 +804,30 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
           'apply.sh': applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/supermetrics', payload: `${base}.json` }], 'DELETE /suite-api/api/supermetrics/{id}.'),
+          'import/supermetric.json': exportJson,
+          ...contentPackage({ 'supermetrics.json': exportJson }, { superMetrics: 1 }),
+          'import-content.sh': contentImportScript({ what: `the super metric "${metricName}"`, contentType: 'SUPER_METRICS', needles: [smId, `"name": ${JSON.stringify(metricName)}`, `"name":${JSON.stringify(metricName)}`] }),
+          'IMPORT.md': importMd({
+            title: `the super metric "${metricName}"`,
+            steps: [
+              {
+                heading: 'The super metric',
+                files: ['import/supermetric.json'],
+                how: [
+                  'Configure → Super Metrics → ⋯ → Import (8.x: Administration → Configuration → Super Metrics → Import Super Metric), and choose import/supermetric.json. A super metric with the same name is skipped unless you choose to overwrite.',
+                  known ? `It arrives assigned to ${chosen.on}, keyed by id ${smId}; its metric key is Super Metric|sm_${smId}.` : 'It arrives assigned to no object type: assign it under the super metric’s Object Types after import.',
+                ],
+              },
+              { heading: 'Or by the REST API', files: [`${base}.json`, 'apply.sh'], how: ['./apply.sh --execute — POST /suite-api/api/supermetrics. The API assigns its own id.'] },
+              contentStep('SUPER_METRICS'),
+              {
+                heading: 'Then enable it in a policy',
+                files: [],
+                how: [`Policies → edit → Metrics and Properties → ${chosen.on === '<REQUIRED — the object type to enable it on>' ? 'the object type' : chosen.on} → the super metric → Enabled. Until then it computes nothing.`],
+              },
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           `After creating it, assign it to ${chosen.on} and enable it in a policy under Metrics and Properties. Until then it exists and computes nothing.`,
@@ -822,6 +956,21 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
             'echo "Saved. Commit it beside the design."',
             '',
           ].join('\n'),
+          'IMPORT.md': importMd({
+            title: `the policy "${policyName}"`,
+            steps: [
+              { heading: 'Save the parent', files: ['export-parent.sh'], how: [`PARENT_POLICY_ID=<id of "${parent}"> ./export-parent.sh — GET /suite-api/api/policies/export, a zip holding the policy XML. That zip is the undo, and re-imports under Policies → Import or POST /suite-api/api/policies/import?forceImport=true (multipart field policy).`] },
+              {
+                heading: 'Create the policy',
+                files: [`${base}-design.md`],
+                how: [
+                  'Nothing here is a policy file to import. Capacity settings are written by the policy editor, and a hand-written policy XML with an element the release does not know is ignored without a word — so the design is applied in Configure → Policies → Add, from the table in the design file.',
+                  'Once it is right, export it (Policies → ⋯ → Export) and keep that zip with the design: from then on it is the importable form of this policy, for this instance and for the next one.',
+                ],
+              },
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           'Policies do not combine. An object covered by two policies gets all of the higher-priority one and none of the other, which is the most common reason an alert "should" be firing and is not.',
@@ -1012,6 +1161,11 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
             '',
           ].join('\n'),
           'report.sh': report,
+          'IMPORT.md': nothingToImportMd('the compliance run', [
+            `${base}-enable.md is for a person: the benchmark is enabled in the interface (Operations → Compliance → the benchmark → Enable, on the policy it names). The benchmarks are VMware's own, so there is no file to import for them.`,
+            'report.sh reads the compliance alerts over the API and changes nothing. Run it by hand or from cron; it exits non-zero on drift.',
+            'A custom benchmark of your own is a separate import (Compliance → Custom Benchmarks → Import) and is not generated here.',
+          ]),
         },
         notes: [
           'The first run is a baseline, not a failure. Agree the number that is acceptable this quarter and set the threshold to it, then lower it.',
@@ -1181,6 +1335,21 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
             'echo "Sent. Check it arrived and reads correctly before attaching the template to a rule."',
             '',
           ].join('\n'),
+          'IMPORT.md': importMd({
+            title: 'the webhook payload template',
+            steps: [
+              {
+                heading: 'The payload template',
+                files: [`${base}-template.json`],
+                how: [
+                  'Configure → Alerts → Payload Templates → Add (8.x: Configure → Alerts → Payload Templates), choose the Webhook Notification Plugin as the outbound method, and paste the contents of this file as the request body. It is the body, not a template export.',
+                  'Then select the template on the notification rule that uses the webhook outbound instance.',
+                ],
+                verify: ['the payload-template export/import in the interface writes its own wrapper around the body; that wrapper is not documented, so this is pasted rather than imported.'],
+              },
+              { heading: 'Test the receiving end', files: [`${base}-sample.json`, 'send-sample.sh'], how: ['./send-sample.sh posts the filled-in sample straight to the endpoint, without VCF Operations.'] },
+            ],
+          }),
         },
         notes: [
           'In the interface: Configure → Payload Templates → Add, choose the webhook outbound method, and paste the template. Then select the template on the notification rule.',
@@ -1354,7 +1523,15 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         undo: ['Nothing to undo. To restore an object, POST its JSON back — without the id, which the target will assign.'],
         told: ['The git log. Point your repository’s notifications at a channel and every content change in VCF Operations becomes visible.'],
         requires: ['git and jq on the machine that runs it, and a working copy already cloned at ' + repo + '.', push ? 'Credentials for the push held by git’s own credential helper, not in the script.' : 'Nothing else.'],
-        files: runner === 'powershell' ? { 'Backup-VcfOpsContent.ps1': ps } : { 'backup-content.sh': bash, 'crontab.txt': `# Nightly at 01:30. The script logs in for itself from the password file\n# (mode 600, owned by the job's user); no token or password is in this line.\n30 1 * * * cd ${repo} && ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/backup-content.sh >> /var/log/vcfops-backup.log 2>&1\n` },
+        files: {
+          ...(runner === 'powershell' ? { 'Backup-VcfOpsContent.ps1': ps } : { 'backup-content.sh': bash, 'crontab.txt': `# Nightly at 01:30. The script logs in for itself from the password file\n# (mode 600, owned by the job's user); no token or password is in this line.\n30 1 * * * cd ${repo} && ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/backup-content.sh >> /var/log/vcfops-backup.log 2>&1\n` }),
+          'IMPORT.md': nothingToImportMd('the nightly content backup', [
+            runner === 'powershell'
+              ? 'Backup-VcfOpsContent.ps1 runs from Task Scheduler on a host of your own; it reads the API and writes JSON into the repository. Nothing is imported into VCF Operations.'
+              : 'backup-content.sh goes in /usr/local/bin and crontab.txt in the service account’s crontab; it reads the API and writes JSON into the repository. Nothing is imported into VCF Operations.',
+            'What it writes is the API’s GET responses, one folder per content type: a record of what changed and when, readable in a diff. It is not an import format. To put content back, POST the object to the same API path, or restore from a Content Management export (Administration → Control Panel → Content Management → Export, then Import) — which is the backup to keep for a rebuild.',
+          ]),
+        },
         notes: [
           'Tokens from /suite-api/api/auth/token/acquire expire after a few hours, so the job logs in for itself each run from VCFOPS_PASSWORD_FILE — a file only the job’s user can read. The password is sent on stdin, never on a command line.',
           'Committing two environments into one repository makes "what differs between test and production" a directory diff.',
@@ -1463,7 +1640,11 @@ export const VCF_OPERATIONS_CONTENT: readonly AutomationBlueprint[] = [
         undo: ['Nothing to undo.'],
         told: webhook ? [`${webhook}, whenever a check fails.`] : ['The exit code only. Set a webhook, or have the scheduler alert on a non-zero exit.'],
         requires: ['jq and bash 4 on the machine that runs it.', 'A read-only VCF Operations account for the token.'],
-        files: { [`${base}.sh`]: script, 'crontab.txt': `# Every 15 minutes. The script logs in for itself from the password file\n# (mode 600); no token or password is in this line.\n*/15 * * * * ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh\n` },
+        files: {
+          [`${base}.sh`]: script,
+          'crontab.txt': `# Every 15 minutes. The script logs in for itself from the password file\n# (mode 600); no token or password is in this line.\n*/15 * * * * ${scheduledEnv('vcf-operations', 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh\n`,
+          'IMPORT.md': nothingToImportMd('the VCF Operations self-health check', [`${base}.sh goes in /usr/local/bin on a host outside VCF Operations (it has to keep working when VCF Operations does not), and crontab.txt in the service account’s crontab. It only reads.`]),
+        },
         notes: [
           'An adapter collecting zero objects is almost always an expired or changed credential, and it is the most common reason an estate goes quiet.',
           'Run the same check against every VCF Operations instance in the fleet; each one only knows about its own collectors.',

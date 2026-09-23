@@ -43,7 +43,7 @@ function mountBuild(container             )       {
         kindLabel: 'Terraform (HCL)',
         noun: 'blueprint',
         idleHint:
-          'Pick a platform and blueprint, adjust the parameters, then Generate. Save the result as main.tf and run terraform init && terraform plan. The Map tab is the reference for what to reach for.',
+          'Pick a platform and blueprint, adjust the parameters, then Generate. Download as .zip, unzip it as the root module (versions.tf, providers.tf, main.tf, variables.tf, outputs.tf), copy terraform.tfvars.example to terraform.tfvars, then run terraform init && terraform plan. The Map tab is the reference for what to reach for.',
         preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
         settingsKind: 'archtoolkit.terraform-generator',
         stack: {

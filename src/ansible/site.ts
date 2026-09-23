@@ -20,6 +20,7 @@
  * changed in one place.
  */
 
+import { ANSIBLE_CFG, API_COLLECTIONS, inventoryYaml, requiredCollections, WINDOWS_COLLECTIONS } from './project.ts';
 import { info, warning, type Finding } from '../core/findings.ts';
 import { defaultValues } from '../kit/blueprint.ts';
 import { numbered, slug, type BlueprintLookup, type StackBuild, type StackItem, type StackReference } from '../kit/stack.ts';
@@ -158,6 +159,9 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
   const imports: string[] = [];
   const collections = new Map<string, { version: string; from: string }>();
   const hosts = new Set<string>();
+  /** Host patterns of the plays that call an API, and of the ones that manage hosts. */
+  const apiHosts = new Set<string>();
+  const hostPlayHosts = new Set<string>();
 
   items.forEach((item, index) => {
     const blueprint = blueprintFor(item.blueprintId);
@@ -215,7 +219,11 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
     }
 
     const text = quoteJinjaScalars(playbook);
-    for (const host of hostsIn(text)) hosts.add(host);
+    const isApi = requiredCollections(requirements).some((c) => API_COLLECTIONS.test(c));
+    for (const host of hostsIn(text)) {
+      hosts.add(host);
+      (isApi ? apiHosts : hostPlayHosts).add(host);
+    }
     const fileName = numbered(index, name, '.yml');
     files[fileName] = text;
     imports.push(`- name: ${item.label}\n  import_playbook: ${fileName}`);
@@ -249,12 +257,24 @@ ${imports.join('\n\n')}
       .join('\n')}\n`;
   }
 
-  if (hosts.size > 0) {
-    files['inventory/hosts.yml'] = `---\n# A starting inventory: every group the playbooks name. Put the real hosts in.\n\nall:\n  children:\n${[...hosts]
-      .filter((h) => h !== 'all' && h !== 'localhost')
-      .map((h) => `    ${h.replace(/[^A-Za-z0-9_]/g, '_')}:\n      hosts: {}`)
-      .join('\n')}\n`;
+  // The inventory the plays need: localhost for API work (a play against
+  // `hosts: all` with no hosts does nothing), the named groups for host work.
+  const used = [...collections.keys()];
+  const apiNeedsEntry = [...apiHosts].some((h) => h !== 'localhost');
+  if (apiNeedsEntry && hostPlayHosts.size > 0) {
+    findings.push(
+      warning('ansible.site.api-play-on-group', `A play that calls an API targets ${[...apiHosts].filter((h) => h !== 'localhost').join(', ')}, and the same site manages hosts. Listing localhost in the inventory for it would put the control node in that pattern for the host plays too.`, {
+        path: 'inventory/hosts.yml',
+        remediation: 'Set "Run against" to localhost on the API items; Ansible runs them on the control node without an inventory entry.',
+      }),
+    );
   }
+  files['inventory/hosts.yml'] = inventoryYaml({
+    api: apiNeedsEntry && hostPlayHosts.size === 0,
+    windows: used.some((c) => WINDOWS_COLLECTIONS.test(c)),
+    hosts: [...hosts],
+  });
+  files['ansible.cfg'] = ANSIBLE_CFG;
 
   files['README.md'] = readme(siteName, items, files, variables);
 
@@ -284,7 +304,8 @@ function readme(siteName: string, items: readonly StackItem[], files: Readonly<R
           '',
         ]
       : []),
-    ...(files['inventory/hosts.yml'] ? ['Put your hosts into `inventory/hosts.yml`; it lists the groups the playbooks name.', ''] : []),
+    'Put the hosts to manage into `inventory/hosts.yml`; it lists the groups the playbooks name, and localhost for anything that calls an API. `ansible.cfg` points at it, so `-i` is optional.',
+    '',
     '## Running it',
     '',
     '```',

@@ -166,6 +166,24 @@
             check it when you are handed a copy — a zip carried into an air-gapped environment months
             ago will say so here.
           </p>
+          <h3>Downloads are import formats</h3>
+          <p>
+            Every generator page has <strong>Download as .zip</strong>. Each file keeps its real name,
+            extension and folder, scripts keep their executable bit, and anything a product imports as a
+            package is already packaged inside it. Unzip it and import or run it as it stands. The
+            <code>IMPORT.md</code> at the top says where each file goes and in what order.
+          </p>
+          <table>
+            <tr><th>Target</th><th>What you import</th></tr>
+            <tr><td>VCF Automation</td><td><code>import/templates/&lt;name&gt;/blueprint.yaml</code> for Upload or a git content source, or <code>import/import-templates.sh</code>; ABX actions and Orchestrator workflows and actions under <code>import/abx</code> and <code>import/orchestrator</code>; everything else through <code>apply.sh</code>, in the order <code>IMPORT.md</code> gives.</td></tr>
+            <tr><td>VCF Operations</td><td>Alert definitions as <code>&lt;alertContent&gt;</code> XML, super metrics, dashboard, view and report packages, custom groups; the Content Management package through <code>import-content.sh</code>, which adds the instance marker the import screen requires.</td></tr>
+            <tr><td>Logs, Networks, fleet, tags</td><td>Content packs as <code>.vlcp</code>, <code>liagent.ini</code>, PowerCLI tag CSVs, and the exact API bodies with their scripts.</td></tr>
+            <tr><td>Pipelines</td><td>Code Stream YAML for Pipelines &gt; Import, <code>.github/workflows</code>, <code>.gitlab-ci.yml</code>, <code>azure-pipelines.yml</code>, <code>Jenkinsfile</code>, Azure runbooks with Bicep and ARM, SSM documents, AWX export JSON for <code>awx import</code>.</td></tr>
+            <tr><td>Splunk</td><td><strong>Download app as .spl</strong> for Install app from file or the deployment server.</td></tr>
+            <tr><td>Terraform, Ansible, Network, Scripts</td><td>A root module ready for <code>terraform init</code>; a playbook project with <code>ansible.cfg</code>, inventory and <code>requirements.yml</code>; device files each platform accepts as pasted; scripts named as their usage lines say.</td></tr>
+          </table>
+          <p><strong>Download all as one text file</strong> is still there, for reading or a change record. It is not an import format.</p>
+
 
           <h3>The licence line, bottom</h3>
           <p>

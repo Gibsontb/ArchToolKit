@@ -203,13 +203,22 @@ export function moduleBlueprint(target             , spec                     ) 
 terraform {
   required_version = ">= 1.5"
 
+  # No version pin here: the module declares the provider versions it works
+  # with, and a tighter pin in the root (say, a newer major than the module
+  # allows) makes terraform init fail to find any release. init records the
+  # version it chose in .terraform.lock.hcl; commit that file to hold it.
   required_providers {
     ${provider.localName} = {
-      source  = "${provider.source}"
-      version = "${provider.version}"
+      source = "${provider.source}"
     }
   }
-}`;
+}${provider.localName === 'azurerm' ? `
+
+# azurerm will not plan without a features block, even an empty one. The
+# subscription comes from ARM_SUBSCRIPTION_ID or the Azure CLI login.
+provider "azurerm" {
+  features {}
+}` : ''}`;
 
       const call = moduleCall({
         name: spec.name,

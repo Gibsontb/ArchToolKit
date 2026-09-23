@@ -30,6 +30,7 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, readScript, scheduledEnv } from '../apply.ts';
+import { withScriptsImportMd } from '../vcfops-import.ts';
 import { PAGED_HELPERS, WEBHOOK_HELPER, shq, workDirLines } from './vcf-operations-content.ts';
 
 const OPS = 'vcf-operations' as const;
@@ -2411,4 +2412,4 @@ export const VCF_OPS_OPERATE: readonly AutomationBlueprint[] = [
       };
     },
   }),
-];
+].map(withScriptsImportMd);

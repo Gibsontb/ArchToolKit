@@ -74,6 +74,7 @@ describe('a stack of real blueprints', () => {
       '03-logs.tf',
       'README.md',
       'providers.tf',
+      'terraform.tfvars.example',
       'variables.tf',
       'versions.tf',
     ]);

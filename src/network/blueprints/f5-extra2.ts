@@ -44,8 +44,8 @@ function declaration(tenant: string, application: string, label: string, body: R
 const clean = (value: string, fallback: string): string => (str({ v: value }, 'v', fallback) || fallback).replace(/[^A-Za-z0-9_]/g, '_');
 
 const as3Push = (tenant: string, app: string): DeviceChange['push'] => ({
-  module: 'f5networks.f5_modules.bigip_as3_deploy',
-  args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' },
+  module: 'f5networks.f5_bigip.bigip_as3_deploy',
+  args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' },
   hosts: 'bigips',
 });
 

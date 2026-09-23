@@ -271,6 +271,19 @@ export const COLLECTIONS                            = [
       'BIG-IP credentials as a provider dictionary from a vault or the environment. An AS3 declaration is posted to the management API; it carries no passwords of its own here.',
     requires: 'A BIG-IP reachable from the control node.',
   },
+  {
+    // The declarative collection: bigip_as3_deploy lives here, not in
+    // f5_modules. It connects over httpapi rather than a provider dictionary.
+    // clouddocs.f5.com/products/orchestration/ansible/devel/f5_bigip/modules_2_0/bigip_as3_deploy_module.html
+    name: 'f5networks.f5_bigip',
+    target: 'network',
+    label: 'F5 BIG-IP (declarative: AS3, DO, TS)',
+    version: 'latest',
+    observedVersion: 'not read from Galaxy by this build',
+    pinned: false,
+    credentials: 'BIG-IP credentials as ansible_user / ansible_password (httpapi) from a vault.',
+    requires: 'ansible.netcommon on the control node, and the AS3 RPM installed on the BIG-IP.',
+  },
 ];
 
 export function collectionFor(name        )                             {

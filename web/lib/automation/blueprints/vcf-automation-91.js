@@ -28,6 +28,22 @@ import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
+import { importBundle, importMd, kubeStep, manualStep, verifyFor,                 } from '../vcfa-import.js';
+
+const ALL_APPS = 'VCF Automation 9.1 / 9.1.1 All Apps organizations';
+const PROVIDER = 'VCF Automation 9.1 / 9.1.1, provider (System) side';
+
+/** The Terraform route: plan, read, apply exactly the plan. */
+function tfStep(heading        , what        )             {
+  return manualStep(heading, [
+    `\`VCFA_URL=https://<vcfa> VCFA_ORG=<org> VCFA_API_TOKEN_FILE=<file> ./plan.sh\` runs terraform init and plan and saves the plan; read it. \`./plan.sh --execute\` applies exactly that saved plan. ${what}`,
+  ]);
+}
+
+/** A read-only check to run after the import. */
+function checkStep(script        , what        )             {
+  return manualStep(`Check it — ${script}`, [`\`./${script}\` reads only and exits 1 when something needs attention: ${what}`]);
+}
 
 const PLATFORM = 'vcf-automation'         ;
 const SRC = 'ArchToolKit';
@@ -420,6 +436,17 @@ export const VCF_AUTOMATION_91                                 = [
 
       const env = `VCFA_HOST=vcfa.example.com${scope === 'tenant' ? ` VCFA_ORG=${org}` : ''} VCFA_API_TOKEN_FILE=${tokenFile} VCFA_ACCESS_FILE=${accessFile}`;
       const files                         = {
+        'IMPORT.md': importMd({
+          subject: 'The API token exchange every other VCF Automation 9 script on this page authenticates with. Nothing here is imported into VCF Automation; it produces the token the imports use.',
+          orgs: scope === 'provider' ? PROVIDER : 'VCF Automation 9.1 / 9.1.1 organizations, VM Apps and All Apps',
+          steps: [
+            manualStep('Make the API token', [`Log in to https://<vcfa>/${scope === 'provider' ? 'provider' : `tenant/${org}`}, My Account → API Tokens → New. Write it once to a mode-600 file: \`( umask 077; cat > ${tokenFile} )\`, paste, Ctrl-D.`]),
+            manualStep('Exchange it', ['`./vcfa-token-exchange.sh` writes a one-hour access token to the access file. The import scripts (`import/*.sh`) take the API token file directly as VCFA_API_TOKEN_FILE with VCFA_ORG; `apply.sh` scripts take VCFA_TOKEN="$(cat <access file>)".']),
+            checkStep('vcfa-tokens-audit.sh', 'tokens that expire within 30 days.'),
+          ],
+          auth: ['vcfa91'],
+          verify: ['The exchange (/oauth/tenant/<org>/token, /oauth/provider/token, grant_type=refresh_token) is from Broadcom TechDocs 9.1.'],
+        }),
         'vcfa-token-exchange.sh': exchange,
         'vcfa-tokens-audit.sh': audit,
         ...(revoke ? { 'vcfa-token-revoke.sh': revokeScript } : {}),
@@ -774,6 +801,13 @@ export const VCF_AUTOMATION_91                                 = [
           'plan.sh': tfScript(`Create organization ${orgName}.`, 'remove the resource from main.tf and apply; see the README for the organization itself.'),
           'check-org.sh': check,
           'onboarding-checklist.md': checklist,
+          'IMPORT.md': importMd({
+            subject: `The organization ${orgName} and its region quota, through the vmware/vcfa Terraform provider.`,
+            orgs: PROVIDER,
+            steps: [tfStep('Create the organization', 'Run it with VCFA_ORG=System and a provider API token.'), checkStep('check-org.sh', 'the organization is enabled and its region quota READY.'), manualStep('Then', ['Work through onboarding-checklist.md; the tenant-side blueprints on this page start once the organization has an administrator and an API token.'])],
+            auth: ['terraform', 'vcfa91'],
+            verify: ['Arguments follow the vmware/vcfa provider documentation (1.2.x, which states support for 9.1).'],
+          }),
         },
         notes: [
           'is_classic_tenant decides VM Apps (true) or All Apps (false), and forces replacement if changed. Choose once.',
@@ -935,6 +969,17 @@ export const VCF_AUTOMATION_91                                 = [
           ...(create ? { 'versions.tf': VERSIONS_TF, 'region.tf': regionTf, 'plan.sh': tfScript(`Create region ${region}.`, 'remove it from region.tf and apply, after its quotas are gone.') } : {}),
           'inventory.sh': inventory,
           'namespace-classes.sh': nsClasses,
+          'IMPORT.md': importMd({
+            subject: `Region ${region}: ${create ? 'created through the vmware/vcfa Terraform provider, then inventoried' : 'inventoried'}.`,
+            orgs: PROVIDER,
+            steps: [
+              ...(create ? [tfStep('Create the region', 'Provider work: VCFA_ORG=System.')] : []),
+              checkStep('inventory.sh', 'the region, its zones, supervisors, VM classes and storage.'),
+              manualStep('Namespace classes', ['`./namespace-classes.sh` lists them from an organization kubectl context. To create one, see "A Supervisor namespace, requested from All Apps".']),
+            ],
+            auth: ['terraform', 'vcfa91', 'kube'],
+            verify: ['The /cloudapi/vcf inventory paths are inferred; inventory.sh reports an HTTP status instead of failing silently when one differs.'],
+          }),
         },
         notes: [
           'Region arguments follow vcfa_region: name (RFC 1123), nsx_manager_id, supervisor_ids, storage_policy_names.',
@@ -1109,6 +1154,17 @@ export const VCF_AUTOMATION_91                                 = [
           'create-subnets.sh': kubeScript(`Create the VPC subnets for ${namespace}.`, [], ['subnets.k8s.yaml'], `kubectl delete -f subnets.k8s.yaml (after the VMs on them are gone).`),
           'discover.sh': discover,
           ...(withBlock ? { 'versions.tf': VERSIONS_TF, 'ip-block.tf': blockTf, 'plan.sh': tfScript(`Create the external IP block ${blockName}.`, 'remove it from ip-block.tf and apply once nothing uses it.') } : {}),
+          'IMPORT.md': importMd({
+            subject: `VPC subnets for the namespace ${namespace}.`,
+            orgs: ALL_APPS,
+            steps: [
+              ...(withBlock ? [tfStep(`External IP block ${blockName} (provider)`, 'Provider work: VCFA_ORG=System.')] : []),
+              manualStep('Look first', ['`./discover.sh` shows the namespace’s VPC, subnets and the API versions the server offers.']),
+              kubeStep('Subnets', 'create-subnets.sh', ['subnets.k8s.yaml']),
+            ],
+            auth: ['kube', ...(withBlock ? (['terraform']         ) : [])],
+            verify: ['The subnet apiVersion and accessMode names: kubectl explain subnet.spec.'],
+          }),
         },
         notes: [
           'Access modes: Public comes from the external IP block and is advertised to the Tier-0; Private is reachable only inside the VPC and leaves by SNAT; PrivateTGW is reachable from every VPC on the same transit gateway (Tom Fojta, VCF Automation 9.0 networking deep dive). Older releases called PrivateTGW "Project" — VERIFY with kubectl explain subnet.spec.accessMode.',
@@ -1321,6 +1377,13 @@ export const VCF_AUTOMATION_91                                 = [
           'content-library.tf': tfLines,
           'plan.sh': tfScript(`Create content library ${lib}.`, 'remove it from content-library.tf and apply.'),
           'check-library.sh': check,
+          'IMPORT.md': importMd({
+            subject: `The content library ${lib} and its images.`,
+            orgs: ALL_APPS,
+            steps: [tfStep('Create the library', `Run with VCFA_ORG=${org}.`), checkStep('check-library.sh', 'the library is READY, with the image identifiers VM Service will use.')],
+            auth: ['terraform', 'vcfa91'],
+            verify: ['Arguments follow vcfa_content_library and vcfa_content_library_item in the vmware/vcfa provider documentation.'],
+          }),
         },
         notes: [
           'Arguments follow vcfa_content_library (org_id, storage_class_ids, auto_attach, is_project_scoped, all_projects_permission, subscription_config) and vcfa_content_library_item (content_library_id, file_paths, upload_piece_size in MB; image_identifier is read-only).',
@@ -1511,6 +1574,13 @@ export const VCF_AUTOMATION_91                                 = [
         files: {
           [`${vm}.k8s.yaml`]: yaml,
           'create-vm.sh': kubeScript(`Create VM ${vm} in ${ns}.`, pre, [`${vm}.k8s.yaml`], `kubectl delete -f ${vm}.k8s.yaml`),
+          'IMPORT.md': importMd({
+            subject: `The VM Service virtual machine ${vm} in ${ns}.`,
+            orgs: ALL_APPS,
+            steps: [kubeStep('The virtual machine', 'create-vm.sh', [`${vm}.k8s.yaml`], ['To offer it in the catalogue instead, wrap the manifest in a blueprint (formatVersion 2, a CCI.Supervisor.Resource whose manifest is this file) and import that through Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import (VERIFY the resource type against a blueprint made in the designer).'])],
+            auth: ['kube'],
+            verify: ['The vmoperator apiVersion: kubectl api-versions | grep vmoperator, and use the newest.'],
+          }),
         },
         notes: [
           'VCF 9.x examples use vmoperator.vmware.com/v1alpha5; a 9.0 KB uses v1alpha3 for the same network interface shape. Pick whichever kubectl api-versions shows as newest.',
@@ -1678,6 +1748,16 @@ export const VCF_AUTOMATION_91                                 = [
           [`${db}.k8s.yaml`]: yaml,
           'create-db.sh': kubeScript(`Create ${kind} ${db} in ${ns}.`, pre, [`${db}.k8s.yaml`], `kubectl delete ${kind.toLowerCase()} ${db} -n ${ns} — deletes the data.`),
           'check-db.sh': check,
+          'IMPORT.md': importMd({
+            subject: `The ${kind} ${db} in ${ns}.`,
+            orgs: ALL_APPS,
+            steps: [
+              kubeStep('The database', 'create-db.sh', [`${db}.k8s.yaml`], ['The script creates the admin password Secret first, from DB_ADMIN_PASSWORD_FILE (a mode-600 file), so the password is never on a command line or in the manifest.']),
+              checkStep('check-db.sh', 'the database is Ready, and when it was last backed up.'),
+            ],
+            auth: ['kube'],
+            verify: ['Field names follow the DSM 9.0.x examples; kubectl explain on your release is the check.'],
+          }),
         },
         notes: [
           'Fields follow the DSM 9.0.x examples (Tom Fojta; Cormac Hogan): adminUsername, adminPasswordRef, version, storageSpace, storagePolicyName, infrastructurePolicy, vmClass, maintenanceWindow, backupLocation, backupConfig. Postgres takes replicas (0 single, 1 HA); MySQL takes members (1 or 3).',
@@ -1928,6 +2008,14 @@ export const VCF_AUTOMATION_91                                 = [
         undo: 'Each changed zone was saved first to zone-before-<id>-<time>.json. Send its tags back the same way (the same fields, tags from the saved file) to remove what was added.',
       });
 
+      // The fragment, made into a whole template so it can be imported and tried.
+      const exampleTemplate = snippet
+        .replace(/^inputs:\n(?=resources:)/m, '')
+        .replace('\n    properties:\n', '\n    properties:\n      image: "<REQUIRED — an image mapping name>"\n      flavor: "<REQUIRED — a flavor mapping name>"\n');
+      const imported = importBundle({
+        templates: [{ name: 'Tag placement example', description: 'Generated by ArchToolKit. Placement constraints and resource tags from the tag standard.', yaml: exampleTemplate }],
+      });
+
       return {
         platform: PLATFORM,
         title: `Tag placement from a ${standard.length}-category standard across ${zones.length} zone(s)`,
@@ -1956,6 +2044,18 @@ export const VCF_AUTOMATION_91                                 = [
           'tag-mapping.csv': csv,
           'check-tags.sh': check,
           ...(writeZones ? { 'apply-zone-tags.sh': apply } : {}),
+          ...imported.files,
+          'IMPORT.md': importMd({
+            subject: 'Tag-based placement: capability tags on the cloud zones, and a template whose constraints match them.',
+            steps: [
+              ...(writeZones ? [manualStep('Zone capability tags', ['`./apply-zone-tags.sh` prints, per zone, the tags it would add and the diff of the zone; `--execute` sends it, saving each zone first. By hand: Infrastructure → Cloud Zones → the zone → Capability tags.'])] : []),
+              checkStep('check-tags.sh', 'a hard constraint that can ask for a tag no zone carries.'),
+              imported.steps.templates,
+              manualStep('Use it in your own templates', ['template-constraints.yaml is the fragment to paste into existing templates; the imported example is the same fragment made whole. Fill its image and flavor before versioning it.']),
+            ],
+            auth: ['vcfa91', 'import'],
+            verify: [...verifyFor(imported), 'The zone update method (PATCH, or PUT with VCFA_ZONE_METHOD) and to_lower() in expressions are VERIFY; see the notes.'],
+          }),
         },
         notes: [
           'Three kinds of tag (drpranayjha.com, VCF Automation 9 series part 13): capability tags say what a zone, compute, network or storage profile offers; constraint tags in a template say what a request needs (hard by default, :soft to prefer, ! to exclude); resource tags are stamped on what is deployed.',
@@ -2123,6 +2223,20 @@ export const VCF_AUTOMATION_91                                 = [
           [`${base}-version.json`]: json(versionPayload),
           'version-template.sh': versionScript,
           ...(target ? { 'import-template.sh': importScript } : {}),
+          'IMPORT.md': importMd({
+            subject: `Version ${version} of the template "${tpl}"${target ? `, and a copy imported into ${target}` : ''}.`,
+            orgs: 'VCF Automation 9.1 / 9.1.1 organizations (VM Apps; All Apps where /blueprint/api answers)',
+            steps: [
+              manualStep('Export (read only)', ['`./export-template.sh` writes export/<template>.yaml and its version list. Keep them: they are the undo.']),
+              manualStep('Version', [`\`./version-template.sh\` looks the template up by exact name and stops if version ${version} exists; \`--execute\` posts \`${base}-version.json\`${release ? ', which releases it' : ''}. By hand: the design page → Version, ${release ? 'with Release to catalog ticked' : 'then release it from Version History when ready'}.`]),
+              ...(target
+                ? [manualStep(`Import into ${target}`, [`With VCFA_ORG=${target} and that organization’s token, \`TARGET_PROJECT_ID=<id> ./import-template.sh\`; \`--execute\` creates the draft there. By hand in the target: ${tgtType === 'all-apps' ? 'Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import' : 'Design → Templates → New from → Upload'}, choosing export/<template>.yaml.`])]
+                : []),
+              manualStep('Templates from this page', ['Every template blueprint here also writes import/templates/<name>/blueprint.yaml with its own import/import-templates.sh, which creates or updates, versions and (with --release) releases in one pass.']),
+            ],
+            auth: ['vcfa91'],
+            verify: ['The /blueprint/api paths under a 9.x tenant token are VERIFY for your organization type; the UI routes are documented (Broadcom 9.1, Import and Export a Blueprint).'],
+          }),
         },
         notes: [
           'Paths are the /blueprint/api carried from Aria Automation 8.x: GET /blueprint/api/blueprints, GET/POST /blueprint/api/blueprints/{id}/versions ({version, description, changeLog, release}). VERIFY they answer under a 9.x tenant token for your organization type.',
@@ -2222,7 +2336,17 @@ export const VCF_AUTOMATION_91                                 = [
         undo: ['Apply the saved before-*.yaml, or patch the old values back.'],
         told: ['vCenter events for the namespace limit change.', 'Kubernetes events on the SupervisorNamespace.'],
         requires: ['VCF Automation 9.1 (namespace day-2 changes are new in 9.1).', 'Rights to edit namespaces in the project.'],
-        files: { 'patch.json': json(patch), 'change-namespace.sh': script },
+        files: {
+          'patch.json': json(patch),
+          'change-namespace.sh': script,
+          'IMPORT.md': importMd({
+            subject: `A change to the existing namespace ${ns}.`,
+            orgs: ALL_APPS,
+            steps: [manualStep('Change it', ['`./change-namespace.sh` saves the namespace as it is, then runs a server-side dry run of patch.json; `--execute` applies the patch. The saved copy is the undo.'])],
+            auth: ['kube'],
+            verify: ['The field names in patch.json: kubectl explain on the namespace kind in your release.'],
+          }),
+        },
         notes: ['9.1 what’s new: application teams can change resource limits, VM classes, storage classes and shared subnets on existing namespaces.', 'The existing "A Supervisor namespace, requested from All Apps" blueprint creates namespaces; this one changes them.'],
         findings,
       };
@@ -2364,7 +2488,22 @@ export const VCF_AUTOMATION_91                                 = [
         undo: [`argocd app delete ${app} --cascade=false keeps the deployed resources.`, `kubectl delete argocd ${inst} -n ${ns} removes Argo CD itself.`],
         told: ['Argo CD’s own history per application, and its notifications if configured.', 'Git history, which is the record of what was deployed.'],
         requires: [vcfService ? 'VCF Automation 9.1.1 with Argo CD installed through Provider Management → Service Management.' : 'The Argo CD Supervisor Service installed on the Supervisor (1.2.0 adds auto-discovery of VKS clusters).', 'The argocd CLI, kubectl and the VCF CLI.', `Read access to ${repo || 'the repository'} for Argo CD.`],
-        files: { 'argocd-instance.k8s.yaml': instance, 'application.yaml': application, 'install-argocd.sh': install, 'connect-and-create-app.sh': connect },
+        files: {
+          'argocd-instance.k8s.yaml': instance,
+          'application.yaml': application,
+          'install-argocd.sh': install,
+          'connect-and-create-app.sh': connect,
+          'IMPORT.md': importMd({
+            subject: `Argo CD instance ${inst} in ${ns}, and the application ${app}.`,
+            orgs: ALL_APPS,
+            steps: [
+              kubeStep('The Argo CD instance', 'install-argocd.sh', ['argocd-instance.k8s.yaml']),
+              manualStep('Connect and create the application', ['When the instance is up, `./connect-and-create-app.sh` logs in with the argocd CLI, has you change the admin password, adds the target cluster and creates the application from application.yaml.']),
+            ],
+            auth: ['kube'],
+            verify: ['The ArgoCD resource apiVersion (argocd-service.vsphere.vmware.com/v1alpha1) and version string follow a 9.0.2 example: kubectl api-resources | grep -i argocd.'],
+          }),
+        },
         notes: [
           'The ArgoCD resource and version pattern follow the VCF 9.0.2 Argo CD service example (kimjohansson.se): argocd-service.vsphere.vmware.com/v1alpha1, spec.version X.Y.Z+vmware.W-vks.V.',
           '9.1.1: Argo CD as a VCF Service authenticates with VCF Automation credentials and is deployed by organization administrators to vSphere namespaces, up to 30 per instance.',
@@ -2471,6 +2610,13 @@ export const VCF_AUTOMATION_91                                 = [
         files: {
           [`${pol}.k8s.yaml`]: yaml,
           'create-policy.sh': kubeScript(`Create security policy ${pol} in ${ns}.`, [`echo "VMs it will cover:"; kubectl get vm -n ${q(ns)} -l ${q(Object.entries(appliedLabels).map(([k, v]) => `${k}=${v}`).join(','))} || true`], [`${pol}.k8s.yaml`], `kubectl delete securitypolicy ${pol} -n ${ns}`),
+          'IMPORT.md': importMd({
+            subject: `The vDefend security policy ${pol} in ${ns}.`,
+            orgs: ALL_APPS,
+            steps: [kubeStep('The policy', 'create-policy.sh', [`${pol}.k8s.yaml`], ['The script first lists the VMs the policy’s selector matches: that list is the scope.'])],
+            auth: ['kube'],
+            verify: ['The SecurityPolicy apiVersion: kubectl api-resources | grep -i securitypolic.'],
+          }),
         },
         notes: ['9.1 what’s new: providers can delegate vDefend Distributed and Gateway Firewall to organization administrators, with RBAC labels for dynamic groups. Gateway firewall on a transit gateway is set in the organization portal.'],
         findings,
@@ -2553,6 +2699,16 @@ export const VCF_AUTOMATION_91                                 = [
         told: [schedule ? 'The cron log and whatever alerts on the exit code.' : 'The terminal.'],
         requires: ['A provider API token for a read-only provider role, in a mode-600 file.', 'curl and jq.'],
         files: {
+          'IMPORT.md': importMd({
+            subject: 'A daily provider-side health check. Nothing is imported into VCF Automation: it reads.',
+            orgs: PROVIDER,
+            steps: [
+              checkStep('vcfa-health.sh', 'organizations, regions, quotas, content libraries and API tokens (what-it-checks.txt).'),
+              ...(schedule ? [manualStep('Schedule it', ['crontab.txt holds the line, with no secret in it: the script reads the provider API token from the file it names.'])] : []),
+            ],
+            auth: ['vcfa91'],
+            verify: ['Paths marked VERIFY in what-it-checks.txt are inferred; the script reports their HTTP status.'],
+          }),
           'vcfa-health.sh': script,
           ...(schedule ? { 'crontab.txt': cronLine('30 6 * * *', 'VCFA_HOST=vcfa.example.com VCFA_API_TOKEN_FILE=/etc/archtoolkit/vcfa-provider-api-token', 'vcfa-health.sh', 'vcfa-health.log') } : {}),
           'what-it-checks.txt': [

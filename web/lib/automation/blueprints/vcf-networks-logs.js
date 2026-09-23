@@ -98,6 +98,227 @@ export function logsChartQuery(constraints                           )         {
 }
 
 // ---------------------------------------------------------------------------
+// Shared: IMPORT.md, and the Logs content pack (.vlcp) format
+// ---------------------------------------------------------------------------
+
+                                 
+                           
+                                    
+ 
+
+/**
+ * IMPORT.md for the Logs, Networks and fleet blueprints: numbered steps in the
+ * order they have to happen, each naming the file and exactly where it goes —
+ * a menu path or one command — then what is confirmed, what is not, and where
+ * it was established. Anything marked VERIFY was not in those sources.
+ */
+export function importGuide(opts   
+                           
+                         
+                                                          
+                                      
+                                      
+ )         {
+  const steps = opts.steps.filter((step)                         => step !== undefined);
+  return [
+    `# Importing this into ${opts.product}`,
+    '',
+    opts.intro,
+    '',
+    ...(steps.length > 1 ? ['Do the steps in order. Every script is a dry run until you add `--execute`.', ''] : []),
+    ...steps.flatMap((step, index) => [`## ${index + 1}. ${step.heading}`, '', ...step.lines, '']),
+    '## Confirmed, and what to verify',
+    '',
+    ...(opts.verify && opts.verify.length > 0 ? opts.verify.map((line) => `- ${line}`) : ['- Nothing beyond what the steps say.']),
+    '',
+    '## Sources',
+    '',
+    ...opts.sources.map((line) => `- ${line}`),
+    '',
+  ].join('\n');
+}
+
+/** Where the Logs import formats were established, for IMPORT.md. */
+export const LOGS_SOURCES = {
+  vlcp: 'Content pack format: real .vlcp files in github.com/vmw-loginsight/vlcp (Dell_EMC_OS10_Networking-v1.0.vlcp, Apache-HTTP-Server-v1.1.vlcp, Apache-CLF-v1.4.vlcp, index.json) — top-level name, namespace, contentPackId, framework "#9c4", version "2.4", contentVersion, extractedFields, queries, alerts, dashboardSections; alerts with alertType, chartQuery, messageQuery, hitCount, hitOperator, searchPeriod, searchInterval; widgets with chartType, chartOptions, widgetType, chartQuery, messageQuery; extracted-field internalName as base32 of "@@<namespace length>_<namespace><field>".',
+  importUi: 'Import route 8.x and 9.0: Broadcom TechDocs, Aria Operations for Logs 8.18, "Import a Content Pack" (Content Packs > Import Content Pack; Install as content pack, or Import into My Content; imported alerts are deactivated). The 9.0 route is the same (thomas-kopton.de, "Migrating Content and Config from Aria Operations for Logs 8.18 to VCF Operations for Logs 9").',
+  import91: 'VCF 9.1 Log Management: a .vlcp is not imported directly. It is converted to a management pack with Broadcom’s cp-to-mp-convertor (VCF 9.1.0.0 > Drivers and Tools) and added under Operate > Administration > Integrations > Repository > ADD, with "Allow Unsigned PAK Installation" on (ifitisnotbroken.wordpress.com, 2026-08-19, citing Broadcom’s conversion guide).',
+  alertsApi: 'POST /api/v1/alerts and its body: the Log Insight API documentation at vmw-loginsight.github.io.',
+  agent91: 'VCF 9.1 agent groups: Broadcom TechDocs 9.1, "Configuring Agent Group" (Operate > Administration > Configurations > Log Collection > Agent Group > ADD; filters; Agent Configuration > Code View) and "Configuring Agents" (liagent.ini, [server] with secret= for agent authentication).',
+}         ;
+
+const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+
+/**
+ * The internalName a content pack gives an extracted field: base32 (RFC 4648,
+ * lower case) of "@@<length of namespace>_<namespace><field name>", with the
+ * padding written as zeros. Decoded from real packs — Dell's
+ * "ibadem27mnxw2ltemvwgyltomv2ho33snnuw4z3pomytazdfnrwf6zlwmvxhi3dpm4000000" is
+ * "@@23_com.dell.networkingos10dell_eventlog".
+ */
+export function vlcpInternalName(namespace        , field        )         {
+  const bytes = new TextEncoder().encode(`@@${namespace.length}_${namespace}${field}`);
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  while (out.length % 8 !== 0) out += '0';
+  return out;
+}
+
+                            
+                               
+                              
+                               
+                              
+                                
+                                                      
+                               
+                               
+ 
+
+                                 
+                                
+                                                           
+                          
+ 
+
+const COUNT = { label: 'Count', value: 'COUNT', requiresField: false, numericOnly: false };
+
+/**
+ * A chartQuery as a content pack carries it: the key order and fixed members of
+ * the queries in the vmw-loginsight packs, including the start and end times
+ * and dateFilterPreset those carry (an alert replaces them with its own period;
+ * a widget with the dashboard's). Count by default; `average` charts the mean
+ * of an extracted field over time.
+ */
+export function vlcpChartQuery(opts   
+                                                  
+                                  
+                               
+                            
+                                         
+ )         {
+  const fn = opts.average ? { label: 'Average', value: 'AVG', requiresField: true, numericOnly: true } : COUNT;
+  const field = opts.average ? { internalName: opts.average.internalName, displayName: opts.average.displayName, displayNamespace: null } : null;
+  return JSON.stringify({
+    query: '',
+    startTimeMillis: 1700000000000,
+    endTimeMillis: 1700003600000,
+    piqlFunctionGroups: [{ functions: [fn], field }],
+    dateFilterPreset: 'CUSTOM',
+    shouldGroupByTime: opts.byTime ?? false,
+    eventSortOrder: 'DESC',
+    summarySortOrder: 'DESC',
+    compareQueryOrderBy: 'TREND',
+    compareQuerySortOrder: 'DESC',
+    compareQueryOptions: null,
+    messageViewType: 'EVENTS',
+    constraintToggle: opts.toggle ?? 'ALL',
+    piqlFunction: fn,
+    piqlFunctionField: opts.average ? opts.average.internalName : null,
+    fieldConstraints: opts.constraints.map((c) => (c.operator === 'EXISTS' ? { internalName: c.internalName, operator: c.operator } : { internalName: c.internalName, operator: c.operator, value: c.value ?? '' })),
+    supplementalConstraints: [],
+    groupByFields: [],
+    extractedFields: (opts.fields ?? []).map((f) => ({ displayName: f.displayName, preContext: f.preContext, postContext: f.postContext, regexValue: f.regexValue, internalName: f.internalName, constraints: f.constraints })),
+  });
+}
+
+                            
+                        
+                        
+                              
+                            
+                                
+                                  
+ 
+
+                             
+                        
+                        
+                              
+ 
+
+/**
+ * A .vlcp: the JSON a content pack is, with the top-level keys and element
+ * shapes of the packs in github.com/vmw-loginsight/vlcp. `version` is the pack
+ * format ("2.4" in every current pack); the pack's own version is
+ * `contentVersion`. No icon: packs import without one (VERIFY on 9.1 conversion).
+ */
+export function contentPackJson(opts   
+                        
+                             
+                                  
+                        
+                                
+                                                  
+                                                                                                              
+                                         
+                                                                                          
+ )         {
+  const pack = {
+    name: opts.name,
+    namespace: opts.namespace,
+    contentPackId: opts.namespace,
+    framework: '#9c4',
+    version: '2.4',
+    extractedFields: (opts.extractedFields ?? []).map((f) => ({ ...f })),
+    queries: (opts.queries ?? []).map((q) => ({ name: q.name, info: q.info, chartQuery: q.chartQuery, messageQuery: '' })),
+    alerts: (opts.alerts ?? []).map((a) => ({
+      name: a.name,
+      info: a.info,
+      alertType: 'RATE_BASED',
+      chartQuery: a.chartQuery,
+      messageQuery: '',
+      hitCount: a.hitCount,
+      hitOperator: 'GREATER_THAN',
+      searchPeriod: a.searchPeriod,
+      searchInterval: a.searchInterval,
+    })),
+    dashboardSections: opts.dashboard
+      ? [
+          {
+            views: [
+              {
+                name: opts.dashboard.name,
+                constraints: [],
+                rows: [{ widgets: opts.dashboard.widgets.map((w) => ({ name: w.name, info: w.info, chartType: null, chartOptions: '{}', widgetType: 'chart', chartQuery: w.chartQuery, messageQuery: '' })) }],
+              },
+            ],
+          },
+        ]
+      : [],
+    author: 'Generated by ArchToolKit',
+    url: 'https://example.com/archtoolkit',
+    contentVersion: opts.contentVersion,
+    info: opts.info,
+    instructions: opts.instructions,
+  };
+  return `${JSON.stringify(pack, null, 2)}\n`;
+}
+
+/** The IMPORT.md step for a .vlcp, both routes. */
+export function vlcpImportStep(file        , what        , mode                           = 'install')                 {
+  return {
+    heading: `Import ${file}`,
+    lines: [
+      `${what}`,
+      '',
+      `- **VCF Operations for Logs 9.0, Aria Operations for Logs 8.x:** main menu > Content Packs > Import Content Pack > ${mode === 'install' ? '**Install as content pack**' : '**Import into My Content**'} > browse to \`${file}\` > Import. Imported alerts arrive deactivated.`,
+      `- **VCF 9.1 Log Management (in VCF Operations):** a .vlcp is not imported as it stands. Convert it with Broadcom’s converter — \`java -jar cp-to-mp-convertor-jar-with-dependencies.jar -i ${file.split('/').pop()}\` — then VCF Operations > Operate > Administration > Integrations > Repository > ADD > Browse, the .pak it wrote. Turn on "Allow Unsigned PAK Installation" in Administrator Settings first: a converted pack is unsigned. (VERIFY — see Sources.)`,
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // VCF Operations for Networks
 // ---------------------------------------------------------------------------
 
@@ -226,6 +447,32 @@ export const NETWORKS_AUTOMATIONS                                 = [
             '',
           ].join('\n'),
           'crontab.txt': `# Daily at 05:30, from the directory holding run-check.sh and ${base}.json.\n# The password file is mode 600 and owned by the account that runs this.\n30 5 * * * cd /opt/archtoolkit/${base} && ${networksScheduledEnv()} ./run-check.sh\n`,
+          'IMPORT.md': importGuide({
+            product: 'VCF Operations for Networks',
+            intro: `Networks has no file import for a search or a saved search. What goes into the product is the search text; what runs it is run-check.sh on a schedule. ${base}.json is read by run-check.sh, not by Networks.`,
+            steps: [
+              {
+                heading: 'Put the search into Networks',
+                lines: [
+                  'Paste this into the search bar at the top of the Networks interface, run it, and read what comes back:',
+                  '',
+                  '```',
+                  search,
+                  '```',
+                  '',
+                  'To keep it in the product, save it from the results page (the save/bookmark action beside the search bar) under the check name. That is the only route: there is no import dialog or documented API for saved searches (VERIFY on your release).',
+                ],
+              },
+              {
+                heading: 'Schedule run-check.sh',
+                lines: [
+                  `Copy run-check.sh and ${base}.json to /opt/archtoolkit/${base} on a host that reaches Networks, run \`./run-check.sh\` once by hand, then install the line in crontab.txt with \`crontab -e\`. POST /api/ni/search/ql takes {query, size} — the body the script builds from ${base}.json.`,
+                ],
+              },
+            ],
+            verify: ['The search condition names (security group, port) are the search bar’s own; if the search bar rejects them, so will the API.'],
+            sources: ['POST /api/ni/search/ql {query, size} and the {username, password, domain} login: PowervRNI (Invoke-vRNISearch, Connect-vRNIServer).'],
+          }),
         },
         notes: [
           'Networks sees flows, not intent. A flow that appears here may be perfectly legitimate and undocumented, which is itself the finding.',
@@ -298,6 +545,20 @@ export const NETWORKS_AUTOMATIONS                                 = [
         requires: ['Read access to the NSX manager through Networks, and somewhere to keep the previous run’s baseline.'],
         files: {
           [`${base}.json`]: `${JSON.stringify({ name: watchName, watch: what, ignoreAccounts: ignore, destination: webhook || '<REQUIRED>', reportOnly: true, baselineFile: `${base}-baseline.json` }, null, 2)}\n`,
+          'IMPORT.md': importGuide({
+            product: 'VCF Operations for Networks',
+            intro: `Nothing here is imported into Networks. ${base}.json is the specification for the job that runs the comparison — what to watch, whose changes to ignore, where to report — for your scheduler or runbook tool to read.`,
+            steps: [
+              {
+                heading: 'Take the baseline',
+                lines: [
+                  'In Networks, search the objects being watched (for example `firewall rules`, `security groups` or `nsx segments`) and export the result (the export action on the results page) as the first baseline; keep it in version control as the file named in baselineFile.',
+                ],
+              },
+            ],
+            verify: ['The comparison job itself is not generated here; the file says what it must do.'],
+            sources: ['The search bar and its export: VMware Aria Operations for Networks user guide.'],
+          }),
         },
         notes: [
           'An out-of-process firewall change is usually somebody fixing something at speed. The value here is the conversation the next morning, not the blame.',
@@ -422,8 +683,49 @@ export const LOGS_AUTOMATIONS                                 = [
           : ['Nobody — no destination set. The alert still appears under Triggered Alerts.'],
         requires: ['The relevant hosts shipping logs, and enough retention to cover the window you test against.', 'A Logs account allowed to create alerts: VCFLOGS_USER and VCFLOGS_PASSWORD_FILE, or VCFLOGS_TOKEN by hand.'],
         files: {
-          [`${base}.json`]: `${JSON.stringify(definition, null, 2)}\n`,
-          'apply.sh': applyScript(LOGS, [{ method: 'POST', path: '/api/v1/alerts', payload: `${base}.json` }], 'disable the alert under Alerts > Alert Definitions, or DELETE /api/v1/alerts/{id} with the id it returned.'),
+          [`import/${base}.json`]: `${JSON.stringify(definition, null, 2)}\n`,
+          [`import/${base}-alert.vlcp`]: contentPackJson({
+            name: `${alertName} (alert)`,
+            namespace: `com.archtoolkit.alert.${slugOf(alertName, 'alert').replace(/-/g, '')}`,
+            contentVersion: '1.0',
+            info: `One alert: more than ${threshold} matching events in ${windowMinutes} minutes. Generated by ArchToolKit.`,
+            instructions: webhook ? `After import, open the alert, choose the webhook for ${webhook} under Notify, and enable it.` : 'After import, set who is notified and enable it.',
+            alerts: [
+              {
+                name: alertName,
+                info: definition.info,
+                chartQuery: vlcpChartQuery({ constraints }),
+                hitCount: threshold,
+                searchPeriod: windowMinutes * 60000,
+                searchInterval: Math.min(windowMinutes * 60000, 300000),
+              },
+            ],
+          }),
+          'apply.sh': applyScript(LOGS, [{ method: 'POST', path: '/api/v1/alerts', payload: `import/${base}.json` }], 'disable the alert under Alerts > Alert Definitions, or DELETE /api/v1/alerts/{id} with the id it returned.'),
+          'IMPORT.md': importGuide({
+            product: 'VCF Operations for Logs',
+            intro: `Two routes for the same alert — take one. The API route (apply.sh) sends import/${base}.json, the body POST /api/v1/alerts takes, including the webhook. The interface route imports import/${base}-alert.vlcp, a content pack holding only this alert; a content pack carries no notification, so the webhook is chosen after import. Run apply.sh from the folder holding this file.`,
+            steps: [
+              {
+                heading: 'Either: create it through the API',
+                lines: [
+                  `\`./apply.sh\` shows what it would send; \`./apply.sh --execute\` sends \`import/${base}.json\` to POST /api/v1/alerts on VCFLOGS_HOST (port 9543). Then GET /api/v1/alerts and check the new alert is disabled.`,
+                ],
+              },
+              vlcpImportStep(`import/${base}-alert.vlcp`, 'Or: import the alert as a content pack. Use Import into My Content so the alert can be edited (an installed pack is read-only), then add the webhook and enable it under Alerts > Alert Definitions.', 'my-content'),
+              {
+                heading: 'VCF 9.1 Log Management',
+                lines: [
+                  'In 9.1 a log alert is a Log Based Alert Definition in VCF Operations, built from a query in the Log Symptom definition (TechDocs 9.1, "Log Based Alerts"). /api/v1/alerts belongs to the separate Logs appliance of 9.0 and earlier; against 9.1, either convert the .vlcp as in step 2, or recreate the query in the Log Symptom definition by hand (VERIFY which your build accepts).',
+                ],
+              },
+            ],
+            verify: [
+              'The alert body follows the published POST /api/v1/alerts schema; the chartQuery was written from the published example and the packs, not exported from 9.x — build the same query in Explore Logs and compare.',
+              'The .vlcp alert element has exactly the keys of the alerts in the vmw-loginsight packs; `enabled` and notification fields are not part of it.',
+            ],
+            sources: [LOGS_SOURCES.alertsApi, LOGS_SOURCES.vlcp, LOGS_SOURCES.importUi, LOGS_SOURCES.import91],
+          }),
         },
         notes: [
           'A log alert tells you something was written, not that something is broken. Pair it with the metric that confirms it before anybody is woken up.',
@@ -493,6 +795,30 @@ export const LOGS_AUTOMATIONS                                 = [
         requires: ['The automation accounts to be distinct from human accounts, or the trail cannot separate the two.'],
         files: {
           [`${base}.json`]: `${JSON.stringify({ name: trailName, query, schedule: 'daily', retentionDays: retention, exportTo: exportTo || '<REQUIRED>', format: 'json' }, null, 2)}\n`,
+          [`import/${base}.vlcp`]: contentPackJson({
+            name: trailName,
+            namespace: `com.archtoolkit.audit.${slugOf(trailName, 'audit').replace(/-/g, '')}`,
+            contentVersion: '1.0',
+            info: `A saved query for the events of ${accounts.length > 0 ? accounts.join(', ') : 'every account'}. Generated by ArchToolKit.`,
+            instructions: 'Open the query from Content Packs, run it over yesterday, and check every service account appears.',
+            queries: [
+              {
+                name: `${trailName} — automation accounts`,
+                info: 'Any event whose text names one of the automation service accounts.',
+                chartQuery: vlcpChartQuery({ constraints: accounts.map((account) => ({ internalName: 'text', operator: 'CONTAINS'         , value: account })), toggle: 'ANY', byTime: true }),
+              },
+            ],
+          }),
+          'IMPORT.md': importGuide({
+            product: 'VCF Operations for Logs',
+            intro: `import/${base}.vlcp carries the trail’s query as a saved query, so everyone runs the same one. ${base}.json is the specification for the daily export job (query, retention, destination) for your scheduler; Logs has no import for a scheduled export.`,
+            steps: [vlcpImportStep(`import/${base}.vlcp`, 'The saved query. Install it as a content pack so it is the same, read-only query for everyone.')],
+            verify: [
+              'The query element (name, info, chartQuery, messageQuery) is written like the alert and widget elements of the published packs; the published packs sampled carry an empty queries array, so VERIFY by exporting a pack with a saved query from your instance.',
+              'The accounts are matched as text CONTAINS, any of them. If your sources extract a user field, a constraint on that field is tighter.',
+            ],
+            sources: [LOGS_SOURCES.vlcp, LOGS_SOURCES.importUi, LOGS_SOURCES.import91],
+          }),
         },
         notes: [
           'Alert on the absence of events, not just their content. A trail that goes silent looks exactly like a quiet night.',

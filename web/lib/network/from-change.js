@@ -17,8 +17,8 @@
 import { slug } from '../kit/blueprint.js';
 import { info,              } from '../core/findings.js';
 import { playbookFiles } from '../ansible/from-plays.js';
-import { PLATFORMS, renderChange, renderRecord, standingFindings,                                  } from './device.js';
-import { playFor } from './push.js';
+import { changeFileName, PLATFORMS, renderChange, renderRecord, standingFindings,                                  } from './device.js';
+import { NETWORK_ANSIBLE_CFG, networkInventory, playFor } from './push.js';
 
                                                     
                                                                             
@@ -46,9 +46,10 @@ export function changeFiles(change              , name        )              {
   const files                         = {};
   const findings            = [...(change.findings ?? []), ...standingFindings(change)];
 
-  files[`${base}${platform.extension}`] = renderChange(change, name);
+  const configFile = changeFileName(change, base);
+  files[configFile] = renderChange(change, name);
 
-  const play = playFor(change, name);
+  const play = playFor(change, name, configFile);
   if (!play) {
     findings.push(
       info('network.change.cli-only', 'No Ansible module covers this change, so no playbook is generated. Apply it from the CLI or the API, and keep the record with it.', {
@@ -61,9 +62,13 @@ export function changeFiles(change              , name        )              {
     for (const [file, contents] of Object.entries(playbook.files)) files[file] = contents;
     // The "uses N modules" line is noise on a single change; the warnings are not.
     findings.push(...playbook.findings.filter((f) => f.code !== 'ansible.blueprint.modules-used'));
+    // What the playbook needs to run as unzipped: the group it targets, with
+    // the connection variables, and ansible.cfg pointing at it.
+    files['inventory/hosts.yml'] = networkInventory([change.platform]);
+    files['ansible.cfg'] = NETWORK_ANSIBLE_CFG;
   }
 
-  files['change-record.md'] = `${[`# ${name || change.title}`, '', ...renderRecord(change, name)].join('\n')}\n`;
+  files['change-record.md'] = `${[`# ${name || change.title}`, '', ...renderRecord(change, name, configFile)].join('\n')}\n`;
 
   return { files, findings };
 }

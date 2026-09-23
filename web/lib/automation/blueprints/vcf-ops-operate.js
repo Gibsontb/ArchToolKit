@@ -30,6 +30,7 @@ import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
 import { applyScript, readScript, scheduledEnv } from '../apply.js';
+import { withScriptsImportMd } from '../vcfops-import.js';
 import { PAGED_HELPERS, WEBHOOK_HELPER, shq, workDirLines } from './vcf-operations-content.js';
 
 const OPS = 'vcf-operations'         ;
@@ -2411,4 +2412,4 @@ export const VCF_OPS_OPERATE                                 = [
       };
     },
   }),
-];
+].map(withScriptsImportMd);

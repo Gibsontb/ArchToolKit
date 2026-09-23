@@ -17,6 +17,7 @@
  */
 
 import { el, append, replace, clear, downloadFile } from './dom.ts';
+import { tarGz, zip } from '../kit/archive.ts';
 import { card, findingsList } from './components.ts';
 import { getTarget, setTarget, type TargetId } from '../kit/target.ts';
 import { estateOptionsFor } from '../kit/estate.ts';
@@ -47,6 +48,16 @@ export interface GeneratorOptions {
   readonly idleHint: string;
   /** Extension for the combined download. */
   readonly downloadExtension: string;
+  /**
+   * Extra package downloads beside the zip, for targets that import a package
+   * of their own — a Splunk app as .spl. Each is built from the same files.
+   */
+  readonly packages?: readonly {
+    readonly label: string;
+    readonly extension: '.zip' | '.tgz' | '.spl' | '.tar.gz';
+    /** Which of the generated files go in; all of them when absent. */
+    readonly include?: (path: string) => boolean;
+  }[];
   /**
    * The blueprint group to open on when the platform has one — the estate
    * blueprints, once an estate is loaded. Otherwise the first blueprint.
@@ -951,19 +962,53 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 
       if (builds && builds.length > 0) children.push(buildsPanel(builds));
 
-      if (Object.keys(generated).length > 1) {
+      if (Object.keys(generated).length > 0) {
         const all = generated;
+        const base = String(values.__name ?? blueprint?.id ?? 'generated')
+          .trim()
+          .replace(/[^A-Za-z0-9._-]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'generated';
+        const archive = async (button: HTMLButtonElement, extension: string, include?: (path: string) => boolean) => {
+          const label = button.textContent;
+          button.disabled = true;
+          button.textContent = 'Building…';
+          try {
+            const chosen = Object.fromEntries(Object.entries(all).filter(([path]) => (include ? include(path) : true)));
+            const bytes = extension === '.zip' ? await zip(chosen) : await tarGz(chosen);
+            downloadFile(`${base}${extension}`, bytes, extension === '.zip' ? 'application/zip' : 'application/gzip');
+          } finally {
+            button.disabled = false;
+            button.textContent = label;
+          }
+        };
         children.push(
           el(
             'div',
             { class: 'btn-row', style: { marginTop: 'var(--space-3)' } },
+            // The zip is the import format: every file keeps its name, its
+            // folder and, for scripts, its executable bit, and anything the
+            // target takes as a package inside it is already packaged.
+            el('button', {
+              class: 'btn btn-primary',
+              text: 'Download as .zip',
+              attrs: { title: 'Every file with its real name and folder — unzip and import or run as it stands' },
+              on: { click: (event: Event) => void archive(event.currentTarget as HTMLButtonElement, '.zip') },
+            }),
+            ...(options.packages ?? []).map((pkg) =>
+              el('button', {
+                class: 'btn',
+                text: pkg.label,
+                on: { click: (event: Event) => void archive(event.currentTarget as HTMLButtonElement, pkg.extension, pkg.include) },
+              }),
+            ),
             el('button', {
               class: 'btn',
-              text: 'Download all as one file',
+              text: 'Download all as one text file',
+              attrs: { title: 'For reading or attaching to a change record. Not an import format.' },
               on: {
                 click: () =>
                   downloadFile(
-                    `${String(values.__name ?? blueprint?.id ?? 'generated')}${options.downloadExtension}`,
+                    `${base}${options.downloadExtension}`,
                     Object.entries(all)
                       .map(([n, b]) => `# ===== ${n} =====\n${b}`)
                       .join('\n'),

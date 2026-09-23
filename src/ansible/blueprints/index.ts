@@ -7,6 +7,7 @@
 
 import type { Blueprint, BlueprintGroup } from '../../kit/blueprint.ts';
 import { withChoicesAll } from '../../kit/choices.ts';
+import { withAnsibleProjectAll } from '../project.ts';
 import { AWS_ANSIBLE } from './aws.ts';
 import { AZURE_ANSIBLE } from './azure.ts';
 import { GCP_ANSIBLE } from './gcp.ts';
@@ -24,7 +25,9 @@ function withEstate(group: BlueprintGroup, estate: readonly Blueprint[]): Bluepr
   };
 }
 
-export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = withChoicesAll([
+// withAnsibleProjectAll adds ansible.cfg, inventory/hosts.yml and a README to
+// every playbook, so the zip runs as unzipped rather than matching no hosts.
+export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = withAnsibleProjectAll(withChoicesAll([
   AWS_ANSIBLE,
   AZURE_ANSIBLE,
   GCP_ANSIBLE,
@@ -32,4 +35,4 @@ export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = withChoicesAll([
   withEstate(VMWARE_ANSIBLE, [inventoryBlueprint('all'), PREMIGRATION, POSTMIGRATION]),
   withEstate(LINUX_ANSIBLE, [inventoryBlueprint('linux')]),
   withEstate(WINDOWS_ANSIBLE, [inventoryBlueprint('windows')]),
-], 'ansible');
+], 'ansible'));

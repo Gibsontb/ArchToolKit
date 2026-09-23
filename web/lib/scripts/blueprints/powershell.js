@@ -565,7 +565,7 @@ export const POWERSHELL_BASE                             = [
                 '            $members.Add([pscustomobject]@{ Group = $groupName; Member = $member.SamAccountName; Name = $member.name; Type = $member.objectClass })',
               ]),
           '        }',
-          '        Write-Log "$groupName: $($found.Count) members"',
+          '        Write-Log "${groupName}: $($found.Count) members"',
           '    }',
           '',
           '    if (-not (Test-Path $ReportPath)) { New-Item -Path $ReportPath -ItemType Directory -Force | Out-Null }',

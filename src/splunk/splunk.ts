@@ -287,7 +287,7 @@ export function standingFindings(app: SplunkApp): Finding[] {
     }
   }
 
-  if (!Object.keys(app.files).some((path) => path.endsWith('app.conf'))) {
+  if (!Object.keys(app.files).includes('default/app.conf')) {
     findings.push(warning('splunk.no-app-conf', 'Without an app.conf this directory is not a complete app, and some deployment paths will skip it.', { source: 'ArchToolKit' }));
   }
 

@@ -26,6 +26,17 @@ import { authHeader, authPreamble, readScript } from '../apply.ts';
 import { networksPreamble, networksScheduledEnv } from './vcf-networks-logs.ts';
 import { authFileVar, workDirLines } from './vcf-operations-content.ts';
 import { CSV_COLUMNS } from '../../migration/portfolio.ts';
+import {
+  CONTENT_ZIP,
+  DASHBOARD_OWNER_PLACEHOLDER,
+  FORMAT_SOURCES,
+  contentImportScript,
+  contentPackage,
+  contentStep,
+  importMd,
+  nothingToImportMd,
+  stableId,
+} from '../vcfops-import.ts';
 
 const PLATFORM = 'vcf-operations' as const;
 const NETWORKS = 'vcf-operations-networks' as const;
@@ -65,221 +76,28 @@ function csvCell(value: string | number): string {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-/**
- * A stable, UUID-shaped id from a name.
- *
- * A dashboard's View widget refers to its view by id. Deriving the id from the
- * view's name means the dashboard blueprint and the view blueprint agree on it
- * without either having to be run first — generate "Cluster capacity overview"
- * in both and the widget finds its view.
- */
-export function stableId(seed: string): string {
-  let hex = '';
-  for (let round = 0; round < 4; round += 1) {
-    let hash = 0x811c9dc5;
-    for (const char of `${seed}#${round}`) {
-      hash ^= char.charCodeAt(0);
-      hash = Math.imul(hash, 0x01000193) >>> 0;
-    }
-    hex += hash.toString(16).padStart(8, '0');
-  }
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-}
+/** Name-derived ids (see vcfops-import.ts), re-exported for the blueprints that already use them from here. */
+export { stableId };
 
 const viewIdOf = (name: string): string => stableId(`view:${name}`);
 
 const CONTENT_IMPORT_NOTE =
-  'Import: POST /suite-api/api/content/operations/import (multipart contentFile) answers 202 with the new operation’s id; GET on the same path is the last import, with state NOT_INITIALIZED, INITIALIZED, RUNNING, FAILED, FINISHED or UNKNOWN and operationSummaries[] (imported, skipped, failed). The reference says "If the force option is set to true, content will be overwritten. By default the flag is true", so the script sends force=false unless --overwrite. The deprecated POST /content/backup is not used; the backup is an export of the same content type. VERIFY: that the status id matches the id the POST returned on your build — if it never does, the script times out and exits 1 rather than guessing.';
-
-/**
- * Bash for the content operations endpoints, shared by the import script and
- * export-reference.sh.
- *
- * Documented in the VCF Operations API reference (Content Management):
- * POST /content/operations/export {scope: ALL|CUSTOM, contentTypes: [...]},
- * GET /content/operations/export and /import (the last operation: id, state
- * NOT_INITIALIZED|INITIALIZED|RUNNING|FAILED|FINISHED|UNKNOWN, errorMessages,
- * operationSummaries[] with imported/skipped/failed), GET …/export/zip, and
- * POST …/import (multipart contentFile, ?force, "by default the flag is true",
- * 202 with the new operation's id).
- */
-function contentOpsLines(): string[] {
-  return [
-    'API="https://${VCFOPS_HOST}/suite-api/api/content/operations"',
-    '# last_op import|export FILE: the last operation into FILE; prints the HTTP code.',
-    'last_op() {',
-    '  local code',
-    `  code=$(curl -sS -o "$2" -w "%{http_code}" "$API/$1" -H "${authHeader(PLATFORM)}" -H "Accept: application/json") || code=000`,
-    '  echo "${code:-000}"',
-    '}',
-    '# export_content TYPE ZIP: export TYPE and wait for *this* export, not an earlier',
-    '# one: the last export is read first, and only a status with a different id counts.',
-    'export_content() {',
-    '  local type="$1" zip="$2" code prev="" id state=""',
-    '  code=$(last_op export "$WORK/last-export.json")',
-    '  case "$code" in',
-    '    200) prev=$(jq -r \'.id // empty\' "$WORK/last-export.json") ;;',
-    '    404) prev="" ;;',
-    '    *) echo "GET $API/export returned HTTP $code" >&2; return 1 ;;',
-    '  esac',
-    '  jq -n --arg t "$type" \'{scope: "CUSTOM", contentTypes: [$t]}\' |',
-    `    curl -sS -f -X POST "$API/export" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- >/dev/null || return 1`,
-    '  for _ in $(seq 1 60); do',
-    '    sleep 5',
-    '    code=$(last_op export "$WORK/export.json")',
-    '    [[ "$code" == 200 ]] || continue',
-    '    id=$(jq -r \'.id // empty\' "$WORK/export.json")',
-    '    [[ -n "$id" && "$id" != "$prev" ]] || continue',
-    '    state=$(jq -r \'.state // "UNKNOWN"\' "$WORK/export.json")',
-    '    case "$state" in FINISHED|FAILED) break ;; esac',
-    '  done',
-    '  if [[ "$state" != FINISHED ]]; then',
-    '    echo "The $type export did not finish (state: ${state:-no status for this export after 5 minutes})." >&2',
-    '    [[ -s "$WORK/export.json" ]] && jq -c \'{state, errorCode, errorMessages}\' "$WORK/export.json" >&2',
-    '    return 1',
-    '  fi',
-    `  curl -sS -f "$API/export/zip" -H "${authHeader(PLATFORM)}" -o "$zip" || return 1`,
-    '}',
-  ];
-}
-
-/**
- * The content-import script: build a content zip, show it, and import it.
- *
- * With --execute it first exports the same content type as a backup and looks
- * in it for this content by name and id; it refuses to replace existing
- * content unless --overwrite is given, and it sends force=false unless it is,
- * because the API reference documents force as defaulting to true. It then
- * follows the import by the id the POST returned and exits 0 only on FINISHED
- * with no failed or skipped items.
- */
-function contentImportScript(what: string, zipName: string, stage: readonly string[], contentType: string, needles: readonly string[]): string {
-  return [
-    '#!/usr/bin/env bash',
-    `# Package ${what} as a VCF Operations content zip and import it.`,
-    '#',
-    '# Without --execute this builds the zip, lists what is in it and stops.',
-    '# The layout inside the zip follows a content export; before the first real',
-    '# import, run export-reference.sh and compare `unzip -l` of the two.',
-    '#',
-    `# With --execute it first exports the existing ${contentType} content to`,
-    '# pre-import-backup-<time>.zip beside this script, and refuses to import if this',
-    '# content is already there (same name or id) unless --overwrite is also given.',
-    '# The import is sent with force=false unless --overwrite: the API reference says',
-    '# force defaults to true, which overwrites.',
-    '#',
-    '# Exit 0 only when this import (followed by the id the POST returned) reaches',
-    '# FINISHED with nothing failed or skipped; 1 on FAILED, on failed or skipped',
-    '# items, on a refusal, or when it has not finished after 10 minutes.',
-    'set -euo pipefail',
-    '',
-    ...authPreamble(PLATFORM),
-    'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
-    'command -v zip >/dev/null || { echo "zip is required" >&2; exit 2; }',
-    'command -v unzip >/dev/null || { echo "unzip is required" >&2; exit 2; }',
-    '',
-    'EXECUTE=0',
-    'OVERWRITE=0',
-    'for arg in "$@"; do',
-    '  case "$arg" in',
-    '    --execute) EXECUTE=1 ;;',
-    '    --overwrite) OVERWRITE=1 ;;',
-    '    *) echo "Unknown argument $arg. Use --execute, and --overwrite to replace existing content." >&2; exit 2 ;;',
-    '  esac',
-    'done',
-    'HERE=$(cd "$(dirname "$0")" && pwd)',
-    ...workDirLines(PLATFORM),
-    '',
-    '# XML escapes the angle bracket, so look for both spellings.',
-    'if grep -rlE "<REQUIRED|&lt;REQUIRED" "$HERE" --include=*.json --include=*.xml >/dev/null 2>&1; then',
-    '  echo "A payload still has a <REQUIRED> value in it:" >&2',
-    '  grep -rlE "<REQUIRED|&lt;REQUIRED" "$HERE" --include=*.json --include=*.xml >&2',
-    '  exit 2',
-    'fi',
-    '',
-    ...stage,
-    '',
-    `rm -f "$HERE/${zipName}"`,
-    `(cd "$WORK/content" && zip -qr "$HERE/${zipName}" .)`,
-    `echo "Built ${zipName}:"`,
-    `unzip -l "$HERE/${zipName}"`,
-    '',
-    'if (( ! EXECUTE )); then',
-    `  echo "DRY RUN: would back up the existing ${contentType} content, then POST ${zipName} to https://\${VCFOPS_HOST}/suite-api/api/content/operations/import?force=false"`,
-    '  echo "Nothing was changed. Compare the layout with export-reference.sh, then re-run with --execute."',
-    '  exit 0',
-    'fi',
-    '',
-    ...contentOpsLines(),
-    '',
-    '# 1. Nothing else may be importing now: its status would be read as ours.',
-    'code=$(last_op import "$WORK/last-import.json")',
-    'case "$code" in',
-    '  200) BUSY=$(jq -r \'.state // "UNKNOWN"\' "$WORK/last-import.json") ;;',
-    '  404) BUSY=NOT_INITIALIZED ;;',
-    '  *) echo "GET $API/import returned HTTP $code" >&2; exit 1 ;;',
-    'esac',
-    'case "$BUSY" in INITIALIZED|RUNNING) echo "Another content import is $BUSY. Wait for it to finish." >&2; exit 1 ;; esac',
-    '',
-    `# 2. Back up the ${contentType} content as it is now, and look in it for this one.`,
-    'BACKUP="$HERE/pre-import-backup-$(date +%Y%m%d-%H%M%S).zip"',
-    `export_content ${contentType} "$BACKUP" || { echo "No backup, so nothing was imported." >&2; exit 1; }`,
-    'echo "Backup of the existing content: $BACKUP"',
-    'mkdir -p "$WORK/existing"',
-    'unzip -q -o "$BACKUP" -d "$WORK/existing"',
-    '# Content zips hold zips; open every level.',
-    'for _ in 1 2 3; do',
-    '  while IFS= read -r -d "" z; do',
-    '    mkdir -p "$z.d" && unzip -q -o "$z" -d "$z.d" && mv "$z" "$z.opened"',
-    '  done < <(find "$WORK/existing" -name "*.zip" -print0)',
-    'done',
-    `NEEDLES=(${needles.map((n) => `'${sq(n)}'`).join(' ')})`,
-    'EXISTS=0',
-    'for needle in "${NEEDLES[@]}"; do',
-    '  if grep -rqF -- "$needle" "$WORK/existing"; then echo "Already in VCF Operations: $needle"; EXISTS=1; fi',
-    'done',
-    'if (( EXISTS && ! OVERWRITE )); then',
-    `  echo "Refusing to replace existing content. Compare it with the backup ($BACKUP); to replace it, re-run with --execute --overwrite." >&2`,
-    '  exit 1',
-    'fi',
-    '',
-    '# 3. Import, and follow this import by its id.',
-    'FORCE=false',
-    '(( OVERWRITE )) && FORCE=true',
-    `RESP=$(curl -sS -f -X POST "$API/import?force=\${FORCE}" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -F "contentFile=@$HERE/${zipName}")`,
-    'IMPORT_ID=$(jq -r \'.id // empty\' <<<"$RESP")',
-    '[[ -n "$IMPORT_ID" ]] || { echo "The import was accepted without an id, so its result cannot be told from an earlier import. Check the content import status in the interface." >&2; exit 1; }',
-    'echo "import ${IMPORT_ID} (force=${FORCE})"',
-    'STATE=""',
-    'for _ in $(seq 1 60); do',
-    '  sleep 10',
-    '  code=$(last_op import "$WORK/import.json")',
-    '  [[ "$code" == 200 ]] || { echo "$(date +%T) status HTTP $code" >&2; continue; }',
-    '  [[ "$(jq -r \'.id // empty\' "$WORK/import.json")" == "$IMPORT_ID" ]] || continue',
-    '  STATE=$(jq -r \'.state // "UNKNOWN"\' "$WORK/import.json")',
-    '  echo "$(date +%T) ${STATE}"',
-    '  case "$STATE" in FINISHED|FAILED) break ;; esac',
-    'done',
-    '[[ -s "$WORK/import.json" ]] && jq \'{id, state, errorCode, errorMessages, operationSummaries}\' "$WORK/import.json"',
-    'if [[ "$STATE" != FINISHED ]]; then',
-    '  echo "Import ${IMPORT_ID} did not finish: ${STATE:-no status for it after 10 minutes}. The backup is $BACKUP." >&2',
-    '  exit 1',
-    'fi',
-    'read -r FAILED SKIPPED IMPORTED ERRORS < <(jq -r \'[([.operationSummaries[]? | .failed // 0] | add // 0), ([.operationSummaries[]? | .skipped // 0] | add // 0), ([.operationSummaries[]? | .imported // 0] | add // 0), ([.errorMessages[]?] | length)] | @tsv\' "$WORK/import.json")',
-    'if (( FAILED > 0 || ERRORS > 0 )); then echo "Import ${IMPORT_ID} finished with ${FAILED} failed item(s) and ${ERRORS} error message(s)." >&2; exit 1; fi',
-    'if (( SKIPPED > 0 )); then echo "Import ${IMPORT_ID} skipped ${SKIPPED} item(s): existing content was left in place." >&2; exit 1; fi',
-    'if (( IMPORTED == 0 )); then echo "Import ${IMPORT_ID} finished but reports nothing imported. VERIFY operationSummaries on your release, and check in the interface." >&2; exit 1; fi',
-    'echo "Imported ${IMPORTED} item(s). Backup of what was there before: $BACKUP"',
-    '',
-  ].join('\n');
-}
+  'Content import: POST /suite-api/api/content/operations/import (multipart contentFile) answers 202 with the new operation’s id; GET on the same path is the last import, with state NOT_INITIALIZED, INITIALIZED, RUNNING, FAILED, FINISHED or UNKNOWN and operationSummaries[] (imported, skipped, failed). The reference says "If the force option is set to true, content will be overwritten. By default the flag is true", so the script sends force=false unless --overwrite. The importer checks for the instance’s own <number>L.v1 marker file, which the script copies from the backup export it takes first.';
 
 /** Export the same kind of content from the target, as the reference layout. */
 function exportReferenceScript(contentType: string): string {
   return readScript(PLATFORM, `Export existing ${contentType} content as the reference layout for an import.`, [
     ...workDirLines(PLATFORM),
-    ...contentOpsLines(),
-    `export_content ${contentType} reference-export.zip || exit 1`,
+    'API="https://${VCFOPS_HOST}/suite-api/api/content/operations"',
+    `jq -n '{scope: "CUSTOM", contentTypes: ["${contentType}"]}' | curl -sS -f -X POST "$API/export" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- >/dev/null`,
+    'state=""',
+    'for _ in $(seq 1 60); do',
+    '  sleep 5',
+    `  state=$(curl -sS -f "$API/export" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" | jq -r '.state // "UNKNOWN"') || continue`,
+    '  case "$state" in FINISHED|FAILED) break ;; esac',
+    'done',
+    '[[ "$state" == FINISHED ]] || { echo "The export did not finish (state: ${state:-none})." >&2; exit 1; }',
+    `curl -sS -f "$API/export/zip" -H "${authHeader(PLATFORM)}" -o reference-export.zip`,
     'unzip -l reference-export.zip',
     'echo "Compare this layout with the zip the import script builds before importing."',
   ]);
@@ -476,46 +294,85 @@ function overlaps(a: Widget, b: Widget): boolean {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
+/** A property whose value is text rather than a number, for isStringAttribute. */
+function isStringProperty(column: ViewColumn): boolean {
+  return column.property === true && !/num_|memoryKB|corecount|number_|Count$|capacity/i.test(column.key);
+}
+
+/**
+ * The view as content.xml — the shape of a Views → Export: ViewDef with Title,
+ * Description, SubjectType, Usage, and Controls holding a time-interval selector
+ * and an attributes selector whose items are the columns, then DataProviders and
+ * Presentation (notoriousbdg and sentania-labs exports; see vcfops-import.ts).
+ */
 function viewXml(view: ViewTemplate, description: string): string {
   const id = viewIdOf(view.name);
-  const items = view.columns.map((column) =>
-    [
-      '            <Item>',
-      '              <Value>',
-      `                <Property name="objectType" value="RESOURCE"/>`,
-      `                <Property name="attributeKey" value="${xml(column.key)}"/>`,
-      `                <Property name="displayName" value="${xml(column.label)}"/>`,
-      `                <Property name="isProperty" value="${column.property ? 'true' : 'false'}"/>`,
-      `                <Property name="transformations" value="${view.presentation === 'trend' ? 'TREND' : 'CURRENT'}"/>`,
-      '              </Value>',
-      '            </Item>',
-    ].join('\n'),
-  );
+  const items = view.columns.flatMap((column) => [
+    '                                <Item>',
+    '                                    <Value>',
+    '                                        <Property name="objectType" value="RESOURCE"/>',
+    `                                        <Property name="attributeKey" value="${xml(column.key)}"/>`,
+    `                                        <Property name="isStringAttribute" value="${isStringProperty(column)}"/>`,
+    '                                        <Property name="adapterKind" value="VMWARE"/>',
+    `                                        <Property name="resourceKind" value="${xml(view.kind)}"/>`,
+    ...(column.property ? [] : ['                                        <Property name="rollUpType" value="NONE"/>']),
+    '                                        <Property name="rollUpCount" value="0"/>',
+    '                                        <Property name="transformations">',
+    '                                            <List>',
+    '                                                <Item value="CURRENT"/>',
+    '                                            </List>',
+    '                                        </Property>',
+    `                                        <Property name="isProperty" value="${column.property ? 'true' : 'false'}"/>`,
+    `                                        <Property name="displayName" value="${xml(column.label)}"/>`,
+    '                                    </Value>',
+    '                                </Item>',
+  ]);
   return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<!-- Generated by ArchToolKit. The ViewDef, Title, SubjectType and Presentation',
-    '     elements are the ones a content export carries. The DataProvider/Item',
-    '     structure below is a skeleton: VERIFY it against one view exported from',
-    '     your release (build one column in the interface, export, compare). -->',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<Content>',
-    '  <Views>',
-    `    <ViewDef id="${id}">`,
-    `      <Title>${xml(view.name)}</Title>`,
-    `      <Description>${xml(description)}</Description>`,
-    `      <SubjectType adapterKind="VMWARE" resourceKind="${xml(view.kind)}" type="descendant"/>`,
-    '      <Usage>dashboard</Usage>',
-    '      <Usage>report</Usage>',
-    '      <DataProviders>',
-    `        <DataProvider dataType="${view.presentation}-view" id="${stableId(`dp:${view.name}`)}">`,
-    '          <Items>',
+    '    <Views>',
+    `        <ViewDef id="${id}">`,
+    `            <Title>${xml(view.name)}</Title>`,
+    `            <Description>${xml(description)}</Description>`,
+    `            <SubjectType adapterKind="VMWARE" resourceKind="${xml(view.kind)}" type="descendant"/>`,
+    `            <SubjectType adapterKind="VMWARE" resourceKind="${xml(view.kind)}" type="self"/>`,
+    '            <Usage>dashboard</Usage>',
+    '            <Usage>report</Usage>',
+    '            <Usage>details</Usage>',
+    '            <Usage>content</Usage>',
+    '            <Controls>',
+    '                <Control id="time-interval-selector_id_1" type="time-interval-selector" visible="false">',
+    '                    <Property name="advancedTimeMode" value="false"/>',
+    `                    <Property name="unit" value="${view.presentation === 'list' ? 'HOURS' : 'DAYS'}"/>`,
+    `                    <Property name="count" value="${view.presentation === 'list' ? 24 : 30}"/>`,
+    '                </Control>',
+    '                <Control id="attributes-selector_id_1" type="attributes-selector" visible="false">',
+    '                    <Property name="attributeInfos">',
+    '                        <List>',
     ...items,
-    '          </Items>',
-    `          <Filter>${xml(view.filter)}</Filter>`,
-    '        </DataProvider>',
-    '      </DataProviders>',
-    `      <Presentation type="${view.presentation}"/>`,
-    '    </ViewDef>',
-    '  </Views>',
+    '                        </List>',
+    '                    </Property>',
+    '                </Control>',
+    ...(view.presentation === 'list'
+      ? [
+          '                <Control id="pagination-control_id_1" type="pagination-control" visible="true">',
+          '                    <Property name="start" value="0"/>',
+          '                    <Property name="size" value="50"/>',
+          '                </Control>',
+        ]
+      : []),
+    '                <Control id="metadata_id_1" type="metadata" visible="false">',
+    '                    <Property name="maxPointsCount" value="5000"/>',
+    '                    <Property name="hideObjectNameColumn" value="false"/>',
+    '                    <Property name="listTopResultSize" value="-1"/>',
+    '                </Control>',
+    '            </Controls>',
+    '            <DataProviders>',
+    `                <DataProvider dataType="${view.presentation}-view" id="${view.presentation}-view_id_1"/>`,
+    '            </DataProviders>',
+    `            <Presentation type="${view.presentation}"/>`,
+    '        </ViewDef>',
+    '    </Views>',
     '</Content>',
     '',
   ].join('\n');
@@ -550,7 +407,6 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
       const tags = listOf(str(values, 'tag_categories', ''));
       const shared = bool(values, 'shared', true);
       const maxWidgets = num(values, 'max_widgets', 10);
-      const base = slugOf(name || dashName, 'dashboard');
       const viewName = templateName(template);
 
       const extra = extraWidgets(str(values, 'extra', ''));
@@ -592,39 +448,62 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
 
       const ids = widgets.map((widget, index) => stableId(`widget:${dashName}:${index}:${widget.title}`));
       const provider = widgets.findIndex((widget) => widget.config['selfProvider'] === true);
+      const dashId = stableId(`dashboard:${dashName}`);
+      // Written as a Dashboards → Export writes it (notoriousbdg and sentania-labs
+      // exports): {entries, dashboards, uuid}; flags as objects ({selfProvider:
+      // {selfProvider: true}}); widgets wired by widgetInteractions.
+      const widgetConfig = (widget: Widget, index: number): Record<string, unknown> => {
+        const { selfProvider, ...rest } = widget.config;
+        const common = { title: widget.title, refreshInterval: 300, refreshContent: { refreshContent: true }, selfProvider: { selfProvider: selfProvider === true || index === provider } };
+        return widget.type === 'View'
+          ? { ...common, ...rest, isUpdatedView: true, chartViewItems: [], selectFirstRow: { selectFirstRow: false }, traversalSpecId: '', resource: null }
+          : { ...common, ...rest };
+      };
       const dashboard = {
+        entries: { resourceKind: [], resource: [] },
         dashboards: [
           {
-            id: stableId(`dashboard:${dashName}`),
+            id: dashId,
             name: dashName,
+            namePath: '',
             description: `Generated by ArchToolKit from the "${viewName}" template.`,
             shared,
-            columnCount: 12,
+            temporary: false,
+            hidden: false,
+            homeTab: false,
+            disabled: false,
+            locked: false,
+            autoswitchEnabled: false,
+            columnCount: 1,
+            columnProportion: '1',
+            gridsterMaxColumns: 12,
+            rank: 0,
+            creationTime: 0,
+            lastUpdateTime: 0,
+            importAttempts: 0,
+            importComplete: true,
+            userId: DASHBOARD_OWNER_PLACEHOLDER,
+            lastUpdateUserId: DASHBOARD_OWNER_PLACEHOLDER,
+            states: [],
+            dashboardNavigations: {},
+            // Selecting an object in the first list drives every other widget.
+            widgetInteractions:
+              provider >= 0
+                ? ids.filter((_, index) => index !== provider && widgets[index]!.type !== 'TextDisplay').map((receiver) => ({ type: 'resourceId', widgetIdProvider: ids[provider], widgetIdReceiver: receiver }))
+                : [],
             widgets: widgets.map((widget, index) => ({
               id: ids[index],
               type: widget.type,
               title: widget.title,
               collapsed: false,
               gridsterCoords: { x: widget.x, y: widget.y, w: widget.w, h: widget.h },
-              config: { title: widget.title, refreshContent: true, refreshInterval: 300, ...widget.config },
+              config: widgetConfig(widget, index),
             })),
-            // Selecting an object in the first list drives every other widget.
-            interactions:
-              provider >= 0
-                ? ids.filter((_, index) => index !== provider && widgets[index]!.type !== 'TextDisplay').map((receiver) => ({ widgetIdProvider: ids[provider], type: 'resourceId', widgetIdReceiver: receiver }))
-                : [],
           },
         ],
+        uuid: stableId(`dashboard-export:${dashName}`),
       };
-
-      const stage = [
-        '# A dashboard export holds one zip per dashboard under dashboards/, each',
-        '# holding dashboard/dashboard.json. That is the shape the Aria Ops page',
-        '# reads, and the shape this builds.',
-        `mkdir -p "$WORK/inner/dashboard" "$WORK/content/dashboards"`,
-        `cp "$HERE/${base}.json" "$WORK/inner/dashboard/dashboard.json"`,
-        `(cd "$WORK/inner" && zip -qr "$WORK/content/dashboards/${base}.zip" dashboard)`,
-      ];
+      const dashboardJson = `${JSON.stringify(dashboard, null, 2)}\n`;
 
       const hasView = widgets.some((widget) => widget.type === 'View');
       return {
@@ -644,15 +523,15 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         guardrails: [
           { rule: 'Overlapping or off-grid widgets are an error before anything is built', because: 'Gridster rearranges an overlapping layout on import, and the dashboard people open is not the one that was reviewed.' },
           { rule: 'import-dashboard.sh stops while any payload holds <REQUIRED>', because: 'A dashboard imported with a placeholder view id shows an empty widget, which reads as "no problems".' },
-          { rule: 'Dry run by default: builds and lists the zip, sends nothing', because: 'The layout inside a content zip is undocumented; the first run is for comparing it with a real export.' },
+          { rule: 'Dry run by default: builds and lists the zip, sends nothing', because: 'The content-zip layout comes from real exports rather than a published specification; the first run is for comparing it with an export-reference.sh export.' },
           { rule: 'With --execute, the script first exports the existing DASHBOARDS content to pre-import-backup-<time>.zip and refuses to import when a dashboard with the same name or id is already there, unless --overwrite is given', because: 'The import API overwrites by default (force defaults to true), and somebody’s hand-edited copy would be gone with no copy kept.' },
           { rule: 'The import is sent with force=false unless --overwrite', because: 'Without it the API replaces whatever matches, which is the documented default.' },
           { rule: 'The script follows the import by the id its POST returned and exits 1 unless it reaches FINISHED with nothing failed or skipped, or when it times out', because: 'Reading the "last import" status can show an earlier import, and a FAILED import that exits 0 is taken as done.' },
         ],
         dryRun: [
           'Run import-dashboard.sh without --execute: it builds the content zip and lists it.',
-          `Drop ${base}.json on the Aria Ops page first — it reads this file as an export and shows the layout and any findings.`,
-          'Or import it by hand: Dashboards > Manage > Import, which takes the dashboard zip.',
+          'Drop import/dashboard.zip on the Aria Ops page first — it reads it as an export and shows the layout and any findings.',
+          'Or import it by hand: Dashboards > Manage > Import, which takes import/dashboard.zip.',
         ],
         undo: ['Delete the dashboard under Dashboards > Manage. If --overwrite replaced one, put the previous version back by importing the pre-import-backup-<time>.zip the script wrote (POST /suite-api/api/content/operations/import) — the import API itself has no undo.'],
         told: ['Nobody. The dashboard appears in the list for the users it is shared with.'],
@@ -662,15 +541,34 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
           'An account allowed to import content (Content admin or Administrator).',
         ],
         files: {
-          [`${base}.json`]: `${JSON.stringify(dashboard, null, 2)}\n`,
-          'import-dashboard.sh': contentImportScript(`the dashboard "${dashName}"`, `${base}-content.zip`, stage, 'DASHBOARDS', [`"name": ${JSON.stringify(dashName)}`, `"name":${JSON.stringify(dashName)}`, stableId(`dashboard:${dashName}`)]),
+          'import/dashboard.zip/dashboard/dashboard.json': dashboardJson,
+          'import/dashboard.zip/dashboard/resources/resources.properties': '',
+          'import/dashboard.json': dashboardJson,
+          ...contentPackage({}, {}),
+          'import-dashboard.sh': contentImportScript({ what: `the dashboard "${dashName}"`, contentType: 'DASHBOARDS', needles: [`"name": ${JSON.stringify(dashName)}`, `"name":${JSON.stringify(dashName)}`, dashId], dashboard: { shared } }),
           'export-reference.sh': exportReferenceScript('DASHBOARDS'),
+          'IMPORT.md': importMd({
+            title: `the dashboard "${dashName}"`,
+            steps: [
+              ...(hasView
+                ? [{ heading: `First, the view "${viewName}"`, files: [], how: [`Generate "A view for dashboards and reports" with the "${viewName}" template and import its import/view.zip first. The View widget refers to view id ${viewIdOf(viewName)}; without it the widget opens empty.`] }]
+                : []),
+              {
+                heading: 'The dashboard',
+                files: ['import/dashboard.zip'],
+                how: ['Dashboards → Manage → ⋯ → Import (8.x: Dashboards → Actions → Manage Dashboards → Import Dashboards), and choose import/dashboard.zip — a zip holding dashboard/dashboard.json, as a dashboard export is.', 'The dashboard is created as the user who imports it, then shared if the shared flag is set.'],
+                verify: ['import/dashboard.json is the same dashboard as a bare file. Import dialogs have taken the .json on its own in 8.x; if yours asks for a zip, use import/dashboard.zip.', 'widget config keys other than viewDefinitionId, selfProvider and refresh are a starting point: open each widget after import and save it once if it shows unconfigured.'],
+              },
+              contentStep('DASHBOARDS', 'import-dashboard.sh'),
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           CONTENT_IMPORT_NOTE,
-          'The dashboards[] / widgets[] / gridsterCoords shape is the one in real exports and the one the Aria Ops page parses. Widget config keys beyond viewDefinitionId (metrics, topN, groupBy and so on) are a starting point: VERIFY them against a widget of the same type exported from your release, and edit the widget in the interface after import if it opens unconfigured.',
+          'The {entries, dashboards[], uuid} shape, widgets[] with gridsterCoords and widgetInteractions are as real exports have them, and the Aria Ops page parses the same file. Widget config keys beyond viewDefinitionId (metrics, topN, groupBy and so on) are a starting point: VERIFY them against a widget of the same type exported from your release, and edit the widget in the interface after import if it opens unconfigured.',
           'gridsterCoords are 1-based: x runs 1 to 12, y from 1 downwards.',
-          'The interactions list wires the first self-providing list to every other widget. That is the usual "select one, see its detail" shape; a widget that should not follow the selection can be unwired in the dashboard editor.',
+          'widgetInteractions wires the first self-providing list to every other widget. That is the usual "select one, see its detail" shape; a widget that should not follow the selection can be unwired in the dashboard editor.',
         ],
         findings,
       };
@@ -742,7 +640,6 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
       if (includeTags && template !== 'tags') {
         view = { ...view, columns: [...view.columns, ...tags.map((category) => ({ key: 'summary|tag', label: `Tag: ${category}`, property: true }))] };
       }
-      const base = slugOf(name || view.name, 'view');
 
       const findings: Finding[] = [];
       if (view.columns.length === 0) findings.push(error('vcfops.view.no-columns', 'A view with no columns shows the object names and nothing else.', { source: SRC }));
@@ -759,13 +656,7 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         findings.push(warning('vcfops.view.required-key', 'A column key is still <REQUIRED>, so the import script will refuse to run.', { remediation: 'Find the key on an object’s metric or property list in your release and put it in the XML.', source: SRC }));
       }
 
-      const stage = [
-        '# A content export carries views as views.zip holding one content.xml —',
-        '# the layout the Aria Ops page reads, and the one this builds.',
-        'mkdir -p "$WORK/views" "$WORK/content"',
-        `cp "$HERE/${base}.xml" "$WORK/views/content.xml"`,
-        '(cd "$WORK/views" && zip -q "$WORK/content/views.zip" content.xml)',
-      ];
+      const content = viewXml(view, `Generated by ArchToolKit. Filter: ${view.filter}.`);
 
       return {
         platform: PLATFORM,
@@ -780,24 +671,43 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         guardrails: [
           { rule: 'The id comes from the name', because: 'Re-importing an edited view replaces it rather than creating a second one with the same title, which is how estates end up with four "VM Inventory" views.' },
           { rule: 'import-view.sh stops while the XML holds <REQUIRED>', because: 'A view with a placeholder column key imports cleanly and shows an empty column forever.' },
-          { rule: 'Dry run by default: builds and lists the zip, sends nothing', because: 'The layout inside a content zip is undocumented; the first run is for comparing it with a real export.' },
+          { rule: 'Dry run by default: builds and lists the zip, sends nothing', because: 'The content-zip layout comes from real exports rather than a published specification; the first run is for comparing it with an export-reference.sh export.' },
           { rule: 'With --execute, the script first exports the existing VIEW_DEFINITIONS content to pre-import-backup-<time>.zip and refuses to import when a view with the same name or id is already there, unless --overwrite is given', because: 'The import API overwrites by default (force defaults to true), and somebody’s hand-edited copy would be gone with no copy kept.' },
           { rule: 'The import is sent with force=false unless --overwrite', because: 'Without it the API replaces whatever matches, which is the documented default.' },
           { rule: 'The script follows the import by the id its POST returned and exits 1 unless it reaches FINISHED with nothing failed or skipped, or when it times out', because: 'Reading the "last import" status can show an earlier import, and a FAILED import that exits 0 is taken as done.' },
         ],
-        dryRun: ['Run import-view.sh without --execute: it builds views.zip into the content zip, lists it and sends nothing.', `Drop ${base}.xml on the Aria Ops page: it reads ViewDef content and lists the view with its subject type.`],
+        dryRun: ['Run import-view.sh without --execute: it builds the content package, lists it and sends nothing.', 'Drop import/view.zip on the Aria Ops page: it reads ViewDef content and lists the view with its subject type.'],
         undo: ['Delete the view under Views > Manage. Delete any dashboard widget or report section that uses it first, or they show an error.', 'If --overwrite replaced a view, import the pre-import-backup-<time>.zip the script wrote to put the previous one back.'],
         told: ['Nobody. It is a definition.'],
         requires: ['zip, unzip, jq and curl.', 'An account allowed to import content.'],
         files: {
-          [`${base}.xml`]: viewXml(view, `Generated by ArchToolKit. Filter: ${view.filter}.`),
-          'import-view.sh': contentImportScript(`the view "${view.name}"`, `${base}-content.zip`, stage, 'VIEW_DEFINITIONS', [`<Title>${xml(view.name)}</Title>`, viewIdOf(view.name)]),
+          'import/view.zip/content.xml': content,
+          'import/view.xml': content,
+          ...contentPackage({ 'views.zip/content.xml': content }, { views: 1 }),
+          'import-view.sh': contentImportScript({ what: `the view "${view.name}"`, contentType: 'VIEW_DEFINITIONS', needles: [`<Title>${xml(view.name)}</Title>`, viewIdOf(view.name)] }),
           'export-reference.sh': exportReferenceScript('VIEW_DEFINITIONS'),
+          'IMPORT.md': importMd({
+            title: `the view "${view.name}"`,
+            steps: [
+              {
+                heading: 'The view',
+                files: ['import/view.zip'],
+                how: ['Views → Manage → ⋯ → Import (8.x: Dashboards → Views → Import), and choose import/view.zip — a zip holding content.xml, as a view export is.', `The view keeps id ${viewIdOf(view.name)}, which is the id the dashboard and report blueprints refer to.`],
+                verify: [
+                  'import/view.xml is the same content.xml as a bare file, for dialogs that take the XML on its own.',
+                  ...(view.presentation === 'list' ? [] : [`a ${view.presentation} view is written with DataProvider dataType "${view.presentation}-view" and Presentation type "${view.presentation}"; only the list form is confirmed from a real export. Open the view in the editor after import and check it draws.`]),
+                  ...(view.filter && view.filter !== 'none' ? [`the filter ("${view.filter}") is in the description only: set it in the view editor after import.`] : []),
+                ],
+              },
+              contentStep('VIEW_DEFINITIONS', 'import-view.sh'),
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           CONTENT_IMPORT_NOTE,
           'DASHBOARDS, VIEW_DEFINITIONS and REPORT_DEFINITIONS are in the contentTypes enum of POST /content/operations/export in the VCF Operations API reference; the backup export uses scope CUSTOM with just that type.',
-          'The simplest way to get the item structure exactly right is to build one column in the view editor, export it, and copy its <Item> block for the rest.',
+          'The attributes-selector items follow a real export; for a column type not seen there, build one column in the view editor, export it, and compare its <Item> block.',
         ],
         findings,
       };
@@ -857,28 +767,41 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
       if (views.length > 8) findings.push(warning('vcfops.report.long', `${views.length} views in one report.`, { remediation: 'Nobody reads past page ten. Split it by audience.', source: SRC }));
 
       const formatList = formats === 'both' ? ['PDF', 'CSV'] : [formats.toUpperCase()];
+      // As a Reports → Export writes it (sentania-labs, VCF Operations 9): ReportDef
+      // with isTenant, Title, Description, SubjectType, Sections of
+      // ContentType/ContentKey (a view section's key is the view id) and Settings.
       const reportXml = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<!-- Generated by ArchToolKit. ReportDef, Title, Description and SubjectType',
-        '     are the elements a content export carries. The Formats and Sections',
-        '     structure is a skeleton: VERIFY against a report exported from your',
-        '     release before importing. -->',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<Content>',
-        '  <Reports>',
-        `    <ReportDef id="${reportId}">`,
-        `      <Title>${xml(reportName)}</Title>`,
-        `      <Description>Generated by ArchToolKit: ${xml(views.join(', '))}.</Description>`,
-        `      <SubjectType adapterKind="VMWARE" resourceKind="${xml(kind)}" type="self"/>`,
-        '      <Formats>',
-        ...formatList.map((format) => `        <Format>${format}</Format>`),
-        '      </Formats>',
-        '      <Sections>',
-        '        <Section type="cover"/>',
-        '        <Section type="toc"/>',
-        ...views.map((view) => `        <Section type="view" viewId="${viewIdOf(view)}"><!-- ${xml(view)} --></Section>`),
-        '      </Sections>',
-        '    </ReportDef>',
-        '  </Reports>',
+        '    <Reports>',
+        `        <ReportDef id="${reportId}">`,
+        '            <isTenant>false</isTenant>',
+        `            <Title>${xml(reportName)}</Title>`,
+        `            <Description>Generated by ArchToolKit: ${xml(views.join(', '))}.</Description>`,
+        `            <SubjectType adapterKind="VMWARE" resourceKind="${xml(kind)}" type="self"/>`,
+        '            <Sections>',
+        '                <Section>',
+        '                    <ContentType>CoverPage</ContentType>',
+        '                    <ContentKey>COVER_PAGE</ContentKey>',
+        '                </Section>',
+        '                <Section>',
+        '                    <ContentType>TableOfContents</ContentType>',
+        '                    <ContentKey>TABLE_OF_CONTENTS</ContentKey>',
+        '                </Section>',
+        ...views.flatMap((view) => [
+          '                <Section>',
+          '                    <ContentType>View</ContentType>',
+          `                    <ContentKey>${viewIdOf(view)}</ContentKey>`,
+          '                    <ContentOrientation>Landscape</ContentOrientation>',
+          '                </Section>',
+        ]),
+        '            </Sections>',
+        '            <Settings>',
+        '                <ShowPageFooter>true</ShowPageFooter>',
+        ...formatList.map((format) => `                <OutputFormat>${format.toLowerCase()}</OutputFormat>`),
+        '            </Settings>',
+        '        </ReportDef>',
+        '    </Reports>',
         '</Content>',
         '',
       ].join('\n');
@@ -896,13 +819,6 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         emailAddresses: recipients,
         relativePath: [],
       };
-
-      const stage = [
-        '# Reports travel as reports.zip holding one content.xml, beside views.zip.',
-        'mkdir -p "$WORK/reports" "$WORK/content"',
-        `cp "$HERE/${base}.xml" "$WORK/reports/content.xml"`,
-        '(cd "$WORK/reports" && zip -q "$WORK/content/reports.zip" content.xml)',
-      ];
 
       const scheduleScript = [
         '#!/usr/bin/env bash',
@@ -952,7 +868,7 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         guardrails: [
           { rule: 'schedule-report.sh refuses unless exactly one definition has this name', because: 'Scheduling the older of two same-named reports sends last year’s columns to people who will not notice.' },
           { rule: 'Both scripts stop on <REQUIRED>', because: 'A schedule with a placeholder start date is rejected at best and misfires at worst.' },
-          { rule: 'Dry run by default for the import and the schedule', because: 'The content zip layout is undocumented; compare it with an export before sending.' },
+          { rule: 'Dry run by default for the import and the schedule', because: 'The content-zip layout comes from real exports rather than a published specification; compare it with an export-reference.sh export before sending.' },
           { rule: 'With --execute, the script first exports the existing REPORT_DEFINITIONS content to pre-import-backup-<time>.zip and refuses to import when a report with the same name or id is already there, unless --overwrite is given', because: 'The import API overwrites by default (force defaults to true), and somebody’s hand-edited copy would be gone with no copy kept.' },
           { rule: 'The import is sent with force=false unless --overwrite', because: 'Without it the API replaces whatever matches, which is the documented default.' },
           { rule: 'The script follows the import by the id its POST returned and exits 1 unless it reaches FINISHED with nothing failed or skipped, or when it times out', because: 'Reading the "last import" status can show an earlier import, and a FAILED import that exits 0 is taken as done.' },
@@ -970,11 +886,36 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
           'zip, unzip, jq and curl.',
         ],
         files: {
-          [`${base}.xml`]: reportXml,
+          'import/report.zip/content.xml': reportXml,
+          'import/report.xml': reportXml,
+          ...contentPackage({ 'reports.zip/content.xml': reportXml }, { reports: 1 }),
           [`${base}-schedule.json`]: `${JSON.stringify(schedule, null, 2)}\n`,
-          'import-report.sh': contentImportScript(`the report "${reportName}"`, `${base}-content.zip`, stage, 'REPORT_DEFINITIONS', [`<Title>${xml(reportName)}</Title>`, reportId]),
+          'import-report.sh': contentImportScript({ what: `the report "${reportName}"`, contentType: 'REPORT_DEFINITIONS', needles: [`<Title>${xml(reportName)}</Title>`, reportId] }),
           'schedule-report.sh': scheduleScript,
           'export-reference.sh': exportReferenceScript('REPORT_DEFINITIONS'),
+          'IMPORT.md': importMd({
+            title: `the report "${reportName}"`,
+            steps: [
+              {
+                heading: 'First, its views',
+                files: [],
+                how: [`Import the views it is made of before the report: ${views.join(', ') || '(none)'} — each from "A view for dashboards and reports" with the same name, import/view.zip. A report section refers to its view by id, and a report whose views are missing does not import.`],
+              },
+              {
+                heading: 'The report definition',
+                files: ['import/report.zip'],
+                how: ['Reports → Manage → ⋯ → Import (8.x: Dashboards → Reports → Import), and choose import/report.zip — a zip holding content.xml, as a report export is.', 'If a view it names already exists and the dialog asks, choose to overwrite only if the view here is the newer one.'],
+                verify: ['import/report.xml is the same content.xml as a bare file, for dialogs that take the XML on its own.'],
+              },
+              contentStep('REPORT_DEFINITIONS', 'import-report.sh'),
+              {
+                heading: 'Then the schedule',
+                files: [`${base}-schedule.json`, 'schedule-report.sh'],
+                how: [`RESOURCE_ID=<id of the ${kind}> ./schedule-report.sh --execute — POST /suite-api/api/reportdefinitions/{id}/schedules. Or in the interface: the report's Schedule action.`],
+              },
+            ],
+            sources: FORMAT_SOURCES,
+          }),
         },
         notes: [
           CONTENT_IMPORT_NOTE,
@@ -1202,6 +1143,19 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
           'precheck.sh': precheck,
           'install.sh': install,
           ...(configure ? { [`${base}-account.json`]: `${JSON.stringify(account, null, 2)}\n` } : {}),
+          'IMPORT.md': importMd({
+            title: `the management pack ${pak}`,
+            steps: [
+              { heading: 'Check it', files: ['precheck.sh'], how: [`Put ${pak} beside the scripts and run ./precheck.sh. The .pak itself is the vendor's file, imported as it is; nothing here rewrites it.`] },
+              {
+                heading: 'Install it',
+                files: [pak, 'install.sh'],
+                how: [`In the interface: Administration → Integrations → Repository → Add (8.x: Data Sources → Integrations → Repository → Add), and choose ${pak}.`, 'By API: CHANGE_TICKET=… ./install.sh --execute, which uploads and installs it through the cluster admin API.'],
+                verify: ['the cluster admin (CASA) upload and install calls — see the notes in README.md.'],
+              },
+              ...(configure ? [{ heading: 'Then its account', files: [`${base}-account.json`], how: ['POST /suite-api/api/adapters with this file (or "Add an adapter instance" in this kit, which also handles the credential and certificate), or Administration → Integrations → Accounts → Add Account.'] }] : []),
+            ],
+          }),
         },
         notes: [
           'CONFIRMED: GET /suite-api/api/solutions and /solutions/{id}/adapterkinds are in the 9.1 API reference; they list, they do not install. VERIFY: the CASA upload/install/status paths and the pak_id and cluster_pak_install_status fields come from vROps 8.x usage and are not in the public reference.',
@@ -1419,6 +1373,11 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
           [`${base}-design.json`]: `${JSON.stringify(design, null, 2)}\n`,
           [`${base}-design.md`]: md,
           'test-source.sh': test,
+          'IMPORT.md': nothingToImportMd('a Management Pack Builder design', [
+            'Management Pack Builder has no documented design-import format, so this design is a worksheet, not a file to import: build the project in Administration → Management Pack Builder from the design .md, source by source and object by object.',
+            'Run ./test-source.sh first: it calls the source the way the pack will, so a wrong URL or query shows here rather than in the builder.',
+            `When the project builds, export the .pak from the builder and install it like any other management pack (Administration → Integrations → Repository → Add).`,
+          ]),
         },
         notes: [
           'Prometheus as a builder source is new in 9.1 (VCF Operations 9.1 release notes). The builder’s own design export format is not documented, so this design is a worksheet to build from, not a file to import.',
@@ -1637,8 +1596,30 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
           'layout.txt': layout,
           'workflow.json': `${JSON.stringify(workflowSpec, null, 2)}\n`,
           [`actions/${slug}/${py ? 'handler.py' : 'handler.ps1'}`]: handler,
+          [`import/${slug}-action.zip/${py ? 'handler.py' : 'handler.ps1'}`]: handler,
           [py ? 'environment/requirements.txt' : 'environment/modules.psd1']: py ? 'requests==2.32.3\n' : "@{ RequiredModules = @(@{ ModuleName = 'VMware.PowerCLI'; RequiredVersion = '<VERIFY — the PowerCLI version your runtime supports>' }) }\n",
           'run-workflow.sh': run,
+          'IMPORT.md': importMd({
+            title: `the orchestrator workflow "${wfName}"`,
+            steps: [
+              {
+                heading: 'The scripting environment',
+                files: [py ? 'environment/requirements.txt' : 'environment/modules.psd1'],
+                how: [`Orchestrator → Assets → Environments → New: runtime ${py ? 'Python' : 'PowerShell'}, the dependencies from this file, and the package repositories in layout.txt.`],
+              },
+              {
+                heading: 'The action',
+                files: [`import/${slug}-action.zip`],
+                how: [`Orchestrator → Library → Actions → New: runtime ${py ? 'Python' : 'PowerShell'} with the environment above, script type "Import package", and choose import/${slug}-action.zip — the handler at the root of the zip, entry handler ${py ? 'handler.handler' : 'handler.Handler'}.`],
+                verify: ['the orchestrator in VCF Operations 9.1 is documented only in the release notes; the zip-package route is the long-standing Orchestrator one for Python and PowerShell actions.'],
+              },
+              {
+                heading: 'The workflow',
+                files: ['workflow.json'],
+                how: ['workflow.json is a design record, not the orchestrator\'s package format (a .workflow file is a signed-or-UTF-16 zip this toolkit does not write). Create the workflow in the workflow editor with one scriptable task that calls the action, with the inputs listed there.', 'Then ./run-workflow.sh starts it over the REST API (POST /vco/api/workflows/{id}/executions).'],
+              },
+            ],
+          }),
         },
         notes: [
           'CONFIRMED in the 9.1 release notes: up to two repositories for Python and PowerShell scripting environments, a default error handler that can catch errors raised inside itself with a configurable re-entry limit, and a configurable UI session timeout.',
@@ -1766,6 +1747,10 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.sh`]: script,
           'hcx-91-checklist.txt': checklist,
+          'IMPORT.md': nothingToImportMd('the HCX readiness report', [
+            `${base}.sh reads VCF Operations and HCX Manager and changes nothing. Run it before each migration wave from a host that can reach both; it exits non-zero on anything that should stop the wave.`,
+            'hcx-91-checklist.txt is for a person. The HCX management pack it checks for is a .pak installed under Administration → Integrations → Repository.',
+          ]),
         },
         notes: [
           'CONFIRMED in the 9.1 release notes: an HCX management pack for VCF Operations (password rotation for local users, certificate rotation, log bundle collection), and HCX Manager lifecycle through VCF Operations.',

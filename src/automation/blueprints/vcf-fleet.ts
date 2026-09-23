@@ -19,9 +19,31 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
+import { importGuide, type ImportStepSpec } from './vcf-networks-logs.ts';
 
 const PLATFORM = 'vcf-fleet' as const;
 const SRC = 'ArchToolKit';
+
+const SDDC_API = 'SDDC Manager API reference at developer.broadcom.com (VMware Cloud Foundation API 5.2 and the SDDC Manager API for 9.x): request bodies CredentialsUpdateSpec, CsrsGenerationSpec, ResourceCertificateSpec[], BackupConfigurationSpec, HostCommissionSpec[].';
+
+/** IMPORT.md for an SDDC Manager blueprint: everything goes in through /v1, in this order. */
+function sddcImport(intro: string, steps: readonly (ImportStepSpec | undefined)[], verify: readonly string[] = [], sources: readonly string[] = [SDDC_API]): string {
+  return importGuide({
+    product: 'SDDC Manager',
+    intro: `${intro} Every script reads SDDC_HOST and either SDDC_TOKEN (POST /v1/tokens) or SDDC_USER with SDDC_PASSWORD_FILE (mode 600). The same calls can be made from SDDC Manager > Developer Center > API Explorer by pasting the file as the body.`,
+    steps,
+    verify,
+    sources,
+  });
+}
+
+/** The one step of a read-only, scheduled script. */
+function scheduleStep(script: string, base: string, extra: readonly string[] = []): ImportStepSpec {
+  return {
+    heading: 'Run it once, then schedule it',
+    lines: [`Copy the files to /opt/archtoolkit/${base} on a host that reaches SDDC Manager, run \`./${script}\` by hand and compare with the SDDC Manager interface, then install the line in crontab.txt with \`crontab -e\`. It only reads.`, ...extra],
+  };
+}
 
 /** The call helper every acting script here opens with. */
 function apiHelper(): string[] {
@@ -271,7 +293,26 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         ],
         told: [webhook ? `${webhook}, when a rotation task fails.` : 'The exit code only.', 'SDDC Manager records the task under Credentials > Password Management.'],
         requires: ['An SDDC Manager account with the ADMIN role for the token.', 'jq and bash 4 on the machine running it.'],
-        files: { 'rotate.sh': rotate, 'select.jq': selectJq, 'body.jq': bodyJq },
+        files: {
+          'rotate.sh': rotate,
+          'select.jq': selectJq,
+          'body.jq': bodyJq,
+          'IMPORT.md': sddcImport(
+            'Nothing is uploaded as a file: the request body is built at run time from the accounts SDDC Manager reports, because each rotation names the exact resources and usernames it touches.',
+            [
+              {
+                heading: 'Build and check the body',
+                lines: ['`./rotate.sh` selects the accounts (GET /v1/credentials, filtered by select.jq) and writes `request-body.json` — exactly the PATCH /v1/credentials body (CredentialsUpdateSpec: operationType ROTATE, elements [{resourceName, resourceType, credentials [{credentialType, username}]}]). Read it.'],
+              },
+              { heading: 'Rotate', lines: ['`./rotate.sh --execute` sends request-body.json to PATCH /v1/credentials and follows the task (GET /v1/credentials/tasks/{id}).'] },
+              auto
+                ? { heading: 'Set the auto-rotate policy', lines: [`\`./rotate.sh --execute --policy\` sends the same selection with operationType UPDATE_AUTO_ROTATE_POLICY and autoRotatePolicy {frequencyInDays: ${days}, enableAutoRotatePolicy: true} — the body Broadcom KB 370275 gives.`] }
+                : undefined,
+            ],
+            ['operationType values (UPDATE, ROTATE, REMEDIATE, UPDATE_AUTO_ROTATE_POLICY) and the element fields are in the CredentialsUpdateSpec schema.'],
+            [SDDC_API, 'Broadcom KB 370275, "Change password rotation to a custom value, in SDDC manager, via Developer center".'],
+          ),
+        },
         notes: [
           'On VCF 9.1 the fleet-wide equivalent is in VCF Operations fleet management: see "fleet91_password_rotate" and "fleet91_password_policy" in this kit, against /suite-api/api/fleet-management/password-management.',
           'The UPDATE_AUTO_ROTATE_POLICY operation type and the autoRotatePolicy block are the shape in recent releases. Verify both against the API reference for your release before running --policy.',
@@ -384,11 +425,13 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         '#   ./replace-plan.sh csrs <domain-id>              dry run: show the CSR request',
         '#   ./replace-plan.sh csrs <domain-id> --execute    PUT /v1/domains/{id}/csrs',
         '#   ./replace-plan.sh install <domain-id>           dry run: show the install body',
-        '#   ./replace-plan.sh install <domain-id> --execute PATCH /v1/domains/{id}/resource-certificates',
+        '#   ./replace-plan.sh install <domain-id> --execute PUT /v1/domains/{id}/resource-certificates',
         '#',
         '# Between the two: fetch the CSRs (GET /v1/domains/{id}/csrs), have them',
         '# signed by your CA, and put the chains into install-certificates.json.',
-        '# Paths and bodies are the documented shape; verify against your release.',
+        '# Both files are exactly the request bodies: CsrsGenerationSpec, and an',
+        '# array of ResourceCertificateSpec (PUT; PATCH on that path only sets',
+        '# auto-renew in current releases).',
         'set -euo pipefail',
         ...authPreamble('sddc-manager'),
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
@@ -400,7 +443,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         '',
         'case "$STEP" in',
         '  csrs)    METHOD=PUT;   PATH_="/v1/domains/${DOMAIN}/csrs";                  FILE=csr-request.json ;;',
-        '  install) METHOD=PATCH; PATH_="/v1/domains/${DOMAIN}/resource-certificates"; FILE=install-certificates.json ;;',
+        '  install) METHOD=PUT;   PATH_="/v1/domains/${DOMAIN}/resource-certificates"; FILE=install-certificates.json ;;',
         '  *) echo "unknown step $STEP" >&2; exit 2 ;;',
         'esac',
         '',
@@ -453,6 +496,21 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
           'csr-request.json': `${JSON.stringify(csrSpec, null, 2)}\n`,
           'install-certificates.json': `${JSON.stringify(install, null, 2)}\n`,
           'crontab.txt': `# Daily at 07:00, from the directory holding ${base}.sh and expiring.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
+          'IMPORT.md': sddcImport(
+            'The check reads; replacing a certificate is two calls whose bodies are the two JSON files here, filled in from the check’s output.',
+            [
+              scheduleStep(`${base}.sh`, base),
+              {
+                heading: 'When something is in the window: generate CSRs',
+                lines: ['Fill `resources` in csr-request.json (fqdn and type of each resource from the check), then `./replace-plan.sh csrs <domain-id>` and `--execute`: PUT /v1/domains/{id}/csrs with csr-request.json as the body. Fetch them with GET /v1/domains/{id}/csrs and have them signed.'],
+              },
+              {
+                heading: 'Install the signed certificates',
+                lines: ['Put one element per resource in install-certificates.json (resourceFqdn and certificateChain — leaf, intermediates, root; resourceCertificate and caCertificate are the alternative), then `./replace-plan.sh install <domain-id> --execute`: PUT /v1/domains/{id}/resource-certificates. Services restart.'],
+              },
+            ],
+            ['CsrsGenerationSpec (keySize is a string: "2048", "3072" or "4096") and the ResourceCertificateSpec array are as the 5.2 and 9.x references give them. On VCF 4.x the install call was a PATCH on the same path.'],
+          ),
         },
         notes: [
           'On VCF 9.1 the fleet-wide equivalent is in VCF Operations fleet management: see "fleet91_certificates" in this kit, against /suite-api/api/fleet-management/certificate-management.',
@@ -582,7 +640,12 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         undo: ['Nothing to undo.', ...(summary ? ['The health summary run leaves a bundle on the appliance; clear old ones as you would any SoS bundle.'] : [])],
         told: [webhook ? `${webhook}, whenever any check fails.` : 'The exit code only.'],
         requires: ['A read-only SDDC Manager account for the token (an ADMIN one if the health summary is on).', 'jq, bash 4 and GNU date.'],
-        files: { [`${base}.sh`]: script, 'tasks.jq': tasksJq, 'crontab.txt': `# Hourly, from the directory holding ${base}.sh and tasks.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n` },
+        files: {
+          [`${base}.sh`]: script,
+          'tasks.jq': tasksJq,
+          'crontab.txt': `# Hourly, from the directory holding ${base}.sh and tasks.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
+          'IMPORT.md': sddcImport('Nothing is imported: this reads SDDC Manager on a schedule.', [scheduleStep(`${base}.sh`, base)]),
+        },
         notes: [
           'On VCF 9.1 the management components VCF Operations now owns are checked through fleet lifecycle: see "fleet91_lifecycle" and "fleet91_cloud_proxy" in this kit. SDDC Manager still owns its own tasks, which this checks.',
           'The last-backup test reads the task list, because the backup configuration does not report the last run in every release. If your release exposes it directly, use that instead.',
@@ -762,7 +825,21 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
           'SFTP_PASSWORD and BACKUP_PASSPHRASE in the environment, read from a vault.',
           'The passphrase stored somewhere that survives losing SDDC Manager. Without it the backup is unreadable.',
         ],
-        files: { [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`, 'apply.sh': apply },
+        files: {
+          [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
+          'apply.sh': apply,
+          'IMPORT.md': sddcImport(
+            `${base}.json is the BackupConfigurationSpec that PUT /v1/system/backup-configuration takes — backupLocations, backupSchedules and encryption — with the two secrets left as <REQUIRED> placeholders. apply.sh fills them (and the SSH fingerprint) from the SFTP_PASSWORD and BACKUP_PASSPHRASE environment variables in memory and never writes the filled body to disk.`,
+            [
+              {
+                heading: 'Apply the configuration',
+                lines: ['`./apply.sh` saves the current configuration to previous-backup-configuration.json and shows the body without secrets; `./apply.sh --execute` sends it. In the interface the same is Administration > Backup > Site Settings.'],
+              },
+              { heading: 'Prove it', lines: ['Take one backup now (POST /v1/backups/tasks, or Backup Now in the interface) and check the file lands on the SFTP server.'] },
+            ],
+            ['PUT replaces the whole configuration; PATCH on the same path updates it. The script uses PUT with the complete body.'],
+          ),
+        },
         notes: [
           'On VCF 9.1 backups of the management components (VCF Operations, identity broker, management services) are scheduled through the fleet lifecycle API: see "fleet91_lifecycle" in this kit. SDDC Manager backup is still configured here.',
           'Field names follow the SDDC Manager API BackupConfigurationSpec. The retention fields in particular have been renamed between releases; verify against yours before --execute.',
@@ -876,7 +953,13 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         undo: ['Nothing to undo. The precheck result stays in SDDC Manager’s task list.'],
         told: [webhook ? `${webhook}, with each failed check.` : 'The exit code, and precheck-result.json.'],
         requires: ['An SDDC Manager account allowed to run prechecks (OPERATOR or ADMIN).', 'The target bundles downloaded, or a depot configured, for the bundle part to mean anything.'],
-        files: { [`${base}.sh`]: script, 'failures.jq': failuresJq },
+        files: {
+          [`${base}.sh`]: script,
+          'failures.jq': failuresJq,
+          'IMPORT.md': sddcImport('Nothing is imported. The script starts a precheck (POST /v1/system/prechecks with a body naming the domain, built at run time) and reads its result.', [
+            { heading: 'Run the precheck', lines: [`\`./${base}.sh\` from a host that reaches SDDC Manager, a day or more before the upgrade window. In the interface: Lifecycle Management > the domain > Precheck.`] },
+          ]),
+        },
         notes: [
           'On VCF 9.1 the management components are upgraded through the fleet lifecycle upgrade plan: see "fleet91_lifecycle" in this kit. Workload domains are still prechecked in SDDC Manager, as here.',
           'Newer releases split prechecks into check-sets (POST /v1/system/check-sets/queries, then /v1/system/check-sets) so you can precheck against a specific target. If /v1/system/prechecks is deprecated in yours, move to those.',
@@ -1045,7 +1128,19 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
           `The network pool ${pool} with free addresses for vMotion and storage for every host.`,
           ...hosts.map((host) => `${host.envVar} set to ${host.fqdn}’s ${user} password, from your vault.`),
         ],
-        files: { [`${base}.sh`]: script, 'hosts.json': `${JSON.stringify(hosts, null, 2)}\n`, 'spec.jq': specJq },
+        files: {
+          [`${base}.sh`]: script,
+          'hosts.json': `${JSON.stringify(hosts, null, 2)}\n`,
+          'spec.jq': specJq,
+          'IMPORT.md': sddcImport(
+            'hosts.json lists the hosts without passwords; spec.jq turns it into exactly the HostCommissionSpec array POST /v1/hosts and POST /v1/hosts/validations take (fqdn, username, password, storageType, networkPoolId, networkPoolName), each password read from the variable named in hosts.json.',
+            [
+              { heading: 'Validate', lines: [`Export each host’s password variable (${hosts.map((host) => host.envVar).join(', ')}), then \`./${base}.sh\`: it resolves the network pool id and runs POST /v1/hosts/validations.`] },
+              { heading: 'Commission', lines: [`\`./${base}.sh --execute\` sends the same body to POST /v1/hosts and follows the task. In the interface: Inventory > Hosts > Commission Hosts, which also accepts a JSON file of the same host list.`] },
+            ],
+            ['The interface’s Commission Hosts JSON import uses its own template (downloadable from that dialog); the file to upload there is not hosts.json — VERIFY its fields against the template before using that route.'],
+          ),
+        },
         notes: [
           'VCF 9.1 has no fleet-management equivalent for commissioning: hosts are still commissioned through SDDC Manager, as here. The fleet-level jobs that moved to VCF Operations are the "fleet91_" blueprints in this kit.',
           'The storageType values follow the SDDC Manager HostCommissionSpec. VSAN_ESA is how recent releases name ESA; some take VSAN with a separate ESA flag instead. Verify against your release.',

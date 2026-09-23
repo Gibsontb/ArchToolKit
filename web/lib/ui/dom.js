@@ -94,8 +94,11 @@ export function allOf                                 (
 }
 
 /** Trigger a client-side file download without a server round trip. */
-export function downloadFile(filename        , contents        , mime = 'application/json')       {
-  const blob = new Blob([contents], { type: `${mime};charset=utf-8` });
+export function downloadFile(filename        , contents                     , mime = 'application/json')       {
+  const blob =
+    typeof contents === 'string'
+      ? new Blob([contents], { type: `${mime};charset=utf-8` })
+      : new Blob([contents                           ], { type: mime });
   const url = URL.createObjectURL(blob);
   const anchor = el('a', { attrs: { href: url, download: filename } });
   document.body.appendChild(anchor);

@@ -39,6 +39,15 @@ import { info, warning } from '../core/findings.js';
                         
                                                     
                              
+     
+                                                                              
+                                                                      
+                                                                              
+                                                                            
+                                                                             
+                                            
+     
+                                     
  
 
 export const PLATFORMS                                           = {
@@ -51,6 +60,7 @@ export const PLATFORMS                                           = {
     networkOs: 'cisco.ios.ios',
     save: 'write memory',
     extension: '.cfg',
+    commentsAccepted: true,
   },
   cisco_nxos: {
     id: 'cisco_nxos',
@@ -61,6 +71,7 @@ export const PLATFORMS                                           = {
     networkOs: 'cisco.nxos.nxos',
     save: 'copy running-config startup-config',
     extension: '.cfg',
+    commentsAccepted: true,
   },
   cisco_wlc: {
     id: 'cisco_wlc',
@@ -72,6 +83,7 @@ export const PLATFORMS                                           = {
     networkOs: 'cisco.ios.ios',
     save: 'write memory',
     extension: '.cfg',
+    commentsAccepted: true,
   },
   cisco_asa: {
     id: 'cisco_asa',
@@ -82,6 +94,7 @@ export const PLATFORMS                                           = {
     networkOs: 'cisco.asa.asa',
     save: 'write memory',
     extension: '.cfg',
+    commentsAccepted: true,
   },
   arista_eos: {
     id: 'arista_eos',
@@ -92,6 +105,7 @@ export const PLATFORMS                                           = {
     networkOs: 'arista.eos.eos',
     save: 'write memory',
     extension: '.cfg',
+    commentsAccepted: true,
   },
   panos: {
     id: 'panos',
@@ -101,6 +115,7 @@ export const PLATFORMS                                           = {
     collection: 'paloaltonetworks.panos',
     save: 'commit',
     extension: '.txt',
+    commentsAccepted: false,
   },
   fortios: {
     id: 'fortios',
@@ -110,6 +125,7 @@ export const PLATFORMS                                           = {
     collection: 'fortinet.fortios',
     save: 'the change applies as each `end` is entered; back it up with `execute backup config`',
     extension: '.txt',
+    commentsAccepted: false,
   },
   f5: {
     id: 'f5',
@@ -119,6 +135,7 @@ export const PLATFORMS                                           = {
     collection: 'f5networks.f5_modules',
     save: 'the declaration is the configuration; save with `tmsh save sys config` after it applies',
     extension: '.json',
+    commentsAccepted: false,
   },
 };
 
@@ -183,7 +200,25 @@ function section(comment        , heading        , lines                   , pre
  * configuration takes effect. That is how it will be used whatever anyone
  * intends: someone will select all and paste.
  */
-export function renderChange(change              , name        )         {
+/**
+ * A change whose configuration carries remarks (`! Then attach the profile…`)
+ * on a platform that has no comment syntax: the remarks move to the notes, so
+ * the file is configuration only and the record still says them.
+ */
+export function withRemarksAsNotes(change              )               {
+  if (PLATFORMS[change.platform].commentsAccepted || change.platform === 'f5') return change;
+  const remark = (line        ) => /^\s*(!|#)/.test(line);
+  const remarks = change.config.filter(remark);
+  if (remarks.length === 0) return change;
+  return {
+    ...change,
+    config: change.config.filter((line) => !remark(line)),
+    notes: [...(change.notes ?? []), ...remarks.map((line) => line.trim().replace(/^(!|#)\s*/, ''))],
+  };
+}
+
+export function renderChange(original              , name        )         {
+  const change = withRemarksAsNotes(original);
   const platform = PLATFORMS[change.platform];
   const c = platform.comment;
   const lines           = [
@@ -207,12 +242,135 @@ export function renderChange(change              , name        )         {
   lines.push(...section(c, 'verify', change.verify.map((cmd) => `${c}   ${cmd}`)));
   lines.push(...section(c, 'back out', change.backout.map((cmd) => `${c}   ${cmd}`)));
 
-  return `${lines.join('\n').trimEnd()}\n`;
+  return deviceFile(change.platform, `${lines.join('\n').trimEnd()}\n`);
+}
+
+function configOnly(text        , comment        )         {
+  return text
+    .split('\n')
+    .filter((line) => !line.trim().startsWith(comment))
+    .join('\n')
+    .trim();
+}
+
+function isJson(text        )          {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The name a change's file is written under: the platform's extension, except
+ * for an F5 change that is a command rather than a declaration, which is a
+ * shell script and named like one.
+ */
+export function changeFileName(change              , base        )         {
+  const info_ = PLATFORMS[change.platform];
+  if (change.platform === 'f5' && !isJson(change.config.join('\n'))) return `${base}.sh`;
+  return `${base}${info_.extension}`;
+}
+
+/** Typographic characters a device CLI may reject or mangle, and their ASCII. */
+const ASCII                                   = {
+  '\u2014': '-', '\u2013': '-', '\u2012': '-', '\u2010': '-', '\u2011': '-', '\u2212': '-',
+  '\u2018': "'", '\u2019': "'", '\u201C': '"', '\u201D': '"',
+  '\u2026': '...', '\u00D7': 'x', '\u2192': '->', '\u2190': '<-', '\u2264': '<=', '\u2265': '>=', '\u00A0': ' ',
+};
+
+/** A CLI line in plain ASCII, so a terminal or TFTP load takes it byte for byte. */
+export function asciiOnly(text        )         {
+  return text.replace(/[^\x00-\x7F]/g, (ch) => ASCII[ch] ?? '?');
+}
+
+/**
+ * The file as the device takes it.
+ *
+ * For a platform whose loader skips comment lines, the file is kept whole —
+ * notes, checks and back-out commented out — so it can be pasted as it stands.
+ * For one that does not, every comment line is dropped and only configuration
+ * is left: a PAN-OS `set` list, a FortiOS `config … end` script, an AS3
+ * declaration that parses as JSON. CLI files are made plain ASCII.
+ */
+export function deviceFile(platform          , text        )         {
+  const info_ = PLATFORMS[platform];
+  let out = text;
+  if (platform === 'f5' && !isJson(configOnly(text, info_.comment))) {
+    // Not a declaration: a tmsh or REST command. It is a shell script, then,
+    // run on the BIG-IP (tmsh) or a workstation (curl); `#` is its comment.
+    const body = configOnly(text, info_.comment).replace(/^#!.*\n/, '');
+    return `#!/bin/sh\n# Run on the BIG-IP (tmsh) or a host that reaches its management address (curl).\nset -eu\n\n${asciiOnly(body).trimEnd()}\n`;
+  }
+  if (!info_.commentsAccepted) {
+    out = out
+      .split('\n')
+      .filter((line) => !line.trim().startsWith(info_.comment))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\n+/, '');
+  }
+  if (platform !== 'f5') out = asciiOnly(out);
+  return `${out.trimEnd()}\n`;
+}
+
+/**
+ * How the generated file is loaded on the device, in the device's own terms.
+ *
+ * IOS / NX-OS / EOS / ASA / 9800: paste in configuration mode, or copy the file
+ * to running-config (comment lines are ignored either way). PAN-OS: paste the
+ * `set` commands in configure mode, then commit (docs.paloaltonetworks.com,
+ * "Load Configuration Settings from a Text File"). FortiOS: paste the
+ * `config … end` blocks into the CLI. F5: POST the AS3 declaration to
+ * /mgmt/shared/appsvcs/declare (clouddocs.f5.com, AS3 API reference).
+ */
+export function applySteps(change              , file        )           {
+  switch (change.platform) {
+    case 'cisco_ios':
+    case 'cisco_wlc':
+    case 'cisco_asa':
+      return [
+        `Paste \`${file}\` after \`configure terminal\`, then \`end\` and \`${PLATFORMS[change.platform].save}\`; the \`!\` lines are comments and are ignored.`,
+        `Or load it: \`copy scp://<user>@<host>/${file} running-config\` (${change.platform === 'cisco_asa' ? 'ASA: `copy disk0:/' + file + ' running-config` after copying it to flash' : 'or tftp:/ftp:/flash:'}).`,
+      ];
+    case 'cisco_nxos':
+      return [
+        `Paste \`${file}\` after \`configure terminal\`, then \`end\` and \`copy running-config startup-config\`.`,
+        `Or load it: copy the file to bootflash: and run \`copy bootflash:${file} running-config\`.`,
+      ];
+    case 'arista_eos':
+      return [
+        `Paste \`${file}\` after \`configure terminal\` (or \`configure session\` to review with \`show session-config diffs\` before \`commit\`), then \`write memory\`.`,
+        `Or load it: \`copy flash:${file} running-config\` after copying it to flash.`,
+      ];
+    case 'panos':
+      return [
+        `From operational mode: \`set cli scripting-mode on\` (more than ~20 lines will not paste otherwise), \`configure\`, paste \`${file}\`, check with \`show | compare\`, then \`commit\`.`,
+        'The file is `set` commands only: PAN-OS has no comment syntax, so the notes are here rather than in the file.',
+      ];
+    case 'fortios':
+      return [
+        `Paste \`${file}\` into the CLI (each \`config … end\` block applies when its \`end\` is entered), or run it as a configuration script from the GUI.`,
+        'The file is configuration only; the notes are here rather than in the file.',
+      ];
+    case 'f5':
+      return file.endsWith('.json')
+        ? [
+            `POST the declaration: \`curl -sku <user> -H 'Content-Type: application/json' -X POST https://<bigip>/mgmt/shared/appsvcs/declare -d @${file}\` (AS3 must be installed).`,
+            'AS3 replaces the whole tenant: merge this into the current declaration for the tenant first.',
+          ]
+        : [`Run \`${file}\` on the BIG-IP (tmsh) or a host that reaches its management address (curl).`];
+    default:
+      return [];
+  }
 }
 
 /** The change record: the same four parts, as text for a ticket. */
-export function renderRecord(change              , name        )           {
+export function renderRecord(original              , name        , file         )           {
+  const change = withRemarksAsNotes(original);
   const platform = PLATFORMS[change.platform];
+  const apply = file ? applySteps(change, file) : [];
   return [
     `### ${name || change.title}`,
     '',
@@ -225,6 +383,7 @@ export function renderRecord(change              , name        )           {
     '',
     ...change.before.map((cmd) => `- \`${cmd}\``),
     '',
+    ...(apply.length > 0 ? ['**Apply**', '', ...apply.map((line) => `- ${line}`), ''] : []),
     '**Verify**',
     '',
     ...change.verify.map((cmd) => `- \`${cmd}\``),

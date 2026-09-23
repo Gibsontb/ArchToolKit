@@ -19,6 +19,7 @@
 import type { Blueprint, BlueprintGroup } from '../../kit/blueprint.ts';
 import { withChoicesAll } from '../../kit/choices.ts';
 import { withSecretLiftingAll } from '../secrets.ts';
+import { withRootModuleLayoutAll } from '../layout.ts';
 import { AWS_TERRAFORM } from './aws.ts';
 import { AZURE_TERRAFORM } from './azure.ts';
 import { GCP_TERRAFORM } from './gcp.ts';
@@ -71,8 +72,11 @@ function combine(
  * set, so a machine type is a dropdown of machine types; `withSecretLiftingAll`
  * fixes up what the templates emit, so a `var.` reference picked from one of
  * those dropdowns comes out as a reference rather than a quoted string.
+ * `withRootModuleLayoutAll` then splits the one main.tf into versions.tf,
+ * providers.tf, main.tf, variables.tf, outputs.tf and terraform.tfvars.example,
+ * so the zip unpacks as a root module laid out the way Terraform's docs lay one out.
  */
-export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withSecretLiftingAll(
+export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withRootModuleLayoutAll(withSecretLiftingAll(
   withChoicesAll(
     [
       combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')]),
@@ -85,4 +89,4 @@ export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withSecretLifting
     ],
     'terraform',
   ),
-);
+));

@@ -27,6 +27,7 @@ import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, authHeader, authPreamble, hostVar } from '../apply.ts';
+import { apiStep, importBundle, importMd, manualStep, setupOrderStep, verifyFor } from '../vcfa-import.ts';
 
 const PLATFORM = 'vcf-automation' as const;
 const SRC = 'ArchToolKit';
@@ -386,6 +387,20 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           ...(withNsx ? { [`${base}-nsx.json`]: json(nsx) } : {}),
           'enumerate-regions.sh': enumerate,
           'apply.sh': chainScript(`Create the ${accountName} cloud account${withNsx ? 's' : ''} in VCF Automation.`, steps, 'DELETE the NSX account, then the vSphere account, by the ids in created-ids.txt.'),
+          'IMPORT.md': importMd({
+            subject: `The vSphere cloud account ${accountName}${withNsx ? ' and its NSX account' : ''}.`,
+            steps: [
+              setupOrderStep('vcfa_cloud_account'),
+              manualStep('Find the regions', ['`./enumerate-regions.sh` lists the datacenters the vCenter offers as externalRegionId values; put the ones you mean in the regions field of the vSphere payload.']),
+              apiStep('Cloud accounts', 'apply.sh', [
+                `\`${base}-vsphere.json\` → POST /iaas/api/cloud-accounts-vsphere, with the password taken from VSPHERE_PASSWORD`,
+                ...(withNsx ? [`\`${base}-nsx.json\` → POST /iaas/api/cloud-accounts-nsx-t, with the password from NSX_PASSWORD and the vSphere account id from the first call`] : []),
+              ], ['The passwords are read from the environment by jq and sent on stdin; they are never in the files. The ids go to created-ids.txt, for the zone and for undo.']),
+            ],
+            auth: ['apply'],
+            orgs: 'VCF Automation 9.1 / 9.1.1 VM Apps organizations and Aria Automation 8.x. In an All Apps organization vCenter and NSX arrive with the provider’s region instead',
+            verify: ['The association field between the NSX and vSphere accounts has moved between releases; GET an existing pair and match it.'],
+          }),
         },
         notes: [
           'The association field has moved between releases: some take associatedCloudAccountIds on the NSX account, some on the vSphere one, some both. GET an existing pair in your system and match it.',
@@ -513,6 +528,15 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: json(zone),
           'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/zones', payload: `${base}.json` }], 'DELETE /iaas/api/zones/{id} after removing it from every project.'),
+          'IMPORT.md': importMd({
+            subject: `The cloud zone ${zoneName}.`,
+            steps: [
+              setupOrderStep('vcfa_cloud_zone'),
+              apiStep('Cloud zone', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/zones`], ['Fill the region id first (GET /iaas/api/regions, after the cloud account has collected). The zone id it returns goes into the project.']),
+            ],
+            auth: ['apply'],
+            verify: [],
+          }),
         },
         notes: [
           'SPREAD_MEMORY is present from 8.12 onwards. An older system rejects it; use SPREAD.',
@@ -645,6 +669,15 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: json(project),
           'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/projects', payload: `${base}.json` }], 'DELETE /iaas/api/projects/{id} once it has no deployments.'),
+          'IMPORT.md': importMd({
+            subject: `The project ${projectName}.`,
+            steps: [
+              setupOrderStep('vcfa_project'),
+              apiStep('Project', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/projects`], ['Fill the cloud zone ids first (GET /iaas/api/zones). The project id it returns is what VCFA_PROJECT_ID means in every import script on this page.']),
+            ],
+            auth: ['apply'],
+            verify: [],
+          }),
         },
         notes: [
           'The machine naming template on a project is superseded by custom naming (see the naming blueprint) when both exist. Keep one, not both.',
@@ -765,6 +798,15 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
             ],
             'DELETE /iaas/api/flavor-profiles/{id} and /iaas/api/image-profiles/{id}.',
           ),
+          'IMPORT.md': importMd({
+            subject: 'Image and flavor mappings for one region.',
+            steps: [
+              setupOrderStep('vcfa_mappings'),
+              apiStep('Mappings', 'apply.sh', [`\`${base}-flavor-profile.json\` → POST /iaas/api/flavor-profiles`, `\`${base}-image-profile.json\` → POST /iaas/api/image-profiles`], ['Fill each image id from GET /iaas/api/images first. A region that already has a profile needs a PATCH of that one instead of a second POST.']),
+            ],
+            auth: ['apply'],
+            verify: [],
+          }),
         },
         notes: [
           'One flavor profile and one image profile per region. A second POST for the same region may fail or may replace — GET /iaas/api/flavor-profiles?$filter=regionId eq ... first and PATCH if one exists.',
@@ -973,6 +1015,15 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
             ],
             'DELETE /iaas/api/network-profiles/{id}, then /iaas/api/network-ip-ranges/{id}.',
           ),
+          'IMPORT.md': importMd({
+            subject: 'A network profile and its IP range.',
+            steps: [
+              setupOrderStep('vcfa_network_profile'),
+              apiStep('Network profile', 'apply.sh', [...(range ? [`\`${base}-ip-range.json\` → POST /iaas/api/network-ip-ranges`] : []), `\`${base}.json\` → POST /iaas/api/network-profiles`], ['Fill the fabric network ids from GET /iaas/api/fabric-networks first; fabric-networks.json lists the PATCH each network needs.']),
+            ],
+            auth: ['apply'],
+            verify: [],
+          }),
         },
         notes: [
           'The interface calls them "on-demand network" and "on-demand security group"; the API field isolationType takes NONE, SUBNET and SECURITY_GROUP. The payload maps one to the other.',
@@ -1089,6 +1140,15 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: json(profile),
           'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/storage-profiles-vsphere', payload: `${base}.json` }], 'DELETE /iaas/api/storage-profiles-vsphere/{id}.'),
+          'IMPORT.md': importMd({
+            subject: 'A vSphere storage profile.',
+            steps: [
+              setupOrderStep('vcfa_storage_profile'),
+              apiStep('Storage profile', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/storage-profiles-vsphere`], ['Fill the region, storage policy and datastore ids first.']),
+            ],
+            auth: ['apply'],
+            verify: [],
+          }),
         },
         notes: [
           'provisioningType takes thin, thick and eagerZeroedThick in 8.x. limitIops is a string in some releases and a number in others — GET an existing vSphere storage profile and match it.',
@@ -1265,6 +1325,26 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           [`${base}-catalog-source.json`]: json(catalogSource),
           [`${base}-sharing-policy.json`]: json(sharing),
           'apply.sh': chainScript(`Create the ${sourceName} content source and its sharing policy.`, steps, 'DELETE the sharing policy, then the catalog source, then the repository source, by the ids in created-ids.txt.'),
+          'IMPORT.md': importMd({
+            subject: `The content source ${sourceName} and who it is shared with.`,
+            steps: [
+              setupOrderStep('vcfa_catalog'),
+              ...(git
+                ? [
+                    manualStep('Lay out the repository', [
+                      `The repository source imports cloud templates from ${repo || 'the repository'}${path ? `, folder ${path}` : ''}, branch ${branch}. Each template must be its own folder holding a file named \`blueprint.yaml\` with \`name:\` and \`version:\` at the top — exactly the \`import/templates/<name>/\` folders the template blueprints on this page generate. Copy those folders in and commit.`,
+                    ]),
+                  ]
+                : []),
+              apiStep('Content source and sharing', 'apply.sh', [
+                ...(git ? [`\`${base}-git-source.json\` → POST /content/api/sources (the repository, imported into the project)`] : []),
+                `\`${base}-catalog-source.json\` → POST /catalog/api/admin/sources (released templates of the project, into the catalogue)`,
+                `\`${base}-sharing-policy.json\` → POST /policy/api/policies, with the catalog source id from the call before`,
+              ], ['Fill the `<REQUIRED>` project and integration ids first.']),
+            ],
+            auth: ['apply'],
+            verify: ['The repository source config field names are the least certain part; GET an existing one and match it.'],
+          }),
         },
         notes: [
           'The repository source (/content/api/sources, typeId com.gitlab or com.github) and the catalogue source (/catalog/api/admin/sources, typeId com.vmw.blueprint) are two different objects in two services. The field names in the repository source config are the least certain part here — GET an existing one and match it.',
@@ -1409,6 +1489,15 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: json(naming),
           'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/iaas/api/naming', payload: `${base}.json` }], 'DELETE /iaas/api/naming/{id}.'),
+          'IMPORT.md': importMd({
+            subject: 'A custom naming template.',
+            steps: [
+              setupOrderStep('vcfa_naming'),
+              apiStep('Custom naming', 'apply.sh', [`\`${base}.json\` → POST /iaas/api/naming`], ['By hand: Infrastructure → Custom naming → New, with the same template.']),
+            ],
+            auth: ['apply'],
+            verify: ['The naming field names are the least certain in the set: GET /iaas/api/naming on a system with one configured and match it.'],
+          }),
         },
         notes: [
           'Custom naming arrived in 8.x at /iaas/api/naming. The template field names (resourceType, counterScope and so on) are the least certain in this set — GET /iaas/api/naming on a system with one configured and match it.',
@@ -1545,6 +1634,10 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
               '',
             ];
 
+      const imported = importBundle({
+        templates: [{ name: `${groupName} property group example`, description: `Generated by ArchToolKit. Uses the ${type.toLowerCase()} property group ${groupName}.`, yaml: example.join('\n') }],
+      });
+
       return {
         platform: PLATFORM,
         title: `${groupName} — ${type.toLowerCase()} property group${shared ? ', shared' : ''}`,
@@ -1568,6 +1661,17 @@ export const VCF_AUTOMATION_SETUP: readonly AutomationBlueprint[] = [
           [`${base}.json`]: json(group),
           [`${base}-template-example.yaml`]: example.join('\n'),
           'apply.sh': applyScript('vcf-automation', [{ method: 'POST', path: '/properties/api/property-groups', payload: `${base}.json` }], 'DELETE /properties/api/property-groups/{id} once no template refers to it.'),
+          ...imported.files,
+          'IMPORT.md': importMd({
+            subject: `The property group ${groupName}, and a template that uses it.`,
+            steps: [
+              setupOrderStep('vcfa_property_group'),
+              apiStep('Property group', 'apply.sh', [`\`${base}.json\` → POST /properties/api/property-groups`], ['By hand: Design → Property Groups → New, with the same properties. It must exist before a template that refers to it validates.']),
+              imported.steps.templates,
+            ],
+            auth: ['apply', 'import'],
+            verify: verifyFor(imported),
+          }),
         },
         notes: [
           'Constant groups are referenced as ${propgroup.<name>.<property>}; input groups through an input with $ref: /ref/property-groups/<name>, read as ${input.<input>.<property>}.',

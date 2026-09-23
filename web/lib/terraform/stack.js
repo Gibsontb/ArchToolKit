@@ -33,6 +33,7 @@ import { defaultValues,                } from '../kit/blueprint.js';
 import { numbered, slug,                                                                            } from '../kit/stack.js';
 import { moduleBySource } from './modules.js';
                                                   
+import { tfvarsExampleFor } from './layout.js';
 
 export { slug } from '../kit/stack.js';
                                                                              
@@ -423,6 +424,10 @@ export function buildStack(
     files['outputs.tf'] = `# Each item's outputs, prefixed with the item's name.\n\n${outputs.join('\n\n')}\n`;
   }
 
+  // What to copy to terraform.tfvars and fill in, required values first.
+  const example = tfvarsExampleFor(files['variables.tf'] ?? '');
+  if (example) files['terraform.tfvars.example'] = example;
+
   files['README.md'] = readme(items, stackName, options.target, files);
 
   return { files, findings, references };
@@ -446,6 +451,7 @@ function readme(items                      , stackName        , target          
     ...(files['providers.tf'] ? ['- `providers.tf` — one block per provider. Give a provider an alias here if two items need different regions or accounts.'] : []),
     ...(files['variables.tf'] ? ['- `variables.tf` — every variable the items need. Anything without a default has to be supplied.'] : []),
     ...(files['outputs.tf'] ? ['- `outputs.tf` — each item\'s outputs, prefixed with the item name.'] : []),
+    ...(files['terraform.tfvars.example'] ? ['- `terraform.tfvars.example` — copy to `terraform.tfvars` and fill in the required values before plan.'] : []),
     '',
     '## Applying it',
     '',

@@ -191,6 +191,7 @@ export const PANOS_EXTRA_2                             = [
         title: `User-ID from ${source === 'agentless' ? 'the domain controllers' : source === 'agent' ? 'a User-ID agent' : 'syslog'}`,
         impact: 'none',
         notes: [
+          'Every other zone must be left with user identification off. (PAN-OS has no comment syntax, so this is a note rather than a line in the file.)',
           'The bind password is `<REQUIRED>` and typed at apply time. It goes in the vault the playbook reads, never in the change record.',
           'The service account needs read access and, for agentless mapping, the rights to read the security event log on every domain controller. A missing right shows up as "no mappings" and nothing more specific.',
           'Group mapping and user mapping are two separate things. Groups come from LDAP; addresses come from the domain controllers or the agent. Either can work while the other does not.',
@@ -218,7 +219,6 @@ export const PANOS_EXTRA_2                             = [
               : servers.flatMap(([name, address]) => [`${prefix} user-id-collector server-monitor ${name} address ${address}`, `${prefix} user-id-collector server-monitor ${name} proto syslog`])),
           '',
           ...zones.map((zone) => `set zone ${zone} enable-user-identification yes`),
-          `${'!'} Every other zone must be left with user identification off.`,
           'commit description "User-ID and group mapping from ArchToolKit"',
         ],
         verify: [

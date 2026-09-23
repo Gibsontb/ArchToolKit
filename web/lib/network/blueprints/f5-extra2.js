@@ -44,8 +44,8 @@ function declaration(tenant        , application        , label        , body   
 const clean = (value        , fallback        )         => (str({ v: value }, 'v', fallback) || fallback).replace(/[^A-Za-z0-9_]/g, '_');
 
 const as3Push = (tenant        , app        )                       => ({
-  module: 'f5networks.f5_modules.bigip_as3_deploy',
-  args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' },
+  module: 'f5networks.f5_bigip.bigip_as3_deploy',
+  args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' },
   hosts: 'bigips',
 });
 

@@ -16,7 +16,7 @@
  */
 
 import { renderYaml,                } from '../ansible/yaml.js';
-import { PLATFORMS,                                  } from './device.js';
+import { asciiOnly, PLATFORMS,                                             } from './device.js';
 
 /** The inventory group a platform's devices are expected to be in. */
 export function defaultHosts(platform          )         {
@@ -65,15 +65,50 @@ export function configPush(change              )                                
   return {
     module,
     args: {
-      lines: change.config.filter((line) => line.trim() !== '' && !line.trim().startsWith('!')),
+      // One command per entry: a block written as one multi-line string would
+      // reach the device as a single "command" with newlines in it.
+      lines: change.config
+        .flatMap((entry) => entry.split('\n'))
+        .filter((line) => line.trim() !== '' && !line.trim().startsWith('!'))
+        .map(asciiOnly),
       save_when: 'changed',
     },
   };
 }
 
+/**
+ * The push, pointed at the file that was generated beside the playbook.
+ *
+ * For the CLI platforms that is `src:` — the module reads the file, skips its
+ * `!` comment lines, and works out parents from the indentation, so a block
+ * under `interface` or `router bgp` is compared under its parent rather than
+ * as a top-level line. It is also the only way the file and the playbook
+ * cannot disagree: the playbook applies the file.
+ * (docs.ansible.com: ios_config / nxos_config / eos_config / asa_config, `src`
+ * — "a relative path from the playbook or role root directory".)
+ *
+ * For a push that reads a file with `lookup('file', …)` — an AS3 declaration —
+ * the lookup is pointed at the generated file's real name.
+ */
+function pushFor(change              , configFile                    )                                       {
+  if (change.push) {
+    if (!configFile) return change.push;
+    const args = Object.fromEntries(
+      Object.entries(change.push.args).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? value.replace(/lookup\((['"])file\1,\s*(['"])[^'"]+\2\)/g, `lookup('file', '${configFile}')`) : value,
+      ]),
+    );
+    return { ...change.push, args };
+  }
+  const generic = configPush(change);
+  if (!generic || !configFile) return generic;
+  return { module: generic.module, args: { src: configFile, save_when: 'changed' } };
+}
+
 /** The play for one change, as the YAML structure the writer renders. */
-export function playFor(change              , name        )                   {
-  const push = change.push ?? configPush(change);
+export function playFor(change              , name        , configFile         )                   {
+  const push = pushFor(change, configFile);
   if (!push) return null;
 
   const platform = PLATFORMS[change.platform];
@@ -136,8 +171,18 @@ export function pushPlaybook(change              , name        )                
   });
 }
 
-/** What the inventory has to say for this platform's connection to work. */
-export function inventoryHint(platform          )           {
+/**
+ * What the inventory has to say for this platform's connection to work, as
+ * group variables. Credentials are always a vault variable, never a value.
+ *
+ *  - IOS, NX-OS, EOS, ASA, 9800: network_cli, with enable.
+ *  - PAN-OS: the panos modules run on the control node with pan-os-python and
+ *    a `provider` dictionary, so the group's connection is local.
+ *  - FortiOS: httpapi with an API token.
+ *  - F5: httpapi for the declarative f5_bigip modules (AS3), and a `provider`
+ *    dictionary for the imperative f5_modules ones.
+ */
+export function inventoryVars(platform          )                            {
   const info = PLATFORMS[platform];
   switch (platform) {
     case 'cisco_ios':
@@ -145,41 +190,99 @@ export function inventoryHint(platform          )           {
     case 'cisco_wlc':
     case 'cisco_asa':
     case 'arista_eos':
-      return [
-        'ansible_connection: ansible.netcommon.network_cli',
-        `ansible_network_os: ${info.networkOs ?? ''}`,
-        'ansible_user: "{{ vault_network_user }}"',
-        'ansible_password: "{{ vault_network_password }}"',
-        'ansible_become: true',
-        'ansible_become_method: enable',
-        'ansible_become_password: "{{ vault_enable_secret }}"',
-      ];
+      return {
+        ansible_connection: 'ansible.netcommon.network_cli',
+        ansible_network_os: info.networkOs ?? '',
+        ansible_user: '{{ vault_network_user }}',
+        ansible_password: '{{ vault_network_password }}',
+        ansible_become: true,
+        ansible_become_method: 'enable',
+        ansible_become_password: '{{ vault_enable_secret }}',
+      };
     case 'panos':
-      return [
-        'provider:',
-        '  ip_address: "{{ inventory_hostname }}"',
-        '  username: "{{ vault_panos_user }}"',
-        '  password: "{{ vault_panos_password }}"',
-        '# or api_key: "{{ vault_panos_api_key }}" instead of username and password',
-      ];
+      return {
+        ansible_connection: 'local',
+        ansible_python_interpreter: '{{ ansible_playbook_python }}',
+        provider: {
+          ip_address: '{{ ansible_host | default(inventory_hostname) }}',
+          username: '{{ vault_panos_user }}',
+          password: '{{ vault_panos_password }}',
+        },
+      };
     case 'fortios':
-      return [
-        'ansible_connection: httpapi',
-        'ansible_httpapi_use_ssl: true',
-        'ansible_httpapi_validate_certs: true',
-        'ansible_httpapi_port: 443',
-        'ansible_network_os: fortinet.fortios.fortios',
-        'ansible_httpapi_key: "{{ vault_fortios_token }}"',
-      ];
+      return {
+        ansible_connection: 'httpapi',
+        ansible_httpapi_use_ssl: true,
+        ansible_httpapi_validate_certs: true,
+        ansible_httpapi_port: 443,
+        ansible_network_os: 'fortinet.fortios.fortios',
+        ansible_httpapi_key: '{{ vault_fortios_token }}',
+      };
     case 'f5':
-      return [
-        'provider:',
-        '  server: "{{ inventory_hostname }}"',
-        '  user: "{{ vault_bigip_user }}"',
-        '  password: "{{ vault_bigip_password }}"',
-        '  validate_certs: true',
-      ];
+      return {
+        ansible_connection: 'httpapi',
+        ansible_network_os: 'f5networks.f5_bigip.bigip',
+        ansible_httpapi_use_ssl: true,
+        ansible_httpapi_validate_certs: true,
+        ansible_user: '{{ vault_bigip_user }}',
+        ansible_password: '{{ vault_bigip_password }}',
+        provider: {
+          server: '{{ ansible_host | default(inventory_hostname) }}',
+          user: '{{ vault_bigip_user }}',
+          password: '{{ vault_bigip_password }}',
+          validate_certs: true,
+        },
+      };
     default:
-      return [];
+      return {};
   }
 }
+
+/** The same variables as YAML lines, for a header or a README. */
+export function inventoryHint(platform          )           {
+  return renderYaml(inventoryVars(platform)).split('\n').filter((line) => line.trim() !== '' && line.trim() !== '---');
+}
+
+/** The inventory group a platform's plays run against. */
+export function inventoryGroup(platform          )         {
+  return defaultHosts(platform);
+}
+
+/**
+ * A starting inventory for these platforms: one group each, the connection
+ * variables set, and one example device to replace.
+ */
+export function networkInventory(platforms                     )         {
+  const groups                            = {};
+  for (const platform of platforms) {
+    groups[inventoryGroup(platform)] = {
+      hosts: { [`${platform.replace(/_/g, '-')}-01`]: { ansible_host: '192.0.2.1' } },
+      vars: inventoryVars(platform),
+    };
+  }
+  return renderYaml({ all: { children: groups } }, {
+    header: [
+      'Where the devices are, and how to reach them.',
+      '',
+      'The device and its address (192.0.2.1 is a documentation address) are',
+      'examples: put the real ones here. The vault_* variables go in an encrypted',
+      'file: ansible-vault create group_vars/all/vault.yml',
+      '',
+      'Nothing in this repository should contain a credential in clear text.',
+    ].join('\n'),
+  });
+}
+
+/** ansible.cfg for a network change: the inventory, and host key checking left on. */
+export const NETWORK_ANSIBLE_CFG = [
+  '# Generated by ArchToolKit. Ansible reads this when run from this directory.',
+  '',
+  '[defaults]',
+  'inventory = inventory/hosts.yml',
+  'host_key_checking = True',
+  '',
+  '[persistent_connection]',
+  '# Device sessions can be slow to answer a large change.',
+  'command_timeout = 60',
+  '',
+].join('\n')

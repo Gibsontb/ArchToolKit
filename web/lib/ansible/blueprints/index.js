@@ -7,6 +7,7 @@
 
                                                                         
 import { withChoicesAll } from '../../kit/choices.js';
+import { withAnsibleProjectAll } from '../project.js';
 import { AWS_ANSIBLE } from './aws.js';
 import { AZURE_ANSIBLE } from './azure.js';
 import { GCP_ANSIBLE } from './gcp.js';
@@ -24,7 +25,9 @@ function withEstate(group                , estate                      )        
   };
 }
 
-export const ANSIBLE_BLUEPRINTS                            = withChoicesAll([
+// withAnsibleProjectAll adds ansible.cfg, inventory/hosts.yml and a README to
+// every playbook, so the zip runs as unzipped rather than matching no hosts.
+export const ANSIBLE_BLUEPRINTS                            = withAnsibleProjectAll(withChoicesAll([
   AWS_ANSIBLE,
   AZURE_ANSIBLE,
   GCP_ANSIBLE,
@@ -32,4 +35,4 @@ export const ANSIBLE_BLUEPRINTS                            = withChoicesAll([
   withEstate(VMWARE_ANSIBLE, [inventoryBlueprint('all'), PREMIGRATION, POSTMIGRATION]),
   withEstate(LINUX_ANSIBLE, [inventoryBlueprint('linux')]),
   withEstate(WINDOWS_ANSIBLE, [inventoryBlueprint('windows')]),
-], 'ansible');
+], 'ansible'));

@@ -17,8 +17,8 @@ import type { Blueprint, BlueprintValues, BuildResult } from '../kit/blueprint.t
 import { slug } from '../kit/blueprint.ts';
 import { info, type Finding } from '../core/findings.ts';
 import { playbookFiles } from '../ansible/from-plays.ts';
-import { PLATFORMS, renderChange, renderRecord, standingFindings, type DeviceChange, type Platform } from './device.ts';
-import { playFor } from './push.ts';
+import { changeFileName, PLATFORMS, renderChange, renderRecord, standingFindings, type DeviceChange, type Platform } from './device.ts';
+import { NETWORK_ANSIBLE_CFG, networkInventory, playFor } from './push.ts';
 
 export interface ChangeBlueprint extends Blueprint {
   /** The platform this builds for, so a change list can group by device. */
@@ -46,9 +46,10 @@ export function changeFiles(change: DeviceChange, name: string): BuildResult {
   const files: Record<string, string> = {};
   const findings: Finding[] = [...(change.findings ?? []), ...standingFindings(change)];
 
-  files[`${base}${platform.extension}`] = renderChange(change, name);
+  const configFile = changeFileName(change, base);
+  files[configFile] = renderChange(change, name);
 
-  const play = playFor(change, name);
+  const play = playFor(change, name, configFile);
   if (!play) {
     findings.push(
       info('network.change.cli-only', 'No Ansible module covers this change, so no playbook is generated. Apply it from the CLI or the API, and keep the record with it.', {
@@ -61,9 +62,13 @@ export function changeFiles(change: DeviceChange, name: string): BuildResult {
     for (const [file, contents] of Object.entries(playbook.files)) files[file] = contents;
     // The "uses N modules" line is noise on a single change; the warnings are not.
     findings.push(...playbook.findings.filter((f) => f.code !== 'ansible.blueprint.modules-used'));
+    // What the playbook needs to run as unzipped: the group it targets, with
+    // the connection variables, and ansible.cfg pointing at it.
+    files['inventory/hosts.yml'] = networkInventory([change.platform]);
+    files['ansible.cfg'] = NETWORK_ANSIBLE_CFG;
   }
 
-  files['change-record.md'] = `${[`# ${name || change.title}`, '', ...renderRecord(change, name)].join('\n')}\n`;
+  files['change-record.md'] = `${[`# ${name || change.title}`, '', ...renderRecord(change, name, configFile)].join('\n')}\n`;
 
   return { files, findings };
 }

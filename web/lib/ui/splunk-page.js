@@ -28,6 +28,9 @@ if (root) {
     // A Splunk tier is not a cloud.
     sharedPlatform: false,
     downloadExtension: '.conf',
+    // Splunk's "Install app from file" and the deployment server take the app
+    // folder as a gzipped tar; .spl is the same format with Splunk's name.
+    packages: [{ label: 'Download app as .spl', extension: '.spl', include: (path        ) => path.includes('/') }],
     standingFindings: ()            => [
       info('splunk.tier-decides-everything', 'The tier is not a label. A setting on the wrong tier does nothing, reports nothing, and looks exactly like a setting that worked — which is why this page asks for it first.', {
         source: 'ArchToolKit',

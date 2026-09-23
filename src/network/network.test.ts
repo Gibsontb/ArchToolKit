@@ -99,7 +99,9 @@ describe('every blueprint', () => {
       const result = blueprint.build(defaultValues(blueprint), blueprint.id);
       const names = Object.keys(result.files);
       const platform = PLATFORMS[blueprint.platform];
-      expect([blueprint.id, names.some((n) => n.endsWith(platform.extension))]).toEqual([blueprint.id, true]);
+      // An F5 change that is a tmsh or REST command rather than a declaration
+      // is a shell script, and named like one.
+      expect([blueprint.id, names.some((n) => n.endsWith(platform.extension) || (blueprint.platform === 'f5' && n.endsWith('.sh')))]).toEqual([blueprint.id, true]);
       expect([blueprint.id, names.includes('change-record.md')]).toEqual([blueprint.id, true]);
     }
   });
@@ -251,7 +253,7 @@ describe('pushing a change with Ansible', () => {
   });
 
   it('names a module in a collection the kit knows how to install', () => {
-    const known = ['cisco.ios', 'cisco.nxos', 'arista.eos', 'paloaltonetworks.panos', 'fortinet.fortios', 'f5networks.f5_modules', 'ansible.builtin'];
+    const known = ['cisco.ios', 'cisco.nxos', 'arista.eos', 'paloaltonetworks.panos', 'fortinet.fortios', 'f5networks.f5_modules', 'f5networks.f5_bigip', 'ansible.builtin'];
     for (const blueprint of NETWORK_CHANGES) {
       const change = blueprint.change(defaultValues(blueprint), blueprint.id);
       const modules = [change.push?.module, ...(change.push?.after ?? []).map((t) => t.module)].filter((m): m is string => typeof m === 'string');
@@ -471,8 +473,11 @@ describe('the complete configuration', () => {
       { label: 'rule', change: byId('panos_security_rule')!.change(defaultValues(byId('panos_security_rule')!), 'rule') },
     ];
     const text = fullConfig('panos', steps, 'dmz build').text;
-    expect(text.indexOf('Network: interfaces') < text.indexOf('Objects:')).toBe(true);
-    expect(text.indexOf('Objects:') < text.indexOf('Security rules')).toBe(true);
+    // No comment headers: PAN-OS has no comment syntax, so the order is read
+    // from the commands themselves.
+    expect(text.split('\n').some((line) => line.trim().startsWith('#'))).toBe(false);
+    expect(text.indexOf('set network interface') < text.indexOf('set address ')).toBe(true);
+    expect(text.indexOf('set address ') < text.indexOf('set rulebase security')).toBe(true);
     expect(text.trimEnd().endsWith('commit description "dmz build"')).toBe(true);
   });
 

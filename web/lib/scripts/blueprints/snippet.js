@@ -505,28 +505,28 @@ const BODY                                                                      
   cmd: cmdBody,
 };
 
-function usageFor(platform                , command              , perItem         , dryRun         )           {
+function usageFor(platform                , command              , perItem         , dryRun         , name        )           {
   const changes = command.effect !== 'read';
   switch (platform) {
     case 'powershell':
       return [
-        `pwsh -File .\\<name>.ps1${perItem ? ' -InputList .\\items.txt' : ''}${changes && dryRun ? '' : ' -WhatIf'}`,
-        ...(changes && dryRun ? [`pwsh -File .\\<name>.ps1${perItem ? ' -InputList .\\items.txt' : ''} -Execute   # once the dry run reads correctly`] : []),
+        `pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''}${changes && dryRun ? '' : ' -WhatIf'}`,
+        ...(changes && dryRun ? [`pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''} -Execute   # once the dry run reads correctly`] : []),
       ];
     case 'python':
       return [
-        `python3 <name>.py${perItem ? ' --input-list items.txt' : ''}`,
-        ...(changes ? [`python3 <name>.py${perItem ? ' --input-list items.txt' : ''} ${dryRun ? '--execute' : '--dry-run'}`] : []),
+        `python3 ${name}.py${perItem ? ' --input-list items.txt' : ''}`,
+        ...(changes ? [`python3 ${name}.py${perItem ? ' --input-list items.txt' : ''} ${dryRun ? '--execute' : '--dry-run'}`] : []),
       ];
     case 'bash':
       return [
-        `./<name>.sh${perItem ? ' --list items.txt' : ''}`,
-        ...(changes ? [`./<name>.sh${perItem ? ' --list items.txt' : ''} --execute   # once the dry run reads correctly`] : []),
+        `./${name}.sh${perItem ? ' --list items.txt' : ''}`,
+        ...(changes ? [`./${name}.sh${perItem ? ' --list items.txt' : ''} --execute   # once the dry run reads correctly`] : []),
       ];
     default:
       return [
-        `<name>.cmd${perItem ? ' /LIST items.txt' : ''}`,
-        ...(changes ? [`<name>.cmd${perItem ? ' /LIST items.txt' : ''} /EXECUTE   # once the /WHATIF run reads correctly`] : []),
+        `${name}.cmd${perItem ? ' /LIST items.txt' : ''}`,
+        ...(changes ? [`${name}.cmd${perItem ? ' /LIST items.txt' : ''} /EXECUTE   # once the /WHATIF run reads correctly`] : []),
       ];
   }
 }
@@ -546,6 +546,13 @@ function undoFor(command              )           {
         'Run the dry run, read every line of what it lists, and confirm a backup exists and has been restored from at least once.',
       ];
   }
+}
+
+/** `script_name` as a file name the platform is happy with: Python wants underscores. */
+function scriptName(platform                , values                 )         {
+  const raw = str(values, 'script_name', 'run-command').replace(/\.(ps1|py|sh|cmd|bat)$/i, '');
+  const safe = raw.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'run-command';
+  return platform === 'python' ? safe.replace(/[-.]/g, '_') : safe;
 }
 
 function buildScript(platform                , values                 )         {
@@ -576,7 +583,9 @@ function buildScript(platform                , values                 )         
         : [{ name: '(none required)', description: 'It reads and reports.', required: false }]),
     ],
     body: BODY[platform](command, values),
-    usage: usageFor(platform, command, perItem, dryRun),
+    // The name the file is saved under: the usage lines name it, and the
+    // download names the file after them.
+    usage: usageFor(platform, command, perItem, dryRun, scriptName(platform, values)),
     undo: undoFor(command),
     notes: [
       command.note ?? `${command.name}: ${command.task}`,

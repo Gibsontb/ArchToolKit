@@ -23,7 +23,7 @@ export interface SplunkBlueprint extends Blueprint {
 export function appFiles(app: SplunkApp, name: string): BuildResult {
   // An app without an app.conf is a directory Splunk may or may not read, so
   // one is added here — before the checks run, so they see the app as shipped.
-  const complete: SplunkApp = Object.keys(app.files).some((path) => path.endsWith('app.conf'))
+  const complete: SplunkApp = Object.keys(app.files).includes('default/app.conf')
     ? app
     : { ...app, files: { ...app.files, 'default/app.conf': appConf(app, app.title) } };
   const findings: Finding[] = [...(complete.findings ?? []), ...standingFindings(complete)];

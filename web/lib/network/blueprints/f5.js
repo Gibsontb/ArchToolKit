@@ -198,8 +198,8 @@ const BLUEPRINTS                             = [
           `curl -sku $USER -X DELETE https://bigip/mgmt/shared/appsvcs/declare/${tenant}`,
         ],
         push: {
-          module: 'f5networks.f5_modules.bigip_as3_deploy',
-          args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' },
+          module: 'f5networks.f5_bigip.bigip_as3_deploy',
+          args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' },
           hosts: 'bigips',
         },
         findings,
@@ -274,8 +274,8 @@ const BLUEPRINTS                             = [
         verify: [`tmsh show ltm pool /${tenant}/${app}/${app}_pool members`, `tmsh show ltm virtual /${tenant}/${app}/service`],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: {
-          module: 'f5networks.f5_modules.bigip_as3_deploy',
-          args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' },
+          module: 'f5networks.f5_bigip.bigip_as3_deploy',
+          args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' },
           hosts: 'bigips',
         },
         findings,
@@ -374,8 +374,8 @@ const BLUEPRINTS                             = [
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: {
-          module: 'f5networks.f5_modules.bigip_as3_deploy',
-          args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, provider: '{{ provider }}', state: 'present' },
+          module: 'f5networks.f5_bigip.bigip_as3_deploy',
+          args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' },
           hosts: 'bigips',
         },
         findings,

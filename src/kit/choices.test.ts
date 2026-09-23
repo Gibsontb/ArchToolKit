@@ -197,11 +197,18 @@ describe('lifting references out of the quotes', () => {
     for (const group of TERRAFORM_BLUEPRINTS) {
       for (const blueprint of group.blueprints) {
         const built = blueprint.build(defaultValues(blueprint), 'demo');
+        // A root module is every .tf in its folder: a variable declared in
+        // variables.tf and used in main.tf is declared. Group by folder.
+        const byFolder = new Map<string, string>();
         for (const [file, text] of Object.entries(built.files)) {
           if (!file.endsWith('.tf')) continue;
+          const folder = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+          byFolder.set(folder, `${byFolder.get(folder) ?? ''}\n${text}`);
+        }
+        for (const [folder, text] of byFolder) {
           const declared = new Set([...text.matchAll(/^\s*variable\s+"([\w-]+)"/gm)].map((m) => m[1]));
           for (const use of text.matchAll(/(?<![\w.])var\.([\w-]+)/g)) {
-            expect(declared.has(use[1])).toBe(true);
+            expect([blueprint.id, folder, use[1], declared.has(use[1])]).toEqual([blueprint.id, folder, use[1], true]);
           }
         }
       }

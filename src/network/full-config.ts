@@ -27,7 +27,7 @@
  */
 
 import { info, warning, type Finding } from '../core/findings.ts';
-import { PLATFORMS, type DeviceChange, type Platform } from './device.ts';
+import { deviceFile, PLATFORMS, type DeviceChange, type Platform } from './device.ts';
 
 export interface FullConfigStep {
   readonly label: string;
@@ -347,7 +347,7 @@ export function fullConfig(platform: Platform, steps: readonly FullConfigStep[],
 
   if (platform === 'f5') {
     const merged = mergeAs3(mine, name);
-    return { text: merged.text, findings: [...merged.findings] };
+    return { text: merged.text ? deviceFile(platform, merged.text) : merged.text, findings: [...merged.findings] };
   }
 
   if (platform === 'panos') {
@@ -356,7 +356,7 @@ export function fullConfig(platform: Platform, steps: readonly FullConfigStep[],
     for (const step of mine) {
       for (const line of step.change.config) {
         const trimmed = line.trim();
-        if (trimmed === '' || trimmed.startsWith('#')) continue;
+        if (trimmed === '' || trimmed.startsWith('#') || trimmed.startsWith('!')) continue;
         if (seen.has(trimmed)) continue;
         seen.add(trimmed);
         const index = PANOS_GROUPS.findIndex((group) => group.match.test(trimmed));
@@ -369,7 +369,7 @@ export function fullConfig(platform: Platform, steps: readonly FullConfigStep[],
         source: 'ArchToolKit',
       }),
     );
-    return { text: `${[...header, ...body, `${comment} --- commit ---`, `commit description "${name}"`].join('\n').trimEnd()}\n`, findings };
+    return { text: deviceFile(platform, `${[...header, ...body, `${comment} --- commit ---`, `commit description "${name}"`].join('\n').trimEnd()}\n`), findings };
   }
 
   if (platform === 'fortios') {
@@ -390,7 +390,7 @@ export function fullConfig(platform: Platform, steps: readonly FullConfigStep[],
     findings.push(
       info('network.full.fortios-order', 'Sections are merged and ordered: system, routing, addresses, then policies. FortiOS applies each section as its `end` is entered.', { source: 'ArchToolKit' }),
     );
-    return { text: `${[...header, ...body].join('\n').trimEnd()}\n`, findings };
+    return { text: deviceFile(platform, `${[...header, ...body].join('\n').trimEnd()}\n`), findings };
   }
 
   // IOS, NX-OS and EOS.
@@ -416,5 +416,5 @@ export function fullConfig(platform: Platform, steps: readonly FullConfigStep[],
     body.push('');
   }
 
-  return { text: `${[...header, ...body].join('\n').trimEnd()}\n`, findings };
+  return { text: deviceFile(platform, `${[...header, ...body].join('\n').trimEnd()}\n`), findings };
 }

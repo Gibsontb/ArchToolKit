@@ -33,6 +33,8 @@ import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
 import { applyScript, authHeader, authPreamble, scheduledEnv } from '../apply.js';
+import { importGuide,                     } from './vcf-networks-logs.js';
+import { blueprintYaml, templatePath } from '../vcfa-import.js';
 
 const PLATFORM = 'vcf-fleet'         ;
 const SRC = 'ArchToolKit';
@@ -566,6 +568,206 @@ function psConnect(vcenters                   )           {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// The standard in the formats people import tags with
+// ---------------------------------------------------------------------------
+
+/**
+ * vSphere type names (as /api/cis/tagging spells them) to the names PowerCLI's
+ * New-TagCategory -EntityType takes. The three marked VERIFY have no PowerCLI
+ * name confirmed here; the script passes them through and PowerCLI refuses an
+ * unknown one before creating anything.
+ */
+const POWERCLI_TYPES                                   = {
+  VirtualMachine: 'VirtualMachine',
+  HostSystem: 'VMHost',
+  ClusterComputeResource: 'Cluster',
+  Datastore: 'Datastore',
+  StoragePod: 'DatastoreCluster',
+  DistributedVirtualPortgroup: 'DistributedPortGroup',
+  VmwareDistributedVirtualSwitch: 'DistributedSwitch',
+  Folder: 'Folder',
+  Datacenter: 'Datacenter',
+  ResourcePool: 'ResourcePool',
+  VirtualApp: 'VApp',
+  Network: 'Network',
+  'com.vmware.content.Library': 'ContentLibrary',
+  'com.vmware.content.library.Item': 'ContentLibraryItem',
+};
+const POWERCLI_UNCONFIRMED = ['Network', 'com.vmware.content.Library', 'com.vmware.content.library.Item'];
+
+function csvCell(value        )         {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+/** The description each tag carries: the same text create-vcenter.sh writes. */
+function tagDescription(category        , value        )         {
+  return `${category} ${value} (ArchToolKit tag standard)`;
+}
+
+/**
+ * The PowerCLI-ready CSV: Category,Cardinality,EntityType,Tag,Description — one
+ * row per tag, the category's settings repeated on each. EntityType is the
+ * PowerCLI names joined with ";" (All when the category applies to every type).
+ * A free-text category has one row with an empty Tag: the category only.
+ */
+function powercliCsv(categories                        )         {
+  const rows = categories.flatMap((c) => {
+    const types = c.types.length === 0 ? 'All' : c.types.map((t) => POWERCLI_TYPES[t] ?? t).join(';');
+    const card = c.cardinality === 'SINGLE' ? 'Single' : 'Multiple';
+    const values = c.values.length === 0 ? [''] : c.values;
+    return values.map((v) => [c.name, card, types, v, c.description].map(csvCell).join(','));
+  });
+  return `${['Category,Cardinality,EntityType,Tag,Description', ...rows].join('\r\n')}\r\n`;
+}
+
+function powercliImportScript(vcenters                   )         {
+  return [
+    '<#',
+    '.SYNOPSIS',
+    '  Create the tag standard in tag-standard.csv on every vCenter, with PowerCLI.',
+    '.DESCRIPTION',
+    '  Reads Category,Cardinality,EntityType,Tag,Description. Creates each category',
+    '  that does not exist (exact, case-sensitive name) and each tag missing from',
+    '  it. Never changes or deletes an existing one; a category that exists with a',
+    '  different cardinality is reported. Dry run unless -Execute is given.',
+    '',
+    '  VC_USER and VC_PASSWORD_FILE (mode 600) log in; VCENTERS overrides the list.',
+    '.EXAMPLE',
+    '  pwsh ./Import-TagStandard.ps1            # what it would create',
+    '  pwsh ./Import-TagStandard.ps1 -Execute   # create it',
+    '#>',
+    '[CmdletBinding()]',
+    'param(',
+    "  [string]$CsvPath = (Join-Path $PSScriptRoot 'tag-standard.csv'),",
+    '  [switch]$Execute',
+    ')',
+    ...psConnect(vcenters),
+    '',
+    '$rows = @(Import-Csv -LiteralPath $CsvPath)',
+    "foreach ($col in 'Category', 'Cardinality', 'EntityType', 'Tag', 'Description') {",
+    '  if (-not ($rows[0].PSObject.Properties.Name -contains $col)) { throw "$CsvPath has no $col column." }',
+    '}',
+    '$problems = 0',
+    'foreach ($server in $global:DefaultVIServers) {',
+    '  foreach ($group in ($rows | Group-Object -Property Category)) {',
+    '    $first = $group.Group[0]',
+    "    $types = @($first.EntityType -split '[;,]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })",
+    '    $cat = Get-TagCategory -Server $server -ErrorAction SilentlyContinue | Where-Object { $_.Name -ceq $group.Name }',
+    '    if (-not $cat) {',
+    '      $near = Get-TagCategory -Server $server -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $group.Name }',
+    '      if ($near) { Write-Warning "$($server.Name): category $($near.Name) exists in another case; skipped $($group.Name)."; $problems++; continue }',
+    '      if ($Execute) {',
+    '        $cat = New-TagCategory -Server $server -Name $group.Name -Cardinality $first.Cardinality -EntityType $types -Description $first.Description',
+    '        Write-Output "$($server.Name): created category $($group.Name)"',
+    '      } else {',
+    "        Write-Output \"$($server.Name): WOULD create category $($group.Name) ($($first.Cardinality); $($types -join ', '))\"",
+    '      }',
+    '    } elseif ([string]$cat.Cardinality -ne $first.Cardinality) {',
+    '      Write-Warning "$($server.Name): category $($group.Name) is $($cat.Cardinality), the standard says $($first.Cardinality). Not changed."',
+    '      $problems++',
+    '    }',
+    '    foreach ($row in $group.Group) {',
+    '      if (-not $row.Tag) { continue }',
+    '      $tag = if ($cat) { Get-Tag -Server $server -Category $cat -ErrorAction SilentlyContinue | Where-Object { $_.Name -ceq $row.Tag } }',
+    '      if ($tag) { continue }',
+    '      if ($Execute) {',
+    '        New-Tag -Server $server -Name $row.Tag -Category $cat -Description "$($group.Name) $($row.Tag) (ArchToolKit tag standard)" | Out-Null',
+    '        Write-Output "$($server.Name): created tag $($group.Name)/$($row.Tag)"',
+    '      } else {',
+    '        Write-Output "$($server.Name): WOULD create tag $($group.Name)/$($row.Tag)"',
+    '      }',
+    '    }',
+    '  }',
+    '}',
+    "if (-not $Execute) { Write-Output 'Dry run: nothing was created. Re-run with -Execute.' }",
+    'Disconnect-VIServer -Server * -Confirm:$false | Out-Null',
+    'if ($problems -gt 0) { exit 1 }',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The exact bodies of POST /api/cis/tagging/category and POST
+ * /api/cis/tagging/tag — the ones create-vcenter.sh sends. A tag body names
+ * its category by id, which vCenter assigns on creation; the file carries a
+ * placeholder there that create-vcenter.sh (or you) replaces.
+ */
+function vcenterRestFiles(categories                        )                         {
+  const files                         = {};
+  for (const c of categories) {
+    const slug = slugOf(c.name, 'category');
+    files[`import/vcenter-rest/categories/${slug}.json`] = `${JSON.stringify({ name: c.name, description: c.description, cardinality: c.cardinality, associable_types: [...c.types].sort() }, null, 2)}\n`;
+    for (const v of c.values) {
+      files[`import/vcenter-rest/tags/${slug}/${slugOf(v, 'tag')}.json`] = `${JSON.stringify({ name: v, description: tagDescription(c.name, v), category_id: `<REQUIRED — the id POST /api/cis/tagging/category returned for ${c.name}>` }, null, 2)}\n`;
+    }
+  }
+  return files;
+}
+
+const TAG_SOURCES = [
+  'vCenter REST: POST /api/cis/tagging/category {name, description, cardinality SINGLE|MULTIPLE, associable_types} and POST /api/cis/tagging/tag {name, description, category_id} — the vSphere Automation API reference (the /api form takes the create spec as the body; the old /rest form wrapped it in create_spec).',
+  'PowerCLI: New-TagCategory -Name -Cardinality Single|Multiple -EntityType -Description, New-Tag -Name -Category -Description (VMware.VimAutomation.Core).',
+  'VCF Operations tag management: VMware Cloud Foundation blog, "Introducing Centralized Tag Management in VMware Cloud Foundation 9.0" (create categories and tags in VCF Operations, import them from a vCenter, push them to vCenters — no file import) and "VCF 9.1 Tag Management: Elevating Operational Governance"; the 9.1.1 API reference under /suite-api/api/fleet-management/tag-management, as cited in create-fleet.sh.',
+];
+
+/** A short IMPORT.md for the tag blueprints whose files are read by their own scripts. */
+function tagsImport(intro        , steps                                         , verify                    = [])         {
+  return importGuide({ product: 'vCenter and VCF Operations tag management', intro, steps, verify, sources: TAG_SOURCES });
+}
+
+/** IMPORT.md for the standard: every format, and which one goes where. */
+function taxonomyImport(categories                        , route        )         {
+  const tags = categories.reduce((n, c) => n + c.values.length, 0);
+  const unconfirmed = [...new Set(categories.flatMap((c) => c.types))].filter((t) => POWERCLI_UNCONFIRMED.includes(t));
+  return importGuide({
+    product: 'vCenter and VCF Operations tag management',
+    intro: `The same standard — ${categories.length} categories, ${tags} tags — in each form tags are imported with. Pick one route per vCenter; every route creates only what is missing.`,
+    steps: [
+      {
+        heading: 'Route A — the scripts (this blueprint’s default)',
+        lines: [
+          route === 'fleet'
+            ? '`./create-fleet.sh` (dry run), then `./create-fleet.sh --execute`: creates the categories and tags in VCF Operations fleet tag management and pushes them to the vCenters.'
+            : '`./create-vcenter.sh` (dry run), then `./create-vcenter.sh --execute`: sends exactly the bodies under import/vcenter-rest/ to every vCenter in VCENTERS, filling each tag’s category_id with the id its category got.',
+          ...(route === 'both' ? ['', 'Then `FLEET_ADAPTERS=<vCenter adapter ids> ./create-fleet.sh --execute`: imports the categories from those vCenters into VCF Operations fleet tag management.'] : []),
+        ],
+      },
+      {
+        heading: 'Route B — PowerCLI with the CSV',
+        lines: [
+          'import/powercli/tag-standard.csv has the columns Category,Cardinality,EntityType,Tag,Description (one row per tag; EntityType is PowerCLI names separated by ";"). Run from import/powercli:',
+          '',
+          '```',
+          'pwsh ./Import-TagStandard.ps1            # dry run',
+          'pwsh ./Import-TagStandard.ps1 -Execute   # create',
+          '```',
+          '',
+          'with VC_USER and VC_PASSWORD_FILE (mode 600) set, and VCENTERS to override the list.',
+        ],
+      },
+      {
+        heading: 'Route C — the vCenter REST bodies by hand',
+        lines: [
+          'Each file under import/vcenter-rest/categories/ is the body of POST https://<vcenter>/api/cis/tagging/category; the response is the new category id. Put that id into category_id of each file under import/vcenter-rest/tags/<category>/ and POST it to /api/cis/tagging/tag. Categories first, then their tags.',
+        ],
+      },
+      {
+        heading: 'VCF Operations 9.x tag management',
+        lines: [
+          'VCF Operations does not import tags from a file. Its import is from a vCenter: create the standard in one vCenter by route A, B or C, then Manage > Fleet Management > Tags > Import from vCenter (or create-fleet.sh, which calls the same import), and push to the other vCenters from there. Or create it centrally (route "fleet only") and push — but not both, or every category gets two ids.',
+        ],
+      },
+    ],
+    verify: [
+      'VCF Operations 9.1 tag management file import: none found in the 9.0 and 9.1 descriptions; if your build offers one, compare its template with import/powercli/tag-standard.csv.',
+      ...(unconfirmed.length > 0 ? [`PowerCLI -EntityType names for ${unconfirmed.join(', ')} are not confirmed here; PowerCLI refuses an unknown name before creating anything.`] : []),
+      'Import-TagStandard.ps1 was parsed, not run against a vCenter.',
+    ],
+    sources: TAG_SOURCES,
+  });
+}
+
 /** The note every vCenter-script README carries about who runs it. */
 const VC_REQUIRES = [
   'bash 4+, curl 7.55+ and jq 1.6+ on the machine that runs the scripts.',
@@ -977,6 +1179,10 @@ export const VCF_TAGS                                 = [
           'TAG-STANDARD.md': standardMarkdown(categories),
           ...(vcenter ? { 'create-vcenter.sh': createVcenterScript(vcenters) } : {}),
           ...(fleet ? { 'create-fleet.sh': createFleetScript(vcenter ? 'import' : 'create') } : {}),
+          'import/powercli/tag-standard.csv': powercliCsv(categories),
+          'import/powercli/Import-TagStandard.ps1': powercliImportScript(vcenters),
+          ...vcenterRestFiles(categories),
+          'IMPORT.md': taxonomyImport(categories, route),
         },
         notes: [
           'In VCF 9, fleet tag management is where the catalogue should live. There are two consistent ways to get it there, and mixing them is what breaks: create it centrally and push it to vCenters that do not have it (route "fleet only"), or create it in vCenter and import it (route "both", the order this blueprint uses). Creating it in both places gives every category two ids.',
@@ -1468,6 +1674,25 @@ export const VCF_TAGS                                 = [
           'assignments.csv': `${sample.join('\n')}\n`,
           ...(bash ? { 'tag-assign.sh': bashScript } : {}),
           ...(ps ? { 'Tag-Assign.ps1': psScript } : {}),
+          'IMPORT.md': tagsImport(
+            'assignments.csv is the bulk-assignment file. Neither vCenter nor VCF Operations imports an assignment CSV, so the scripts beside it are the import: they resolve each row to the object on its vCenter and attach the tag (POST /api/cis/tagging/tag-association/{tag}?action=attach-multiple-tags-to-object style calls, or PowerCLI New-TagAssignment).',
+            [
+              {
+                heading: 'Fill assignments.csv',
+                lines: [
+                  'Columns, in this order, with this header line: `vcenter,object_type,object,category,tag`.',
+                  '',
+                  '- vcenter: the vCenter FQDN as in VCENTERS.',
+                  '- object_type: the vSphere type name (VirtualMachine, HostSystem, ClusterComputeResource, Datastore, Folder, ResourcePool, Datacenter, Network, DistributedVirtualPortgroup, ...).',
+                  '- object: its name, or its MoRef (vm-2041) when names repeat.',
+                  '- category, tag: exactly as in the tag standard — create the standard first (tags_taxonomy).',
+                ],
+              },
+              ...(bash ? [{ heading: 'Assign with the bash script', lines: ['`./tag-assign.sh assignments.csv` writes plan-<run>.csv listing every change; `./tag-assign.sh assignments.csv --execute` makes them and writes change-log-<run>.csv, which `./tag-assign.sh --undo change-log-<run>.csv --execute` reverses. Add `--replace` to allow changing the value of a one-value category.'] }] : []),
+              ...(ps ? [{ heading: bash ? 'Or with PowerCLI' : 'Assign with PowerCLI', lines: ['`pwsh ./Tag-Assign.ps1 -CsvPath assignments.csv` (dry run), then add `-Execute`. VC_USER and VC_PASSWORD_FILE log in.'] }] : []),
+              { heading: 'VCF 9.1', lines: ['Assignments made in vCenter appear in VCF Operations tag management (Manage > Fleet Management > Tags) with the next sync; 9.1 can also assign there by hand. There is no CSV import in either place (VERIFY on your build).'] },
+            ],
+          ),
         },
         notes: [
           'Folders are matched by name alone, and vCenter has many folders called "Discovered virtual machine". Use the folder MoRef (group-v123) in the CSV for folders.',
@@ -1815,6 +2040,9 @@ export const VCF_TAGS                                 = [
           'tag-rules.json': `${JSON.stringify(rules, null, 2)}\n`,
           'Tag-Rules.ps1': script,
           'crontab.txt': cron,
+          'IMPORT.md': tagsImport('tag-rules.json is read by Tag-Rules.ps1; no product imports it. vCenter has no rule-based tagging of its own, which is what the script supplies.', [
+            { heading: 'Run it', lines: ['`pwsh ./Tag-Rules.ps1` (dry run), then `-Execute`, from a host with PowerCLI; then install the line in crontab.txt with `crontab -e`.'] },
+          ]),
         },
         notes: [
           'Name patterns use .NET regular expressions and -match, which is case-insensitive. ^prd- also matches PRD-.',
@@ -1999,6 +2227,9 @@ export const VCF_TAGS                                 = [
         told: [`reports/tag-compliance-<run>.csv every run${webhook ? `, a summary to ${webhook}` : ''}, and the exit code to whatever scheduled it.`],
         requires: [...VC_REQUIRES, 'Read-only access to every object and read on every tag and category — a read-only role at the vCenter root is enough.'],
         files: {
+          'IMPORT.md': tagsImport('Nothing is imported: tag-compliance.sh reads every vCenter (or the fleet API) and compares against tag-standard.json.', [
+            { heading: 'Run it, then schedule it', lines: ['`./tag-compliance.sh` from /opt/archtoolkit/tag-compliance, then install the line in crontab.txt with `crontab -e`.'] },
+          ]),
           'tag-standard.json': standardJson(categories),
           'tag-compliance.sh': script,
           'crontab.txt': [
@@ -2326,6 +2557,9 @@ export const VCF_TAGS                                 = [
           'For push: vSphere Tagging privileges on the target vCenters for the account VCF Operations uses.',
         ],
         files: {
+          'IMPORT.md': tagsImport('Nothing is imported: sync-control.sh calls the 9.1.1 fleet tag-management API (import from vCenter, push, disengage, export). RUNBOOK.md is the same in the interface.', [
+            { heading: 'Run it', lines: ['`./sync-control.sh --list-adapters` for the vCenter adapter ids, then the action (`export <label>`, `pull`, `push` or `disengage`) — `pull` and `push` are dry runs until `--execute`. In the interface: Manage > Fleet Management > Tags.'] },
+          ]),
           'sync-control.sh': script,
           'RUNBOOK.md': runbook,
           ...(action === 'export'
@@ -2603,6 +2837,10 @@ export const VCF_TAGS                                 = [
           'Read-only access for the backup; Create vSphere Tag Category, Create vSphere Tag and Assign or Unassign vSphere Tag for the restore.',
         ],
         files: {
+          'IMPORT.md': tagsImport('tag-backup.sh writes the catalogue and every assignment as JSON; tag-restore.sh is the only thing that reads that JSON back — vCenter and VCF Operations have no import for it.', [
+            { heading: 'Back up daily', lines: ['Install the line in crontab.txt with `crontab -e` after one run by hand.'] },
+            { heading: 'Restore', lines: ['`./tag-restore.sh <backup>/<vcenter>.json [target-vcenter]` (dry run: what would be recreated), then `--execute` (`--catalogue-only` for categories and tags without assignments). It recreates what is missing through POST /api/cis/tagging/category and /tag, then the assignments.'] },
+          ]),
           'tag-backup.sh': backup,
           'tag-restore.sh': restore,
           'crontab.txt': [
@@ -2970,6 +3208,28 @@ export const VCF_TAGS                                 = [
         '',
       ].join('\n');
 
+      const template = { name: `VM placed by ${placeCat}`, description: `A vSphere VM placed and tagged by ${placeCat}${c ? ` and ${costCat}` : ''}. Generated by ArchToolKit.`, version: '1.0.0', yaml: files['vcfa-template.yaml'] ?? '' };
+      files[templatePath(template)] = blueprintYaml(template);
+      files['IMPORT.md'] = tagsImport(
+        'Each consumer takes its own format. Where a file is exactly the request body the consumer takes, it is sent as it stands.',
+        [
+          groupFiles.length > 0
+            ? { heading: 'VCF Operations custom groups', lines: [`Each vcfops-group-*.json is exactly the body of POST /suite-api/api/resources/groups. \`./vcfops-apply-groups.sh\` (dry run), then \`--execute\`. Then assign a policy per group as in vcfops-policies.md. (The interface’s custom-group Import takes its own export format, not these bodies.)`] }
+            : undefined,
+          nsxFiles.length > 0
+            ? { heading: 'NSX groups', lines: [`Each nsx-group-*.json is exactly the body of PATCH /policy/api/v1/infra/domains/default/groups/<id>. \`./nsx-apply-groups.sh\` (dry run), then \`--execute\`.${nsxSync ? ' Then schedule nsx-tag-sync.sh, which copies the vCenter tag to the NSX tag the groups select on.' : ''}`] }
+            : undefined,
+          {
+            heading: 'VCF Automation',
+            lines: [
+              `${templatePath(template)} is the template with name and version at the top — the layout VCF Automation’s git integration reads, and what Design > Templates > Upload (VM Apps) or Blueprint Design > New From Import (All Apps) takes. Replace the image and flavor <REQUIRED> values first.`,
+              'vcfa-capability-tags.json is not a request body: it lists which capability tag each cloud zone needs. Set them under Infrastructure > Configure > Cloud Zones > the zone > Capability tags.',
+            ],
+          },
+          { heading: 'Showback', lines: ['cost-showback.md: steps in VCF Operations; nothing to upload.'] },
+        ],
+        ['The VCF Operations group rule reads the vSphere tag property summary|tag with the value <Category-value>; check the property on one tagged VM in VCF Operations before relying on the group.'],
+      );
       files['TAG-CONSUMERS.md'] = [
         '# What reads which tag',
         '',
@@ -3221,6 +3481,9 @@ export const VCF_TAGS                                 = [
         files: {
           'tag-standard.json': standardJson(categories),
           'tag-cleanup.sh': script,
+          'IMPORT.md': tagsImport('Nothing is imported: tag-cleanup.sh compares each vCenter’s catalogue with tag-standard.json and removes only what its plan lists.', [
+            { heading: 'Run it', lines: ['`./tag-cleanup.sh` writes cleanup-plan-<run>.csv; `CHANGE_TICKET=<ref> ./tag-cleanup.sh --execute` exports everything, then deletes.'] },
+          ]),
         },
         notes: [
           'If a category is managed centrally by VCF Operations fleet tag management, delete it there instead: a later push or import brings back what was deleted in the vCenter.',

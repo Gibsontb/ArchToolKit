@@ -169,7 +169,8 @@ describe('the module blueprints', () => {
       expect(text).toContain('module "');
       expect(text).toContain('source  = "');
       expect(text).toContain('version = "~>');
-      expect(text).toContain('required_providers');
+      // The terraform block is in versions.tf, where a root module keeps it.
+      expect(built.files['versions.tf'] ?? '').toContain('required_providers');
     }
   });
 

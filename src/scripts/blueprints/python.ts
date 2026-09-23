@@ -1373,7 +1373,7 @@ export const PYTHON_BASE: readonly ScriptBlueprint[] = [
           '        LOG.info("Nothing matched")',
           '        return 0',
           '',
-          '    manifest = Path(f"' + module + '-manifest-{:%Y%m%d-%H%M%S}.csv".format(datetime.now()))',
+          '    manifest = Path(f"' + module + '-manifest-{datetime.now():%Y%m%d-%H%M%S}.csv")',
           '    with manifest.open("w", newline="", encoding="utf-8") as handle:',
           '        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))',
           '        writer.writeheader()',

@@ -14,6 +14,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { applyScript, authHeader, authPreamble } from '../apply.ts';
+import { importMd } from '../vcfops-import.ts';
 
 const PLATFORM = 'vcf-operations' as const;
 const SRC = 'ArchToolKit';
@@ -137,6 +138,13 @@ export const VCF_OPERATIONS_SETUP: readonly AutomationBlueprint[] = [
           [`${base}-credential.json`]: `${JSON.stringify(credential, null, 2)}\n`,
           [`${base}-adapter.json`]: `${JSON.stringify(adapter, null, 2)}\n`,
           'apply.sh': apply,
+          'IMPORT.md': importMd({
+            title: 'the adapter instance',
+            steps: [
+              { heading: 'The credential, then the adapter instance', files: [`${base}-credential.json`, `${base}-adapter.json`, 'apply.sh'], how: ['VCENTER_PASSWORD=… ./apply.sh --execute — POST /suite-api/api/credentials, then /suite-api/api/adapters with the credential id. Then accept the vCenter certificate in the interface and start collection (PUT /suite-api/api/adapters/{id}/monitoringstate/start). Or Administration → Integrations → Accounts → Add Account in the interface.'] },
+            ],
+            intro: ['Integration accounts are not imported from a file here: the interface exports and imports them only inside a password-protected Content Management package, because they carry credentials. The REST API is the route.'],
+          }),
         },
         notes: ['In VCF 9.1 the management vCenter is usually added by fleet management rather than by hand. Use this for workload vCenters and anything outside the fleet.', 'The resource identifier names (VCURL and the rest) are the VMware adapter’s. Check them against GET /suite-api/api/adapterkinds/VMWARE/resourcekinds on your version.'],
         findings,
@@ -226,6 +234,11 @@ export const VCF_OPERATIONS_SETUP: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
           'apply.sh': applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/alertplugins', payload: `${base}.json` }], 'DELETE /suite-api/api/alertplugins/{id}.'),
+          'IMPORT.md': importMd({
+            title: 'the outbound instance',
+            intro: ['Outbound settings are exported and imported by the interface only with a password (they can hold credentials), in a form that is not documented; the file here is the REST body.'],
+            steps: [{ heading: 'The outbound instance', files: [`${base}.json`, 'apply.sh'], how: ['./apply.sh --execute — POST /suite-api/api/alertplugins, then enable it (PUT /suite-api/api/alertplugins/{id}/enable/true). Or Configure → Alerts → Outbound Settings → Add in the interface, with the values from the file.'] }],
+          }),
         },
         notes: ['Config value names differ between plugin types and releases. GET /suite-api/api/alertplugins/types lists the fields your version expects; match them before applying.', 'Created disabled until enabled: PUT /suite-api/api/alertplugins/{id}/enable/true once the test has passed.'],
         findings,
@@ -323,6 +336,17 @@ export const VCF_OPERATIONS_SETUP: readonly AutomationBlueprint[] = [
         files: {
           [`${base}.json`]: `${JSON.stringify(payload, null, 2)}\n`,
           'apply.sh': applyScript('vcf-operations', [{ method: 'POST', path: '/suite-api/api/auth/usergroups', payload: `${base}.json` }], 'DELETE /suite-api/api/auth/usergroups/{id}.'),
+          'IMPORT.md': importMd({
+            title: 'the user group and its access',
+            steps: [
+              {
+                heading: 'The group',
+                files: [`${base}.json`, 'apply.sh'],
+                how: ['./apply.sh --execute — POST /suite-api/api/auth/usergroups. Or Administration → Control Panel → Access Control → User Groups → Import from the identity source, then assign the role and scope shown in the file.'],
+                verify: ['Access Control has an export/import of user groups, in its own file shape; it is not generated here — the REST body is.'],
+              },
+            ],
+          }),
         },
         notes: ['Compare the payload with GET /suite-api/api/auth/usergroups for a group already scoped the same way in the interface — the traversal spec name and selection type are the parts that differ between releases.', 'Role names are the internal ones. GET /suite-api/api/auth/roles lists what your instance calls them, including any custom roles.', 'In VCF 9.1 identity is shared across the fleet; if the group already has access through VCF SSO, check that before adding a second grant here.'],
         findings,

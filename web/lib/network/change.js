@@ -25,8 +25,8 @@ import { numbered, slug,                                                      } 
 import { error, info, warning,              } from '../core/findings.js';
 import { renderYaml } from '../ansible/yaml.js';
 import { playbookFiles } from '../ansible/from-plays.js';
-import { IMPACT_MEANING, PLATFORMS, renderChange, renderRecord,                                               } from './device.js';
-import { inventoryHint, playFor } from './push.js';
+import { changeFileName, IMPACT_MEANING, PLATFORMS, renderChange, renderRecord,                                               } from './device.js';
+import { inventoryHint, NETWORK_ANSIBLE_CFG, networkInventory, playFor } from './push.js';
 import { networkChange } from './blueprints/index.js';
 import { fullConfig } from './full-config.js';
 
@@ -123,7 +123,7 @@ export function buildChange(items                      , blueprintFor           
 
   // One configuration file per step, in order, in the device's own syntax.
   for (const step of steps) {
-    files[`${step.file}${PLATFORMS[step.change.platform].extension}`] = renderChange(step.change, step.item.label);
+    files[changeFileName(step.change, step.file)] = renderChange(step.change, step.item.label);
   }
 
   /*
@@ -153,7 +153,7 @@ export function buildChange(items                      , blueprintFor           
   // One playbook that applies the steps in order, and the collections it needs.
   const plays            = [];
   for (const step of steps) {
-    const play = playFor(step.change, step.item.label);
+    const play = playFor(step.change, step.item.label, changeFileName(step.change, step.file));
     if (Array.isArray(play)) plays.push(...play);
   }
   if (plays.length > 0) {
@@ -179,33 +179,8 @@ export function buildChange(items                      , blueprintFor           
   }
 
   // The inventory the playbook expects, with the connection variables per platform.
-  const groups                          = {};
-  for (const platform of platforms) {
-    const info_ = PLATFORMS[platform];
-    groups[hostsGroup(platform)] = {
-      hosts: { [`${platform.replace(/_/g, '-')}-01`]: { ansible_host: '10.0.0.1' } },
-      vars: Object.fromEntries(
-        inventoryHint(platform)
-          .filter((line) => line.includes(':') && !line.trim().startsWith('#') && !line.startsWith(' '))
-          .map((line)                   => {
-            const at = line.indexOf(':');
-            return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
-          })
-          .filter(([key, value]) => key !== '' && value !== ''),
-      ),
-    };
-    void info_;
-  }
-  files['inventory/hosts.yml'] = renderYaml({ all: { children: groups } }         , {
-    header: [
-      'Where the devices are, and how to reach them.',
-      '',
-      'Addresses and credentials are examples. Put the real ones here, and the',
-      'passwords and tokens in a vault: ansible-vault create group_vars/all/vault.yml',
-      '',
-      'Nothing in this repository should contain a credential in clear text.',
-    ].join('\n'),
-  });
+  files['inventory/hosts.yml'] = networkInventory(platforms);
+  if (files['apply.yml']) files['ansible.cfg'] = NETWORK_ANSIBLE_CFG;
 
   // The record: what is being done, in order, with the back-out reversed.
   files['change-record.md'] = changeRecord(steps, options.stackName ?? 'Network change', platforms);
@@ -230,10 +205,6 @@ export function buildChange(items                      , blueprintFor           
   }
 
   return { files, findings, references: references(steps) };
-}
-
-function hostsGroup(platform          )         {
-  return platform === 'f5' ? 'bigips' : platform === 'fortios' ? 'fortigates' : platform.replace('cisco_', '').replace('arista_', '');
 }
 
 /** What a later step can refer to: the names the earlier steps created. */
