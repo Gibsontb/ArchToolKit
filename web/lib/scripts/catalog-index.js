@@ -9,12 +9,13 @@
                                                   
 import { allCommands,                                      } from './catalog.js';
 import { POWERSHELL_CATALOG } from './catalog-powershell.js';
+import { POWERSHELL_CATALOG_2 } from './catalog-powershell2.js';
 import { PYTHON_CATALOG } from './catalog-python.js';
 import { BASH_CATALOG } from './catalog-bash.js';
 import { CMD_CATALOG } from './catalog-cmd.js';
 
 export const CATALOG_BY_PLATFORM                                                            = {
-  powershell: POWERSHELL_CATALOG,
+  powershell: [...POWERSHELL_CATALOG, ...POWERSHELL_CATALOG_2],
   python: PYTHON_CATALOG,
   bash: BASH_CATALOG,
   cmd: CMD_CATALOG,
@@ -22,6 +23,7 @@ export const CATALOG_BY_PLATFORM                                                
 
 export const ALL_CATALOG_GROUPS                          = [
   ...POWERSHELL_CATALOG,
+  ...POWERSHELL_CATALOG_2,
   ...PYTHON_CATALOG,
   ...BASH_CATALOG,
   ...CMD_CATALOG,

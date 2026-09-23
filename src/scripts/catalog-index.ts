@@ -9,12 +9,13 @@
 import type { ScriptPlatform } from './script.ts';
 import { allCommands, type CommandEntry, type CommandGroup } from './catalog.ts';
 import { POWERSHELL_CATALOG } from './catalog-powershell.ts';
+import { POWERSHELL_CATALOG_2 } from './catalog-powershell2.ts';
 import { PYTHON_CATALOG } from './catalog-python.ts';
 import { BASH_CATALOG } from './catalog-bash.ts';
 import { CMD_CATALOG } from './catalog-cmd.ts';
 
 export const CATALOG_BY_PLATFORM: Readonly<Record<ScriptPlatform, readonly CommandGroup[]>> = {
-  powershell: POWERSHELL_CATALOG,
+  powershell: [...POWERSHELL_CATALOG, ...POWERSHELL_CATALOG_2],
   python: PYTHON_CATALOG,
   bash: BASH_CATALOG,
   cmd: CMD_CATALOG,
@@ -22,6 +23,7 @@ export const CATALOG_BY_PLATFORM: Readonly<Record<ScriptPlatform, readonly Comma
 
 export const ALL_CATALOG_GROUPS: readonly CommandGroup[] = [
   ...POWERSHELL_CATALOG,
+  ...POWERSHELL_CATALOG_2,
   ...PYTHON_CATALOG,
   ...BASH_CATALOG,
   ...CMD_CATALOG,
