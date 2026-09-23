@@ -65,6 +65,15 @@ export interface GeneratorOptions {
    * declared `emits` is a declaration, and most blueprints declare nothing.
    */
   readonly panels?: (platform: string, files: Readonly<Record<string, string>>) => readonly HTMLElement[];
+  /**
+   * Open on a particular blueprint, with some of its inputs already filled.
+   *
+   * The Commands tab uses this: a row there links to the generator with the
+   * command's id, and the page opens on the catalogue blueprint with that
+   * command selected rather than making you find it again in a list of four
+   * hundred. Returns undefined when the link said nothing.
+   */
+  readonly openWith?: () => { readonly blueprint: string; readonly values: BlueprintValues } | undefined;
   /** The `kind` written into saved settings, e.g. `archtoolkit.terraform-generator`. */
   readonly settingsKind: string;
   /**
@@ -993,7 +1002,18 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     );
   }
 
-  selectBlueprint(first());
+  // A link from elsewhere can name the blueprint to open on and prefill it —
+  // the Commands tab sends a catalogued command here that way. It is applied
+  // after the defaults so a missing or renamed blueprint simply does nothing.
+  const opening = options.openWith?.();
+  const wanted = opening ? available().find((b) => b.id === opening.blueprint) : undefined;
+  if (opening && wanted) {
+    selectBlueprint(wanted);
+    values = { ...values, ...opening.values };
+  } else {
+    selectBlueprint(first());
+  }
+
   renderOne();
   renderTwo();
   renderThree();

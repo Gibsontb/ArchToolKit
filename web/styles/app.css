@@ -2221,3 +2221,78 @@ textarea {
   cursor: pointer;
   font-size: 0.9em;
 }
+
+/* --- The command catalogue -------------------------------------------- */
+/* Hundreds of rows, so each one is closed until asked for and the summary
+   carries enough to decide on: the command, what it is for, what it does. */
+
+.tab-bodies > .tab-pane > * + * {
+  margin-top: var(--space-4);
+}
+
+.cmd-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.cmd {
+  border-top: 1px solid var(--border);
+  padding: var(--space-2) 0;
+}
+
+.cmd:first-of-type {
+  border-top: 0;
+}
+
+.cmd > summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.cmd > summary:hover .cmd-name {
+  color: var(--accent);
+}
+
+.cmd-name {
+  font-weight: 600;
+}
+
+.cmd-task {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  flex: 1 1 18rem;
+}
+
+.cmd-body {
+  padding: 0 0 var(--space-3) var(--space-3);
+  border-left: 2px solid var(--border);
+  margin-left: var(--space-1);
+}
+
+.cmd-body > * + * {
+  margin-top: var(--space-3);
+}
+
+.cmd-facts {
+  font-size: 0.8rem;
+}
+
+.pill.effect-read {
+  color: var(--text-muted);
+}
+
+.pill.effect-changes {
+  border-color: var(--warning, #b8860b);
+  color: var(--warning, #b8860b);
+}
+
+.pill.effect-destructive,
+.pill.warn {
+  border-color: var(--danger, #b3261e);
+  color: var(--danger, #b3261e);
+}

@@ -11,7 +11,7 @@
  * the third for fixes.
  */
 
-export const VERSION = '2.8.0';
+export const VERSION = '2.9.0';
 
-/** "Version 2.8.0", as the header prints it. */
+/** "Version 2.9.0", as the header prints it. */
 export const VERSION_LABEL = `Version ${VERSION}`;

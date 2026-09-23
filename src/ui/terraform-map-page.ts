@@ -228,5 +228,5 @@ export function mountTerraformMapPage(root: HTMLElement): void {
   draw();
 }
 
-const root = document.getElementById('terraform-map-root');
-if (root) mountTerraformMapPage(root);
+// Mounted by terraform-page.ts as a tab. It was a page of its own until a
+// reference you have to navigate to turned out to be a reference nobody opens.

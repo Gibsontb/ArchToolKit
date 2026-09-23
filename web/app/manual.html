@@ -45,7 +45,6 @@
         <a href="network.html">Network</a>
         <a href="scripts.html">Scripts</a>
         <a href="splunk.html">Splunk</a>
-        <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
         <a href="manual.html" aria-current="page">Manual</a>
@@ -75,7 +74,7 @@
             <li><a href="#editor">Data Editor</a></li>
             <li><a href="#terraform">Terraform generator</a></li>
             <li><a href="#ansible">Ansible generator</a></li>
-            <li><a href="#tfmap">Terraform Map</a></li>
+            <li><a href="#tfmap">Terraform &rsaquo; the Map tab</a></li>
             <li><a href="#multicloud">Multi-Cloud wizard</a></li>
             <li><a href="#migration">Application Migration and Portfolio</a></li>
             <li><a href="#network">Network devices</a></li>
@@ -126,7 +125,7 @@
             <tr><td><a href="data-editor.html">Data Editor</a></td><td>Open and change JSON or YAML files: VCF specs, playbooks, Terraform JSON, CloudFormation, ARM, cloud IAM policies, F5, Kubernetes.</td></tr>
             <tr><td><a href="terraform.html">Terraform</a></td><td>Generate Terraform for AWS, Azure, Google Cloud, OCI and vSphere, including rehosting an imported cluster.</td></tr>
             <tr><td><a href="ansible.html">Ansible</a></td><td>Generate Ansible playbooks plus their <code>requirements.yml</code>, including inventories built from the estate.</td></tr>
-            <tr><td><a href="terraform-map.html">Terraform Map</a></td><td>A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
+            <tr><td><a href="terraform.html#map">Terraform &rsaquo; Map</a></td><td>A tab on the Terraform page. A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
             <tr><td><a href="multicloud.html">Multi-Cloud</a></td><td>A four-step wizard that produces a cloud recommendation and onboarding playbook, ready for Word.</td></tr>
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
@@ -205,7 +204,7 @@
           </p>
 
           <h3>The cloud is chosen once</h3>
-          <p>The platform picked on the Multi-Cloud wizard, Terraform, Terraform Map or Ansible is shared by all four for the rest of the tab. Change it on any of them and the others follow.</p>
+          <p>The platform picked on the Multi-Cloud wizard, Terraform (either tab) or Ansible is shared by all three for the rest of the tab. Change it on any of them and the others follow.</p>
 
           <h3>Findings</h3>
           <p>Checks are reported as findings: <strong>error</strong> (it will fail or be refused), <strong>warning</strong> (it will work but probably is not what you want) and <strong>info</strong>. Most carry what to do about it and where the rule comes from. Figures marked <span class="badge badge-verified">Verified</span> come from Broadcom's API reference, TechDocs or a real deployment spec; <span class="badge badge-community">Community</span> ones from community sources.</p>
@@ -423,13 +422,14 @@
           <p>Module names are checked against the committed Galaxy catalog: amazon.aws, community.aws, azure.azcollection, google.cloud, oracle.oci, vmware.vmware, vmware.vmware_rest, community.vmware, ansible.posix, ansible.windows, microsoft.ad and community.general.</p>
 
           <!-- ================================================================ -->
-          <h2 id="tfmap">10. Terraform Map</h2>
+          <h2 id="tfmap">10. Terraform &rsaquo; the Map tab</h2>
           <p>A reference for AWS, Azure, Google Cloud and OCI: for each domain (identity, networking, compute, storage, databases, security, landing-zone patterns), which Terraform resources do the job and the pattern around them, with examples. Every resource name is checked against the provider catalog; one renamed since the map was written is marked, with the closest current name in the Findings card.</p>
           <p>
             It answers a different question from the generator — <em>what should I use for this?</em>
-            rather than <em>write it for me</em> — so it stays its own page, and the two link to each
-            other: <strong>Which resource does what →</strong> in the generator's step 1, and
-            <strong>Write some of this →</strong> on the map. Both follow the platform you picked.
+            rather than <em>write it for me</em> — so it is the second tab on the Terraform page rather
+            than a separate entry in the menu: a reference you have to navigate to is a reference nobody
+            opens. The old <code>terraform-map.html</code> address redirects to it, and the rows that
+            talk about what you have just generated also appear under the generator's output.
           </p>
 
           <!-- ================================================================ -->
@@ -696,6 +696,13 @@
             parameters, generate — and, like the network page, the language is this page's own choice
             rather than the toolkit-wide cloud.
           </p>
+          <p>
+            The page has two tabs. <strong>Build</strong> is the generator. <strong>Commands</strong>
+            is the catalogue: 420 commands across the four languages, searchable, each with a correct
+            invocation and — the part that matters — the thing about it that is true, not obvious, and
+            costs an afternoon to find out. Every row there has a <em>Wrap it in a script</em> link
+            that opens the generator on that command.
+          </p>
 
           <h3>What every script carries</h3>
           <p>
@@ -724,8 +731,38 @@
             <code>/WHATIF</code> — and the page says so.
           </p>
 
-          <h3>What it can write</h3>
-          <p>48 scripts across four languages, grouped in the picker by what they touch.</p>
+          <h3>The command catalogue</h3>
+          <p>
+            Forty-eight hand-written task scripts was never coverage of four languages — the languages
+            have hundreds of commands each, and the question people arrive with is usually "what is the
+            command for this, and what is the incantation that makes it work". So the commands are data,
+            the same way the Terraform kit keeps its map: browsable, searchable, and buildable.
+          </p>
+          <table>
+            <tr><th>Language</th><th>Commands</th><th>Covering</th></tr>
+            <tr><td>PowerShell</td><td>173</td><td>the pipeline, files, processes and services, remoting, Active Directory, Windows internals, networking, certificates, Microsoft 365 and Entra, Azure, PowerCLI, modules</td></tr>
+            <tr><td>Bash</td><td>118</td><td>files, text and data, processes and systemd, networking, users and access, packages and storage, writing the script itself, containers and remote work</td></tr>
+            <tr><td>Python</td><td>73</td><td>paths, data and text, subprocess and logging, HTTP and SSH, cloud SDKs, debugging, packaging</td></tr>
+            <tr><td>Windows batch</td><td>56</td><td>the batch language itself, copying, services and processes, networking and domain, images and recovery</td></tr>
+          </table>
+          <p>
+            Searching is over what you are trying to do rather than the command name, because someone
+            looking for "how do I list open ports" does not know the answer is <code>ss</code>. Each
+            entry says what running it does — <em>reads</em>, <em>changes</em> or <em>destructive</em> —
+            and a test refuses any entry whose note is missing or whose replacement is unnamed when it
+            is marked deprecated.
+          </p>
+          <p>
+            <strong>Any catalogued command</strong> sits at the top of every language in the generator.
+            Pick a command and it comes back wrapped in that language's house skeleton: strict mode,
+            timestamped logging, argument parsing, a dry run that short-circuits before anything
+            happens, an optional loop over an input file, and the command's own trap written into the
+            file as a comment so whoever runs it reads it first. That is the difference between this
+            and pasting a line from a search result.
+          </p>
+
+          <h3>The hand-written scripts</h3>
+          <p>48 finished scripts across four languages, grouped in the picker by what they touch.</p>
           <table>
             <tr><th>Language</th><th>Scripts</th></tr>
             <tr><td>PowerShell <em>(21)</em></td><td>

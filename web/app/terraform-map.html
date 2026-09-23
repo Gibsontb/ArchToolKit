@@ -2,45 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Terraform Map · ArchToolKit</title>
-    <link rel="stylesheet" href="../styles/app.css" />
+    <meta http-equiv="refresh" content="0; url=terraform.html#map" />
+    <script>location.replace('terraform.html#map' + (location.hash ? location.hash.replace('#', '-') : ''));</script>
   </head>
   <body>
-    <header class="app-header">
-      <a class="brand" href="../index.html">
-        <span class="brand-mark">AT</span>
-        <span>ArchToolKit</span>
-      </a>
-      <nav class="header-nav">
-        <a href="../index.html">Home</a>
-        <a href="inventory.html">VMware Inventory</a>
-        <a href="vcf-sizing.html">VCF Sizing</a>
-        <a href="vcf-spec.html">VCF Spec Builder</a>
-        <a href="data-editor.html">Data Editor</a>
-        <a href="multicloud.html">Multi-Cloud</a>
-        <a href="migration.html">Migration</a>
-        <a href="network.html">Network</a>
-        <a href="scripts.html">Scripts</a>
-        <a href="splunk.html">Splunk</a>
-        <a href="terraform-map.html" aria-current="page">Terraform Map</a>
-        <a href="terraform.html">Terraform</a>
-        <a href="ansible.html">Ansible</a>
-        <a href="manual.html">Manual</a>
-      </nav>
-    </header>
-
-    <main class="page">
-      <div class="page-header">
-        <h1>Terraform Map</h1>
-        <p>Which resource does which job, per cloud and per domain, with the pattern to put around it. Every name on the page is checked against the committed provider catalog, so one that has been renamed since the map was written says so here rather than at plan time.</p>
-      </div>
-
-      <div id="terraform-map-root"></div>
-    </main>
-
-    <script type="module" src="../lib/ui/terraform-map-page.js"></script>
-    <script type="module" src="../lib/ui/clear-all.js"></script>
-    <script type="module" src="../lib/ui/site-footer.js"></script>
+    <p>The Terraform Map is now a tab on the <a href="terraform.html#map">Terraform page</a>.</p>
   </body>
 </html>

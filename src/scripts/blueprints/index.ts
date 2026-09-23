@@ -18,16 +18,26 @@ import { BASH_BASE } from './bash.ts';
 import { BASH_EXTRA } from './bash-extra.ts';
 import { CMD_BASE } from './cmd.ts';
 import { CMD_EXTRA } from './cmd-extra.ts';
+import { SNIPPET_SCRIPTS } from './snippet.ts';
 
-export const POWERSHELL_SCRIPTS: BlueprintGroup = { target: 'powershell', label: SCRIPT_PLATFORMS.powershell.label, blueprints: [...POWERSHELL_BASE, ...POWERSHELL_CLOUD, ...POWERSHELL_INFRA] };
-export const PYTHON_SCRIPTS: BlueprintGroup = { target: 'python', label: SCRIPT_PLATFORMS.python.label, blueprints: [...PYTHON_BASE, ...PYTHON_EXTRA] };
-export const BASH_SCRIPTS: BlueprintGroup = { target: 'bash', label: SCRIPT_PLATFORMS.bash.label, blueprints: [...BASH_BASE, ...BASH_EXTRA] };
-export const CMD_SCRIPTS: BlueprintGroup = { target: 'cmd', label: SCRIPT_PLATFORMS.cmd.label, blueprints: [...CMD_BASE, ...CMD_EXTRA] };
+/**
+ * The catalogue blueprint goes first in every language.
+ *
+ * The hand-written blueprints below it cover the tasks worth having an opinion
+ * about; the one above covers everything else, which is most of what anybody
+ * actually needs on a given afternoon.
+ */
+const snippetFor = (platform: string) => SNIPPET_SCRIPTS.filter((blueprint) => blueprint.platform === platform);
+
+export const POWERSHELL_SCRIPTS: BlueprintGroup = { target: 'powershell', label: SCRIPT_PLATFORMS.powershell.label, blueprints: [...snippetFor('powershell'), ...POWERSHELL_BASE, ...POWERSHELL_CLOUD, ...POWERSHELL_INFRA] };
+export const PYTHON_SCRIPTS: BlueprintGroup = { target: 'python', label: SCRIPT_PLATFORMS.python.label, blueprints: [...snippetFor('python'), ...PYTHON_BASE, ...PYTHON_EXTRA] };
+export const BASH_SCRIPTS: BlueprintGroup = { target: 'bash', label: SCRIPT_PLATFORMS.bash.label, blueprints: [...snippetFor('bash'), ...BASH_BASE, ...BASH_EXTRA] };
+export const CMD_SCRIPTS: BlueprintGroup = { target: 'cmd', label: SCRIPT_PLATFORMS.cmd.label, blueprints: [...snippetFor('cmd'), ...CMD_BASE, ...CMD_EXTRA] };
 
 export const SCRIPT_BLUEPRINTS: readonly BlueprintGroup[] = [POWERSHELL_SCRIPTS, PYTHON_SCRIPTS, BASH_SCRIPTS, CMD_SCRIPTS];
 
 /** Every script blueprint, with its structured builder, in one list. */
-export const SCRIPTS: readonly ScriptBlueprint[] = [...POWERSHELL_BASE, ...POWERSHELL_CLOUD, ...POWERSHELL_INFRA, ...PYTHON_BASE, ...PYTHON_EXTRA, ...BASH_BASE, ...BASH_EXTRA, ...CMD_BASE, ...CMD_EXTRA];
+export const SCRIPTS: readonly ScriptBlueprint[] = [...SNIPPET_SCRIPTS, ...POWERSHELL_BASE, ...POWERSHELL_CLOUD, ...POWERSHELL_INFRA, ...PYTHON_BASE, ...PYTHON_EXTRA, ...BASH_BASE, ...BASH_EXTRA, ...CMD_BASE, ...CMD_EXTRA];
 
 export function scriptFor(id: string): ScriptBlueprint | undefined {
   return SCRIPTS.find((blueprint) => blueprint.id === id);

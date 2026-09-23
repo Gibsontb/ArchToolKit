@@ -65,6 +65,15 @@ import { isRecord,           } from '../editor/doc.js';
                                                                             
      
                                                                                                           
+     
+                                                                            
+    
+                                                                            
+                                                                          
+                                                                            
+                                                           
+     
+                                                                                                         
                                                                                         
                                 
      
@@ -993,7 +1002,18 @@ export function mountGeneratorPage(root             , options                  )
     );
   }
 
-  selectBlueprint(first());
+  // A link from elsewhere can name the blueprint to open on and prefill it —
+  // the Commands tab sends a catalogued command here that way. It is applied
+  // after the defaults so a missing or renamed blueprint simply does nothing.
+  const opening = options.openWith?.();
+  const wanted = opening ? available().find((b) => b.id === opening.blueprint) : undefined;
+  if (opening && wanted) {
+    selectBlueprint(wanted);
+    values = { ...values, ...opening.values };
+  } else {
+    selectBlueprint(first());
+  }
+
   renderOne();
   renderTwo();
   renderThree();
