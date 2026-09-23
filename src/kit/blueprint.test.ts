@@ -6,13 +6,14 @@ import { TERRAFORM_BLUEPRINTS } from '../terraform/blueprints/index.ts';
 import { ANSIBLE_BLUEPRINTS } from '../ansible/blueprints/index.ts';
 import { NETWORK_BLUEPRINTS } from '../network/blueprints/index.ts';
 import { SCRIPT_BLUEPRINTS } from '../scripts/blueprints/index.ts';
+import { SPLUNK_BLUEPRINTS } from '../splunk/blueprints/index.ts';
 import { CATALOG_DATA } from '../terraform/catalog-data.ts';
 import { collectModules } from '../ansible/from-plays.ts';
 
 const ALL = [...TERRAFORM_BLUEPRINTS, ...ANSIBLE_BLUEPRINTS];
 
 /** The kits whose platforms are not clouds, swept for structure but not for target names. */
-const OTHER_KITS = [...NETWORK_BLUEPRINTS, ...SCRIPT_BLUEPRINTS];
+const OTHER_KITS = [...NETWORK_BLUEPRINTS, ...SCRIPT_BLUEPRINTS, ...SPLUNK_BLUEPRINTS];
 
 describe('kit/blueprint: the model', () => {
   it('reads a value, falling back to the default rather than emitting a blank', () => {

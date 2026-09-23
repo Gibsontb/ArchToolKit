@@ -44,6 +44,7 @@
         <a href="migration.html">Migration</a>
         <a href="network.html">Network</a>
         <a href="scripts.html">Scripts</a>
+        <a href="splunk.html">Splunk</a>
         <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
@@ -79,6 +80,7 @@
             <li><a href="#migration">Application Migration and Portfolio</a></li>
             <li><a href="#network">Network devices</a></li>
             <li><a href="#scripts">Scripts</a></li>
+            <li><a href="#splunk">Splunk</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -760,7 +762,66 @@
             is still yours to write and yours to check.
           </div>
 
-          <h2 id="collector">15. The inventory collector</h2>
+          <h2 id="splunk">15. Splunk</h2>
+          <p>
+            <a href="splunk.html">Splunk</a> writes deployable apps: the conf files, an
+            <code>app.conf</code> so it is a real app, the <code>metadata/default.meta</code> that makes
+            its objects visible to anyone, and a deployment note.
+          </p>
+
+          <h3>Why the tier is the first question</h3>
+          <p>
+            The platform picker on this page is the Splunk <strong>tier</strong> — search head, indexer
+            or forwarder — rather than a cloud, because that is the setting that decides whether
+            anything works. A <code>props.conf</code> deployed to a search head does not parse data
+            arriving from a forwarder. The app deploys, the file is read, and nothing happens. There is
+            no error anywhere, and the symptom appears weeks later as events with the wrong timestamp.
+          </p>
+          <table>
+            <tr><th>Tier</th><th>What belongs there</th></tr>
+            <tr><td>Search head</td><td>Search-time only: saved searches, alerts, dashboards, macros, lookups, tags and data models. Index-time settings here do nothing, silently.</td></tr>
+            <tr><td>Indexer</td><td>Index-time: indexes and retention, line breaking, timestamp recognition, routing and masking. The only tier where those take effect for data arriving over a forwarder.</td></tr>
+            <tr><td>Forwarder</td><td>Collection and delivery: what to read, what to listen on, where to send it.</td></tr>
+          </table>
+          <p>
+            Every generated app also declares how it is <strong>activated</strong>: picked up on a
+            reload, needing a restart of splunkd on that tier, or needing a cluster bundle push that
+            rolls the peers one at a time. That is the difference between a quick change and a change
+            window.
+          </p>
+
+          <h3>What it can build</h3>
+          <table>
+            <tr><th>Tier</th><th>Apps</th></tr>
+            <tr><td>Search head <em>(6)</em></td><td>
+              <strong>Searches:</strong> a saved search or report written the way a scheduled one has to be — the index and sourcetype first so the filter happens at the earliest point, no leading wildcards, a schedule offset off the hour, and a window slightly longer than the interval so a late event is not missed.<br/>
+              <strong>Alerting:</strong> an alert with throttling per field, a condition that means something, and the severity, digest and suppression settings that stop one incident producing forty notifications.<br/>
+              <strong>Dashboards:</strong> Simple XML or Dashboard Studio, with a time token every panel reads and an optional base search so six panels are not six concurrent searches.<br/>
+              <strong>Knowledge objects:</strong> a macro with argument validation and a lookup with <code>max_matches</code> set, optionally applied automatically to a sourcetype; and a data model with acceleration, with the tsidx cost estimated from your daily volume rather than discovered afterwards.<br/>
+              <strong>Security:</strong> a correlation search with a MITRE technique, a documented false-positive note, risk attribution and an optional notable.
+            </td></tr>
+            <tr><td>Indexer <em>(2)</em></td><td>
+              <strong>Indexes:</strong> sized from daily volume, compression and retention, with the frozen decision made explicitly — the default deletes — and both the size and age limits set, since whichever is reached first rolls data away.<br/>
+              <strong>Parsing:</strong> the five settings that decide what an event is and when it happened, plus index-time routing, masking and dropping. These cannot be fixed later without re-indexing, and the generated app says so.
+            </td></tr>
+            <tr><td>Forwarder <em>(3)</em></td><td>
+              <strong>Inputs:</strong> file and directory monitoring with the index named, the recursion bounded and the rotated files excluded; and syslog or HEC listeners with the port privilege, queue size and per-sender routing a busy listener needs.<br/>
+              <strong>Delivery:</strong> <code>outputs.conf</code> pointing at every indexer rather than one, with the persistent queue that carries an indexer restart and the TLS that stops the data crossing the network in clear.
+            </td></tr>
+          </table>
+          <div class="tip warn">
+            <strong>No credentials, anywhere.</strong> A HEC token, a <code>pass4SymmKey</code> or an SSL
+            password is left empty or written as <code>&lt;REQUIRED&gt;</code>. Splunk encrypts a
+            password in place on restart, which means the plain text was already on disk — and in
+            version control. A test refuses any generated conf file that sets one to a literal.
+          </div>
+          <div class="tip">
+            <strong>Index-time settings are not retroactive.</strong> Events already indexed keep
+            whatever parsing they were given. Getting line breaking and timestamps right before the data
+            arrives is the whole game, which is why those five settings have a page of their own.
+          </div>
+
+          <h2 id="collector">16. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -768,7 +829,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">16. Keeping catalogs current</h2>
+          <h2 id="updates">17. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -783,7 +844,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">17. Common workflows</h2>
+          <h2 id="workflows">18. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -820,7 +881,7 @@
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">18. Troubleshooting</h2>
+          <h2 id="trouble">19. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -838,7 +899,7 @@
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">19. Known limits</h2>
+          <h2 id="limits">20. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
@@ -855,7 +916,7 @@
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">20. Licence and disclaimer</h2>
+          <h2 id="licence">21. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.

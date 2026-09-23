@@ -1,0 +1,304 @@
+/**
+ * The Splunk model.
+ *
+ * Splunk configuration is a set of `.conf` files in an app, and almost every
+ * problem people have with it comes from one of three things: the file is in
+ * the wrong app, the app is on the wrong tier, or the setting is index-time and
+ * was changed after the data was already indexed.
+ *
+ * So the unit here is an **app**, not a file, and every app says which tier it
+ * belongs on and whether it needs a restart. A search head does not parse
+ * incoming data, so `props.conf` line breaking there does nothing at all — and
+ * that is a change that looks applied, shows no error, and simply has no
+ * effect. Saying which tier is not documentation; it is the setting that makes
+ * the rest of it work.
+ *
+ * Nothing here writes a credential. A token, a password or a bind DN goes in
+ * Splunk's own credential store or in a `local/` file that is never in version
+ * control, and the generated app says which.
+ */
+
+import { warning,              } from '../core/findings.js';
+
+/** Which Splunk tier the generated app is deployed to. */
+                                                                 
+
+                           
+                          
+                         
+                                                   
+                            
+                                            
+                                 
+                                                                                 
+                                  
+ 
+
+export const TIERS                                         = {
+  search_head: {
+    id: 'search_head',
+    label: 'Search head',
+    deployTo: '$SPLUNK_HOME/etc/apps/<app>/ on every search head, or on the deployer for a cluster',
+    distributedBy: 'The search head cluster deployer: splunk apply shcluster-bundle',
+    responsibility:
+      'Search-time only: saved searches, alerts, dashboards, macros, field extractions, lookups, tags and data models. Index-time settings here do nothing, silently.',
+  },
+  indexer: {
+    id: 'indexer',
+    label: 'Indexer',
+    deployTo: '$SPLUNK_HOME/etc/apps/<app>/ on every indexer, or on the cluster master',
+    distributedBy: 'The indexer cluster manager: splunk apply cluster-bundle',
+    responsibility:
+      'Index-time: indexes, retention, line breaking, timestamp recognition, routing and masking. This is the only tier where those take effect for data arriving over a forwarder.',
+  },
+  forwarder: {
+    id: 'forwarder',
+    label: 'Forwarder',
+    deployTo: '$SPLUNK_HOME/etc/apps/<app>/ on the forwarders, via the deployment server',
+    distributedBy: 'The deployment server: a serverclass with this app mapped to the forwarders',
+    responsibility:
+      'Collection and delivery: what to read, what to listen on, where to send it. A heavy forwarder also parses, which is why index-time settings sometimes belong here too.',
+  },
+};
+
+/** Whether the change takes effect on its own, or needs something restarted. */
+                        
+                                                                      
+            
+                                                         
+             
+                                                            
+             
+
+export const ACTIVATION_MEANING                                       = {
+  reload: 'Takes effect without a restart. A debug refresh or a reload of that endpoint is enough.',
+  restart: 'Needs splunkd restarted on that tier. On a search head that interrupts running searches; on an indexer it stops ingestion for that peer.',
+  bundle: 'Needs a cluster bundle push. That rolls the peers one at a time and can take a while on a large cluster — it is a change window, not a quick fix.',
+};
+
+/** One generated app. */
+                            
+                            
+                                                             
+                         
+                                                                                 
+                       
+                                  
+                                                                     
+                                                              
+                                           
+                                     
+                                                   
+                                     
+                                  
+                                      
+                                                      
+                                     
+                                         
+ 
+
+/** An app is only an app if it has an app.conf. */
+export function appConf(app           , description        )           {
+  return [
+    '[install]',
+    'is_configured = 0',
+    '',
+    '[ui]',
+    'is_visible = 0',
+    `label = ${app.app}`,
+    '',
+    '[launcher]',
+    'author = ArchToolKit',
+    `description = ${description}`,
+    'version = 1.0.0',
+    '',
+    '[package]',
+    `id = ${app.app}`,
+  ];
+}
+
+/**
+ * Sharing, which is the setting people forget and then cannot explain.
+ *
+ * Without `default.meta`, a knowledge object is private to whoever created it —
+ * and an object created by the deployment has no owner, so it is visible to
+ * nobody. The dashboard is there, the search returns nothing, and there is no
+ * error anywhere.
+ */
+export function defaultMeta(readRoles                    = ['*'], writeRoles                    = ['admin', 'power'])           {
+  return [
+    '[]',
+    'access = read : [ ' + readRoles.join(', ') + ' ], write : [ ' + writeRoles.join(', ') + ' ]',
+    'export = system',
+  ];
+}
+
+/** The app, rendered as the files it actually is. */
+export function renderApp(app           , name        )                         {
+  const out                         = {};
+  for (const [path, lines] of Object.entries(app.files)) {
+    out[`${app.app}/${path}`] = `${['# ' + app.title, '# Generated by ArchToolKit. Review before deploying.', '', ...lines].join('\n')}\n`;
+  }
+  return out;
+}
+
+/** The deployment note that travels with the app, for the ticket. */
+export function renderRecord(app           , name        )           {
+  const tier = TIERS[app.tier];
+  return [
+    `**Tier:** ${tier.label}  `,
+    `**Activation:** ${ACTIVATION_MEANING[app.activation]}`,
+    '',
+    '## Where it goes',
+    '',
+    `- ${tier.deployTo}`,
+    `- Distributed by: ${tier.distributedBy}`,
+    `- This tier is responsible for: ${tier.responsibility}`,
+    '',
+    ...(app.notes && app.notes.length > 0 ? ['## Before you deploy it', '', ...app.notes.map((n) => `- ${n}`), ''] : []),
+    '## Check first',
+    '',
+    ...app.before.map((line) => `- \`${line}\``),
+    '',
+    '## Files',
+    '',
+    ...Object.keys(app.files).map((path) => `- \`${app.app}/${path}\``),
+    '',
+    '## Verify',
+    '',
+    ...app.verify.map((line) => `- \`${line}\``),
+    '',
+    '## Back out',
+    '',
+    ...app.backout.map((line) => `- \`${line}\``),
+    '',
+    '---',
+    '',
+    'No credential is written into a generated file. Tokens, passwords and bind accounts go in Splunk’s credential store, or in a `local/` file kept out of version control.',
+  ];
+}
+
+/**
+ * The checks that apply to every generated app.
+ *
+ * The two that matter most: a setting written to the wrong tier does nothing
+ * and says nothing, and an index-time setting changed after the fact does not
+ * apply to data that is already indexed. Both look like the change worked.
+ */
+export function standingFindings(app           )            {
+  const findings            = [];
+
+  const indexTime = /^\s*(LINE_BREAKER|SHOULD_LINEMERGE|TIME_PREFIX|TIME_FORMAT|MAX_TIMESTAMP_LOOKAHEAD|TRUNCATE|TRANSFORMS-|SEDCMD-)/;
+  const hasIndexTime = Object.entries(app.files).some(([path, lines]) => path.includes('props.conf') && lines.some((line) => indexTime.test(line)));
+
+  if (hasIndexTime && app.tier === 'search_head') {
+    findings.push(
+      warning('splunk.index-time-on-search-head', 'This app contains index-time settings but is written for a search head, where they have no effect on data arriving from forwarders. The change will appear to apply and will do nothing.', {
+        remediation: 'Put line breaking, timestamp recognition and index-time transforms on the indexers, or on the heavy forwarder that parses the data.',
+        source: 'ArchToolKit',
+      }),
+    );
+  }
+
+  if (hasIndexTime) {
+    findings.push(
+      warning('splunk.index-time-not-retroactive', 'Index-time settings apply only to data indexed after they are in place. Events already in the index keep whatever parsing they got, and the only way to correct them is to re-index.', {
+        source: 'ArchToolKit',
+      }),
+    );
+  }
+
+  for (const [path, lines] of Object.entries(app.files)) {
+    for (const line of lines) {
+      if (line.trim().startsWith('#')) continue;
+      if (/^\s*(password|token|passAuth|bindDNpassword|clientSecret)\s*=\s*\S/i.test(line) && !/\$|<|REQUIRED/.test(line)) {
+        findings.push(
+          warning('splunk.credential-literal', `A line in ${path} looks like it sets a credential directly. Splunk encrypts a password in place on restart, which means the plain text has already been on disk and in version control.`, {
+            remediation: 'Leave the value empty in the generated app and set it through Settings, or through the storage/passwords endpoint, after deployment.',
+            source: 'ArchToolKit',
+          }),
+        );
+        break;
+      }
+    }
+  }
+
+  if (!Object.keys(app.files).some((path) => path.endsWith('app.conf'))) {
+    findings.push(warning('splunk.no-app-conf', 'Without an app.conf this directory is not a complete app, and some deployment paths will skip it.', { source: 'ArchToolKit' }));
+  }
+
+  return findings;
+}
+
+// --- SPL helpers -----------------------------------------------------------
+
+/** A comma or newline separated list, cleaned up. */
+export function listOf(value        )           {
+  return String(value ?? '')
+    .split(/[,\n]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+/** A name Splunk will accept for an app, a macro or a saved search. */
+export function splunkName(value        , fallback        )         {
+  const cleaned = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || fallback;
+}
+
+/** A saved search title, which may have spaces but not the characters Splunk reserves. */
+export function searchTitle(value        , fallback        )         {
+  const cleaned = String(value ?? '')
+    .trim()
+    .replace(/[\[\]\\/]/g, ' ')
+    .replace(/\s+/g, ' ');
+  return cleaned || fallback;
+}
+
+/**
+ * Fold a long SPL pipeline so a conf file stays readable.
+ *
+ * A `.conf` continues a value onto the next line with a trailing backslash, and
+ * a search written as one 400-character line is why nobody ever edits these in
+ * the file.
+ */
+export function foldSearch(pipeline                   )           {
+  const parts = pipeline.map((line) => line.trim()).filter(Boolean);
+  if (parts.length === 0) return ['search = '];
+  if (parts.length === 1) return [`search = ${parts[0]}`];
+  return [`search = ${parts[0]} \\`, ...parts.slice(1, -1).map((line) => `    ${line} \\`), `    ${parts[parts.length - 1]}`];
+}
+
+/**
+ * A cron expression that does not put every search on the same minute.
+ *
+ * Splunk schedules everything at :00 by default, and on a busy search head that
+ * is the reason searches get skipped. Spreading them by a stable offset derived
+ * from the name costs nothing and fixes it.
+ */
+export function spreadCron(name        , everyMinutes        )         {
+  let hash = 0;
+  for (const character of name) hash = (hash * 31 + character.charCodeAt(0)) % 997;
+  if (everyMinutes >= 1440) return `${hash % 60} ${hash % 6} * * *`;
+  if (everyMinutes >= 60) {
+    const hours = Math.max(1, Math.round(everyMinutes / 60));
+    return `${hash % 60} */${hours} * * *`;
+  }
+  const minutes = Math.max(1, everyMinutes);
+  return `${hash % minutes}-59/${minutes} * * * *`;
+}
+
+/**
+ * The window a scheduled search looks at, given how often it runs.
+ *
+ * The overlap is deliberate: events arrive late, and a search whose window
+ * exactly matches its schedule misses whatever indexed a second after it ran.
+ */
+export function searchWindow(everyMinutes        )                                       {
+  const lookback = Math.round(everyMinutes * 1.2) + 1;
+  return { earliest: `-${lookback}m@m`, latest: 'now' };
+}

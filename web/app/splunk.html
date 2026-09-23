@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Application Migration · ArchToolKit</title>
+    <title>Splunk · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -19,10 +19,10 @@
         <a href="vcf-spec.html">VCF Spec Builder</a>
         <a href="data-editor.html">Data Editor</a>
         <a href="multicloud.html">Multi-Cloud</a>
-        <a href="migration.html" aria-current="page">Migration</a>
+        <a href="migration.html">Migration</a>
         <a href="network.html">Network</a>
         <a href="scripts.html">Scripts</a>
-        <a href="splunk.html">Splunk</a>
+        <a href="splunk.html" aria-current="page">Splunk</a>
         <a href="terraform-map.html">Terraform Map</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
@@ -32,19 +32,14 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>Application migration</h1>
-        <p>
-          Evaluate an application, route it to one of the seven courses of action, and get the
-          readiness score, the risk band, the target cloud, the services that cover it and a
-          step-by-step plan. Everything evaluated is kept in the Portfolio tab, where the waves are
-          planned across all of it.
-        </p>
+        <h1>Splunk app generator</h1>
+        <p>Searches, alerts, dashboards, knowledge objects, indexes, parsing and inputs — as deployable apps. Pick the tier first, because a setting on the wrong tier does nothing at all and says nothing about it.</p>
       </div>
 
-      <div id="migration-root"></div>
+      <div id="splunk-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/migration-page.js"></script>
+    <script type="module" src="../lib/ui/splunk-page.js"></script>
     <script type="module" src="../lib/ui/clear-all.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>
