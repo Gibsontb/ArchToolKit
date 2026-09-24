@@ -25,7 +25,7 @@ const typeLabel = (value        )         => TAG_OBJECT_TYPES.find((t) => t.valu
  * hidden textarea (class `tag-standard-value`) that always holds the current
  * text, so the page reads it like any other field.
  */
-export function tagStandardBuilder(value        , onChange            )              {
+export function tagStandardBuilder(value        , onChange            , onStructure             = () => {})              {
   let categories                = parseTagStandard(value);
   const store = el('textarea', { class: 'tag-standard-value', attrs: { hidden: true } })                       ;
   const list = el('div', { class: 'tag-builder-list' });
@@ -60,7 +60,8 @@ export function tagStandardBuilder(value        , onChange            )         
       ];
       commit();
       render();
-      if (!preset) (list.lastElementChild?.querySelector('.tag-cat-name')                           )?.focus();
+      onStructure();
+      if (!preset) (root.querySelector('.tag-builder-list')?.lastElementChild?.querySelector('.tag-cat-name')                           )?.focus();
     });
     replace(adder, pick);
   }
@@ -175,6 +176,7 @@ export function tagStandardBuilder(value        , onChange            )         
               categories = categories.filter((_, i) => i !== index);
               commit();
               render();
+              onStructure();
             },
           },
         }),

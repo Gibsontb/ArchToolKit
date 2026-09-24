@@ -983,11 +983,11 @@
           <p>
             <a href="automation.html">Automation and Operations</a> writes the automations the rest of the toolkit
             implies: the notification rule that closes the gap the VCF Ops content page keeps finding, the
-            scheduled reclamation, the cloud template people can request, the pipeline that runs the
-            Terraform. Six targets, which in VCF 9.1 are capabilities of one platform rather than
+            scheduled reclamation, the cloud template people can request, the fleet-wide tag standard.
+            Five targets, which in VCF 9.1 are capabilities of one platform rather than
             separate products &mdash; <strong>VCF Operations</strong>, <strong>VCF Operations for
             Networks</strong>, <strong>VCF Operations for Logs</strong>, <strong>VCF Automation</strong>,
-            <strong>fleet operations</strong> through SDDC Manager, and the pipelines and runners.
+            and <strong>fleet management</strong>.
           </p>
 
           <h3>Why an automation is not a script</h3>
@@ -1003,7 +1003,7 @@
             <tr><td>Trigger</td><td>What starts it, and how often it can fire at worst &mdash; which is not how often you expect it to.</td></tr>
             <tr><td>Scope</td><td>What it may touch, and every indirection that decides it. An action inherits its scope from an alert, the alert from a policy, the policy from a custom group, and the group from a rule somebody wrote a year ago. Four steps between &ldquo;power off idle VMs&rdquo; and which VMs that is tonight.</td></tr>
             <tr><td>Guardrails</td><td>What has to be true before it acts: a cap on objects per run, an exclusion tag, an approval, a maintenance window. Each one says which incident it prevents.</td></tr>
-            <tr><td>Dry run</td><td>How to make it report instead of act. Everything generated here is created disabled with its dry run on, because applying a file should never start something running.</td></tr>
+            <tr><td>Dry run</td><td>How to preview it. Everything generated here is created enabled and applies when run; <code>--dry-run</code> previews.</td></tr>
             <tr><td>Undo</td><td>How to reverse it &mdash; or an honest statement that you cannot, which is the more useful sentence.</td></tr>
             <tr><td>Who is told</td><td>Where the record goes when it acts. A run log nobody reads is not a record.</td></tr>
           </table>
@@ -1056,7 +1056,6 @@
               templates, approval and day-2 policies, ABX, Orchestrator, custom actions and resources,
               Supervisor namespaces and VKS clusters, Terraform.
             </td></tr>
-            <tr><td>Pipelines and runners <em>(9)</em></td><td>Automation Pipelines for 8.x; templates, ABX and Orchestrator tested in CI; VCF Operations content promoted by pull request; the read-only checks on a schedule; Azure Automation, SSM, AWX and Terraform runners.</td></tr>
           </table>
           <div class="tip">
             <strong>Signing in, in 9.1.</strong> The fleet-wide APIs take a short-lived Bearer token from the

@@ -19,6 +19,8 @@
 import { el, append, replace, clear, downloadFile } from './dom.js';
 import { tarGz, zip } from '../kit/archive.js';
 import { buildVroPackage, readPackageSpec } from '../kit/vro-package.js';
+import { currentTagStandard, tagChoices } from '../kit/tag-standard.js';
+import { tagStandardBuilder } from './tag-standard-builder.js';
 import { card, findingsList } from './components.js';
 import { getTarget, setTarget,               } from '../kit/target.js';
 import { estateOptionsFor } from '../kit/estate.js';
@@ -130,6 +132,26 @@ function aboutTheInput(findings                    )            {
   return findings.filter((finding) => finding.severity !== 'info');
 }
 
+/** A blueprint's tag standard starts from the one last built on the page, so the tag blueprints build on each other. */
+function withCurrentTags(blueprint           , values                 )                  {
+  const saved = currentTagStandard();
+  const input = blueprint.inputs.find((i) => i.control === 'tag-standard');
+  return saved && input ? { ...values, [input.id]: saved } : values;
+}
+
+/** An input that names categories or tags, offered from the tag standard rather than typed. */
+function withTags(input                )                 {
+  if (!input.fromTags) return input;
+  const { categories, tags } = tagChoices();
+  if (input.fromTags === 'categories') return { ...input, control: 'checklist', options: categories.map((c) => ({ value: c, label: c })) };
+  if (input.fromTags === 'category') return { ...input, control: 'combo', options: categories.map((c) => ({ value: c, label: c })) };
+  return {
+    ...input,
+    control: 'combo',
+    options: tags.map((t) => ({ value: `${t.category}=${t.tag}`, label: `${t.category} = ${t.tag}`, group: t.category })),
+  };
+}
+
 /**
  * The input, with anything the imported estate can answer folded in.
  *
@@ -193,7 +215,32 @@ function withBlank(input                )                          {
   return [{ value: '', label: input.blankLabel }, ...options];
 }
 
-function control(input                , value         , onChange            )              {
+function control(input                , value         , onChange            , onStructure             = onChange)              {
+  if (input.control === 'tag-standard') return tagStandardBuilder(String(value ?? ''), onChange, onStructure);
+
+  if (input.control === 'checklist') {
+    const picked = new Set(String(value ?? '').split(',').map((v) => v.trim()).filter(Boolean));
+    const store = el('input', { class: 'checklist-value', attrs: { type: 'hidden' } })                    ;
+    store.value = [...picked].join(', ');
+    const wrap = el('div', { class: 'checklist tag-chips' });
+    // Anything already chosen that the list no longer offers stays ticked, so nothing is dropped silently.
+    const options = [...(input.options ?? []), ...[...picked].filter((p) => !(input.options ?? []).some((o) => o.value === p)).map((p) => ({ value: p, label: p }))];
+    for (const option of options) {
+      const box = el('input', { attrs: { type: 'checkbox' } })                    ;
+      box.checked = picked.has(option.value);
+      box.addEventListener('change', () => {
+        if (box.checked) picked.add(option.value);
+        else picked.delete(option.value);
+        store.value = [...picked].join(', ');
+        onChange();
+      });
+      wrap.appendChild(el('label', { class: 'tag-check' }, box, el('span', { text: option.label })));
+    }
+    if (options.length === 0) wrap.appendChild(el('span', { class: 'muted', text: 'Nothing to pick yet.' }));
+    wrap.appendChild(store);
+    return wrap;
+  }
+
   if (input.control === 'select') {
     const node = el('select')                     ;
     fillOptions(node, withBlank(input), String(value ?? ''));
@@ -555,7 +602,7 @@ export function mountGeneratorPage(root             , options                  )
 
   function selectBlueprint(next                       )       {
     blueprint = next;
-    values = next ? defaultValues(next) : {};
+    values = next ? withCurrentTags(next, defaultValues(next)) : {};
     generated = null;
     builds = undefined;
     findings = [];
@@ -841,10 +888,14 @@ export function mountGeneratorPage(root             , options                  )
 
     for (const raw of blueprint.inputs) {
       if (!isVisible(raw, values)) continue;
-      const input = withEstate(raw, target);
+      const input = withTags(withEstate(raw, target));
       const node = control(input, values[input.id], () => {
         let raw        ;
-        if (node.classList.contains('combo')) {
+        if (node.classList.contains('tag-builder')) {
+          raw = (node.querySelector('.tag-standard-value')                       ).value;
+        } else if (node.classList.contains('checklist')) {
+          raw = (node.querySelector('.checklist-value')                    ).value;
+        } else if (node.classList.contains('combo')) {
           const picker = node.querySelector('select')                     ;
           const typed = node.querySelector('input')                    ;
           raw = picker.value === '__custom__' ? typed.value : picker.value;
@@ -854,6 +905,9 @@ export function mountGeneratorPage(root             , options                  )
         values = { ...values, [input.id]: raw };
         // A follow-up question may have appeared or gone away.
         if (blueprint?.inputs.some((i) => i.showWhen?.input === input.id)) renderTwo();
+      }, () => {
+        // A category was added or removed: the fields that offer categories and tags follow.
+        if (blueprint?.inputs.some((i) => i.fromTags)) renderTwo();
       });
       const setValue = (text        ) => {
         const box = (node.classList.contains('combo') ? node.querySelector('input') : node)                                                 ;
@@ -868,7 +922,7 @@ export function mountGeneratorPage(root             , options                  )
         box.focus();
       };
       const reference =
-        input.control === 'select' || input.control === 'toggle' ? null : referenceButton(setValue);
+        input.control === 'select' || input.control === 'toggle' || input.control === 'checklist' || input.control === 'tag-standard' ? null : referenceButton(setValue);
       const field = labelledField(input, reference ? el('div', { class: 'with-ref' }, node, reference) : node);
       if (input.section === undefined) {
         fields.push(field);

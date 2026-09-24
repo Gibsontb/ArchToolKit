@@ -2430,3 +2430,49 @@ textarea {
   align-items: end;
 }
 
+
+/* The tag standard builder, and tick lists of categories. */
+.tag-builder { display: flex; flex-direction: column; gap: var(--space-3); }
+.tag-builder-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.tag-cat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.tag-cat-head { display: flex; gap: var(--space-2); align-items: center; }
+.tag-cat-head .tag-cat-name { flex: 1; font-weight: 600; }
+.tag-row { display: grid; grid-template-columns: 8.5rem 1fr; gap: var(--space-2); align-items: start; }
+.tag-row-label { font-size: 0.8rem; color: var(--text-muted); padding-top: 0.35rem; }
+.tag-row-body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.tag-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 400;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tag-check:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.25rem 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+}
+.tag-chip-x { background: none; border: 0; color: var(--text-muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.25rem; }
+.tag-chip-x:hover { color: var(--danger); }
+.tag-add-row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.tag-add-row input[type='text'] { flex: 1; min-width: 10rem; }
+@media (max-width: 600px) { .tag-row { grid-template-columns: 1fr; } .tag-row-label { padding-top: 0; } }

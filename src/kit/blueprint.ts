@@ -32,7 +32,11 @@ export type InputControl =
   | 'text'
   | 'number'
   | 'toggle'
-  | 'textarea';
+  | 'textarea'
+  /** Tick any of the options; the value is the ticked ones, comma separated. */
+  | 'checklist'
+  /** The tag standard, built by picking categories, types and values (src/ui/tag-standard-builder.ts). */
+  | 'tag-standard';
 
 export interface SelectOption {
   readonly value: string;
@@ -88,6 +92,12 @@ export interface BlueprintInput {
    * say — otherwise showing the dropdown would silently pick its first entry.
    */
   readonly blankLabel?: string;
+  /**
+   * Offer the categories or tags of the tag standard being built on the page:
+   * 'category' a dropdown of categories, 'categories' a tick list of them,
+   * 'tag' a dropdown of Category=value.
+   */
+  readonly fromTags?: 'category' | 'categories' | 'tag';
 }
 
 /** Values as the page collects them, keyed by input id. */

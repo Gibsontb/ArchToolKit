@@ -37,7 +37,7 @@ const PROVIDER = 'VCF Automation 9.1 / 9.1.1, provider (System) side';
 /** The Terraform route: plan, read, apply exactly the plan. */
 function tfStep(heading        , what        )             {
   return manualStep(heading, [
-    `\`VCFA_URL=https://<vcfa> VCFA_ORG=<org> VCFA_API_TOKEN_FILE=<file> ./scripts/plan.sh\` runs terraform init and plan on the .tf files beside scripts/ and saves the plan; read it. \`./scripts/plan.sh --execute\` applies exactly that saved plan. ${what}`,
+    `\`VCFA_URL=https://<vcfa> VCFA_ORG=<org> VCFA_API_TOKEN_FILE=<file> ./scripts/plan.sh\` runs terraform init and plan on the .tf files beside scripts/, saves the plan and applies exactly that saved plan. \`./scripts/plan.sh --dry-run\` stops after the plan, so you can read it first. ${what}`,
   ]);
 }
 
@@ -137,8 +137,8 @@ function versionCheckLines()           {
 
 function sendLines()           {
   return [
-    'DRY_RUN=1',
-    '[[ " $* " == *" --execute "* ]] && DRY_RUN=0',
+    'DRY_RUN=0',
+    '[[ " $* " == *" --dry-run "* ]] && DRY_RUN=1',
     'send() {  # send METHOD PATH FILE [TYPE]',
     '  local method="$1" path="$2" file="$3" type="${4:-$(cloudapi_type)}"',
     '  if (( DRY_RUN )); then echo "DRY RUN: would ${method} ${file} to https://${VCFA_HOST}${path}"; return 0; fi',
@@ -155,7 +155,7 @@ function restScript(opts                                                        
     `# ${opts.purpose}`,
     '#',
     opts.act
-      ? '# Without --execute this only reads and prints what it would send.'
+      ? '# Applies when run. With --dry-run this only reads and prints what it would send.'
       : '# Reads only. Exits 1 when something needs attention, so a scheduler can alert on the exit code.',
     `# Authenticates as ${opts.scope === 'provider' ? 'the provider (System), at /oauth/provider/token' : 'an organization, at /oauth/tenant/$VCFA_ORG/token'}.`,
     'set -euo pipefail',
@@ -168,14 +168,14 @@ function restScript(opts                                                        
     ...(opts.act ? [...sendLines(), ''] : []),
     ...opts.body,
     '',
-    ...(opts.act ? ['if (( DRY_RUN )); then echo "Nothing was changed. Read the payloads, then re-run with --execute."; fi', ''] : []),
+    ...(opts.act ? ['if (( DRY_RUN )); then echo "Dry run: nothing was changed. Run it without --dry-run to apply."; fi', ''] : []),
     ...(opts.undo ? [`# Undo: ${opts.undo}`, ''] : []),
   ].join('\n');
 }
 
 /**
- * kubectl against a VCF Automation (CCI) or Supervisor context. Server-side dry
- * run unless --execute; create rather than apply, because the VCF Automation
+ * kubectl against a VCF Automation (CCI) or Supervisor context. Creates when
+ * run; --dry-run makes it a server-side dry run. Create rather than apply, because the VCF Automation
  * endpoint rejects the last-applied annotation apply depends on, and because
  * create refuses to overwrite an object that already exists.
  */
@@ -190,7 +190,7 @@ function kubeScript(purpose        , pre                   , files              
     '# Leave --api-token off so the CLI asks for it, rather than putting the token in',
     '# your shell history and the process list (VERIFY the prompt on your CLI version).',
     '#',
-    '# Without --execute this is a server-side dry run: the server validates, nothing is created.',
+    '# Applies when run. With --dry-run this is a server-side dry run: the server validates, nothing is created.',
     '# It reads the manifests beside the scripts/ folder it is in.',
     'set -euo pipefail',
     'cd "$(dirname "$0")/.."',
@@ -201,13 +201,13 @@ function kubeScript(purpose        , pre                   , files              
     '[[ "$CTX" == "$EXPECT_CONTEXT" ]] || { echo "Current context is $CTX, not $EXPECT_CONTEXT. Switch with vcf context use." >&2; exit 2; }',
     'echo "Context: $CTX"',
     '',
-    'MODE=(--dry-run=server)',
-    '[[ " $* " == *" --execute "* ]] && MODE=()',
+    'MODE=()',
+    '[[ " $* " == *" --dry-run "* ]] && MODE=(--dry-run=server)',
     '',
     ...pre,
     ...files.map((file) => `kubectl ${verb} "\${MODE[@]}" -f '${file}'`),
     '',
-    'if [[ ${#MODE[@]} -gt 0 ]]; then echo "Server-side dry run only. Nothing was created. Re-run with --execute."; fi',
+    'if [[ ${#MODE[@]} -gt 0 ]]; then echo "Server-side dry run only. Nothing was created. Run it without --dry-run to apply."; fi',
     '',
     `# Undo: ${undo}`,
     '',
@@ -233,14 +233,14 @@ function kubeReadScript(purpose        , body                   )         {
   ].join('\n');
 }
 
-/** terraform init/plan, and --execute applies exactly the saved plan. */
+/** terraform init, plan and apply of that plan; --dry-run stops after the plan. */
 function tfScript(purpose        , undo        )         {
   return [
     '#!/usr/bin/env bash',
     `# ${purpose}`,
     '#',
-    '# Without --execute: init and plan, saved to tfplan. With --execute: apply that saved',
-    '# plan and nothing else — Terraform refuses it if anything changed since it was made.',
+    '# init, plan (saved to tfplan), then apply exactly that plan. With --dry-run: stop',
+    '# after the plan so it can be read.',
     '# Terraform runs in the folder above scripts/, where the .tf files are.',
     'set -euo pipefail',
     'cd "$(dirname "$0")/.."',
@@ -253,16 +253,14 @@ function tfScript(purpose        , undo        )         {
     'fi',
     'export VCFA_URL VCFA_ORG VCFA_API_TOKEN',
     '',
-    'if [[ " $* " == *" --execute "* ]]; then',
-    '  [[ -f tfplan ]] || { echo "No saved plan. Run without --execute first and read it." >&2; exit 2; }',
-    '  terraform apply -input=false tfplan',
-    '  rm -f tfplan',
-    '  exit 0',
-    'fi',
-    '',
     'terraform init -input=false',
     'terraform plan -input=false -out=tfplan',
-    'echo "Plan saved to tfplan. Read it, then re-run with --execute to apply exactly this plan."',
+    'if [[ " $* " == *" --dry-run "* ]]; then',
+    '  echo "Dry run: plan saved to tfplan, nothing applied. Run it without --dry-run to apply."',
+    '  exit 0',
+    'fi',
+    'terraform apply -input=false tfplan',
+    'rm -f tfplan',
     '',
     `# Undo: ${undo}`,
     '',
@@ -1186,7 +1184,7 @@ export const VCF_AUTOMATION_91                                 = [
         act: true,
         body: [
           'ID="${1:-}"; NAME="${2:-}"',
-          '[[ -n "$ID" && -n "$NAME" && "$ID" != --execute && "$NAME" != --execute ]] || { echo "usage: $0 <token-id> <exact-token-name> [--execute]   (ids from vcfa-tokens-audit.sh)" >&2; exit 2; }',
+          '[[ -n "$ID" && -n "$NAME" && "$ID" != --dry-run && "$NAME" != --dry-run ]] || { echo "usage: $0 <token-id> <exact-token-name> [--dry-run]   (ids from vcfa-tokens-audit.sh)" >&2; exit 2; }',
           'TOKEN_JSON=$(probe "/cloudapi/1.0.0/tokens/${ID}") || exit 2',
           "ACTUAL=$(jq -r '.name' <<<\"$TOKEN_JSON\")",
           '[[ "$ACTUAL" == "$NAME" ]] || { echo "Token ${ID} is named \\"${ACTUAL}\\", not \\"${NAME}\\". Nothing revoked." >&2; exit 2; }',
@@ -1211,7 +1209,7 @@ export const VCF_AUTOMATION_91                                 = [
         categoryPath: `${AREA}/API tokens/${scope === 'provider' ? 'provider' : org}`,
         workflow: {
           name: 'Audit VCF Automation API tokens',
-          description: `Exchanges the API token at ${tokenPath} (which proves it still works, and warns when rotation replaced it), lists the account's API tokens and flags those expiring within the configured days; fails the run when one does, so a schedule alerts.${revoke ? ' With revokeId and revokeName, revokes that one token — only when both match, and only once dryRun is false in the configuration element.' : ''}`,
+          description: `Exchanges the API token at ${tokenPath} (which proves it still works, and warns when rotation replaced it), lists the account's API tokens and flags those expiring within the configured days; fails the run when one does, so a schedule alerts.${revoke ? ' With revokeId and revokeName, revokes that one token — only when both match, and not when the dryRun input is true.' : ''}`,
           inputs: revoke
             ? [
                 { name: 'dryRun', type: 'boolean', description: 'true: report what would be revoked and change nothing' },
@@ -1304,11 +1302,11 @@ export const VCF_AUTOMATION_91                                 = [
           { rule: 'The API token is sent on stdin, and the bearer token to curl on a file descriptor', because: 'Neither shows in ps, /proc or the shell history.' },
           { rule: 'A rotated API token is written back atomically before anything else', because: 'With rotation on, the old token dies at the exchange; losing the new one means a trip to the interface and a failed night of jobs.' },
           { rule: 'In Orchestrator the API token is a SecureString, redacted from every error and never logged', because: 'The workflow log is readable by everyone who can see the workflow run.' },
-          ...(revoke ? [{ rule: 'Revoke needs the id, the exact name, and the arming switch (dryRun false in the configuration element; --execute for the script), and at most one per run', because: 'Two tokens called "automation" on one account is common; revoking by name alone takes the wrong one.' }] : []),
+          ...(revoke ? [{ rule: 'Revoke needs the id and the exact name, and revokes at most one per run', because: 'Two tokens called "automation" on one account is common; revoking by name alone takes the wrong one.' }] : []),
         ],
         dryRun: [
           'The Audit VCF Automation API tokens workflow only reads unless a revoke is asked for; scripts/vcfa-tokens-audit.sh the same from a Linux host.',
-          ...(revoke ? ['A revoke is a dry run until dryRun is false in the configuration element: the log says which token it would revoke. scripts/vcfa-token-revoke.sh without --execute does the same.'] : []),
+          ...(revoke ? ['Run the workflow with the dryRun input set to true to preview: the log says which token it would revoke. scripts/vcfa-token-revoke.sh --dry-run does the same.'] : []),
           'The exchange has no dry run — the exchange is the operation. With rotation on it replaces the API token file every time.',
         ],
         undo: [
@@ -1554,7 +1552,7 @@ export const VCF_AUTOMATION_91                                 = [
         '',
         '## Provider',
         '',
-        `- [ ] \`plan.sh\`, read the plan, \`plan.sh --execute\`. Then \`check-org.sh\`.`,
+        `- [ ] \`plan.sh --dry-run\`, read the plan, then \`plan.sh\` to apply it. Then \`check-org.sh\`.`,
         `- [ ] Identity: connect ${identity === 'oidc' ? 'OIDC (vcfa_org_oidc, or Organization → Identity Providers → OIDC)' : 'LDAP (vcfa_org_ldap, or Organization → Identity Providers → LDAP)'} for ${orgName}.`,
         `- [ ] Import the group ${adminGroup || '<administrators>'} and give it the Organization Administrator role. VERIFY: the vcfa provider has no group resource at 1.2.x; do it in the portal.`,
         ...(allApps
@@ -1587,7 +1585,7 @@ export const VCF_AUTOMATION_91                                 = [
         categoryPath: `${AREA}/Organizations/${orgName}`,
         workflow: {
           name: `Create organization ${label(orgName, 'org')}`,
-          description: `Provider work. Creates the organization ${orgName} (${allApps ? 'All Apps' : 'VM Apps'}) through POST /cloudapi/1.0.0/orgs when no organization of that name exists; leaves an existing one as it is and refuses one of the other type.${allApps ? ' Then reports whether its region quota exists and is READY — the quota, VM classes, storage policy and networking are applied with the Terraform in main.tf.' : ''} A dry run until dryRun is set to false in the configuration element.`,
+          description: `Provider work. Creates the organization ${orgName} (${allApps ? 'All Apps' : 'VM Apps'}) through POST /cloudapi/1.0.0/orgs when no organization of that name exists; leaves an existing one as it is and refuses one of the other type.${allApps ? ' Then reports whether its region quota exists and is READY — the quota, VM classes, storage policy and networking are applied with the Terraform in main.tf.' : ''} Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [
             { name: 'organizationId', type: 'string', description: 'The organization id, empty when a dry run would create it' },
@@ -1618,13 +1616,13 @@ export const VCF_AUTOMATION_91                                 = [
           ifWrong: 'An organization given the wrong supervisor or no limits takes capacity other tenants were counting on; the first sign is their namespaces failing to schedule.',
         },
         guardrails: [
-          { rule: 'Apply only a saved, read plan (plan.sh --execute applies tfplan and nothing else)', because: 'A plan re-made at apply time can differ from the one that was reviewed.' },
+          { rule: 'Apply only the saved plan (plan.sh applies tfplan and nothing else; --dry-run stops after the plan)', because: 'A plan re-made at apply time can differ from the one that was reviewed.' },
           { rule: 'prevent_destroy on the organization', because: 'A terraform destroy, or a rename that forces replacement, would delete every namespace and VM in it.' },
           ...(allApps && cpuLimit > 0 && memLimit > 0 && storageGib > 0 ? [{ rule: `Explicit limits: ${cpuLimit} MHz and ${memLimit} MiB per zone, ${storageGib} GiB of ${storagePolicy}`, because: 'Without limits one tenant can consume the region.' }] : []),
           { rule: 'The workflow and check-org.sh stop if the server does not offer the API version they ask for', because: 'A version mismatch returns fields renamed or missing, and the check reports a healthy organization it did not read.' },
           { rule: 'The workflow creates the organization only when none of that name exists, refuses one of the other type, and makes at most cap changes', because: 'The type (VM Apps or All Apps) cannot be changed after creation; a second organization of the same name is not possible and a retry must not try.' },
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it reads, and logs "DRY RUN: would create organization …".', 'scripts/plan.sh without --execute: terraform plan, saved to tfplan, changes nothing.', 'scripts/check-org.sh reads only.'],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: it reads, and logs "DRY RUN: would create organization …".', 'scripts/plan.sh --dry-run: terraform plan, saved to tfplan, changes nothing.', 'scripts/check-org.sh reads only.'],
         undo: [
           allApps ? 'Region quota and networking: remove them from main.tf and apply. Namespaces using the quota must be deleted first.' : 'Nothing but the organization was created.',
           'The organization: remove prevent_destroy on purpose, then terraform destroy -target. That deletes everything the organization contains.',
@@ -1838,7 +1836,7 @@ export const VCF_AUTOMATION_91                                 = [
               { rule: 'prevent_destroy on the region', because: 'Every organization quota in the region depends on it.' },
             ]
           : [],
-        dryRun: create ? ['scripts/plan.sh without --execute.', 'The Inventory region workflow, scripts/inventory.sh and scripts/namespace-classes.sh only read.'] : ['Everything here reads only.'],
+        dryRun: create ? ['scripts/plan.sh --dry-run: plans and stops.', 'The Inventory region workflow, scripts/inventory.sh and scripts/namespace-classes.sh only read.'] : ['Everything here reads only.'],
         undo: create ? ['Remove the region from main.tf and apply after every organization quota in it is removed. prevent_destroy has to be taken off first.'] : ['Nothing to undo.'],
         told: ['Provider events in VCF Automation.', 'The workflow log and its inventory output, and the webhook when set; a run with problems fails — schedule it weekly and it becomes the record.'],
         requires: ['VCF Automation 9.1 with the vCenter and NSX Manager connected in the provider portal.', 'Supervisors enabled with VPC networking (or 9.1.1 VLAN-backed VPC).'],
@@ -1960,7 +1958,7 @@ export const VCF_AUTOMATION_91                                 = [
         categoryPath: `${AREA}/VPC subnets/${namespace}`,
         workflow: {
           name: `Create VPC subnets in ${label(namespace, 'namespace')}`,
-          description: `Creates the NSX operator Subnet objects ${subnets.map((sn) => sn.name).join(', ')} in namespace ${namespace}, through the namespace's Kubernetes API: each that does not exist, never changing one that does. A dry run validates each on the server (dryRun=All) and changes nothing, until dryRun is false in the configuration element.`,
+          description: `Creates the NSX operator Subnet objects ${subnets.map((sn) => sn.name).join(', ')} in namespace ${namespace}, through the namespace's Kubernetes API: each that does not exist, never changing one that does. With the dryRun input set to true it validates each on the server (dryRun=All) and changes nothing.`,
           inputs: [DRY_RUN_INPUT],
           outputs: KUBE_OUTPUTS,
           script: kubeWorkflow({ resource: 'subnets.json', served: ['crd.nsx.vmware.com/v1alpha1'], label: '"subnet " + o.metadata.name + " (" + o.spec.accessMode + ", " + o.spec.ipv4SubnetSize + " addresses) in " + o.metadata.namespace' }),
@@ -2027,10 +2025,10 @@ export const VCF_AUTOMATION_91                                 = [
         guardrails: [
           { rule: 'The script stops unless the current context is EXPECT_CONTEXT; the workflow sends only to the kubeServer of its configuration element', because: 'The context is the scope; a subnet created in the wrong organization is a routing change in someone else’s VPC.' },
           { rule: 'kubectl create, not apply', because: 'create refuses to change a subnet that already exists; resizing a live subnet renumbers what is on it.' },
-          { rule: 'Server-side dry run unless --execute', because: 'The NSX operator’s admission checks the access mode, size and quota before anything is allocated.' },
+          { rule: 'Server-side dry run with --dry-run (or the dryRun input) before the first real run', because: 'The NSX operator’s admission checks the access mode, size and quota before anything is allocated.' },
           ...(withBlock ? [{ rule: 'Apply only a saved, read plan for the IP block, with prevent_destroy', because: 'Destroying an external block withdraws addresses in use.' }] : []),
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it sends each subnet with dryRun=All, so the NSX operator validates it, and creates nothing.', 'scripts/create-subnets.sh without --execute runs the same server-side dry run.', 'scripts/discover.sh only reads.', ...(withBlock ? ['scripts/plan.sh without --execute.'] : [])],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: it sends each subnet with dryRun=All, so the NSX operator validates it, and creates nothing.', 'scripts/create-subnets.sh --dry-run runs the same server-side dry run.', 'scripts/discover.sh only reads.', ...(withBlock ? ['scripts/plan.sh --dry-run: plans and stops.'] : [])],
         undo: ['kubectl delete subnet <name> -n ' + namespace + ' — refused while VMs are attached. Public addresses go back to the organization’s quota.'],
         told: ['NSX Manager audit log for the subnet and its segment.', 'Kubernetes events on the Subnet object.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An All Apps organization with regional networking set, and a namespace attached to a VPC.', 'kubectl and the VCF CLI, logged in to the organization and namespace.'],
@@ -2278,7 +2276,7 @@ export const VCF_AUTOMATION_91                                 = [
           ...(needsPassword ? [{ rule: 'The subscription password comes from TF_VAR_subscription_password, marked sensitive', because: 'It never lands in a .tf file or the plan output.' }] : []),
           { rule: 'check-library.sh fails unless the library and every item are READY', because: 'A PARTIALLY_READY library still appears in the picker and fails at VM creation.' },
         ],
-        dryRun: ['scripts/plan.sh without --execute.', 'The Check content library workflow and scripts/check-library.sh read only.'],
+        dryRun: ['scripts/plan.sh --dry-run: plans and stops.', 'The Check content library workflow and scripts/check-library.sh read only.'],
         undo: ['Remove the items or library from content-library.tf and apply. VMs already deployed from an image keep running; new requests naming its vmi fail.'],
         told: ['VCF Automation events, and vCenter content library tasks, which VCF Operations collects.', 'The Check content library workflow log and its itemReport output, and the webhook when set; a run fails unless everything is READY.'],
         requires: ['VCF Automation 9.1 (project content libraries and Canonical subscriptions are 9.1).', 'A storage class granted to the organization in the region.', 'Terraform 1.5+ and the image files on the host that runs plan.sh.'],
@@ -2457,7 +2455,7 @@ if (!kubeGet(collectionPath(VMOP, NS, "virtualmachineclasses") + "/" + encodeURI
         categoryPath: `${AREA}/VM Service/${ns}/${vm}`,
         workflow: {
           name: `Create VM ${vm}`,
-          description: `Creates, in namespace ${ns} through its Kubernetes API, ${vmObjects.map((d) => `the ${d.item.object.kind} ${d.item.object.metadata.name}`).join(', ')} — each that does not exist, in that order, never changing one that does. Stops first unless vmoperator.vmware.com/${api} is served and the image is visible. A dry run validates each on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          description: `Creates, in namespace ${ns} through its Kubernetes API, ${vmObjects.map((d) => `the ${d.item.object.kind} ${d.item.object.metadata.name}`).join(', ')} — each that does not exist, in that order, never changing one that does. Stops first unless vmoperator.vmware.com/${api} is served and the image is visible. With the dryRun input set to true it validates each on the server (dryRun=All) and creates nothing.`,
           inputs: [DRY_RUN_INPUT],
           outputs: KUBE_OUTPUTS,
           script: kubeWorkflow({ resource: 'objects.json', served: [`vmoperator.vmware.com/${api}`], pre: vmPre }),
@@ -2492,7 +2490,7 @@ if (!kubeGet(collectionPath(VMOP, NS, "virtualmachineclasses") + "/" + encodeURI
           { rule: 'kubectl create, never apply', because: 'create refuses to overwrite an existing VM of the same name; apply would change its class or image in place.' },
           { rule: 'cloud-init sets no password and disables SSH password login', because: 'The Secret is readable by anyone who can read Secrets in the namespace.' },
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: each object is sent with dryRun=All, so class binding, image, storage class and quota are all checked, and nothing is created.', 'scripts/create-vm.sh without --execute: the same server-side dry run.'],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: each object is sent with dryRun=All, so class binding, image, storage class and quota are all checked, and nothing is created.', 'scripts/create-vm.sh --dry-run: the same server-side dry run.'],
         undo: [`kubectl delete -f ${vm}.k8s.yaml. The VM and its data disk are deleted with it.`],
         told: ['Kubernetes events on the VirtualMachine.', 'vCenter tasks for the VM, which VCF Operations collects.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An All Apps namespace with the VM class, storage class and image available to it.', 'kubectl and the VCF CLI logged in to the namespace context.', ...(lb ? ['Avi load balancing delegated to the organization (9.1).'] : [])],
@@ -2634,7 +2632,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         categoryPath: `${AREA}/Data Services/${ns}/${db}`,
         workflow: {
           name: `Create database ${db}`,
-          description: `Creates, in namespace ${ns} through its Kubernetes API, the Secret ${secret} with the admin password from the configuration element, then the ${kind} ${db} — each that does not exist, never changing one that does. Stops first unless databases.dataservices.vmware.com/v1alpha1 is served. A dry run validates both on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          description: `Creates, in namespace ${ns} through its Kubernetes API, the Secret ${secret} with the admin password from the configuration element, then the ${kind} ${db} — each that does not exist, never changing one that does. Stops first unless databases.dataservices.vmware.com/v1alpha1 is served. With the dryRun input set to true it validates both on the server (dryRun=All) and creates nothing.`,
           inputs: [DRY_RUN_INPUT],
           outputs: KUBE_OUTPUTS,
           script: kubeWorkflow({ resource: 'database.json', served: ['databases.dataservices.vmware.com/v1alpha1'], pre: dbPre }),
@@ -2683,7 +2681,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
           { rule: 'Stops if Data Services is not served in the context', because: 'Otherwise the error is a confusing "no matches for kind".' },
           { rule: 'kubectl create, not apply', because: 'apply to an existing database changes it in place — a version or class change is a restart.' },
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: the Secret and the database are sent with dryRun=All and nothing is created.', 'scripts/create-db.sh without --execute: server-side dry run of the Secret and the database.', 'scripts/check-db.sh reads only.'],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: the Secret and the database are sent with dryRun=All and nothing is created.', 'scripts/create-db.sh --dry-run: server-side dry run of the Secret and the database.', 'scripts/check-db.sh reads only.'],
         undo: [`kubectl delete ${kind.toLowerCase()} ${db} -n ${ns} deletes the database and its data. Backups are kept for their retention (VERIFY in DSM before relying on it).`],
         told: ['DSM’s own events and alerts, and VCF Operations if the DSM management pack is installed.', 'Kubernetes events on the object.'],
         requires: ['VCF Data Services Manager 9.x integrated with VCF Automation, with a data service policy for this organization.', ...(backup ? [`Backup location ${loc} configured in DSM.`] : []), 'kubectl logged in to the namespace.'],
@@ -2965,7 +2963,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         categoryPath: `${AREA}/Tag placement`,
         workflow: {
           name: 'Tag placement',
-          description: `VM Apps organization. ${writeZones ? 'Adds the capability tags in zone-tags.json to each cloud zone named (exactly one match, or it is skipped), keeping every tag the zone has and sending the whole zone read fresh. ' : ''}Checks that every tag a hard template constraint can ask for is on some zone, and fails the run when one is not. With projectId set, imports the example template through the blueprint API — validated, created or its draft updated, then versioned (released only if releaseTemplate is true). A dry run until dryRun is set to false in the configuration element.`,
+          description: `VM Apps organization. ${writeZones ? 'Adds the capability tags in zone-tags.json to each cloud zone named (exactly one match, or it is skipped), keeping every tag the zone has and sending the whole zone read fresh. ' : ''}Checks that every tag a hard template constraint can ask for is on some zone, and fails the run when one is not. With projectId set, imports the example template through the blueprint API — validated, created or its draft updated, then versioned (released only if releaseTemplate is true). Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would change and change nothing' }],
           outputs: [
             { name: 'missingTags', type: 'string', description: 'Tags a hard constraint can ask for that no zone carries' },
@@ -3017,7 +3015,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
           { rule: 'The template is validated first, updated only when its draft differs, and a version that exists is left alone; it is released only when releaseTemplate is true', because: 'Versions are immutable and a release reaches every catalog that imports the template.' },
           { rule: 'At most cap changes per run; the first failure stops it', because: 'A run against the wrong organization stops early rather than tagging every zone.' },
         ],
-        dryRun: ['The Tag placement workflow is a dry run until dryRun is false in the configuration element: it logs every tag it would add and the template it would create or version.', writeZones ? 'scripts/apply-zone-tags.sh without --execute prints, per zone, the tags it would add.' : 'No zone is changed.', 'scripts/check-tags.sh reads only and exits 1 if a hard constraint can ask for a tag no zone has.'],
+        dryRun: ['Run the Tag placement workflow with the dryRun input set to true to preview: it logs every tag it would add and the template it would create or version.', writeZones ? 'scripts/apply-zone-tags.sh --dry-run prints, per zone, the tags it would add.' : 'No zone is changed.', 'scripts/check-tags.sh reads only and exits 1 if a hard constraint can ask for a tag no zone has.'],
         undo: ['Each zone as it was is in the workflow log (and saved to zone-before-<id>-<time>.json by the script) before it is changed; send that zone back (its tags, with name and regionId) to remove what was added. Deployments already placed stay where they are.', 'The template: unrelease the version, or DELETE /blueprint/api/blueprints/{id} while nothing is deployed from it.'],
         told: ['VCF Automation audit of the zone change.', 'The workflow log (AUDIT lines), its summary output and the webhook when set; a run fails when a hard constraint cannot be met.', 'scripts/check-tags.sh output, which can run on a schedule and fail when someone untags a zone.'],
         requires: ['A VM Apps organization with cloud zones, and an organization token (see "API tokens").', 'The vCenter tag standard, with cardinality, as it is actually configured.'],
@@ -3033,7 +3031,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
             subject: 'Tag-based placement: capability tags on the cloud zones, and a template whose constraints match them — one Orchestrator workflow for both, or the scripts and the template import by hand.',
             steps: [
               ...pkg.importSteps,
-              ...(writeZones ? [manualStep('Or: zone capability tags from a Linux host', ['`./scripts/apply-zone-tags.sh` prints, per zone, the tags it would add and the diff of the zone; `--execute` sends it, saving each zone first. By hand: Infrastructure → Cloud Zones → the zone → Capability tags.'])] : []),
+              ...(writeZones ? [manualStep('Or: zone capability tags from a Linux host', ['`./scripts/apply-zone-tags.sh` saves each zone first, then sends the tags it adds; with `--dry-run` it only prints, per zone, the tags it would add and the diff of the zone. By hand: Infrastructure → Cloud Zones → the zone → Capability tags.'])] : []),
               checkStep('check-tags.sh', 'a hard constraint that can ask for a tag no zone carries.'),
               imported.steps.templates,
               manualStep('Use it in your own templates', ['template-constraints.yaml is the fragment to paste into existing templates; the imported example is the same fragment made whole. Fill its image and flavor before versioning it.']),
@@ -3193,7 +3191,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         categoryPath: `${AREA}/Templates/${base}`,
         workflow: {
           name: `Version template ${base}`,
-          description: `VM Apps organization (the blueprint API). Finds the one template named "${tpl}", exports its YAML (output templateYaml), creates version ${version} with its change log${release ? ' and releases it' : ''} unless that version exists${target ? `, then — with the token of ${target} — creates it as a draft in targetProjectId unless a template of that name is already there` : ''}. A dry run until dryRun is set to false in the configuration element.`,
+          description: `VM Apps organization (the blueprint API). Finds the one template named "${tpl}", exports its YAML (output templateYaml), creates version ${version} with its change log${release ? ' and releases it' : ''} unless that version exists${target ? `, then — with the token of ${target} — creates it as a draft in targetProjectId unless a template of that name is already there` : ''}. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [
             { name: 'templateId', type: 'string', description: 'The source template id' },
@@ -3242,7 +3240,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
           ...(target ? [{ rule: `Import refuses when VCFA_ORG is not ${target} or the name already exists there`, because: 'An import with the wrong token lands in the source organization as a duplicate.' }] : []),
           { rule: 'Dry run by default', because: 'The script reads first and says what it would post.' },
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it looks everything up, exports the YAML and logs what it would post.', 'scripts/export-template.sh reads only.', 'scripts/version-template.sh and scripts/import-template.sh without --execute look everything up and stop before posting.'],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: it looks everything up, exports the YAML and logs what it would post.', 'scripts/export-template.sh reads only.', 'scripts/version-template.sh and scripts/import-template.sh with --dry-run look everything up and stop before posting.'],
         undo: ['Unrelease the version (POST …/versions/{version}/actions/unrelease). Deployments made from it keep their version.', ...(target ? ['Delete the imported draft in the target.'] : [])],
         told: ['The template’s version history in the design canvas.', 'Catalogue item change in Service Broker at the next content source sync.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An organization token for the source (and one for the target) — see "API tokens".', 'The template already exists in the source organization.'],
@@ -3258,9 +3256,9 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
             steps: [
               ...pkg.importSteps,
               manualStep('Or: export (read only)', ['`./scripts/export-template.sh` writes export/<template>.yaml and its version list. Keep them: they are the undo.']),
-              manualStep('Version', [`\`./scripts/version-template.sh\` looks the template up by exact name and stops if version ${version} exists; \`--execute\` posts \`${base}-version.json\`${release ? ', which releases it' : ''}. By hand: the design page → Version, ${release ? 'with Release to catalog ticked' : 'then release it from Version History when ready'}.`]),
+              manualStep('Version', [`\`./scripts/version-template.sh\` looks the template up by exact name and stops if version ${version} exists, otherwise posts \`${base}-version.json\`${release ? ', which releases it' : ''}; \`--dry-run\` stops before posting. By hand: the design page → Version, ${release ? 'with Release to catalog ticked' : 'then release it from Version History when ready'}.`]),
               ...(target
-                ? [manualStep(`Import into ${target}`, [`With VCFA_ORG=${target} and that organization’s token, \`TARGET_PROJECT_ID=<id> ./scripts/import-template.sh\`; \`--execute\` creates the draft there. By hand in the target: ${tgtType === 'all-apps' ? 'Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import' : 'Design → Templates → New from → Upload'}, choosing export/<template>.yaml.`])]
+                ? [manualStep(`Import into ${target}`, [`With VCFA_ORG=${target} and that organization’s token, \`TARGET_PROJECT_ID=<id> ./scripts/import-template.sh\` creates the draft there; \`--dry-run\` stops before posting. By hand in the target: ${tgtType === 'all-apps' ? 'Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import' : 'Design → Templates → New from → Upload'}, choosing export/<template>.yaml.`])]
                 : []),
               manualStep('Templates from this page', ['Every template blueprint here also writes import/templates/<name>/blueprint.yaml with its own import/import-templates.sh, which creates or updates, versions and (with --release) releases in one pass.']),
             ],
@@ -3330,7 +3328,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
 
       const script = [
         '#!/usr/bin/env bash',
-        `# Change namespace ${ns}: saves it first, server-side dry run unless --execute.`,
+        `# Change namespace ${ns}: saves it first, checks with a server-side dry run, then applies (--dry-run stops after the check).`,
         'set -euo pipefail',
         'command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }',
         ': "${EXPECT_CONTEXT:?set EXPECT_CONTEXT to the organization/project context that owns the namespace}"',
@@ -3343,7 +3341,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         'echo "Saved the current namespace to before-${NS}-${STAMP}.yaml"',
         'kubectl patch supervisornamespace "$NS" --type merge --patch-file "$HERE/patch.json" --dry-run=server -o yaml > /dev/null',
         'echo "Server-side dry run passed."',
-        'if [[ " $* " != *" --execute "* ]]; then echo "Nothing changed. Re-run with --execute."; exit 0; fi',
+        'if [[ " $* " == *" --dry-run "* ]]; then echo "Dry run: nothing changed. Run it without --dry-run to apply."; exit 0; fi',
         'kubectl patch supervisornamespace "$NS" --type merge --patch-file "$HERE/patch.json"',
         '',
         '# Undo: kubectl replace -f before-<namespace>-<stamp>.yaml (after removing status and resourceVersion), or patch the old values back.',
@@ -3356,7 +3354,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         categoryPath: `${AREA}/Namespaces/${ns}`,
         workflow: {
           name: `Change namespace ${label(ns, 'namespace')}`,
-          description: `All Apps organization. Reads the SupervisorNamespace ${ns} through /cci/kubernetes (output before: the undo), leaves it alone if it already has every value in patch.json, otherwise runs a server-side dry run of the merge patch and then — once dryRun is false in the configuration element — applies it.`,
+          description: `All Apps organization. Reads the SupervisorNamespace ${ns} through /cci/kubernetes (output before: the undo), leaves it alone if it already has every value in patch.json, otherwise runs a server-side dry run of the merge patch and then applies it (with the dryRun input set to true it stops after the check).`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: read, validate on the server, and change nothing' }],
           outputs: [
             { name: 'before', type: 'string', description: 'The namespace as it was, JSON: the undo' },
@@ -3394,7 +3392,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
           { rule: 'Server-side dry run every time, before the real patch', because: 'Quota and class checks happen on the server; a typo in a field name fails here rather than half-applying.' },
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'Namespace names are unique only within an organization.' },
         ],
-        dryRun: ['The workflow reads the namespace and runs the server-side dry run of the patch every time; it patches only once dryRun is false in the configuration element.', 'scripts/change-namespace.sh without --execute: saves the namespace and runs the dry run.'],
+        dryRun: ['The workflow reads the namespace and runs the server-side dry run of the patch every time; it patches unless the dryRun input is set to true.', 'scripts/change-namespace.sh --dry-run: saves the namespace and runs the dry run only.'],
         undo: ['Patch the old values back from the workflow\'s before output (or its log line), or apply the saved before-*.yaml from the script.'],
         told: ['vCenter events for the namespace limit change.', 'Kubernetes events on the SupervisorNamespace.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['VCF Automation 9.1 (namespace day-2 changes are new in 9.1).', 'Rights to edit namespaces in the project.'],
@@ -3407,7 +3405,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
             orgs: ALL_APPS,
             steps: [
               ...pkg.importSteps,
-              manualStep('Or: change it with kubectl', ['`./scripts/change-namespace.sh` saves the namespace as it is, then runs a server-side dry run of patch.json; `--execute` applies the patch. The saved copy is the undo.']),
+              manualStep('Or: change it with kubectl', ['`./scripts/change-namespace.sh` saves the namespace as it is, runs a server-side dry run of patch.json, then applies the patch; `--dry-run` stops after the check. The saved copy is the undo.']),
             ],
             auth: ['kube', 'vcfa91'],
             verify: [
@@ -3544,7 +3542,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         categoryPath: `${AREA}/Argo CD/${ns}/${inst}`,
         workflow: {
           name: `Create Argo CD ${inst}`,
-          description: `Creates, in namespace ${ns} through its Kubernetes API, the ArgoCD instance ${inst} (version ${version}) unless it exists; with createApplication set, then the Argo CD Application ${app} (${auto ? `automatic sync${prune ? ' with prune' : ''}` : 'manual sync'}) unless it exists. A dry run validates on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          description: `Creates, in namespace ${ns} through its Kubernetes API, the ArgoCD instance ${inst} (version ${version}) unless it exists; with createApplication set, then the Argo CD Application ${app} (${auto ? `automatic sync${prune ? ' with prune' : ''}` : 'manual sync'}) unless it exists. With the dryRun input set to true it validates on the server (dryRun=All) and creates nothing.`,
           inputs: [DRY_RUN_INPUT],
           outputs: KUBE_OUTPUTS,
           script: kubeWorkflow({ resource: 'objects.json', served: ['argocd-service.vsphere.vmware.com/v1alpha1'], pre: argoPre }),
@@ -3567,11 +3565,11 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         'echo "Change it now:"; argocd account update-password',
         `echo "Add the target cluster (its kubeconfig context must be current in kubectl: vcf cluster kubeconfig get ${dest}):"`,
         `echo "  argocd cluster add <kubeconfig-context> --name ${dest}"`,
-        'if [[ " $* " == *" --execute "* ]]; then',
+        'if [[ " $* " != *" --dry-run "* ]]; then',
         '  argocd app create -f "$(dirname "$0")/../application.yaml" --upsert=false',
         `  argocd app diff ${app} || true`,
         'else',
-        '  echo "DRY RUN: would create the application from application.yaml. Re-run with --execute."',
+        '  echo "DRY RUN: would create the application from application.yaml. Run it without --dry-run to create it."',
         'fi',
         '',
         `# Undo: argocd app delete ${app} --cascade=false keeps what it deployed; --cascade deletes it too.`,
@@ -3591,10 +3589,10 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         guardrails: [
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'The instance is created in the namespace the context points at.' },
           { rule: auto ? `Automatic sync${prune ? ' with prune' : ' without prune'}` : 'Manual sync — a person reads argocd app diff first', because: auto ? (prune ? 'Chosen: deletions in Git are deletions in the cluster.' : 'Removed resources are reported as out of sync, not deleted.') : 'A bad merge is caught at the diff rather than in production.' },
-          { rule: 'The application is created only with --execute, and never upserts over an existing one', because: 'An upsert silently repoints an existing application at a different repository.' },
+          { rule: 'The application is created only when none of that name exists, and never upserts over an existing one', because: 'An upsert silently repoints an existing application at a different repository.' },
           { rule: 'The admin password is changed at first login', because: 'The initial password sits in a Secret anyone with read access to the namespace can decode.' },
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: each object is sent with dryRun=All and nothing is created.', 'scripts/install-argocd.sh without --execute: server-side dry run.', 'scripts/connect-and-create-app.sh without --execute logs in and stops before creating the application.'],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: each object is sent with dryRun=All and nothing is created.', 'scripts/install-argocd.sh --dry-run: server-side dry run.', 'scripts/connect-and-create-app.sh --dry-run logs in and stops before creating the application.'],
         undo: [`argocd app delete ${app} --cascade=false keeps the deployed resources.`, `kubectl delete argocd ${inst} -n ${ns} removes Argo CD itself.`],
         told: ['Argo CD’s own history per application, and its notifications if configured.', 'Git history, which is the record of what was deployed.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: [vcfService ? 'VCF Automation 9.1.1 with Argo CD installed through Provider Management → Service Management.' : 'The Argo CD Supervisor Service installed on the Supervisor (1.2.0 adds auto-discovery of VKS clusters).', 'The argocd CLI, kubectl and the VCF CLI.', `Read access to ${repo || 'the repository'} for Argo CD.`],
@@ -3716,7 +3714,7 @@ else {
         categoryPath: `${AREA}/Security policies/${ns}/${pol}`,
         workflow: {
           name: `Create security policy ${pol}`,
-          description: `Lists the VMs labelled ${selector} in namespace ${ns} (the scope), then creates the NSX operator SecurityPolicy ${pol} through the namespace's Kubernetes API unless it exists — never changing one that does. A dry run validates it on the server (dryRun=All) and creates nothing, until dryRun is false in the configuration element.`,
+          description: `Lists the VMs labelled ${selector} in namespace ${ns} (the scope), then creates the NSX operator SecurityPolicy ${pol} through the namespace's Kubernetes API unless it exists — never changing one that does. With the dryRun input set to true it validates it on the server (dryRun=All) and creates nothing.`,
           inputs: [DRY_RUN_INPUT],
           outputs: KUBE_OUTPUTS,
           script: kubeWorkflow({ resource: 'policy.json', served: ['crd.nsx.vmware.com/v1alpha1'], pre: policyPre }),
@@ -3739,7 +3737,7 @@ else {
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'The context is the scope.' },
           { rule: 'Server-side dry run before creating, and create rather than apply', because: 'The NSX operator validates selectors and ports; create refuses to overwrite a policy another team maintains.' },
         ],
-        dryRun: ['The workflow is a dry run until dryRun is false in the configuration element: it logs the VMs the selector matches and sends the policy with dryRun=All, creating nothing.', 'scripts/create-policy.sh without --execute runs a server-side dry run.', 'Before --execute, kubectl get vm -n ' + ns + ' -l ' + applied.replace(/\s/g, '') + ' shows which VMs it will cover.'],
+        dryRun: ['Run the workflow with the dryRun input set to true to preview: it logs the VMs the selector matches and sends the policy with dryRun=All, creating nothing.', 'scripts/create-policy.sh --dry-run runs a server-side dry run.', 'Before the first real run, kubectl get vm -n ' + ns + ' -l ' + applied.replace(/\s/g, '') + ' shows which VMs it will cover.'],
         undo: [`kubectl delete securitypolicy ${pol} -n ${ns} — traffic falls back to the default rule immediately.`],
         told: ['NSX Manager audit log, and the DFW rule hit counts in VCF Operations for Networks.', 'The workflow log (the VMs covered, AUDIT lines), its summary output and the webhook when set.'],
         requires: ['vDefend firewall delegated to the organization by the provider (9.1).', 'VMs carrying the labels.'],

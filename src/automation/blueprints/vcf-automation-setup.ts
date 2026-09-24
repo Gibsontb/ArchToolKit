@@ -526,7 +526,7 @@ function vcfaSettings(own: readonly VroConfigAttribute[], cap: number): VroConfi
     { name: 'iaasApiVersion', type: 'string', value: '2021-07-15', description: 'apiVersion sent to /iaas/api (required in the 9.1 spec). VERIFY the value your release lists in its IaaS API reference.' },
     ...own,
     { name: 'payloadOverrides', type: 'string', value: '', description: 'Optional JSON, { "<resource name>": { "<field>": value } }, merged into the payloads before they are sent: for the values this package cannot look up' },
-    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is created while this is true' },
+    { name: 'dryRun', type: 'boolean', value: false, description: 'Set to true to preview: nothing is created while it is true' },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
     { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
   ];
@@ -579,7 +579,7 @@ export function vcfaPackage(spec: {
     categoryPath: `ArchToolKit/VCF Automation/${spec.folder}/${spec.base}`,
     workflow: {
       name: spec.workflowName,
-      description: `${spec.description} Reads what exists first and leaves it alone; a dry run until dryRun is set to false in the configuration element.`,
+      description: `${spec.description} Reads what exists first and leaves it alone; set the dryRun input to true to preview without changing anything.`,
       inputs: [DRY_RUN_INPUT],
       outputs: [...Object.keys(spec.outputs).map((name) => ({ name, type: 'string', description: `The id, empty in a dry run` })), SUMMARY_OUTPUT],
       script: `${vcfaHead(Object.keys(spec.payloads))}${spec.script}${vcfaTail(spec.outputs)}`,
@@ -587,7 +587,7 @@ export function vcfaPackage(spec: {
     actions: vcfaActions(packageName, spec.templates === true),
     config: {
       name: 'Settings',
-      description: `Settings of the ${spec.workflowName} workflow. Fill the secrets after import; set dryRun to false only after a dry run.`,
+      description: `Settings of the ${spec.workflowName} workflow. Fill the secrets after import; set dryRun to true to preview instead of changing anything.`,
       attributes: vcfaSettings(spec.settings, spec.cap),
     },
     resources: [...Object.entries(spec.payloads).map(([name, value]) => ({ name, content: json(value) })), ...(spec.extraResources ?? [])],
@@ -827,7 +827,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           { rule: 'The script stops if the vSphere account returns no id', because: 'An NSX account associated with nothing is created happily, and then every on-demand network fails with an error that does not mention it.' },
         ],
         dryRun: [
-          `Run the workflow Create cloud account ${base} with dryRun = true (the configuration element keeps it a dry run until its dryRun is set to false): it reads the existing cloud accounts, logs "DRY RUN: would create …" for each missing one and warns about any value still a placeholder.`,
+          `Run the workflow Create cloud account ${base} with dryRun = true to preview: it reads the existing cloud accounts, logs "DRY RUN: would create …" for each missing one and warns about any value still a placeholder.`,
           'Run scripts/enumerate-regions.sh to see what the vCenter offers before choosing what to enable.',
           'Or run scripts/apply.sh --dry-run: it lists the payloads and the environment variables it will need.',
         ],
@@ -1177,7 +1177,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           { rule: type === 'group' ? 'Access by directory group' : 'Access by named user — see the finding', because: 'Leavers are removed from groups by the directory, not from projects by anyone.' },
           ...(naming ? [{ rule: `Machines named ${naming}`, because: 'A name that says which project owns it is how an orphan in vCenter gets back to a person.' }] : []),
         ],
-        dryRun: [`Run the workflow Create project ${base} with dryRun = true: it reads the projects and logs what it would create. scripts/apply.sh --dry-run shows the payload.`, 'Expand each group in the directory and count its members before arming it. That count is who can deploy.'],
+        dryRun: [`Run the workflow Create project ${base} with dryRun = true: it reads the projects and logs what it would create. scripts/apply.sh --dry-run shows the payload.`, 'Expand each group in the directory and count its members before running it. That count is who can deploy.'],
         undo: ['DELETE /iaas/api/projects/{id}. It fails while the project has deployments; those must be deleted or moved to another project first, which is why undo is only clean on day one.'],
         told: ['Nobody. Consider an Event Broker subscription on project changes if the change process needs one.'],
         requires: ['The cloud zones, and their ids.', 'The directory groups, synchronised into VCF Automation’s identity source.'],
@@ -1802,7 +1802,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           { rule: iops > 0 ? `${iops} IOPS limit per disk` : 'No IOPS limit on this profile', because: 'Limits belong on a tier that is chosen; a limit on the default throttles workloads that never asked for it.' },
           { rule: 'Storage policy or datastore resolved by id, not by name in the payload', because: 'Two datastores with the same name in two clusters is common, and the API does not choose between them for you.' },
         ],
-        dryRun: [`Run the workflow Create storage profile ${base} with dryRun = true: it looks up the storage policy and datastore by name, warns about a second default in the region, and logs what it would create.`, 'Confirm which datastores the storage policy is compatible with in this region before arming it. For scripts/apply.sh, resolve each <REQUIRED> id by hand.'],
+        dryRun: [`Run the workflow Create storage profile ${base} with dryRun = true: it looks up the storage policy and datastore by name, warns about a second default in the region, and logs what it would create.`, 'Confirm which datastores the storage policy is compatible with in this region before running it. For scripts/apply.sh, resolve each <REQUIRED> id by hand.'],
         undo: ['DELETE /iaas/api/storage-profiles/{id}. Existing disks are unaffected. If it was the default, another profile must be made default first or new requests without a storage constraint fail.'],
         told: ['Nobody. The audit log records the change.'],
         requires: ['The region with data collection complete, so storage policies and datastores are discovered.'],

@@ -76,7 +76,7 @@ function vcfaSettings(org: 'vm-apps' | 'all-apps'): VroConfigAttribute[] {
   ];
 }
 
-/** The arming switch, the cap and the webhook, as every changing package has them. */
+/** The dryRun switch (off: it acts), the cap and the webhook, as every changing package has them. */
 function guardSettings(cap: number, what: string): VroConfigAttribute[] {
   return [
     { name: 'dryRun', type: 'boolean', value: false, description: `Set to true to preview: nothing is ${what} while it is true` },
@@ -1072,14 +1072,14 @@ export const VCF_AUTOMATION_EXTEND: readonly AutomationBlueprint[] = [
         categoryPath: `${folder}/${base}`,
         workflow: {
           name: packageWorkflowName,
-          description: `${task.about} A dry run until dryRun is set to false in the configuration element; what exists is left as it is.`,
+          description: `${task.about} Set the dryRun input to true to preview without changing anything; what exists is left as it is.`,
           inputs: [...task.inputs, ...(hasDryRun ? [{ name: 'dryRun', type: 'boolean', description: 'true: report what would change and change nothing' }] : [])],
           outputs: [...task.outputs, { name: 'summary', type: 'string', description: 'The audit record, JSON' }],
           script: pkgScript,
         },
         config: {
           name: element,
-          description: `Settings of the ${packageWorkflowName} workflow. Fill the secrets after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${packageWorkflowName} workflow. Fill the secrets after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [...task.pkg.settings, ...guardSettings(1, 'changed')],
         },
       });
@@ -1110,7 +1110,7 @@ export const VCF_AUTOMATION_EXTEND: readonly AutomationBlueprint[] = [
           { rule: 'Rethrows on failure', because: 'A workflow that logs an error and ends in success is reported as done, and the gap is found at the next audit.' },
         ],
         dryRun: [
-          `The package workflow ${packageWorkflowName} is a dry run until dryRun is set to false in its configuration element: it looks up what exists, logs every "DRY RUN: would …" and an AUDIT summary, and changes nothing.`,
+          `The package workflow ${packageWorkflowName} previews when run with the dryRun input set to true: it looks up what exists, logs every "DRY RUN: would …" and an AUDIT summary, and changes nothing.`,
           hasDryRun ? 'Run it from the Orchestrator client with dryRun = Yes. It logs what it would do and changes nothing.' : 'There is no dryRun input — run it against a test object, which is the finding.',
           'Then wire it to a subscription with criteria narrowed to one test project before widening it.',
         ],
@@ -1148,7 +1148,7 @@ export const VCF_AUTOMATION_EXTEND: readonly AutomationBlueprint[] = [
               ...verifyFor(imported),
               ...(taskId === 'ad-computer' ? ['The Active Directory plugin calls (ActiveDirectory.searchExactMatch, OU.createComputerAD) are as the plugin library workflows use them; VERIFY them against the plugin on your Orchestrator.'] : []),
               ...(taskId === 'dns-record' ? ['The DNS paths default to the Infoblox WAPI (GET record:a?name=, POST record:a {name, ipv4addr}); VERIFY the WAPI version your grid runs, or set lookupPath and recordPath for your DNS API.'] : []),
-              ...(taskId === 'backup-job' ? ['listPath and addPath are placeholders for a backup product REST API; VERIFY both against your product’s API reference before arming the workflow.'] : []),
+              ...(taskId === 'backup-job' ? ['listPath and addPath are placeholders for a backup product REST API; VERIFY both against your product’s API reference before running the workflow.'] : []),
               'The package reads its settings from the configuration element in its own folder (see step 3), not from the path set on the page, which the plain workflow keeps using.',
             ],
           }),
@@ -1745,7 +1745,7 @@ core.notify(settings.webhook, summary);`,
         categoryPath,
         workflow: {
           name: registerName,
-          description: `Registers "${actionName}" in VCF Automation: ${backedBy === 'abx' ? 'the ABX action, ' : ''}the resource action on ${resourceType} (as DRAFT)${approval ? ' and its approval policy' : ''}. What exists is left as it is. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Registers "${actionName}" in VCF Automation: ${backedBy === 'abx' ? 'the ABX action, ' : ''}the resource action on ${resourceType} (as DRAFT)${approval ? ' and its approval policy' : ''}. What exists is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [
             { name: 'resourceActionId', type: 'string', description: 'The resource action id, empty in a dry run' },
@@ -1756,7 +1756,7 @@ core.notify(settings.webhook, summary);`,
         actions: pkgActions,
         config: {
           name: 'Settings',
-          description: `Settings of the ${registerName} workflow${backedBy === 'vro' ? ` and of the ${backingName} workflow` : ''}. Fill vcfaApiToken after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${registerName} workflow${backedBy === 'vro' ? ` and of the ${backingName} workflow` : ''}. Fill vcfaApiToken after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             ...vcfaSettings('vm-apps'),
             ...(hasProject ? [{ name: 'projectName', type: 'string' as const, value: '', description: `The project ${backedBy === 'abx' ? 'that owns the ABX action' : ''}${backedBy === 'abx' && approval ? ' and ' : ''}${approval ? 'the approval policy is scoped to' : ''}` }] : []),
@@ -1846,7 +1846,7 @@ if (newKb === disk.capacityInKB) {
           { rule: 'The backing workflow takes dryRun, default true', because: 'The action passes false explicitly; anything else calling the workflow gets a report.' },
         ],
         dryRun: [
-          `Run the package workflow ${registerName}: until dryRun is set to false in its configuration element it reads what exists, logs every "DRY RUN: would create …" and creates nothing.`,
+          `Run the package workflow ${registerName} with the dryRun input set to true: it reads what exists, logs every "DRY RUN: would create …" and creates nothing.`,
           'Run the backing workflow from the Orchestrator client with dryRun = true against one machine.',
           'Release the action, allow it in a test project’s day-2 policy only, and run it there as a project member.',
         ],
@@ -2070,7 +2070,7 @@ if (newKb === disk.capacityInKB) {
         categoryPath: `ArchToolKit/Policies/${base}`,
         workflow: {
           name: applyName,
-          description: `Creates in VCF Automation the day-2 actions policy "${policyName}"${approvalPolicy ? ' and the approval policy for delete and resize' : ''}, scoped to the project in the configuration element. A policy of the same name and type is left as it is. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Creates in VCF Automation the day-2 actions policy "${policyName}"${approvalPolicy ? ' and the approval policy for delete and resize' : ''}, scoped to the project in the configuration element. A policy of the same name and type is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [{ name: 'summary', type: 'string', description: 'The audit record, JSON' }],
           script: [
@@ -2110,7 +2110,7 @@ core.notify(settings.webhook, summary);`,
         actions: vcfaActions(packageNameOf('vcfa', 'policy', base)),
         config: {
           name: 'Settings',
-          description: `Settings of the ${applyName} workflow. Fill vcfaApiToken${approvalPolicy ? ' and approvers' : ''} after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${applyName} workflow. Fill vcfaApiToken${approvalPolicy ? ' and approvers' : ''} after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             ...vcfaSettings('vm-apps'),
             { name: 'projectName', type: 'string', value: project, description: 'The project the policies are scoped to' },
@@ -2143,7 +2143,7 @@ core.notify(settings.webhook, summary);`,
           { rule: 'Actions listed explicitly', because: 'A policy that allows "*" allows every custom action anybody adds later, without anybody deciding it.' },
         ],
         dryRun: [
-          `Run the package workflow ${applyName}: until dryRun is set to false in its configuration element it finds the project, reads the existing policies, logs every "DRY RUN: would create …" and creates nothing.`,
+          `Run the package workflow ${applyName} with the dryRun input set to true: it finds the project, reads the existing policies, logs every "DRY RUN: would create …" and creates nothing.`,
           'Apply it to a test project first, then log in as a project member and open the Actions menu on a machine. What is offered there is the policy.',
           'GET /policy/api/policies?typeId=com.vmware.policy.deployment.action and read which other policies already cover the project.',
         ],
@@ -2393,7 +2393,7 @@ core.notify(settings.webhook, summary);`,
         categoryPath: `ArchToolKit/Custom resources/${short}`,
         workflow: {
           name: registerName,
-          description: `Registers ${typeName} in VCF Automation: ${backedBy === 'abx' ? 'its ABX actions, ' : ''}the custom resource type (as DRAFT), and the cloud template "${templateName}" with its version 1.0.0. What exists is left as it is. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Registers ${typeName} in VCF Automation: ${backedBy === 'abx' ? 'its ABX actions, ' : ''}the custom resource type (as DRAFT), and the cloud template "${templateName}" with its version 1.0.0. What exists is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [
             { name: 'resourceTypeId', type: 'string', description: 'The custom resource type id, empty in a dry run that would create it' },
@@ -2443,7 +2443,7 @@ core.notify(settings.webhook, summary);`,
         actions: vcfaActions(customPkgName),
         config: {
           name: 'Settings',
-          description: `Settings of the ${registerName} workflow${backedBy === 'vro' ? ' and of the lifecycle workflows' : ''}. Fill vcfaApiToken after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${registerName} workflow${backedBy === 'vro' ? ' and of the lifecycle workflows' : ''}. Fill vcfaApiToken after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             ...vcfaSettings('vm-apps'),
             { name: 'projectName', type: 'string', value: '', description: `The project the template${backedBy === 'abx' ? ' and the ABX actions' : ''} belong to` },
@@ -2506,7 +2506,7 @@ core.notify(settings.webhook, summary);`,
           { rule: 'The workflows take dryRun, default true', because: 'The type passes false; anybody running the workflow by hand gets a report.' },
         ],
         dryRun: [
-          `Run the package workflow ${registerName}: until dryRun is set to false in its configuration element it reads what exists, logs every "DRY RUN: would create …" and creates nothing.`,
+          `Run the package workflow ${registerName} with the dryRun input set to true: it reads what exists, logs every "DRY RUN: would create …" and creates nothing.`,
           'Run each backing workflow from the Orchestrator client with dryRun = true.',
           'Release the type, deploy the template in a test project, then delete the deployment and check the real object is gone.',
         ],
@@ -2717,7 +2717,7 @@ core.notify(settings.webhook, summary);`,
         categoryPath: `ArchToolKit/Namespaces/${base}`,
         workflow: {
           name: nsWorkflow,
-          description: `Requests a Supervisor namespace ${nsName}-… of class ${className} in region ${region}, in the project set in the configuration element, through the CCI API. A namespace this workflow already requested (found by its ${requestLabel} label) is left as it is. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Requests a Supervisor namespace ${nsName}-… of class ${className} in region ${region}, in the project set in the configuration element, through the CCI API. A namespace this workflow already requested (found by its ${requestLabel} label) is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be requested and change nothing' }],
           outputs: [
             { name: 'namespaceName', type: 'string', description: 'The Supervisor namespace, empty in a dry run that would create it' },
@@ -2759,7 +2759,7 @@ core.notify(settings.webhook, summary);`,
         },
         config: {
           name: 'Settings',
-          description: `Settings of the ${nsWorkflow} workflow. Fill vcfaApiToken after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${nsWorkflow} workflow. Fill vcfaApiToken after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             ...vcfaSettings('all-apps'),
             { name: 'projectName', type: 'string', value: '', description: 'The project to request the namespace in (its namespace in VCF Automation, as kubectl shows it)' },
@@ -2790,7 +2790,7 @@ core.notify(settings.webhook, summary);`,
           { rule: 'Name validated as a DNS label', because: 'An invalid name fails at the Supervisor after approval, which is the slowest place to find out.' },
         ],
         dryRun: [
-          `Run the package workflow ${nsWorkflow}: until dryRun is set to false in its configuration element it lists the project's namespaces, logs "DRY RUN: would request …" and requests nothing.`,
+          `Run the package workflow ${nsWorkflow} with the dryRun input set to true: it lists the project's namespaces, logs "DRY RUN: would request …" and requests nothing.`,
           `Run scripts/apply-kubectl.sh --dry-run: a server-side dry run against the CCI endpoint, which checks the class and region exist.`,
           'Request the template in a test project and check the namespace’s limits in vCenter match the class.',
         ],
@@ -3127,7 +3127,7 @@ core.notify(settings.webhook, summary);`,
         categoryPath: `ArchToolKit/VKS/${base}`,
         workflow: {
           name: vksWorkflow,
-          description: `Creates the VKS cluster ${clusterName} (${cpCount} control plane, ${pools.length} pool(s) of ${replicas} ${workerClass}) in the Supervisor namespace set in the configuration element: validated first by the API server (server-side dry run), then created. A cluster of that name is left as it is. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Creates the VKS cluster ${clusterName} (${cpCount} control plane, ${pools.length} pool(s) of ${replicas} ${workerClass}) in the Supervisor namespace set in the configuration element: validated first by the API server (server-side dry run), then created. A cluster of that name is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: validate on the server and change nothing' }],
           outputs: [
             { name: 'clusterName', type: 'string', description: 'The cluster, empty in a dry run that would create it' },
@@ -3182,7 +3182,7 @@ return { "Authorization": "Bearer " + r.body.session_id };`,
         ],
         config: {
           name: 'Settings',
-          description: `Settings of the ${vksWorkflow} workflow. Fill supervisorPassword after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${vksWorkflow} workflow. Fill supervisorPassword after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             { name: 'supervisorHost', type: 'string', value: '', description: 'The Supervisor control plane address (as in kubectl vsphere login --server)' },
             { name: 'supervisorUsername', type: 'string', value: '', description: 'A vSphere SSO account with edit rights on the namespace' },
@@ -3221,7 +3221,7 @@ return { "Authorization": "Bearer " + r.body.session_id };`,
           { rule: 'Server-side dry run before creating', because: 'The Supervisor checks the class, release and VM class binding. It is the fastest way to find a typo in any of them.' },
         ],
         dryRun: [
-          `Run the package workflow ${vksWorkflow}: until dryRun is set to false in its configuration element it sends the Cluster to the Supervisor as a server-side dry run only (?dryRun=All — validated, not persisted), logs "DRY RUN: would create …" and creates nothing.`,
+          `Run the package workflow ${vksWorkflow} with the dryRun input set to true: it sends the Cluster to the Supervisor as a server-side dry run only (?dryRun=All — validated, not persisted), logs "DRY RUN: would create …" and creates nothing.`,
           'Run scripts/apply-kubectl.sh --dry-run: kubectl apply --dry-run=server validates the Cluster against the ClusterClass and the namespace.',
           `kubectl get clusterclass -A and kubectl get kr, and check ${clusterClass} and ${version} are both listed.`,
         ],
@@ -3410,7 +3410,7 @@ return { "Authorization": "Bearer " + r.body.session_id };`,
         categoryPath: `ArchToolKit/Terraform/${base}`,
         workflow: {
           name: tfWorkflow,
-          description: `Imports "${templateName}" into the project set in the configuration element: the repository integration's id filled in, validated on the server, created (or its draft updated) and versioned 1.0.0. A dry run until dryRun is set to false in the configuration element.`,
+          description: `Imports "${templateName}" into the project set in the configuration element: the repository integration's id filled in, validated on the server, created (or its draft updated) and versioned 1.0.0. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: validate and report, change nothing' }],
           outputs: [
             { name: 'templateId', type: 'string', description: 'The template id, empty in a dry run that would create it' },
@@ -3435,7 +3435,7 @@ core.notify(settings.webhook, summary);`,
         actions: vcfaActions(tfPkgName),
         config: {
           name: 'Settings',
-          description: `Settings of the ${tfWorkflow} workflow. Fill vcfaApiToken after import; set dryRun to false only after a dry run.`,
+          description: `Settings of the ${tfWorkflow} workflow. Fill vcfaApiToken after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             ...vcfaSettings('vm-apps'),
             { name: 'projectName', type: 'string', value: '', description: 'The project the template is created in' },
@@ -3471,7 +3471,7 @@ core.notify(settings.webhook, summary);`,
           { rule: 'State held by VCF Automation, not a backend in the configuration', because: 'Two places holding state for the same resources is how they drift and then get destroyed.' },
         ],
         dryRun: [
-          `Run the package workflow ${tfWorkflow}: until dryRun is set to false in its configuration element it resolves the project and the repository integration, has the template validated on the server, logs every "DRY RUN: would …" and imports nothing.`,
+          `Run the package workflow ${tfWorkflow} with the dryRun input set to true: it resolves the project and the repository integration, has the template validated on the server, logs every "DRY RUN: would …" and imports nothing.`,
           `Run terraform init and terraform plan against the directory locally with the same versions — plan is Terraform’s own dry run.`,
           'Then deploy the template in a test project whose cloud zone points at a lab. VCF Automation shows the plan in the deployment’s history before it applies.',
         ],

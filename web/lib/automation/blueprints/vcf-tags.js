@@ -779,9 +779,9 @@ const VC_REQUIRES = [
 const STANDARD_INPUT = {
   id: 'standard',
   label: 'Tag standard',
-  control: 'textarea'         ,
+  control: 'tag-standard'         ,
   default: DEFAULT_STANDARD,
-  hint: 'Category | single or multiple | object types | values | required on | description',
+  hint: 'Pick categories, then their object types and tags. The other tag automations use what you build here.',
 };
 
 const VCENTERS_INPUT = { id: 'vcenters', label: 'vCenters', control: 'text'         , default: DEFAULT_VCENTERS, hint: 'Comma separated. Every script also takes VCENTERS from the environment' };
@@ -1734,7 +1734,7 @@ export const VCF_TAGS                                 = [
           'tag | Environment=prod | BackupPolicy=gold-daily | fill',
         ].join('\n'),
       },
-      { id: 'exclude_tag', label: 'Never touch VMs tagged', control: 'text', default: 'Automation=never', hint: 'Category=Tag. Empty means no escape hatch' },
+      { id: 'exclude_tag', label: 'Never touch VMs tagged', control: 'text', fromTags: 'tag'         , default: 'Automation=never', hint: 'Category=Tag. Empty means no escape hatch' },
       { id: 'max_changes', label: 'Refuse a run that changes more than (VMs)', control: 'number', default: 100, min: 1, max: 20000 },
       { id: 'hour', label: 'Run daily at (hour, server time)', control: 'number', default: 3, min: 0, max: 23 },
       { id: 'scheduled_execute', label: 'Let the scheduled run make changes', control: 'toggle', default: true, hint: 'Off: the schedule only reports what it would do' },
@@ -2071,7 +2071,7 @@ export const VCF_TAGS                                 = [
       VCENTERS_INPUT,
       { id: 'max_problems', label: 'Exit 1 above (problems)', control: 'number', default: 50, min: 0, max: 1000000, hint: 'During a rollout set it to where you are, and lower it as you go' },
       { id: 'cross_vcenter', label: 'Compare the catalogue between vCenters', control: 'toggle', default: true },
-      { id: 'ignore_categories', label: 'Ignore categories', control: 'text', default: '', hint: 'Comma separated, e.g. categories another product owns' },
+      { id: 'ignore_categories', label: 'Ignore categories', control: 'text', fromTags: 'categories'         , default: '', hint: 'Comma separated, e.g. categories another product owns' },
       { id: 'exclude_names', label: 'Ignore objects whose name matches', control: 'text', default: '^vCLS', hint: 'A regular expression; system VMs that are never tagged' },
       { id: 'webhook', label: 'Post a summary to', control: 'text', default: '', hint: 'Optional webhook URL' },
       { id: 'hour', label: 'Run daily at (hour, server time)', control: 'number', default: 6, min: 0, max: 23 },
@@ -2274,7 +2274,7 @@ export const VCF_TAGS                                 = [
         default: 'pull',
       },
       { id: 'adapters', label: 'vCenter adapter ids', control: 'text', default: '', hint: 'Comma separated; ./sync-control.sh --list-adapters shows them. Or set FLEET_ADAPTERS' },
-      { id: 'categories', label: 'Categories', control: 'text', default: 'Environment, Owner, CostCenter', hint: 'For push and disengage', showWhen: { input: 'action', equals: ['push', 'disengage'] } },
+      { id: 'categories', label: 'Categories', control: 'text', fromTags: 'categories'         , default: 'Environment, Owner, CostCenter', hint: 'For push and disengage', showWhen: { input: 'action', equals: ['push', 'disengage'] } },
       { id: 'overwrite', label: 'Overwrite category properties in vCenter on push', control: 'toggle', default: false, showWhen: { input: 'action', equals: ['push'] } },
       { id: 'vcenter', label: 'vCenter to disengage', control: 'text', default: 'vc-wld01.example.com', showWhen: { input: 'action', equals: ['disengage'] } },
     ],
@@ -2873,12 +2873,12 @@ export const VCF_TAGS                                 = [
     inputs: [
       STANDARD_INPUT,
       VCENTERS_INPUT,
-      { id: 'group_category', label: 'VCF Operations custom group per value of', control: 'text', default: 'Environment' },
-      { id: 'placement_category', label: 'VCF Automation placement by', control: 'text', default: 'Environment' },
-      { id: 'nsx_category', label: 'NSX security group per value of', control: 'text', default: 'Application' },
+      { id: 'group_category', label: 'VCF Operations custom group per value of', control: 'text', fromTags: 'category'         , default: 'Environment' },
+      { id: 'placement_category', label: 'VCF Automation placement by', control: 'text', fromTags: 'category'         , default: 'Environment' },
+      { id: 'nsx_category', label: 'NSX security group per value of', control: 'text', fromTags: 'category'         , default: 'Application' },
       { id: 'nsx_sync', label: 'Copy vCenter tags onto NSX (sync script)', control: 'toggle', default: true },
       { id: 'nsx_host', label: 'NSX Manager', control: 'text', default: 'nsx-wld01.example.com' },
-      { id: 'cost_category', label: 'Showback by', control: 'text', default: 'CostCenter' },
+      { id: 'cost_category', label: 'Showback by', control: 'text', fromTags: 'category'         , default: 'CostCenter' },
       { id: 'max_changes', label: 'NSX sync refuses more than (VMs)', control: 'number', default: 200, min: 1, max: 100000, showWhen: { input: 'nsx_sync', equals: ['true'] } },
     ],
     automation: (values                 )             => {
@@ -3324,7 +3324,7 @@ export const VCF_TAGS                                 = [
     inputs: [
       STANDARD_INPUT,
       VCENTERS_INPUT,
-      { id: 'protect', label: 'Never delete from categories', control: 'text', default: '', hint: 'Comma separated, e.g. categories another product creates and expects to find' },
+      { id: 'protect', label: 'Never delete from categories', control: 'text', fromTags: 'categories'         , default: '', hint: 'Comma separated, e.g. categories another product creates and expects to find' },
       { id: 'empty_categories', label: 'Also delete empty categories', control: 'toggle', default: true },
       { id: 'max_deletes', label: 'Refuse a run that deletes more than', control: 'number', default: 25, min: 1, max: 10000 },
     ],
