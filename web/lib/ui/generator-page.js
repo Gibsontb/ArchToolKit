@@ -18,6 +18,7 @@
 
 import { el, append, replace, clear, downloadFile } from './dom.js';
 import { tarGz, zip } from '../kit/archive.js';
+import { buildVroPackage, readPackageSpec } from '../kit/vro-package.js';
 import { card, findingsList } from './components.js';
 import { getTarget, setTarget,               } from '../kit/target.js';
 import { estateOptionsFor } from '../kit/estate.js';
@@ -920,8 +921,14 @@ export function mountGeneratorPage(root             , options                  )
     if (generated === null) {
       children.push(el('p', { class: 'muted', text: options.idleHint }));
     } else {
+      // Orchestrator packages come first, built and signed, one button each:
+      // that is what VCF Automation imports. Their text sources stay below,
+      // folded away, for anyone who wants to review them.
+      const packages = orchestratorPackages(generated);
+      if (packages.length > 0) children.push(packagePanel(packages));
+      const packageSource                = [];
       for (const [filename, body] of Object.entries(generated)) {
-        children.push(
+        (PACKAGE_PATH.test(filename) ? packageSource : children).push(
           el(
             'div',
             { class: 'file-head' },
@@ -959,6 +966,16 @@ export function mountGeneratorPage(root             , options                  )
           el('pre', { class: 'mono code-block' }, body),
         );
       }
+      if (packageSource.length > 0) {
+        children.push(
+          el(
+            'details',
+            { class: 'package-source' },
+            el('summary', { text: `Orchestrator package source — ${packageSource.length / 2} text files, for review only (the buttons above build the importable .package)` }),
+            ...packageSource,
+          ),
+        );
+      }
 
       if (builds && builds.length > 0) children.push(buildsPanel(builds));
 
@@ -989,8 +1006,8 @@ export function mountGeneratorPage(root             , options                  )
             // folder and, for scripts, its executable bit, and anything the
             // target takes as a package inside it is already packaged.
             el('button', {
-              class: 'btn btn-primary',
-              text: 'Download as .zip',
+              class: orchestratorPackages(all).length > 0 ? 'btn' : 'btn btn-primary',
+              text: orchestratorPackages(all).length > 0 ? 'Download everything as .zip (packages, scripts, manual-import files)' : 'Download as .zip',
               attrs: { title: 'Every file with its real name and folder — unzip and import or run as it stands' },
               on: { click: (event       ) => void archive(event.currentTarget                     , '.zip') },
             }),
@@ -1063,4 +1080,87 @@ export function mountGeneratorPage(root             , options                  )
   renderTwo();
   renderThree();
   renderBuildList();
+}
+
+// --- Orchestrator packages ----------------------------------------------------
+
+/** A file inside a package folder: import/<name>.package/<path>. */
+const PACKAGE_PATH = /^(?:.*\/)?[^/]+\.package\//;
+
+                         
+                             
+                        
+                           
+                                         
+ 
+
+/** The package folders in the output, the core library first. */
+function orchestratorPackages(files                                  )                  {
+  const folders = new Map                                ();
+  for (const [path, body] of Object.entries(files)) {
+    const m = /^(?:.*\/)?([^/]+)\.package\/(.+)$/.exec(path);
+    if (!m) continue;
+    const folder = folders.get(m[1] ) ?? {};
+    folder[m[2] ] = body;
+    folders.set(m[1] , folder);
+  }
+  const out                  = [];
+  for (const [name, folder] of folders) {
+    let version = '1.0.0';
+    try {
+      version = String((JSON.parse(folder['package.json'] ?? '{}')                        ).version ?? version);
+    } catch {
+      // readPackageSpec reports a broken package.json when the button is used.
+    }
+    out.push({ name, version, files: folder });
+  }
+  return out.sort((a, b) => (a.name === 'com.archtoolkit.core' ? -1 : b.name === 'com.archtoolkit.core' ? 1 : a.name.localeCompare(b.name)));
+}
+
+function packagePanel(packages                          )              {
+  const download = async (button                   , pkg               ) => {
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Building and signing…';
+    try {
+      const bytes = await buildVroPackage(readPackageSpec(pkg.files));
+      downloadFile(`${pkg.name}-${pkg.version}.package`, bytes, 'application/octet-stream');
+      button.textContent = label;
+    } catch (error) {
+      button.textContent = `Could not build: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      button.disabled = false;
+    }
+  };
+  const core = packages.filter((p) => p.name === 'com.archtoolkit.core');
+  const own = packages.filter((p) => p.name !== 'com.archtoolkit.core');
+  let step = 1;
+  return el(
+    'div',
+    { class: 'callout', style: { marginBottom: 'var(--space-3)' } },
+    el('strong', { text: 'Import into VCF Automation — Orchestrator packages' }),
+    el('p', {
+      text: 'Download each .package and import it: VCF Automation → Orchestrate tab (All Apps organization) or Orchestrator tab (VM Apps organization) → Assets → Packages → Import. Trust the publisher certificate when asked. Then fill the settings (Assets → Configurations) and run the workflow once as a dry run — IMPORT.md, in the zip, has every step.',
+    }),
+    el(
+      'div',
+      { class: 'btn-row' },
+      ...core.map((pkg) =>
+        el('button', {
+          class: 'btn',
+          text: `${step++}. Core library — ${pkg.name}-${pkg.version}.package (import once, first)`,
+          attrs: { title: 'The ArchToolKit core library every automation package uses. Importing it again only updates it.' },
+          on: { click: (event       ) => void download(event.currentTarget                     , pkg) },
+        }),
+      ),
+      ...own.map((pkg) =>
+        el('button', {
+          class: 'btn btn-primary',
+          text: `${step++}. This automation — ${pkg.name}-${pkg.version}.package`,
+          attrs: { title: 'The workflow, its actions, its settings and its payloads, as one signed Orchestrator package' },
+          on: { click: (event       ) => void download(event.currentTarget                     , pkg) },
+        }),
+      ),
+    ),
+  );
 }

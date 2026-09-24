@@ -420,9 +420,21 @@ export async function createSigner(commonName = 'ArchToolKit package signer', wh
 
 // --- the package ------------------------------------------------------------------
 
+let session: Promise<Signer> | null = null;
+
+/**
+ * One signer for the whole page session, so the core library and the
+ * automation package downloaded side by side (or in one zip) are signed by the
+ * same certificate, and Orchestrator asks to trust the publisher once.
+ */
+export function sessionSigner(): Promise<Signer> {
+  session ??= createSigner();
+  return session;
+}
+
 /** Build the .package bytes from a spec. */
 export async function buildVroPackage(spec: VroPackageSpec, signer?: Signer): Promise<Uint8Array> {
-  const s = signer ?? (await createSigner());
+  const s = signer ?? (await sessionSigner());
   const version = spec.version;
   const files: [string, Uint8Array][] = [];
 
