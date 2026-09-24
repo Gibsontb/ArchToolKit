@@ -121,6 +121,40 @@ export function describeSubnet(text        )                         {
   };
 }
 
+/** The classful network an address belongs to — what classic subnet calculators subnet within. */
+export function addressClass(address        )                                                                      {
+  const first = address >>> 24;
+  if (first < 128) return { cls: 'A', prefix: 8, range: '1 – 126' };
+  if (first < 192) return { cls: 'B', prefix: 16, range: '128 – 191' };
+  if (first < 224) return { cls: 'C', prefix: 24, range: '192 – 223' };
+  if (first < 240) return { cls: 'D', prefix: 4, range: '224 – 239 (multicast)' };
+  return { cls: 'E', prefix: 4, range: '240 – 255 (reserved)' };
+}
+
+/** Hosts a prefix holds: /31 two (point-to-point), /32 one, otherwise less network and broadcast. */
+export const hostsFor = (prefix        )         => (prefix >= 31 ? 2 ** (32 - prefix) : 2 ** (32 - prefix) - 2);
+
+/** The address as hex, 0A.14.1E.28, and as dotted binary. */
+export const hexOf = (address        )         =>
+  formatIPv4(address)
+    .split('.')
+    .map((o) => Number(o).toString(16).toUpperCase().padStart(2, '0'))
+    .join('.');
+export const binaryOf = (address        )         => bits(address);
+
+/**
+ * The subnet bitmap classic calculators show: n for network bits of the
+ * class, s for subnet bits, h for host bits, dotted per octet.
+ */
+export function subnetBitmap(parentPrefix        , prefix        )         {
+  let out = '';
+  for (let i = 0; i < 32; i += 1) {
+    if (i && i % 8 === 0) out += '.';
+    out += i < parentPrefix ? 'n' : i < prefix ? 's' : 'h';
+  }
+  return out;
+}
+
                            
                         
                              

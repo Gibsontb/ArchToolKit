@@ -21,6 +21,7 @@
  */
 
 import { info, warning, type Finding } from '../core/findings.ts';
+import { familyOf, isIp, isIpv6 } from '../core/ip.ts';
 import type { Inventory, InventoryVm } from '../vmware/inventory.ts';
 import { assessVm } from '../vmware/vm-readiness.ts';
 import { vmsInScope, type EstateScope } from '../terraform/estate.ts';
@@ -53,6 +54,19 @@ export function vmFolder(vm: InventoryVm): string | undefined {
   return `/${dc}/vm${rest.length > 0 ? `/${rest.join('/')}` : ''}`;
 }
 
+/**
+ * The address Ansible connects to: the primary IP when it is one, else the
+ * first IPv4, else the first routable IPv6. Link-local fe80:: needs an
+ * interface zone that means nothing on the control node, so it is skipped.
+ * ansible_host takes a bare IPv6 literal, no brackets.
+ */
+export function hostAddress(vm: InventoryVm): string | undefined {
+  const usable = (ip: string): boolean => isIp(ip) && !(isIpv6(ip) && /^fe[89ab]/i.test(ip.trim()));
+  if (vm.ipAddress && usable(vm.ipAddress)) return vm.ipAddress.trim();
+  const candidates = (vm.ipAddresses ?? []).map((ip) => ip.trim()).filter(usable);
+  return candidates.find((ip) => familyOf(ip) === 4) ?? candidates[0];
+}
+
 function noEstate(inventory: Inventory | null | undefined, scope: EstateScope): Finding[] {
   if (!inventory) {
     return [
@@ -82,7 +96,7 @@ export function estateInventoryFiles(
   const noAddress: string[] = [];
 
   for (const vm of selected) {
-    const address = vm.ipAddress ?? vm.ipAddresses?.find((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip));
+    const address = hostAddress(vm);
     if (!address) noAddress.push(vm.name);
     const vars: Record<string, YamlValue> = {};
     if (address) vars.ansible_host = address;
@@ -127,7 +141,7 @@ export function estateInventoryFiles(
     findings.push(
       info(
         'estate.ansible.no-address',
-        `${noAddress.length} VM(s) report no IPv4 address (Tools not running, or powered off) and are listed by name only: ${noAddress.slice(0, 5).join(', ')}${noAddress.length > 5 ? '…' : ''}.`,
+        `${noAddress.length} VM(s) report no usable IP address (Tools not running, or powered off) and are listed by name only: ${noAddress.slice(0, 5).join(', ')}${noAddress.length > 5 ? '…' : ''}.`,
         { remediation: 'They resolve through DNS if their names are registered; otherwise add ansible_host by hand.' },
       ),
     );

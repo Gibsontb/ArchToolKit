@@ -14,8 +14,11 @@
  * renamed in a major version fails the test suite rather than a plan.
  */
 
-import type { BlueprintGroup } from '../../kit/blueprint.ts';
+import type { Blueprint, BlueprintGroup, BlueprintValues } from '../../kit/blueprint.ts';
+import { error, warning, type Finding } from '../../core/findings.ts';
+import { familyOf } from '../../core/ip.ts';
 import { moduleBlueprint, type ModuleBlueprintSpec } from '../module-blueprint.ts';
+import { ipv4Range, isOn, listOf } from './dual-stack.ts';
 
 const SPECS: readonly ModuleBlueprintSpec[] = [
   {
@@ -40,6 +43,34 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
       },
       { input: 'enable_dns_hostnames', default: 'true' },
       { input: 'enable_flow_log', default: 'false', hint: 'VPC flow logs to CloudWatch' },
+      {
+        input: 'enable_ipv6',
+        label: 'Dual stack (IPv6)',
+        default: 'false',
+        hint: 'Amazon allocates a /56; subnets take the /64s named below, and private ones route ::/0 to an egress-only gateway',
+      },
+      {
+        input: 'public_subnet_ipv6_prefixes',
+        label: 'Public subnet IPv6 /64s',
+        default: '',
+        hint: 'With dual stack: one /64 index (0-255) of the /56 per public subnet, e.g. 0,1,2',
+      },
+      {
+        input: 'private_subnet_ipv6_prefixes',
+        label: 'Private subnet IPv6 /64s',
+        default: '',
+        hint: 'With dual stack: one index per private subnet, e.g. 3,4,5',
+      },
+      {
+        input: 'public_subnet_assign_ipv6_address_on_creation',
+        label: 'Give public instances an IPv6 address',
+        default: 'false',
+      },
+      {
+        input: 'private_subnet_assign_ipv6_address_on_creation',
+        label: 'Give private instances an IPv6 address',
+        default: 'false',
+      },
     ],
     outputs: ['vpc_id', 'private_subnets', 'public_subnets', 'database_subnet_group', 'nat_public_ips'],
   },
@@ -65,6 +96,12 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
       { input: 'monitoring', label: 'Detailed monitoring', default: 'false' },
       { input: 'create_eip', label: 'Create an elastic IP', default: 'false' },
       { input: 'create_iam_instance_profile', default: 'true' },
+      {
+        input: 'ipv6_address_count',
+        label: 'IPv6 addresses',
+        default: '',
+        hint: 'Blank for none. The subnet must have an IPv6 /64',
+      },
     ],
     outputs: ['id', 'arn', 'private_ip', 'public_ip'],
   },
@@ -82,7 +119,7 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
         input: 'ingress_rules',
         label: 'Ingress rules',
         default: '',
-        hint: 'key=value, comma-separated. Leave blank and add them in the file',
+        hint: 'A map of rules — write it in the file. Each rule takes one cidr_ipv4 or one cidr_ipv6, never both',
       },
       { input: 'egress_rules', default: '' },
     ],
@@ -163,6 +200,18 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
       { input: 'endpoint_public_access', default: 'false', hint: 'Private-only is the safer default' },
       { input: 'enable_irsa', label: 'Enable IRSA', default: 'true' },
       { input: 'create_kms_key', label: 'Create a KMS key for secrets', default: 'true' },
+      {
+        input: 'ip_family',
+        label: 'Pod and service IP family',
+        control: 'select',
+        options: [
+          { value: 'ipv4', label: 'ipv4' },
+          { value: 'ipv6', label: 'ipv6 — needs a dual-stack VPC and the CNI IPv6 policy' },
+        ],
+        default: 'ipv4',
+        hint: 'Set at creation only; changing it replaces the cluster',
+      },
+      { input: 'create_cni_ipv6_iam_policy', label: 'Create the CNI IPv6 policy', default: 'false', hint: 'Needed with ip_family ipv6' },
     ],
     outputs: ['cluster_name', 'cluster_endpoint', 'cluster_certificate_authority_data', 'oidc_provider_arn'],
   },
@@ -282,8 +331,74 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
   },
 ];
 
+/**
+ * The address checks the module cannot make before plan.
+ *
+ * The VPC module indexes the IPv6 prefix lists by subnet position, so a list
+ * shorter than its subnet list fails at plan with an index error, and a list
+ * given without enable_ipv6 has no /56 to carve from.
+ */
+function vpcFindings(values: BlueprintValues): Finding[] {
+  const code = 'terraform.aws_module_vpc';
+  const v6 = isOn(values.enable_ipv6);
+  const findings: Finding[] = [];
+  if (String(values.cidr ?? '').trim()) findings.push(...ipv4Range(values.cidr, 'cidr', 'The VPC CIDR', code));
+  let anyPrefixes = false;
+  for (const tier of ['public', 'private'] as const) {
+    const subnets = listOf(values[`${tier}_subnets`]);
+    for (const s of subnets) {
+      if (familyOf(s) === 6) {
+        findings.push(error(`${code}.ipv4-subnet-required`, `${tier}_subnets takes IPv4 ranges; "${s}" is IPv6. IPv6 goes in ${tier}_subnet_ipv6_prefixes.`, { path: `${tier}_subnets` }));
+      }
+    }
+    const prefixes = listOf(values[`${tier}_subnet_ipv6_prefixes`]);
+    if (prefixes.length === 0) continue;
+    anyPrefixes = true;
+    if (!v6) {
+      findings.push(error(`${code}.ipv6-prefixes-without-ipv6`, `${tier}_subnet_ipv6_prefixes is set but dual stack is off, so there is no /56 to take them from.`, { path: 'enable_ipv6' }));
+    }
+    if (prefixes.some((p) => !/^\d+$/.test(p) || Number(p) > 255)) {
+      findings.push(error(`${code}.ipv6-prefix-index`, `${tier}_subnet_ipv6_prefixes takes /64 indexes from 0 to 255, e.g. 0,1,2.`, { path: `${tier}_subnet_ipv6_prefixes` }));
+    }
+    if (prefixes.length !== subnets.length) {
+      findings.push(error(`${code}.ipv6-prefix-count`, `${tier}_subnet_ipv6_prefixes has ${prefixes.length} entries for ${subnets.length} ${tier} subnet(s); the module needs one each.`, { path: `${tier}_subnet_ipv6_prefixes` }));
+    }
+  }
+  if (v6 && !anyPrefixes) {
+    findings.push(warning(`${code}.ipv6-no-subnet-prefixes`, 'Dual stack is on, but no subnet IPv6 /64s are named, so the VPC gets a /56 and no subnet uses it.', { path: 'public_subnet_ipv6_prefixes' }));
+  }
+  return findings;
+}
+
+/** EKS with ip_family ipv6 needs the CNI's IPv6 policy, or pods get no addresses. */
+function eksFindings(values: BlueprintValues): Finding[] {
+  if (values.ip_family !== 'ipv6' || isOn(values.create_cni_ipv6_iam_policy)) return [];
+  return [
+    warning('terraform.aws_module_eks.ipv6-cni-policy', 'ip_family is ipv6 but the CNI IPv6 policy is not created; the VPC CNI cannot assign pod addresses without it.', {
+      path: 'create_cni_ipv6_iam_policy',
+    }),
+  ];
+}
+
+const CHECKS: Readonly<Record<string, (values: BlueprintValues) => Finding[]>> = {
+  aws_module_vpc: vpcFindings,
+  aws_module_eks: eksFindings,
+};
+
+function checked(blueprint: Blueprint): Blueprint {
+  const check = CHECKS[blueprint.id];
+  if (!check) return blueprint;
+  return {
+    ...blueprint,
+    build: (values, name) => {
+      const out = blueprint.build(values, name);
+      return { ...out, findings: [...(out.findings ?? []), ...check(values)] };
+    },
+  };
+}
+
 export const AWS_TERRAFORM_MODULES: BlueprintGroup = {
   target: 'aws',
   label: 'Amazon Web Services (AWS)',
-  blueprints: SPECS.map((spec) => moduleBlueprint('aws', spec)),
+  blueprints: SPECS.map((spec) => checked(moduleBlueprint('aws', spec))),
 };

@@ -23,6 +23,8 @@ import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, info, warning,              } from '../../core/findings.js';
 import { splunkBlueprint,                      } from '../from-app.js';
 import { listOf, splunkName,                } from '../splunk.js';
+import { containsAny, familyOf, parseCidrAny,             } from '../../core/ip.js';
+import { parseIPv4 } from '../../core/net.js';
 
 const TIER = 'cloud'         ;
 
@@ -71,58 +73,46 @@ export function stackFindings(stack        )            {
 /** Index names Splunk accepts: lower case, digits, _ and -, not starting with _ or -. */
 export const INDEX_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
-/** A parsed IPv4 CIDR, or why it is not one. */
+/**
+ * A parsed IPv4 or IPv6 CIDR, or why it is not one. ACS keeps the two families
+ * in separate lists (ipallowlists and ipallowlists-v6), so the family decides
+ * which list an entry goes to.
+ */
                 
                         
                        
                             
+                           
                             
                            
                               
  
 
-function ipToInt(ip        )                     {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return undefined;
-  let n = 0;
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return undefined;
-    const v = Number(part);
-    if (v > 255) return undefined;
-    n = n * 256 + v;
-  }
-  return n;
-}
-
-function intToIp(n        )         {
-  return [24, 16, 8, 0].map((s) => Math.floor(n / 2 ** s) % 256).join('.');
-}
-
 function parseCidr(text        )       {
   const t = text.trim();
-  if (t.includes(':')) return { text: t, ok: false, problem: 'IPv6 — ACS IP allow lists take IPv4 subnets (VERIFY whether your stack’s release adds IPv6 lists)' };
-  const [ip, bits, extra] = t.split('/');
+  const [ip = '', bits, extra] = t.split('/');
   if (extra !== undefined) return { text: t, ok: false, problem: 'not a CIDR' };
-  const addr = ipToInt(ip ?? '');
-  if (addr === undefined) return { text: t, ok: false, problem: 'not an IPv4 address' };
-  if (bits === undefined) return { text: t, ok: false, problem: `no prefix length — write ${t}/32 for a single address` };
-  if (!/^\d{1,2}$/.test(bits) || Number(bits) > 32) return { text: t, ok: false, problem: 'prefix length must be 0–32' };
-  const prefix = Number(bits);
-  const size = 2 ** (32 - prefix);
-  const network = Math.floor(addr / size) * size;
-  return { text: t, ok: true, network: intToIp(network), prefix, hostBits: network !== addr };
+  const family = familyOf(ip);
+  if (family === null) return { text: t, ok: false, problem: 'not an IPv4 or IPv6 address' };
+  const max = family === 6 ? 128 : 32;
+  if (bits === undefined) return { text: t, ok: false, problem: `no prefix length — write ${t}/${max} for a single address` };
+  if (!/^\d{1,3}$/.test(bits) || Number(bits) > max) return { text: t, ok: false, problem: `prefix length must be 0–${max}` };
+  const c = parseCidrAny(t) ;
+  return { text: t, ok: true, family, network: c.network, prefix: c.prefix, hostBits: family === 6 ? c.network !== c.address : parseIPv4(c.address) !== parseIPv4(c.network) };
 }
+
+/** Where the source address Splunk Cloud sees can never be, for each family. */
+const NON_PUBLIC                                    = {
+  // Private, shared (CGNAT), loopback and link-local.
+  4: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16'],
+  // Unique local (fc00::/7), link-local, loopback and IPv4-mapped.
+  6: ['fc00::/7', 'fe80::/10', '::1/128', '::ffff:0:0/96'],
+};
 
 /** Private, shared, loopback and link-local space: never the source address Splunk Cloud sees. */
 function isNonPublic(c      )          {
-  if (!c.ok || c.network === undefined || c.prefix === undefined) return false;
-  const n = ipToInt(c.network) ;
-  const inside = (base        , bits        ) => {
-    const b = ipToInt(base) ;
-    const size = 2 ** (32 - bits);
-    return c.prefix  >= bits && Math.floor(n / size) * size === b;
-  };
-  return inside('10.0.0.0', 8) || inside('172.16.0.0', 12) || inside('192.168.0.0', 16) || inside('100.64.0.0', 10) || inside('127.0.0.0', 8) || inside('169.254.0.0', 16);
+  if (!c.ok || c.network === undefined || c.prefix === undefined || c.family === undefined) return false;
+  return NON_PUBLIC[c.family].some((base) => c.prefix  >= Number(base.split('/')[1]) && containsAny(base, c.network ));
 }
 
 function cidrFindings(list                   , what        , codePrefix        )            {
@@ -136,7 +126,7 @@ function cidrFindings(list                   , what        , codePrefix        )
     }
     if (c.prefix === 0) {
       findings.push(
-        error(`${codePrefix}-open`, `${what}: ${raw} allows every address on the internet. That is the state an allow list exists to end.`, {
+        error(`${codePrefix}-open`, `${what}: ${raw} allows every ${c.family === 6 ? 'IPv6 ' : ''}address on the internet. That is the state an allow list exists to end.`, {
           remediation: 'List the public egress addresses of the networks that need access — the NAT gateways, proxies and VPN concentrators — as /32s or small ranges.',
           source: 'ArchToolKit',
         }),
@@ -144,17 +134,28 @@ function cidrFindings(list                   , what        , codePrefix        )
       continue;
     }
     if (c.hostBits) {
-      findings.push(error(`${codePrefix}-host-bits`, `${what}: ${raw} has host bits set; the network is ${c.network}/${c.prefix}. Write that, or ${raw.split('/')[0]}/32 if one address was meant.`, { source: 'ArchToolKit' }));
+      findings.push(error(`${codePrefix}-host-bits`, `${what}: ${raw} has host bits set; the network is ${c.network}/${c.prefix}. Write that, or ${raw.split('/')[0]}/${c.family === 6 ? 128 : 32} if one address was meant.`, { source: 'ArchToolKit' }));
     }
-    if (c.prefix  < 16) {
+    if (c.family === 4 && c.prefix  < 16) {
       findings.push(warning(`${codePrefix}-wide`, `${what}: ${raw} is ${(2 ** (32 - c.prefix )).toLocaleString('en-US')} addresses. A range that wide usually means a cloud provider’s whole block — every other tenant in it gets through too.`, { source: 'ArchToolKit' }));
+    }
+    // An IPv6 site is a /48 and an ISP allocation a /32: anything wider is
+    // someone's whole network, not yours.
+    if (c.family === 6 && c.prefix  < 32) {
+      findings.push(warning(`${codePrefix}-wide`, `${what}: ${raw} is wider than a whole ISP allocation (/32). A range that wide usually means a provider’s block — every other customer in it gets through too.`, { source: 'ArchToolKit' }));
     }
     if (isNonPublic(c)) {
       findings.push(
-        warning(`${codePrefix}-private`, `${what}: ${raw} is private or non-routable address space. Splunk Cloud sees your traffic after NAT, from a public address, so this entry never matches anything (unless the stack is reached over AWS PrivateLink — VERIFY).`, {
-          remediation: 'Find the public egress address: curl https://checkip.amazonaws.com from the network in question.',
-          source: 'ArchToolKit',
-        }),
+        warning(
+          `${codePrefix}-private`,
+          c.family === 6
+            ? `${what}: ${raw} is unique-local, link-local or otherwise non-routable IPv6. Splunk Cloud sees your global IPv6 address, so this entry never matches anything (unless the stack is reached over AWS PrivateLink — VERIFY).`
+            : `${what}: ${raw} is private or non-routable address space. Splunk Cloud sees your traffic after NAT, from a public address, so this entry never matches anything (unless the stack is reached over AWS PrivateLink — VERIFY).`,
+          {
+            remediation: c.family === 6 ? 'Find the global egress address: curl -6 https://api6.ipify.org from the network in question.' : 'Find the public egress address: curl https://checkip.amazonaws.com from the network in question.',
+            source: 'ArchToolKit',
+          },
+        ),
       );
     }
     const key = `${c.network}/${c.prefix}`;
@@ -904,12 +905,12 @@ export const CLOUD_BLUEPRINTS                             = [
         { value: 'idm-api', label: 'idm-api — Inputs Data Manager API, 8089' },
         { value: 'idm-ui', label: 'idm-ui — Inputs Data Manager UI, 443' },
       ] },
-      { id: 'subnets', label: 'Subnets', control: 'textarea', default: '203.0.113.0/24\n198.51.100.17/32', hint: 'Public IPv4 CIDRs, one per line' },
-      { id: 'remove_open', label: 'Remove 0.0.0.0/0 once these are in place', control: 'toggle', default: true },
+      { id: 'subnets', label: 'Subnets', control: 'textarea', default: '203.0.113.0/24\n198.51.100.17/32', hint: 'Public IPv4 or IPv6 CIDRs, one per line; IPv6 goes to the separate IPv6 list' },
+      { id: 'remove_open', label: 'Remove 0.0.0.0/0 (and ::/0) once these are in place', control: 'toggle', default: true },
       { id: 'exact', label: 'Remove anything else not listed', control: 'toggle', default: false },
       { id: 'outbound', label: 'Also open an outbound port', control: 'toggle', default: false },
       { id: 'outbound_port', label: 'Outbound port', control: 'number', default: 8089, min: 1, max: 65535, showWhen: { input: 'outbound', equals: ['true'] } },
-      { id: 'outbound_subnets', label: 'Outbound destinations', control: 'textarea', default: '198.51.100.40/32', showWhen: { input: 'outbound', equals: ['true'] } },
+      { id: 'outbound_subnets', label: 'Outbound destinations', control: 'textarea', default: '198.51.100.40/32', hint: 'IPv4 CIDRs', showWhen: { input: 'outbound', equals: ['true'] } },
       { id: 'outbound_reason', label: 'Reason', control: 'text', default: 'Federated search to on-premises Splunk', showWhen: { input: 'outbound', equals: ['true'] } },
     ],
     app: (values                 )            => {
@@ -925,12 +926,18 @@ export const CLOUD_BLUEPRINTS                             = [
       const outReason = str(values, 'outbound_reason', '');
       const findings            = [...stackFindings(stack), ...cidrFindings(subnets, `${feature} allow list`, 'splunk.acs-allowlist')];
 
-      const valid = subnets.map(parseCidr).filter((c) => c.ok && c.prefix  > 0).map((c) => `${c.network}/${c.prefix}`);
-      const unique = [...new Set(valid)];
+      // IPv4 subnets go to ipallowlists, IPv6 to ipallowlists-v6: two lists,
+      // two files, never one request mixing families.
+      const parsed = subnets.map(parseCidr).filter((c) => c.ok && c.prefix  > 0);
+      const unique = [...new Set(parsed.filter((c) => c.family === 4).map((c) => `${c.network}/${c.prefix}`))];
+      const unique6 = [...new Set(parsed.filter((c) => c.family === 6).map((c) => `${c.network}/${c.prefix}`))];
+      const total = unique.length + unique6.length;
       if (subnets.length === 0) {
         findings.push(error('splunk.acs-allowlist-empty', `No subnets for ${feature}. An empty allow list blocks everyone.`, { source: 'ArchToolKit' }));
       }
-      if (unique.length > 200) findings.push(error('splunk.acs-allowlist-limit', `${unique.length} subnets; ACS allows 200 per feature (230 per group on AWS). Summarise into larger ranges.`, { source: 'ArchToolKit' }));
+      for (const [list, name] of [[unique, 'IPv4'], [unique6, 'IPv6']]         ) {
+        if (list.length > 200) findings.push(error('splunk.acs-allowlist-limit', `${list.length} ${name} subnets; ACS allows 200 per feature (230 per group on AWS). Summarise into larger ranges.`, { source: 'ArchToolKit' }));
+      }
       if (!removeOpen && !exact) {
         findings.push(
           warning('splunk.acs-allowlist-still-open', `Most allow lists start as 0.0.0.0/0. Adding subnets without removing it changes nothing: ${feature} stays open to the internet.`, {
@@ -943,12 +950,17 @@ export const CLOUD_BLUEPRINTS                             = [
         findings.push(info('splunk.acs-allowlist-lockout', `Closing ${feature} to these subnets locks out every other address — including yours if you run this from outside them. The script checks your own public address first and refuses unless it is covered.`, { source: 'ArchToolKit' }));
       }
       if (outbound) {
-        findings.push(...cidrFindings(outSubnets, `outbound port ${outPort}`, 'splunk.acs-outbound'));
+        // Outbound ports take IPv4 destinations; ACS documents no IPv6 form for them.
+        const out6 = outSubnets.filter((s) => familyOf(s.split('/')[0] ?? '') === 6);
+        for (const s of out6) {
+          findings.push(error('splunk.acs-outbound-ipv6', `outbound port ${outPort}: ACS outbound ports on Splunk Cloud do not support IPv6 (${s}).`, { remediation: 'Give the destination’s IPv4 address. VERIFY: IPv6 outbound ports in the ACS endpoint reference for your stack’s release.', source: 'ArchToolKit' }));
+        }
+        findings.push(...cidrFindings(outSubnets.filter((s) => !out6.includes(s)), `outbound port ${outPort}`, 'splunk.acs-outbound'));
         if (outSubnets.length === 0) findings.push(error('splunk.acs-outbound-empty', 'An outbound port needs at least one destination subnet.', { source: 'ArchToolKit' }));
         if (outPort < 1 || outPort > 65535) findings.push(error('splunk.acs-outbound-port', `${outPort} is not a port.`, { source: 'ArchToolKit' }));
         if (!outReason) findings.push(warning('splunk.acs-outbound-no-reason', 'No reason: the rule will be in place long after anyone remembers why.', { source: 'ArchToolKit' }));
       }
-      const outValid = [...new Set(outSubnets.map(parseCidr).filter((c) => c.ok && c.prefix  > 0).map((c) => `${c.network}/${c.prefix}`))];
+      const outValid = [...new Set(outSubnets.map(parseCidr).filter((c) => c.ok && c.family === 4 && c.prefix  > 0).map((c) => `${c.network}/${c.prefix}`))];
 
       const sh = [
         '#!/usr/bin/env bash',
@@ -961,7 +973,8 @@ export const CLOUD_BLUEPRINTS                             = [
         '# options:',
         `#   --feature F              search-api search-ui hec s2s idm-api idm-ui (default ${feature})`,
         '#   --subnets-file F         one CIDR per line (default allowlist-<feature>.txt beside this script)',
-        `#   --remove-open            remove 0.0.0.0/0 after the subnets are in place${removeOpen ? ' (on by default here)' : ''}`,
+        '#   --ipv6                   the IPv6 list (ipallowlists-v6) from allowlist-<feature>-v6.txt',
+        `#   --remove-open            remove 0.0.0.0/0 (::/0 with --ipv6) after the subnets are in place${removeOpen ? ' (on by default here)' : ''}`,
         `#   --exact                  also remove every subnet not in the file${exact ? ' (on by default here)' : ''}`,
         '#   --allow-lockout          skip the check that your own address stays allowed',
         '#   --stack S  --token-file F  --dry-run (apply and outbound-apply only preview)',
@@ -977,15 +990,18 @@ export const CLOUD_BLUEPRINTS                             = [
           '--keep-open) REMOVE_OPEN=0; shift ;;',
           '--exact) EXACT=1; shift ;;',
           '--allow-lockout) ALLOW_LOCKOUT=1; shift ;;',
-        ]).flatMap((line) => (line.startsWith('CMD=') ? [`FEATURE=${shq(feature)}; SUBNETS_FILE=""; REMOVE_OPEN=${removeOpen ? 1 : 0}; EXACT=${exact ? 1 : 0}; ALLOW_LOCKOUT=0`, line] : [line])),
+          '--ipv6) V6=1; shift ;;',
+        ]).flatMap((line) => (line.startsWith('CMD=') ? [`FEATURE=${shq(feature)}; SUBNETS_FILE=""; REMOVE_OPEN=${removeOpen ? 1 : 0}; EXACT=${exact ? 1 : 0}; ALLOW_LOCKOUT=0; V6=0`, line] : [line])),
         '',
         ...acsPrelude(),
         '',
-        'case "$CMD" in help|-h|--help) sed -n "2,20p" "$0"; exit 0 ;; esac',
+        'case "$CMD" in help|-h|--help) sed -n "2,21p" "$0"; exit 0 ;; esac',
         'case "$FEATURE" in search-api|search-ui|hec|s2s|idm-api|idm-ui) ;; *) die "unknown feature $FEATURE" ;; esac',
         'setup_acs',
-        '[ -n "$SUBNETS_FILE" ] || SUBNETS_FILE="$HERE/allowlist-$FEATURE.txt"',
-        'AL="/access/$FEATURE/ipallowlists"',
+        '# IPv4 and IPv6 are separate lists on the stack: ipallowlists and ipallowlists-v6.',
+        'if [ "$V6" = 1 ]; then SUFFIX=-v6; OPEN="::/0"; else SUFFIX=""; OPEN="0.0.0.0/0"; fi',
+        '[ -n "$SUBNETS_FILE" ] || SUBNETS_FILE="$HERE/allowlist-$FEATURE$SUFFIX.txt"',
+        'AL="/access/$FEATURE/ipallowlists$SUFFIX"',
         '',
         'ip2int() { local IFS=.; set -- $1; echo $(( ($1 << 24) + ($2 << 16) + ($3 << 8) + $4 )); }',
         '# valid_cidr A.B.C.D/N: an IPv4 network with no host bits set.',
@@ -1003,6 +1019,18 @@ export const CLOUD_BLUEPRINTS                             = [
         '  local mask=$(( bits == 0 ? 0 : (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))',
         '  [ $(( $(ip2int "$ip") & mask )) -eq $(( $(ip2int "$net") & mask )) ]',
         '}',
+        '# IPv6 with python3 (ipaddress) when it is there: a full check, and one written',
+        '# form (compressed, lower case) so the file and the stack\'s list compare line by',
+        '# line. Without python3 only the shape is checked and case is folded.',
+        'valid_cidr6() {',
+        '  if command -v python3 >/dev/null; then python3 -c \'import ipaddress,sys; ipaddress.IPv6Network(sys.argv[1], strict=True)\' "$1" 2>/dev/null; return; fi',
+        '  [[ "$1" =~ ^[0-9A-Fa-f:]+/[0-9]{1,3}$ ]] && [[ "$1" == *:*:* ]] && [ "${1#*/}" -le 128 ]',
+        '}',
+        'in_cidr6() { python3 -c \'import ipaddress,sys; sys.exit(0 if ipaddress.ip_address(sys.argv[1]) in ipaddress.ip_network(sys.argv[2], strict=False) else 1)\' "$1" "$2" 2>/dev/null; }',
+        'canon6() { if command -v python3 >/dev/null; then python3 -c \'import ipaddress,sys; [print(ipaddress.ip_network(l.strip(), strict=False)) for l in sys.stdin if l.strip()]\'; else tr "A-F" "a-f"; fi; }',
+        'valid() { if [ "$V6" = 1 ]; then valid_cidr6 "$1"; else valid_cidr "$1"; fi; }',
+        'in_net() { if [ "$V6" = 1 ]; then in_cidr6 "$1" "$2"; else in_cidr "$1" "$2"; fi; }',
+        'canon() { if [ "$V6" = 1 ]; then canon6; else cat; fi; }',
         '',
         'read_list() {',
         '  [ -f "$1" ] || die "not found: $1"',
@@ -1011,9 +1039,9 @@ export const CLOUD_BLUEPRINTS                             = [
         '  while IFS= read -r c || [ -n "$c" ]; do',
         '    c=\${c%%#*}; c=\${c//[[:space:]]/}',
         '    [ -n "$c" ] || continue',
-        '    if valid_cidr "$c"; then echo "$c" >> "$WORK/list.raw"; else note "invalid CIDR (or host bits set): $c"; bad=1; fi',
+        '    if valid "$c"; then echo "$c" >> "$WORK/list.raw"; else note "invalid CIDR (or host bits set): $c"; bad=1; fi',
         '  done < "$1"',
-        '  sort -u "$WORK/list.raw"',
+        '  canon < "$WORK/list.raw" | sort -u',
         '  return $bad',
         '}',
         '',
@@ -1023,14 +1051,14 @@ export const CLOUD_BLUEPRINTS                             = [
         '# response without a subnets array fails: it never reads as an empty list.',
         'live_list() {',
         '  acs GET "$AL" > "$WORK/live.json" || return 1',
-        '  jq -r \'if (.subnets | type) == "array" then .subnets[] else error("no subnets array") end\' "$WORK/live.json" | sort -u > "$WORK/live"',
+        '  jq -r \'if (.subnets | type) == "array" then .subnets[] else error("no subnets array") end\' "$WORK/live.json" | canon | sort -u > "$WORK/live"',
         '}',
         '# Read-back checks for wait_applied: every line of FILE on the list / none of them.',
         'all_present() { live_list || return 1; comm -13 "$WORK/live" "$1" > "$WORK/missing"; [ ! -s "$WORK/missing" ]; }',
         'all_absent() { live_list || return 1; comm -12 "$WORK/live" "$1" > "$WORK/still"; [ ! -s "$WORK/still" ]; }',
         'outbound_visible() { acs GET "/access/outbound-ports/$1" > /dev/null 2>&1; }',
         '# covers IP FILE: some CIDR in FILE contains IP.',
-        'covers() { local c; while IFS= read -r c; do [ -n "$c" ] && in_cidr "$1" "$c" && return 0; done < "$2"; return 1; }',
+        'covers() { local c; while IFS= read -r c; do [ -n "$c" ] && in_net "$1" "$c" && return 0; done < "$2"; return 1; }',
         '',
         'case "$CMD" in',
         '  show)',
@@ -1040,12 +1068,12 @@ export const CLOUD_BLUEPRINTS                             = [
         '  plan|apply)',
         '    read_list "$SUBNETS_FILE" > "$WORK/desired" || die "fix the subnets file first"',
         '    [ -s "$WORK/desired" ] || die "$SUBNETS_FILE is empty; an empty allow list blocks everyone"',
-        '    grep -qx "0.0.0.0/0" "$WORK/desired" && die "$SUBNETS_FILE contains 0.0.0.0/0"',
+        '    grep -qx "$OPEN" "$WORK/desired" && die "$SUBNETS_FILE contains $OPEN"',
         '    live_list || die "could not read the $FEATURE allow list; not planning against a guess"',
         '    cp "$WORK/live" "$WORK/current"',
         '    comm -13 "$WORK/current" "$WORK/desired" > "$WORK/add"',
         '    : > "$WORK/remove"',
-        '    if [ "$REMOVE_OPEN" = 1 ]; then grep -x "0.0.0.0/0" "$WORK/current" >> "$WORK/remove" || true; fi',
+        '    if [ "$REMOVE_OPEN" = 1 ]; then grep -x "$OPEN" "$WORK/current" >> "$WORK/remove" || true; fi',
         '    if [ "$EXACT" = 1 ]; then comm -23 "$WORK/current" "$WORK/desired" >> "$WORK/remove"; fi',
         '    sort -u -o "$WORK/remove" "$WORK/remove"',
         '    sort -u "$WORK/current" "$WORK/add" | comm -23 - "$WORK/remove" > "$WORK/after"',
@@ -1056,7 +1084,17 @@ export const CLOUD_BLUEPRINTS                             = [
         '    [ "$(wc -l < "$WORK/after")" -le 200 ] || die "more than 200 subnets after the change; ACS will refuse"',
         '    # The search-api and search-ui lists also decide whether you can get back in.',
         '    ME=""',
-        '    if [[ "$FEATURE" == search-* ]] && [ -s "$WORK/remove" ] && [ "$ALLOW_LOCKOUT" != 1 ]; then',
+        '    if [[ "$FEATURE" == search-* ]] && [ -s "$WORK/remove" ] && [ "$ALLOW_LOCKOUT" != 1 ] && [ "$V6" = 1 ]; then',
+        '      # The IPv6 list decides access only for a host that reaches the stack over IPv6.',
+        '      ME=$(curl -6 -fsS --max-time 10 https://api6.ipify.org | tr -d "[:space:]") || ME=""',
+        '      if [ -z "$ME" ]; then',
+        '        echo "  (this host has no public IPv6 address; the IPv6 list does not decide its access)"',
+        '      else',
+        '        command -v python3 >/dev/null || die "python3 is needed to check $ME against the IPv6 list; pass --allow-lockout if you are sure"',
+        '        covers "$ME" "$WORK/after" || die "this host ($ME) would not be in the IPv6 $FEATURE list afterwards. Add it, or pass --allow-lockout if you reach the stack another way."',
+        '        echo "  (this host, $ME, stays allowed)"',
+        '      fi',
+        '    elif [[ "$FEATURE" == search-* ]] && [ -s "$WORK/remove" ] && [ "$ALLOW_LOCKOUT" != 1 ]; then',
         '      ME=$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d "[:space:]") || die "could not find this host\'s public address; pass --allow-lockout if you are sure"',
         '      [[ "$ME" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]] || die "checkip.amazonaws.com returned \'$ME\', not an IPv4 address; pass --allow-lockout if you are sure"',
         '      covers "$ME" "$WORK/after" || die "this host ($ME) would not be in the $FEATURE list afterwards. Add it, or pass --allow-lockout if you reach the stack another way."',
@@ -1115,7 +1153,7 @@ export const CLOUD_BLUEPRINTS                             = [
 
       return {
         tier: TIER,
-        title: `${feature} allow list on ${stack}: ${unique.length} subnet${unique.length === 1 ? '' : 's'}${outbound ? `, outbound ${outPort}` : ''}`,
+        title: `${feature} allow list on ${stack}: ${total} subnet${total === 1 ? '' : 's'}${unique6.length > 0 ? ` (${unique6.length} IPv6)` : ''}${outbound ? `, outbound ${outPort}` : ''}`,
         app,
         activation: 'reload',
         notes: [
@@ -1124,15 +1162,25 @@ export const CLOUD_BLUEPRINTS                             = [
           `Changes take several minutes to apply (the script waits for the stack to report Ready). ${feature} controls port ${ports[feature]}.`,
           'Each list is separate: allowing an address on search-ui does not let it use the REST API (search-api), send HEC, or connect forwarders (s2s). Forwarders also need the Cloud universal forwarder credentials app; allowing s2s is only the network half.',
           ...(outbound ? [`Outbound port ${outPort} lets the stack connect out to ${outValid.join(', ')}. A rule cannot be edited — to change its destinations, delete and recreate it.`] : []),
+          ...(unique6.length > 0
+            ? [
+                `IPv6: ${unique6.length} subnet${unique6.length === 1 ? '' : 's'} in ops/allowlist-${feature}-v6.txt go to the separate IPv6 list (…/access/${feature}/ipallowlists-v6), applied with --ipv6. The IPv4 and IPv6 lists are independent: a client is checked against the list of the family it connects with.`,
+                'VERIFY: that your stack offers the IPv6 list for this feature (GET …/ipallowlists-v6 answers), and the acs CLI option for IPv6 lists (acs ip-allowlist --help).',
+              ]
+            : []),
         ],
         before: [
           `bash ops/acs-network.sh show --feature ${feature} --stack ${stack}   # save this output: it is the back-out`,
           `bash ops/acs-network.sh plan --feature ${feature} --stack ${stack}`,
           'curl -fsS https://checkip.amazonaws.com   # the address this host is seen from',
+          ...(unique6.length > 0
+            ? [`bash ops/acs-network.sh show --ipv6 --feature ${feature} --stack ${stack}   # the IPv6 list, also the back-out`, `bash ops/acs-network.sh plan --ipv6 --feature ${feature} --stack ${stack}`, 'curl -6 -fsS https://api6.ipify.org   # the IPv6 address this host is seen from, if it has one']
+            : []),
         ],
         files: {
           'default/app.conf': kitConf(app, `ACS network access for ${stack}`),
-          [`ops/allowlist-${feature}.txt`]: [`# ${feature} allow list for ${stack}. One public IPv4 CIDR per line.`, ...unique],
+          ...(unique.length > 0 || unique6.length === 0 ? { [`ops/allowlist-${feature}.txt`]: [`# ${feature} allow list for ${stack}. One public IPv4 CIDR per line.`, ...unique] } : {}),
+          ...(unique6.length > 0 ? { [`ops/allowlist-${feature}-v6.txt`]: [`# ${feature} IPv6 allow list for ${stack}. One global IPv6 CIDR per line; applied with --ipv6.`, ...unique6] } : {}),
           'ops/acs-network.sh': sh,
           ...(outbound
             ? { 'ops/outbound-ports.spec': ['# The outbound rule sent to ACS: JSON after these comment lines, which the script strips.', ...JSON.stringify({ outboundPorts: [{ subnets: outValid, port: outPort }], reason: outReason }, null, 2).split('\n')] }
@@ -1140,23 +1188,27 @@ export const CLOUD_BLUEPRINTS                             = [
           'ops/acs-cli.txt': [
             '# acs CLI equivalents (token from STACK_TOKEN). VERIFY flags with --help.',
             `acs ip-allowlist describe ${feature}`,
-            `acs ip-allowlist create ${feature} --subnets ${unique.join(',')}`,
+            ...(unique.length > 0 || unique6.length === 0 ? [`acs ip-allowlist create ${feature} --subnets ${unique.join(',')}`] : []),
             ...(removeOpen ? [`acs ip-allowlist delete ${feature} --subnets 0.0.0.0/0   # only after the create has applied`] : []),
+            ...(unique6.length > 0 ? [`# IPv6 (${unique6.join(',')}): use acs-network.sh --ipv6 or the REST path below; VERIFY the CLI's IPv6 option with acs ip-allowlist --help.`] : []),
             ...(outbound ? [`acs outbound-port create ${outPort} --subnets ${outValid.join(',')}`, `acs outbound-port describe ${outPort}`] : []),
             'acs status current-stack',
             '',
             '# REST: GET/POST/DELETE https://admin.splunk.com/{stack}/adminconfig/v2/access/{feature}/ipallowlists  body {"subnets": [...]}',
+            ...(unique6.length > 0 ? ['#       GET/POST/DELETE https://admin.splunk.com/{stack}/adminconfig/v2/access/{feature}/ipallowlists-v6  body {"subnets": [...]} (IPv6)'] : []),
             '#       POST https://admin.splunk.com/{stack}/adminconfig/v2/access/outbound-ports  body {"outboundPorts": [{"subnets": [...], "port": N}], "reason": "..."}',
           ],
         },
         verify: [
           `bash ops/acs-network.sh plan --feature ${feature} --stack ${stack}   # "no change"`,
           `nc -vz -w 5 ${probeHost} ${ports[feature]}   # from an allowed network: open; from elsewhere: times out`,
+          ...(unique6.length > 0 ? [`bash ops/acs-network.sh plan --ipv6 --feature ${feature} --stack ${stack}   # "no change"`, `nc -6 -vz -w 5 ${probeHost} ${ports[feature]}   # over IPv6, from an allowed IPv6 network`] : []),
           ...(outbound ? [`bash ops/acs-network.sh outbound-plan --stack ${stack}`] : []),
         ],
         backout: [
           `# Put back the subnets from the "show" output taken before: write them to a file and run`,
           `bash ops/acs-network.sh apply --feature ${feature} --subnets-file before.txt --exact --keep-open --stack ${stack}`,
+          ...(unique6.length > 0 ? [`bash ops/acs-network.sh apply --ipv6 --feature ${feature} --subnets-file before-v6.txt --exact --keep-open --stack ${stack}`] : []),
           '# In an emergency (locked out of search-api and search-ui): the Splunk Cloud Admin UI is also blocked, so open a P1 case with Splunk Support to restore access.',
           ...(outbound ? [`acs outbound-port delete ${outPort} --subnets ${outValid.join(',')}`] : []),
         ],

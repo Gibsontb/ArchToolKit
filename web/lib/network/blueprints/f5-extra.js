@@ -15,7 +15,9 @@
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint, withPush,                      } from '../from-change.js';
-import { isIpv4, listOf,                   } from '../device.js';
+import { listOf,                   } from '../device.js';
+import { byFamily, formatHostPort, isIp, urlHost } from '../../core/ip.js';
+import { as3Members, parseMembers, tmshMember, virtualFindings } from './f5-common.js';
 
 const PLATFORM = 'f5'         ;
 
@@ -41,19 +43,6 @@ function declaration(tenant        , application        , label        , body   
 }
 
 const clean = (value        , fallback        )         => (str({ v: value }, 'v', fallback) || fallback).replace(/[^A-Za-z0-9_]/g, '_');
-
-/** "10.1.1.10:8080, 10.1.1.11:8080" → servers and the port. */
-function members(value        , defaultPort        )                                      {
-  const parts = listOf(value.replace(/\n/g, ','));
-  let port = defaultPort;
-  const servers           = [];
-  for (const part of parts) {
-    const [address, typed] = part.split(':');
-    if (address) servers.push(address);
-    if (typed && Number.isFinite(Number(typed))) port = Number(typed);
-  }
-  return { servers, port };
-}
 
 const BLUEPRINTS                             = [
   deviceBlueprint({
@@ -82,10 +71,11 @@ const BLUEPRINTS                             = [
       const app = clean(str(values, 'application', 'service'), 'service');
       const address = str(values, 'virtual_address', '');
       const port = num(values, 'port', 53);
-      const pool = members(str(values, 'pool_members', ''), port);
+      const pool = parseMembers(str(values, 'pool_members', ''), port);
       const monitorKind = str(values, 'monitor', 'dns');
-      const findings            = [];
-      if (!isIpv4(address)) findings.push(error('network.f5.bad-virtual-address', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const snat = bool(values, 'snat', true) ? 'auto' : 'none';
+      const checked = virtualFindings(address, pool, snat);
+      const findings            = [...checked.findings];
       if (pool.servers.length === 0) findings.push(error('network.f5.no-members', 'The pool has no members.', { source: 'ArchToolKit' }));
 
       const monitor =
@@ -97,25 +87,26 @@ const BLUEPRINTS                             = [
 
       return {
         platform: PLATFORM,
-        title: `UDP virtual server ${address}:${port} for ${app}`,
+        title: `UDP virtual server ${formatHostPort(address, port)} for ${app}`,
         impact: 'brief',
         notes: [
           'A UDP monitor that expects no reply proves only that the port is open on the BIG-IP’s side. Use a protocol monitor — DNS here — where one exists.',
           'UDP has no connection, so the idle timeout is what decides when a "session" ends. Too long and the table fills; too short and long-lived flows break.',
           'AS3 replaces the whole tenant: capture the current declaration first.',
+          ...checked.notes,
         ],
         before: [`curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`, `tmsh list ltm virtual /${tenant}/${app}/service`],
-        config: declaration(tenant, app, `${app} on ${address}:${port}`, {
+        config: declaration(tenant, app, `${app} on ${formatHostPort(address, port)}`, {
           [`${app}_monitor`]: monitor,
           [`${app}_udp`]: { class: 'UDP_Profile', idleTimeout: num(values, 'idle_timeout', 60) },
-          [`${app}_pool`]: { class: 'Pool', loadBalancingMode: 'least-connections-member', monitors: [{ use: `${app}_monitor` }], members: [{ servicePort: pool.port, serverAddresses: pool.servers, shareNodes: true }] },
+          [`${app}_pool`]: { class: 'Pool', loadBalancingMode: 'least-connections-member', monitors: [{ use: `${app}_monitor` }], members: as3Members(pool, { shareNodes: true }) },
           service: {
             class: 'Service_UDP',
             virtualAddresses: [address],
             virtualPort: port,
             pool: `${app}_pool`,
             profileUDP: { use: `${app}_udp` },
-            snat: bool(values, 'snat', true) ? 'auto' : 'none',
+            snat,
           },
         }),
         verify: [`tmsh show ltm pool /${tenant}/${app}/${app}_pool members`, `tmsh show ltm virtual /${tenant}/${app}/service`, `dig @${address} ${str(values, 'monitor_query', 'health.corp.local')}`],
@@ -144,11 +135,11 @@ const BLUEPRINTS                             = [
       const address = str(values, 'virtual_address', '');
       const target = str(values, 'target', '');
       const findings            = [];
-      if (!isIpv4(address)) findings.push(error('network.f5.bad-virtual-address', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      if (!isIp(address)) findings.push(error('network.f5.bad-virtual-address', 'The virtual address is not a valid IPv4 or IPv6 address.', { source: 'ArchToolKit' }));
 
       return {
         platform: PLATFORM,
-        title: `HTTP redirect listener on ${address}:80`,
+        title: `HTTP redirect listener on ${formatHostPort(address, 80)}`,
         impact: 'brief',
         notes: [
           'Use this only where the HTTPS service is in another tenant or on another device. A Service_HTTPS with `redirect80` already does this for its own address, and two listeners on one address will conflict.',
@@ -175,7 +166,7 @@ const BLUEPRINTS                             = [
             strategy: 'first-match',
           },
         }),
-        verify: [`curl -skI http://${address}/`, `tmsh show ltm virtual /${tenant}/${app}/service`],
+        verify: [`curl -skI http://${urlHost(address)}/`, `tmsh show ltm virtual /${tenant}/${app}/service`],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: { module: 'f5networks.f5_bigip.bigip_as3_deploy', args: { content: `{{ lookup('file', '${app}.json') }}`, tenant, state: 'present' }, hosts: 'bigips' },
         findings,
@@ -261,10 +252,17 @@ const BLUEPRINTS                             = [
     change: (values                 )               => {
       const tenant = clean(str(values, 'tenant', 'Prod'), 'Prod');
       const app = clean(str(values, 'application', 'shared_snat'), 'shared_snat');
-      const addresses = listOf(str(values, 'addresses', '').replace(/\n/g, ','));
+      // A SNAT address is one address, not a network; a /32 or /128 is read as the address.
+      const entries = listOf(str(values, 'addresses', '').replace(/\n/g, ',')).map((a) => a.replace(/\/(32|128)$/, ''));
+      const usable = entries.filter((a) => isIp(a));
+      const invalid = entries.filter((a) => !isIp(a));
+      const typed = byFamily(usable);
       const findings            = [];
-      if (addresses.length === 0) findings.push(error('network.f5.no-snat-addresses', 'A SNAT pool with no addresses translates nothing.', { source: 'ArchToolKit' }));
-      if (addresses.length === 1) {
+      if (invalid.length > 0) {
+        findings.push(error('network.f5.bad-snat-address', `Not a single IPv4 or IPv6 address: ${invalid.join(', ')}.`, { source: 'ArchToolKit' }));
+      }
+      if (usable.length === 0) findings.push(error('network.f5.no-snat-addresses', 'A SNAT pool with no addresses translates nothing.', { source: 'ArchToolKit' }));
+      if (usable.length === 1) {
         findings.push(
           warning('network.f5.snat-port-exhaustion', 'One SNAT address gives about 64,000 concurrent connections per destination. A busy application will exhaust it and fail in a way that looks like a network problem.', {
             source: 'ArchToolKit',
@@ -274,15 +272,18 @@ const BLUEPRINTS                             = [
 
       return {
         platform: PLATFORM,
-        title: `SNAT pool with ${addresses.length} address(es)`,
+        title: `SNAT pool with ${usable.length} address(es)`,
         impact: 'brief',
         notes: [
           'The servers must route back to the BIG-IP for these addresses, and anything filtering between them has to permit them.',
           'Changing a live virtual server from automap to a SNAT pool changes the source address the servers see — check the application and any allow-lists first.',
+          ...(typed.v4.length > 0 && typed.v6.length > 0
+            ? ['The pool holds both families. The BIG-IP picks a SNAT address of the same family as the pool member it is connecting to, so each family needs enough addresses of its own.']
+            : []),
         ],
         before: [`curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`, 'tmsh list ltm snatpool'],
         config: declaration(tenant, app, 'SNAT pool', {
-          [`${app}_snatpool`]: { class: 'SNAT_Pool', snatAddresses: addresses },
+          [`${app}_snatpool`]: { class: 'SNAT_Pool', snatAddresses: usable },
         }),
         verify: ['tmsh list ltm snatpool', 'tmsh show sys connection | head', 'Check the servers see the new source addresses.'],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
@@ -386,10 +387,14 @@ const BLUEPRINTS                             = [
       const port = num(values, 'port', 8080);
       const offline = str(values, 'mode', 'disable') === 'offline';
       const path = `/${tenant}/${app}`;
+      // tmsh names an IPv6 member address.port, an IPv4 one address:port.
+      const name = tmshMember(member, port);
+      const findings            = [];
+      if (!isIp(member)) findings.push(error('network.f5.bad-member', 'The member address is not a valid IPv4 or IPv6 address.', { source: 'ArchToolKit' }));
 
       return {
         platform: PLATFORM,
-        title: `${offline ? 'Force offline' : 'Disable'} ${member}:${port} in ${pool}`,
+        title: `${offline ? 'Force offline' : 'Disable'} ${name} in ${pool}`,
         impact: offline ? 'outage' : 'brief',
         notes: [
           'This is a tmsh action, not a declaration: AS3 would replace the tenant, and a maintenance state does not belong in the declaration.',
@@ -400,11 +405,12 @@ const BLUEPRINTS                             = [
         ],
         before: [`tmsh show ltm pool ${path}/${pool} members`, `tmsh show sys connection ss-server-addr ${member} | wc -l`],
         config: [
-          `tmsh modify ltm pool ${path}/${pool} members modify { ${member}:${port} { state ${offline ? 'user-down' : 'user-up'} session user-disabled } }`,
+          `tmsh modify ltm pool ${path}/${pool} members modify { ${name} { state ${offline ? 'user-down' : 'user-up'} session user-disabled } }`,
           ...(offline ? [`tmsh delete sys connection ss-server-addr ${member}`] : []),
         ],
         verify: [`tmsh show ltm pool ${path}/${pool} members`, `tmsh show sys connection ss-server-addr ${member} | wc -l`, 'Watch the application through the virtual server.'],
-        backout: [`tmsh modify ltm pool ${path}/${pool} members modify { ${member}:${port} { state user-up session user-enabled } }`, `tmsh show ltm pool ${path}/${pool} members`],
+        backout: [`tmsh modify ltm pool ${path}/${pool} members modify { ${name} { state user-up session user-enabled } }`, `tmsh show ltm pool ${path}/${pool} members`],
+        findings,
       };
     },
   }),

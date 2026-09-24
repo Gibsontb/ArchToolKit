@@ -13,7 +13,9 @@
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint, withPush,                      } from '../from-change.js';
-import { listOf, parseCidr,                   } from '../device.js';
+import { listOf, netmask, parseCidrDual,                   } from '../device.js';
+import { anyRoute, familyOf, isAnyNetwork, isIp, isIpv6 } from '../../core/ip.js';
+import { badAddressFinding, ipv6Unverified, looksLikeAddress } from './panos-ip.js';
 
 const PLATFORM = 'panos'         ;
 const PROVIDER = '{{ provider }}';
@@ -135,8 +137,11 @@ const BLUEPRINTS                             = [
     inputs: [
       { id: 'virtual_router', label: 'Virtual router', control: 'text', default: 'default' },
       { id: 'route_name', label: 'Route name', control: 'text', default: 'default-route' },
-      { id: 'destination', label: 'Destination', control: 'text', default: '0.0.0.0/0' },
-      { id: 'next_hop', label: 'Next hop', control: 'text', default: '203.0.113.1' },
+      { id: 'destination', label: 'Destination', control: 'combo', default: '0.0.0.0/0', hint: 'IPv4 or IPv6; ::/0 is the IPv6 default route', options: [
+        { value: '0.0.0.0/0', label: '0.0.0.0/0 — IPv4 default route' },
+        { value: '::/0', label: '::/0 — IPv6 default route' },
+      ] },
+      { id: 'next_hop', label: 'Next hop', control: 'text', default: '203.0.113.1', hint: 'Same family as the destination' },
       { id: 'interface', label: 'Interface', control: 'text', default: 'ethernet1/1' },
       { id: 'metric', label: 'Metric', control: 'number', default: 10, min: 1, max: 65535 },
       { id: 'monitor', label: 'Path monitoring', control: 'toggle', default: true, hint: 'Pings the next hop and withdraws the route when it stops answering' },
@@ -144,25 +149,42 @@ const BLUEPRINTS                             = [
     change: (values                 )               => {
       const vr = str(values, 'virtual_router', 'default');
       const name = str(values, 'route_name', 'route');
-      const cidr = parseCidr(str(values, 'destination', ''));
+      const cidr = parseCidrDual(str(values, 'destination', ''));
       const hop = str(values, 'next_hop', '');
-      const monitor = bool(values, 'monitor', true);
+      const hopFamily = familyOf(hop);
       const findings            = [];
-      if (!cidr) findings.push(error('network.panos.bad-destination', 'The destination is not a valid prefix.', { source: 'ArchToolKit' }));
+      if (!cidr) findings.push(error('network.panos.bad-destination', 'The destination is not a valid prefix.', { remediation: 'Write it as 0.0.0.0/0, 10.50.0.0/16, ::/0 or 2001:db8:50::/48.', source: 'ArchToolKit' }));
+      if (!isIp(hop)) findings.push(error('network.panos.bad-next-hop', `The next hop "${hop}" is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
+      // IPv4 and IPv6 routes live in separate tables; a route cannot cross them.
+      if (cidr && hopFamily && cidr.family !== hopFamily) {
+        findings.push(error('network.panos.route-family-mismatch', `The destination is IPv${cidr.family} and the next hop is IPv${hopFamily}. A route's next hop must be of the same family.`, { source: 'ArchToolKit' }));
+      }
+      const v6 = cidr?.family === 6;
+      if (v6 && hop.toLowerCase().startsWith('fe80:') && !str(values, 'interface', '')) {
+        findings.push(error('network.panos.link-local-no-interface', 'A link-local next hop is only meaningful with the interface it is on.', { source: 'ArchToolKit' }));
+      }
+      // Path monitoring is written for IPv4 routes only; see ipv6Unverified.
+      const wantMonitor = bool(values, 'monitor', true);
+      const monitor = wantMonitor && !v6;
+      if (wantMonitor && v6) findings.push(ipv6Unverified('network.panos.path-monitor-ipv6', 'Path monitoring on an IPv6 static route'));
 
-      const base = `set network virtual-router ${vr} routing-table ip static-route ${name}`;
+      const table = v6 ? 'ipv6' : 'ip';
+      const base = `set network virtual-router ${vr} routing-table ${table} static-route ${name}`;
+      const destination = cidr ? `${cidr.network}/${cidr.prefix}` : anyRoute(4);
       return {
         platform: PLATFORM,
-        title: `Static route ${cidr ? `${cidr.address}/${cidr.prefix}` : '(invalid)'} via ${hop}`,
+        title: `Static route ${cidr ? destination : '(invalid)'} via ${hop}`,
         impact: cidr && cidr.prefix === 0 ? 'outage' : 'brief',
         notes: [
           ...(cidr && cidr.prefix === 0 ? ['This is the default route. If it is wrong, the firewall loses its path out — including to whatever you are managing it from.'] : []),
           ...(monitor ? ['Path monitoring removes the route when the next hop stops answering, which is what lets a backup route take over. Without it a dead next hop keeps a live route.'] : []),
+          ...(v6 ? ['IPv6 routes sit in the virtual router’s ipv6 routing table. The interface needs IPv6 enabled, or the route is never installed.'] : []),
+          ...(wantMonitor && v6 ? ['VERIFY: path monitoring for IPv6 static routes on this release before adding it by hand; it is not generated here.'] : []),
         ],
-        before: [`show routing route virtual-router ${vr}`, 'show config diff'],
+        before: [`show routing route virtual-router ${vr}${v6 ? ' afi ipv6' : ''}`, 'show config diff'],
         config: [
-          `${base} destination ${cidr ? `${cidr.address}/${cidr.prefix}` : '0.0.0.0/0'}`,
-          `${base} nexthop ip-address ${hop}`,
+          `${base} destination ${destination}`,
+          `${base} nexthop ${v6 ? 'ipv6-address' : 'ip-address'} ${hop}`,
           `${base} interface ${str(values, 'interface', '')}`,
           `${base} metric ${num(values, 'metric', 10)}`,
           ...(monitor
@@ -176,23 +198,36 @@ const BLUEPRINTS                             = [
               ]
             : []),
         ],
-        verify: [`show routing route virtual-router ${vr}`, ...(monitor ? [`show routing path-monitor virtual-router ${vr}`] : []), 'commit description "static route"'],
-        backout: [`delete network virtual-router ${vr} routing-table ip static-route ${name}`],
-        push: {
-          module: 'paloaltonetworks.panos.panos_static_route',
-          args: {
-            provider: PROVIDER,
-            name,
-            destination: cidr ? `${cidr.address}/${cidr.prefix}` : '0.0.0.0/0',
-            nexthop_type: 'ip-address',
-            nexthop: hop,
-            interface: str(values, 'interface', ''),
-            metric: num(values, 'metric', 10),
-            virtual_router: vr,
-            state: 'present',
-          },
-          after: [{ name: 'Commit', module: 'paloaltonetworks.panos.panos_commit_firewall', args: { provider: PROVIDER, description: 'static route' } }],
-        },
+        verify: [`show routing route virtual-router ${vr}${v6 ? ' afi ipv6' : ''}`, ...(monitor ? [`show routing path-monitor virtual-router ${vr}`] : []), 'commit description "static route"'],
+        backout: [`delete network virtual-router ${vr} routing-table ${table} static-route ${name}`],
+        // panos_static_route writes the IPv4 table; an IPv6 route is set at
+        // its XPath in the ipv6 table instead.
+        push: v6
+          ? {
+              module: 'paloaltonetworks.panos.panos_type_cmd',
+              args: {
+                provider: PROVIDER,
+                cmd: 'set',
+                xpath: `/config/devices/entry[@name='localhost.localdomain']/network/virtual-router/entry[@name='${vr}']/routing-table/ipv6/static-route/entry[@name='${name}']`,
+                element: `<destination>${destination}</destination><nexthop><ipv6-address>${hop}</ipv6-address></nexthop>${str(values, 'interface', '') ? `<interface>${str(values, 'interface', '')}</interface>` : ''}<metric>${num(values, 'metric', 10)}</metric>`,
+              },
+              after: [{ name: 'Commit', module: 'paloaltonetworks.panos.panos_commit_firewall', args: { provider: PROVIDER, description: 'static route' } }],
+            }
+          : {
+              module: 'paloaltonetworks.panos.panos_static_route',
+              args: {
+                provider: PROVIDER,
+                name,
+                destination,
+                nexthop_type: 'ip-address',
+                nexthop: hop,
+                interface: str(values, 'interface', ''),
+                metric: num(values, 'metric', 10),
+                virtual_router: vr,
+                state: 'present',
+              },
+              after: [{ name: 'Commit', module: 'paloaltonetworks.panos.panos_commit_firewall', args: { provider: PROVIDER, description: 'static route' } }],
+            },
         findings,
       };
     },
@@ -261,10 +296,10 @@ const BLUEPRINTS                             = [
     description: 'An IKE gateway, the crypto profiles, the tunnel interface and the IPsec tunnel — a route-based VPN to another site or a cloud.',
     inputs: [
       { id: 'tunnel_name', label: 'Tunnel name', control: 'text', default: 'VPN-BRANCH-01' },
-      { id: 'peer_address', label: 'Peer address', control: 'text', default: '198.51.100.10' },
+      { id: 'peer_address', label: 'Peer address', control: 'text', default: '198.51.100.10', hint: 'IPv4 or IPv6' },
       { id: 'local_interface', label: 'Local interface', control: 'text', default: 'ethernet1/1' },
       { id: 'tunnel_interface', label: 'Tunnel interface', control: 'text', default: 'tunnel.1' },
-      { id: 'tunnel_address', label: 'Tunnel address', control: 'text', default: '10.254.1.1/30', hint: 'Empty for a numberless tunnel' },
+      { id: 'tunnel_address', label: 'Tunnel address', control: 'text', default: '10.254.1.1/30', hint: 'IPv4, IPv6 or both, comma separated; empty for a numberless tunnel' },
       { id: 'zone', label: 'Zone for the tunnel', control: 'text', default: 'vpn' },
       { id: 'virtual_router', label: 'Virtual router', control: 'text', default: 'default' },
       { id: 'ike_version', label: 'IKE version', control: 'select', default: 'ikev2', options: [{ value: 'ikev2', label: 'IKEv2 only' }, { value: 'ikev2-preferred', label: 'IKEv2 preferred' }] },
@@ -279,12 +314,28 @@ const BLUEPRINTS                             = [
     change: (values                 )               => {
       const name = str(values, 'tunnel_name', 'VPN').toUpperCase().replace(/\s+/g, '-');
       const peer = str(values, 'peer_address', '');
+      const peerV6 = familyOf(peer) === 6;
       const tunnelIface = str(values, 'tunnel_interface', 'tunnel.1');
-      const address = parseCidr(str(values, 'tunnel_address', ''));
+      // The tunnel interface can carry either family or both, independently
+      // of the family of the outer (peer) addresses.
+      const typed = listOf(str(values, 'tunnel_address', ''));
+      const addresses = typed.map((text) => parseCidrDual(text));
+      const v4 = addresses.filter((c) => c !== null && c.family === 4).map((c) => `${c .address}/${c .prefix}`);
+      const v6 = addresses.filter((c) => c !== null && c.family === 6).map((c) => `${c .address}/${c .prefix}`);
       const zone = str(values, 'zone', 'vpn');
       const vr = str(values, 'virtual_router', 'default');
       const dh = str(values, 'dh_group', 'group20');
-      const monitor = bool(values, 'monitor', true);
+      const monitorDestination = str(values, 'monitor_destination', '');
+      const wantMonitor = bool(values, 'monitor', true);
+      const monitorV6 = familyOf(monitorDestination) === 6;
+      const monitor = wantMonitor && !monitorV6;
+      const findings            = [];
+      if (!isIp(peer)) findings.push(error('network.panos.bad-peer', `The peer address "${peer}" is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
+      if (addresses.some((c) => c === null)) findings.push(error('network.panos.bad-tunnel-address', 'The tunnel address is not a valid address and prefix.', { remediation: 'Write it as 10.254.1.1/30, 2001:db8:fe::1/64, or both separated by a comma.', source: 'ArchToolKit' }));
+      if (wantMonitor && monitorDestination && !isIp(monitorDestination)) {
+        findings.push(error('network.panos.bad-monitor-destination', `The monitor destination "${monitorDestination}" is not an address.`, { source: 'ArchToolKit' }));
+      }
+      if (wantMonitor && monitorV6) findings.push(ipv6Unverified('network.panos.tunnel-monitor-ipv6', 'Tunnel monitoring to an IPv6 destination'));
 
       return {
         platform: PLATFORM,
@@ -295,6 +346,10 @@ const BLUEPRINTS                             = [
           'Both ends must agree on the proposals, the DH group and the identities. A mismatch shows as phase 1 or phase 2 failing in the system log.',
           'A route-based tunnel carries nothing until there is a route pointing into the tunnel interface and a security rule permitting the zone pair.',
           ...(monitor ? ['Tunnel monitoring needs something at the far end that answers ICMP, or the tunnel will be brought down for being healthy-but-quiet.'] : []),
+          ...(peerV6
+            ? ['The gateway peers over IPv6, so the local interface needs an IPv6 address. Where it has more than one, set `local-address ip` to the one the peer expects.']
+            : []),
+          ...(wantMonitor && monitorV6 ? ['VERIFY: tunnel monitoring to an IPv6 destination on this release before adding it by hand; it is not generated here.'] : []),
         ],
         before: ['show vpn ike-sa', 'show vpn ipsec-sa', 'show vpn flow', 'show config diff'],
         config: [
@@ -310,10 +365,14 @@ const BLUEPRINTS                             = [
           `set network ike gateway ${name}-GW protocol version ${str(values, 'ike_version', 'ikev2')}`,
           `set network ike gateway ${name}-GW protocol ikev2 ike-crypto-profile ${name}-IKE`,
           `set network ike gateway ${name}-GW protocol ikev2 dpd enable yes`,
+          ...(peerV6 ? [`set network ike gateway ${name}-GW ipv6 yes`] : []),
           `set network ike gateway ${name}-GW local-address interface ${str(values, 'local_interface', '')}`,
           `set network ike gateway ${name}-GW peer-address ip ${peer}`,
           `set network interface tunnel units ${tunnelIface} comment "${name}"`,
-          ...(address ? [`set network interface tunnel units ${tunnelIface} ip ${address.address}/${address.prefix}`] : []),
+          ...v4.map((address) => `set network interface tunnel units ${tunnelIface} ip ${address}`),
+          ...(v6.length > 0
+            ? [`set network interface tunnel units ${tunnelIface} ipv6 enabled yes`, ...v6.map((address) => `set network interface tunnel units ${tunnelIface} ipv6 address ${address} enable-on-interface yes`)]
+            : []),
           `set zone ${zone} network layer3 [ ${tunnelIface} ]`,
           `set network virtual-router ${vr} interface [ ${tunnelIface} ]`,
           `set network tunnel ipsec ${name} auto-key ike-gateway [ ${name}-GW ]`,
@@ -322,10 +381,11 @@ const BLUEPRINTS                             = [
           ...(monitor
             ? [
                 `set network tunnel ipsec ${name} tunnel-monitor enable yes`,
-                `set network tunnel ipsec ${name} tunnel-monitor destination-ip ${str(values, 'monitor_destination', '')}`,
+                `set network tunnel ipsec ${name} tunnel-monitor destination-ip ${monitorDestination}`,
               ]
             : []),
         ],
+        findings,
         verify: ['show vpn ike-sa gateway ' + name + '-GW', `show vpn ipsec-sa tunnel ${name}`, `show vpn flow tunnel-id 1`, 'commit description "IPsec tunnel"'],
         backout: [
           `delete network tunnel ipsec ${name}`,
@@ -348,7 +408,7 @@ const BLUEPRINTS                             = [
     description: 'A syslog server profile and a log forwarding profile, so traffic and threat logs reach a SIEM instead of only the firewall.',
     inputs: [
       { id: 'profile_name', label: 'Log forwarding profile', control: 'text', default: 'LF-DEFAULT' },
-      { id: 'syslog_server', label: 'Syslog server', control: 'text', default: '10.0.0.20' },
+      { id: 'syslog_server', label: 'Syslog server', control: 'text', default: '10.0.0.20', hint: 'IPv4, IPv6 or a hostname' },
       { id: 'syslog_port', label: 'Port', control: 'number', default: 514, min: 1, max: 65535 },
       { id: 'transport', label: 'Transport', control: 'select', default: 'UDP', options: [{ value: 'UDP', label: 'UDP' }, { value: 'TCP', label: 'TCP' }, { value: 'SSL', label: 'SSL' }] },
       { id: 'format', label: 'Format', control: 'select', default: 'BSD', options: [{ value: 'BSD', label: 'BSD' }, { value: 'IETF', label: 'IETF (RFC 5424)' }] },
@@ -358,10 +418,16 @@ const BLUEPRINTS                             = [
     change: (values                 )               => {
       const profile = str(values, 'profile_name', 'LF').toUpperCase().replace(/\s+/g, '-');
       const server = str(values, 'syslog_server', '');
+      // Object names take letters, digits, dot, hyphen and underscore — not
+      // the colons of an IPv6 address.
+      const syslogName = `SYSLOG-${server.replace(/[.:]/g, '-')}`;
+      const serverV6 = familyOf(server) === 6;
       const types = listOf(str(values, 'log_types', ''));
       const dg = str(values, 'device_group', '');
       const prefix = prefixFor(dg);
       const findings            = [];
+      if (!server) findings.push(error('network.panos.no-syslog-server', 'No syslog server was given.', { source: 'ArchToolKit' }));
+      if (server && looksLikeAddress(server) && !isIp(server)) findings.push(badAddressFinding('Syslog server', [server]));
       if (str(values, 'transport', 'UDP') === 'UDP') {
         findings.push(
           warning('network.panos.syslog-udp', 'UDP syslog is unacknowledged: a busy firewall or a congested link loses log entries silently.', {
@@ -378,21 +444,23 @@ const BLUEPRINTS                             = [
         notes: [
           'The profile forwards nothing until rules reference it. Set it as the default on the security rules, or attach it rule by rule.',
           'Traffic logs are high volume. Check what the collector charges you for before forwarding every session.',
+          ...(serverV6 ? ['The syslog server is IPv6, so the logs leave from the management interface’s IPv6 address, or from a dataplane interface through an IPv6 service route for syslog. One of them has to exist.'] : []),
         ],
         before: ['show log-collector preference-list', 'show config diff', `show config running | match ${profile}`],
         config: [
-          `set shared log-settings syslog SYSLOG-${server.replace(/\./g, '-')} server SYSLOG-${server.replace(/\./g, '-')} server ${server}`,
-          `set shared log-settings syslog SYSLOG-${server.replace(/\./g, '-')} server SYSLOG-${server.replace(/\./g, '-')} transport ${str(values, 'transport', 'UDP')}`,
-          `set shared log-settings syslog SYSLOG-${server.replace(/\./g, '-')} server SYSLOG-${server.replace(/\./g, '-')} port ${num(values, 'syslog_port', 514)}`,
-          `set shared log-settings syslog SYSLOG-${server.replace(/\./g, '-')} server SYSLOG-${server.replace(/\./g, '-')} format ${str(values, 'format', 'BSD')}`,
-          `set shared log-settings syslog SYSLOG-${server.replace(/\./g, '-')} server SYSLOG-${server.replace(/\./g, '-')} facility LOG_USER`,
+          `set shared log-settings syslog ${syslogName} server ${syslogName} server ${server}`,
+          `set shared log-settings syslog ${syslogName} server ${syslogName} transport ${str(values, 'transport', 'UDP')}`,
+          `set shared log-settings syslog ${syslogName} server ${syslogName} port ${num(values, 'syslog_port', 514)}`,
+          `set shared log-settings syslog ${syslogName} server ${syslogName} format ${str(values, 'format', 'BSD')}`,
+          `set shared log-settings syslog ${syslogName} server ${syslogName} facility LOG_USER`,
           ...types.flatMap((type) => [
             `${prefix} log-settings profiles ${profile} match-list ${type}-all log-type ${type}`,
-            `${prefix} log-settings profiles ${profile} match-list ${type}-all send-syslog [ SYSLOG-${server.replace(/\./g, '-')} ]`,
+            `${prefix} log-settings profiles ${profile} match-list ${type}-all send-syslog [ ${syslogName} ]`,
           ]),
         ],
         verify: ['show config diff', 'commit description "log forwarding"', 'tail follow yes mp-log ms.log', 'Check the collector is receiving.'],
-        backout: [`${prefix.replace('set', 'delete')} log-settings profiles ${profile}`, `delete shared log-settings syslog SYSLOG-${server.replace(/\./g, '-')}`],
+        backout: [`${prefix.replace('set', 'delete')} log-settings profiles ${profile}`, `delete shared log-settings syslog ${syslogName}`],
+        findings,
       };
     },
   }),
@@ -455,10 +523,12 @@ const BLUEPRINTS                             = [
     group: 'Baseline',
     description: 'Permitted management addresses, NTP, DNS, the update schedule and an administrator account — the baseline a firewall should have before it carries traffic.',
     inputs: [
-      { id: 'permitted', label: 'Permitted management addresses', control: 'text', default: '10.0.0.0/24' },
-      { id: 'ntp_primary', label: 'NTP primary', control: 'text', default: '10.0.0.10' },
+      { id: 'permitted', label: 'Permitted management addresses', control: 'text', default: '10.0.0.0/24', hint: 'IPv4 and IPv6 prefixes, comma separated' },
+      { id: 'mgmt_ipv6', label: 'Management IPv6 address', control: 'text', default: '', hint: 'e.g. 2001:db8:0:10::5/64; empty to leave the management interface IPv4 only' },
+      { id: 'mgmt_ipv6_gateway', label: 'Management IPv6 default gateway', control: 'text', default: '', showWhen: { input: 'mgmt_ipv6', notEquals: [''] } },
+      { id: 'ntp_primary', label: 'NTP primary', control: 'text', default: '10.0.0.10', hint: 'IPv4, IPv6 or a hostname' },
       { id: 'ntp_secondary', label: 'NTP secondary', control: 'text', default: '10.0.0.11' },
-      { id: 'dns_primary', label: 'DNS primary', control: 'text', default: '10.0.0.10' },
+      { id: 'dns_primary', label: 'DNS primary', control: 'text', default: '10.0.0.10', hint: 'IPv4 or IPv6' },
       { id: 'dns_secondary', label: 'DNS secondary', control: 'text', default: '10.0.0.11' },
       { id: 'admin_user', label: 'Administrator username', control: 'text', default: 'netadmin' },
       { id: 'content_updates', label: 'Content update schedule', control: 'select', default: 'daily', options: [
@@ -475,6 +545,35 @@ const BLUEPRINTS                             = [
       if (permitted.length === 0) {
         findings.push(error('network.panos.no-permitted-ip', 'Without a permitted address list, the management interface answers anything that can reach it.', { source: 'ArchToolKit' }));
       }
+      // permitted-ip, NTP and DNS all take IPv4 or IPv6 on the management plane.
+      const badPermitted = permitted.filter((entry) => familyOf(entry) === null);
+      if (badPermitted.length > 0) findings.push(badAddressFinding('Permitted management addresses', badPermitted));
+      if (permitted.some((entry) => isAnyNetwork(entry))) {
+        findings.push(warning('network.panos.permitted-any', 'A permitted address of 0.0.0.0/0 or ::/0 permits everything, which is the same as no list at all.', { source: 'ArchToolKit' }));
+      }
+      const dns = [str(values, 'dns_primary', ''), str(values, 'dns_secondary', '')].filter(Boolean);
+      const badDns = dns.filter((server) => !isIp(server));
+      if (badDns.length > 0) findings.push(badAddressFinding('DNS servers', badDns));
+      const ntp = [str(values, 'ntp_primary', ''), str(values, 'ntp_secondary', '')].filter((server) => looksLikeAddress(server) && !isIp(server));
+      if (ntp.length > 0) findings.push(badAddressFinding('NTP servers', ntp));
+      const mgmtV6 = str(values, 'mgmt_ipv6', '') ? parseCidrDual(str(values, 'mgmt_ipv6', '')) : null;
+      const mgmtGateway = str(values, 'mgmt_ipv6_gateway', '');
+      if (str(values, 'mgmt_ipv6', '') && (!mgmtV6 || mgmtV6.family !== 6)) {
+        findings.push(error('network.panos.bad-mgmt-ipv6', 'The management IPv6 address must be an IPv6 address with its prefix, such as 2001:db8:0:10::5/64.', { source: 'ArchToolKit' }));
+      }
+      if (mgmtV6 && mgmtGateway && !isIpv6(mgmtGateway)) {
+        findings.push(error('network.panos.bad-mgmt-ipv6-gateway', 'The management IPv6 default gateway must be an IPv6 address.', { source: 'ArchToolKit' }));
+      }
+      const usesV6 = [...permitted, ...dns, str(values, 'ntp_primary', ''), str(values, 'ntp_secondary', '')].some((entry) => familyOf(entry) === 6);
+      if (usesV6 && !mgmtV6) {
+        findings.push(
+          warning('network.panos.mgmt-no-ipv6', 'IPv6 servers or management addresses were given, but the management interface has no IPv6 address here. They are reachable only if it already has one, or through an IPv6 service route.', {
+            remediation: 'Give the management interface an IPv6 address, or confirm the existing one.',
+            source: 'ArchToolKit',
+          }),
+        );
+      }
+      const mgmtV6Valid = mgmtV6 && mgmtV6.family === 6 ? mgmtV6 : null;
 
       return {
         platform: PLATFORM,
@@ -487,6 +586,12 @@ const BLUEPRINTS                             = [
         ],
         before: ['show system info', 'show config running | match permitted-ip', 'request content upgrade info'],
         config: [
+          ...(mgmtV6Valid
+            ? [
+                `set deviceconfig system ipv6-address ${mgmtV6Valid.address}/${mgmtV6Valid.prefix}`,
+                ...(mgmtGateway && isIpv6(mgmtGateway) ? [`set deviceconfig system ipv6-default-gateway ${mgmtGateway}`] : []),
+              ]
+            : []),
           ...permitted.map((prefix) => `set deviceconfig system permitted-ip ${prefix}`),
           `set deviceconfig system ntp-servers primary-ntp-server ntp-server-address ${str(values, 'ntp_primary', '')}`,
           `set deviceconfig system ntp-servers secondary-ntp-server ntp-server-address ${str(values, 'ntp_secondary', '')}`,
@@ -510,7 +615,11 @@ const BLUEPRINTS                             = [
               : []),
         ],
         verify: ['show system info', 'show ntp', 'show config running | match permitted-ip', 'commit description "management baseline"'],
-        backout: [...permitted.map((prefix) => `delete deviceconfig system permitted-ip ${prefix}`), `delete mgt-config users ${user}`],
+        backout: [
+          ...permitted.map((prefix) => `delete deviceconfig system permitted-ip ${prefix}`),
+          ...(mgmtV6Valid ? ['delete deviceconfig system ipv6-default-gateway', 'delete deviceconfig system ipv6-address'] : []),
+          `delete mgt-config users ${user}`,
+        ],
         findings,
       };
     },
@@ -588,9 +697,17 @@ const BLUEPRINTS                             = [
     change: (values                 )               => {
       const group = num(values, 'group_id', 1);
       const priority = str(values, 'role', 'primary') === 'primary' ? 100 : 110;
-      const local = parseCidr(str(values, 'local_ha1', ''));
+      const typedLocal = parseCidrDual(str(values, 'local_ha1', ''));
+      const peer = str(values, 'peer_ha1', '');
       const monitored = listOf(str(values, 'monitored_interfaces', ''));
       const findings            = [];
+      // HA1 is written with an IPv4 address and dotted netmask. IPv6 HA1
+      // addressing is not generated: see ipv6Unverified.
+      const ha1V6 = typedLocal?.family === 6 || familyOf(peer) === 6;
+      if (ha1V6) findings.push(ipv6Unverified('network.panos.ha1-ipv6', 'The HA1 control link over IPv6', 'error'));
+      if (!typedLocal) findings.push(error('network.panos.bad-ha1-address', 'This firewall’s HA1 address is not a valid address and prefix.', { remediation: 'Write it as 10.0.100.1/30.', source: 'ArchToolKit' }));
+      if (!isIp(peer)) findings.push(error('network.panos.bad-ha1-peer', `The peer HA1 address "${peer}" is not an address.`, { source: 'ArchToolKit' }));
+      const local = typedLocal && typedLocal.family === 4 ? typedLocal : null;
       if (bool(values, 'preemptive', false)) {
         findings.push(
           warning('network.panos.ha-preemptive', 'Preemption makes a recovering firewall take over again, which turns one failover into two.', {
@@ -608,6 +725,7 @@ const BLUEPRINTS                             = [
           'Both firewalls need the same group id and the same HA mode, with the priorities the other way round. Configure the passive one first.',
           'The pair must be on the same PAN-OS version and content version, or they will not synchronise.',
           'Enabling HA on a firewall already passing traffic will cause a brief interruption while sessions synchronise.',
+          ...(ha1V6 ? ['VERIFY: IPv6 addressing on the HA1 link for this release. The HA1 address and peer address were left out and must be set by hand before the pair can form.'] : []),
         ],
         before: ['show high-availability state', 'show high-availability all', 'show system info | match version'],
         config: [
@@ -616,9 +734,9 @@ const BLUEPRINTS                             = [
           `set deviceconfig high-availability group mode active-passive passive-link-state auto`,
           `set deviceconfig high-availability group election-option device-priority ${priority}`,
           `set deviceconfig high-availability group election-option preemptive ${bool(values, 'preemptive', false) ? 'yes' : 'no'}`,
-          `set deviceconfig high-availability group peer-ip ${str(values, 'peer_ha1', '')}`,
+          ...(ha1V6 ? [] : [`set deviceconfig high-availability group peer-ip ${peer}`]),
           `set deviceconfig high-availability interface ha1 port ${str(values, 'ha1_interface', 'ha1-a')}`,
-          ...(local ? [`set deviceconfig high-availability interface ha1 ip-address ${local.address}`, `set deviceconfig high-availability interface ha1 netmask ${'255.255.255.252'}`] : []),
+          ...(local && !ha1V6 ? [`set deviceconfig high-availability interface ha1 ip-address ${local.address}`, `set deviceconfig high-availability interface ha1 netmask ${netmask(local.prefix)}`] : []),
           `set deviceconfig high-availability interface ha2 port ${str(values, 'ha2_interface', 'ha2-a')}`,
           'set deviceconfig high-availability group state-synchronization enabled yes',
           'set deviceconfig high-availability group monitoring link-monitoring enabled yes',
@@ -662,6 +780,7 @@ const PUSHES                                                                    
         name: `${name}-GW`,
         interface: str(values, 'local_interface', ''),
         peer_ip_value: str(values, 'peer_address', ''),
+        ...(familyOf(str(values, 'peer_address', '')) === 6 ? { enable_ipv6: true } : {}),
         pre_shared_key: '{{ vault_vpn_psk }}',
         version: str(values, 'ike_version', 'ikev2') === 'ikev2' ? 'ikev2' : 'ikev2-preferred',
         ikev2_crypto_profile: `${name}-IKE`,

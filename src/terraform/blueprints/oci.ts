@@ -10,6 +10,8 @@
 
 import type { Blueprint, BlueprintGroup, BlueprintValues, TemplateValues } from '../../kit/blueprint.ts';
 import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, GCP_ZONES, OCI_REGIONS } from './regions.ts';
+import { info, type Finding } from '../../core/findings.ts';
+import { dualStackInput, ipv4Range, isOn } from './dual-stack.ts';
 
 const BLUEPRINTS: readonly Blueprint[] = [
   {
@@ -87,10 +89,26 @@ const BLUEPRINTS: readonly Blueprint[] = [
               control: 'text',
               default: "10.40.2.0/24",
               hint: "For app / DB tiers"
-            }
+            },
+            dualStackInput("Oracle allocates a /56 to the VCN; each subnet takes a /64, and ::/0 routes to the gateway")
           ],
     emits: [],
-    build: (values: BlueprintValues, name: string) => ({
+    build: (values: BlueprintValues, name: string) => {
+      const code = 'terraform.oci_core_vcn_baseline';
+      const v6 = isOn(values.enable_ipv6);
+      const findings: Finding[] = [
+        ...ipv4Range(values.vcn_cidr, 'vcn_cidr', 'The VCN CIDR', code),
+        ...ipv4Range(values.pub_subnet_cidr, 'pub_subnet_cidr', 'The public subnet CIDR', code),
+        ...ipv4Range(values.priv_subnet_cidr, 'priv_subnet_cidr', 'The private subnet CIDR', code),
+      ];
+      // The n-th /64 of the VCN's Oracle-allocated /56.
+      const subnetV6 = (n: number): string => v6 ? `
+  ipv6cidr_blocks     = [cidrsubnet(oci_core_vcn.this.ipv6cidr_blocks[0], 8, ${n})]` : "";
+      if (v6) {
+        findings.push(info(`${code}.private-ipv6-no-egress`, 'The private subnet gets IPv6 addresses but no route out; OCI\'s NAT gateway translates IPv4 only.', { path: 'enable_ipv6' }));
+      }
+      return {
+      findings,
       files: {
         'main.tf': ((vals: TemplateValues, moduleName: string): string => {
             const m = moduleName || "oci_core_vcn_baseline";
@@ -114,14 +132,17 @@ provider "oci" {
 resource "oci_core_vcn" "this" {
   cidr_block     = "${vals.vcn_cidr}"
   compartment_id = "${vals.compartment_ocid}"
-  display_name   = "${vals.vcn_display_name}"
+  display_name   = "${vals.vcn_display_name}"${v6 ? `
+
+  # Oracle allocates a global /56; subnets take /64s of it.
+  is_ipv6enabled = true` : ""}
 }
 
 resource "oci_core_internet_gateway" "igw" {
   compartment_id = "${vals.compartment_ocid}"
   display_name   = "${vals.vcn_display_name}-igw"
   vcn_id         = oci_core_vcn.this.id
-  is_enabled     = true
+  enabled        = true
 }
 
 resource "oci_core_route_table" "public_rt" {
@@ -133,14 +154,20 @@ resource "oci_core_route_table" "public_rt" {
     network_entity_id = oci_core_internet_gateway.igw.id
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-  }
+  }${v6 ? `
+
+  route_rules {
+    network_entity_id = oci_core_internet_gateway.igw.id
+    destination       = "::/0"
+    destination_type  = "CIDR_BLOCK"
+  }` : ""}
 }
 
 resource "oci_core_subnet" "public" {
   compartment_id      = "${vals.compartment_ocid}"
   vcn_id              = oci_core_vcn.this.id
   display_name        = "${vals.vcn_display_name}-public"
-  cidr_block          = "${vals.pub_subnet_cidr}"
+  cidr_block          = "${vals.pub_subnet_cidr}"${subnetV6(0)}
   route_table_id      = oci_core_route_table.public_rt.id
   prohibit_public_ip_on_vnic = false
 }
@@ -149,13 +176,14 @@ resource "oci_core_subnet" "private" {
   compartment_id      = "${vals.compartment_ocid}"
   vcn_id              = oci_core_vcn.this.id
   display_name        = "${vals.vcn_display_name}-private"
-  cidr_block          = "${vals.priv_subnet_cidr}"
+  cidr_block          = "${vals.priv_subnet_cidr}"${subnetV6(1)}
   prohibit_public_ip_on_vnic = true
 }
 `;
           })(values, name),
       },
-    }),
+      };
+    },
   },
   {
     id: 'oci_core_instance_linux',

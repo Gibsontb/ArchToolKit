@@ -10,6 +10,8 @@
 
                                                                                                          
 import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, GCP_ZONES, OCI_REGIONS } from './regions.js';
+import { error,              } from '../../core/findings.js';
+import { dualStackInput, ipv4Range, isOn, sources } from './dual-stack.js';
 
 const BLUEPRINTS                       = [
   {
@@ -30,10 +32,57 @@ const BLUEPRINTS                       = [
             { id: "ami_id", label: "AMI ID", control: 'text', default: "ami-xxxxxxxx", hint: "Hardened AMI" },
             { id: "subnet_id", label: "Subnet ID", control: 'text', default: "subnet-xxxxxxx", hint: "Existing subnet" },
             { id: "vpc_security_group_name", label: "Security group name", control: 'text', default: "sg-app", hint: "SG created in this module" },
-            { id: "allow_ssh_cidr", label: "Allowed SSH CIDR", control: 'text', default: "10.0.0.0/16", hint: "Lock down in prod" }
+            { id: "allow_ssh_cidr", label: "Allowed SSH CIDR", control: 'text', default: "10.0.0.0/16", hint: "IPv4 or IPv6, comma-separated. Lock down in prod" },
+            {
+              id: "ipv6_address_count",
+              label: "IPv6 addresses",
+              control: 'select',
+              options: [
+                { value: "0", label: "None — IPv4 only" },
+                { value: "1", label: "1 (subnet must have an IPv6 /64)" },
+                { value: "2", label: "2" },
+              ],
+              default: "0",
+              hint: "Assigned from the subnet's IPv6 range"
+            }
           ],
     emits: [],
-    build: (values                 , name        ) => ({
+    build: (values                 , name        ) => {
+      const ssh = sources(values.allow_ssh_cidr, 'allow_ssh_cidr', 'terraform.aws_ec2_instance');
+      if (ssh.v4.length + ssh.v6.length === 0 && ssh.findings.length === 0) {
+        ssh.findings.push(error('terraform.aws_ec2_instance.no-ssh-source', 'No SSH source was given, so the rule admits nothing.', { path: 'allow_ssh_cidr' }));
+      }
+      const v6Count = Number(values.ipv6_address_count ?? 0) || 0;
+      // Egress to the IPv6 internet only when the instance or its rules use IPv6.
+      const v6 = v6Count > 0 || ssh.v6.length > 0;
+      const hcl = (list          )         => list.map((c) => `"${c}"`).join(", ");
+      // One ingress block per family: cidr_blocks for IPv4, ipv6_cidr_blocks for IPv6.
+      const sshIngress = [
+        ...(ssh.v4.length > 0 || ssh.v6.length === 0 ? [`  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [${hcl(ssh.v4)}]
+  }`] : []),
+        ...(ssh.v6.length > 0 ? [`  ingress {
+    description      = "SSH over IPv6"
+    from_port        = 22
+    to_port          = 22
+    protocol         = "tcp"
+    ipv6_cidr_blocks = [${hcl(ssh.v6)}]
+  }`] : []),
+      ].join("\n\n");
+      const egressV6 = v6 ? `
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    ipv6_cidr_blocks = ["::/0"]
+  }` : "";
+      return {
+      findings: ssh.findings,
       files: {
         'main.tf': ((vals                , moduleName        )         => {
             const m = moduleName || "aws_ec2_instance";
@@ -56,20 +105,14 @@ resource "aws_security_group" "this" {
   description = "Security group for ${vals.instance_name}"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["${vals.allow_ssh_cidr}"]
-  }
+${sshIngress}
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-  }
+  }${egressV6}
 
   tags = {
     Name        = "${vals.vpc_security_group_name}"
@@ -82,7 +125,8 @@ resource "aws_instance" "this" {
   ami                    = "${vals.ami_id}"
   instance_type          = "${vals.instance_type}"
   subnet_id              = "${vals.subnet_id}"
-  vpc_security_group_ids = [aws_security_group.this.id]
+  vpc_security_group_ids = [aws_security_group.this.id]${v6Count > 0 ? `
+  ipv6_address_count     = ${v6Count}` : ""}
 
   tags = {
     Name        = "${vals.instance_name}"
@@ -104,7 +148,8 @@ variable "environment" {
 `;
           })(values, name),
       },
-    }),
+      };
+    },
   },
   {
     id: 'aws_s3_secure_bucket',
@@ -190,10 +235,24 @@ variable "environment" {
             { id: "vpc_cidr", label: "VPC CIDR block", control: 'text', default: "10.20.0.0/16", hint: "Top-level CIDR (non-overlapping)" },
             { id: "subnet1_cidr", label: "Public subnet 1 CIDR", control: 'text', default: "10.20.1.0/24", hint: "AZ A" },
             { id: "subnet2_cidr", label: "Public subnet 2 CIDR", control: 'text', default: "10.20.2.0/24", hint: "AZ B" },
-            { id: "name_prefix", label: "Name prefix", control: 'text', default: "app-vpc", hint: "Prefix for tags/names" }
+            { id: "name_prefix", label: "Name prefix", control: 'text', default: "app-vpc", hint: "Prefix for tags/names" },
+            dualStackInput("Amazon allocates a /56; each subnet takes a /64 and routes ::/0 to the gateway")
           ],
     emits: [],
-    build: (values                 , name        ) => ({
+    build: (values                 , name        ) => {
+      const v6 = isOn(values.enable_ipv6);
+      // The IPv4 ranges stay IPv4: a VPC cannot be built without one.
+      const findings            = [
+        ...ipv4Range(values.vpc_cidr, 'vpc_cidr', 'The VPC CIDR', 'terraform.aws_vpc_baseline'),
+        ...ipv4Range(values.subnet1_cidr, 'subnet1_cidr', 'Public subnet 1', 'terraform.aws_vpc_baseline'),
+        ...ipv4Range(values.subnet2_cidr, 'subnet2_cidr', 'Public subnet 2', 'terraform.aws_vpc_baseline'),
+      ];
+      // The n-th /64 of the VPC's Amazon-allocated /56.
+      const subnetV6 = (n        )         => v6 ? `
+  ipv6_cidr_block                 = cidrsubnet(aws_vpc.this.ipv6_cidr_block, 8, ${n})
+  assign_ipv6_address_on_creation = true` : "";
+      return {
+      findings,
       files: {
         'main.tf': ((vals                , moduleName        )         => {
             const m = moduleName || "aws_vpc_baseline";
@@ -213,7 +272,10 @@ provider "aws" {
 resource "aws_vpc" "this" {
   cidr_block           = "${vals.vpc_cidr}"
   enable_dns_support   = true
-  enable_dns_hostnames = true
+  enable_dns_hostnames = true${v6 ? `
+
+  # Amazon allocates the /56; subnets take /64s of it.
+  assign_generated_ipv6_cidr_block = true` : ""}
 
   tags = {
     Name   = "${vals.name_prefix}"
@@ -233,7 +295,7 @@ resource "aws_internet_gateway" "this" {
 resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.this.id
   cidr_block              = "${vals.subnet1_cidr}"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = true${subnetV6(0)}
 
   tags = {
     Name   = "${vals.name_prefix}-public-a"
@@ -244,7 +306,7 @@ resource "aws_subnet" "public_a" {
 resource "aws_subnet" "public_b" {
   vpc_id                  = aws_vpc.this.id
   cidr_block              = "${vals.subnet2_cidr}"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = true${subnetV6(1)}
 
   tags = {
     Name   = "${vals.name_prefix}-public-b"
@@ -258,7 +320,12 @@ resource "aws_route_table" "public" {
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.this.id
-  }
+  }${v6 ? `
+
+  route {
+    ipv6_cidr_block = "::/0"
+    gateway_id      = aws_internet_gateway.this.id
+  }` : ""}
 
   tags = {
     Name   = "${vals.name_prefix}-public-rt"
@@ -278,7 +345,8 @@ resource "aws_route_table_association" "public_b" {
 `;
           })(values, name),
       },
-    }),
+      };
+    },
   },
   {
     id: 'aws_rds_postgres',
@@ -300,7 +368,18 @@ resource "aws_route_table_association" "public_b" {
             { id: "subnet_ids_csv", label: "Subnet IDs (comma-separated)", control: 'text', default: "subnet-1,subnet-2", hint: "At least two subnets" },
             { id: "vpc_security_group_ids_csv", label: "VPC security group IDs (comma-separated)", control: 'text', default: "sg-xxxx", hint: "Existing SG(s)" },
             { id: "instance_class", label: "Instance class", control: 'text', default: "db.t3.medium", hint: "e.g. db.t3.medium" },
-            { id: "storage_gb", label: "Allocated storage (GB)", control: 'number', default: "100", hint: "Storage size" }
+            { id: "storage_gb", label: "Allocated storage (GB)", control: 'number', default: "100", hint: "Storage size" },
+            {
+              id: "network_type",
+              label: "Network type",
+              control: 'select',
+              options: [
+                { value: "IPV4", label: "IPV4 — IPv4 only" },
+                { value: "DUAL", label: "DUAL — IPv4 and IPv6 (subnets need IPv6 ranges)" },
+              ],
+              default: "IPV4",
+              hint: "DUAL needs every subnet in the group to be dual-stack"
+            }
           ],
     emits: [],
     build: (values                 , name        ) => ({
@@ -347,7 +426,8 @@ resource "aws_db_instance" "this" {
   vpc_security_group_ids  = [${sgHcl}]
   skip_final_snapshot     = true
   deletion_protection     = false
-  publicly_accessible     = false
+  publicly_accessible     = false${vals.network_type === "DUAL" ? `
+  network_type            = "DUAL"` : ""}
   storage_encrypted       = true
   auto_minor_version_upgrade = true
 

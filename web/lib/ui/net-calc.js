@@ -1,13 +1,17 @@
 /**
- * The network calculator: a button in the header of every page, beside Clear
- * all, that opens a panel with four tabs — Subnet, Split, VLSM and Check.
- * Every tab takes IPv4 or IPv6 and works out which from what is typed.
- *
- * Every page loads this module; it mounts itself into `.app-header`.
+ * The network calculator: opened from the header of every page (beside Clear
+ * all) and from beside Clear list in a build list, it is a panel with four
+ * tabs — Subnet, Split, VLSM and Check. Every tab takes IPv4 or IPv6.
  */
 
 import { el, replace } from './dom.js';
+import { formatCidr, formatIPv4, parseIPv4, prefixToMask } from '../core/net.js';
 import {
+  addressClass,
+  binaryOf,
+  hexOf,
+  hostsFor,
+  subnetBitmap,
   checkContains,
   checkContains6,
   checkOverlap,
@@ -55,40 +59,192 @@ function copyButton(getText              )              {
   return b;
 }
 
-function subnetTab()              {
-  const box = input('10.20.30.40/22, 10.20.30.40 255.255.252.0, or 2001:db8::1/48', '10.20.30.40/22');
+/** A labelled select filled from [value, label] pairs. */
+function selectOf(options                                        , value        )                    {
+  const s = el('select')                     ;
+  for (const [v, l] of options) {
+    const o = el('option', { text: l, attrs: { value: v } })                     ;
+    if (v === value) o.selected = true;
+    s.appendChild(o);
+  }
+  return s;
+}
+
+const field = (label        , node             )              => el('div', { class: 'netcalc-field' }, el('label', { class: 'netcalc-label', text: label }), node);
+
+/**
+ * The classic subnet calculator: an address, its network class (or a parent
+ * of your own), and five linked dropdowns — mask, subnet bits, mask bits,
+ * maximum subnets, hosts per subnet. Changing any one moves the others.
+ */
+function subnetV4()              {
+  let address = parseIPv4('10.20.30.40') ;
+  let parent = 8;
+  let prefix = 22;
+  const form = el('div', { class: 'netcalc-form' });
   const out = el('div', { class: 'netcalc-out' });
-  const run = ()       => {
-    const text = box.value.trim();
-    if (isV6(text)) {
-      const d = describeIPv6(text);
-      replace(out, typeof d === 'string' ? problem(d) : pairs([['Network', d.network], ['Compressed', d.compressed], ['Expanded', d.expanded], ['Last address', d.last], ['/64 subnets inside', d.subnets64], ['Type', d.kind]]));
-      return;
+  const listOut = el('div', { class: 'netcalc-out' });
+  const ipBox = input('e.g. 10.20.30.40', '10.20.30.40');
+
+  const render = ()       => {
+    const cls = addressClass(address);
+    const parentOptions                     = [
+      ...(cls.cls === 'A' || cls.cls === 'B' || cls.cls === 'C' ? [[String(cls.prefix), `Class ${cls.cls} (/${cls.prefix}) — first octet ${cls.range}`]                    ] : []),
+      ...Array.from({ length: 32 }, (_, i) => [String(i), `Custom parent /${i}`]                    ).filter(([v]) => !(cls.cls <= 'C' && v === String(cls.prefix))),
+    ];
+    if (prefix < parent) prefix = parent;
+    const masks = Array.from({ length: 33 - parent }, (_, i) => parent + i);
+    const mk = (fmt                       )                     => masks.map((p) => [String(p), fmt(p)]);
+    const pSel = selectOf(parentOptions, String(parent));
+    const maskSel = selectOf(mk((p) => `${formatIPv4(prefixToMask(p))}  (/${p})`), String(prefix));
+    const sbSel = selectOf(mk((p) => String(p - parent)), String(prefix));
+    const mbSel = selectOf(mk((p) => String(p)), String(prefix));
+    const maxSel = selectOf(mk((p) => (2 ** (p - parent)).toLocaleString()), String(prefix));
+    const hostsSel = selectOf(mk((p) => hostsFor(p).toLocaleString()), String(prefix));
+    pSel.addEventListener('change', () => {
+      parent = Number(pSel.value);
+      render();
+    });
+    for (const s of [maskSel, sbSel, mbSel, maxSel, hostsSel]) {
+      s.addEventListener('change', () => {
+        prefix = Number(s.value);
+        render();
+      });
     }
-    const d = describeSubnet(text);
+    replace(
+      form,
+      field('IP address', ipBox),
+      field('Network class', pSel),
+      field('Subnet mask', maskSel),
+      field('Subnet bits', sbSel),
+      field('Mask bits', mbSel),
+      field('Maximum subnets', maxSel),
+      field('Hosts per subnet', hostsSel),
+    );
+
+    const c = { network: (address & prefixToMask(prefix)) >>> 0, prefix };
+    const d = describeSubnet(`${formatIPv4(address)}/${prefix}`)                                                      ;
+    const parentNet = { network: (address & prefixToMask(parent)) >>> 0, prefix: parent };
+    replace(
+      out,
+      pairs([
+        ['Subnet ID', formatCidr(c)],
+        ['Host address range', `${d.firstHost} – ${d.lastHost}`],
+        ['Broadcast', d.broadcast],
+        ['Subnet mask', `${d.netmask}  (/${prefix})`],
+        ['Wildcard mask', d.wildcard],
+        ['Usable hosts', d.usable.toLocaleString()],
+        ['Subnets in the network', `${(2 ** (prefix - parent)).toLocaleString()} in ${formatCidr(parentNet)}`],
+        ['Subnet bitmap', subnetBitmap(parent, prefix)],
+        ['Address type', d.kind],
+        ['Hex address', hexOf(address)],
+        ['Binary address', binaryOf(address)],
+        ['Reverse DNS zone', d.reverseZone],
+      ]),
+      el('div', { class: 'btn-row' }, el('button', { class: 'btn btn-small btn-primary', text: 'List all subnets', attrs: { type: 'button' }, on: { click: () => list(parentNet) } })),
+    );
+    replace(listOut);
+  };
+
+  const list = (parentNet                                     )       => {
+    const r = splitSubnet(formatCidr(parentNet), { prefix });
+    if (typeof r === 'string') return replace(listOut, problem(r));
+    const rows = r.rows.map((x, i) => {
+      const net = parseIPv4(x.cidr.split('/')[0] ) ;
+      const bc = prefix >= 31 ? '—' : formatIPv4((net + 2 ** (32 - prefix) - 1) >>> 0);
+      return [i + 1, x.cidr, x.firstHost, x.lastHost, bc];
+    });
+    const text = rows.map((row) => row.join('\t')).join('\n');
+    replace(
+      listOut,
+      el('p', { class: 'muted', text: `${r.total.toLocaleString()} subnets of /${prefix} in ${formatCidr(parentNet)}${r.total > 1024 ? ' — the first 1,024 listed' : ''}.` }),
+      table(['#', 'Subnet ID', 'First host', 'Last host', 'Broadcast'], rows),
+      copyButton(() => text),
+    );
+  };
+
+  ipBox.addEventListener('input', () => {
+    const v = parseIPv4(ipBox.value.trim());
+    if (v === null) return replace(out, problem(`"${ipBox.value}" is not an IPv4 address.`));
+    const before = addressClass(address);
+    address = v;
+    // Moving to another class moves the parent with it, unless a custom parent was chosen.
+    const now = addressClass(address);
+    if (parent === before.prefix && now.cls <= 'C') parent = now.prefix;
+    render();
+    ipBox.focus();
+  });
+  render();
+  return el('div', { class: 'netcalc-tab' }, form, out, listOut);
+}
+
+/** The same questions for IPv6: an address, a prefix, and subnetting it into longer prefixes. */
+function subnetV6()              {
+  const ipBox = input('e.g. 2001:db8:abcd:12::1', '2001:db8:abcd:12::1');
+  const common = new Set([32, 40, 44, 48, 52, 56, 60, 64, 112, 126, 127, 128]);
+  const prefixSel = selectOf(Array.from({ length: 129 }, (_, i) => [String(i), `/${i}${common.has(i) ? ' •' : ''}`]                    ), '48');
+  const intoSel = selectOf(Array.from({ length: 129 }, (_, i) => [String(i), `/${i}${common.has(i) ? ' •' : ''}`]                    ), '64');
+  const out = el('div', { class: 'netcalc-out' });
+  const listOut = el('div', { class: 'netcalc-out' });
+  const run = ()       => {
+    const d = describeIPv6(`${ipBox.value.trim()}/${prefixSel.value}`);
     if (typeof d === 'string') return replace(out, problem(d));
     replace(
       out,
       pairs([
-        ['Network', d.cidr],
-        ['Netmask', `${d.netmask} (/${d.prefix})`],
-        ['Wildcard', d.wildcard],
-        ['First usable', d.firstHost],
-        ['Last usable', d.lastHost],
-        ['Broadcast', d.broadcast],
-        ['Usable hosts', d.usable.toLocaleString()],
-        ['Total addresses', d.total.toLocaleString()],
-        ['Type', d.kind],
-        ['Reverse DNS zone', d.reverseZone],
-        ['Next subnet', d.next ?? 'none — end of the address space'],
-        ['Mask in binary', d.binaryMask],
+        ['Network', d.network],
+        ['First address', d.network.split('/')[0] ],
+        ['Last address', d.last],
+        ['Addresses', `2^${128 - d.prefix}`],
+        ['/64 subnets inside', d.subnets64],
+        ['Address (compressed)', d.compressed],
+        ['Address (expanded)', d.expanded],
+        ['Address type', d.kind],
       ]),
-      d.hostBitsSet ? el('p', { class: 'muted', text: `${d.address} is a host address; the network it is in is ${d.cidr}.` }) : null,
+      el('div', { class: 'btn-row' }, el('button', { class: 'btn btn-small btn-primary', text: 'List the subnets', attrs: { type: 'button' }, on: { click: list } })),
+    );
+    replace(listOut);
+  };
+  const list = ()       => {
+    const d = describeIPv6(`${ipBox.value.trim()}/${prefixSel.value}`);
+    if (typeof d === 'string') return;
+    const r = splitSubnet6(d.network, { prefix: Number(intoSel.value) });
+    if (typeof r === 'string') return replace(listOut, problem(r));
+    const rows = r.rows.map((x, i) => [i + 1, x.cidr, x.first, x.last]);
+    replace(
+      listOut,
+      el('p', { class: 'muted', text: `${r.total.toLocaleString()} subnets of /${intoSel.value} in ${d.network}${r.total > 1024n ? ' — the first 1,024 listed' : ''}.` }),
+      table(['#', 'Subnet', 'First address', 'Last address'], rows),
+      copyButton(() => rows.map((row) => row.join('\t')).join('\n')),
     );
   };
-  box.addEventListener('input', run);
+  ipBox.addEventListener('input', run);
+  prefixSel.addEventListener('change', run);
+  intoSel.addEventListener('change', () => replace(listOut));
   run();
-  return el('div', { class: 'netcalc-tab' }, el('label', { class: 'netcalc-label', text: 'Address and prefix or mask' }), box, out);
+  return el(
+    'div',
+    { class: 'netcalc-tab' },
+    el('div', { class: 'netcalc-form' }, field('IPv6 address', ipBox), field('Prefix length', prefixSel), field('Subnet it into', intoSel)),
+    out,
+    listOut,
+    el('p', { class: 'muted', text: '• marks the usual sizes: /48 a site, /56 a small site, /64 a LAN (SLAAC needs it), /127 a point-to-point link.' }),
+  );
+}
+
+function subnetTab()              {
+  const body = el('div');
+  const v4 = el('button', { class: 'netcalc-family is-active', text: 'IPv4', attrs: { type: 'button' } });
+  const v6 = el('button', { class: 'netcalc-family', text: 'IPv6', attrs: { type: 'button' } });
+  const pick = (six         )       => {
+    v4.classList.toggle('is-active', !six);
+    v6.classList.toggle('is-active', six);
+    replace(body, six ? subnetV6() : subnetV4());
+  };
+  v4.addEventListener('click', () => pick(false));
+  v6.addEventListener('click', () => pick(true));
+  pick(false);
+  return el('div', { class: 'netcalc-tab' }, el('div', { class: 'netcalc-families' }, v4, v6), body);
 }
 
 function splitTab()              {
@@ -193,7 +349,7 @@ const TABS                                                         = [
   ['check', 'Check', checkTab],
 ];
 
-function openCalculator()       {
+export function openCalculator()       {
   const existing = document.querySelector                   ('dialog.netcalc');
   if (existing) {
     existing.showModal();
@@ -231,14 +387,14 @@ function openCalculator()       {
   dialog.showModal();
 }
 
+/** The same calculator from the header of every page, beside Clear all — it is useful well beyond the build lists. */
 export function mountNetCalc(header         )                    {
   const button = el('button', {
     class: 'btn btn-small btn-netcalc',
     text: 'Network calculator',
     attrs: { type: 'button', title: 'Subnets, splits, VLSM and overlap checks — IPv4 and IPv6', 'data-control': 'netcalc' },
-    on: { click: openCalculator },
+    on: { click: () => openCalculator() },
   })                     ;
-  // Beside Clear all, which stays the last thing in the header.
   const clear = header.querySelector('[data-control="clear-all"]');
   if (clear) header.insertBefore(button, clear);
   else header.appendChild(button);

@@ -22,6 +22,7 @@ import { error, info, warning,              } from '../../core/findings.js';
 import { currentEstate } from '../../kit/estate-store.js';
 import { splunkBlueprint,                      } from '../from-app.js';
 import { defaultMeta, listOf, splunkName,                } from '../splunk.js';
+import { formatHostPort, isIpv6, splitHostPort } from '../../core/ip.js';
 
 const TIER = 'forwarder'         ;
 
@@ -543,7 +544,7 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
     description: 'Install scripts for the universal forwarder on the imported estate\u2019s Linux and Windows machines — non-root, started by systemd, pointed at the deployment server — with the admin password hashed from stdin on Linux and randomly generated on Windows.',
     inputs: [
       { id: 'app_name', label: 'Deployment client app', control: 'text', default: 'org_all_deploymentclient' },
-      { id: 'deployment_server', label: 'Deployment server', control: 'text', default: 'ds01.example.com:8089', hint: 'host:port — leave empty only if something else will manage these forwarders' },
+      { id: 'deployment_server', label: 'Deployment server', control: 'text', default: 'ds01.example.com:8089', hint: 'host:port or [IPv6]:port — leave empty only if something else will manage these forwarders' },
       { id: 'phone_home', label: 'Phone home every (seconds)', control: 'number', default: 60, min: 30, max: 3600 },
       { id: 'use_estate', label: 'Hosts from the imported estate', control: 'toggle', default: true, hint: 'Powered-on Windows and Linux VMs; falls back to the lists below when no estate is loaded' },
       { id: 'linux_hosts', label: 'Linux hosts', control: 'textarea', default: 'app01.example.com\napp02.example.com' },
@@ -582,7 +583,15 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
         findings.push(warning('splunk.uf-no-hosts', 'No hosts to install on.', { source: 'ArchToolKit' }));
       }
 
-      const [dsHost, dsPort] = ds.includes(':') ? [ds.slice(0, ds.lastIndexOf(':')), ds.slice(ds.lastIndexOf(':') + 1)] : [ds, '8089'];
+      // host:port, [IPv6]:port or a bare host; an IPv6 address is bracketed
+      // wherever it sits next to a port (targetUri, URLs, the MSI property).
+      const dsSplit = splitHostPort(ds);
+      const dsPort = String(dsSplit.port ?? 8089);
+      const dsHost = dsSplit.host;
+      const dsHostPort = formatHostPort(dsHost, dsPort);
+      if (ds && isIpv6(dsHost) && !ds.startsWith('[') && dsSplit.port === null && /:\d{2,5}$/.test(ds)) {
+        findings.push(warning('splunk.uf-ds-ipv6-port', `"${ds}" is read as an IPv6 address with no port, so 8089 is used. Write [address]:port to give one.`, { source: 'ArchToolKit' }));
+      }
       const deploymentClient = [
         '[deployment-client]',
         '# How often the forwarder asks for changes. 60s is fine to a few',
@@ -591,7 +600,7 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
         `phoneHomeIntervalInSecs = ${phoneHome}`,
         '',
         '[target-broker:deploymentServer]',
-        `targetUri = ${dsHost}:${dsPort || '8089'}`,
+        `targetUri = ${dsHostPort}`,
       ];
       const fwdUser = 'splunkfwd';
 
@@ -610,7 +619,7 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
           'Outputs are deliberately not set here. Map an outputs app (splunk_outputs) to every forwarder in a serverclass so the indexer list is in one place.',
         ],
         before: [
-          ...(ds ? [`curl -sk https://${dsHost}:${dsPort || '8089'}/services/server/info -o /dev/null -w "%{http_code}\\n"   # reachable from the hosts? 401 is fine`] : []),
+          ...(ds ? [`curl -sk https://${dsHostPort}/services/server/info -o /dev/null -w "%{http_code}\\n"   # reachable from the hosts? 401 is fine`] : []),
           'ssh <a linux host> "sudo -n true && df -h /opt"   # passwordless sudo and space for /opt/splunkforwarder',
           'Test-WSMan <a windows host>   # WinRM reachable for Invoke-Command',
           `ls -l ${linuxPkg} ${msi}   # both packages downloaded and checksums compared with splunk.com`,
@@ -654,7 +663,7 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
             'HASH_FILE="${HASH_FILE:-$HOME/.splunk/uf-admin.hash}"',
             `FWD_USER="${fwdUser}"`,
             `DC_APP="${app}"`,
-            `DS_URI="${ds ? `${dsHost}:${dsPort || '8089'}` : ''}"`,
+            `DS_URI="${ds ? dsHostPort : ''}"`,
             '',
             '[[ -f "$PKG" ]] || { echo "Package not found: $PKG" >&2; exit 1; }',
             '[[ -f "$HASH_FILE" ]] || { echo "No admin hash; run make-admin-hash.sh first." >&2; exit 1; }',
@@ -746,7 +755,7 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
             "  'AGREETOLICENSE=Yes',",
             "  'SPLUNKUSERNAME=admin',",
             "  'GENRANDOMPASSWORD=1',",
-            ...(ds ? [`  'DEPLOYMENT_SERVER=${dsHost}:${dsPort || '8089'}',`] : []),
+            ...(ds ? [`  'DEPLOYMENT_SERVER=${dsHostPort}',`] : []),
             "  # Runs as the least-privileged virtual account, with the rights to read",
             "  # the event logs granted by the installer. 10.2 and later no longer run",
             "  # as Local System or Administrator.",

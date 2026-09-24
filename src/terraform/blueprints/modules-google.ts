@@ -12,8 +12,11 @@
  * directory Terraform would read.
  */
 
-import type { BlueprintGroup } from '../../kit/blueprint.ts';
+import type { Blueprint, BlueprintGroup, BlueprintValues } from '../../kit/blueprint.ts';
+import { error, type Finding } from '../../core/findings.ts';
+import { containsAny, parseCidrAny } from '../../core/ip.ts';
 import { moduleBlueprint, type ModuleBlueprintSpec } from '../module-blueprint.ts';
+import { isOn } from './dual-stack.ts';
 
 const SPECS: readonly ModuleBlueprintSpec[] = [
   {
@@ -30,7 +33,19 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
       {
         input: 'subnets',
         default: '',
-        hint: 'Required. A list of objects — write it in the file',
+        hint: 'Required. A list of objects — write it in the file. Dual stack: stack_type = "IPV4_IPV6" and ipv6_access_type = "EXTERNAL" or "INTERNAL"; Google allocates the /64',
+      },
+      {
+        input: 'enable_ipv6_ula',
+        label: 'Internal IPv6 (ULA)',
+        default: 'false',
+        hint: 'Needed by INTERNAL IPv6 subnets. Permanent once on',
+      },
+      {
+        input: 'internal_ipv6_range',
+        label: 'Internal IPv6 /48',
+        default: '',
+        hint: 'Optional, with ULA on: a /48 from fd20::/20. Blank lets Google choose',
       },
       { input: 'secondary_ranges', default: '', hint: 'key=value, comma-separated' },
       { input: 'delete_default_internet_gateway_routes', default: 'false' },
@@ -60,6 +75,16 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
       { input: 'enable_shielded_nodes', default: 'true' },
       { input: 'remove_default_node_pool', default: 'true' },
       { input: 'deletion_protection', default: 'true' },
+      {
+        input: 'stack_type',
+        label: 'Stack type',
+        control: 'select',
+        options: [
+          { value: 'IPV4', label: 'IPV4' },
+          { value: 'IPV4_IPV6', label: 'IPV4_IPV6 — dual stack; the subnetwork must be dual-stack' },
+        ],
+        default: 'IPV4',
+      },
     ],
     outputs: ['name', 'endpoint', 'ca_certificate', 'location'],
   },
@@ -257,8 +282,35 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
   },
 ];
 
+/** Google takes an internal IPv6 range only as a /48 inside fd20::/20, and only with ULA on. */
+function networkFindings(values: BlueprintValues): Finding[] {
+  const code = 'terraform.google_module_network';
+  const range = String(values.internal_ipv6_range ?? '').trim();
+  if (!range) return [];
+  const c = parseCidrAny(range);
+  const findings: Finding[] = [];
+  if (!c || c.family !== 6 || c.prefix !== 48 || !containsAny('fd20::/20', c.network)) {
+    findings.push(error(`${code}.internal-ipv6-range`, `internal_ipv6_range must be a /48 inside fd20::/20; "${range}" is not.`, { path: 'internal_ipv6_range' }));
+  }
+  if (!isOn(values.enable_ipv6_ula)) {
+    findings.push(error(`${code}.internal-ipv6-without-ula`, 'internal_ipv6_range is set but Internal IPv6 (ULA) is off, so Google ignores it.', { path: 'enable_ipv6_ula' }));
+  }
+  return findings;
+}
+
+function checked(blueprint: Blueprint): Blueprint {
+  if (blueprint.id !== 'google_module_network') return blueprint;
+  return {
+    ...blueprint,
+    build: (values, name) => {
+      const out = blueprint.build(values, name);
+      return { ...out, findings: [...(out.findings ?? []), ...networkFindings(values)] };
+    },
+  };
+}
+
 export const GOOGLE_TERRAFORM_MODULES: BlueprintGroup = {
   target: 'google',
   label: 'Google Cloud Platform (GCP)',
-  blueprints: SPECS.map((spec) => moduleBlueprint('google', spec)),
+  blueprints: SPECS.map((spec) => checked(moduleBlueprint('google', spec))),
 };

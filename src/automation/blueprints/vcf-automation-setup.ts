@@ -31,6 +31,9 @@ import { apiStep, importBundle, importMd, manualStep, setupOrderStep, verifyFor,
 import { packageNameOf, toPackage, type AutomationPackage } from '../vro/to-package.ts';
 import type { VroActionDef } from '../vro/core.ts';
 import type { VroConfigAttribute } from '../../kit/vro-package.ts';
+import { containsAny, familyOf, isIp, overlapsAny, parseCidrAny } from '../../core/ip.ts';
+import { parseIPv4 } from '../../core/net.ts';
+import { parseIPv6, v6ToBig } from '../../core/net-calc.ts';
 
 const PLATFORM = 'vcf-automation' as const;
 const SRC = 'ArchToolKit';
@@ -200,17 +203,36 @@ function chainScript(purpose: string, steps: readonly ChainStep[], undo: string)
   return lines.join('\n');
 }
 
-/** A CIDR as an inclusive range of 32-bit addresses, or undefined if it does not parse. */
-function cidrRange(cidr: string): [number, number] | undefined {
-  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr.trim());
-  if (!match) return undefined;
-  const octets = match.slice(1, 5).map(Number);
-  const prefix = Number(match[5]);
-  if (octets.some((o) => o > 255) || prefix > 32) return undefined;
-  const address = octets.reduce((acc, o) => acc * 256 + o, 0);
-  const size = 2 ** (32 - prefix);
-  const start = Math.floor(address / size) * size;
-  return [start, start + size - 1];
+/** An address of either family as a number, to order the ends of a range; undefined if it is not an address. */
+function addressOrder(ip: string): bigint | undefined {
+  const t = ip.trim();
+  if (!isIp(t)) return undefined;
+  return familyOf(t) === 4 ? BigInt(parseIPv4(t)!) : v6ToBig(parseIPv6(t)!);
+}
+
+/**
+ * One segment of a network profile: an IPv4 CIDR, an IPv6 CIDR, or both
+ * joined with + for a dual-stack segment (one fabric network carrying cidr
+ * and ipv6Cidr). IPv6 is written canonically so it matches what the API lists.
+ */
+interface Segment {
+  readonly text: string;
+  readonly v4?: string;
+  readonly v6?: string;
+  readonly problem?: string;
+}
+function segmentOf(entry: string): Segment {
+  const parts = entry.split('+').map((p) => p.trim()).filter(Boolean);
+  let v4: string | undefined;
+  let v6: string | undefined;
+  for (const part of parts) {
+    const c = parseCidrAny(part);
+    if (!c || !part.includes('/')) return { text: entry, problem: `${part} is not an IPv4 or IPv6 CIDR` };
+    if ((c.family === 4 ? v4 : v6) !== undefined || parts.length > 2) return { text: entry, problem: `${entry} has two CIDRs of one family; a segment has at most one IPv4 and one IPv6 CIDR` };
+    if (c.family === 4) v4 = part;
+    else v6 = `${c.network}/${c.prefix}`;
+  }
+  return { text: entry, v4, v6 };
 }
 
 const PLACEMENT = [
@@ -1414,8 +1436,8 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         ],
         default: 'NONE',
       },
-      { id: 'existing_cidrs', label: 'Existing network CIDRs', control: 'text', default: '10.20.10.0/24, 10.20.11.0/24', hint: 'The segments the profile includes, for the overlap check' },
-      { id: 'ondemand_cidr', label: 'On-demand address space', control: 'text', default: '10.200.0.0/16', showWhen: { input: 'mode', equals: ['on-demand'] } },
+      { id: 'existing_cidrs', label: 'Existing network CIDRs', control: 'text', default: '10.20.10.0/24, 10.20.11.0/24', hint: 'The segments the profile includes, IPv4 or IPv6; a dual-stack segment as 10.20.10.0/24+2001:db8:10::/64' },
+      { id: 'ondemand_cidr', label: 'On-demand address space', control: 'text', default: '10.200.0.0/16', hint: 'IPv4: on-demand networks take IPv4 address space only', showWhen: { input: 'mode', equals: ['on-demand'] } },
       { id: 'ondemand_prefix', label: 'Subnet size (prefix)', control: 'number', default: 28, min: 16, max: 29, showWhen: { input: 'mode', equals: ['on-demand'] } },
       {
         id: 'ipam',
@@ -1428,7 +1450,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         ],
         default: 'internal',
       },
-      { id: 'range_start', label: 'Static range start', control: 'text', default: '10.20.10.50', showWhen: { input: 'ipam', equals: ['internal'] } },
+      { id: 'range_start', label: 'Static range start', control: 'text', default: '10.20.10.50', hint: 'IPv4 or IPv6, inside a network of the same family above', showWhen: { input: 'ipam', equals: ['internal'] } },
       { id: 'range_end', label: 'Static range end', control: 'text', default: '10.20.10.200', showWhen: { input: 'ipam', equals: ['internal'] } },
       { id: 'security_groups', label: 'Security group ids', control: 'text', default: '', placeholder: 'from GET /iaas/api/security-groups' },
       { id: 'net_tags', label: 'Capability tags', control: 'text', default: 'net:app, site:dc1' },
@@ -1439,7 +1461,11 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
       const mode = str(values, 'mode', 'existing');
       const isolation = str(values, 'isolation', 'NONE');
       const existing = listOf(str(values, 'existing_cidrs', ''));
-      const onDemandCidr = mode === 'on-demand' ? str(values, 'ondemand_cidr', '') : '';
+      const segments = existing.map(segmentOf);
+      const anyV6 = segments.some((s) => s.v6 !== undefined);
+      const onDemandTyped = mode === 'on-demand' ? str(values, 'ondemand_cidr', '') : '';
+      const onDemandV6 = familyOf(onDemandTyped) === 6;
+      const onDemandCidr = onDemandV6 ? '' : onDemandTyped;
       const prefix = num(values, 'ondemand_prefix', 28);
       const ipam = str(values, 'ipam', 'internal');
       const rangeStart = str(values, 'range_start', '');
@@ -1460,18 +1486,24 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
       if (mode === 'existing' && isolation !== 'NONE') {
         findings.push(info('vcfa.network.isolation-unused', 'An isolation policy is set but only existing networks are offered, so it only applies to templates asking for private networks.', { source: SRC }));
       }
-      const all = [...existing, ...(onDemandCidr ? [onDemandCidr] : [])];
-      const ranges = all.map((cidr) => ({ cidr, range: cidrRange(cidr) }));
-      for (const r of ranges) {
-        if (!r.range) findings.push(error('vcfa.network.bad-cidr', `${r.cidr} is not an IPv4 CIDR.`, { source: SRC }));
+      if (onDemandV6) {
+        findings.push(
+          error('vcfa.network.ondemand-ipv6', `On-demand address space on VCF Automation does not support IPv6 (${onDemandTyped}): isolationNetworkDomainCIDR takes an IPv4 block.`, {
+            remediation: 'Give an IPv4 block for on-demand networks. IPv6 is supported on existing networks (ipv6Cidr) and IPv6 IP ranges.',
+            source: SRC,
+          }),
+        );
       }
-      for (let i = 0; i < ranges.length; i++) {
-        for (let j = i + 1; j < ranges.length; j++) {
-          const a = ranges[i]!.range;
-          const b = ranges[j]!.range;
-          if (a && b && a[0] <= b[1] && b[0] <= a[1]) {
+      for (const s of segments) {
+        if (s.problem) findings.push(error('vcfa.network.bad-cidr', `${s.problem}.`, { source: SRC }));
+      }
+      const all = [...segments.flatMap((s) => [s.v4, s.v6].filter((c): c is string => c !== undefined)), ...(onDemandCidr ? [onDemandCidr] : [])];
+      if (onDemandCidr && familyOf(onDemandCidr) === null) findings.push(error('vcfa.network.bad-cidr', `${onDemandCidr} is not an IPv4 CIDR.`, { source: SRC }));
+      for (let i = 0; i < all.length; i++) {
+        for (let j = i + 1; j < all.length; j++) {
+          if (overlapsAny(all[i]!, all[j]!)) {
             findings.push(
-              error('vcfa.network.overlap', `${ranges[i]!.cidr} overlaps ${ranges[j]!.cidr}.`, {
+              error('vcfa.network.overlap', `${all[i]!} overlaps ${all[j]!}.`, {
                 remediation: 'Two networks in one profile with overlapping addresses means two machines can be given the same IP. On-demand address space in particular must be carved out of nothing else.',
                 source: SRC,
               }),
@@ -1479,15 +1511,23 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           }
         }
       }
+      // The range belongs to the first segment with a network of its family: an
+      // IPv6 range (ipVersion IPv6) to the first segment with an ipv6Cidr.
+      const rangeFamily = familyOf(rangeStart);
+      const rangeAt = Math.max(0, segments.findIndex((s) => (rangeFamily === 6 ? s.v6 : s.v4) !== undefined));
+      const home = segments[rangeAt];
+      const homeCidr = rangeFamily === 6 ? home?.v6 : home?.v4;
       if (ipam === 'internal') {
-        const first = existing[0] ? cidrRange(existing[0]) : undefined;
-        const toNum = (ip: string) => cidrRange(`${ip}/32`)?.[0];
-        const s = toNum(rangeStart);
-        const e = toNum(rangeEnd);
-        if (s === undefined || e === undefined || s > e) {
+        const s = addressOrder(rangeStart);
+        const e = addressOrder(rangeEnd);
+        if (s !== undefined && e !== undefined && familyOf(rangeStart) !== familyOf(rangeEnd)) {
+          findings.push(error('vcfa.network.range-family', `The static range ${rangeStart} – ${rangeEnd} mixes IPv4 and IPv6. An IP range is one family (ipVersion IPv4 or IPv6); make one range per family.`, { source: SRC }));
+        } else if (s === undefined || e === undefined || s > e) {
           findings.push(error('vcfa.network.bad-range', `The static range ${rangeStart} – ${rangeEnd} is not a valid ascending range.`, { source: SRC }));
-        } else if (first && (s < first[0] || e > first[1])) {
-          findings.push(warning('vcfa.network.range-outside', `The static range is not inside ${existing[0]}, the first existing network.`, { source: SRC }));
+        } else if (segments.length > 0 && !homeCidr && !segments.some((g) => g.problem)) {
+          findings.push(error('vcfa.network.range-no-network', `The static range is IPv${rangeFamily}, but no existing network in the profile has an IPv${rangeFamily} CIDR for it to belong to.`, { source: SRC }));
+        } else if (homeCidr && (!containsAny(homeCidr, rangeStart) || !containsAny(homeCidr, rangeEnd))) {
+          findings.push(warning('vcfa.network.range-outside', `The static range is not inside ${homeCidr}, the first existing ${rangeFamily === 6 ? 'IPv6 ' : ''}network.`, { source: SRC }));
         }
       }
       if (tags.length === 0) {
@@ -1499,7 +1539,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         name: profileName,
         description: '',
         regionId,
-        fabricNetworkIds: existing.map((cidr) => `<REQUIRED — fabric network id for ${cidr}, from GET /iaas/api/fabric-networks>`),
+        fabricNetworkIds: segments.map((s) => `<REQUIRED — fabric network id for ${s.text}, from GET /iaas/api/fabric-networks>`),
         isolationType,
         ...(isolationType === 'SUBNET'
           ? {
@@ -1522,17 +1562,19 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           ? {
               name: `${profileName}-range`,
               description: '',
-              fabricNetworkIds: [`<REQUIRED — fabric network id for ${existing[0] ?? 'the network'}>`],
+              fabricNetworkIds: [`<REQUIRED — fabric network id for ${home?.text ?? 'the network'}>`],
               startIPAddress: rangeStart,
               endIPAddress: rangeEnd,
-              ipVersion: 'IPv4',
+              ipVersion: rangeFamily === 6 ? 'IPv6' : 'IPv4',
             }
           : undefined;
 
-      const fabric = existing.map((cidr) => ({
-        _path: `PATCH /iaas/api/fabric-networks-vsphere/<id for ${cidr}>`,
-        cidr,
-        defaultGateway: '<REQUIRED>',
+      // A dual-stack segment is one fabric network with both address families:
+      // cidr and defaultGateway for IPv4, ipv6Cidr and defaultIpv6Gateway for IPv6.
+      const fabric = segments.map((s) => ({
+        _path: `PATCH /iaas/api/fabric-networks-vsphere/<id for ${s.text}>`,
+        ...(s.v4 !== undefined || s.v6 === undefined ? { cidr: s.v4 ?? s.text, defaultGateway: '<REQUIRED>' } : {}),
+        ...(s.v6 !== undefined ? { ipv6Cidr: s.v6, defaultIpv6Gateway: '<REQUIRED>' } : {}),
         dnsServerAddresses: ['<REQUIRED>'],
         domain: '<REQUIRED>',
         tags,
@@ -1559,7 +1601,9 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
             ...(range ? [{ key: 'IP_RANGE_ID', label: `IP range "${profileName}-range"`, resource: 'ip-range.json', list: '/iaas/api/network-ip-ranges', style: 'iaas' as const, create: '/iaas/api/network-ip-ranges' }] : []),
             { key: 'NETWORK_PROFILE_ID', label: `network profile "${profileName}"`, resource: 'network-profile.json', list: '/iaas/api/network-profiles', style: 'iaas', create: '/iaas/api/network-profiles' },
           ]),
-          `var CIDRS = ${JSON.stringify(existing)};\n`,
+          `var CIDRS = ${JSON.stringify(anyV6 ? segments.map((s) => s.v4 ?? '') : existing)};\n`,
+          // IPv6 segments match the fabric network's ipv6Cidr; a dual-stack one both.
+          anyV6 ? `var CIDRS6 = ${JSON.stringify(segments.map((s) => s.v6 ?? ''))};\nvar SEGMENTS = ${JSON.stringify(segments.map((s) => s.text))};\n` : '',
           String.raw`var NP = bodies["network-profile.json"];
 var RANGE = bodies["ip-range.json"];
 var region = mod.regionId(conn, settings);
@@ -1572,11 +1616,11 @@ if (CIDRS.length > 0) {
   var networks = mod.listAll(conn, "/iaas/api/fabric-networks", "iaas");
   for (var c = 0; c < CIDRS.length; c++) {
     var hits = [];
-    for (var i = 0; i < networks.length; i++) if (String(networks[i].cidr) === CIDRS[c] && (!external || !networks[i].externalRegionId || String(networks[i].externalRegionId) === external)) hits.push(networks[i]);
-    var id = hits.length === 1 ? String(hits[0].id) : "<REQUIRED — " + hits.length + " fabric networks with CIDR " + CIDRS[c] + "; set its id in payloadOverrides>";
-    if (hits.length === 1) System.log("Network " + CIDRS[c] + " is " + hits[0].name + " (" + id + ")");
+    for (var i = 0; i < networks.length; i++) if (${anyV6 ? '(!CIDRS[c] || String(networks[i].cidr) === CIDRS[c]) && (!CIDRS6[c] || String(networks[i].ipv6Cidr || "").toLowerCase() === CIDRS6[c])' : 'String(networks[i].cidr) === CIDRS[c]'} && (!external || !networks[i].externalRegionId || String(networks[i].externalRegionId) === external)) hits.push(networks[i]);
+    var id = hits.length === 1 ? String(hits[0].id) : "<REQUIRED — " + hits.length + " fabric networks with CIDR " + ${anyV6 ? 'SEGMENTS[c]' : 'CIDRS[c]'} + "; set its id in payloadOverrides>";
+    if (hits.length === 1) System.log("Network " + ${anyV6 ? 'SEGMENTS[c]' : 'CIDRS[c]'} + " is " + hits[0].name + " (" + id + ")");
     NP.fabricNetworkIds[c] = id;
-    if (c === 0 && RANGE) RANGE.fabricNetworkIds = [id];
+    if (c === ${rangeAt} && RANGE) RANGE.fabricNetworkIds = [id];
   }
 }
 mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
@@ -1648,6 +1692,9 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           'The NSX-related custom properties (Tier-0, edge cluster) have changed names between releases. GET an existing network profile that uses on-demand networks and copy its shape.',
           'scripts/fabric-networks.json is not sent by the workflow or scripts/apply.sh: each entry is a PATCH against a discovered network, and the ids have to be looked up first.',
           ...(ipam === 'external' ? ['With external IPAM, IP ranges come from the provider via the integration and are not created here; assign them to the networks in the interface or via /iaas/api/external-network-ip-ranges.'] : []),
+          ...(anyV6 || rangeFamily === 6
+            ? ['IPv6: a fabric network carries ipv6Cidr and defaultIpv6Gateway beside cidr and defaultGateway, and an IP range says ipVersion IPv6. VERIFY: those field names on a GET of a fabric network and an IP range in your 9.x release, and that the lookup compares ipv6Cidr in the same (compressed, lower-case) form this writes.']
+            : []),
         ],
         findings,
       };

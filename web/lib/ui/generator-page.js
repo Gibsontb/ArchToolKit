@@ -22,6 +22,7 @@ import { buildVroPackage, readPackageSpec } from '../kit/vro-package.js';
 import { currentTagStandard, tagChoices } from '../kit/tag-standard.js';
 import { tagStandardBuilder } from './tag-standard-builder.js';
 import { autogrow, isListField, listEditor, tableEditor, tableShape } from './multi-editors.js';
+import { openCalculator } from './net-calc.js';
 import { card, findingsList } from './components.js';
 import { getTarget, setTarget,               } from '../kit/target.js';
 import { estateOptionsFor } from '../kit/estate.js';
@@ -791,6 +792,13 @@ export function mountGeneratorPage(root             , options                  )
                 renderTwo();
               },
             },
+          }),
+          // Working out subnets is part of building the change, so the calculator is here too.
+          el('button', {
+            class: 'btn btn-small btn-netcalc',
+            text: 'Network calculator',
+            attrs: { type: 'button', 'data-control': 'netcalc-stack', title: 'Subnets, splits, VLSM and overlap checks — IPv4 and IPv6' },
+            on: { click: () => openCalculator() },
           }),
         ),
       ),

@@ -16,7 +16,9 @@
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
-import { isIpv4, listOf,                   } from '../device.js';
+import { listOf,                   } from '../device.js';
+import { familyOf, formatHostPort, isIp, urlHost } from '../../core/ip.js';
+import { as3Members, parseMembers, virtualFindings } from './f5-common.js';
 
 const PLATFORM = 'f5'         ;
 
@@ -83,9 +85,14 @@ export const F5_EXTRA_2                             = [
       const method = str(values, 'method', 'cookie');
       const timeout = num(values, 'timeout', 3600);
       const virtual = str(values, 'virtual_address', '');
-      const servers = listOf(str(values, 'pool_members', '').replace(/\n/g, ','));
-      const findings            = [];
-      if (!isIpv4(virtual)) findings.push(error('network.f5.bad-virtual', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const servers = parseMembers(str(values, 'pool_members', ''), 8080);
+      const checked = virtualFindings(virtual, servers, 'auto', 'network.f5.bad-virtual');
+      const findings            = [...checked.findings];
+      // A dotted mask says nothing about an IPv6 client; how the BIG-IP applies it there is version-specific.
+      const maskNote =
+        method === 'source-address' && familyOf(virtual) === 6
+          ? ['VERIFY: the virtual address is IPv6 and the persistence mask is dotted IPv4. Check how this BIG-IP version applies the mask to IPv6 clients before relying on anything coarser than one record per client address.']
+          : [];
       if (method === 'source-address' && str(values, 'mask', '') === '255.255.255.255') {
         findings.push(
           warning('network.f5.source-persistence-nat', 'Source address persistence sends every client behind one NAT address to the same pool member. A large office or a mobile carrier then loads one server and leaves the rest idle.', {
@@ -121,6 +128,8 @@ export const F5_EXTRA_2                             = [
           'Changing persistence does not move existing connections. Clients already pinned stay where they are until their record expires.',
           'Persistence and load balancing pull in opposite directions. A pool that looks unbalanced under persistence is usually working correctly.',
           ...(method === 'cookie' ? ['Cookie persistence needs an HTTP profile on the virtual server. Without one there is nowhere to insert the cookie and it silently does nothing.'] : []),
+          ...checked.notes,
+          ...maskNote,
         ],
         before: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`,
@@ -135,7 +144,7 @@ export const F5_EXTRA_2                             = [
           [`${app}_pool`]: {
             class: 'Pool',
             monitors: ['http'],
-            members: [{ servicePort: Number(servers[0]?.split(':')[1] ?? 8080), serverAddresses: servers.map((s) => s.split(':')[0] ?? s) }],
+            members: as3Members(servers),
           },
           serviceMain: {
             class: method === 'cookie' ? 'Service_HTTP' : 'Service_TCP',
@@ -150,10 +159,11 @@ export const F5_EXTRA_2                             = [
           'tmsh show ltm persistence persist-records',
           `tmsh show ltm pool /${tenant}/${app}/${app}_pool members`,
           `${'!'} From a client: make several requests and confirm they land on the same member`,
-          ...(method === 'cookie' ? [`curl -skI https://${virtual}/ | grep -i ${str(values, 'cookie_name', 'BIGIPSERVER')}`] : []),
+          ...(method === 'cookie' ? [`curl -skI https://${urlHost(virtual)}/ | grep -i ${str(values, 'cookie_name', 'BIGIPSERVER')}`] : []),
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: as3Push(tenant, app),
+        findings,
       };
     },
   }),
@@ -189,11 +199,15 @@ export const F5_EXTRA_2                             = [
       const app = clean(str(values, 'application', 'app1'), 'app1');
       const pattern = str(values, 'pattern', 'uri-routing');
       const virtual = str(values, 'virtual_address', '');
-      const servers = listOf(str(values, 'pool_members', '').replace(/\n/g, ','));
-      const second = listOf(str(values, 'second_pool', '').replace(/\n/g, ','));
+      const servers = parseMembers(str(values, 'pool_members', ''), 8080);
+      const second = parseMembers(pattern === 'uri-routing' ? str(values, 'second_pool', '') : '', 8080);
       const blocked = listOf(str(values, 'blocked_paths', ''));
-      const findings            = [];
-      if (!isIpv4(virtual)) findings.push(error('network.f5.bad-virtual', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const web = urlHost(virtual);
+      const checked = virtualFindings(virtual, parseMembers([...servers.servers, ...second.servers].join(','), 8080), 'auto', 'network.f5.bad-virtual');
+      const findings            = [...checked.findings];
+      if (servers.invalid.length > 0 || second.invalid.length > 0) {
+        findings.push(error('network.f5.bad-member', `Not a pool member address: ${[...servers.invalid, ...second.invalid].join(', ')}.`, { source: 'ArchToolKit' }));
+      }
       findings.push(
         warning('network.f5.irule-cost', 'An iRule runs on every request it is attached to. A rule doing string work per request is a CPU cost that only shows up at peak, and iRules are rarely the first thing anyone looks at.', {
           remediation: 'Prefer a policy (LTM policy) where one will do the same job — it is evaluated in a faster path.',
@@ -230,6 +244,7 @@ export const F5_EXTRA_2                             = [
           'AS3 replaces the whole tenant. Take the current declaration first and merge this into it.',
           'An iRule takes effect on the next request, not on existing connections. Test it against a copy of the virtual server before attaching it to the live one.',
           'Log lines in an iRule go to /var/log/ltm on every match. A rule that logs on a busy path fills the disk.',
+          ...checked.notes,
         ],
         before: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`,
@@ -241,14 +256,14 @@ export const F5_EXTRA_2                             = [
           [`${app}_pool`]: {
             class: 'Pool',
             monitors: ['http'],
-            members: [{ servicePort: Number(servers[0]?.split(':')[1] ?? 8080), serverAddresses: servers.map((s) => s.split(':')[0] ?? s) }],
+            members: as3Members(servers),
           },
-          ...(pattern === 'uri-routing' && second.length > 0
+          ...(pattern === 'uri-routing' && second.servers.length > 0
             ? {
                 [`${app}_pool_second`]: {
                   class: 'Pool',
                   monitors: ['http'],
-                  members: [{ servicePort: Number(second[0]?.split(':')[1] ?? 8080), serverAddresses: second.map((s) => s.split(':')[0] ?? s) }],
+                  members: as3Members(second),
                 },
               }
             : {}),
@@ -262,14 +277,15 @@ export const F5_EXTRA_2                             = [
         verify: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} | jq .`,
           `tmsh list ltm rule /${tenant}/${app}/${app}_rule`,
-          ...(pattern === 'uri-routing' ? [`curl -sk https://${virtual}${str(values, 'match_uri', '/api')}/ -o /dev/null -w '%{http_code}\\n'`] : []),
-          ...(pattern === 'host-redirect' ? [`curl -skI -H "Host: ${str(values, 'from_host', '')}" https://${virtual}/ | head -5`] : []),
-          ...(pattern === 'security-headers' ? [`curl -skI https://${virtual}/ | grep -iE 'strict-transport|x-content-type|x-frame'`] : []),
-          ...(pattern === 'block-paths' ? blocked.slice(0, 2).map((p) => `curl -sk https://${virtual}${p} -o /dev/null -w '%{http_code}\\n'`) : []),
+          ...(pattern === 'uri-routing' ? [`curl -sk https://${web}${str(values, 'match_uri', '/api')}/ -o /dev/null -w '%{http_code}\\n'`] : []),
+          ...(pattern === 'host-redirect' ? [`curl -skI -H "Host: ${str(values, 'from_host', '')}" https://${web}/ | head -5`] : []),
+          ...(pattern === 'security-headers' ? [`curl -skI https://${web}/ | grep -iE 'strict-transport|x-content-type|x-frame'`] : []),
+          ...(pattern === 'block-paths' ? blocked.slice(0, 2).map((p) => `curl -sk https://${web}${p} -o /dev/null -w '%{http_code}\\n'`) : []),
           'tail -f /var/log/ltm',
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: as3Push(tenant, app),
+        findings,
       };
     },
   }),
@@ -303,12 +319,12 @@ export const F5_EXTRA_2                             = [
       const tenant = clean(str(values, 'tenant', 'Prod'), 'Prod');
       const app = clean(str(values, 'application', 'app1'), 'app1');
       const virtual = str(values, 'virtual_address', '');
-      const servers = listOf(str(values, 'pool_members', '').replace(/\n/g, ','));
+      const servers = parseMembers(str(values, 'pool_members', ''), 8080);
       const oneconnect = bool(values, 'oneconnect', true);
       const mask = str(values, 'source_mask', '255.255.255.255');
       const compression = str(values, 'compression', 'selective');
-      const findings            = [];
-      if (!isIpv4(virtual)) findings.push(error('network.f5.bad-virtual', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const checked = virtualFindings(virtual, servers, 'auto', 'network.f5.bad-virtual');
+      const findings            = [...checked.findings];
       if (oneconnect && mask === '0.0.0.0') {
         findings.push(
           warning('network.f5.oneconnect-aggressive', 'A 0.0.0.0 source mask lets any client reuse any existing server connection. With an application that keeps state on the connection — NTLM authentication is the classic case — one user can be served as another.', {
@@ -336,6 +352,10 @@ export const F5_EXTRA_2                             = [
           'AS3 replaces the whole tenant. Merge this into the current declaration rather than sending it alone.',
           'These change behaviour for new connections. Existing ones keep whatever they were using.',
           'Measure before and after. Every one of these has a plausible story and a measurable cost, and the only way to know which won is to look at the throughput and CPU graphs.',
+          ...checked.notes,
+          ...(oneconnect && familyOf(virtual) === 6
+            ? ['VERIFY: the OneConnect source mask is dotted IPv4 and the virtual address is IPv6. Check how this BIG-IP version applies it to IPv6 clients before choosing anything other than the /32-equivalent default.']
+            : []),
         ],
         before: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`,
@@ -362,7 +382,7 @@ export const F5_EXTRA_2                             = [
           [`${app}_pool`]: {
             class: 'Pool',
             monitors: ['http'],
-            members: [{ servicePort: Number(servers[0]?.split(':')[1] ?? 8080), serverAddresses: servers.map((s) => s.split(':')[0] ?? s) }],
+            members: as3Members(servers),
           },
           serviceMain: {
             class: 'Service_HTTP',
@@ -377,13 +397,14 @@ export const F5_EXTRA_2                             = [
         verify: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} | jq .`,
           ...(oneconnect ? [`tmsh show ltm profile one-connect /${tenant}/${app}/${app}_oneconnect`] : []),
-          ...(compression !== 'off' ? [`curl -skI -H "Accept-Encoding: gzip" https://${virtual}/ | grep -i encoding`] : []),
+          ...(compression !== 'off' ? [`curl -skI -H "Accept-Encoding: gzip" https://${urlHost(virtual)}/ | grep -i encoding`] : []),
           'tmsh show sys performance throughput',
           'tmsh show sys cpu',
           `${'!'} Compare the connection count on the pool members before and after`,
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: as3Push(tenant, app),
+        findings,
       };
     },
   }),
@@ -423,9 +444,11 @@ export const F5_EXTRA_2                             = [
       const cn = str(values, 'common_name', '');
       const sans = listOf(str(values, 'sans', ''));
       const virtual = str(values, 'virtual_address', '');
-      const servers = listOf(str(values, 'pool_members', '').replace(/\n/g, ','));
-      const findings            = [];
-      if (!isIpv4(virtual)) findings.push(error('network.f5.bad-virtual', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const servers = parseMembers(str(values, 'pool_members', ''), 8080);
+      const checked = virtualFindings(virtual, servers, 'auto', 'network.f5.bad-virtual');
+      const findings            = [...checked.findings];
+      // openssl wants [v6]:443; curl --resolve wants the IPv6 address bracketed too.
+      const connect = formatHostPort(virtual, 443);
       if (cn && !sans.some((s) => s.toLowerCase() === cn.toLowerCase())) {
         findings.push(
           error('network.f5.cn-not-in-san', 'The common name is not in the subject alternative names. Every current browser ignores the common name entirely, so clients connecting to that name will see a certificate error.', {
@@ -459,12 +482,13 @@ export const F5_EXTRA_2                             = [
           'Do this before the old certificate expires, not on the day. A rollback needs the old certificate still installed, which it will not be if the window is the expiry date.',
           'Existing TLS sessions keep the old certificate until they renegotiate. The change is visible to new connections first.',
           'Check the chain from outside the network, not from a management host that may already trust the intermediate.',
+          ...checked.notes,
         ],
         before: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`,
           `tmsh list sys crypto cert ${certName}`,
           `tmsh list ltm profile client-ssl /${tenant}/${app}/${app}_clientssl`,
-          `echo | openssl s_client -connect ${virtual}:443 -servername ${cn} 2>/dev/null | openssl x509 -noout -dates -subject`,
+          `echo | openssl s_client -connect ${connect} -servername ${cn} 2>/dev/null | openssl x509 -noout -dates -subject`,
         ],
         config: declaration(tenant, app, `${app} with certificate ${certName}`, {
           [certName]: {
@@ -485,7 +509,7 @@ export const F5_EXTRA_2                             = [
           [`${app}_pool`]: {
             class: 'Pool',
             monitors: ['http'],
-            members: [{ servicePort: Number(servers[0]?.split(':')[1] ?? 8080), serverAddresses: servers.map((s) => s.split(':')[0] ?? s) }],
+            members: as3Members(servers),
           },
           serviceMain: {
             class: 'Service_HTTPS',
@@ -497,13 +521,14 @@ export const F5_EXTRA_2                             = [
         }),
         verify: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} | jq .`,
-          `echo | openssl s_client -connect ${virtual}:443 -servername ${cn} 2>/dev/null | openssl x509 -noout -dates -subject -issuer`,
-          `echo | openssl s_client -connect ${virtual}:443 -servername ${cn} -showcerts 2>/dev/null | grep -c 'BEGIN CERTIFICATE'`,
-          ...sans.slice(0, 3).map((san) => `curl -skI https://${san}/ --resolve ${san}:443:${virtual} | head -3`),
+          `echo | openssl s_client -connect ${connect} -servername ${cn} 2>/dev/null | openssl x509 -noout -dates -subject -issuer`,
+          `echo | openssl s_client -connect ${connect} -servername ${cn} -showcerts 2>/dev/null | grep -c 'BEGIN CERTIFICATE'`,
+          ...sans.slice(0, 3).map((san) => `curl -skI https://${san}/ --resolve ${san}:443:${urlHost(virtual)} | head -3`),
           `${'!'} Check from outside the network, and from one client that is not a browser`,
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: as3Push(tenant, app),
+        findings,
       };
     },
   }),
@@ -544,7 +569,20 @@ export const F5_EXTRA_2                             = [
       const secondary = str(values, 'secondary_site', '');
       const ttl = num(values, 'ttl', 30);
       const findings            = [];
-      if (!isIpv4(primary)) findings.push(error('network.f5.bad-primary', 'The primary site address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      if (!isIp(primary)) findings.push(error('network.f5.bad-primary', 'The primary site address is not a valid IPv4 or IPv6 address.', { source: 'ArchToolKit' }));
+      if (!isIp(secondary)) findings.push(error('network.f5.bad-secondary', 'The secondary site address is not a valid IPv4 or IPv6 address.', { source: 'ArchToolKit' }));
+      // A GSLB pool answers one record type: A for IPv4 sites, AAAA for IPv6.
+      const family = familyOf(primary);
+      const v6 = family === 6;
+      const rr = v6 ? 'AAAA' : 'A';
+      if (isIp(primary) && isIp(secondary) && familyOf(secondary) !== family) {
+        findings.push(
+          error('network.f5.gslb-mixed-family', 'The two sites are different address families. A GSLB pool answers one record type, so an IPv4 and an IPv6 site cannot be in the same pool.', {
+            remediation: 'Build an A pool for the IPv4 sites and an AAAA pool for the IPv6 sites, and attach both to the wide IP of each type.',
+            source: 'ArchToolKit',
+          }),
+        );
+      }
       if (!domain.includes('.')) findings.push(error('network.f5.bad-domain', 'The wide IP name is not a domain name.', { source: 'ArchToolKit' }));
       findings.push(
         warning('network.f5.gslb-dns-caching', `A ${ttl}s TTL is what this BIG-IP asks for. Resolvers, browsers and operating systems all cache independently and some ignore short TTLs entirely — plan for clients to keep using the old site for minutes after a failover, not seconds.`, {
@@ -571,16 +609,16 @@ export const F5_EXTRA_2                             = [
         ],
         before: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`,
-          'tmsh show gtm wideip a',
-          'tmsh show gtm pool a',
+          `tmsh show gtm wideip ${rr.toLowerCase()}`,
+          `tmsh show gtm pool ${rr.toLowerCase()}`,
           'tmsh show gtm server',
-          `dig +short ${domain}`,
+          `dig +short ${domain}${v6 ? ' AAAA' : ''}`,
         ],
         config: declaration(tenant, app, `GSLB for ${domain}`, {
           [`${app}_monitor`]: { class: 'Monitor', monitorType: str(values, 'monitor', 'https'), interval: 10, timeout: 31 },
           [`${app}_pool`]: {
             class: 'GSLB_Pool',
-            resourceRecordType: 'A',
+            resourceRecordType: rr,
             lbModePreferred: method,
             lbModeAlternate: 'round-robin',
             lbModeFallback: 'return-to-dns',
@@ -594,22 +632,24 @@ export const F5_EXTRA_2                             = [
           [`${app}_wideip`]: {
             class: 'GSLB_Domain',
             domainName: domain,
-            resourceRecordType: 'A',
+            resourceRecordType: rr,
             poolLbMode: method,
             pools: [{ use: `${app}_pool` }],
-            ...(bool(values, 'persist_cidr', false) ? { persistenceEnabled: true, persistCidrIpv4: 24, ttlPersistence: 3600 } : {}),
+            // Persistence is keyed on the resolver's address, which can be either family whatever the answer is.
+            ...(bool(values, 'persist_cidr', false) ? { persistenceEnabled: true, persistCidrIpv4: 24, persistCidrIpv6: 56, ttlPersistence: 3600 } : {}),
           },
         }),
         verify: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} | jq .`,
-          `tmsh show gtm wideip a ${domain}`,
-          `tmsh show gtm pool a /${tenant}/${app}/${app}_pool`,
-          `dig @<this bigip> ${domain}`,
+          `tmsh show gtm wideip ${rr.toLowerCase()} ${domain}`,
+          `tmsh show gtm pool ${rr.toLowerCase()} /${tenant}/${app}/${app}_pool`,
+          `dig @<this bigip> ${domain}${v6 ? ' AAAA' : ''}`,
           `${'!'} Take the primary site out of service and confirm the answer changes within the TTL`,
-          `dig +short ${domain}`,
+          `dig +short ${domain}${v6 ? ' AAAA' : ''}`,
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: as3Push(tenant, app),
+        findings,
       };
     },
   }),
@@ -638,17 +678,19 @@ export const F5_EXTRA_2                             = [
       const tenant = clean(str(values, 'tenant', 'Prod'), 'Prod');
       const app = clean(str(values, 'application', 'app1'), 'app1');
       const virtual = str(values, 'virtual_address', '');
-      const servers = listOf(str(values, 'pool_members', '').replace(/\n/g, ','));
-      const api = listOf(str(values, 'api_members', '').replace(/\n/g, ','));
-      const staticPool = listOf(str(values, 'static_members', '').replace(/\n/g, ','));
+      const servers = parseMembers(str(values, 'pool_members', ''), 8080);
+      const api = parseMembers(str(values, 'api_members', ''), 8080);
+      const staticPool = parseMembers(str(values, 'static_members', ''), 8080);
       const parsed = str(values, 'rules', '')
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => line.split(/\s+/))
         .filter((parts) => parts.length >= 4);
-      const findings            = [];
-      if (!isIpv4(virtual)) findings.push(error('network.f5.bad-virtual', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const checked = virtualFindings(virtual, parseMembers([...servers.servers, ...api.servers, ...staticPool.servers].join(','), 8080), 'auto', 'network.f5.bad-virtual');
+      const findings            = [...checked.findings];
+      const invalid = [...servers.invalid, ...api.invalid, ...staticPool.invalid];
+      if (invalid.length > 0) findings.push(error('network.f5.bad-member', `Not a pool member address: ${invalid.join(', ')}.`, { source: 'ArchToolKit' }));
       if (parsed.length === 0) {
         findings.push(error('network.f5.no-policy-rules', 'No rule could be read. Each line needs a name, a path prefix, "pool" or "redirect", and a target.', { source: 'ArchToolKit' }));
       }
@@ -662,10 +704,10 @@ export const F5_EXTRA_2                             = [
       }
 
       const pools                          = {
-        [`${app}_pool`]: { class: 'Pool', monitors: ['http'], members: [{ servicePort: Number(servers[0]?.split(':')[1] ?? 8080), serverAddresses: servers.map((s) => s.split(':')[0] ?? s) }] },
+        [`${app}_pool`]: { class: 'Pool', monitors: ['http'], members: as3Members(servers) },
       };
-      if (api.length > 0) pools[`${app}_pool_api`] = { class: 'Pool', monitors: ['http'], members: [{ servicePort: Number(api[0]?.split(':')[1] ?? 8080), serverAddresses: api.map((s) => s.split(':')[0] ?? s) }] };
-      if (staticPool.length > 0) pools[`${app}_pool_static`] = { class: 'Pool', monitors: ['http'], members: [{ servicePort: Number(staticPool[0]?.split(':')[1] ?? 8080), serverAddresses: staticPool.map((s) => s.split(':')[0] ?? s) }] };
+      if (api.servers.length > 0) pools[`${app}_pool_api`] = { class: 'Pool', monitors: ['http'], members: as3Members(api) };
+      if (staticPool.servers.length > 0) pools[`${app}_pool_static`] = { class: 'Pool', monitors: ['http'], members: as3Members(staticPool) };
 
       return {
         platform: PLATFORM,
@@ -675,6 +717,7 @@ export const F5_EXTRA_2                             = [
           'AS3 replaces the whole tenant. Merge this into the current declaration.',
           'A policy is evaluated in a faster path than an iRule and is far easier to read six months later. Anything a policy can express should be a policy.',
           'Rules are matched against the request. A request that matches nothing goes to the default pool, which is why the default pool still matters.',
+          ...checked.notes,
         ],
         before: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`,
@@ -705,12 +748,13 @@ export const F5_EXTRA_2                             = [
         verify: [
           `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} | jq .`,
           `tmsh list ltm policy /${tenant}/${app}/${app}_policy`,
-          ...parsed.slice(0, 3).map(([, path]) => `curl -sk https://${virtual}${path ?? '/'}/ -o /dev/null -w '%{http_code}\\n'`),
+          ...parsed.slice(0, 3).map(([, path]) => `curl -sk https://${urlHost(virtual)}${path ?? '/'}/ -o /dev/null -w '%{http_code}\\n'`),
           `tmsh show ltm pool /${tenant}/${app}/${app}_pool members`,
           `${'!'} Confirm each path reaches the pool it was meant to`,
         ],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: as3Push(tenant, app),
+        findings,
       };
     },
   }),

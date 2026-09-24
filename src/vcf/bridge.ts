@@ -16,6 +16,7 @@ import type { SizingResult, SizingInput } from './sizing.ts';
 import type { DeploymentPlan, HostEntry, NetworkPlan } from './spec-builder.ts';
 import { scopedKey, type Inventory, type InventoryHost, type VmkernelAdapter } from '../vmware/inventory.ts';
 import { parseIPv4, formatIPv4, maskToPrefix } from '../core/net.ts';
+import { parseCidrAny, formatCidrAny } from '../core/ip.ts';
 import type { DeploymentScenario } from './scenarios.ts';
 
 /** The deployment scenario a sizing path implies, where one does. */
@@ -124,7 +125,7 @@ export function estateToPlan(inventory: Inventory, managementClusterKey?: string
   };
 
   const network = (match: (vmk: VmkernelAdapter) => boolean): NetworkPlan | undefined => {
-    const found: { cidr: string; gateway?: string; mtu?: number; vlan?: number }[] = [];
+    const found: { cidr: string; gateway?: string; mtu?: number; vlan?: number; ipv6Cidr?: string }[] = [];
     for (const host of hosts) {
       const vmk = (host.vmkernelAdapters ?? []).find(match);
       if (!vmk?.ip || !vmk.subnetMask) continue;
@@ -141,6 +142,7 @@ export function estateToPlan(inventory: Inventory, managementClusterKey?: string
         ...(inside && vmk.gateway ? { gateway: vmk.gateway } : {}),
         ...(vmk.mtu ? { mtu: vmk.mtu } : {}),
         ...(vlanOf(host, vmk.portGroup) !== undefined ? { vlan: vlanOf(host, vmk.portGroup) } : {}),
+        ...(globalV6Prefix(vmk.ipv6) ? { ipv6Cidr: globalV6Prefix(vmk.ipv6) } : {}),
       });
     }
     const cidr = mostCommon(found.map((f) => f.cidr));
@@ -149,11 +151,15 @@ export function estateToPlan(inventory: Inventory, managementClusterKey?: string
     const gateway = mostCommon(same.map((f) => f.gateway ?? '').filter(Boolean));
     const mtu = Number(mostCommon(same.map((f) => String(f.mtu ?? '')).filter(Boolean)));
     const vlan = Number(mostCommon(same.map((f) => String(f.vlan ?? '')).filter((v) => v !== '')));
+    // The IPv6 side of the same adapters. RVTools records no IPv6 gateway, so
+    // none is carried; the builder reports the gap rather than inventing one.
+    const ipv6Cidr = mostCommon(same.map((f) => f.ipv6Cidr ?? '').filter(Boolean));
     return {
       cidr,
       vlanId: Number.isFinite(vlan) ? vlan : 0,
       ...(gateway ? { gateway } : {}),
       ...(Number.isFinite(mtu) && mtu > 0 ? { mtu } : {}),
+      ...(ipv6Cidr ? { ipv6Cidr } : {}),
     };
   };
 
@@ -167,10 +173,31 @@ export function estateToPlan(inventory: Inventory, managementClusterKey?: string
   if (vmotion) plan.vmotion = vmotion;
   const vsan = network((v) => /vsan|virtual san/i.test(v.portGroup ?? ''));
   if (vsan) plan.vsan = vsan;
+  // An estate already running IPv6 on its VMkernel adapters is dual stack, and
+  // the new instance should be too.
+  if ([management, vmotion, vsan].some((n) => n?.ipv6Cidr)) plan.dualStack = true;
   const uplinks = mostCommon(hosts.map((h) => String((h.physicalNics ?? []).filter((n) => n.linkUp !== false).length)));
   if (uplinks && Number(uplinks) > 0) plan.pnicsPerHost = Number(uplinks);
 
   return plan as Partial<DeploymentPlan>;
+}
+
+/**
+ * The global IPv6 prefix a VMkernel adapter sits in, from RVTools' "IP 6
+ * Address" column. The column can hold several addresses: link-local ones
+ * (fe80::/10) say nothing about the network and are skipped, as is any address
+ * without a prefix length — assuming /64 would put a guessed prefix in the spec.
+ */
+function globalV6Prefix(text: string | undefined): string | undefined {
+  for (const part of (text ?? '').split(/[,;\s]+/)) {
+    // Drop a zone index ("fe80::1%vmk0/64") before parsing.
+    const clean = part.replace(/%[^/]*/, '');
+    if (!clean.includes('/')) continue;
+    const c = parseCidrAny(clean);
+    if (!c || c.family !== 6 || /^fe[89ab][0-9a-f]?:/i.test(c.network)) continue;
+    return formatCidrAny(c);
+  }
+  return undefined;
 }
 
 function mostCommon(values: readonly string[]): string | undefined {

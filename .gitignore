@@ -11,3 +11,7 @@ Thumbs.db
 
 # Customer exports - never committed
 private/
+
+# Local downloads and build-only tool installs
+Temp DL/
+tools/archpad-build/node_modules/

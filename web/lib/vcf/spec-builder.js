@@ -20,7 +20,9 @@ import {
   usableRange,
             
 } from '../core/net.js';
-import { warning, info,              } from '../core/findings.js';
+import { familyOf, isIp, containsAny } from '../core/ip.js';
+import { parseCidr6, bigToV6, compressIPv6,            } from '../core/net-calc.js';
+import { error, warning, info,              } from '../core/findings.js';
 import {
   DEFAULT_MTU,
   VCFMS_RECOMMENDED_IPS,
@@ -404,7 +406,8 @@ function networkSpec(
     subnet: plan.cidr,
     gateway: gatewayFor(plan, cidr),
     ipAddressVersion: 'IPv4',
-    ipAddressAssignmentMode: plan.assignmentMode ?? 'STATIC',
+    // SLAAC is IPv6-only; on a dual-stack plan it applies to the IPv6 twin.
+    ipAddressAssignmentMode: plan.assignmentMode === 'SLAAC' ? 'STATIC' : (plan.assignmentMode ?? 'STATIC'),
     // Per-traffic-type teaming — the wizard exposes this per network, and the
     // enum here is lowercase, unlike the uppercase NSX uplink-profile enum.
     teamingPolicy: plan.teamingPolicy ?? 'loadbalance_loadbased',
@@ -428,11 +431,14 @@ function networkSpecV6(
   plan             ,
   extras                           = {},
 )                         {
-  if (!plan.ipv6Cidr) return null;
+  const cidr = v6Cidr(plan.ipv6Cidr);
+  if (!cidr) return null;
   return {
     networkType: type,
     vlanId: plan.vlanId,
-    subnet: plan.ipv6Cidr,
+    // Written canonically: the API bounds subnet at 18 characters for IPv4,
+    // so the compressed form gives an IPv6 prefix its best chance to fit.
+    subnet: `${compressIPv6(bigToV6(cidr.network))}/${cidr.prefix}`,
     ...(plan.ipv6Gateway ? { gateway: plan.ipv6Gateway } : {}),
     ipAddressVersion: 'IPv6',
     ipAddressAssignmentMode: plan.assignmentMode ?? 'STATIC',
@@ -518,17 +524,108 @@ function poolToAddresses(pool          )           {
   return [];
 }
 
-/** IPv6 pool. Only the explicit-address and CIDR forms are derivable offline. */
-function buildPoolV6(plan                      )                  {
-  if (!plan) return null;
-  if (plan.addresses?.length) return { addresses: plan.addresses };
-  if (plan.cidr) {
-    return {
-      cidr: plan.cidr,
-      ...(plan.excludedAddresses?.length ? { excludedAddresses: plan.excludedAddresses } : {}),
-    };
+/** An IPv6 prefix, or null for anything else (including IPv4). */
+function v6Cidr(text                    )               {
+  if (!text || !text.includes('/') || familyOf(text) !== 6) return null;
+  return parseCidr6(text);
+}
+
+/**
+ * IPv6 counterpart of allocateRange: `count` consecutive addresses starting
+ * `offset` into the prefix. The first usable address is network + 1 (the
+ * network address itself is the subnet-router anycast), so the same offsets
+ * land on the same host numbers in both families.
+ */
+function allocateRange6(cidr       , offset        , count        )                                        {
+  if (count <= 0 || offset < 0) return null;
+  const size = 1n << BigInt(128 - cidr.prefix);
+  const start = 1n + BigInt(offset);
+  const end = start + BigInt(count) - 1n;
+  if (end > size - 1n) return null;
+  const text = (v        )         => compressIPv6(bigToV6(cidr.network + v));
+  return { start: text(start), end: text(end) };
+}
+
+/**
+ * IPv6 pool, in the same three forms as buildPool.
+ *
+ * An explicit address list or a bare CIDR is emitted as given, as before. The
+ * range form is carved out of `sourceCidr` (the IPv6 prefix of the network the
+ * pool serves) or the plan's own IPv6 CIDR, at the same offset IPv4 uses.
+ */
+function buildPoolV6(
+  plan                      ,
+  sourceCidr              ,
+  defaultOffset        ,
+  defaultCount        ,
+)                  {
+  const excluded = plan?.excludedAddresses?.length ? { excludedAddresses: plan.excludedAddresses } : {};
+  const mode =
+    plan?.mode ??
+    (plan?.addresses?.length
+      ? 'addresses'
+      : plan?.cidr && plan.offset === undefined && plan.count === undefined
+        ? 'cidr'
+        : 'range');
+
+  if (mode === 'addresses') return plan?.addresses?.length ? { addresses: plan.addresses } : null;
+  if (mode === 'cidr') return plan?.cidr ? { cidr: plan.cidr, ...excluded } : null;
+
+  const cidr = plan?.cidr ? v6Cidr(plan.cidr) : sourceCidr;
+  if (!cidr) return null;
+  const range = allocateRange6(cidr, plan?.offset ?? defaultOffset, plan?.count ?? defaultCount);
+  if (!range) return null;
+  return { ipRange: { startIpAddress: range.start, endIpAddress: range.end }, ...excluded };
+}
+
+/**
+ * Check a network plan's addresses before anything is emitted from it.
+ *
+ * VCF 9.1 runs IPv6 as dual stack: every network keeps its IPv4 `cidr` and
+ * carries IPv6 in `ipv6Cidr`/`ipv6Gateway`. An IPv6 value in an IPv4 field, or
+ * the reverse, cannot work, so it is an error rather than a silent drop.
+ */
+function checkNetworkPlan(label        , path        , plan                         , findings           )       {
+  if (!plan) return;
+  if (familyOf(plan.cidr) === 6) {
+    findings.push(
+      error(
+        'vcf.build.ipv6-only-network',
+        `${label} has an IPv6 prefix (${plan.cidr}) in its IPv4 cidr. VCF 9.1 IPv6 is dual stack: the IPv4 subnet stays in cidr.`,
+        { path: `${path}.cidr`, remediation: `Put the IPv4 subnet in cidr and ${plan.cidr} in ipv6Cidr.` },
+      ),
+    );
   }
-  return null;
+  if (plan.gateway !== undefined && familyOf(plan.gateway) !== 4) {
+    findings.push(
+      error('vcf.build.invalid-gateway', `${label} gateway "${plan.gateway}" is not an IPv4 address.`, {
+        path: `${path}.gateway`,
+        remediation: 'An IPv6 gateway goes in ipv6Gateway.',
+      }),
+    );
+  }
+  if (plan.ipv6Cidr !== undefined && !v6Cidr(plan.ipv6Cidr)) {
+    findings.push(
+      error('vcf.build.invalid-ipv6-cidr', `${label} ipv6Cidr "${plan.ipv6Cidr}" is not an IPv6 prefix.`, {
+        path: `${path}.ipv6Cidr`,
+      }),
+    );
+  }
+  if (plan.ipv6Gateway !== undefined) {
+    if (!isIp(plan.ipv6Gateway) || familyOf(plan.ipv6Gateway) !== 6) {
+      findings.push(
+        error('vcf.build.invalid-ipv6-gateway', `${label} ipv6Gateway "${plan.ipv6Gateway}" is not an IPv6 address.`, {
+          path: `${path}.ipv6Gateway`,
+        }),
+      );
+    } else if (v6Cidr(plan.ipv6Cidr) && !containsAny(plan.ipv6Cidr , plan.ipv6Gateway)) {
+      findings.push(
+        error('vcf.build.ipv6-gateway-outside-subnet', `${label} ipv6Gateway ${plan.ipv6Gateway} is not inside ${plan.ipv6Cidr}.`, {
+          path: `${path}.ipv6Gateway`,
+        }),
+      );
+    }
+  }
 }
 
 /**
@@ -1014,6 +1111,13 @@ export function buildSddcSpec(plan                )              {
   const networkSpecs                    = [];
   const mgmtCidr = parseCidr(plan.management.cidr);
 
+  checkNetworkPlan('Management', 'management', plan.management, findings);
+  checkNetworkPlan('VM management', 'vmManagement', plan.vmManagement, findings);
+  checkNetworkPlan('vMotion', 'vmotion', plan.vmotion, findings);
+  checkNetworkPlan('vSAN', 'vsan', plan.vsan, findings);
+  checkNetworkPlan('NFS', 'nfs', plan.nfs, findings);
+  checkNetworkPlan('Fleet management', 'fleetManagement', plan.fleetManagement, findings);
+
   const mgmt = networkSpec('MANAGEMENT', plan.management, {
     portGroupKey: `${prefix}-pg-mgmt`,
   });
@@ -1088,15 +1192,40 @@ export function buildSddcSpec(plan                )              {
       ['FLEET_MANAGEMENT', plan.fleetManagement],
     ];
 
+    // Static vMotion and vSAN addresses are handed out from the same host
+    // numbers IPv4 uses, so esx01 is ::a in vMotion as it is .10.
+    const hostRangeOffset                                       = { VMOTION: 9, VSAN: 1 };
+
     let emitted = 0;
     for (const [type, netPlan] of v6Candidates) {
       if (!netPlan?.ipv6Cidr) continue;
+      if (type === 'VSAN' && plan.storage !== 'vsan-esa' && plan.storage !== 'vsan-osa') continue;
+      const cidr6 = v6Cidr(netPlan.ipv6Cidr);
+      const offset = hostRangeOffset[type];
+      const range =
+        cidr6 && offset !== undefined && (netPlan.assignmentMode ?? 'STATIC') === 'STATIC'
+          ? allocateRange6(cidr6, offset, Math.max(plan.hostCount, 1))
+          : null;
       const v6 = networkSpecV6(type, netPlan, {
         portGroupKey: `${prefix}-pg-${type.toLowerCase().replace(/_/g, '-')}-v6`,
+        ...(range ? { includeIpAddressRanges: [{ startIpAddress: range.start, endIpAddress: range.end }] } : {}),
       });
       if (v6) {
         networkSpecs.push(v6);
         emitted += 1;
+        // IPv4 defaults a gateway to the first address; IPv6 gateways are as
+        // often a link-local router address, so none is invented.
+        const routed =
+          type === 'MANAGEMENT' || type === 'FLEET_MANAGEMENT' || (type === 'VM_MANAGEMENT' && plan.vmManagement);
+        if (!v6.gateway && routed) {
+          findings.push(
+            warning(
+              'vcf.build.ipv6-no-gateway',
+              `The IPv6 ${type} network ${v6.subnet} has no gateway, so its components cannot route IPv6 off the subnet.`,
+              { path: `${type === 'MANAGEMENT' ? 'management' : type === 'VM_MANAGEMENT' ? 'vmManagement' : 'fleetManagement'}.ipv6Gateway` },
+            ),
+          );
+        }
       }
     }
 
@@ -1116,10 +1245,60 @@ export function buildSddcSpec(plan                )              {
           { source: 'VCF Installer API — SddcNetworkSpec' },
         ),
       );
+      // VCF Automation's pool is a bare address list with no IPv6 form, so
+      // only IPv4 is emitted there.
+      if (plan.includeAutomation !== false) {
+        findings.push(
+          info(
+            'vcf.build.automation-ipv4-only',
+            'VERIFY: vcfAutomationSpec.ipPool is emitted as IPv4 only. The 9.1 API documents no IPv6 form for it, unlike vspClusterSpec.ipv6Pool.',
+            { path: 'vcfAutomationSpec.ipPool', source: 'VCF Installer API — VcfAutomationSpec' },
+          ),
+        );
+      }
+    }
+  } else {
+    const ignored = (
+      [
+        ['management', plan.management],
+        ['vmManagement', plan.vmManagement],
+        ['vmotion', plan.vmotion],
+        ['vsan', plan.vsan],
+        ['nfs', plan.nfs],
+        ['fleetManagement', plan.fleetManagement],
+      ]         
+    ).filter(([, p]) => p?.ipv6Cidr);
+    if (ignored.length > 0) {
+      findings.push(
+        info(
+          'vcf.build.ipv6-without-dual-stack',
+          `IPv6 prefixes are set on ${ignored.map(([k]) => k).join(', ')} but dual stack is off, so no IPv6 networks were emitted.`,
+          { path: 'dualStack', remediation: 'Turn on dual stack to emit them.' },
+        ),
+      );
     }
   }
 
   // --- NSX -----------------------------------------------------------------
+  // The installer's host TEP pool is IPv4 only (see spec-validate), so IPv6
+  // for it is refused here rather than emitted into a pool that rejects it.
+  const tepV6 = [plan.hostTep.cidr, plan.hostTep.gateway, plan.hostTep.ipv6Cidr, plan.hostTep.ipv6Gateway].filter(
+    (v)              => typeof v === 'string' && familyOf(v) === 6,
+  );
+  if (tepV6.length > 0 && !plan.tepLess) {
+    findings.push(
+      error(
+        'vcf.build.tep-ipv6-unsupported',
+        `NSX host TEP pool on VCF 9.1 does not support IPv6 (${tepV6.join(', ')}); no IPv6 TEP configuration was emitted.`,
+        {
+          path: 'hostTep',
+          remediation:
+            'Give the host TEP network an IPv4 cidr. VERIFY: IPv6 host TEPs are an NSX capability the VCF 9.1 installer spec does not document.',
+          source: 'VCF Installer API — IpAddressPoolSubnetSpec',
+        },
+      ),
+    );
+  }
   const tepCidr = parseCidr(plan.hostTep.cidr);
   const tepCount = plan.tepPool?.count ?? plan.hostCount * (plan.pnicsPerHost ?? 2);
   const tepRange = tepCidr
@@ -1180,7 +1359,27 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
-  if (plan.dtgw) {
+  // The DTGW block's gateway and IP blocks are only documented with IPv4
+  // values, so IPv6 is not emitted there until that is confirmed.
+  const dtgwV6 = plan.dtgw
+    ? [plan.dtgw.gatewayCidr, plan.dtgw.externalIpBlockCidr, plan.dtgw.privateTgwIpBlockCidr].filter(
+        (v)              => typeof v === 'string' && familyOf(v) === 6,
+      )
+    : [];
+  if (dtgwV6.length > 0) {
+    findings.push(
+      warning(
+        'vcf.build.dtgw-ipv6-unverified',
+        `VERIFY: the distributed transit gateway was given IPv6 (${dtgwV6.join(', ')}). The 9.1 DtgwSpec documents IPv4 blocks only, so dtgwSpec was not emitted.`,
+        {
+          path: 'dtgw',
+          remediation: 'Use IPv4 blocks for the bring-up DTGW and add IPv6 VPC blocks in NSX after deployment.',
+          source: 'VCF Installer API — DtgwSpec',
+        },
+      ),
+    );
+    nsxtSpec.vpcSpec = { vpcNetworkConfigurationType: plan.vpcNetworkConfigurationType ?? 'FULL_STACK_VPC' };
+  } else if (plan.dtgw) {
     nsxtSpec.vpcSpec = {
       vpcNetworkConfigurationType: plan.vpcNetworkConfigurationType ?? 'FULL_STACK_VPC',
       dtgwSpec: {
@@ -1217,7 +1416,30 @@ export function buildSddcSpec(plan                )              {
       : sharedHomeCidr;
   const vcfmsPool = buildPool(plan.vcfmsPool, vcfmsHomeCidr, 31, VCFMS_RECOMMENDED_IPS);
   const vcfmsRange = vcfmsPool;
-  const vcfmsIpv6 = buildPoolV6(plan.vcfmsIpv6Pool);
+  // On dual stack the services runtime takes an IPv6 pool too, carved from the
+  // IPv6 prefix of whichever network the IPv4 pool came from, at the same
+  // offset. An explicit vcfmsIpv6Pool is honoured with or without dual stack.
+  const vcfmsHomePlan =
+    networkModel.requiresDedicatedNetwork && plan.fleetManagement
+      ? plan.fleetManagement
+      : (plan.vmManagement ?? plan.management);
+  const vcfmsHomeV6 = plan.dualStack ? v6Cidr(vcfmsHomePlan.ipv6Cidr) : null;
+  const vcfmsIpv6 =
+    plan.vcfmsIpv6Pool || vcfmsHomeV6
+      ? buildPoolV6(plan.vcfmsIpv6Pool, vcfmsHomeV6, 31, VCFMS_RECOMMENDED_IPS)
+      : null;
+  if (!vcfmsIpv6 && (plan.vcfmsIpv6Pool || vcfmsHomeV6)) {
+    findings.push(
+      warning(
+        'vcf.build.vcfms-ipv6-pool-not-allocated',
+        `Could not build the VCF Management Services IPv6 pool${vcfmsHomeV6 ? ` from ${vcfmsHomePlan.ipv6Cidr}` : ''}.`,
+        {
+          path: 'vcfmsIpv6Pool',
+          remediation: 'Give vcfmsIpv6Pool an IPv6 CIDR or address list, or widen the IPv6 prefix it is carved from.',
+        },
+      ),
+    );
+  }
 
   const vspClusterSpec                     = {
     platformFqdn: name('vspPlatform', `${prefix}-msr01`),

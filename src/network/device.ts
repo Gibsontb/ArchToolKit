@@ -19,6 +19,7 @@
  * Ansible. Both come out of one structure, so they cannot disagree.
  */
 
+import { isIp, parseCidrAny } from '../core/ip.ts';
 import type { Finding } from '../core/findings.ts';
 import { info, warning } from '../core/findings.ts';
 
@@ -499,6 +500,20 @@ export function parseCidr(value: string): { address: string; prefix: number } | 
   if (!Number.isInteger(length) || length < 0 || length > 32) return null;
   return { address, prefix: length };
 }
+
+/**
+ * Either family: "10.0.0.1/24" or "2001:db8::1/64" split into address, prefix
+ * and family. Use this in every generator that can emit IPv6; `parseCidr`
+ * stays IPv4-only for the places that need a dotted mask or wildcard.
+ */
+export function parseCidrDual(value: string): { address: string; prefix: number; family: 4 | 6; network: string } | null {
+  const c = parseCidrAny(String(value ?? ''));
+  if (!c || !String(value ?? '').includes('/')) return null;
+  return { address: c.address, prefix: c.prefix, family: c.family, network: c.network };
+}
+
+/** An address of either family, no prefix. */
+export const isIpAny = (value: string): boolean => isIp(String(value ?? ''));
 
 /** A prefix length as the dotted mask IOS and PAN-OS want in places. */
 export function netmask(prefix: number): string {

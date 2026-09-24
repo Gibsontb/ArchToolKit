@@ -14,13 +14,21 @@
  * `azurerm_subnet_network_security_group_association`, which must not be combined
  * with an inline `security_group` on the subnet: they overwrite each other and
  * produce a perpetual diff.
+ *
+ * Azure does not allocate IPv6: dual stack (`ipv6`) adds the given `ipv6Cidr`
+ * to `address_space` and a /64 to each subnet's `address_prefixes`, which is
+ * the only IPv6 size a subnet takes. A security rule's single
+ * `source_address_prefix` is one family, so each source is its own rule.
  */
 
-import { info, warning,              } from '../core/findings.js';
+import { hasErrors, info, warning,              } from '../core/findings.js';
 import { renderFile, str, num, strings, raw,                                  } from './hcl.js';
 import {
+  checkFoundationAddresses,
   identifier,
   resourceName,
+  subnetIpv6Ranges,
+  worldIngress,
                       
                         
 } from './foundation.js';
@@ -35,7 +43,11 @@ function tagsAttribute(plan                )                 {
 }
 
 export function emitAzureFoundation(plan                )                   {
-  const findings            = [];
+  const findings            = checkFoundationAddresses(plan, 'azure', 'An Azure virtual network');
+  const v6 = plan.ipv6 === true;
+  const v6Ranges = v6 ? subnetIpv6Ranges(plan, 'azure') : { ranges: [], findings: [] };
+  findings.push(...v6Ranges.findings);
+  if (hasErrors(findings)) return { files: {}, findings };
   const blocks             = [];
   const base = resourceName(plan.name);
   const location = plan.region ?? 'eastus';
@@ -58,12 +70,12 @@ export function emitAzureFoundation(plan                )                   {
       { name: 'name', value: str(`${base}-vnet`) },
       { name: 'resource_group_name', value: raw(`${rg}.name`) },
       { name: 'location', value: raw(`${rg}.location`) },
-      { name: 'address_space', value: strings([plan.cidr]) },
+      { name: 'address_space', value: strings(v6 ? [plan.cidr, plan.ipv6Cidr ] : [plan.cidr]) },
       ...tagsAttribute(plan),
     ],
   });
 
-  for (const subnet of plan.subnets) {
+  for (const [index, subnet] of plan.subnets.entries()) {
     blocks.push({
       type: 'resource',
       labels: ['azurerm_subnet', identifier(subnet.name)],
@@ -73,7 +85,11 @@ export function emitAzureFoundation(plan                )                   {
         { name: 'resource_group_name', value: raw(`${rg}.name`) },
         { name: 'virtual_network_name', value: raw('azurerm_virtual_network.this.name') },
         // Plural, and a list: the singular form was removed in provider 3.0.
-        { name: 'address_prefixes', value: strings([subnet.cidr]) },
+        // Dual stack: the IPv4 range and the subnet's IPv6 /64.
+        {
+          name: 'address_prefixes',
+          value: strings(v6 ? [subnet.cidr, v6Ranges.ranges[index] ] : [subnet.cidr]),
+        },
       ],
     });
   }
@@ -169,11 +185,12 @@ export function emitAzureFoundation(plan                )                   {
       ),
     );
   }
-  if (cidrs.includes('0.0.0.0/0')) {
+  const world = worldIngress(plan);
+  if (world.length > 0) {
     findings.push(
       warning(
         'terraform.azure.ingress-from-anywhere',
-        'An inbound rule allows 0.0.0.0/0. Azure also accepts the Internet service tag, which is clearer about intent.',
+        `An inbound rule allows ${world.join(' and ')}. Azure also accepts the Internet service tag, which is clearer about intent.`,
         { path: 'allowedIngressCidrs' },
       ),
     );

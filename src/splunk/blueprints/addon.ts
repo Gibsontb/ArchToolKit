@@ -31,6 +31,24 @@ import { currentEstate } from '../../kit/estate-store.ts';
 import { PLATFORMS, type Platform } from '../../network/device.ts';
 import { splunkBlueprint, type SplunkBlueprint } from '../from-app.ts';
 import { defaultMeta, foldSearch, splunkName, spreadCron, type SplunkApp } from '../splunk.ts';
+import { formatHostPort, isIpv6, urlHost } from '../../core/ip.ts';
+import { LISTEN_ON_IPV6 } from './forwarder.ts';
+
+/**
+ * listenOnIPv6 for the collector's listeners (and SC4S_IPV6_ENABLE), with an
+ * error when the devices are told to send to an IPv6 address nothing hears.
+ */
+function listenFor(values: BlueprintValues, target: string, findings: Finding[]): string {
+  const choice = str(values, 'listen_ipv6', 'no');
+  const listen = ['yes', 'only'].includes(choice) ? choice : 'no';
+  if (listen === 'no' && isIpv6(target)) {
+    findings.push(error('splunk.collector-ipv6-not-listening', `The collector is ${target}, an IPv6 address, but its listeners hear IPv4 only (listenOnIPv6 = no; SC4S without SC4S_IPV6_ENABLE). Nothing the devices send would arrive.`, { remediation: 'Set Listen on IPv6 to yes (dual-stack), or give the collector’s IPv4 address.', source: 'inputs.conf spec' }));
+  }
+  return listen;
+}
+
+/** The input for it, shared by the network and VMware onboarding. */
+const LISTEN_INPUT: BlueprintInput = { id: 'listen_ipv6', label: 'Collector listens on IPv6', control: 'select', default: 'no', options: LISTEN_ON_IPV6, hint: 'listenOnIPv6 on the heavy forwarder stanzas, SC4S_IPV6_ENABLE for SC4S' };
 
 const TIER = 'addon' as const;
 const SRC = 'ArchToolKit';
@@ -574,8 +592,9 @@ function deviceConfig(d: Device & { platform: Platform }, target: string, port: 
   // comment is "#"; the Network page's "//" is for AS3 and iRules.
   const c = d.platform === 'f5' ? '#' : PLATFORMS[d.platform].comment;
   const utc = tz.toUpperCase() === 'UTC';
+  const v6 = isIpv6(target);
   const hdr = [
-    `${c} ${d.name} (${PLATFORMS[d.platform].label}) — send syslog to ${target}:${port} over ${transport.toUpperCase()}`,
+    `${c} ${d.name} (${PLATFORMS[d.platform].label}) — send syslog to ${formatHostPort(target, port)} over ${transport.toUpperCase()}`,
     `${c} Capture first: the current logging and clock configuration, so the back-out is a paste.`,
   ];
   switch (d.platform) {
@@ -596,13 +615,14 @@ function deviceConfig(d: Device & { platform: Platform }, target: string, port: 
         // "!" is a comment only at the start of a line on IOS, NX-OS, ASA and EOS;
         // after a command it is part of the command, which is then rejected. Every
         // note in these device files is therefore a line of its own.
+        // An IPv6 collector takes the ipv6 keyword: logging host ipv6 <address>.
         ...(transport === 'udp'
-          ? [`logging host ${target} transport udp port ${port}`]
+          ? [`logging host ${v6 ? 'ipv6 ' : ''}${target} transport udp port ${port}`]
           : transport === 'tls'
-            ? [`${c} TLS needs a trustpoint and a TLS profile — VERIFY for your IOS-XE release.`, `logging host ${target} transport tls port ${port}`]
-            : [`logging host ${target} transport tcp port ${port}`]),
+            ? [`${c} TLS needs a trustpoint and a TLS profile — VERIFY for your IOS-XE release.`, `logging host ${v6 ? 'ipv6 ' : ''}${target} transport tls port ${port}`]
+            : [`logging host ${v6 ? 'ipv6 ' : ''}${target} transport tcp port ${port}`]),
         PLATFORMS[d.platform].save,
-        `${c} Back out: no logging host ${target}`,
+        `${c} Back out: no logging host ${v6 ? 'ipv6 ' : ''}${target}`,
       ];
     case 'cisco_nxos':
       return [
@@ -638,6 +658,7 @@ function deviceConfig(d: Device & { platform: Platform }, target: string, port: 
         `${c} closed because its logging did.`,
         'logging permit-hostdown',
         `${c} Replace "inside" with the name of the interface facing the collector.`,
+        ...(v6 ? [`${c} VERIFY: an IPv6 syslog host on your ASA release, and IPv6 on that interface.`] : []),
         transport === 'udp'
           ? `logging host inside ${target} udp/${port}`
           : `logging host inside ${target} tcp/${port}${transport === 'tls' ? ' secure' : ''}`,
@@ -694,6 +715,7 @@ function deviceConfig(d: Device & { platform: Platform }, target: string, port: 
         '        next',
         '    end',
         'end',
+        ...(v6 ? [`${c} VERIFY: that "set server" takes an IPv6 address on your FortiOS release; if not, use a name with an AAAA record.`] : []),
         'config log syslogd setting',
         '    set status enable',
         `    set server "${target}"`,
@@ -719,13 +741,15 @@ function deviceConfig(d: Device & { platform: Platform }, target: string, port: 
         ...(transport === 'udp'
           ? [
               `${c} remote-servers is UDP only.`,
+              ...(v6 ? [`${c} VERIFY: remote-servers takes an IPv6 host on your TMOS release.`] : []),
               `tmsh modify sys syslog remote-servers add { splunk { host ${target} remote-port ${port} } }`,
               `${c} Back out: tmsh modify sys syslog remote-servers delete { splunk }`,
             ]
           : [
               `${c} remote-servers sends UDP only; TCP goes through a syslog-ng include.`,
               `${c} VERIFY the include syntax on your TMOS release (K13080 and related articles).`,
-              `tmsh modify sys syslog include "destination d_splunk { tcp(\\"${target}\\" port(${port})); }; log { source(s_syslog_pipe); destination(d_splunk); };"`,
+              // syslog-ng connects over IPv6 only when told to: ip-protocol(6).
+              `tmsh modify sys syslog include "destination d_splunk { tcp(\\"${target}\\" port(${port})${v6 ? ' ip-protocol(6)' : ''}); }; log { source(s_syslog_pipe); destination(d_splunk); };"`,
               `${c} Back out: tmsh modify sys syslog include none`,
             ]),
         'tmsh save sys config',
@@ -1356,12 +1380,13 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         { value: 'sc4s', label: 'Splunk Connect for Syslog (SC4S)' },
         { value: 'hf', label: 'Heavy forwarder, a port per sourcetype' },
       ] },
-      { id: 'collector_ip', label: 'Collector address', control: 'text', default: '10.0.5.10', hint: 'What the devices send to — a VIP if there are several' },
+      { id: 'collector_ip', label: 'Collector address', control: 'text', default: '10.0.5.10', hint: 'What the devices send to, IPv4 or IPv6 — a VIP if there are several' },
       { id: 'transport', label: 'Transport', control: 'select', default: 'tcp', options: [
         { value: 'tcp', label: 'TCP' },
         { value: 'tls', label: 'TLS' },
         { value: 'udp', label: 'UDP' },
       ] },
+      LISTEN_INPUT,
       { id: 'netops_index', label: 'Network operations index', control: 'text', default: 'netops' },
       { id: 'netfw_index', label: 'Firewall index', control: 'text', default: 'netfw' },
       { id: 'ntp', label: 'NTP server', control: 'text', default: '10.0.0.1' },
@@ -1389,6 +1414,8 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
       const indexes = [...new Set(platforms.map(indexOf))];
       const portOf = (p: Platform) => (collector === 'hf' ? NET[p].hfPort : transport === 'tls' ? 6514 : 514);
       const findings: Finding[] = [];
+      const listenV6 = listenFor(values, target, findings);
+      const v6Line = listenV6 !== 'no' ? [`listenOnIPv6 = ${listenV6}`] : [];
 
       if (unknown.length > 0) {
         findings.push(
@@ -1450,6 +1477,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
           '# Host from the sending address; the add-ons re-read the host from the',
           '# syslog header where the device puts its name there.',
           'connection_host = ip',
+          ...v6Line,
           ...(transport === 'udp' ? ['# Keep the device’s own header rather than prepending the receive time.', 'no_appending_timestamp = true'] : []),
           '# A bounded in-memory queue plus a disk queue for when the indexers push back.',
           'queueSize = 10MB',
@@ -1463,6 +1491,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
               `sourcetype = ${NET.cisco_nxos.sourcetype}`,
               `index = ${indexOf('cisco_nxos')}`,
               'connection_host = ip',
+              ...v6Line,
               'no_appending_timestamp = true',
               '',
             ]
@@ -1494,6 +1523,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
                 '# Add to /opt/sc4s/env_file, then restart SC4S.',
                 '# SC4S listens on 514 TCP and UDP by default and identifies most of these',
                 '# sources from the message itself.',
+                ...(listenV6 !== 'no' ? ['# Listeners on IPv6 as well as IPv4.', 'SC4S_IPV6_ENABLE=yes'] : []),
                 ...(transport === 'tls' ? ['SC4S_SOURCE_TLS_ENABLE=yes', '# TLS listens on 6514 by default; the certificate goes in /opt/sc4s/tls/. VERIFY for your SC4S version.'] : []),
                 ...(!utc ? [`# Devices send ${tz} with no zone in the timestamp.`, `SC4S_DEFAULT_TIMEZONE=${tz}`] : []),
                 '# PAN-OS: SC4S prefers IETF framing on a dedicated port (601) — about a',
@@ -1525,7 +1555,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
                             '# VERIFY which your SC4S version reads.',
                             `application ${name}[sc4s-vps] {`,
                             '    filter {',
-                            ...ds.map((d, i) => `        ${i > 0 ? 'or ' : ''}${d.ip ? `netmask(${d.ip}/32)` : `host("${d.name}*" type(glob))`}`),
+                            ...ds.map((d, i) => `        ${i > 0 ? 'or ' : ''}${d.ip ? (isIpv6(d.ip) ? `netmask6(${d.ip}/128)` : `netmask(${d.ip}/32)`) : `host("${d.name}*" type(glob))`}`),
                             '    };',
                             '    parser {',
                             '        p_set_netsource_fields(',
@@ -1679,6 +1709,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         { value: 'tls', label: 'TLS' },
         { value: 'udp', label: 'UDP' },
       ] },
+      LISTEN_INPUT,
       { id: 'esxi_index', label: 'ESXi index', control: 'text', default: 'vmware-esxilog' },
       { id: 'vc_index', label: 'vCenter index', control: 'text', default: 'vmware-vclog' },
       { id: 'vcf_index', label: 'NSX and VCF index', control: 'text', default: 'vcf', hint: 'Match the Splunk index on vcflog91_forwarding' },
@@ -1713,8 +1744,11 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
       const port = { esxi: collector === 'hf' ? 1514 : transport === 'tls' ? 6514 : 514, vc: collector === 'hf' ? 1517 : transport === 'tls' ? 6514 : 514, nsx: collector === 'hf' ? 1518 : transport === 'tls' ? 6514 : 514, fwd: collector === 'hf' ? 1519 : transport === 'tls' ? 6514 : 514 };
       if (collector === 'sc4s' && transport !== 'tls') port.esxi = 514;
       const esxiScheme = transport === 'tls' ? 'ssl' : transport;
-      const esxiTarget = `${esxiScheme}://${target}:${port.esxi}`;
+      // An IPv6 collector in a URL is bracketed: tcp://[2001:db8::10]:1514.
+      const esxiTarget = `${esxiScheme}://${urlHost(target)}:${port.esxi}`;
       const findings: Finding[] = [];
+      const listenV6 = listenFor(values, target, findings);
+      const v6Line = listenV6 !== 'no' ? [`listenOnIPv6 = ${listenV6}`] : [];
 
       if (useEstate && !estate) {
         findings.push(info('splunk.vmw-no-estate', 'No estate is loaded, so the ESXi and vCenter lists on the form were used. Import an RVTools export and every host in it is listed for you.', { source: SRC }));
@@ -1942,8 +1976,9 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
                 '# events people see on 514). VERIFY variable names for your version.',
                 `SC4S_LISTEN_VMWARE_VSPHERE_${transport === 'udp' ? 'UDP' : transport === 'tls' ? 'TLS' : 'TCP'}_PORT=1514`,
                 ...(transport === 'tls' ? ['SC4S_SOURCE_TLS_ENABLE=yes'] : []),
+                ...(listenV6 !== 'no' ? ['# Listeners on IPv6 as well as IPv4.', 'SC4S_IPV6_ENABLE=yes'] : []),
                 '# With the dedicated port, point ESXi at 1514 instead of 514: run',
-                `# esxi-syslog.ps1 with -Target ${esxiScheme}://${target}:1514`,
+                `# esxi-syslog.ps1 with -Target ${esxiScheme}://${urlHost(target)}:1514`,
               ],
             }
           : {};
@@ -1959,6 +1994,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         'sourcetype = vmw-syslog',
         `index = ${direct ? esxiIndex : vcfIndex}`,
         'connection_host = dns',
+        ...v6Line,
         '',
         '# vCenter — the Splunk Add-on for vCenter Logs (Splunk_TA_vcenter). Its',
         '# documented method is an rsyslog imfile template on the appliance to port',
@@ -1969,6 +2005,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         'sourcetype = vclog',
         `index = ${direct ? vcIndex : vcfIndex}`,
         'connection_host = dns',
+        ...v6Line,
         '',
         '# NSX — no Splunk-supported add-on. The sourcetype name follows SC4S’s',
         '# convention so a TA written later (splunk_ta_custom) can match on it.',
@@ -1976,6 +2013,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         'sourcetype = vmware:nsxlog',
         `index = ${vcfIndex}`,
         'connection_host = dns',
+        ...v6Line,
         '',
         '# Forwarded from VCF Operations for Logs (SDDC Manager, VCF Operations,',
         '# VCF Automation). Local sourcetype name; no Splunkbase add-on parses these.',
@@ -1983,6 +2021,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         'sourcetype = vcf:syslog',
         `index = ${vcfIndex}`,
         'connection_host = none',
+        ...v6Line,
         '',
         ...(transport === 'tls'
           ? ['[SSL]', '# Key password, if any, in local/inputs.conf on the host — not here.', 'serverCert = $SPLUNK_HOME/etc/auth/mycerts/syslog-server.pem', 'requireClientCert = false', 'sslVersions = tls1.2']

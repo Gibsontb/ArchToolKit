@@ -17,7 +17,9 @@
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
-import { listOf, parseCidr,                   } from '../device.js';
+import { listOf, parseCidrDual,                   } from '../device.js';
+import { anyRoute, familyOf, isIp, isIpv4Address } from '../../core/ip.js';
+import { badAddresses, badAddressFinding, ipv6Unverified, looksLikeAddress, testAddresses } from './panos-ip.js';
 
 const PLATFORM = 'panos'         ;
 const SECRET = '<REQUIRED>';
@@ -162,20 +164,30 @@ export const PANOS_EXTRA_2                             = [
       const source = str(values, 'source', 'agentless');
       const dg = str(values, 'device_group', '');
       const prefix = prefixFor(dg);
-      const servers = str(values, 'servers', '')
+      const typedServers = str(values, 'servers', '')
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
         .map((line) => line.split(/\s+/));
       const ldapProfile = str(values, 'ldap_profile', 'LDAP-AD');
       const ldapServers = listOf(str(values, 'ldap_servers', ''));
+      // LDAP server profiles take IPv6 addresses. Server monitoring and the
+      // User-ID agent are written for IPv4 addresses and hostnames only, so an
+      // IPv6 entry there is left out and said so (ipv6Unverified).
+      const v6Servers = typedServers.filter(([, address]) => familyOf(String(address ?? '')) === 6 && isIp(String(address ?? '')));
+      const servers = typedServers.filter((entry) => !v6Servers.includes(entry));
+      const badServers = [...typedServers.map(([, address]) => String(address ?? '')), ...ldapServers].filter((address) => !address || (looksLikeAddress(address) && !isIp(address)));
       const groups = str(values, 'group_include', '')
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
       const zones = listOf(str(values, 'enable_zones', ''));
       const findings            = [];
-      if (servers.length === 0) findings.push(error('network.panos.no-userid-source', 'No identity source was given, so User-ID would map nobody.', { source: 'ArchToolKit' }));
+      if (typedServers.length === 0) findings.push(error('network.panos.no-userid-source', 'No identity source was given, so User-ID would map nobody.', { source: 'ArchToolKit' }));
+      if (badServers.length > 0) findings.push(badAddressFinding('Identity and LDAP servers', badServers.map((b) => b || '(missing address)')));
+      if (v6Servers.length > 0) {
+        findings.push(ipv6Unverified('network.panos.userid-server-ipv6', `${source === 'agent' ? 'The User-ID agent' : 'Server monitoring'} for ${v6Servers.map(([name]) => name).join(', ')} over IPv6`));
+      }
       if (groups.length === 0) {
         findings.push(warning('network.panos.userid-all-groups', 'With no include list the firewall maps every group in the directory, which on a large domain is slow, large, and mostly groups no rule will ever name.', { remediation: 'List only the groups rules use.', source: 'ArchToolKit' }));
       }
@@ -195,6 +207,7 @@ export const PANOS_EXTRA_2                             = [
           'The bind password is `<REQUIRED>` and typed at apply time. It goes in the vault the playbook reads, never in the change record.',
           'The service account needs read access and, for agentless mapping, the rights to read the security event log on every domain controller. A missing right shows up as "no mappings" and nothing more specific.',
           'Group mapping and user mapping are two separate things. Groups come from LDAP; addresses come from the domain controllers or the agent. Either can work while the other does not.',
+          ...(v6Servers.length > 0 ? [`VERIFY: ${source === 'agent' ? 'User-ID agent' : 'server monitoring'} over IPv6 on this release, or use each server’s hostname. ${v6Servers.map(([name]) => name).join(', ')} ${v6Servers.length === 1 ? 'was' : 'were'} left out.`] : []),
         ],
         before: ['show user user-id-agent statistics', 'show user group-mapping statistics', 'show user ip-user-mapping all | match ""', 'show user group list'],
         config: [
@@ -352,35 +365,67 @@ export const PANOS_EXTRA_2                             = [
       { id: 'portal_name', label: 'Portal name', control: 'text', default: 'GP-PORTAL' },
       { id: 'gateway_name', label: 'Gateway name', control: 'text', default: 'GP-GATEWAY' },
       { id: 'external_interface', label: 'External interface', control: 'text', default: 'ethernet1/1' },
-      { id: 'external_address', label: 'External address', control: 'text', default: '203.0.113.20' },
+      { id: 'external_address', label: 'External address', control: 'text', default: '203.0.113.20', hint: 'IPv4, IPv6, or one of each for a dual-stack gateway' },
       { id: 'tunnel_interface', label: 'Tunnel interface', control: 'text', default: 'tunnel.10' },
-      { id: 'pool', label: 'Client address pool', control: 'text', default: '10.200.0.0/22' },
+      { id: 'pool', label: 'Client address pool', control: 'text', default: '10.200.0.0/22', hint: 'IPv4, IPv6 or both, comma separated: 10.200.0.0/22, 2001:db8:200::/64' },
       { id: 'auth_profile', label: 'Authentication profile', control: 'text', default: 'AUTH-VPN' },
       { id: 'certificate', label: 'Server certificate name', control: 'text', default: 'CERT-VPN' },
       { id: 'split_tunnel', label: 'Split tunnel', control: 'select', default: 'corporate', options: [
         { value: 'none', label: 'Full tunnel — everything goes through the firewall' },
         { value: 'corporate', label: 'Split — only the corporate networks' },
       ] },
-      { id: 'include_routes', label: 'Networks to send through the tunnel', control: 'text', default: '10.0.0.0/8, 172.16.0.0/12', showWhen: { input: 'split_tunnel', equals: ['corporate'] } },
-      { id: 'dns', label: 'DNS servers for clients', control: 'text', default: '10.0.1.10, 10.0.2.10' },
+      { id: 'include_routes', label: 'Networks to send through the tunnel', control: 'text', default: '10.0.0.0/8, 172.16.0.0/12', hint: 'IPv4 and IPv6 prefixes', showWhen: { input: 'split_tunnel', equals: ['corporate'] } },
+      { id: 'dns', label: 'DNS servers for clients', control: 'text', default: '10.0.1.10, 10.0.2.10', hint: 'IPv4 or IPv6' },
       { id: 'hip', label: 'Require a host information check', control: 'toggle', default: false },
       { id: 'device_group', label: 'Panorama device group', control: 'text', default: '' },
     ],
     change: (values                 )               => {
       const portal = str(values, 'portal_name', 'GP-PORTAL');
       const gateway = str(values, 'gateway_name', 'GP-GATEWAY');
-      const pool = parseCidr(str(values, 'pool', ''));
+      // The pool, the gateway address, the access routes and the DNS servers
+      // all take either family; a dual-stack pool gives each client one of each.
+      const poolText = listOf(str(values, 'pool', ''));
+      const pools = poolText.map((text) => parseCidrDual(text));
+      const pool4 = pools.filter((c) => c !== null && c.family === 4);
+      const pool6 = pools.filter((c) => c !== null && c.family === 6);
       const split = str(values, 'split_tunnel', 'corporate') === 'corporate';
       const includes = listOf(str(values, 'include_routes', ''));
       const dns = listOf(str(values, 'dns', ''));
+      const external = listOf(str(values, 'external_address', ''));
+      const external4 = external.find((address) => familyOf(address) === 4 && isIp(address));
+      const external6 = external.find((address) => familyOf(address) === 6 && isIp(address));
+      const addressFamily = external4 && external6 ? 'ipv4_ipv6' : external6 ? 'ipv6' : 'ipv4';
       const findings            = [];
-      if (!pool) findings.push(error('network.panos.bad-pool', 'The client address pool is not a valid prefix.', { remediation: 'Write it as 10.200.0.0/22.', source: 'ArchToolKit' }));
+      if (poolText.length === 0 || pools.some((c) => c === null)) {
+        findings.push(error('network.panos.bad-pool', 'The client address pool is not a valid prefix.', { remediation: 'Write it as 10.200.0.0/22, 2001:db8:200::/64, or both separated by a comma.', source: 'ArchToolKit' }));
+      }
+      const pool = pool4[0];
       if (pool && pool.prefix > 24) {
         findings.push(warning('network.panos.small-pool', `A /${pool.prefix} gives about ${2 ** (32 - pool.prefix) - 2} concurrent clients. Remote access demand is rarely what it was planned for.`, { source: 'ArchToolKit' }));
       }
       if (split && includes.length === 0) {
         findings.push(error('network.panos.split-no-routes', 'Split tunnelling was chosen with no networks to include, so clients would connect and route nothing through the tunnel.', { source: 'ArchToolKit' }));
       }
+      const badRoutes = includes.filter((route) => familyOf(route) === null);
+      if (split && badRoutes.length > 0) findings.push(badAddressFinding('Networks to send through the tunnel', badRoutes));
+      const badDns = dns.filter((server) => !isIp(server));
+      if (badDns.length > 0) findings.push(badAddressFinding('DNS servers for clients', badDns));
+      if (external.length === 0 || external.some((address) => !isIp(address))) {
+        findings.push(error('network.panos.bad-gp-address', 'The external address must be an IPv4 address, an IPv6 address, or one of each.', { source: 'ArchToolKit' }));
+      }
+      // An IPv6 route or DNS server is useless to a client that gets no IPv6 address.
+      if (pool6.length === 0 && ((split && includes.some((route) => familyOf(route) === 6)) || dns.some((server) => familyOf(server) === 6))) {
+        findings.push(
+          warning('network.panos.gp-ipv6-no-pool', 'IPv6 access routes or DNS servers were given, but the pool has no IPv6 prefix, so clients get no IPv6 address to use them with.', {
+            remediation: 'Add an IPv6 prefix to the client address pool, such as 2001:db8:200::/64.',
+            source: 'ArchToolKit',
+          }),
+        );
+      }
+      if (pool4.length === 0 && ((split && includes.some((route) => familyOf(route) === 4)) || dns.some((server) => familyOf(server) === 4))) {
+        findings.push(warning('network.panos.gp-ipv4-no-pool', 'IPv4 access routes or DNS servers were given, but the pool has no IPv4 prefix, so clients get no IPv4 address to use them with.', { source: 'ArchToolKit' }));
+      }
+      const routes = split ? includes : [...(pool4.length > 0 || pool6.length === 0 ? [anyRoute(4)] : []), ...(pool6.length > 0 ? [anyRoute(6)] : [])];
       if (split) {
         findings.push(
           warning('network.panos.split-tunnel-visibility', 'With a split tunnel the firewall sees only the corporate traffic. Everything else leaves the laptop directly, unfiltered and unlogged, which is a deliberate trade and should be a recorded decision.', { source: 'ArchToolKit' }),
@@ -401,30 +446,38 @@ export const PANOS_EXTRA_2                             = [
           'The tunnel interface needs to be in a zone, and a security rule has to allow that zone to reach whatever the clients need. Without the rule they connect successfully and reach nothing.',
           'Return routing matters: the internal network needs a route back to the client pool, via this firewall.',
           ...(bool(values, 'hip', false) ? ['Host information profile checks fail closed. A client that cannot report — a new operating system version, an agent that did not start — is denied, and the message is not specific.'] : []),
+          ...(pool6.length > 0 ? ['Clients get an IPv6 address from the pool as well. The internal network needs a route back to the IPv6 pool too, and the security rules must name IPv6 destinations.'] : []),
+          ...(!split && pool6.length === 0 ? ['This is a full tunnel for IPv4 only. With no IPv6 pool, a client’s native IPv6 traffic does not enter the tunnel.'] : []),
+          'VERIFY: the portal’s external gateway entry (ip and priority-rule) against the release; the gateway list layout has changed between PAN-OS versions.',
         ],
         before: ['show global-protect-gateway gateway', 'show global-protect-portal portal', 'show running security-policy | match GP', 'show interface tunnel.10', 'show routing route'],
         config: [
           `set network interface tunnel units ${str(values, 'tunnel_interface', 'tunnel.10')} comment "GlobalProtect clients"`,
           '',
           `set global-protect global-protect-gateway ${gateway} local-address interface ${str(values, 'external_interface', 'ethernet1/1')}`,
-          `set global-protect global-protect-gateway ${gateway} local-address ip ${str(values, 'external_address', '')}`,
+          `set global-protect global-protect-gateway ${gateway} local-address ip-address-family ${addressFamily}`,
+          ...(external4 ? [`set global-protect global-protect-gateway ${gateway} local-address ip ipv4 ${external4}`] : []),
+          ...(external6 ? [`set global-protect global-protect-gateway ${gateway} local-address ip ipv6 ${external6}`] : []),
           `set global-protect global-protect-gateway ${gateway} ssl-tls-service-profile ${str(values, 'certificate', 'CERT-VPN')}`,
           `set global-protect global-protect-gateway ${gateway} client-auth AUTH authentication-profile ${str(values, 'auth_profile', 'AUTH-VPN')}`,
           `set global-protect global-protect-gateway ${gateway} client-auth AUTH os Any`,
           `set global-protect global-protect-gateway ${gateway} remote-user-tunnel ${str(values, 'tunnel_interface', 'tunnel.10')}`,
-          ...(pool ? [`set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG ip-pool ${pool.address}/${pool.prefix}`] : []),
-          ...dns.map((server, index) => `set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG dns-server ${index === 0 ? 'primary' : 'secondary'} ${server}`),
-          ...(split
-            ? includes.map((route) => `set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG split-tunneling access-route include ${route}`)
-            : [`set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG split-tunneling access-route include 0.0.0.0/0`]),
+          ...(pool4.length + pool6.length > 0
+            ? [`set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG ip-pool [ ${[...pool4, ...pool6].map((c) => `${c .network}/${c .prefix}`).join(' ')} ]`]
+            : []),
+          ...(dns.length > 0 ? [`set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG dns-server [ ${dns.join(' ')} ]`] : []),
+          ...(routes.length > 0 ? [`set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG split-tunneling access-route [ ${routes.join(' ')} ]`] : []),
           ...(bool(values, 'hip', false) ? [`set global-protect global-protect-gateway ${gateway} remote-user-tunnel-configs TUNNEL-CONFIG hip-notification HIP-CHECK`] : []),
           '',
           `set global-protect global-protect-portal ${portal} local-address interface ${str(values, 'external_interface', 'ethernet1/1')}`,
-          `set global-protect global-protect-portal ${portal} local-address ip ${str(values, 'external_address', '')}`,
+          `set global-protect global-protect-portal ${portal} local-address ip-address-family ${addressFamily}`,
+          ...(external4 ? [`set global-protect global-protect-portal ${portal} local-address ip ipv4 ${external4}`] : []),
+          ...(external6 ? [`set global-protect global-protect-portal ${portal} local-address ip ipv6 ${external6}`] : []),
           `set global-protect global-protect-portal ${portal} portal-config ssl-tls-service-profile ${str(values, 'certificate', 'CERT-VPN')}`,
           `set global-protect global-protect-portal ${portal} portal-config client-auth AUTH authentication-profile ${str(values, 'auth_profile', 'AUTH-VPN')}`,
-          `set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list GW external-gateway ${gateway} address ${str(values, 'external_address', '')}`,
-          `set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list GW external-gateway ${gateway} priority 1`,
+          ...(external4 ? [`set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list ${gateway} ip ipv4 ${external4}`] : []),
+          ...(external6 ? [`set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list ${gateway} ip ipv6 ${external6}`] : []),
+          `set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list ${gateway} priority-rule Any priority 1`,
           '',
           'commit description "GlobalProtect"',
         ],
@@ -475,7 +528,14 @@ export const PANOS_EXTRA_2                             = [
       const prefix = prefixFor(dg);
       const source = str(values, 'source', '');
       const destination = str(values, 'destination', '');
+      // Either family on either side; a list is written as one bracketed member list.
+      const sources = listOf(source);
+      const destinations = listOf(destination);
+      const members = (items                   , typed        ) => (items.length > 1 ? `[ ${items.join(' ')} ]` : typed);
+      const probe = testAddresses(sources, destinations);
       const findings            = [];
+      const bad = badAddresses([...sources, ...destinations]);
+      if (bad.length > 0) findings.push(badAddressFinding('Override addresses', bad));
       findings.push(
         warning('network.panos.app-override-bypasses-inspection', 'An application override turns off App-ID for the matched flow, and with it every content inspection that depends on identifying the application — threat prevention, file blocking, data filtering. The traffic is permitted and unexamined.', {
           remediation: 'Scope it as narrowly as the flow allows: exact sources, exact destinations, exact ports. Review it on a schedule, because it will outlive the reason for it.',
@@ -508,8 +568,8 @@ export const PANOS_EXTRA_2                             = [
           '',
           `${prefix} rulebase application-override rules ${rule} from ${str(values, 'source_zone', 'INSIDE')}`,
           `${prefix} rulebase application-override rules ${rule} to ${str(values, 'destination_zone', 'DMZ')}`,
-          `${prefix} rulebase application-override rules ${rule} source ${source}`,
-          `${prefix} rulebase application-override rules ${rule} destination ${destination}`,
+          `${prefix} rulebase application-override rules ${rule} source ${members(sources, source)}`,
+          `${prefix} rulebase application-override rules ${rule} destination ${members(destinations, destination)}`,
           `${prefix} rulebase application-override rules ${rule} protocol ${str(values, 'protocol', 'tcp')}`,
           `${prefix} rulebase application-override rules ${rule} port ${str(values, 'ports', '')}`,
           `${prefix} rulebase application-override rules ${rule} application ${app}`,
@@ -520,7 +580,7 @@ export const PANOS_EXTRA_2                             = [
         ],
         verify: [
           'show running application-override-policy',
-          `test security-policy-match from ${str(values, 'source_zone', 'INSIDE')} to ${str(values, 'destination_zone', 'DMZ')} source ${source.split('/')[0]} destination ${destination.split('/')[0]} protocol 6 destination-port ${str(values, 'ports', '9000').split('-')[0]}`,
+          `test security-policy-match from ${str(values, 'source_zone', 'INSIDE')} to ${str(values, 'destination_zone', 'DMZ')} source ${probe.source} destination ${probe.destination} protocol 6 destination-port ${str(values, 'ports', '9000').split('-')[0]}`,
           `show session all filter application ${app}`,
           'show log traffic direction equal backward | match ' + app,
         ],
@@ -539,15 +599,18 @@ export const PANOS_EXTRA_2                             = [
     inputs: [
       { id: 'router_name', label: 'Virtual router name', control: 'text', default: 'VR-DEFAULT' },
       { id: 'protocol', label: 'Protocol', control: 'select', default: 'ospf', options: [
-        { value: 'ospf', label: 'OSPF' },
-        { value: 'bgp', label: 'BGP' },
+        { value: 'ospf', label: 'OSPF (OSPFv2, IPv4)' },
+        { value: 'ospfv3', label: 'OSPFv3 (IPv6)' },
+        { value: 'bgp', label: 'BGP (IPv4 or IPv6 peer)' },
       ] },
-      { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.1.1' },
+      { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.1.1', hint: 'Dotted IPv4 form, for OSPFv3 and IPv6 BGP too' },
       { id: 'interfaces', label: 'Interfaces in the router', control: 'text', default: 'ethernet1/1, ethernet1/2' },
-      { id: 'area', label: 'OSPF area', control: 'text', default: '0.0.0.0', showWhen: { input: 'protocol', equals: ['ospf'] } },
-      { id: 'ospf_interfaces', label: 'OSPF-enabled interfaces', control: 'text', default: 'ethernet1/2', showWhen: { input: 'protocol', equals: ['ospf'] } },
+      { id: 'area', label: 'OSPF area', control: 'text', default: '0.0.0.0', showWhen: { input: 'protocol', equals: ['ospf', 'ospfv3'] } },
+      { id: 'ospf_interfaces', label: 'OSPF-enabled interfaces', control: 'text', default: 'ethernet1/2', showWhen: { input: 'protocol', equals: ['ospf', 'ospfv3'] } },
       { id: 'local_as', label: 'Local AS', control: 'number', default: 65010, min: 1, showWhen: { input: 'protocol', equals: ['bgp'] } },
-      { id: 'peer_address', label: 'Peer address', control: 'text', default: '10.0.12.2', showWhen: { input: 'protocol', equals: ['bgp'] } },
+      { id: 'peer_address', label: 'Peer address', control: 'text', default: '10.0.12.2', hint: 'IPv4, or IPv6 for an IPv6 unicast (MP-BGP) session', showWhen: { input: 'protocol', equals: ['bgp'] } },
+      { id: 'local_interface', label: 'Local interface for the session', control: 'text', default: '', hint: 'Empty to leave the local address to be set by hand', showWhen: { input: 'protocol', equals: ['bgp'] } },
+      { id: 'local_address', label: 'Local address on that interface', control: 'text', default: '', hint: 'With its prefix, same family as the peer: 10.0.12.1/30 or 2001:db8:12::1/64', showWhen: { input: 'protocol', equals: ['bgp'] } },
       { id: 'peer_as', label: 'Peer AS', control: 'number', default: 65020, min: 1, showWhen: { input: 'protocol', equals: ['bgp'] } },
       { id: 'redistribute', label: 'Redistribute', control: 'select', default: 'connected', options: [
         { value: 'connected', label: 'Connected networks only' },
@@ -561,8 +624,34 @@ export const PANOS_EXTRA_2                             = [
       const protocol = str(values, 'protocol', 'ospf');
       const ifaces = listOf(str(values, 'interfaces', ''));
       const redistribute = str(values, 'redistribute', 'connected');
+      const routerId = str(values, 'router_id', '');
+      const area = str(values, 'area', '0.0.0.0');
+      const peer = str(values, 'peer_address', '');
+      const localInterface = str(values, 'local_interface', '');
+      const localAddress = str(values, 'local_address', '');
+      const local = localAddress ? parseCidrDual(localAddress) : null;
+      const ospf = protocol === 'ospf' || protocol === 'ospfv3';
+      // The address family the session carries: OSPFv3 and an IPv6 BGP peer
+      // are IPv6; OSPFv2 and an IPv4 BGP peer are IPv4.
+      const v6 = protocol === 'ospfv3' || (protocol === 'bgp' && familyOf(peer) === 6);
+      const auth = bool(values, 'authentication', true);
       const findings            = [];
       if (ifaces.length === 0) findings.push(error('network.panos.no-interfaces', 'A virtual router with no interfaces routes nothing.', { source: 'ArchToolKit' }));
+      // Router ids and areas are 32-bit identifiers written as dotted quads, in
+      // OSPFv3 and IPv6 BGP as much as in IPv4.
+      if (!isIpv4Address(routerId)) findings.push(error('network.panos.bad-router-id', `The router id "${routerId}" must be a 32-bit id in dotted IPv4 form, such as 10.255.1.1 — also for OSPFv3 and IPv6 BGP.`, { source: 'ArchToolKit' }));
+      if (ospf && !isIpv4Address(area)) findings.push(error('network.panos.bad-area', `The OSPF area "${area}" must be in dotted form, such as 0.0.0.0.`, { source: 'ArchToolKit' }));
+      if (protocol === 'bgp' && !isIp(peer)) findings.push(error('network.panos.bad-bgp-peer', `The peer address "${peer}" is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
+      if (protocol === 'bgp' && localAddress && !local) findings.push(error('network.panos.bad-bgp-local', `The local address "${localAddress}" is not a valid address and prefix.`, { source: 'ArchToolKit' }));
+      if (protocol === 'bgp' && local && familyOf(peer) !== null && local.family !== familyOf(peer)) {
+        findings.push(error('network.panos.bgp-family-mismatch', `The peer is IPv${familyOf(peer)} and the local address is IPv${local.family}. A BGP session runs between two addresses of the same family.`, { source: 'ArchToolKit' }));
+      }
+      if (protocol === 'bgp' && (!localInterface || !local)) {
+        findings.push(warning('network.panos.bgp-no-local-address', 'The peer has no local interface and address, and the firewall needs both to open the session. Set them here or by hand before the commit.', { source: 'ArchToolKit' }));
+      }
+      if (protocol === 'ospfv3' && auth) {
+        findings.push(ipv6Unverified('network.panos.ospfv3-auth', 'OSPFv3 authentication (an IPsec AH or ESP auth profile, not MD5)'));
+      }
       if (!bool(values, 'authentication', true)) {
         findings.push(warning('network.panos.routing-unauthenticated', 'An unauthenticated routing protocol on a firewall lets anything on the segment inject a route and redirect traffic around the policy.', { remediation: 'Authenticate the adjacency. The key is `<REQUIRED>` here and belongs in the vault.', source: 'ArchToolKit' }));
       }
@@ -583,12 +672,24 @@ export const PANOS_EXTRA_2                             = [
           'A firewall that peers will also withdraw routes when it fails over or reboots, which is usually the point — but it means a maintenance window now moves traffic for the whole network, not just for the firewall.',
           'Routes learned here still have to pass policy. A route arriving does not mean the traffic will be permitted.',
           ...(protocol === 'bgp' ? ['The BGP password is `<REQUIRED>` and must match the peer. It belongs in the vault, not the change record.'] : []),
+          ...(protocol === 'ospfv3' ? ['OSPFv3 runs over the interfaces’ IPv6 link-local addresses, so each OSPFv3 interface needs IPv6 enabled. The router id stays a dotted 32-bit id.'] : []),
+          ...(protocol === 'ospfv3' && auth ? ['VERIFY: OSPFv3 authentication uses an IPsec AH or ESP auth profile on this release; it is not generated here, so the adjacency comes up unauthenticated until one is added.'] : []),
+          ...(protocol === 'bgp' && v6 ? ['The IPv6 peer is configured for multiprotocol BGP with the IPv6 unicast address family. IPv6 routes are exchanged only with this peer; IPv4 routes need an IPv4 session.'] : []),
         ],
-        before: [`show routing protocol ${protocol} summary`, 'show routing route', `show routing resource`, 'show interface all'],
+        before: [`show routing protocol ${protocol} summary`, `show routing route${v6 ? ' afi ipv6' : ''}`, `show routing resource`, 'show interface all'],
         config: [
           ...ifaces.map((iface) => `set network virtual-router ${vr} interface ${iface}`),
           '',
-          ...(protocol === 'ospf'
+          ...(protocol === 'ospfv3'
+            ? [
+                `set network virtual-router ${vr} protocol ospfv3 enable yes`,
+                `set network virtual-router ${vr} protocol ospfv3 router-id ${routerId}`,
+                ...listOf(str(values, 'ospf_interfaces', '')).flatMap((iface) => [
+                  `set network virtual-router ${vr} protocol ospfv3 area ${area} interface ${iface} enable yes`,
+                  `set network virtual-router ${vr} protocol ospfv3 area ${area} interface ${iface} link-type broadcast`,
+                ]),
+              ]
+            : protocol === 'ospf'
             ? [
                 `set network virtual-router ${vr} protocol ospf enable yes`,
                 `set network virtual-router ${vr} protocol ospf router-id ${str(values, 'router_id', '')}`,
@@ -609,28 +710,57 @@ export const PANOS_EXTRA_2                             = [
                 `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 peer-address ip ${str(values, 'peer_address', '')}`,
                 `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 peer-as ${num(values, 'peer_as', 65020)}`,
                 `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 enable yes`,
-                ...(bool(values, 'authentication', true) ? [`set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 connection-options authentication ${SECRET}`] : []),
+                ...(localInterface && local && local.family === familyOf(peer)
+                  ? [
+                      `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 local-address interface ${localInterface}`,
+                      `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 local-address ip ${local.address}/${local.prefix}`,
+                    ]
+                  : []),
+                // An IPv6 peer carries IPv6 unicast through multiprotocol BGP.
+                ...(v6
+                  ? [
+                      `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 enable-mp-bgp yes`,
+                      `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 address-family-identifier ipv6`,
+                      `set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 subsequent-address-family-identifier unicast yes`,
+                    ]
+                  : []),
+                ...(auth ? [`set network virtual-router ${vr} protocol bgp peer-group PG-1 peer PEER-1 connection-options authentication ${SECRET}`] : []),
               ]),
           '',
+          // IPv6 routes are redistributed through an IPv6 redistribution profile.
           ...(redistribute !== 'none'
-            ? [
-                `set network virtual-router ${vr} redist-profile REDIST-OUT priority 1`,
-                `set network virtual-router ${vr} redist-profile REDIST-OUT action redist`,
-                `set network virtual-router ${vr} redist-profile REDIST-OUT filter type connect`,
-                ...(redistribute === 'static' ? [`set network virtual-router ${vr} redist-profile REDIST-OUT filter type static`] : []),
-                `${'!'} Add destination prefixes to REDIST-OUT so only the intended networks are advertised.`,
-                ...(protocol === 'ospf'
-                  ? [`set network virtual-router ${vr} protocol ospf export-rules REDIST-OUT new-path-type ext-2`]
-                  : [`set network virtual-router ${vr} protocol bgp redist-rules REDIST-OUT enable yes`]),
-              ]
+            ? v6
+              ? [
+                  `set network virtual-router ${vr} redist-profile-ipv6 REDIST-OUT-V6 priority 1`,
+                  `set network virtual-router ${vr} redist-profile-ipv6 REDIST-OUT-V6 action redist`,
+                  `set network virtual-router ${vr} redist-profile-ipv6 REDIST-OUT-V6 filter type connect`,
+                  ...(redistribute === 'static' ? [`set network virtual-router ${vr} redist-profile-ipv6 REDIST-OUT-V6 filter type static`] : []),
+                  `${'!'} Add destination prefixes to REDIST-OUT-V6 so only the intended networks are advertised.`,
+                  ...(protocol === 'ospfv3'
+                    ? [`set network virtual-router ${vr} protocol ospfv3 export-rules REDIST-OUT-V6 new-path-type ext-2`]
+                    : [
+                        `set network virtual-router ${vr} protocol bgp redist-rules REDIST-OUT-V6 address-family-identifier ipv6`,
+                        `set network virtual-router ${vr} protocol bgp redist-rules REDIST-OUT-V6 enable yes`,
+                      ]),
+                ]
+              : [
+                  `set network virtual-router ${vr} redist-profile REDIST-OUT priority 1`,
+                  `set network virtual-router ${vr} redist-profile REDIST-OUT action redist`,
+                  `set network virtual-router ${vr} redist-profile REDIST-OUT filter type connect`,
+                  ...(redistribute === 'static' ? [`set network virtual-router ${vr} redist-profile REDIST-OUT filter type static`] : []),
+                  `${'!'} Add destination prefixes to REDIST-OUT so only the intended networks are advertised.`,
+                  ...(protocol === 'ospf'
+                    ? [`set network virtual-router ${vr} protocol ospf export-rules REDIST-OUT new-path-type ext-2`]
+                    : [`set network virtual-router ${vr} protocol bgp redist-rules REDIST-OUT enable yes`]),
+                ]
             : []),
           '',
           'commit description "Virtual router routing"',
         ],
         verify: [
           `show routing protocol ${protocol} summary`,
-          ...(protocol === 'ospf' ? [`show routing protocol ospf neighbor`, 'show routing protocol ospf interface'] : ['show routing protocol bgp summary', 'show routing protocol bgp peer']),
-          'show routing route',
+          ...(ospf ? [`show routing protocol ${protocol} neighbor`, `show routing protocol ${protocol} interface`] : ['show routing protocol bgp summary', 'show routing protocol bgp peer']),
+          `show routing route${v6 ? ' afi ipv6' : ''}`,
           `${'!'} Confirm only the intended prefixes are being advertised, from the peer’s side`,
         ],
         backout: [`set network virtual-router ${vr} protocol ${protocol} enable no`, 'commit description "Back out dynamic routing on the firewall"'],
@@ -760,6 +890,9 @@ export const PANOS_EXTRA_2                             = [
         .filter(Boolean);
       const findings            = [];
       if (servers.length === 0) findings.push(error('network.panos.no-auth-servers', 'No authentication server was given.', { source: 'ArchToolKit' }));
+      // LDAP, RADIUS and Kerberos server profiles take IPv4 or IPv6 addresses, or hostnames.
+      const badServers = servers.filter((server) => looksLikeAddress(server) && !isIp(server));
+      if (badServers.length > 0) findings.push(badAddressFinding('Authentication servers', badServers));
       if (servers.length === 1) {
         findings.push(warning('network.panos.single-auth-server', 'One authentication server means nobody can log in while it is down — including, depending on where this profile is used, the administrators.', { source: 'ArchToolKit' }));
       }

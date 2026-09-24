@@ -13,7 +13,9 @@
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
-import { description, listOf, parseCidr,                   } from '../device.js';
+import { containsAny, familyOf } from '../../core/ip.js';
+import { description, isIpAny, listOf, parseCidr, parseCidrDual,                   } from '../device.js';
+import { dualCidrs, dualFindings, ipv6Rule, routerIdFindings, ruleFamily, unverifiedIpv6 } from './nxos-eos-dual.js';
 
 const PLATFORM = 'arista_eos'         ;
 const SECRET = '<REQUIRED>';
@@ -37,11 +39,22 @@ export const EOS_EXTRA                             = [
     change: (values                 )               => {
       const domain = str(values, 'domain_id', 'MLAG-1');
       const vlan = num(values, 'peer_vlan', 4094);
-      const local = parseCidr(str(values, 'local_address', ''));
+      const typed = str(values, 'local_address', '');
+      const peer = str(values, 'peer_address', '');
+      // MLAG peering over IPv6 could not be confirmed across EOS releases, so it is not written.
+      const mlag6 = familyOf(typed) === 6 || familyOf(peer) === 6;
+      const local = mlag6 ? null : parseCidr(typed);
       const po = num(values, 'peer_link_channel', 1000);
       const members = listOf(str(values, 'peer_link_members', ''));
       const findings            = [];
-      if (!local) findings.push(error('network.eos.mlag-address', 'The peer address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      if (mlag6) findings.push(unverifiedIpv6('network.eos.mlag-ipv6', 'The MLAG local-interface and peer-address', 'EOS'));
+      else {
+        if (!local) findings.push(error('network.eos.mlag-address', 'The peer address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+        if (!isIpAny(peer)) findings.push(error('network.eos.mlag-peer', `The peer's address "${peer}" is not an address.`, { source: 'ArchToolKit' }));
+        else if (local && !containsAny(`${local.address}/${local.prefix}`, peer)) {
+          findings.push(error('network.eos.mlag-subnet', `The peer's address ${peer} is not in ${local.address}/${local.prefix}, so the peers can never reach each other over the peer VLAN.`, { source: 'ArchToolKit' }));
+        }
+      }
       if (members.length < 2) findings.push(warning('network.eos.peer-link-members', 'A peer-link with one member is a single point of failure for the pair.', { source: 'ArchToolKit' }));
 
       return {
@@ -75,7 +88,7 @@ export const EOS_EXTRA                             = [
           'mlag configuration',
           `   domain-id ${domain}`,
           `   local-interface Vlan${vlan}`,
-          `   peer-address ${str(values, 'peer_address', '')}`,
+          ...(mlag6 ? [] : [`   peer-address ${peer}`]),
           `   peer-link Port-Channel${po}`,
           '   reload-delay mlag 300',
           '   reload-delay non-mlag 330',
@@ -102,7 +115,7 @@ export const EOS_EXTRA                             = [
       { id: 'local_as', label: 'Local AS', control: 'number', default: 65101, min: 1 },
       { id: 'route_distinguisher', label: 'Route distinguisher', control: 'text', default: '10.255.0.11:10100' },
       { id: 'route_target', label: 'Route target', control: 'text', default: '10100:10100' },
-      { id: 'anycast_gateway', label: 'Anycast gateway address', control: 'text', default: '', hint: 'VARP address for the SVI; empty for layer 2 only' },
+      { id: 'anycast_gateway', label: 'Anycast gateway address', control: 'text', default: '', hint: 'Address and prefix for the SVI, IPv4, IPv6 or one of each; empty for layer 2 only' },
       { id: 'vrf', label: 'Tenant VRF', control: 'text', default: '', showWhen: { input: 'anycast_gateway', notEquals: [''] } },
     ],
     change: (values                 )               => {
@@ -110,11 +123,13 @@ export const EOS_EXTRA                             = [
       const vni = num(values, 'vni', 10100);
       const loopback = num(values, 'source_loopback', 1);
       const asn = num(values, 'local_as', 65101);
-      const gateway = parseCidr(str(values, 'anycast_gateway', ''));
-      const varp = str(values, 'anycast_gateway', '').split('/')[0] ?? '';
+      const anycast = dualCidrs(str(values, 'anycast_gateway', ''));
+      const gateway = anycast.v4 !== null || anycast.v6 !== null;
       const vrf = str(values, 'vrf', '');
+      const findings            = dualFindings('network.eos.bad-address', 'the anycast gateway address', anycast, '10.100.0.1/24 or 2001:db8:100::1/64');
 
       return {
+        findings,
         platform: PLATFORM,
         title: `VXLAN VNI ${vni} for VLAN ${vlan}`,
         impact: 'brief',
@@ -128,12 +143,15 @@ export const EOS_EXTRA                             = [
           `vlan ${vlan}`,
           `   name VNI-${vni}`,
           '!',
+          // IPv6 is not routed on EOS, in any VRF, until it is turned on for that VRF.
+          ...(anycast.v6 ? [`ipv6 unicast-routing${vrf ? ` vrf ${vrf}` : ''}`, '!'] : []),
           ...(gateway
             ? [
                 `interface Vlan${vlan}`,
                 `   description VNI ${vni} gateway`,
                 ...(vrf ? [`   vrf ${vrf}`] : []),
-                `   ip address virtual ${gateway.address}/${gateway.prefix}`,
+                ...(anycast.v4 ? [`   ip address virtual ${anycast.v4.text}`] : []),
+                ...(anycast.v6 ? [`   ipv6 address virtual ${anycast.v6.text}`] : []),
                 '   no shutdown',
                 '!',
               ]
@@ -151,7 +169,13 @@ export const EOS_EXTRA                             = [
           '      redistribute learned',
           '!',
         ],
-        verify: [`show vxlan vni ${vni}`, 'show vxlan vtep', 'show bgp evpn route-type mac-ip', ...(gateway ? [`show ip virtual-router`, `ping ${varp}`] : [])],
+        verify: [
+          `show vxlan vni ${vni}`,
+          'show vxlan vtep',
+          'show bgp evpn route-type mac-ip',
+          ...(anycast.v4 ? [`show ip virtual-router`, `ping ${anycast.v4.address}`] : []),
+          ...(anycast.v6 ? [`show ipv6 interface Vlan${vlan}`, `ping${vrf ? ` vrf ${vrf}` : ''} ipv6 ${anycast.v6.address}`] : []),
+        ],
         backout: [`router bgp ${asn}`, `   no vlan ${vlan}`, '!', 'interface Vxlan1', `   no vxlan vlan ${vlan} vni ${vni}`, '!', ...(gateway ? [`no interface Vlan${vlan}`] : []), `no vlan ${vlan}`],
       };
     },
@@ -165,39 +189,53 @@ export const EOS_EXTRA                             = [
     description: 'A layer 3 interface with an address, optionally in a VRF and in the underlay routing.',
     inputs: [
       { id: 'interface', label: 'Interface', control: 'text', default: 'Ethernet1' },
-      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/31', hint: 'A /31 is normal on an Arista fabric link' },
+      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/31', hint: 'A /31 is normal on an Arista fabric link; IPv4, IPv6 (/127) or one of each' },
       { id: 'port_description', label: 'Description', control: 'text', default: 'Fabric link' },
       { id: 'vrf', label: 'VRF', control: 'text', default: '' },
       { id: 'mtu', label: 'MTU', control: 'number', default: 9214, min: 1500, max: 9214 },
-      { id: 'ospf', label: 'Add to OSPF', control: 'toggle', default: false },
+      { id: 'ospf', label: 'Add to OSPF', control: 'toggle', default: false, hint: 'OSPFv2: the IPv4 address only' },
       { id: 'ospf_area', label: 'OSPF area', control: 'text', default: '0.0.0.0', showWhen: { input: 'ospf', equals: ['true'] } },
     ],
     change: (values                 )               => {
       const iface = str(values, 'interface', '');
-      const cidr = parseCidr(str(values, 'address', ''));
+      const address = dualCidrs(str(values, 'address', ''));
       const vrf = str(values, 'vrf', '');
       const ospf = bool(values, 'ospf', false);
-      const findings            = [];
-      if (!cidr) findings.push(error('network.eos.bad-address', 'The address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      const findings            = dualFindings('network.eos.bad-address', 'the address', address, '10.0.12.1/31 or 2001:db8:0:12::/127');
+      if (!address.v4 && !address.v6) findings.push(error('network.eos.bad-address', 'The address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      if (ospf && address.v6 && !address.v4) {
+        findings.push(warning('network.eos.ospfv2-ipv6', 'OSPF here is OSPFv2, which only carries IPv4. With an IPv6-only address the interface joins the area and never forms an adjacency.', { remediation: 'Turn OSPF off here and use OSPFv3 or BGP for IPv6.', source: 'ArchToolKit' }));
+      }
 
       return {
         platform: PLATFORM,
         title: `Routed interface ${iface}`,
         impact: 'outage',
-        notes: ['`no switchport` clears the layer 2 configuration. Whatever the port was carrying stops.'],
+        notes: [
+          '`no switchport` clears the layer 2 configuration. Whatever the port was carrying stops.',
+          ...(address.v6 ? ['`ipv6 unicast-routing` is included: without it EOS addresses the port and routes no IPv6.'] : []),
+          ...(ospf && address.v6 ? ['OSPFv2 advertises the IPv4 address only. The IPv6 address needs OSPFv3 or BGP, which this change does not configure.'] : []),
+        ],
         before: [`show running-config interfaces ${iface}`, `show interfaces ${iface} status`],
         config: [
+          ...(address.v6 ? [`ipv6 unicast-routing${vrf ? ` vrf ${vrf}` : ''}`, '!'] : []),
           `interface ${iface}`,
           `   description ${description(str(values, 'port_description', ''), 'Routed link')}`,
           '   no switchport',
           ...(vrf ? [`   vrf ${vrf}`] : []),
-          ...(cidr ? [`   ip address ${cidr.address}/${cidr.prefix}`] : []),
+          ...(address.v4 ? [`   ip address ${address.v4.text}`] : []),
+          ...(address.v6 ? [`   ipv6 address ${address.v6.text}`] : []),
           `   mtu ${num(values, 'mtu', 9214)}`,
           ...(ospf ? [`   ip ospf area ${str(values, 'ospf_area', '0.0.0.0')}`, '   ip ospf network point-to-point'] : []),
           '   no shutdown',
           '!',
         ],
-        verify: [`show interfaces ${iface}`, `show ip interface brief${vrf ? ` vrf ${vrf}` : ''}`, ...(ospf ? ['show ip ospf neighbor'] : [])],
+        verify: [
+          `show interfaces ${iface}`,
+          ...(address.v4 || !address.v6 ? [`show ip interface brief${vrf ? ` vrf ${vrf}` : ''}`] : []),
+          ...(address.v6 ? [`show ipv6 interface brief${vrf ? ` vrf ${vrf}` : ''}`] : []),
+          ...(ospf ? ['show ip ospf neighbor'] : []),
+        ],
         backout: [`default interface ${iface}`],
         findings,
       };
@@ -212,7 +250,7 @@ export const EOS_EXTRA                             = [
     description: 'A loopback for the router id or the VXLAN source, advertised into the underlay.',
     inputs: [
       { id: 'number', label: 'Loopback number', control: 'number', default: 0, min: 0, max: 1000 },
-      { id: 'address', label: 'Address', control: 'text', default: '10.255.0.11/32' },
+      { id: 'address', label: 'Address', control: 'text', default: '10.255.0.11/32', hint: 'IPv4 /32, IPv6 /128, or one of each' },
       { id: 'purpose', label: 'Purpose', control: 'select', default: 'router-id', options: [
         { value: 'router-id', label: 'Router id and peering source' },
         { value: 'vtep', label: 'VXLAN VTEP source' },
@@ -222,11 +260,22 @@ export const EOS_EXTRA                             = [
     ],
     change: (values                 )               => {
       const id = num(values, 'number', 0);
-      const cidr = parseCidr(str(values, 'address', ''));
+      const address = dualCidrs(str(values, 'address', ''));
+      const cidr = address.v4;
+      const v6 = address.v6;
       const purpose = str(values, 'purpose', 'router-id');
       const asn = num(values, 'local_as', 0);
-      const findings            = [];
+      const findings            = dualFindings('network.eos.bad-address', 'the loopback address', address, '10.255.0.11/32 or 2001:db8::11/128');
       if (cidr && cidr.prefix !== 32) findings.push(warning('network.eos.loopback-mask', 'A loopback is normally a /32.', { source: 'ArchToolKit' }));
+      if (v6 && v6.prefix !== 128) findings.push(warning('network.eos.loopback-mask', 'An IPv6 loopback is normally a /128.', { source: 'ArchToolKit' }));
+      if (!cidr && !v6) findings.push(error('network.eos.bad-address', 'The loopback address is not a valid address and prefix.', { remediation: 'Write it as 10.255.0.11/32.', source: 'ArchToolKit' }));
+      // The VTEP source in this fabric is IPv4; a VXLAN-over-IPv6 underlay is a different design.
+      if (v6 && !cidr && purpose !== 'router-id') {
+        findings.push(warning('network.eos.vtep-ipv6', 'The VTEP source loopback has no IPv4 address, and the VXLAN changes here source from IPv4. VERIFY: a VXLAN-over-IPv6 underlay needs the platform and release to support it.', { source: 'ArchToolKit' }));
+      }
+      // Each family is advertised from its own address family, so one never carries the other's prefix.
+      const af4 = asn > 0 && (cidr !== null || v6 === null);
+      const af6 = asn > 0 && v6 !== null;
 
       return {
         platform: PLATFORM,
@@ -235,17 +284,42 @@ export const EOS_EXTRA                             = [
         notes: [
           ...(purpose === 'anycast-vtep' ? ['Both MLAG peers carry the same anycast VTEP address on this loopback, so the fabric sees the pair as one VTEP.'] : []),
           'A loopback that is not advertised into the underlay is unreachable from the rest of the fabric, which is the usual reason EVPN peering never comes up.',
+          ...(af6 ? ['The IPv6 network is only advertised to neighbours activated in `address-family ipv6`.'] : []),
         ],
-        before: [`show running-config interfaces Loopback${id}`, 'show ip route ' + (cidr?.address ?? '')],
+        before: [`show running-config interfaces Loopback${id}`, ...(cidr || !v6 ? ['show ip route ' + (cidr?.address ?? '')] : []), ...(v6 ? [`show ipv6 route ${v6.address}`] : [])],
         config: [
           `interface Loopback${id}`,
           `   description ${purpose === 'vtep' || purpose === 'anycast-vtep' ? 'VXLAN VTEP source' : 'Router id'}`,
           ...(cidr ? [`   ip address ${cidr.address}/${cidr.prefix}`] : []),
+          ...(v6 ? [`   ipv6 address ${v6.text}`] : []),
           '!',
-          ...(asn > 0 ? [`router bgp ${asn}`, '   address-family ipv4', `      network ${cidr ? `${cidr.address}/${cidr.prefix}` : ''}`, '!'] : []),
+          ...(af4 || af6
+            ? [
+                `router bgp ${asn}`,
+                ...(af4 ? ['   address-family ipv4', `      network ${cidr ? `${cidr.address}/${cidr.prefix}` : ''}`] : []),
+                ...(af6 ? ['   address-family ipv6', `      network ${v6 .network}/${v6 .prefix}`] : []),
+                '!',
+              ]
+            : []),
         ],
-        verify: [`show ip interface brief | include Loopback${id}`, ...(asn > 0 ? ['show bgp ipv4 unicast'] : []), ...(cidr ? [`ping ${cidr.address}`] : [])],
-        backout: [...(asn > 0 ? [`router bgp ${asn}`, '   address-family ipv4', `      no network ${cidr ? `${cidr.address}/${cidr.prefix}` : ''}`, '!'] : []), `no interface Loopback${id}`],
+        verify: [
+          `show ip${v6 && !cidr ? 'v6' : ''} interface brief | include Loopback${id}`,
+          ...(af4 ? ['show bgp ipv4 unicast'] : []),
+          ...(af6 ? ['show bgp ipv6 unicast'] : []),
+          ...(cidr ? [`ping ${cidr.address}`] : []),
+          ...(v6 ? [`ping ipv6 ${v6.address}`] : []),
+        ],
+        backout: [
+          ...(af4 || af6
+            ? [
+                `router bgp ${asn}`,
+                ...(af4 ? ['   address-family ipv4', `      no network ${cidr ? `${cidr.address}/${cidr.prefix}` : ''}`] : []),
+                ...(af6 ? ['   address-family ipv6', `      no network ${v6 .network}/${v6 .prefix}`] : []),
+                '!',
+              ]
+            : []),
+          `no interface Loopback${id}`,
+        ],
         findings,
       };
     },
@@ -260,25 +334,44 @@ export const EOS_EXTRA                             = [
     inputs: [
       { id: 'local_as', label: 'Local AS', control: 'number', default: 65101, min: 1 },
       { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.0.11' },
-      { id: 'peers', label: 'Peer addresses', control: 'textarea', default: '10.0.1.0 65100\n10.0.2.0 65100', hint: 'One per line: address AS' },
-      { id: 'advertise', label: 'Prefixes to advertise', control: 'textarea', default: '10.255.0.11/32' },
+      { id: 'peers', label: 'Peer addresses', control: 'textarea', default: '10.0.1.0 65100\n10.0.2.0 65100', hint: 'One per line: address AS. IPv6 peers (2001:db8:0:1::0 65100) go in their own peer group' },
+      { id: 'advertise', label: 'Prefixes to advertise', control: 'textarea', default: '10.255.0.11/32', hint: 'One per line, IPv4 or IPv6' },
       { id: 'ecmp', label: 'ECMP paths', control: 'number', default: 4, min: 1, max: 64 },
       { id: 'bfd', label: 'BFD', control: 'toggle', default: true },
     ],
     change: (values                 )               => {
       const asn = num(values, 'local_as', 65101);
-      const peers = str(values, 'peers', '')
+      const allPeers = str(values, 'peers', '')
         .split(/\n+/)
         .map((line) => line.trim().split(/\s+/))
         .filter((parts) => parts.length >= 2);
-      const advertise = str(values, 'advertise', '')
+      const lines = str(values, 'advertise', '')
         .split(/\n+/)
-        .map((line) => parseCidr(line.trim()))
-        .filter((c)                                           => c !== null);
+        .map((line) => line.trim())
+        .filter(Boolean);
       const ecmp = num(values, 'ecmp', 4);
       const bfd = bool(values, 'bfd', true);
+      // IPv4 and IPv6 sessions are separate peer groups, each activated only in
+      // its own address family, so no session carries the other family's routes.
+      const peers = allPeers.filter((parts) => familyOf(parts[0] ?? '') === 4);
+      const peers6 = allPeers.filter((parts) => familyOf(parts[0] ?? '') === 6);
+      const advertise = lines.map((l) => parseCidrDual(l)).filter((c) => c?.family === 4)                                         ;
+      const advertise6 = lines.flatMap((l) => {
+        const c = parseCidrDual(l);
+        return c?.family === 6 ? [`${c.network}/${c.prefix}`] : [];
+      });
+      const findings            = [
+        ...routerIdFindings('network.eos.router-id', str(values, 'router_id', '')),
+        ...allPeers.filter((parts) => !isIpAny(parts[0] ?? '')).map((parts) => error('network.eos.bad-peer', `The peer "${parts[0]}" is not an address.`, { source: 'ArchToolKit' })),
+        ...lines.filter((l) => !parseCidrDual(l)).map((l) => error('network.eos.bad-prefix', `"${l}" is not an IPv4 or IPv6 prefix.`, { source: 'ArchToolKit' })),
+      ];
+      if (advertise6.length > 0 && peers6.length === 0) {
+        findings.push(warning('network.eos.ipv6-no-peers', 'IPv6 prefixes are advertised but there is no IPv6 peer to send them to. They sit in the table and reach nobody.', { remediation: 'Add the IPv6 address of each fabric link as a peer.', source: 'ArchToolKit' }));
+      }
+      const group6 = peers6.length > 0 || advertise6.length > 0;
 
       return {
+        findings,
         platform: PLATFORM,
         title: `BGP underlay in AS ${asn}`,
         impact: 'brief',
@@ -300,14 +393,30 @@ export const EOS_EXTRA                             = [
           '   neighbor UNDERLAY maximum-routes 12000',
           ...(bfd ? ['   neighbor UNDERLAY bfd'] : []),
           ...peers.flatMap((parts) => [`   neighbor ${parts[0]} peer group UNDERLAY`, `   neighbor ${parts[0]} remote-as ${parts[1]}`]),
+          ...(group6
+            ? [
+                '   neighbor UNDERLAY-V6 peer group',
+                '   neighbor UNDERLAY-V6 send-community',
+                '   neighbor UNDERLAY-V6 maximum-routes 12000',
+                ...(bfd ? ['   neighbor UNDERLAY-V6 bfd'] : []),
+                ...peers6.flatMap((parts) => [`   neighbor ${parts[0]} peer group UNDERLAY-V6`, `   neighbor ${parts[0]} remote-as ${parts[1]}`]),
+              ]
+            : []),
           '   !',
           '   address-family ipv4',
           '      neighbor UNDERLAY activate',
           ...advertise.map((n) => `      network ${n.address}/${n.prefix}`),
+          ...(group6 ? ['   !', '   address-family ipv6', '      neighbor UNDERLAY-V6 activate', ...advertise6.map((n) => `      network ${n}`)] : []),
           '!',
         ],
-        verify: ['show bgp summary', 'show ip route bgp', 'show ip bgp neighbors', ...(bfd ? ['show bfd peers'] : [])],
-        backout: [`router bgp ${asn}`, ...peers.map((parts) => `   no neighbor ${parts[0]}`), '   no neighbor UNDERLAY peer group', '!'],
+        verify: ['show bgp summary', 'show ip route bgp', 'show ip bgp neighbors', ...(group6 ? ['show ipv6 bgp summary', 'show ipv6 route bgp'] : []), ...(bfd ? ['show bfd peers'] : [])],
+        backout: [
+          `router bgp ${asn}`,
+          ...[...peers, ...peers6].map((parts) => `   no neighbor ${parts[0]}`),
+          '   no neighbor UNDERLAY peer group',
+          ...(group6 ? ['   no neighbor UNDERLAY-V6 peer group'] : []),
+          '!',
+        ],
       };
     },
   }),
@@ -319,29 +428,43 @@ export const EOS_EXTRA                             = [
     group: 'Routing',
     description: 'A static route, in the default table or a VRF.',
     inputs: [
-      { id: 'prefix', label: 'Destination', control: 'text', default: '0.0.0.0/0' },
-      { id: 'next_hop', label: 'Next hop', control: 'text', default: '10.0.0.1' },
+      { id: 'prefix', label: 'Destination', control: 'combo', default: '0.0.0.0/0', options: ['0.0.0.0/0', '10.0.0.0/8', '::/0', '2001:db8::/32'].map((v) => ({ value: v, label: v })), hint: 'IPv4 or IPv6; ::/0 is the IPv6 default' },
+      { id: 'next_hop', label: 'Next hop', control: 'text', default: '10.0.0.1', hint: 'The same family as the destination; a global IPv6 address, not link-local' },
       { id: 'vrf', label: 'VRF', control: 'text', default: '' },
       { id: 'distance', label: 'Administrative distance', control: 'number', default: 1, min: 1, max: 255 },
       { id: 'route_name', label: 'Name', control: 'text', default: 'DEFAULT', hint: 'EOS can name a static route, which shows in the routing table' },
     ],
     change: (values                 )               => {
-      const cidr = parseCidr(str(values, 'prefix', '0.0.0.0/0'));
+      const cidr = parseCidrDual(str(values, 'prefix', '0.0.0.0/0'));
       const hop = str(values, 'next_hop', '');
       const vrf = str(values, 'vrf', '');
       const distance = num(values, 'distance', 1);
       const label = str(values, 'route_name', '');
-      const line = `ip route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? `${cidr.address}/${cidr.prefix}` : '<REQUIRED>'} ${hop}${distance !== 1 ? ` ${distance}` : ''}${label ? ` name ${label}` : ''}`;
+      const v6 = cidr?.family === 6;
+      const ip = v6 ? 'ipv6' : 'ip';
+      const dest = cidr ? (v6 ? `${cidr.network}/${cidr.prefix}` : `${cidr.address}/${cidr.prefix}`) : null;
+      const findings            = [];
+      if (!cidr) findings.push(error('network.eos.bad-prefix', `The destination "${str(values, 'prefix', '')}" is not an IPv4 or IPv6 prefix.`, { remediation: 'Write it as 10.0.0.0/8 or 2001:db8::/32.', source: 'ArchToolKit' }));
+      if (hop && !isIpAny(hop)) findings.push(error('network.eos.bad-next-hop', `The next hop "${hop}" is not an address.`, { source: 'ArchToolKit' }));
+      if (cidr && isIpAny(hop) && familyOf(hop) !== cidr.family) {
+        findings.push(error('network.eos.route-family', `The destination is IPv${cidr.family} and the next hop ${hop} is not. A route and its next hop are one family.`, { source: 'ArchToolKit' }));
+      }
+      // This blueprint has no egress interface, and a link-local next hop is meaningless without one.
+      if (v6 && /^fe[89ab]/i.test(hop)) {
+        findings.push(error('network.eos.link-local-hop', 'A link-local next hop needs the outgoing interface named, which this change does not take.', { remediation: 'Use the neighbour’s global IPv6 address as the next hop.', source: 'ArchToolKit' }));
+      }
+      const line = `${ip} route${vrf ? ` vrf ${vrf}` : ''} ${dest ?? '<REQUIRED>'} ${hop}${distance !== 1 ? ` ${distance}` : ''}${label ? ` name ${label}` : ''}`;
 
       return {
         platform: PLATFORM,
-        title: `Static route ${cidr ? `${cidr.address}/${cidr.prefix}` : '(invalid)'}`,
+        title: `Static route ${dest ?? '(invalid)'}`,
         impact: cidr && cidr.prefix === 0 ? 'outage' : 'brief',
         notes: cidr && cidr.prefix === 0 ? ['This is the default route. Getting the next hop wrong takes the switch off the network.'] : [],
-        before: [`show ip route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? `${cidr.address}/${cidr.prefix}` : ''}`.trim(), 'show running-config | include ip route'],
+        before: [`show ${ip} route${vrf ? ` vrf ${vrf}` : ''} ${dest ?? ''}`.trim(), `show running-config | include ${ip} route`],
         config: [line],
-        verify: [`show ip route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? cidr.address : ''}`.trim(), `ping${vrf ? ` vrf ${vrf}` : ''} ${hop}`],
+        verify: [`show ${ip} route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? (v6 ? cidr.network : cidr.address) : ''}`.trim(), `ping${vrf ? ` vrf ${vrf}` : ''}${v6 ? ' ipv6' : ''} ${hop}`],
         backout: [`no ${line}`],
+        findings,
       };
     },
   }),
@@ -367,8 +490,20 @@ export const EOS_EXTRA                             = [
         .filter(Boolean);
       const target = str(values, 'apply_to', '');
       const direction = str(values, 'direction', 'in');
+      const counters = bool(values, 'counters', true) ? ['   counters per-entry'] : [];
       const findings            = [];
       if (rules.length === 0) findings.push(error('network.eos.empty-acl', 'An access list with no rules denies everything.', { source: 'ArchToolKit' }));
+      // EOS keeps IPv4 and IPv6 in separate lists. A rule that names no
+      // address ("permit tcp any any eq ssh") belongs in both.
+      const families = rules.map((rule) => ({ rule, family: ruleFamily(rule) }));
+      for (const { rule } of families.filter((r) => r.family === 'mixed')) {
+        findings.push(error('network.eos.acl-mixed-family', `"${rule}" names both IPv4 and IPv6 addresses. One entry matches one family.`, { remediation: 'Split it into an IPv4 rule and an IPv6 rule.', source: 'ArchToolKit' }));
+      }
+      const rules4 = families.filter((r) => r.family === 4 || r.family === null).map((r) => r.rule);
+      const has6 = families.some((r) => r.family === 6);
+      const rules6 = has6 ? families.filter((r) => r.family === 6 || r.family === null).map((r) => ipv6Rule(r.rule, 'icmpv6')) : [];
+      const name6 = `${name}-V6`;
+      const list4 = rules4.length > 0 || !has6;
 
       return {
         platform: PLATFORM,
@@ -377,18 +512,28 @@ export const EOS_EXTRA                             = [
         notes: [
           'Build it in a configure session and commit with a timer if the list protects the path you are on.',
           ...(target ? ['This filters live traffic immediately. Make sure your own management path is permitted.'] : []),
+          ...(has6 ? [`IPv6 rules are in ${name6}. Each list ends in its own deny, so a family with no list on the interface is not filtered at all.`] : []),
         ],
-        before: [`show ip access-lists ${name}`, ...(target ? [`show running-config interfaces ${target}`] : [])],
+        before: [...(list4 ? [`show ip access-lists ${name}`] : []), ...(has6 ? [`show ipv6 access-lists ${name6}`] : []), ...(target ? [`show running-config interfaces ${target}`] : [])],
         config: [
-          `ip access-list ${name}`,
-          ...(bool(values, 'counters', true) ? ['   counters per-entry'] : []),
-          ...rules.map((rule, i) => `   ${(i + 1) * 10} ${rule}`),
-          `   ${(rules.length + 1) * 10} deny ip any any log`,
-          '!',
-          ...(target ? [`interface ${target}`, `   ip access-group ${name} ${direction}`, '!'] : []),
+          ...(list4 ? [`ip access-list ${name}`, ...counters, ...rules4.map((rule, i) => `   ${(i + 1) * 10} ${rule}`), `   ${(rules4.length + 1) * 10} deny ip any any log`, '!'] : []),
+          ...(has6 ? [`ipv6 access-list ${name6}`, ...counters, ...rules6.map((rule, i) => `   ${(i + 1) * 10} ${rule}`), `   ${(rules6.length + 1) * 10} deny ipv6 any any log`, '!'] : []),
+          ...(target
+            ? [`interface ${target}`, ...(list4 ? [`   ip access-group ${name} ${direction}`] : []), ...(has6 ? [`   ipv6 access-group ${name6} ${direction}`] : []), '!']
+            : []),
         ],
-        verify: [`show ip access-lists ${name}`, `show ip access-lists ${name} summary`, ...(target ? [`show running-config interfaces ${target}`] : [])],
-        backout: [...(target ? [`interface ${target}`, `   no ip access-group ${name} ${direction}`, '!'] : []), `no ip access-list ${name}`],
+        verify: [
+          ...(list4 ? [`show ip access-lists ${name}`, `show ip access-lists ${name} summary`] : []),
+          ...(has6 ? [`show ipv6 access-lists ${name6}`] : []),
+          ...(target ? [`show running-config interfaces ${target}`] : []),
+        ],
+        backout: [
+          ...(target
+            ? [`interface ${target}`, ...(list4 ? [`   no ip access-group ${name} ${direction}`] : []), ...(has6 ? [`   no ipv6 access-group ${name6} ${direction}`] : []), '!']
+            : []),
+          ...(list4 ? [`no ip access-list ${name}`] : []),
+          ...(has6 ? [`no ipv6 access-list ${name6}`] : []),
+        ],
         findings,
       };
     },
@@ -412,8 +557,14 @@ export const EOS_EXTRA                             = [
       const collector = str(values, 'collector', '');
       const vrf = str(values, 'vrf', '');
       const interfaces = listOf(str(values, 'interfaces', ''));
+      // An IPv6 sFlow collector could not be confirmed for EOS, so the destination is not written.
+      const collector6 = familyOf(collector) === 6;
+      const findings            = [];
+      if (collector6) findings.push(unverifiedIpv6('network.eos.sflow-ipv6', 'An sFlow collector address', 'EOS'));
+      else if (!isIpAny(collector)) findings.push(error('network.eos.sflow-collector', `The collector "${collector}" is not an address.`, { source: 'ArchToolKit' }));
 
       return {
+        findings,
         platform: PLATFORM,
         title: `sFlow to ${collector}`,
         impact: 'none',
@@ -424,7 +575,7 @@ export const EOS_EXTRA                             = [
         before: ['show sflow', 'show running-config section sflow'],
         config: [
           `sflow source-interface ${str(values, 'source_interface', 'Loopback0')}`,
-          `sflow${vrf ? ` vrf ${vrf}` : ''} destination ${collector} ${num(values, 'port', 6343)}`,
+          ...(collector6 ? [] : [`sflow${vrf ? ` vrf ${vrf}` : ''} destination ${collector} ${num(values, 'port', 6343)}`]),
           `sflow sample ${num(values, 'sample_rate', 16384)}`,
           'sflow polling-interval 30',
           'sflow run',
@@ -432,7 +583,7 @@ export const EOS_EXTRA                             = [
           ...interfaces.flatMap((iface) => [`interface ${iface}`, '   sflow enable', '!']),
         ],
         verify: ['show sflow', 'show sflow interfaces', 'show sflow counters'],
-        backout: ['no sflow run', `no sflow${vrf ? ` vrf ${vrf}` : ''} destination ${collector}`, ...interfaces.flatMap((iface) => [`interface ${iface}`, '   no sflow enable', '!'])],
+        backout: ['no sflow run', ...(collector6 ? [] : [`no sflow${vrf ? ` vrf ${vrf}` : ''} destination ${collector}`]), ...interfaces.flatMap((iface) => [`interface ${iface}`, '   no sflow enable', '!'])],
       };
     },
   }),
@@ -485,7 +636,7 @@ export const EOS_EXTRA                             = [
     group: 'Baseline',
     description: 'Login through TACACS+ over the management VRF with a local fallback and command accounting.',
     inputs: [
-      { id: 'servers', label: 'TACACS+ servers', control: 'text', default: '10.0.0.30, 10.0.0.31' },
+      { id: 'servers', label: 'TACACS+ servers', control: 'text', default: '10.0.0.30, 10.0.0.31', hint: 'IPv4 or IPv6 addresses, or names' },
       { id: 'vrf', label: 'VRF', control: 'text', default: 'MGMT' },
       { id: 'source_interface', label: 'Source interface', control: 'text', default: 'Management1' },
       { id: 'local_user', label: 'Local fallback username', control: 'text', default: 'netadmin' },
@@ -495,6 +646,7 @@ export const EOS_EXTRA                             = [
       const servers = listOf(str(values, 'servers', ''));
       const vrf = str(values, 'vrf', 'MGMT');
       const user = str(values, 'local_user', 'netadmin');
+      const any6 = servers.some((s) => familyOf(s) === 6);
 
       return {
         platform: PLATFORM,
@@ -503,6 +655,7 @@ export const EOS_EXTRA                             = [
         notes: [
           `Replace every ${SECRET} with the real key and the local account's secret.`,
           'Commit this with a timer: if the key is wrong, the session you are in still works and the switch rolls it back.',
+          ...(any6 ? ['VERIFY: `ip tacacs … source-interface` sets the IPv4 source. Confirm the source interface has an IPv6 address, and whether the release in use sources IPv6 TACACS+ from it.'] : []),
         ],
         before: ['show tacacs', 'show aaa', 'show users detail'],
         config: [

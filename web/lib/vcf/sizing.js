@@ -247,6 +247,14 @@ export function computeLicensing(hostCount        , host          , isEdge = fal
   };
 }
 
+/**
+ * Address counts, per family.
+ *
+ * These are IPv4 counts. On a dual-stack build the host, VCFMS and component
+ * counts apply again inside each network's IPv6 prefix, which a /64 always
+ * holds; host TEPs stay IPv4 only, because the 9.1 installer's host TEP pool
+ * takes no IPv6, and VCF Automation's pool has no documented IPv6 form.
+ */
 export function computeIpRequirements(input             )                 {
   const pnics = input.pnicsPerHost ?? 2;
   // Management, vMotion and vSAN VMkernel addresses per host.

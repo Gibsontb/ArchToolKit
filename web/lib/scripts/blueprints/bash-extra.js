@@ -14,10 +14,38 @@
 
 import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
+import { isAnyNetwork, parseCidrAny,             } from '../../core/ip.js';
 import { scriptBlueprint,                      } from '../from-script.js';
 import { identifier, listOf, snake,             } from '../script.js';
 
 const PLATFORM = 'bash'         ;
+
+/**
+ * Where a firewall rule lets traffic in from. "any" (or nothing) is everyone
+ * over IPv4 and IPv6; a network is exactly that network, in its own family —
+ * 0.0.0.0/0 is every IPv4 address and ::/0 every IPv6 one.
+ */
+                                                                                                                      
+
+function ruleSource(raw        )                    {
+  const t = raw.trim();
+  if (t === '' || /^(any|all|\*)$/i.test(t)) return { kind: 'any' };
+  const c = parseCidrAny(t);
+  if (!c) return null;
+  // Written the way every backend accepts: the network for a prefix, the
+  // address alone for a host. nft and firewalld refuse 10.0.1.5/24.
+  return { kind: 'net', family: c.family, text: t.includes('/') ? `${c.network}/${c.prefix}` : c.address };
+}
+
+/**
+ * The ICMPv6 that IPv6 cannot work without (RFC 4890): neighbour discovery
+ * is how it finds the next hop at all, router advertisements carry the
+ * default route, MLD queries keep snooping switches forwarding the ND
+ * multicast, and packet-too-big is path MTU discovery — IPv6 routers never
+ * fragment. Kept when ping is turned off.
+ */
+const ICMPV6_ESSENTIAL_NFT = 'destination-unreachable, packet-too-big, time-exceeded, parameter-problem, mld-listener-query, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert';
+const ICMPV6_ESSENTIAL_IPT = ['destination-unreachable', 'packet-too-big', 'time-exceeded', 'parameter-problem', '130', 'router-solicitation', 'router-advertisement', 'neighbour-solicitation', 'neighbour-advertisement'];
 
 function preamble()           {
   return [
@@ -762,7 +790,7 @@ export const BASH_EXTRA                             = [
         { value: 'firewalld', label: 'firewalld' },
         { value: 'iptables', label: 'iptables' },
       ] },
-      { id: 'rules', label: 'Allow', control: 'textarea', default: '22/tcp | 10.0.1.0/24 | SSH from management\n443/tcp | 0.0.0.0/0 | HTTPS\n5432/tcp | 10.0.2.0/24 | PostgreSQL from the app tier', hint: 'port/protocol | source | comment' },
+      { id: 'rules', label: 'Allow', control: 'textarea', default: '22/tcp | 10.0.1.0/24 | SSH from management\n22/tcp | 2001:db8:0:1::/64 | SSH from management over IPv6\n443/tcp | any | HTTPS\n5432/tcp | 10.0.2.0/24 | PostgreSQL from the app tier', hint: 'port/protocol | source | comment. Source is an IPv4 or IPv6 address or network; "any" is everyone over both IPv4 and IPv6, 0.0.0.0/0 is IPv4 only, ::/0 IPv6 only' },
       { id: 'default_policy', label: 'Everything else inbound', control: 'select', default: 'drop', options: [
         { value: 'drop', label: 'Drop — silent' },
         { value: 'reject', label: 'Reject — sends an unreachable, fails faster' },
@@ -773,6 +801,7 @@ export const BASH_EXTRA                             = [
     ],
     script: (values                 )         => {
       const name = snake(str(values, 'script_name', 'apply-firewall'), 'apply_firewall');
+      const findings            = [];
       const rules = str(values, 'rules', '')
         .split('\n')
         .map((line) => line.trim())
@@ -780,11 +809,44 @@ export const BASH_EXTRA                             = [
         .map((line) => {
           const [port, source, comment] = line.split('|').map((p) => p.trim());
           const [number, protocol] = (port ?? '').split('/');
-          return { port: number ?? '', protocol: (protocol ?? 'tcp').toLowerCase(), source: source ?? '0.0.0.0/0', comment: comment ?? '' };
+          const src = ruleSource(source ?? '');
+          if (!src) {
+            findings.push(error('scripts.sh.bad-source', `"${source}" in "${line}" is not an IPv4 or IPv6 address or network, or "any".`, { source: 'ArchToolKit' }));
+          } else if (src.kind === 'net' && (source ?? '').includes('/') && parseCidrAny(source ?? '')?.address !== parseCidrAny(source ?? '')?.network) {
+            findings.push(warning('scripts.sh.source-host-bits', `"${source}" has host bits set; it is written as ${src.text}, which is the network it means.`, { source: 'ArchToolKit' }));
+          }
+          return { port: number ?? '', protocol: (protocol ?? 'tcp').toLowerCase(), src, comment: comment ?? '' };
         })
-        .filter((r) => r.port);
+        .filter((r)                                      => Boolean(r.port) && r.src !== null);
       const timer = num(values, 'rollback_timer', 300);
-      const findings            = [];
+      const policy = str(values, 'default_policy', 'drop');
+      const icmp = bool(values, 'allow_icmp', true);
+      // Which rules each family's table gets. "any" goes in both.
+      const forFamily = (family        ) => rules.filter((r) => r.src.kind === 'any' || r.src.family === family);
+      const nftSource = (s            ) => (s.kind === 'any' ? '' : `${s.family === 6 ? 'ip6' : 'ip'} saddr ${s.text} `);
+      // iptables and ip6tables are one family each; "everything" in that family needs no -s.
+      const iptSource = (s            ) => (s.kind === 'any' || isAnyNetwork(s.text) ? '' : ` -s ${s.text}`);
+      // One family's INPUT chain. iptables cannot take REJECT as a chain
+      // policy, so reject is DROP plus a final REJECT rule.
+      const iptablesFamily = (bin                          , family        )           => [
+        `  ${bin} -F INPUT`,
+        `  ${bin} -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`,
+        `  ${bin} -A INPUT -m conntrack --ctstate INVALID -j DROP`,
+        `  ${bin} -A INPUT -i lo -j ACCEPT`,
+        ...(family === 4
+          ? icmp ? ['  iptables -A INPUT -p icmp -j ACCEPT'] : []
+          : icmp
+            ? ['  ip6tables -A INPUT -p ipv6-icmp -j ACCEPT']
+            : ICMPV6_ESSENTIAL_IPT.map((type) => `  ip6tables -A INPUT -p ipv6-icmp --icmpv6-type ${type} -j ACCEPT`)),
+        ...forFamily(family).map((r) => `  ${bin} -A INPUT -p ${r.protocol} --dport ${r.port}${iptSource(r.src)} -m comment --comment "${r.comment}" -j ACCEPT`),
+        ...(bool(values, 'log_dropped', false) ? [`  ${bin} -A INPUT -m limit --limit 5/min -j LOG --log-prefix "fw-drop: "`] : []),
+        ...(policy === 'reject'
+          ? [`  ${bin} -A INPUT -p tcp -j REJECT --reject-with tcp-reset`, `  ${bin} -A INPUT -j REJECT --reject-with ${family === 6 ? 'icmp6-port-unreachable' : 'icmp-port-unreachable'}`]
+          : []),
+        `  ${bin} -P INPUT DROP`,
+        `  ${bin} -P FORWARD DROP`,
+        `  ${bin} -P OUTPUT ACCEPT`,
+      ];
 
       if (rules.length === 0) findings.push(error('scripts.sh.no-rules', 'No rule was given, so this would apply a default-deny policy and nothing else — which locks out everything including SSH.', { source: 'ArchToolKit' }));
       if (!rules.some((r) => r.port === '22')) {
@@ -802,7 +864,7 @@ export const BASH_EXTRA                             = [
           }),
         );
       }
-      if (rules.some((r) => r.source === '0.0.0.0/0' && r.port === '22')) {
+      if (rules.some((r) => (r.src.kind === 'any' || isAnyNetwork(r.src.text)) && r.port === '22')) {
         findings.push(warning('scripts.sh.ssh-from-anywhere', 'SSH is open to the internet. That is a permanent brute-force target — restrict it to the management network or put it behind a bastion.', { source: 'ArchToolKit' }));
       }
 
@@ -828,6 +890,10 @@ export const BASH_EXTRA                             = [
               ]
             : []),
           'Loopback is always allowed. Half of what a machine does talks to itself, and blocking it breaks things in confusing ways.',
+          'IPv6 gets the same default policy as IPv4. A firewall that filters only IPv4 leaves every service open over IPv6 on any network with router advertisements, which is most of them — so the iptables backend writes ip6tables rules too, and nftables uses one inet table for both.',
+          `A source of "any" allows both IPv4 and IPv6; 0.0.0.0/0 is IPv4 only and ::/0 IPv6 only. Rules from an IPv4 network go only in the IPv4 rules and IPv6 networks only in the IPv6 rules, since no packet can match both.`,
+          ...(icmp ? [] : ['Ping is refused, but the ICMPv6 that IPv6 needs to work at all — neighbour discovery, router advertisements, MLD queries and packet-too-big — is still allowed. Blocking those breaks IPv6 outright, a few minutes later, when the neighbour cache expires.']),
+          'If this machine takes its IPv6 address from DHCPv6, replies arrive on UDP 546 from a link-local address and conntrack does not always match them to the multicast request; add "546/udp | fe80::/10 | DHCPv6 client" if the address disappears at renewal.',
           ...(bool(values, 'log_dropped', false) ? ['Dropped packets are logged and rate limited. It is useful for a day; leave it on for a week and the journal is mostly firewall logs.'] : []),
         ],
         usage: [`sudo ./${name}.sh --dry-run`, `sudo ./${name}.sh`, `# then, from a NEW session, having confirmed you are still connected:`, `sudo ./${name}.sh --confirm`],
@@ -888,9 +954,13 @@ export const BASH_EXTRA                             = [
           '# --- back up what is there now -------------------------------------------',
           'mkdir -p "$BACKUP_DIR"',
           'readonly BACKUP="${BACKUP_DIR}/${BACKEND}-${STARTED_AT}.rules"',
+          'readonly BACKUP6="${BACKUP_DIR}/ip6tables-${STARTED_AT}.rules"',
           'case "$BACKEND" in',
           '  nftables) nft list ruleset > "$BACKUP" ;;',
-          '  iptables) iptables-save > "$BACKUP" ;;',
+          '  iptables)',
+          '    iptables-save > "$BACKUP"',
+          '    if command -v ip6tables-save >/dev/null 2>&1; then ip6tables-save > "$BACKUP6"; fi',
+          '    ;;',
           '  firewalld) firewall-cmd --list-all --permanent > "$BACKUP" 2>/dev/null || true ;;',
           'esac',
           'log "Current rules saved to $BACKUP"',
@@ -906,7 +976,7 @@ export const BASH_EXTRA                             = [
                 '#!/usr/bin/env bash',
                 'case "$BACKEND" in',
                 '  nftables)  nft flush ruleset && nft -f "$BACKUP" ;;',
-                '  iptables)  iptables-restore < "$BACKUP" ;;',
+                '  iptables)  iptables-restore < "$BACKUP"; [[ -s "$BACKUP6" ]] && ip6tables-restore < "$BACKUP6" ;;',
                 '  firewalld) firewall-cmd --reload ;;',
                 'esac',
                 'logger -t firewall "Reverted to $BACKUP — nobody confirmed within ${ROLLBACK_SECONDS}s"',
@@ -934,9 +1004,11 @@ export const BASH_EXTRA                             = [
           'apply_nftables() {',
           '  local ruleset',
           '  ruleset="$(cat <<\'RULES\'',
+          '# inet: one table for IPv4 and IPv6, so neither family is left open.',
           'table inet filter {',
           '  chain input {',
-          `    type filter hook input priority 0; policy ${str(values, 'default_policy', 'drop')};`,
+          // A base chain's policy can only be accept or drop; reject is a rule at the end.
+          '    type filter hook input priority 0; policy drop;',
           '',
           '    # First, always. Without this the session applying the change is',
           '    # dropped by its own rule set, immediately.',
@@ -946,10 +1018,13 @@ export const BASH_EXTRA                             = [
           '    # Half of what a machine does talks to itself.',
           '    iif lo accept',
           '',
-          ...(bool(values, 'allow_icmp', true) ? ['    ip protocol icmp accept', '    ip6 nexthdr icmpv6 accept', ''] : []),
-          ...rules.map((r) => `    ${r.source === '0.0.0.0/0' ? '' : `ip saddr ${r.source} `}${r.protocol} dport ${r.port} accept comment "${r.comment}"`),
+          ...(icmp
+            ? ['    ip protocol icmp accept', '    meta l4proto ipv6-icmp accept', '']
+            : ['    # IPv6 does not work without these, ping or no ping.', `    icmpv6 type { ${ICMPV6_ESSENTIAL_NFT} } accept`, '']),
+          ...rules.map((r) => `    ${nftSource(r.src)}${r.protocol} dport ${r.port} accept comment "${r.comment}"`),
           '',
           ...(bool(values, 'log_dropped', false) ? ['    limit rate 5/minute burst 10 packets log prefix "fw-drop: " level info', ''] : []),
+          ...(policy === 'reject' ? ['    meta l4proto tcp reject with tcp reset', '    reject with icmpx type port-unreachable'] : []),
           '  }',
           '',
           '  chain forward { type filter hook forward priority 0; policy drop; }',
@@ -972,12 +1047,14 @@ export const BASH_EXTRA                             = [
           '}',
           '',
           'apply_firewalld() {',
+          // A plain port is open to both families; a rich rule names the family of its source.
           ...rules.flatMap((r) =>
-            r.source === '0.0.0.0/0'
+            r.src.kind === 'any'
               ? [`  run firewall-cmd --permanent --add-port=${r.port}/${r.protocol}`]
-              : [`  run firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="${r.source}" port port="${r.port}" protocol="${r.protocol}" accept'`],
+              : [`  run firewall-cmd --permanent --add-rich-rule='rule family="${r.src.family === 6 ? 'ipv6' : 'ipv4'}" source address="${r.src.text}" port port="${r.port}" protocol="${r.protocol}" accept'`],
           ),
-          ...(bool(values, 'allow_icmp', true) ? [] : ['  run firewall-cmd --permanent --add-icmp-block=echo-request']),
+          // echo-request covers ping over IPv4 and IPv6; neighbour discovery is not an icmp-block and keeps working.
+          ...(icmp ? [] : ['  run firewall-cmd --permanent --add-icmp-block=echo-request']),
           '  run firewall-cmd --reload',
           '}',
           '',
@@ -986,20 +1063,16 @@ export const BASH_EXTRA                             = [
           '    log "DRY RUN: would apply the iptables rules"',
           '    return 0',
           '  fi',
-          '  iptables -F INPUT',
-          '  iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',
-          '  iptables -A INPUT -m conntrack --ctstate INVALID -j DROP',
-          '  iptables -A INPUT -i lo -j ACCEPT',
-          ...(bool(values, 'allow_icmp', true) ? ['  iptables -A INPUT -p icmp -j ACCEPT'] : []),
-          ...rules.map(
-            (r) =>
-              `  iptables -A INPUT -p ${r.protocol} --dport ${r.port}${r.source === '0.0.0.0/0' ? '' : ` -s ${r.source}`} -m comment --comment "${r.comment}" -j ACCEPT`,
-          ),
-          ...(bool(values, 'log_dropped', false) ? ['  iptables -A INPUT -m limit --limit 5/min -j LOG --log-prefix "fw-drop: "'] : []),
-          `  iptables -P INPUT ${str(values, 'default_policy', 'drop').toUpperCase()}`,
-          '  iptables -P FORWARD DROP',
-          '  iptables -P OUTPUT ACCEPT',
-          '  command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save',
+          ...iptablesFamily('iptables', 4),
+          '',
+          '  # The same policy for IPv6. Filtering only IPv4 leaves every service',
+          '  # open over IPv6, which the host has whenever a router advertises it.',
+          '  if command -v ip6tables >/dev/null 2>&1; then',
+          ...iptablesFamily('ip6tables', 6).map((line) => `  ${line}`),
+          '  else',
+          '    warn "ip6tables is not installed: IPv6 is NOT filtered. Install it, or disable IPv6, before relying on this firewall."',
+          '  fi',
+          '  if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save; fi',
           '}',
           '',
           'case "$BACKEND" in',
@@ -1014,7 +1087,7 @@ export const BASH_EXTRA                             = [
           'case "$BACKEND" in',
           '  nftables)  nft list ruleset | head -40 ;;',
           '  firewalld) firewall-cmd --list-all ;;',
-          '  iptables)  iptables -L INPUT -n -v --line-numbers ;;',
+          '  iptables)  iptables -L INPUT -n -v --line-numbers; if command -v ip6tables >/dev/null 2>&1; then ip6tables -L INPUT -n -v --line-numbers; fi ;;',
           'esac',
           '',
           ...(timer > 0

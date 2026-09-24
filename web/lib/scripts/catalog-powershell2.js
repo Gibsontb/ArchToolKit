@@ -375,7 +375,14 @@ export const POWERSHELL_CATALOG_2                          = [
       syntax: "Add-DnsServerResourceRecordA -ZoneName example.com -Name app01 -IPv4Address 10.0.0.9 -TimeToLive 01:00:00 -ComputerName dc01",
       effect: 'changes',
       note: 'A record created by hand in an AD-integrated zone has no owner, so the machine cannot later update it and dynamic registration fails silently. Add -CreatePtr to get the reverse record in the same call.',
-      related: ['ps.remove-dnsserverresourcerecord'],
+      related: ['ps.remove-dnsserverresourcerecord', 'ps.add-dnsserverresourcerecordaaaa'],
+    },
+    {
+      name: 'Add-DnsServerResourceRecordAAAA',
+      task: 'create a DNS AAAA record for an IPv6 address',
+      syntax: "Add-DnsServerResourceRecordAAAA -ZoneName example.com -Name app01 -IPv6Address 2001:db8:0:1::9 -TimeToLive 01:00:00 -CreatePtr -ComputerName dc01",
+      effect: 'changes',
+      note: 'Publish the AAAA only once the service actually listens and is allowed on IPv6: clients prefer it, so an AAAA for a host that only answers on IPv4 turns into a delay on every connection. -CreatePtr needs the ip6.arpa reverse zone to exist.',
     },
     {
       name: 'Remove-DnsServerResourceRecord',
@@ -411,6 +418,27 @@ export const POWERSHELL_CATALOG_2                          = [
       syntax: 'Add-DhcpServerv4Reservation -ComputerName dhcp01 -ScopeId 10.0.0.0 -IPAddress 10.0.0.50 -ClientId AA-BB-CC-DD-EE-FF -Name printer01',
       effect: 'changes',
       note: 'The reservation takes effect at the next lease renewal, not immediately; the client keeps its old address for up to half the lease. The ClientId format matters — dashes, not colons.',
+    },
+    {
+      name: 'Get-DhcpServerv6Lease',
+      task: 'see who holds an address in a DHCPv6 scope',
+      syntax: 'Get-DhcpServerv6Lease -ComputerName dhcp01 -Prefix 2001:db8:0:1:: | Sort-Object LeaseExpiryTime',
+      effect: 'read',
+      note: 'A DHCPv6 lease is keyed on the client DUID and IAID, not the MAC address, so a reimaged machine gets a new lease and the old one lingers. Hosts using SLAAC never appear here at all.',
+    },
+    {
+      name: 'Add-DhcpServerv6Reservation',
+      task: 'pin an IPv6 address to a client',
+      syntax: 'Add-DhcpServerv6Reservation -ComputerName dhcp01 -Prefix 2001:db8:0:1:: -IPAddress 2001:db8:0:1::50 -ClientDuid 00-01-00-01-2a-bc-de-f0-aa-bb-cc-dd-ee-ff -Iaid 12345678 -Name printer01',
+      effect: 'changes',
+      note: 'The reservation needs the client DUID and IAID, which Get-DhcpServerv6Lease shows once the client has asked for an address. The MAC address is no use here, and a reimage changes the DUID.',
+    },
+    {
+      name: 'Get-DhcpServerv6ScopeStatistics',
+      task: 'check how full the DHCPv6 scopes are',
+      syntax: 'Get-DhcpServerv6ScopeStatistics -ComputerName dhcp01 | Format-Table -AutoSize',
+      effect: 'read',
+      note: 'A DHCPv6 scope is a /64, so it does not run out of addresses; a rising count means leases are not being released. Windows has no DHCPv6 failover, so check both halves of a split scope.',
     },
     {
       name: 'Get-DhcpServerv4ScopeStatistics',

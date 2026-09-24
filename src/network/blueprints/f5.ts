@@ -21,7 +21,9 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { F5_EXTRA } from './f5-extra.ts';
 import { F5_EXTRA_2 } from './f5-extra2.ts';
-import { isIpv4, listOf, type DeviceChange } from '../device.ts';
+import { type DeviceChange } from '../device.ts';
+import { formatHostPort, urlHost } from '../../core/ip.ts';
+import { as3Members, parseMembers, virtualFindings } from './f5-common.ts';
 
 const PLATFORM = 'f5' as const;
 
@@ -59,19 +61,6 @@ function declaration({ tenant, application, label, body }: As3Options): Record<s
 
 const json = (value: unknown): string[] => JSON.stringify(value, null, 2).split('\n');
 
-/** Members typed as "10.20.30.11:443, 10.20.30.12:443". */
-function members(value: string, defaultPort: number): { servers: string[]; port: number } {
-  const parts = listOf(value);
-  let port = defaultPort;
-  const servers: string[] = [];
-  for (const part of parts) {
-    const [address, typed] = part.split(':');
-    if (address) servers.push(address);
-    if (typed && Number.isFinite(Number(typed))) port = Number(typed);
-  }
-  return { servers, port };
-}
-
 const BLUEPRINTS: readonly ChangeBlueprint[] = [
   deviceBlueprint({
     id: 'f5_http_virtual',
@@ -82,9 +71,9 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
     inputs: [
       { id: 'tenant', label: 'Tenant (partition)', control: 'text', default: 'Prod' },
       { id: 'application', label: 'Application name', control: 'text', default: 'web_app' },
-      { id: 'virtual_address', label: 'Virtual address', control: 'text', default: '203.0.113.20' },
+      { id: 'virtual_address', label: 'Virtual address', control: 'text', default: '203.0.113.20', hint: 'IPv4 or IPv6' },
       { id: 'port', label: 'Virtual port', control: 'number', default: 443, min: 1, max: 65535 },
-      { id: 'pool_members', label: 'Pool members', control: 'textarea', default: '10.20.30.11:8080\n10.20.30.12:8080', hint: 'One per line: address:port' },
+      { id: 'pool_members', label: 'Pool members', control: 'textarea', default: '10.20.30.11:8080\n10.20.30.12:8080', hint: 'One per line: 10.20.30.11:8080 or [2001:db8::11]:8080' },
       { id: 'monitor', label: 'Health monitor', control: 'select', default: 'http', options: [
         { value: 'http', label: 'HTTP — a request and an expected response' },
         { value: 'https', label: 'HTTPS' },
@@ -114,11 +103,12 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
       const port = num(values, 'port', 443);
       const tls = bool(values, 'tls', true);
       const monitorKind = str(values, 'monitor', 'http');
-      const pool = members(str(values, 'pool_members', '').replace(/\n/g, ','), 8080);
+      const pool = parseMembers(str(values, 'pool_members', ''), 8080);
       const persistence = str(values, 'persistence', 'cookie');
-      const findings: Finding[] = [];
+      const snat = bool(values, 'snat', true) ? 'auto' : 'none';
+      const checked = virtualFindings(address, pool, snat);
+      const findings: Finding[] = [...checked.findings];
 
-      if (!isIpv4(address)) findings.push(error('network.f5.bad-virtual-address', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
       if (pool.servers.length === 0) findings.push(error('network.f5.no-members', 'The pool has no members, so the virtual server would be down the moment it is created.', { source: 'ArchToolKit' }));
       if (pool.servers.length === 1) {
         findings.push(warning('network.f5.single-member', 'One pool member is a load balancer in front of a single point of failure.', { source: 'ArchToolKit' }));
@@ -142,21 +132,22 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
                 monitorType: monitorKind,
                 interval: 5,
                 timeout: 16,
-                send: `GET ${str(values, 'monitor_path', '/health')} HTTP/1.1\\r\\nHost: ${address}\\r\\nConnection: Close\\r\\n\\r\\n`,
+                // An IPv6 literal in a Host header is bracketed, as in a URL.
+                send: `GET ${str(values, 'monitor_path', '/health')} HTTP/1.1\\r\\nHost: ${urlHost(address)}\\r\\nConnection: Close\\r\\n\\r\\n`,
                 receive: str(values, 'monitor_expect', 'HTTP/1.1 200'),
               },
         [`${app}_pool`]: {
           class: 'Pool',
           loadBalancingMode: str(values, 'lb_method', 'least-connections-member'),
           monitors: [{ use: monitorName }],
-          members: [{ servicePort: pool.port, serverAddresses: pool.servers, shareNodes: true }],
+          members: as3Members(pool, { shareNodes: true }),
         },
         service: {
           class: tls ? 'Service_HTTPS' : 'Service_HTTP',
           virtualAddresses: [address],
           virtualPort: port,
           pool: `${app}_pool`,
-          snat: bool(values, 'snat', true) ? 'auto' : 'none',
+          snat,
           ...(persistence !== 'none' ? { persistenceMethods: [persistence] } : { persistenceMethods: [] }),
           ...(tls
             ? {
@@ -169,16 +160,17 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         },
       };
 
-      const config = json(declaration({ tenant, application: app, label: `${app} on ${address}:${port}`, body }));
+      const config = json(declaration({ tenant, application: app, label: `${app} on ${formatHostPort(address, port)}`, body }));
 
       return {
         platform: PLATFORM,
-        title: `${tls ? 'HTTPS' : 'HTTP'} virtual server ${address}:${port} for ${app}`,
+        title: `${tls ? 'HTTPS' : 'HTTP'} virtual server ${formatHostPort(address, port)} for ${app}`,
         impact: 'brief',
         notes: [
           'AS3 replaces the whole tenant it is given. Anything in this tenant that is not in the declaration is removed — so deploy to a tenant this application owns, not a shared one.',
           'Post it to /mgmt/shared/appsvcs/declare. The AS3 extension has to be installed on the BIG-IP first.',
           ...(tls ? ['The certificate is referenced, not supplied. Import it on the device beforehand.'] : []),
+          ...checked.notes,
         ],
         before: [
           'curl -sku $USER https://bigip/mgmt/shared/appsvcs/info',
@@ -189,7 +181,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         verify: [
           `tmsh show ltm pool /${tenant}/${app}/${app}_pool members`,
           `tmsh show ltm virtual /${tenant}/${app}/service`,
-          `curl -skI https://${address}:${port}/`,
+          `curl -skI https://${formatHostPort(address, port)}/`,
         ],
         backout: [
           `# Re-post the declaration captured before the change:`,
@@ -235,10 +227,11 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
       const app = str(values, 'application', 'service').replace(/[^A-Za-z0-9_]/g, '_');
       const address = str(values, 'virtual_address', '');
       const port = num(values, 'port', 5432);
-      const pool = members(str(values, 'pool_members', '').replace(/\n/g, ','), port);
+      const pool = parseMembers(str(values, 'pool_members', ''), port);
       const persistence = str(values, 'persistence', 'source-address');
-      const findings: Finding[] = [];
-      if (!isIpv4(address)) findings.push(error('network.f5.bad-virtual-address', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const snat = bool(values, 'snat', true) ? 'auto' : 'none';
+      const checked = virtualFindings(address, pool, snat);
+      const findings: Finding[] = [...checked.findings];
       if (pool.servers.length === 0) findings.push(error('network.f5.no-members', 'The pool has no members.', { source: 'ArchToolKit' }));
 
       const body: Record<string, unknown> = {
@@ -248,7 +241,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
           class: 'Pool',
           loadBalancingMode: str(values, 'lb_method', 'least-connections-member'),
           monitors: [{ use: `${app}_monitor` }],
-          members: [{ servicePort: pool.port, serverAddresses: pool.servers, shareNodes: true }],
+          members: as3Members(pool, { shareNodes: true }),
         },
         service: {
           class: 'Service_TCP',
@@ -256,21 +249,22 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
           virtualPort: port,
           pool: `${app}_pool`,
           profileTCP: { use: `${app}_tcp` },
-          snat: bool(values, 'snat', true) ? 'auto' : 'none',
+          snat,
           persistenceMethods: persistence === 'none' ? [] : [persistence],
         },
       };
 
       return {
         platform: PLATFORM,
-        title: `TCP virtual server ${address}:${port} for ${app}`,
+        title: `TCP virtual server ${formatHostPort(address, port)} for ${app}`,
         impact: 'brief',
         notes: [
           'AS3 replaces the whole tenant. Capture the current declaration first — the back-out is re-posting it.',
           'A TCP monitor only proves the port answers. If the service can accept a connection while being broken, write a receive string instead.',
+          ...checked.notes,
         ],
         before: [`curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`, `tmsh list ltm virtual /${tenant}/${app}/service`],
-        config: json(declaration({ tenant, application: app, label: `${app} on ${address}:${port}`, body })),
+        config: json(declaration({ tenant, application: app, label: `${app} on ${formatHostPort(address, port)}`, body })),
         verify: [`tmsh show ltm pool /${tenant}/${app}/${app}_pool members`, `tmsh show ltm virtual /${tenant}/${app}/service`],
         backout: [`curl -sku $USER -X POST https://bigip/mgmt/shared/appsvcs/declare -d @${tenant}-before.json`],
         push: {
@@ -309,10 +303,10 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
       const tenant = str(values, 'tenant', 'Prod').replace(/[^A-Za-z0-9_]/g, '_');
       const app = str(values, 'application', 'app').replace(/[^A-Za-z0-9_]/g, '_');
       const address = str(values, 'virtual_address', '');
-      const pool = members(str(values, 'pool_members', '').replace(/\n/g, ','), 8080);
+      const pool = parseMembers(str(values, 'pool_members', ''), 8080);
       const enforcement = str(values, 'enforcement', 'transparent');
-      const findings: Finding[] = [];
-      if (!isIpv4(address)) findings.push(error('network.f5.bad-virtual-address', 'The virtual address is not a valid IPv4 address.', { source: 'ArchToolKit' }));
+      const checked = virtualFindings(address, pool, 'auto');
+      const findings: Finding[] = [...checked.findings];
       if (enforcement === 'blocking') {
         findings.push(
           warning('network.f5.waf-blocking', 'Blocking mode from day one will drop legitimate traffic that the policy has not learned yet.', {
@@ -328,7 +322,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
           class: 'Pool',
           loadBalancingMode: 'least-connections-member',
           monitors: [{ use: `${app}_monitor` }],
-          members: [{ servicePort: pool.port, serverAddresses: pool.servers, shareNodes: true }],
+          members: as3Members(pool, { shareNodes: true }),
         },
         [`${app}_waf`]: {
           class: 'WAF_Policy',
@@ -364,6 +358,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
           'Advanced WAF has to be provisioned on the BIG-IP (`tmsh list sys provision asm`) or the declaration will fail.',
           'Transparent first. A policy that has never seen the application will block things it should not.',
           'AS3 replaces the whole tenant: capture the current declaration first.',
+          ...checked.notes,
         ],
         before: ['tmsh list sys provision asm', `curl -sku $USER https://bigip/mgmt/shared/appsvcs/declare/${tenant} > ${tenant}-before.json`],
         config: json(declaration({ tenant, application: app, label: `${app} with WAF`, body })),

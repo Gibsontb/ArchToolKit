@@ -10,7 +10,9 @@
 import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
-import { description, listOf, parseCidr, type DeviceChange } from '../device.ts';
+import { familyOf } from '../../core/ip.ts';
+import { description, isIpAny, listOf, parseCidrDual, type DeviceChange } from '../device.ts';
+import { dualCidrs, dualFindings, ipv6Rule, routerIdFindings, ruleFamily, unverifiedIpv6 } from './nxos-eos-dual.ts';
 
 const PLATFORM = 'cisco_nxos' as const;
 const SECRET = '<REQUIRED>';
@@ -36,9 +38,20 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       const domain = num(values, 'domain_id', 1);
       const po = num(values, 'peer_link_channel', 1);
       const members = listOf(str(values, 'peer_link_members', ''));
+      const local = str(values, 'peer_keepalive_local', '');
+      const remote = str(values, 'peer_keepalive_remote', '');
       const findings: Finding[] = [];
       if (members.length < 2) {
         findings.push(warning('network.nxos.peer-link-members', 'A peer-link with one member is a single point of failure for the whole pair.', { source: 'ArchToolKit' }));
+      }
+      for (const [label, value] of [['This switch’s management address', local], ['The peer’s management address', remote]] as const) {
+        if (!isIpAny(value)) findings.push(error('network.nxos.keepalive-address', `${label} "${value}" is not an address.`, { remediation: 'Write the mgmt0 address, such as 10.0.0.11.', source: 'ArchToolKit' }));
+      }
+      // IPv6 peer-keepalive could not be confirmed across NX-OS releases, so it is not written.
+      const keepalive6 = familyOf(local) === 6 || familyOf(remote) === 6;
+      if (keepalive6) findings.push(unverifiedIpv6('network.nxos.keepalive-ipv6', 'vPC peer-keepalive', 'NX-OS'));
+      else if (isIpAny(local) && isIpAny(remote) && familyOf(local) !== familyOf(remote)) {
+        findings.push(error('network.nxos.keepalive-family', 'The two keepalive addresses are different address families.', { source: 'ArchToolKit' }));
       }
 
       return {
@@ -57,7 +70,7 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
           '!',
           `vpc domain ${domain}`,
           `  role priority ${num(values, 'role_priority', 1000)}`,
-          `  peer-keepalive destination ${str(values, 'peer_keepalive_remote', '')} source ${str(values, 'peer_keepalive_local', '')} vrf management`,
+          ...(keepalive6 ? [] : [`  peer-keepalive destination ${remote} source ${local} vrf management`]),
           ...(bool(values, 'peer_switch', true) ? ['  peer-switch'] : []),
           ...(bool(values, 'peer_gateway', true) ? ['  peer-gateway'] : []),
           '  delay restore 150',
@@ -92,7 +105,7 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'mode', label: 'Mode', control: 'select', default: 'trunk', options: [{ value: 'trunk', label: 'Trunk' }, { value: 'access', label: 'Access' }, { value: 'routed', label: 'Routed (no switchport)' }] },
       { id: 'allowed', label: 'Allowed VLANs', control: 'text', default: '100,200', showWhen: { input: 'mode', equals: ['trunk'] } },
       { id: 'vlan_id', label: 'Access VLAN', control: 'number', default: 100, min: 1, max: 4094, showWhen: { input: 'mode', equals: ['access'] } },
-      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/30', showWhen: { input: 'mode', equals: ['routed'] } },
+      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/30', hint: 'IPv4, IPv6, or one of each', showWhen: { input: 'mode', equals: ['routed'] } },
       { id: 'port_description', label: 'Description', control: 'text', default: 'Uplink' },
       { id: 'mtu', label: 'MTU', control: 'number', default: 9216, min: 1500, max: 9216 },
     ],
@@ -100,14 +113,15 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       const po = num(values, 'channel_id', 10);
       const members = listOf(str(values, 'members', ''));
       const mode = str(values, 'mode', 'trunk');
-      const cidr = parseCidr(str(values, 'address', ''));
+      const address = dualCidrs(mode === 'routed' ? str(values, 'address', '') : '');
+      const findings: Finding[] = dualFindings('network.nxos.bad-address', 'the port-channel address', address, '10.0.12.1/30 or 2001:db8:0:12::1/64');
       const text = description(str(values, 'port_description', ''), 'Port-channel');
       const body =
         mode === 'trunk'
           ? ['  switchport mode trunk', `  switchport trunk allowed vlan ${str(values, 'allowed', '')}`]
           : mode === 'access'
             ? ['  switchport mode access', `  switchport access vlan ${num(values, 'vlan_id', 100)}`]
-            : ['  no switchport', ...(cidr ? [`  ip address ${cidr.address}/${cidr.prefix}`] : [])];
+            : ['  no switchport', ...(address.v4 ? [`  ip address ${address.v4.text}`] : []), ...(address.v6 ? [`  ipv6 address ${address.v6.text}`] : [])];
 
       return {
         platform: PLATFORM,
@@ -124,10 +138,12 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
           `  mtu ${num(values, 'mtu', 9216)}`,
           '  no shutdown',
           '!',
-          ...members.flatMap((port) => [`interface ${port}`, `  description ${text} member`, ...body, `  channel-group ${po} mode active`, '  no shutdown', '!']),
+          // The address lives on the port-channel only; a member with one cannot join the bundle.
+          ...members.flatMap((port) => [`interface ${port}`, `  description ${text} member`, ...(mode === 'routed' ? ['  no switchport'] : body), `  channel-group ${po} mode active`, '  no shutdown', '!']),
         ],
-        verify: ['show port-channel summary', `show interface port-channel${po}`, 'show lacp neighbor'],
+        verify: ['show port-channel summary', `show interface port-channel${po}`, 'show lacp neighbor', ...(address.v6 ? [`show ipv6 interface port-channel${po}`] : [])],
         backout: [...members.flatMap((port) => [`interface ${port}`, `  no channel-group ${po}`, '!']), `no interface port-channel${po}`],
+        findings,
       };
     },
   }),
@@ -140,39 +156,52 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
     description: 'A layer 3 interface with an address, optionally in a VRF and in a routing process.',
     inputs: [
       { id: 'interface', label: 'Interface', control: 'text', default: 'Ethernet1/1' },
-      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/30' },
+      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/30', hint: 'IPv4, IPv6, or one of each: 10.0.12.1/30, 2001:db8:0:12::1/64' },
       { id: 'vrf', label: 'VRF', control: 'text', default: '' },
       { id: 'mtu', label: 'MTU', control: 'number', default: 9216, min: 1500, max: 9216 },
       { id: 'port_description', label: 'Description', control: 'text', default: 'Routed link' },
-      { id: 'ospf_tag', label: 'OSPF process tag', control: 'text', default: '', hint: 'Empty for no OSPF' },
+      { id: 'ospf_tag', label: 'OSPF process tag', control: 'text', default: '', hint: 'Empty for no OSPF. OSPFv2 carries the IPv4 address only' },
       { id: 'ospf_area', label: 'OSPF area', control: 'text', default: '0.0.0.0' },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const iface = str(values, 'interface', '');
-      const cidr = parseCidr(str(values, 'address', ''));
+      const address = dualCidrs(str(values, 'address', ''));
       const vrf = str(values, 'vrf', '');
       const ospf = str(values, 'ospf_tag', '');
-      const findings: Finding[] = [];
-      if (!cidr) findings.push(error('network.nxos.bad-address', 'The address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      const findings: Finding[] = dualFindings('network.nxos.bad-address', 'the address', address, '10.0.12.1/30 or 2001:db8:0:12::1/64');
+      if (!address.v4 && !address.v6) findings.push(error('network.nxos.bad-address', 'The address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      if (ospf && address.v6 && !address.v4) {
+        findings.push(warning('network.nxos.ospfv2-ipv6', 'OSPF here is OSPFv2, which only carries IPv4. With an IPv6-only address the interface joins the process and never forms an adjacency.', { remediation: 'Leave the OSPF tag empty and run OSPFv3 or BGP for IPv6.', source: 'ArchToolKit' }));
+      }
 
       return {
         platform: PLATFORM,
         title: `Routed interface ${iface}`,
         impact: 'outage',
-        notes: ['`no switchport` clears the layer 2 configuration on the port. Anything it was carrying stops.', ...(vrf ? ['Moving into a VRF removes the address; it is re-applied here, inside the VRF.'] : [])],
+        notes: [
+          '`no switchport` clears the layer 2 configuration on the port. Anything it was carrying stops.',
+          ...(vrf ? ['Moving into a VRF removes the address; it is re-applied here, inside the VRF.'] : []),
+          ...(ospf && address.v6 ? ['OSPFv2 advertises the IPv4 address only. The IPv6 address needs OSPFv3 or BGP, which this change does not configure.'] : []),
+        ],
         before: [`show run interface ${iface}`, `show interface ${iface} status`],
         config: [
           `interface ${iface}`,
           `  description ${description(str(values, 'port_description', ''), 'Routed link')}`,
           '  no switchport',
           ...(vrf ? [`  vrf member ${vrf}`] : []),
-          ...(cidr ? [`  ip address ${cidr.address}/${cidr.prefix}`] : []),
+          ...(address.v4 ? [`  ip address ${address.v4.text}`] : []),
+          ...(address.v6 ? [`  ipv6 address ${address.v6.text}`] : []),
           `  mtu ${num(values, 'mtu', 9216)}`,
           ...(ospf ? [`  ip router ospf ${ospf} area ${str(values, 'ospf_area', '0.0.0.0')}`, '  ip ospf network point-to-point'] : []),
           '  no shutdown',
           '!',
         ],
-        verify: [`show interface ${iface}`, `show ip interface brief${vrf ? ` vrf ${vrf}` : ''}`, ...(ospf ? ['show ip ospf neighbors'] : [])],
+        verify: [
+          `show interface ${iface}`,
+          ...(address.v4 || !address.v6 ? [`show ip interface brief${vrf ? ` vrf ${vrf}` : ''}`] : []),
+          ...(address.v6 ? [`show ipv6 interface brief${vrf ? ` vrf ${vrf}` : ''}`] : []),
+          ...(ospf ? ['show ip ospf neighbors'] : []),
+        ],
         backout: [`default interface ${iface}`],
         findings,
       };
@@ -190,7 +219,7 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'l2_vni', label: 'L2 VNI', control: 'number', default: 10100, min: 1, max: 16777214 },
       { id: 'nve_interface', label: 'NVE interface', control: 'number', default: 1, min: 1, max: 1 },
       { id: 'multicast_group', label: 'Multicast group', control: 'text', default: '', hint: 'Leave empty for ingress replication (BGP EVPN), which is the usual answer' },
-      { id: 'anycast_gateway', label: 'Anycast gateway address', control: 'text', default: '10.100.0.1/24', hint: 'The same on every leaf; empty for layer 2 only' },
+      { id: 'anycast_gateway', label: 'Anycast gateway address', control: 'text', default: '10.100.0.1/24', hint: 'The same on every leaf; IPv4, IPv6 or one of each; empty for layer 2 only' },
       { id: 'vrf', label: 'Tenant VRF', control: 'text', default: 'TENANT-1', showWhen: { input: 'anycast_gateway', notEquals: [''] } },
       { id: 'l3_vni', label: 'L3 VNI for the VRF', control: 'number', default: 50001, min: 0, max: 16777214, hint: '0 if the VRF is already configured' },
       { id: 'route_target', label: 'Route target', control: 'text', default: 'auto' },
@@ -200,11 +229,12 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       const vni = num(values, 'l2_vni', 10100);
       const nve = num(values, 'nve_interface', 1);
       const group = str(values, 'multicast_group', '');
-      const gateway = parseCidr(str(values, 'anycast_gateway', ''));
+      const anycast = dualCidrs(str(values, 'anycast_gateway', ''));
+      const gateway = anycast.v4 !== null || anycast.v6 !== null;
       const vrf = str(values, 'vrf', '');
       const l3vni = num(values, 'l3_vni', 0);
       const rt = str(values, 'route_target', 'auto');
-      const findings: Finding[] = [];
+      const findings: Finding[] = dualFindings('network.nxos.bad-address', 'the anycast gateway address', anycast, '10.100.0.1/24 or 2001:db8:100::1/64');
       if (gateway && !vrf) {
         findings.push(warning('network.nxos.anycast-no-vrf', 'An anycast gateway without a tenant VRF puts the SVI in the default VRF, which is rarely what a fabric wants.', { source: 'ArchToolKit' }));
       }
@@ -233,7 +263,8 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
                 `  description L2VNI ${vni} gateway`,
                 '  no shutdown',
                 `  vrf member ${vrf}`,
-                '  ip address ' + `${gateway.address}/${gateway.prefix}`,
+                ...(anycast.v4 ? ['  ip address ' + anycast.v4.text] : []),
+                ...(anycast.v6 ? [`  ipv6 address ${anycast.v6.text}`] : []),
                 '  fabric forwarding mode anycast-gateway',
                 '!',
               ]
@@ -246,6 +277,8 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
                 '  address-family ipv4 unicast',
                 `    route-target both ${rt}`,
                 `    route-target both ${rt} evpn`,
+                // The tenant's IPv6 routes travel in their own address family, with the same targets.
+                ...(anycast.v6 ? ['  address-family ipv6 unicast', `    route-target both ${rt}`, `    route-target both ${rt} evpn`] : []),
                 '!',
                 `vlan ${l3vni - 50000 + 900}`,
                 `  vn-segment ${l3vni}`,
@@ -266,7 +299,14 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
           `    route-target export ${rt}`,
           '!',
         ],
-        verify: [`show nve vni ${vni}`, 'show nve peers', 'show bgp l2vpn evpn summary', `show l2route evpn mac evi ${vlan}`, ...(gateway ? [`show ip interface Vlan${vlan}`] : [])],
+        verify: [
+          `show nve vni ${vni}`,
+          'show nve peers',
+          'show bgp l2vpn evpn summary',
+          `show l2route evpn mac evi ${vlan}`,
+          ...(anycast.v4 ? [`show ip interface Vlan${vlan}`] : []),
+          ...(anycast.v6 ? [`show ipv6 interface Vlan${vlan}`, 'show fabric forwarding ipv6 local-host-db'] : []),
+        ],
         backout: [
           `interface nve${nve}`,
           `  no member vni ${vni}`,
@@ -291,12 +331,12 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
     inputs: [
       { id: 'local_as', label: 'Local AS', control: 'number', default: 65001, min: 1 },
       { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.0.11' },
-      { id: 'neighbor', label: 'Neighbour address', control: 'text', default: '10.255.0.1' },
+      { id: 'neighbor', label: 'Neighbour address', control: 'text', default: '10.255.0.1', hint: 'IPv4 or IPv6; unicast peers use the family of this address' },
       { id: 'remote_as', label: 'Remote AS', control: 'number', default: 65000, min: 1 },
       { id: 'family', label: 'Address family', control: 'select', default: 'ipv4', options: [
-        { value: 'ipv4', label: 'IPv4 unicast (underlay)' },
+        { value: 'ipv4', label: 'Unicast (underlay) — IPv4 or IPv6 from the neighbour' },
         { value: 'evpn', label: 'L2VPN EVPN (overlay)' },
-        { value: 'vrf', label: 'IPv4 unicast inside a VRF' },
+        { value: 'vrf', label: 'Unicast inside a VRF — IPv4 or IPv6 from the neighbour' },
       ] },
       { id: 'vrf', label: 'VRF', control: 'text', default: 'TENANT-1', showWhen: { input: 'family', equals: ['vrf'] } },
       { id: 'update_source', label: 'Update source', control: 'text', default: 'loopback0', showWhen: { input: 'family', equals: ['evpn'] } },
@@ -310,15 +350,24 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
       const family = str(values, 'family', 'ipv4');
       const vrf = str(values, 'vrf', '');
       const auth = bool(values, 'auth', true);
+      const peerFamily = familyOf(peer);
+      // A unicast session carries the family of the address it runs over.
+      const unicast = peerFamily === 6 ? 'ipv6 unicast' : 'ipv4 unicast';
+      const findings: Finding[] = routerIdFindings('network.nxos.router-id', str(values, 'router_id', ''));
+      if (!isIpAny(peer)) findings.push(error('network.nxos.bgp-neighbor', `The neighbour "${peer}" is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
+      // EVPN peering over an IPv6 underlay is release- and platform-specific on Nexus; not written.
+      const evpn6 = family === 'evpn' && peerFamily === 6;
+      if (evpn6) findings.push(unverifiedIpv6('network.nxos.evpn-ipv6-peer', 'L2VPN EVPN peering over an IPv6 neighbour address', 'NX-OS'));
 
       const neighborBody = [
         `    remote-as ${remote}`,
         `    description ${description(str(values, 'peer_description', ''), 'peer')}`,
         ...(auth ? [`    password 3 ${SECRET}`] : []),
         ...(family === 'evpn' ? [`    update-source ${str(values, 'update_source', 'loopback0')}`, '    ebgp-multihop 3'] : []),
-        family === 'evpn' ? '    address-family l2vpn evpn' : '    address-family ipv4 unicast',
+        family === 'evpn' ? '    address-family l2vpn evpn' : `    address-family ${unicast}`,
         ...(family === 'evpn' ? ['      send-community', '      send-community extended'] : ['      soft-reconfiguration inbound always']),
       ];
+      const summary = `show bgp ${family === 'evpn' ? 'l2vpn evpn' : unicast} summary${family === 'vrf' ? ` vrf ${vrf}` : ''}`;
 
       return {
         platform: PLATFORM,
@@ -328,20 +377,24 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
           ...(family === 'evpn' ? ['The underlay must be up first: this peers over loopbacks, and they have to be reachable.'] : []),
           ...(auth ? [`Replace ${SECRET} with the session password from your vault.`] : []),
           'NX-OS needs `feature bgp`; it is included and safe to run again.',
+          ...(peerFamily === 6 && family !== 'evpn' ? ['The router id stays a dotted 32-bit value even though this session runs over IPv6.'] : []),
         ],
-        before: ['show bgp sessions', `show bgp ${family === 'evpn' ? 'l2vpn evpn' : 'ipv4 unicast'} summary${family === 'vrf' ? ` vrf ${vrf}` : ''}`, 'show running-config bgp'],
+        findings,
+        before: ['show bgp sessions', summary, 'show running-config bgp'],
         config: [
           'feature bgp',
           '!',
           `router bgp ${asn}`,
           `  router-id ${str(values, 'router_id', '')}`,
           '  log-neighbor-changes',
-          ...(family === 'vrf'
-            ? [`  vrf ${vrf}`, `    neighbor ${peer}`, ...neighborBody.map((line) => `  ${line}`)]
-            : [`  neighbor ${peer}`, ...neighborBody]),
+          ...(evpn6
+            ? []
+            : family === 'vrf'
+              ? [`  vrf ${vrf}`, `    neighbor ${peer}`, ...neighborBody.map((line) => `  ${line}`)]
+              : [`  neighbor ${peer}`, ...neighborBody]),
           '!',
         ],
-        verify: [`show bgp sessions neighbor ${peer}`, family === 'evpn' ? 'show bgp l2vpn evpn summary' : `show bgp ipv4 unicast summary${family === 'vrf' ? ` vrf ${vrf}` : ''}`, `show bgp neighbors ${peer}`],
+        verify: [`show bgp sessions neighbor ${peer}`, summary, `show bgp neighbors ${peer}`],
         backout: [`router bgp ${asn}`, ...(family === 'vrf' ? [`  vrf ${vrf}`, `    no neighbor ${peer}`] : [`  no neighbor ${peer}`]), '!'],
       };
     },
@@ -354,29 +407,42 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
     group: 'Routing',
     description: 'A static route, in the default table or a VRF, with a distance that can make it a backup.',
     inputs: [
-      { id: 'prefix', label: 'Destination', control: 'text', default: '0.0.0.0/0' },
-      { id: 'next_hop', label: 'Next hop', control: 'text', default: '10.0.0.1' },
-      { id: 'interface', label: 'Out of interface', control: 'text', default: '', hint: 'Optional; needed on a point-to-point link without a next hop' },
+      { id: 'prefix', label: 'Destination', control: 'combo', default: '0.0.0.0/0', options: ['0.0.0.0/0', '10.0.0.0/8', '::/0', '2001:db8::/32'].map((v) => ({ value: v, label: v })), hint: 'IPv4 or IPv6; ::/0 is the IPv6 default' },
+      { id: 'next_hop', label: 'Next hop', control: 'text', default: '10.0.0.1', hint: 'The same family as the destination' },
+      { id: 'interface', label: 'Out of interface', control: 'text', default: '', hint: 'Optional; needed on a point-to-point link without a next hop, and with an IPv6 link-local next hop' },
       { id: 'vrf', label: 'VRF', control: 'text', default: '' },
       { id: 'distance', label: 'Distance', control: 'number', default: 1, min: 1, max: 255 },
     ],
     change: (values: BlueprintValues): DeviceChange => {
-      const cidr = parseCidr(str(values, 'prefix', '0.0.0.0/0'));
+      const cidr = parseCidrDual(str(values, 'prefix', '0.0.0.0/0'));
       const hop = str(values, 'next_hop', '');
       const iface = str(values, 'interface', '');
       const vrf = str(values, 'vrf', '');
       const distance = num(values, 'distance', 1);
-      const line = `ip route ${cidr ? `${cidr.address}/${cidr.prefix}` : '<REQUIRED>'} ${iface ? `${iface} ` : ''}${hop}${distance !== 1 ? ` ${distance}` : ''}`;
+      const v6 = cidr?.family === 6;
+      const ip = v6 ? 'ipv6' : 'ip';
+      const dest = cidr ? (v6 ? `${cidr.network}/${cidr.prefix}` : `${cidr.address}/${cidr.prefix}`) : null;
+      const findings: Finding[] = [];
+      if (!cidr) findings.push(error('network.nxos.bad-prefix', `The destination "${str(values, 'prefix', '')}" is not an IPv4 or IPv6 prefix.`, { remediation: 'Write it as 10.0.0.0/8 or 2001:db8::/32.', source: 'ArchToolKit' }));
+      if (hop && !isIpAny(hop)) findings.push(error('network.nxos.bad-next-hop', `The next hop "${hop}" is not an address.`, { source: 'ArchToolKit' }));
+      if (cidr && isIpAny(hop) && familyOf(hop) !== cidr.family) {
+        findings.push(error('network.nxos.route-family', `The destination is IPv${cidr.family} and the next hop ${hop} is not. A route and its next hop are one family.`, { source: 'ArchToolKit' }));
+      }
+      if (v6 && /^fe[89ab]/i.test(hop) && !iface) {
+        findings.push(error('network.nxos.link-local-hop', 'A link-local next hop is only meaningful on one link, so the route needs the outgoing interface as well.', { remediation: 'Fill in "Out of interface".', source: 'ArchToolKit' }));
+      }
+      const line = `${ip} route ${dest ?? '<REQUIRED>'} ${iface ? `${iface} ` : ''}${hop}${distance !== 1 ? ` ${distance}` : ''}`;
 
       return {
         platform: PLATFORM,
-        title: `Static route ${cidr ? `${cidr.address}/${cidr.prefix}` : '(invalid)'}${vrf ? ` in VRF ${vrf}` : ''}`,
+        title: `Static route ${dest ?? '(invalid)'}${vrf ? ` in VRF ${vrf}` : ''}`,
         impact: cidr && cidr.prefix === 0 ? 'outage' : 'brief',
         notes: cidr && cidr.prefix === 0 ? ['This is the default route. A wrong next hop takes the switch off the network, including your session.'] : [],
-        before: [`show ip route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? `${cidr.address}/${cidr.prefix}` : ''}`.trim(), `show running-config | include 'ip route'`],
+        before: [`show ${ip} route${vrf ? ` vrf ${vrf}` : ''} ${dest ?? ''}`.trim(), `show running-config | include '${ip} route'`],
         config: vrf ? [`vrf context ${vrf}`, `  ${line}`, '!'] : [line],
-        verify: [`show ip route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? cidr.address : ''}`.trim(), `ping ${hop}${vrf ? ` vrf ${vrf}` : ''}`],
+        verify: [`show ${ip} route${vrf ? ` vrf ${vrf}` : ''} ${cidr ? (v6 ? cidr.network : cidr.address) : ''}`.trim(), `${v6 ? 'ping6' : 'ping'} ${hop}${vrf ? ` vrf ${vrf}` : ''}`],
         backout: vrf ? [`vrf context ${vrf}`, `  no ${line}`, '!'] : [`no ${line}`],
+        findings,
       };
     },
   }),
@@ -389,7 +455,7 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
     description: 'A named IP access list with sequence numbers, applied to an interface or as a VLAN access map.',
     inputs: [
       { id: 'acl_name', label: 'Access list name', control: 'text', default: 'ACL-TENANT-IN' },
-      { id: 'rules', label: 'Rules', control: 'textarea', default: 'permit tcp 10.100.0.0/24 any eq 443\npermit udp 10.100.0.0/24 10.0.0.10/32 eq 53', hint: 'One per line; NX-OS takes prefixes directly' },
+      { id: 'rules', label: 'Rules', control: 'textarea', default: 'permit tcp 10.100.0.0/24 any eq 443\npermit udp 10.100.0.0/24 10.0.0.10/32 eq 53', hint: 'One per line; NX-OS takes prefixes directly. IPv6 rules go into a companion ipv6 access-list' },
       { id: 'apply_to', label: 'Apply to interface', control: 'text', default: '', hint: 'Empty to create the list only' },
       { id: 'direction', label: 'Direction', control: 'select', default: 'in', options: [{ value: 'in', label: 'Inbound' }, { value: 'out', label: 'Outbound' }] },
       { id: 'log_denies', label: 'Log the final deny', control: 'toggle', default: true },
@@ -402,8 +468,20 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
         .filter(Boolean);
       const target = str(values, 'apply_to', '');
       const direction = str(values, 'direction', 'in');
+      const log = bool(values, 'log_denies', true) ? ' log' : '';
       const findings: Finding[] = [];
       if (rules.length === 0) findings.push(error('network.nxos.empty-acl', 'An access list with no rules denies everything.', { source: 'ArchToolKit' }));
+      // NX-OS keeps IPv4 and IPv6 in separate lists. A rule that names no
+      // address ("permit tcp any any eq 22") belongs in both.
+      const families = rules.map((rule) => ({ rule, family: ruleFamily(rule) }));
+      for (const { rule } of families.filter((r) => r.family === 'mixed')) {
+        findings.push(error('network.nxos.acl-mixed-family', `"${rule}" names both IPv4 and IPv6 addresses. One entry matches one family.`, { remediation: 'Split it into an IPv4 rule and an IPv6 rule.', source: 'ArchToolKit' }));
+      }
+      const rules4 = families.filter((r) => r.family === 4 || r.family === null).map((r) => r.rule);
+      const has6 = families.some((r) => r.family === 6);
+      const rules6 = has6 ? families.filter((r) => r.family === 6 || r.family === null).map((r) => ipv6Rule(r.rule, 'icmp')) : [];
+      const name6 = `${name}-V6`;
+      const list4 = rules4.length > 0 || !has6;
 
       return {
         platform: PLATFORM,
@@ -412,17 +490,33 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
         notes: [
           'NX-OS applies an access list update atomically by default, so replacing one does not open a gap — but it can fail if the device cannot fit both copies. `no hardware access-list update atomic` changes that, at the cost of a gap.',
           ...(target ? ['This filters live traffic as soon as it is applied. Make sure your own management path is permitted.'] : []),
+          ...(has6 ? [`IPv6 rules are in ${name6}, applied with \`ipv6 traffic-filter\`. Each list ends in its own deny, so a family with no list on the interface is not filtered at all.`] : []),
         ],
-        before: [`show ip access-lists ${name}`, ...(target ? [`show run interface ${target}`] : [])],
+        before: [...(list4 ? [`show ip access-lists ${name}`] : []), ...(has6 ? [`show ipv6 access-lists ${name6}`] : []), ...(target ? [`show run interface ${target}`] : [])],
         config: [
-          `ip access-list ${name}`,
-          ...rules.map((rule, i) => `  ${(i + 1) * 10} ${rule}`),
-          `  ${(rules.length + 1) * 10} deny ip any any${bool(values, 'log_denies', true) ? ' log' : ''}`,
-          '!',
-          ...(target ? [`interface ${target}`, `  ip access-group ${name} ${direction}`, '!'] : []),
+          ...(list4
+            ? [`ip access-list ${name}`, ...rules4.map((rule, i) => `  ${(i + 1) * 10} ${rule}`), `  ${(rules4.length + 1) * 10} deny ip any any${log}`, '!']
+            : []),
+          ...(has6
+            ? [`ipv6 access-list ${name6}`, ...rules6.map((rule, i) => `  ${(i + 1) * 10} ${rule}`), `  ${(rules6.length + 1) * 10} deny ipv6 any any${log}`, '!']
+            : []),
+          ...(target
+            ? [`interface ${target}`, ...(list4 ? [`  ip access-group ${name} ${direction}`] : []), ...(has6 ? [`  ipv6 traffic-filter ${name6} ${direction}`] : []), '!']
+            : []),
         ],
-        verify: [`show ip access-lists ${name}`, ...(target ? [`show run interface ${target}`] : []), `show ip access-lists ${name} | include match`],
-        backout: [...(target ? [`interface ${target}`, `  no ip access-group ${name} ${direction}`, '!'] : []), `no ip access-list ${name}`],
+        verify: [
+          ...(list4 ? [`show ip access-lists ${name}`] : []),
+          ...(has6 ? [`show ipv6 access-lists ${name6}`] : []),
+          ...(target ? [`show run interface ${target}`] : []),
+          ...(list4 ? [`show ip access-lists ${name} | include match`] : []),
+        ],
+        backout: [
+          ...(target
+            ? [`interface ${target}`, ...(list4 ? [`  no ip access-group ${name} ${direction}`] : []), ...(has6 ? [`  no ipv6 traffic-filter ${name6} ${direction}`] : []), '!']
+            : []),
+          ...(list4 ? [`no ip access-list ${name}`] : []),
+          ...(has6 ? [`no ipv6 access-list ${name6}`] : []),
+        ],
         findings,
       };
     },
@@ -480,7 +574,7 @@ export const NXOS_EXTRA: readonly ChangeBlueprint[] = [
     group: 'Baseline',
     description: 'Administrative login through TACACS+ over the management VRF, with a local fallback and command accounting.',
     inputs: [
-      { id: 'servers', label: 'TACACS+ servers', control: 'text', default: '10.0.0.30, 10.0.0.31' },
+      { id: 'servers', label: 'TACACS+ servers', control: 'text', default: '10.0.0.30, 10.0.0.31', hint: 'IPv4 or IPv6 addresses, or names' },
       { id: 'vrf', label: 'VRF to reach them over', control: 'text', default: 'management' },
       { id: 'local_user', label: 'Local fallback username', control: 'text', default: 'netadmin' },
       { id: 'accounting', label: 'Command accounting', control: 'toggle', default: true },

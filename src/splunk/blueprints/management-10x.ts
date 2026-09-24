@@ -20,6 +20,7 @@ import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { splunkBlueprint, type SplunkBlueprint } from '../from-app.ts';
 import { defaultMeta, listOf, type SplunkApp, splunkName } from '../splunk.ts';
+import { isIpv6, splitHostPort, urlHost } from '../../core/ip.ts';
 
 const TIER = 'management' as const;
 
@@ -140,10 +141,12 @@ function distributedSearch(): SplunkBlueprint {
       const peers: Peer[] = [];
       const seen = new Set<string>();
       for (const [rawHost = '', rawPort = '', user = ''] of rows(str(values, 'peers', ''))) {
-        const host = rawHost.replace(/^https?:\/\//, '').replace(/:\d+$/, '').replace(/\/.*$/, '');
+        // host, host:port, [IPv6]:port or a bare IPv6 address, with or without https://.
+        const hostPort = splitHostPort(rawHost.replace(/^https?:\/\//, '').replace(/\/.*$/, ''));
+        const host = hostPort.host;
         const port = Number(rawPort || 8089);
-        if (!HOST.test(host)) {
-          findings.push(error('splunk.distsearch-host', `"${rawHost}" is not a host name or IPv4 address.`));
+        if (!HOST.test(host) && !isIpv6(host)) {
+          findings.push(error('splunk.distsearch-host', `"${rawHost}" is not a host name, IPv4 or IPv6 address.`));
           continue;
         }
         if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -158,7 +161,7 @@ function distributedSearch(): SplunkBlueprint {
           findings.push(error('splunk.distsearch-no-user', `${host} has no remote user. splunk add search-server authenticates to the peer as an admin user to exchange keys.`));
           continue;
         }
-        const uri = `https://${host}:${port}`;
+        const uri = `https://${urlHost(host)}:${port}`;
         if (seen.has(uri)) {
           findings.push(warning('splunk.distsearch-duplicate', `${uri} is listed twice. The second add fails, and in distsearch.conf the peer is searched once anyway.`));
           continue;
@@ -251,8 +254,10 @@ function distributedSearch(): SplunkBlueprint {
           fi
           for host in "$\{PEER_HOSTS[@]}"; do
             dest="$PEER_HOME/etc/auth/distServerKeys/$SH_NAME"
+            # scp needs an IPv6 address in brackets before the :path; ssh does not.
+            scp_host=$host; [[ "$host" == *:* ]] && scp_host="[$host]"
             run ssh "$SSH_USER@$host" "mkdir -p '$dest'"
-            run scp "$KEY" "$SSH_USER@$host:$dest/trusted.pem"
+            run scp "$KEY" "$SSH_USER@$scp_host:$dest/trusted.pem"
             if [[ $RESTART -eq 1 ]]; then run ssh "$SSH_USER@$host" "'$PEER_HOME/bin/splunk' restart"; fi
           done
         `,

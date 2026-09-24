@@ -2587,3 +2587,9 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .netcalc-error { color: var(--danger); font-size: 0.85rem; margin: 0.2rem 0; }
 .netcalc-answer { font-size: 0.85rem; margin: 0.1rem 0 0.4rem; }
 .btn-netcalc { white-space: nowrap; }
+.netcalc-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 0.4rem var(--space-2); }
+.netcalc-field { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.netcalc-field .netcalc-label { margin-top: 0; }
+.netcalc-families { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; align-self: flex-start; margin-bottom: 0.4rem; }
+.netcalc-family { background: none; border: 0; color: var(--text-muted); padding: 0.25rem 0.9rem; cursor: pointer; font: inherit; font-size: 0.85rem; }
+.netcalc-family.is-active { background: var(--accent-dim); color: var(--text); }

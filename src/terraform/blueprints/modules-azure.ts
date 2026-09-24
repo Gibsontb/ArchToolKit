@@ -14,8 +14,11 @@
  * the only reason the calls below are right.
  */
 
-import type { BlueprintGroup } from '../../kit/blueprint.ts';
+import type { Blueprint, BlueprintGroup, BlueprintValues } from '../../kit/blueprint.ts';
+import { error, type Finding } from '../../core/findings.ts';
+import { parseCidrAny } from '../../core/ip.ts';
 import { moduleBlueprint, type ModuleBlueprintSpec } from '../module-blueprint.ts';
+import { listOf } from './dual-stack.ts';
 
 const SPECS: readonly ModuleBlueprintSpec[] = [
   {
@@ -47,11 +50,15 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
         default: '',
         hint: 'Full resource id — or module.resource_group.resource_id',
       },
-      { input: 'address_space', default: '10.30.0.0/16' },
+      {
+        input: 'address_space',
+        default: '10.30.0.0/16',
+        hint: 'Comma-separated. For dual stack add an IPv6 range, e.g. 10.30.0.0/16,fd00:db8:30::/48',
+      },
       {
         input: 'subnets',
         default: '',
-        hint: 'key=value, comma-separated. Leave blank and write the map in the file',
+        hint: 'A map of subnets — write it in the file. Dual stack: address_prefixes = [IPv4, an IPv6 /64]',
       },
       { input: 'enable_telemetry', default: 'false' },
     ],
@@ -67,7 +74,11 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
       { input: 'name', default: 'nsg-app' },
       { input: 'location', default: 'eastus' },
       { input: 'resource_group_name', default: 'rg-app-prod' },
-      { input: 'security_rules', default: '', hint: 'key=value, comma-separated' },
+      {
+        input: 'security_rules',
+        default: '',
+        hint: 'A map of rules — write it in the file. Keep each rule to one family: IPv4 and IPv6 prefixes go in separate rules',
+      },
       { input: 'enable_telemetry', default: 'false' },
     ],
     outputs: ['name', 'resource_id'],
@@ -215,8 +226,46 @@ const SPECS: readonly ModuleBlueprintSpec[] = [
   },
 ];
 
+/**
+ * A VNet's address space, either family: Azure builds no IPv6-only network, so
+ * dual stack is an IPv4 range plus an IPv6 one, and an IPv6 range must hold at
+ * least one /64, the only size a subnet takes.
+ */
+function vnetFindings(values: BlueprintValues): Finding[] {
+  const code = 'terraform.azure_module_vnet';
+  const entries = listOf(values.address_space);
+  const findings: Finding[] = [];
+  const families = new Set<number>();
+  for (const entry of entries) {
+    const c = parseCidrAny(entry);
+    if (!c || !entry.includes('/')) {
+      findings.push(error(`${code}.invalid-cidr`, `"${entry}" in address_space is not a CIDR.`, { path: 'address_space' }));
+      continue;
+    }
+    families.add(c.family);
+    if (c.family === 6 && c.prefix > 64) {
+      findings.push(error(`${code}.ipv6-too-small`, `${entry} is smaller than a /64, so no IPv6 subnet fits in it.`, { path: 'address_space' }));
+    }
+  }
+  if (families.has(6) && !families.has(4)) {
+    findings.push(error(`${code}.ipv6-only`, 'Azure does not support an IPv6-only virtual network; add an IPv4 range alongside the IPv6 one.', { path: 'address_space' }));
+  }
+  return findings;
+}
+
+function checked(blueprint: Blueprint): Blueprint {
+  if (blueprint.id !== 'azure_module_vnet') return blueprint;
+  return {
+    ...blueprint,
+    build: (values, name) => {
+      const out = blueprint.build(values, name);
+      return { ...out, findings: [...(out.findings ?? []), ...vnetFindings(values)] };
+    },
+  };
+}
+
 export const AZURE_TERRAFORM_MODULES: BlueprintGroup = {
   target: 'azure',
   label: 'Microsoft Azure',
-  blueprints: SPECS.map((spec) => moduleBlueprint('azure', spec)),
+  blueprints: SPECS.map((spec) => checked(moduleBlueprint('azure', spec))),
 };

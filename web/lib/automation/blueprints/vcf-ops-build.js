@@ -26,6 +26,7 @@ import { authHeader, authPreamble, readScript } from '../apply.js';
 import { networksPreamble, networksScheduledEnv } from './vcf-networks-logs.js';
 import { authFileVar, workDirLines } from './vcf-operations-content.js';
 import { CSV_COLUMNS } from '../../migration/portfolio.js';
+import { familyOf, overlapsAny } from '../../core/ip.js';
 import {
   CONTENT_ZIP,
   DASHBOARD_OWNER_PLACEHOLDER,
@@ -1894,7 +1895,7 @@ export const NETWORKS_91                                 = [
         label: 'Port groups to subnets',
         control: 'textarea',
         default: 'pg-orders-web = 10.20.1.0/24 Public\npg-orders-app = 10.20.2.0/24 Private\npg-orders-db = 10.20.3.0/24 Isolated',
-        hint: 'One per line: port group = CIDR access-mode (Public, Private, Isolated)',
+        hint: 'One per line: port group = IPv4 CIDR access-mode (Public, Private, Isolated); VPC subnets are IPv4',
       },
       { id: 'days', label: 'Flows over the last (days)', control: 'number', default: 7, min: 1, max: 30 },
     ],
@@ -1913,9 +1914,20 @@ export const NETWORKS_91                                 = [
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => {
-          const m = /^(.+?)\s*=\s*(\d+\.\d+\.\d+\.\d+\/\d+)\s*(\w+)?$/.exec(line);
-          if (!m) {
+          const m = /^(.+?)\s*=\s*([0-9A-Fa-f.:]+\/\d+)\s*(\w+)?$/.exec(line);
+          if (!m || familyOf(m[2] ) === null) {
             findings.push(error('vcfnet91.vpc.bad-line', `"${line}" is not "port group = CIDR mode".`, { source: SRC }));
+            return undefined;
+          }
+          // The proposal is NSX VPC subnets, which this plans as IPv4: an IPv6
+          // port group is reported, not turned into a payload NSX would refuse.
+          if (familyOf(m[2] ) === 6) {
+            findings.push(
+              error('vcfnet91.vpc.ipv6', `${m[1] .trim()}: NSX VPC subnets on VCF 9.1 do not support IPv6 (${m[2]}), so it cannot be planned as a VPC subnet here.`, {
+                remediation: 'Plan the port group’s IPv4 CIDR, and keep its IPv6 on a segment outside the VPC. VERIFY: IPv6 for VPCs in the NSX release behind your 9.1.x.',
+                source: SRC,
+              }),
+            );
             return undefined;
           }
           return { pg: m[1] .trim(), cidr: m[2] , mode: m[3] ?? 'Private' };
@@ -1924,17 +1936,9 @@ export const NETWORKS_91                                 = [
       if (rows.length === 0) findings.push(error('vcfnet91.vpc.none', 'No port groups to plan.', { source: SRC }));
       const badMode = rows.filter((row) => !['Public', 'Private', 'Isolated'].includes(row.mode));
       if (badMode.length > 0) findings.push(warning('vcfnet91.vpc.mode', `Unknown access mode on ${badMode.map((r) => r.pg).join(', ')}.`, { remediation: 'Use Public, Private or Isolated; VERIFY the exact enum (for example Private_TGW) in your NSX release.', source: SRC }));
-      const toInt = (cidr        ) => {
-        const [ip = '0.0.0.0', bits = '32'] = cidr.split('/');
-        const n = ip.split('.').reduce((acc, octet) => acc * 256 + Number(octet), 0);
-        const size = 2 ** (32 - Number(bits));
-        return { start: n - (n % size), end: n - (n % size) + size - 1 };
-      };
       for (let i = 0; i < rows.length; i += 1) {
         for (let j = i + 1; j < rows.length; j += 1) {
-          const a = toInt(rows[i] .cidr);
-          const b = toInt(rows[j] .cidr);
-          if (a.start <= b.end && b.start <= a.end) findings.push(error('vcfnet91.vpc.overlap', `${rows[i] .cidr} (${rows[i] .pg}) overlaps ${rows[j] .cidr} (${rows[j] .pg}).`, { source: SRC }));
+          if (overlapsAny(rows[i] .cidr, rows[j] .cidr)) findings.push(error('vcfnet91.vpc.overlap', `${rows[i] .cidr} (${rows[i] .pg}) overlaps ${rows[j] .cidr} (${rows[j] .pg}).`, { source: SRC }));
         }
       }
       if (rows.some((row) => row.mode === 'Public')) {

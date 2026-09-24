@@ -601,7 +601,8 @@ class Collector {
             directPathIo: row.b('Direct Path IO'),
           });
           (vm.nics ??= []).push(nic);
-          if (nic.ipv4) vm.ipAddresses = [...new Set([...(vm.ipAddresses ?? []), ...nic.ipv4])];
+          // IPv4 first, so the first address stays the one most tools expect; IPv6 kept too.
+          if (nic.ipv4 || nic.ipv6) vm.ipAddresses = [...new Set([...(vm.ipAddresses ?? []), ...(nic.ipv4 ?? []), ...(nic.ipv6 ?? [])])];
         };
       case 'vCD':
       case 'vUSB':

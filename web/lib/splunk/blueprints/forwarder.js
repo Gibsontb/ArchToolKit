@@ -12,9 +12,103 @@
  */
 
 import { bool, num, str,                      } from '../../kit/blueprint.js';
-import { error, warning,              } from '../../core/findings.js';
+import { error, info, warning,              } from '../../core/findings.js';
 import { splunkBlueprint,                      } from '../from-app.js';
 import { defaultMeta, listOf, splunkName,                } from '../splunk.js';
+import { familyOf, formatHostPort, parseCidrAny, splitHostPort } from '../../core/ip.js';
+import { parseIPv6 } from '../../core/net-calc.js';
+
+/**
+ * splunkd's IPv6 switch, the same for server.conf [general] and the network
+ * input stanzas: no (the default), yes (both families) or only.
+ */
+export const CONNECT_IP_VERSION = [
+  { value: 'auto', label: 'auto — follows listenOnIPv6 (IPv4 only on a default install)' },
+  { value: '4-first', label: 'IPv4 first, then IPv6' },
+  { value: '6-first', label: 'IPv6 first, then IPv4' },
+  { value: '4-only', label: 'IPv4 only' },
+  { value: '6-only', label: 'IPv6 only' },
+];
+
+/**
+ * A server list for outputs.conf: each entry host:port, with IPv6 literals in
+ * brackets ([2001:db8::10]:9997). Findings for entries that cannot work, and
+ * the families of the literal addresses.
+ */
+export function serverListOf(entries                   , what        , codePrefix        )                                                                   {
+  const servers           = [];
+  const findings            = [];
+  const families = new Set       ();
+  for (const raw of entries) {
+    const { host, port } = splitHostPort(raw);
+    const f = familyOf(host);
+    if (f === 6 && !raw.trim().startsWith('[')) {
+      findings.push(error(`${codePrefix}-ipv6-brackets`, `${what}: "${raw}" is an IPv6 address with no port that can be told apart. Write it as [${host}]:<port>.`, { source: 'outputs.conf spec' }));
+      continue;
+    }
+    if (port === null || port < 1 || port > 65535) {
+      findings.push(error(`${codePrefix}-no-port`, `${what}: "${raw}" has no port. outputs.conf needs host:port${f === 6 ? ', and [address]:port for IPv6' : ''}.`, { source: 'outputs.conf spec' }));
+      continue;
+    }
+    if (f !== null) families.add(f);
+    servers.push(formatHostPort(f === 6 ? parseCidrAny(host) .address : host, port));
+  }
+  return { servers, findings, families };
+}
+
+/**
+ * connectUsingIpVersion for a server list: auto on a default install means
+ * IPv4 only, so a list with an IPv6 literal needs 4-first (or 6-*) to reach it.
+ */
+export function connectFindings(choice        , families            , codePrefix        )                                                  {
+  const findings            = [];
+  if (choice === '4-only' && families.has(6)) findings.push(error(`${codePrefix}-ipv6-unreachable`, 'An IPv6 address is in the server list but connectUsingIpVersion = 4-only: the forwarder never connects to it.', { remediation: 'Choose 4-first or 6-first, or list its IPv4 address.', source: 'server.conf spec' }));
+  if (choice === '6-only' && families.has(4)) findings.push(error(`${codePrefix}-ipv4-unreachable`, 'An IPv4 address is in the server list but connectUsingIpVersion = 6-only: the forwarder never connects to it.', { remediation: 'Choose 4-first or 6-first, or list its IPv6 address.', source: 'server.conf spec' }));
+  if (choice === 'auto' && families.has(6)) return { setting: '4-first', findings };
+  return { setting: choice === 'auto' ? null : choice, findings };
+}
+
+export const LISTEN_ON_IPV6 = [
+  { value: 'no', label: 'IPv4 only — Splunk’s default' },
+  { value: 'yes', label: 'IPv4 and IPv6 (dual-stack)' },
+  { value: 'only', label: 'IPv6 only' },
+];
+
+/**
+ * acceptFrom: addresses and networks of either family, host name patterns,
+ * * and !-negations, as inputs.conf and server.conf take it. Returns the
+ * entries it cannot read and the families it names.
+ */
+export function acceptFromOf(text        )                                                          {
+  const list = listOf(text.replace(/\n/g, ','));
+  const bad           = [];
+  const families = new Set       ();
+  for (const entry of list) {
+    const e = entry.replace(/^!/, '');
+    const f = familyOf(e);
+    if (f !== null) families.add(f);
+    else if (e.includes(':') || !/^[A-Za-z0-9*][A-Za-z0-9.*-]*$/.test(e)) bad.push(entry);
+  }
+  return { list, bad, families };
+}
+
+/**
+ * The transforms.conf regex for a routed sender, as connection_host = ip writes
+ * the host: IPv4 as before (the first three octets of a network), IPv6 in the
+ * compressed form (RFC 5952, as inet_ntop writes it). An IPv6 network is
+ * matched on its leading groups, so it has to be on a 16-bit boundary, end in a
+ * non-zero group and have no two zero groups together — otherwise "::" could
+ * shorten what the regex expects. Null when that is not so.
+ */
+export function hostRegexOf(source        )                {
+  const c = source.includes(':') ? parseCidrAny(source) : null;
+  if (!c) return source.includes('/') ? `^host::${source.split('/')[0]?.split('.').slice(0, 3).join('\\.')}\\.` : `^host::${source}$`;
+  if (!source.includes('/') || c.prefix === 128) return `^host::${c.address}$`;
+  if (c.prefix % 16 !== 0 || c.prefix === 0) return null;
+  const groups = parseIPv6(c.network) .slice(0, c.prefix / 16);
+  if (groups[groups.length - 1] === 0 || groups.some((g, i) => g === 0 && groups[i + 1] === 0)) return null;
+  return `^host::${groups.map((g) => g.toString(16)).join(':')}:`;
+}
 
 const TIER = 'forwarder'         ;
 
@@ -169,7 +263,9 @@ export const FORWARDER_BLUEPRINTS                             = [
       { id: 'index', label: 'Index', control: 'text', default: 'network' },
       { id: 'sourcetype', label: 'Sourcetype', control: 'text', default: 'syslog' },
       { id: 'route_by_host', label: 'Split by sending host', control: 'toggle', default: true, hint: 'Different sourcetype and index per device type', showWhen: { input: 'protocol', equals: ['udp', 'tcp'] } },
-      { id: 'routes', label: 'Routing', control: 'textarea', default: '10.0.1.0/24 | cisco:ios | network\n10.0.2.0/24 | pan:traffic | security', hint: 'CIDR or host | sourcetype | index', showWhen: { input: 'route_by_host', equals: ['true'] } },
+      { id: 'routes', label: 'Routing', control: 'textarea', default: '10.0.1.0/24 | cisco:ios | network\n10.0.2.0/24 | pan:traffic | security', hint: 'IPv4 /24, IPv6 network on a 16-bit boundary, or host | sourcetype | index', showWhen: { input: 'route_by_host', equals: ['true'] } },
+      { id: 'listen_ipv6', label: 'Listen on IPv6', control: 'select', default: 'no', options: LISTEN_ON_IPV6, hint: 'listenOnIPv6: no is Splunk’s default and hears IPv4 only' },
+      { id: 'accept_from', label: 'Accept from', control: 'text', default: '', placeholder: '10.0.0.0/8, 2001:db8::/32', hint: 'acceptFrom: IPv4 or IPv6 networks, host patterns, !exclusions; empty accepts everyone' },
       { id: 'queue_size', label: 'Receive queue', control: 'text', default: '10MB', showWhen: { input: 'protocol', equals: ['udp', 'tcp'] } },
       { id: 'hec_ssl', label: 'HEC over TLS', control: 'toggle', default: true, showWhen: { input: 'protocol', equals: ['hec'] } },
       { id: 'hec_ack', label: 'Require indexer acknowledgement', control: 'toggle', default: false, showWhen: { input: 'protocol', equals: ['hec'] } },
@@ -190,7 +286,28 @@ export const FORWARDER_BLUEPRINTS                             = [
           return { source: source ?? '', sourcetype: type ?? '', index: target ?? '' };
         })
         .filter((r) => r.source);
+      const listenV6 = ['yes', 'only'].includes(str(values, 'listen_ipv6', 'no')) ? str(values, 'listen_ipv6', 'no') : 'no';
+      const accept = acceptFromOf(str(values, 'accept_from', ''));
       const findings            = [];
+
+      // IPv6: the listener has to be told to hear it, and each routed or
+      // accepted network has to be of a family the listener hears.
+      if (accept.bad.length > 0) {
+        findings.push(error('splunk.accept-from-invalid', `acceptFrom: ${accept.bad.join(', ')} ${accept.bad.length === 1 ? 'is' : 'are'} not an address, network or host pattern. Splunk refuses to start the input.`, { source: 'inputs.conf spec' }));
+      }
+      const v6Named = [...routes.filter((r) => routeByHost && r.source.includes(':')).map((r) => r.source), ...accept.list.filter((a) => familyOf(a.replace(/^!/, '')) === 6)];
+      const v4Named = [...routes.filter((r) => routeByHost && familyOf(r.source) === 4).map((r) => r.source), ...accept.list.filter((a) => familyOf(a.replace(/^!/, '')) === 4)];
+      if (listenV6 === 'no' && v6Named.length > 0) {
+        findings.push(warning('splunk.input-ipv6-not-listening', `${v6Named.join(', ')} ${v6Named.length === 1 ? 'is' : 'are'} IPv6, but the listener hears IPv4 only (listenOnIPv6 = no), so ${v6Named.length === 1 ? 'it' : 'they'} can never match.`, { remediation: 'Set Listen on IPv6 to yes (dual-stack).', source: 'inputs.conf spec' }));
+      }
+      if (listenV6 === 'only' && v4Named.length > 0) {
+        findings.push(warning('splunk.input-ipv4-not-listening', `${v4Named.join(', ')} ${v4Named.length === 1 ? 'is' : 'are'} IPv4, but the listener hears IPv6 only (listenOnIPv6 = only), so ${v4Named.length === 1 ? 'it' : 'they'} can never match.`, { remediation: 'Set Listen on IPv6 to yes (dual-stack).', source: 'inputs.conf spec' }));
+      }
+      for (const r of routeByHost ? routes : []) {
+        if (r.source.includes(':') && (familyOf(r.source) !== 6 || hostRegexOf(r.source) === null)) {
+          findings.push(error('splunk.route-ipv6-prefix', `Route ${r.source}: an IPv6 route is one address or a network on a 16-bit boundary (/16, /32, /48, /64…) that ends in a non-zero group, so the host regex matches the address as Splunk writes it.`, { remediation: 'Use a /48 or /64 like 2001:db8:10::/48, or list the senders one by one.', source: 'ArchToolKit' }));
+        }
+      }
 
       if (port < 1024) {
         findings.push(
@@ -240,6 +357,13 @@ export const FORWARDER_BLUEPRINTS                             = [
             ? ['Routing by sending address is what turns one syslog listener into per-device-type sourcetypes. Without it every device shares one sourcetype and one set of parsing rules, which cannot be right for all of them.']
             : []),
           ...(protocol !== 'hec' ? ['This is a heavy forwarder or an indexer receiving directly. A universal forwarder can listen too, but it does not parse — so the sourcetype is assigned and the parsing happens downstream.'] : []),
+          ...(listenV6 !== 'no'
+            ? [
+                protocol === 'hec'
+                  ? `listenOnIPv6 = ${listenV6} is set in server.conf [general]: it applies to splunkd as a whole, so the management port listens the same way.`
+                  : `listenOnIPv6 = ${listenV6} on the stanza overrides server.conf [general] for this port only. With connection_host = ip an IPv6 sender's host is its compressed address, which is what the IPv6 routes match.`,
+              ]
+            : []),
           'Restart after deploying. A network input is not picked up by a reload.',
         ],
         before: [
@@ -258,6 +382,7 @@ export const FORWARDER_BLUEPRINTS                             = [
                   `enableSSL = ${bool(values, 'hec_ssl', true) ? 1 : 0}`,
                   `useDeploymentServer = 0`,
                   'dedicatedIoThreads = 2',
+                  ...(accept.list.length > 0 ? ['# Who may connect; IPv6 networks are written like IPv4 ones.', `acceptFrom = ${accept.list.join(', ')}`] : []),
                   '',
                   `[http://${app}]`,
                   'disabled = 0',
@@ -280,6 +405,8 @@ export const FORWARDER_BLUEPRINTS                             = [
                   'no_priority_stripping = false',
                   'no_appending_timestamp = false',
                   ...(protocol === 'udp' ? [`queueSize = ${str(values, 'queue_size', '10MB')}`, '_rcvbuf = 16777216'] : ['queueSize = ' + str(values, 'queue_size', '10MB')]),
+                  ...(listenV6 !== 'no' ? [`# ${listenV6 === 'yes' ? 'IPv4 and IPv6 on one port' : 'IPv6 only'}; the default (no) hears IPv4 only.`, `listenOnIPv6 = ${listenV6}`] : []),
+                  ...(accept.list.length > 0 ? ['# Who may send; IPv6 networks are written like IPv4 ones.', `acceptFrom = ${accept.list.join(', ')}`] : []),
                   ...(routeByHost && routes.length > 0 ? ['', '# Routing by sender is done in transforms.conf, keyed on _MetaData:Host.'] : []),
                 ]),
             'metadata/default.meta',
@@ -288,20 +415,26 @@ export const FORWARDER_BLUEPRINTS                             = [
             ? {
                 'default/props.conf': [
                   `[source::${protocol}:${port}]`,
-                  `TRANSFORMS-route = ${routes.map((_, i) => `route_${i}`).join(', ')}`,
+                  // Both transforms of a route: the index one and, when a sourcetype is given, its own.
+                  `TRANSFORMS-route = ${routes.flatMap((route, i) => [`route_${i}`, ...(route.sourcetype ? [`route_${i}_sourcetype`] : [])]).join(', ')}`,
                 ],
                 'default/transforms.conf': routes.flatMap((route, i) => [
                   `[route_${i}]`,
                   `# ${route.source}`,
                   `SOURCE_KEY = MetaData:Host`,
-                  `REGEX = ${route.source.includes('/') ? `^host::${route.source.split('/')[0]?.split('.').slice(0, 3).join('\\.')}\\.` : `^host::${route.source}$`}`,
+                  `REGEX = ${hostRegexOf(route.source) ?? `^host::${route.source}$`}`,
                   ...(route.index ? ['DEST_KEY = _MetaData:Index', `FORMAT = ${route.index}`] : []),
                   '',
                   ...(route.sourcetype
-                    ? [`[route_${i}_sourcetype]`, `SOURCE_KEY = MetaData:Host`, `REGEX = ${route.source.includes('/') ? `^host::${route.source.split('/')[0]?.split('.').slice(0, 3).join('\\.')}\\.` : `^host::${route.source}$`}`, 'DEST_KEY = MetaData:Sourcetype', `FORMAT = sourcetype::${route.sourcetype}`, '']
+                    ? [`[route_${i}_sourcetype]`, `SOURCE_KEY = MetaData:Host`, `REGEX = ${hostRegexOf(route.source) ?? `^host::${route.source}$`}`, 'DEST_KEY = MetaData:Sourcetype', `FORMAT = sourcetype::${route.sourcetype}`, '']
                     : []),
                 ]),
               }
+            : {}),
+          // HEC runs on splunkd's HTTP server, which takes listenOnIPv6 from
+          // server.conf [general] — for the whole instance, 8089 included.
+          ...(protocol === 'hec' && listenV6 !== 'no'
+            ? { 'default/server.conf': ['[general]', `# ${listenV6 === 'yes' ? 'IPv4 and IPv6' : 'IPv6 only'} for splunkd, HEC and the management port alike.`, `listenOnIPv6 = ${listenV6}`] }
             : {}),
           'metadata/default.meta': defaultMeta(),
         },
@@ -329,7 +462,8 @@ export const FORWARDER_BLUEPRINTS                             = [
     description: 'outputs.conf pointing at every indexer rather than one, with indexer acknowledgement so nothing in flight is lost, a sensibly sized output queue, and the TLS that stops the data crossing the network in clear.',
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_forwarder_outputs' },
-      { id: 'indexers', label: 'Indexers', control: 'textarea', default: 'idx01.example.com:9997\nidx02.example.com:9997\nidx03.example.com:9997', hint: 'Every one of them — a single entry is a single point of failure' },
+      { id: 'indexers', label: 'Indexers', control: 'textarea', default: 'idx01.example.com:9997\nidx02.example.com:9997\nidx03.example.com:9997', hint: 'host:port, IPv4:port or [IPv6]:port — every one of them; a single entry is a single point of failure' },
+      { id: 'ip_version', label: 'Connect using', control: 'select', default: 'auto', options: CONNECT_IP_VERSION, hint: 'connectUsingIpVersion in server.conf [general]' },
       { id: 'discovery', label: 'How the forwarder finds them', control: 'select', default: 'list', options: [
         { value: 'list', label: 'The list above' },
         { value: 'discovery', label: 'Indexer discovery from the cluster manager' },
@@ -350,8 +484,11 @@ export const FORWARDER_BLUEPRINTS                             = [
     ],
     app: (values                 )            => {
       const app = splunkName(str(values, 'app_name', 'org_forwarder_outputs'), 'org_forwarder_outputs');
-      const indexers = listOf(str(values, 'indexers', '').replace(/\n/g, ','));
+      const indexerEntries = listOf(str(values, 'indexers', '').replace(/\n/g, ','));
       const discovery = str(values, 'discovery', 'list') === 'discovery';
+      const serverList = serverListOf(discovery ? [] : indexerEntries, 'Indexers', 'splunk.outputs');
+      const indexers = serverList.servers;
+      const connect = connectFindings(str(values, 'ip_version', 'auto'), serverList.families, 'splunk.outputs');
       const tls = bool(values, 'tls', true);
       const useAck = bool(values, 'use_ack', true);
       const tlsVersions = str(values, 'tls_versions', 'tls1.2') === 'tls1.2, tls1.3' ? 'tls1.2, tls1.3' : 'tls1.2';
@@ -361,7 +498,10 @@ export const FORWARDER_BLUEPRINTS                             = [
       const queueMatch = /^(\d+)\s*(KB|MB|GB)?$/i.exec(queueRaw);
       const queueSize = /^auto$/i.test(queueRaw) ? 'auto' : queueMatch ? `${queueMatch[1]}${(queueMatch[2] ?? '').toUpperCase()}` : 'auto';
       const queueMB = queueMatch && queueMatch[2] ? Number(queueMatch[1]) * ({ KB: 1 / 1024, MB: 1, GB: 1024 }                          )[queueMatch[2].toUpperCase()]  : 0;
-      const findings            = [];
+      const findings            = [...serverList.findings, ...connect.findings];
+      if (connect.setting === '4-first' && str(values, 'ip_version', 'auto') === 'auto') {
+        findings.push(info('splunk.outputs-connect-4-first', 'An indexer is listed by IPv6 address, and auto means IPv4 only on a forwarder that does not listen on IPv6, so server.conf sets connectUsingIpVersion = 4-first.', { source: 'server.conf spec' }));
+      }
 
       if (queueSize === 'auto' && !/^auto$/i.test(queueRaw)) {
         findings.push(warning('splunk.queue-size-invalid', `"${queueRaw}" is not a maxQueueSize value (auto, a count, or a number with KB, MB or GB); auto is used instead.`, { source: 'outputs.conf spec' }));
@@ -504,6 +644,17 @@ export const FORWARDER_BLUEPRINTS                             = [
                 ]
               : []),
           ],
+          ...(connect.setting
+            ? {
+                'default/server.conf': [
+                  '[general]',
+                  '# Which family the forwarder connects with. auto follows listenOnIPv6,',
+                  '# which is no on a default install: IPv4 only, and an IPv6 indexer',
+                  '# ([address]:port in outputs.conf) is never reached.',
+                  `connectUsingIpVersion = ${connect.setting}`,
+                ],
+              }
+            : {}),
           'metadata/default.meta': defaultMeta(),
         },
         verify: [

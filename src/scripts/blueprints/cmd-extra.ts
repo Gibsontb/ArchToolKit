@@ -14,6 +14,7 @@
 
 import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
+import { familyOf } from '../../core/ip.ts';
 import { scriptBlueprint, type ScriptBlueprint } from '../from-script.ts';
 import { identifier, listOf, type Script } from '../script.ts';
 
@@ -122,6 +123,7 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
           ...(full ? ['Installed software is read from the uninstall registry keys, not from Win32_Product. Querying Win32_Product triggers a consistency check on every MSI, which takes minutes and writes an event for each one.'] : []),
           ...(csv ? ['One row per machine, with a header. Collect them all and `copy *.csv merged.csv` gives a single file — though the headers repeat, so a real merge is a one-line PowerShell command.'] : []),
           'Both 32-bit and 64-bit uninstall keys are read. Reading only one misses about half the software on a 64-bit machine.',
+          'The first IPv4 address and the first global IPv6 address are both recorded; temporary (privacy) and link-local IPv6 addresses are left out because they change or mean nothing off the local link. The labels are read from ipconfig, which is localised: on a non-English Windows both columns come back empty.',
         ],
         usage: [`${name}.cmd`, `${name}.cmd /QUIET`, `rem From a task sequence: cmd /c "%~dp0${name}.cmd" /QUIET`],
         undo: ['Nothing to undo — it reads and writes one file.'],
@@ -174,6 +176,15 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
           ')',
           'set "IP_ADDRESS=%IP_ADDRESS: =%"',
           '',
+          'rem The global IPv6 address. It has colons of its own, so everything after',
+          'rem the label\'s colon is kept, and the "(Preferred)" suffix cut off. Only',
+          'rem lines that start with "IPv6 Address": the temporary and link-local',
+          'rem ones are not the address anybody looks the machine up by.',
+          'set "IPV6_ADDRESS="',
+          'for /f "tokens=1,* delims=:" %%I in (\'ipconfig ^| findstr /r /c:"^ *IPv6 Address"\') do (',
+          '    for /f "tokens=1 delims=( " %%A in ("%%J") do if not defined IPV6_ADDRESS set "IPV6_ADDRESS=%%A"',
+          ')',
+          '',
           'set "DISK_TOTAL_GB=0" & set "DISK_FREE_GB=0"',
           'for /f "tokens=2,3" %%A in (\'wmic logicaldisk where "DriveType=3" get Size^,FreeSpace 2^>nul ^| findstr /r "[0-9]"\') do (',
           '    set /a "DISK_FREE_GB+=%%A/1073741824" 2>nul',
@@ -191,8 +202,8 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
             ? [
                 'rem --- one row per machine, for merging --------------------------------------',
                 '(',
-                '  echo ComputerName,Domain,IPAddress,Manufacturer,Model,Serial,CPU,Cores,MemoryMB,DiskTotalGB,DiskFreeGB,OS,Version,Build,Architecture,InstallDate,LastBoot,BitLocker,Collected',
-                '  echo %COMPUTERNAME%,%DOMAIN%,%IP_ADDRESS%,"%MANUFACTURER%","%MODEL%",%SERIAL%,"%CPU_NAME%",%CPU_CORES%,%MEMORY_MB%,%DISK_TOTAL_GB%,%DISK_FREE_GB%,"%OS_NAME%",%OS_VERSION%,%OS_BUILD%,%OS_ARCH%,%INSTALL_DATE:~0,8%,%LAST_BOOT:~0,8%,%BITLOCKER%,%STARTED_AT%',
+                '  echo ComputerName,Domain,IPAddress,IPv6Address,Manufacturer,Model,Serial,CPU,Cores,MemoryMB,DiskTotalGB,DiskFreeGB,OS,Version,Build,Architecture,InstallDate,LastBoot,BitLocker,Collected',
+                '  echo %COMPUTERNAME%,%DOMAIN%,%IP_ADDRESS%,%IPV6_ADDRESS%,"%MANUFACTURER%","%MODEL%",%SERIAL%,"%CPU_NAME%",%CPU_CORES%,%MEMORY_MB%,%DISK_TOTAL_GB%,%DISK_FREE_GB%,"%OS_NAME%",%OS_VERSION%,%OS_BUILD%,%OS_ARCH%,%INSTALL_DATE:~0,8%,%LAST_BOOT:~0,8%,%BITLOCKER%,%STARTED_AT%',
                 ') > "%OUT_FILE%"',
               ]
             : [
@@ -204,6 +215,7 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
                 '  echo === System ===',
                 '  echo Domain:        %DOMAIN%',
                 '  echo IP address:    %IP_ADDRESS%',
+                '  echo IPv6 address:  %IPV6_ADDRESS%',
                 '  echo Manufacturer:  %MANUFACTURER%',
                 '  echo Model:         %MODEL%',
                 '  echo Serial:        %SERIAL%',
@@ -526,7 +538,7 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
         { value: 'performance', label: 'Performance — what is using CPU, memory and disk' },
       ] },
       { id: 'event_hours', label: 'Events from the last (hours)', control: 'number', default: 24, min: 1, max: 720 },
-      { id: 'target_host', label: 'Test connectivity to', control: 'text', default: '', hint: 'A host that should be reachable', showWhen: { input: 'focus', equals: ['network', 'general'] } },
+      { id: 'target_host', label: 'Test connectivity to', control: 'text', default: '', hint: 'A host name, IPv4 or IPv6 address that should be reachable', showWhen: { input: 'focus', equals: ['network', 'general'] } },
       { id: 'services', label: 'Report on these services', control: 'text', default: '', hint: 'The ones related to the problem' },
       { id: 'compress', label: 'Zip it up', control: 'toggle', default: true },
       { id: 'output', label: 'Write to', control: 'text', default: '%USERPROFILE%\\Desktop', hint: 'Somewhere the person can find it' },
@@ -614,6 +626,8 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
                 'call :capture "routes" route print',
                 'call :capture "connections" netstat -ano',
                 'call :capture "arp" arp -a',
+                'rem arp is IPv4 only; the IPv6 neighbour cache is here.',
+                'call :capture "ipv6-neighbours" netsh interface ipv6 show neighbors',
                 'call :capture "dns-cache" ipconfig /displaydns',
                 'call :capture "firewall" netsh advfirewall show allprofiles',
                 'call :capture "firewall-rules" netsh advfirewall firewall show rule name=all',
@@ -621,6 +635,14 @@ export const CMD_EXTRA: readonly ScriptBlueprint[] = [
                 ...(str(values, 'target_host', '')
                   ? [
                       `call :capture "ping-target" ping -n 10 ${str(values, 'target_host', '')}`,
+                      // A name: try each family on its own, since a dual-stack
+                      // client uses IPv6 first and a broken AAAA path looks like a slow network.
+                      ...(familyOf(str(values, 'target_host', '')) === null
+                        ? [
+                            `call :capture "ping-target-ipv4" ping -4 -n 4 ${str(values, 'target_host', '')}`,
+                            `call :capture "ping-target-ipv6" ping -6 -n 4 ${str(values, 'target_host', '')}`,
+                          ]
+                        : []),
                       `call :capture "tracert-target" tracert -d -w 1000 -h 20 ${str(values, 'target_host', '')}`,
                       `call :capture "nslookup-target" nslookup ${str(values, 'target_host', '')}`,
                     ]

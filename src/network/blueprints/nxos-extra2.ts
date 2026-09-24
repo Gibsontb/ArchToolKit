@@ -12,7 +12,9 @@
 import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
-import { listOf, netmask, parseCidr, vlanIds, vlanRange, type DeviceChange } from '../device.ts';
+import { familyOf, isIpv6 } from '../../core/ip.ts';
+import { isIpAny, listOf, netmask, parseCidr, parseCidrDual, vlanIds, vlanRange, type DeviceChange } from '../device.ts';
+import { addressList, dualCidrs, dualFindings, unverifiedIpv6 } from './nxos-eos-dual.ts';
 
 const PLATFORM = 'cisco_nxos' as const;
 const SECRET = '<REQUIRED>';
@@ -94,20 +96,35 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
         { value: 'hsrp', label: 'HSRP — one active, one standby' },
       ] },
       { id: 'vlan_id', label: 'VLAN', control: 'number', default: 10, min: 1, max: 4094 },
-      { id: 'gateway', label: 'Gateway address', control: 'text', default: '10.0.10.1/24' },
+      { id: 'gateway', label: 'Gateway address', control: 'text', default: '10.0.10.1/24', hint: 'IPv4, IPv6, or one of each: 10.0.10.1/24, 2001:db8:0:10::1/64' },
       { id: 'vrf', label: 'VRF', control: 'text', default: '', hint: 'Empty for the global table' },
       { id: 'group', label: 'HSRP group', control: 'number', default: 10, min: 0, max: 4095, showWhen: { input: 'style', equals: ['hsrp'] } },
       { id: 'priority', label: 'HSRP priority', control: 'number', default: 110, min: 1, max: 255, showWhen: { input: 'style', equals: ['hsrp'] } },
-      { id: 'real_address', label: 'This switch’s address', control: 'text', default: '10.0.10.2/24', showWhen: { input: 'style', equals: ['hsrp'] } },
+      { id: 'real_address', label: 'This switch’s address', control: 'text', default: '10.0.10.2/24', hint: 'One per gateway family', showWhen: { input: 'style', equals: ['hsrp'] } },
       { id: 'anycast_mac', label: 'Anycast gateway MAC', control: 'text', default: '0000.2222.3333', showWhen: { input: 'style', equals: ['anycast'] } },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const anycast = str(values, 'style', 'anycast') === 'anycast';
       const vlan = num(values, 'vlan_id', 10);
-      const gateway = str(values, 'gateway', '');
+      const gw = dualCidrs(str(values, 'gateway', ''));
+      const real = dualCidrs(anycast ? '' : str(values, 'real_address', ''));
       const vrf = str(values, 'vrf', '');
-      const findings: Finding[] = [];
-      if (!parseCidr(gateway)) findings.push(error('network.nxos.bad-address', 'The gateway address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      const group = num(values, 'group', 10);
+      // HSRP version 1 has no IPv6 and stops at group 255.
+      const version2 = !anycast && (gw.v6 !== null || group > 255);
+      const findings: Finding[] = [
+        ...dualFindings('network.nxos.bad-address', 'the gateway address', gw, '10.0.10.1/24 or 2001:db8:0:10::1/64'),
+        ...dualFindings('network.nxos.bad-address', 'this switch’s address', real, '10.0.10.2/24 or 2001:db8:0:10::2/64'),
+      ];
+      if (!gw.v4 && !gw.v6) findings.push(error('network.nxos.bad-address', 'The gateway address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      if (!anycast) {
+        for (const family of [4, 6] as const) {
+          const g = family === 4 ? gw.v4 : gw.v6;
+          const r = family === 4 ? real.v4 : real.v6;
+          if (g && !r) findings.push(error('network.nxos.hsrp-family', `The IPv${family} HSRP gateway needs an IPv${family} address on this switch for the group to run on.`, { source: 'ArchToolKit' }));
+          if (g && r && (g.network !== r.network || g.prefix !== r.prefix)) findings.push(error('network.nxos.hsrp-subnet', `${g.address} and ${r.text} are not in the same subnet.`, { source: 'ArchToolKit' }));
+        }
+      }
       if (anycast) {
         findings.push(
           warning('network.nxos.anycast-mac', 'The anycast gateway MAC must be identical on every leaf in the fabric. A leaf with a different one gives hosts an ARP entry that stops working the moment they move.', {
@@ -123,13 +140,15 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
 
       return {
         platform: PLATFORM,
-        title: anycast ? `Anycast gateway on VLAN ${vlan}` : `HSRP group ${num(values, 'group', 10)} on VLAN ${vlan}`,
+        title: anycast ? `Anycast gateway on VLAN ${vlan}` : `HSRP group ${group} on VLAN ${vlan}`,
         impact: 'brief',
         notes: [
           'Hosts keep the old gateway MAC in their ARP cache until it ages. Changing the style of gateway under a live VLAN means a period where some hosts are talking to a MAC that no longer answers.',
           ...(anycast ? ['`fabric forwarding mode anycast-gateway` on the SVI is what makes every leaf answer. Without it the SVI is an ordinary interface and only this leaf routes for the subnet.'] : []),
+          ...(version2 ? ['`hsrp version 2` changes the virtual MAC. Set it on both peers in the same window.'] : []),
+          ...(!anycast && gw.v6 ? ['VERIFY: the IPv6 group reuses the IPv4 group number with the `ipv6` keyword. Confirm the release in use accepts the same number for both families on one SVI.'] : []),
         ],
-        before: [`show run interface Vlan${vlan}`, 'show hsrp brief', 'show fabric forwarding ip local-host-db', `show ip arp vlan ${vlan}`],
+        before: [`show run interface Vlan${vlan}`, 'show hsrp brief', 'show fabric forwarding ip local-host-db', `show ip arp vlan ${vlan}`, ...(gw.v6 ? [`show ipv6 neighbor vlan ${vlan}`] : [])],
         config: [
           ...(anycast
             ? [
@@ -138,7 +157,8 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
                 `interface Vlan${vlan}`,
                 '  no shutdown',
                 ...(vrf ? [`  vrf member ${vrf}`] : []),
-                `  ip address ${gateway}`,
+                ...(gw.v4 ? [`  ip address ${gw.v4.text}`] : []),
+                ...(gw.v6 ? [`  ipv6 address ${gw.v6.text}`] : []),
                 '  fabric forwarding mode anycast-gateway',
                 '!',
               ]
@@ -146,22 +166,22 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
                 `interface Vlan${vlan}`,
                 '  no shutdown',
                 ...(vrf ? [`  vrf member ${vrf}`] : []),
-                `  ip address ${str(values, 'real_address', '')}`,
-                `  hsrp ${num(values, 'group', 10)}`,
-                `    ip ${parseCidr(gateway)?.address ?? gateway}`,
-                `    priority ${num(values, 'priority', 110)}`,
-                '    preempt delay minimum 180',
-                '    timers 1 3',
+                ...(real.v4 ? [`  ip address ${real.v4.text}`] : []),
+                ...(real.v6 ? [`  ipv6 address ${real.v6.text}`] : []),
+                ...(version2 ? ['  hsrp version 2'] : []),
+                ...(gw.v4 ? [`  hsrp ${group}`, `    ip ${gw.v4.address}`, `    priority ${num(values, 'priority', 110)}`, '    preempt delay minimum 180', '    timers 1 3'] : []),
+                ...(gw.v6 ? [`  hsrp ${group} ipv6`, `    ip ${gw.v6.address}`, `    priority ${num(values, 'priority', 110)}`, '    preempt delay minimum 180', '    timers 1 3'] : []),
                 '!',
               ]),
         ],
         verify: [
           `show run interface Vlan${vlan}`,
-          ...(anycast ? ['show fabric forwarding ip local-host-db', 'show nve peers'] : ['show hsrp brief', `show hsrp group ${num(values, 'group', 10)}`]),
-          `ping ${parseCidr(gateway)?.address ?? gateway} source ${parseCidr(gateway)?.address ?? ''}`,
+          ...(anycast ? ['show fabric forwarding ip local-host-db', ...(gw.v6 ? ['show fabric forwarding ipv6 local-host-db'] : []), 'show nve peers'] : ['show hsrp brief', `show hsrp group ${group}`]),
+          ...(gw.v4 ? [`ping ${gw.v4.address} source ${gw.v4.address}`] : []),
+          ...(gw.v6 ? [`ping6 ${gw.v6.address}${vrf ? ` vrf ${vrf}` : ''}`] : []),
           `${'!'} From a host in the VLAN: ping the gateway, then something beyond it`,
         ],
-        backout: [`interface Vlan${vlan}`, ...(anycast ? ['  no fabric forwarding mode anycast-gateway'] : [`  no hsrp ${num(values, 'group', 10)}`]), '  shutdown', '!'],
+        backout: [`interface Vlan${vlan}`, ...(anycast ? ['  no fabric forwarding mode anycast-gateway'] : [...(gw.v4 ? [`  no hsrp ${group}`] : []), ...(gw.v6 ? [`  no hsrp ${group} ipv6`] : [])]), '  shutdown', '!'],
         findings,
       };
     },
@@ -338,8 +358,13 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
     change: (values: BlueprintValues): DeviceChange => {
       const domain = num(values, 'domain', 0);
       const ifaces = listOf(str(values, 'interfaces', ''));
+      const source = str(values, 'source_address', '');
+      // PTP here runs over IPv4 (UDP/IPv4 transport). An IPv6 source is not written.
+      const source6 = familyOf(source) === 6;
       const findings: Finding[] = [];
       if (ifaces.length === 0) findings.push(error('network.nxos.no-interfaces', 'PTP was asked for with no interface to run it on.', { source: 'ArchToolKit' }));
+      if (source6) findings.push(unverifiedIpv6('network.nxos.ptp-ipv6', 'The PTP source address', 'NX-OS'));
+      else if (!isIpAny(source)) findings.push(error('network.nxos.ptp-source', `The PTP source "${source}" is not an address.`, { remediation: 'Use this switch’s loopback address, such as 10.255.0.11.', source: 'ArchToolKit' }));
       findings.push(
         warning('network.nxos.ptp-every-hop', 'PTP accuracy depends on every device in the path handling it. One ordinary switch in the middle that forwards PTP as normal multicast adds its own queuing delay to the measurement, and the error is invisible from either end.', {
           remediation: 'Confirm every hop between the grandmaster and the clients is a boundary or transparent clock.',
@@ -361,7 +386,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
         before: ['show ptp brief', 'show ptp parent', 'show ptp clock', 'show ntp peer-status'],
         config: [
           'feature ptp',
-          `ptp source ${str(values, 'source_address', '')}`,
+          ...(source6 ? [] : [`ptp source ${source}`]),
           `ptp domain ${domain}`,
           `ptp priority1 ${num(values, 'priority1', 128)}`,
           `ptp priority2 ${num(values, 'priority2', 128)}`,
@@ -407,8 +432,16 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
       const groups = str(values, 'groups', '239.0.0.0/8');
       const vrf = str(values, 'vrf', '');
       const findings: Finding[] = [];
+      // IPv6 multicast is PIM6, a separate feature whose support varies by Nexus
+      // platform and release. Nothing IPv6 is written here.
+      const addresses = [rp, groups, ...(anycast ? [str(values, 'local_address', ''), str(values, 'anycast_peer', '')] : [])];
+      const pim6 = addresses.some((a) => familyOf(a) === 6);
       if (ifaces.length === 0) findings.push(error('network.nxos.no-interfaces', 'No interface was named, so multicast would be routed nowhere.', { source: 'ArchToolKit' }));
-      if (!parseCidr(groups)) findings.push(error('network.nxos.bad-groups', 'The group range is not a valid prefix.', { remediation: 'Write it as 239.0.0.0/8.', source: 'ArchToolKit' }));
+      if (pim6) findings.push(unverifiedIpv6('network.nxos.pim6', 'IPv6 multicast (PIM6)', 'NX-OS'));
+      else {
+        if (!parseCidr(groups)) findings.push(error('network.nxos.bad-groups', 'The group range is not a valid prefix.', { remediation: 'Write it as 239.0.0.0/8.', source: 'ArchToolKit' }));
+        for (const a of addresses.filter((a) => a !== groups)) if (!isIpAny(a)) findings.push(error('network.nxos.pim-address', `"${a}" is not an address.`, { source: 'ArchToolKit' }));
+      }
       if (anycast) {
         findings.push(warning('network.nxos.anycast-rp-set', 'Every member of the anycast RP set has to list every other member, including itself. A missing entry gives an RP that works for some sources and not others, which looks like an intermittent fault.', { source: 'ArchToolKit' }));
       }
@@ -424,7 +457,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
         before: ['show ip pim interface brief', 'show ip pim rp', 'show ip mroute summary', 'show ip igmp groups'],
         config: [
           'feature pim',
-          ...(vrf ? [`vrf context ${vrf}`, `  ip pim rp-address ${rp} group-list ${groups}`, ...(anycast ? [`  ip pim anycast-rp ${rp} ${str(values, 'local_address', '')}`, `  ip pim anycast-rp ${rp} ${str(values, 'anycast_peer', '')}`] : []), '!'] : [
+          ...(pim6 ? [] : vrf ? [`vrf context ${vrf}`, `  ip pim rp-address ${rp} group-list ${groups}`, ...(anycast ? [`  ip pim anycast-rp ${rp} ${str(values, 'local_address', '')}`, `  ip pim anycast-rp ${rp} ${str(values, 'anycast_peer', '')}`] : []), '!'] : [
             `ip pim rp-address ${rp} group-list ${groups}`,
             ...(anycast ? [`ip pim anycast-rp ${rp} ${str(values, 'local_address', '')}`, `ip pim anycast-rp ${rp} ${str(values, 'anycast_peer', '')}`] : []),
           ]),
@@ -432,7 +465,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
           ...ifaces.flatMap((iface) => [`interface ${iface}`, '  ip pim sparse-mode', '!']),
         ],
         verify: ['show ip pim interface brief', 'show ip pim neighbor', 'show ip pim rp', ...(anycast ? ['show ip pim rp | include Anycast'] : []), 'show ip mroute', 'show ip igmp snooping groups'],
-        backout: [...ifaces.flatMap((i) => [`interface ${i}`, '  no ip pim sparse-mode', '!']), `no ip pim rp-address ${rp} group-list ${groups}`],
+        backout: [...ifaces.flatMap((i) => [`interface ${i}`, '  no ip pim sparse-mode', '!']), ...(pim6 ? [] : [`no ip pim rp-address ${rp} group-list ${groups}`])],
         findings,
       };
     },
@@ -498,7 +531,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
     description: 'Relay DHCP from an SVI to servers elsewhere, including the VXLAN case where the relay source has to be a loopback the server can route back to.',
     inputs: [
       { id: 'interfaces', label: 'SVIs', control: 'text', default: 'Vlan10, Vlan20' },
-      { id: 'servers', label: 'DHCP servers', control: 'text', default: '10.0.1.10, 10.0.2.10' },
+      { id: 'servers', label: 'DHCP servers', control: 'text', default: '10.0.1.10, 10.0.2.10', hint: 'IPv4 servers get DHCP relay, IPv6 servers DHCPv6 relay; both may be listed' },
       { id: 'server_vrf', label: 'Server VRF', control: 'text', default: '', hint: 'Where the servers live, if not the same VRF as the clients' },
       { id: 'relay_source', label: 'Relay source interface', control: 'text', default: 'loopback0', hint: 'Required in a VXLAN fabric with anycast gateways' },
       { id: 'sub_option', label: 'Insert VPN option', control: 'toggle', default: false, hint: 'Option 82 sub-option 151, when clients are in a VRF' },
@@ -506,9 +539,11 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
     change: (values: BlueprintValues): DeviceChange => {
       const ifaces = listOf(str(values, 'interfaces', ''));
       const servers = listOf(str(values, 'servers', ''));
+      const { v4, v6, invalid } = addressList(str(values, 'servers', ''));
       const vrf = str(values, 'server_vrf', '');
       const source = str(values, 'relay_source', '');
-      const findings: Finding[] = [];
+      const useVrf = vrf ? ` use-vrf ${vrf}` : '';
+      const findings: Finding[] = invalid.map((s) => error('network.nxos.bad-server', `The DHCP server "${s}" is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
       if (servers.length === 0) findings.push(error('network.nxos.no-servers', 'No DHCP server address was given.', { source: 'ArchToolKit' }));
       if (!source) {
         findings.push(
@@ -526,23 +561,40 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
         notes: [
           'The server needs a scope selected by the giaddr and a route back to whatever the relay source is. Both are on the server side and neither is visible from the switch.',
           ...(vrf ? [`The servers are in VRF ${vrf} while the clients are not, so the relay crosses VRFs. The return path has to be leaked or routed accordingly.`] : []),
+          ...(v6.length > 0 ? ['DHCPv6 relay is configured separately from DHCP relay (`ipv6 dhcp relay address`). The SVI needs an IPv6 address, and router advertisements must set the managed flag or clients never ask.'] : []),
+          ...(v6.length > 0 && bool(values, 'sub_option', false) ? ['VERIFY: the VPN sub-option is written for IPv4 only. Check whether the release in use supports it for DHCPv6 before adding it.'] : []),
         ],
-        before: ['show ip dhcp relay', 'show ip dhcp relay statistics', ...ifaces.map((i) => `show run interface ${i}`)],
+        before: [
+          ...(v4.length > 0 || v6.length === 0 ? ['show ip dhcp relay', 'show ip dhcp relay statistics'] : []),
+          ...(v6.length > 0 ? ['show ipv6 dhcp relay', 'show ipv6 dhcp relay statistics'] : []),
+          ...ifaces.map((i) => `show run interface ${i}`),
+        ],
         config: [
           'feature dhcp',
           'service dhcp',
-          'ip dhcp relay',
-          ...(bool(values, 'sub_option', false) ? ['ip dhcp relay information option', 'ip dhcp relay information option vpn'] : []),
-          ...(source ? [`ip dhcp relay source-interface ${source}`] : []),
+          ...(v4.length > 0 || v6.length === 0 ? ['ip dhcp relay'] : []),
+          ...(bool(values, 'sub_option', false) && v4.length > 0 ? ['ip dhcp relay information option', 'ip dhcp relay information option vpn'] : []),
+          ...(source && (v4.length > 0 || v6.length === 0) ? [`ip dhcp relay source-interface ${source}`] : []),
+          ...(v6.length > 0 ? ['ipv6 dhcp relay', ...(source ? [`ipv6 dhcp relay source-interface ${source}`] : [])] : []),
           '!',
           ...ifaces.flatMap((iface) => [
             `interface ${iface}`,
-            ...servers.map((server) => `  ip dhcp relay address ${server}${vrf ? ` use-vrf ${vrf}` : ''}`),
+            ...v4.map((server) => `  ip dhcp relay address ${server}${useVrf}`),
+            ...v6.map((server) => `  ipv6 dhcp relay address ${server}${useVrf}`),
             '!',
           ]),
         ],
-        verify: ['show ip dhcp relay', 'show ip dhcp relay statistics', 'show ip dhcp relay address', `${'!'} From a client: release and renew, and confirm the address and gateway`],
-        backout: ifaces.flatMap((iface) => [`interface ${iface}`, ...servers.map((s) => `  no ip dhcp relay address ${s}${vrf ? ` use-vrf ${vrf}` : ''}`), '!']),
+        verify: [
+          ...(v4.length > 0 || v6.length === 0 ? ['show ip dhcp relay', 'show ip dhcp relay statistics', 'show ip dhcp relay address'] : []),
+          ...(v6.length > 0 ? ['show ipv6 dhcp relay', 'show ipv6 dhcp relay statistics'] : []),
+          `${'!'} From a client: release and renew, and confirm the address and gateway`,
+        ],
+        backout: ifaces.flatMap((iface) => [
+          `interface ${iface}`,
+          ...v4.map((s) => `  no ip dhcp relay address ${s}${useVrf}`),
+          ...v6.map((s) => `  no ipv6 dhcp relay address ${s}${useVrf}`),
+          '!',
+        ]),
         findings,
       };
     },
@@ -559,7 +611,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
       { id: 'shared_vrf', label: 'To VRF', control: 'text', default: 'SHARED-SERVICES' },
       { id: 'source_rt', label: 'From VRF route target', control: 'text', default: '65001:10010' },
       { id: 'shared_rt', label: 'To VRF route target', control: 'text', default: '65001:10099' },
-      { id: 'prefixes', label: 'Prefixes allowed to cross', control: 'textarea', default: '10.99.0.0/24', hint: 'One per line — the shared services, not the whole tenant' },
+      { id: 'prefixes', label: 'Prefixes allowed to cross', control: 'textarea', default: '10.99.0.0/24', hint: 'One per line, IPv4 or IPv6 — the shared services, not the whole tenant' },
       { id: 'direction', label: 'Direction', control: 'select', default: 'both', options: [
         { value: 'both', label: 'Both — tenant reaches shared, shared replies' },
         { value: 'to-shared', label: 'One way — tenant reaches shared only' },
@@ -576,7 +628,17 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
       if (prefixes.length === 0) {
         findings.push(error('network.nxos.leak-no-filter', 'Leaking with no prefix filter imports the whole VRF, which is the same as not having separated them.', { remediation: 'Name the shared service prefixes explicitly.', source: 'ArchToolKit' }));
       }
-      for (const prefix of prefixes) if (!parseCidr(prefix)) findings.push(error('network.nxos.bad-prefix', `"${prefix}" is not a prefix.`, { source: 'ArchToolKit' }));
+      for (const prefix of prefixes) if (!parseCidrDual(prefix)) findings.push(error('network.nxos.bad-prefix', `"${prefix}" is not an IPv4 or IPv6 prefix.`, { source: 'ArchToolKit' }));
+      // Each family has its own prefix list, route-map and address family; they are never mixed in one.
+      const p4 = prefixes.filter((p) => parseCidrDual(p)?.family === 4);
+      const p6 = prefixes.flatMap((p) => {
+        const c = parseCidrDual(p);
+        return c?.family === 6 ? [`${c.network}/${c.prefix}`] : [];
+      });
+      const with4 = p4.length > 0 || p6.length === 0;
+      const sharedRt = str(values, 'shared_rt', '');
+      const sourceRt = str(values, 'source_rt', '');
+      const both = str(values, 'direction', 'both') === 'both';
       findings.push(
         warning('network.nxos.leak-two-way', 'Leaking is per direction and per switch. A prefix that leaks one way gives a path out and no path back, which presents as a one-way ping and takes a long time to find. Apply this on every leaf that routes for either VRF.', {
           source: 'ArchToolKit',
@@ -591,40 +653,54 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
           'Route targets are what actually move prefixes between VRFs in an EVPN fabric. The route-map filters which of the imported prefixes are kept.',
           'Overlapping addresses between the two VRFs cannot be leaked. If both tenants use 10.0.0.0/8 this is not the change you need — that is NAT.',
         ],
-        before: [`show vrf ${from} detail`, `show vrf ${to} detail`, `show bgp l2vpn evpn vni-id all | include ${from}`, `show ip route vrf ${from}`],
+        before: [`show vrf ${from} detail`, `show vrf ${to} detail`, `show bgp l2vpn evpn vni-id all | include ${from}`, `show ip route vrf ${from}`, ...(p6.length > 0 ? [`show ipv6 route vrf ${from}`] : [])],
         config: [
-          `ip prefix-list LEAK-${to} seq 5 permit ${prefixes[0] ?? '0.0.0.0/0'}`,
-          ...prefixes.slice(1).map((prefix, index) => `ip prefix-list LEAK-${to} seq ${(index + 2) * 5} permit ${prefix}`),
-          '!',
-          `route-map LEAK-${to}-IN permit 10`,
-          `  match ip address prefix-list LEAK-${to}`,
-          '!',
+          ...(with4
+            ? [
+                `ip prefix-list LEAK-${to} seq 5 permit ${p4[0] ?? prefixes[0] ?? '0.0.0.0/0'}`,
+                ...p4.slice(1).map((prefix, index) => `ip prefix-list LEAK-${to} seq ${(index + 2) * 5} permit ${prefix}`),
+                '!',
+                `route-map LEAK-${to}-IN permit 10`,
+                `  match ip address prefix-list LEAK-${to}`,
+                '!',
+              ]
+            : []),
+          ...(p6.length > 0
+            ? [
+                ...p6.map((prefix, index) => `ipv6 prefix-list LEAK-${to}-V6 seq ${(index + 1) * 5} permit ${prefix}`),
+                '!',
+                `route-map LEAK-${to}-V6-IN permit 10`,
+                `  match ipv6 address prefix-list LEAK-${to}-V6`,
+                '!',
+              ]
+            : []),
           `vrf context ${from}`,
-          '  address-family ipv4 unicast',
-          `    route-target import ${str(values, 'shared_rt', '')}`,
-          `    route-target import ${str(values, 'shared_rt', '')} evpn`,
-          `    import map LEAK-${to}-IN`,
+          ...(with4 ? ['  address-family ipv4 unicast', `    route-target import ${sharedRt}`, `    route-target import ${sharedRt} evpn`, `    import map LEAK-${to}-IN`] : []),
+          ...(p6.length > 0 ? ['  address-family ipv6 unicast', `    route-target import ${sharedRt}`, `    route-target import ${sharedRt} evpn`, `    import map LEAK-${to}-V6-IN`] : []),
           '!',
-          ...(str(values, 'direction', 'both') === 'both'
+          ...(both
             ? [
                 `vrf context ${to}`,
-                '  address-family ipv4 unicast',
-                `    route-target import ${str(values, 'source_rt', '')}`,
-                `    route-target import ${str(values, 'source_rt', '')} evpn`,
+                ...(with4 ? ['  address-family ipv4 unicast', `    route-target import ${sourceRt}`, `    route-target import ${sourceRt} evpn`] : []),
+                ...(p6.length > 0 ? ['  address-family ipv6 unicast', `    route-target import ${sourceRt}`, `    route-target import ${sourceRt} evpn`] : []),
                 '!',
               ]
             : []),
         ],
-        verify: [`show ip route vrf ${from}`, `show ip route vrf ${to}`, `show bgp l2vpn evpn route-type 5`, `${'!'} From a host in ${from}: reach a shared service, and confirm nothing else in ${to} answers`],
+        verify: [
+          `show ip route vrf ${from}`,
+          `show ip route vrf ${to}`,
+          ...(p6.length > 0 ? [`show ipv6 route vrf ${from}`, `show ipv6 route vrf ${to}`] : []),
+          `show bgp l2vpn evpn route-type 5`,
+          `${'!'} From a host in ${from}: reach a shared service, and confirm nothing else in ${to} answers`,
+        ],
         backout: [
           `vrf context ${from}`,
-          '  address-family ipv4 unicast',
-          `    no route-target import ${str(values, 'shared_rt', '')}`,
-          `    no route-target import ${str(values, 'shared_rt', '')} evpn`,
-          `    no import map LEAK-${to}-IN`,
+          ...(with4 ? ['  address-family ipv4 unicast', `    no route-target import ${sharedRt}`, `    no route-target import ${sharedRt} evpn`, `    no import map LEAK-${to}-IN`] : []),
+          ...(p6.length > 0 ? ['  address-family ipv6 unicast', `    no route-target import ${sharedRt}`, `    no route-target import ${sharedRt} evpn`, `    no import map LEAK-${to}-V6-IN`] : []),
           '!',
-          `no route-map LEAK-${to}-IN`,
-          `no ip prefix-list LEAK-${to}`,
+          ...(with4 ? [`no route-map LEAK-${to}-IN`, `no ip prefix-list LEAK-${to}`] : []),
+          ...(p6.length > 0 ? [`no route-map LEAK-${to}-V6-IN`, `no ipv6 prefix-list LEAK-${to}-V6`] : []),
         ],
         findings,
       };
@@ -716,7 +792,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
         { value: 'aes-128', label: 'AES-128' },
         { value: 'none', label: 'None — authenticated only' },
       ] },
-      { id: 'host', label: 'Trap receiver', control: 'text', default: '10.0.1.50' },
+      { id: 'host', label: 'Trap receiver', control: 'text', default: '10.0.1.50', hint: 'IPv4 or IPv6 address, or a name' },
       { id: 'vrf', label: 'Management VRF', control: 'text', default: 'management' },
       { id: 'remove_v2c', label: 'Remove the v2c strings', control: 'toggle', default: true },
     ],
@@ -784,9 +860,13 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
       const ra = str(values, 'ra', 'slaac');
       const anycast = bool(values, 'anycast', false);
       const vrf = str(values, 'vrf', '');
+      const linkLocal = str(values, 'link_local', '');
       const findings: Finding[] = [];
-      if (!address.includes(':') || !address.includes('/')) {
+      if (parseCidrDual(address)?.family !== 6) {
         findings.push(error('network.nxos.bad-ipv6', 'The IPv6 address is not an address and prefix length.', { source: 'ArchToolKit' }));
+      }
+      if (linkLocal && (!isIpv6(linkLocal) || !/^fe[89ab]/i.test(linkLocal))) {
+        findings.push(error('network.nxos.bad-link-local', `"${linkLocal}" is not an IPv6 link-local address (fe80::/10).`, { source: 'ArchToolKit' }));
       }
       if (ra === 'slaac' && !address.endsWith('/64')) {
         findings.push(error('network.nxos.slaac-prefix', 'SLAAC only works on a /64.', { source: 'ArchToolKit' }));
@@ -810,7 +890,7 @@ export const NXOS_EXTRA_2: readonly ChangeBlueprint[] = [
           `interface ${iface}`,
           '  no shutdown',
           ...(vrf ? [`  vrf member ${vrf}`] : []),
-          ...(str(values, 'link_local', '') ? [`  ipv6 link-local ${str(values, 'link_local', '')}`] : []),
+          ...(linkLocal ? [`  ipv6 link-local ${linkLocal}`] : []),
           ...(address ? [`  ipv6 address ${address}`] : []),
           ...(anycast ? ['  fabric forwarding mode anycast-gateway'] : []),
           ...(ra === 'suppress' ? ['  ipv6 nd suppress-ra'] : []),

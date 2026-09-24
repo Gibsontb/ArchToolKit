@@ -12,12 +12,17 @@
  * everyone is on it, so the impact levels here are deliberately pessimistic.
  *
  * No key is ever written: PSKs, RADIUS secrets and the rest are `<REQUIRED>`.
+ *
+ * IPv6 is IOS-XE syntax: `ipv6 address` on the SVI, `address ipv6` in a RADIUS
+ * server, `logging host ipv6`. Where the controller's support for an IPv6
+ * value is not certain, it is not emitted and the change says VERIFY.
  */
 
 import { bool, num, str,                                           } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
+import { familyOf, isIp } from '../../core/ip.js';
 import { deviceBlueprint,                      } from '../from-change.js';
-import { listOf, parseCidr, netmask,                   } from '../device.js';
+import { listOf, parseCidrDual, netmask,                   } from '../device.js';
 
 const PLATFORM = 'cisco_wlc'         ;
 const SECRET = '<REQUIRED>';
@@ -213,6 +218,7 @@ const BLUEPRINTS                             = [
         { value: 'external', label: 'External portal (ISE or a guest system)' },
       ] },
       { id: 'external_url', label: 'External portal URL', control: 'text', default: '', showWhen: { input: 'portal_type', equals: ['external'] } },
+      { id: 'portal_address', label: 'External portal address', control: 'text', default: '', hint: 'The portal server’s IPv4 and/or IPv6 address, comma separated', showWhen: { input: 'portal_type', equals: ['external'] } },
       { id: 'rate_limit_kbps', label: 'Per-client rate limit (kbps)', control: 'number', default: 5000, min: 0, hint: '0 for none' },
       { id: 'session_timeout', label: 'Session timeout (seconds)', control: 'number', default: 28800, min: 60 },
     ],
@@ -225,7 +231,15 @@ const BLUEPRINTS                             = [
       const map = str(values, 'parameter_map', 'GUEST-PORTAL').toUpperCase().replace(/\s+/g, '-');
       const kind = str(values, 'portal_type', 'consent');
       const rate = num(values, 'rate_limit_kbps', 5000);
+      // The redirect portal takes one address per family: redirect portal ipv4 … and redirect portal ipv6 ….
+      const portals = kind === 'external' ? listOf(str(values, 'portal_address', '')) : [];
+      const portalLines = [4, 6].flatMap((family) => {
+        const address = portals.find((p) => familyOf(p) === family);
+        return address ? [` redirect portal ipv${family} ${address}`] : [];
+      });
+      const badPortals = portals.filter((p) => !isIp(p));
       const findings            = [
+        ...(badPortals.length > 0 ? [error('network.wlc.bad-portal', `Not an IPv4 or IPv6 address: ${badPortals.join(', ')}.`, { source: 'ArchToolKit' })] : []),
         warning('network.wlc.guest-open', 'A guest SSID with web authentication is an open network: everything before the portal, and everything the portal does not encrypt, is in the clear over the air.', {
           remediation: 'Terminate guests outside the firewall, isolate them from everything internal, and say so in the terms.',
           source: 'ArchToolKit',
@@ -244,7 +258,7 @@ const BLUEPRINTS                             = [
         before: ['show wlan summary', `show wlan id ${id}`, 'show parameter-map type webauth summary', 'show wireless client summary'],
         config: [
           `parameter-map type webauth ${map}`,
-          ...(kind === 'consent' ? [' type consent', ' consent email'] : kind === 'webauth' ? [' type webauth'] : [' type webauth', ` redirect for-login ${str(values, 'external_url', '')}`, ' redirect portal ipv4 <portal-address>']),
+          ...(kind === 'consent' ? [' type consent', ' consent email'] : kind === 'webauth' ? [' type webauth'] : [' type webauth', ` redirect for-login ${str(values, 'external_url', '')}`, ...(portalLines.length > 0 ? portalLines : [' redirect portal ipv4 <portal-address>'])]),
           ' banner text ^Guest access. Use of this network is logged.^',
           '!',
           `wlan ${profile} ${id} ${ssid}`,
@@ -454,7 +468,7 @@ const BLUEPRINTS                             = [
         { value: 'sniffer', label: 'Sniffer — packet capture' },
       ] },
       { id: 'ssh', label: 'SSH access to the APs', control: 'toggle', default: true, hint: 'For troubleshooting; needs credentials' },
-      { id: 'syslog_host', label: 'AP syslog server', control: 'text', default: '10.0.0.20' },
+      { id: 'syslog_host', label: 'AP syslog server', control: 'text', default: '10.0.0.20', hint: 'IPv4; an IPv6 address is held back until the release is checked' },
       { id: 'syslog_level', label: 'Syslog level', control: 'select', default: 'informational', options: [
         { value: 'informational', label: 'Informational' },
         { value: 'warnings', label: 'Warnings' },
@@ -467,6 +481,11 @@ const BLUEPRINTS                             = [
       const name = str(values, 'profile_name', 'APJP').toUpperCase().replace(/\s+/g, '-');
       const mode = str(values, 'ap_mode', 'local');
       const ssh = bool(values, 'ssh', true);
+      const syslog = str(values, 'syslog_host', '');
+      // Whether the AP join profile takes an IPv6 syslog host depends on the release; it is not emitted until checked.
+      const syslogV6 = familyOf(syslog) === 6;
+      const findings            = [];
+      if (syslog && !isIp(syslog)) findings.push(error('network.wlc.bad-syslog', `The AP syslog server ${syslog} is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
 
       return {
         platform: PLATFORM,
@@ -476,6 +495,9 @@ const BLUEPRINTS                             = [
           '**Changing the AP mode reboots the access point.** Every client on it drops and reassociates elsewhere, if there is an elsewhere.',
           'The profile applies through a site tag. Creating it changes nothing until a tag carries it.',
           ...(ssh ? [`The AP management credentials are ${SECRET}. They are not generated here, and they should not match the controller's.`] : []),
+          ...(syslogV6
+            ? [`VERIFY: the AP syslog host ${syslog} is IPv6. Check that this 9800 release accepts an IPv6 address for syslog host in an AP join profile, then add \` syslog host ${syslog}\`; it is left out until then.`]
+            : []),
         ],
         before: ['show ap profile summary', `show ap profile name ${name} detailed`, 'show ap summary'],
         config: [
@@ -483,7 +505,7 @@ const BLUEPRINTS                             = [
           ' description',
           ...(ssh ? [' mgmtuser username admin password 0 ' + SECRET + ' secret 0 ' + SECRET, ' ssh'] : [' no ssh']),
           ...(bool(values, 'led_state', true) ? [' led'] : [' no led']),
-          ` syslog host ${str(values, 'syslog_host', '')}`,
+          ...(syslogV6 ? [] : [` syslog host ${syslog}`]),
           ` syslog level ${str(values, 'syslog_level', 'informational')}`,
           ...(bool(values, 'capwap_timers', false) ? [' capwap retransmit interval 5', ' capwap retransmit count 5'] : []),
           ' no shutdown',
@@ -492,6 +514,7 @@ const BLUEPRINTS                             = [
         ],
         verify: [`show ap profile name ${name} detailed`, 'show ap summary', 'show ap config general | include Mode|Join'],
         backout: [`no ap profile ${name}`],
+        findings,
       };
     },
   }),
@@ -503,7 +526,7 @@ const BLUEPRINTS                             = [
     group: 'Baseline',
     description: 'The RADIUS servers an 802.1X WLAN authenticates against, the server group, and change-of-authorisation so ISE can move a client mid-session.',
     inputs: [
-      { id: 'servers', label: 'RADIUS servers', control: 'text', default: '10.0.0.30, 10.0.0.31' },
+      { id: 'servers', label: 'RADIUS servers', control: 'text', default: '10.0.0.30, 10.0.0.31', hint: 'IPv4 or IPv6' },
       { id: 'group_name', label: 'Server group', control: 'text', default: 'ISE-GROUP' },
       { id: 'source_interface', label: 'Source interface', control: 'text', default: 'Vlan10' },
       { id: 'coa', label: 'Change of authorisation', control: 'toggle', default: true, hint: 'Lets ISE quarantine or re-authorise a client without disconnecting it' },
@@ -515,6 +538,12 @@ const BLUEPRINTS                             = [
       const group = str(values, 'group_name', 'ISE-GROUP').toUpperCase().replace(/\s+/g, '-');
       const coa = bool(values, 'coa', true);
       const findings            = [];
+      // Each server is addressed in its own family; the group sources IPv6 requests from the same SVI.
+      const anyV6 = servers.some((server) => familyOf(server) === 6);
+      const anyV4 = servers.some((server) => familyOf(server) !== 6) || !anyV6;
+      // A dynamic-author client by IPv6 address depends on the release: held back until checked.
+      const coaClients = servers.filter((server) => familyOf(server) !== 6);
+      const coaHeld = coa ? servers.filter((server) => familyOf(server) === 6) : [];
       if (servers.length < 2) {
         findings.push(
           warning('network.wlc.single-radius', 'One RADIUS server means every 802.1X SSID stops authenticating when it is patched.', { source: 'ArchToolKit' }),
@@ -529,13 +558,17 @@ const BLUEPRINTS                             = [
           `Replace every ${SECRET} with the shared secret from your vault. It must match what the controller is configured with on the RADIUS server.`,
           'Add the controller as a network device on ISE first, or every authentication fails with a silent reject.',
           ...(coa ? ['CoA needs the RADIUS server to reach the controller on UDP 1700. Check the firewall between them.'] : []),
+          ...(anyV6 ? ['The IPv6 servers are reached from the source interface’s IPv6 address, so it needs one, and the RADIUS server must list the controller by that address too.'] : []),
+          ...(coaHeld.length > 0
+            ? [`VERIFY: CoA from ${coaHeld.join(', ')} needs a dynamic-author client by IPv6 address. Check this 9800 release accepts one, then add \` client <address> server-key 0 ${SECRET}\`; it is left out until then.`]
+            : []),
         ],
         before: ['show aaa servers', 'show run aaa', 'show wireless client summary'],
         config: [
           'aaa new-model',
           ...servers.flatMap((server, i) => [
             `radius server RADIUS-${i + 1}`,
-            ` address ipv4 ${server} auth-port 1812 acct-port 1813`,
+            ` address ${familyOf(server) === 6 ? 'ipv6' : 'ipv4'} ${server} auth-port 1812 acct-port 1813`,
             ` key 0 ${SECRET}`,
             ' timeout 5',
             ' retransmit 3',
@@ -544,13 +577,14 @@ const BLUEPRINTS                             = [
           ]),
           `aaa group server radius ${group}`,
           ...servers.map((_, i) => ` server name RADIUS-${i + 1}`),
-          ` ip radius source-interface ${str(values, 'source_interface', '')}`,
+          ...(anyV4 ? [` ip radius source-interface ${str(values, 'source_interface', '')}`] : []),
+          ...(anyV6 ? [` ipv6 radius source-interface ${str(values, 'source_interface', '')}`] : []),
           ' deadtime 5',
           '!',
           `aaa authentication dot1x ${group} group ${group}`,
           `aaa authorization network ${group} group ${group}`,
           ...(bool(values, 'accounting', true) ? [`aaa accounting identity ${group} start-stop group ${group}`] : []),
-          ...(coa ? ['aaa server radius dynamic-author', ...servers.map((server) => ` client ${server} server-key 0 ${SECRET}`), ' auth-type any', '!'] : []),
+          ...(coa ? ['aaa server radius dynamic-author', ...coaClients.map((server) => ` client ${server} server-key 0 ${SECRET}`), ' auth-type any', '!'] : []),
           `radius-server dead-criteria time ${num(values, 'dead_criteria', 10)} tries 3`,
           'radius-server deadtime 5',
           '!',
@@ -630,22 +664,33 @@ const BLUEPRINTS                             = [
       { id: 'hostname', label: 'Hostname', control: 'text', default: 'wlc-01' },
       { id: 'country', label: 'Country code', control: 'text', default: 'GB', hint: 'Sets the legal channels and power. Wrong here is a regulatory problem' },
       { id: 'management_vlan', label: 'Wireless management VLAN', control: 'number', default: 10, min: 1, max: 4094 },
-      { id: 'management_address', label: 'Management address', control: 'text', default: '10.0.10.5/24' },
-      { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: '10.0.0.10, 10.0.0.11', hint: 'APs will not join a controller whose clock is wrong' },
-      { id: 'syslog_server', label: 'Syslog server', control: 'text', default: '10.0.0.20' },
+      { id: 'management_address', label: 'Management address', control: 'text', default: '10.0.10.5/24', hint: 'IPv4 or IPv6 with prefix' },
+      { id: 'management_ipv6', label: 'IPv6 management address (dual stack)', control: 'text', default: '', hint: 'Optional second address when the first is IPv4: 2001:db8:10::5/64' },
+      { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: '10.0.0.10, 10.0.0.11', hint: 'IPv4 or IPv6. APs will not join a controller whose clock is wrong' },
+      { id: 'syslog_server', label: 'Syslog server', control: 'text', default: '10.0.0.20', hint: 'IPv4 or IPv6' },
       { id: 'snmp_user', label: 'SNMPv3 user', control: 'text', default: 'monitor' },
       { id: 'netconf', label: 'Enable NETCONF for automation', control: 'toggle', default: true },
     ],
     change: (values                 )               => {
       const country = str(values, 'country', 'GB').toUpperCase();
       const vlan = num(values, 'management_vlan', 10);
-      const cidr = parseCidr(str(values, 'management_address', ''));
+      const first = parseCidrDual(str(values, 'management_address', ''));
+      const secondText = str(values, 'management_ipv6', '');
+      const second = secondText ? parseCidrDual(secondText) : null;
+      const cidr = first?.family === 4 ? first : null;
+      const v6 = [first, second].filter((c)                             => c?.family === 6);
       const ntp = listOf(str(values, 'ntp_servers', ''));
+      const syslog = str(values, 'syslog_server', '');
+      // IOS-XE: an IPv6 syslog host needs the ipv6 keyword; an NTP server takes either address as is.
+      const loggingHost = `logging host ${familyOf(syslog) === 6 ? `ipv6 ${syslog}` : syslog}`;
       const findings            = [];
       if (country.length !== 2) {
         findings.push(error('network.wlc.country-code', 'The country code must be the two-letter code for where the APs are. It decides the legal channels and power.', { source: 'ArchToolKit' }));
       }
-
+      if (!first) findings.push(error('network.wlc.bad-management-address', 'The management address is not a valid IPv4 or IPv6 address and prefix.', { source: 'ArchToolKit' }));
+      if (secondText && second?.family !== 6) {
+        findings.push(error('network.wlc.bad-management-ipv6', 'The IPv6 management address is not a valid IPv6 address and prefix.', { remediation: 'Write it as 2001:db8:10::5/64.', source: 'ArchToolKit' }));
+      }
       return {
         platform: PLATFORM,
         title: `Controller baseline for ${str(values, 'hostname', 'wlc')}`,
@@ -654,6 +699,11 @@ const BLUEPRINTS                             = [
           '**Changing the country code disables every radio until it is re-applied.** It is a maintenance-window change on a live controller.',
           'The clock matters more here than anywhere: an AP will not join a controller whose certificate looks invalid because the time is wrong.',
           `Replace every ${SECRET} with the real credential from your vault.`,
+          ...(v6.length > 0
+            ? [
+                'With an IPv6 address on the wireless management interface, APs can join over CAPWAP on IPv6. Which family an AP prefers is set in its AP join profile (CAPWAP preferred mode); an AP only joins over IPv6 if it has an IPv6 address itself and can reach this one.',
+              ]
+            : []),
         ],
         before: ['show wireless management interface', 'show wireless country configured', 'show ap summary', 'show ntp status'],
         config: [
@@ -667,12 +717,14 @@ const BLUEPRINTS                             = [
           `interface Vlan${vlan}`,
           ' description Wireless management',
           ...(cidr ? [` ip address ${cidr.address} ${netmask(cidr.prefix)}`] : []),
+          ...v6.map((c) => ` ipv6 address ${c.address}/${c.prefix}`),
+          ...(v6.length > 0 ? [' ipv6 enable'] : []),
           ' no shutdown',
           '!',
           `wireless management interface Vlan${vlan}`,
           '!',
           ...ntp.map((server) => `ntp server ${server}`),
-          `logging host ${str(values, 'syslog_server', '')}`,
+          loggingHost,
           'logging trap informational',
           'service timestamps log datetime msec localtime show-timezone',
           '!',
@@ -682,7 +734,7 @@ const BLUEPRINTS                             = [
           ...(bool(values, 'netconf', true) ? ['netconf-yang'] : []),
         ],
         verify: ['show wireless management interface', 'show wireless country configured', 'show ntp status', 'show ap summary', 'show logging | include Logging to'],
-        backout: [`no wireless management interface Vlan${vlan}`, ...ntp.map((server) => `no ntp server ${server}`), `no logging host ${str(values, 'syslog_server', '')}`, ...(bool(values, 'netconf', true) ? ['no netconf-yang'] : [])],
+        backout: [`no wireless management interface Vlan${vlan}`, ...ntp.map((server) => `no ntp server ${server}`), `no ${loggingHost}`, ...(bool(values, 'netconf', true) ? ['no netconf-yang'] : [])],
         findings,
       };
     },
@@ -696,8 +748,8 @@ const BLUEPRINTS                             = [
     description: 'Mobility peers so clients roam between controllers, and an anchor controller for guest traffic that terminates in a DMZ.',
     inputs: [
       { id: 'group_name', label: 'Mobility group', control: 'text', default: 'CAMPUS' },
-      { id: 'local_address', label: 'This controller’s mobility address', control: 'text', default: '10.0.10.5' },
-      { id: 'peers', label: 'Peers', control: 'textarea', default: '10.0.20.5 CAMPUS aabb.ccdd.eeff', hint: 'One per line: address group mac-address' },
+      { id: 'local_address', label: 'This controller’s mobility address', control: 'text', default: '10.0.10.5', hint: 'Its wireless management address, IPv4 or IPv6. Peers must be the same family' },
+      { id: 'peers', label: 'Peers', control: 'textarea', default: '10.0.20.5 CAMPUS aabb.ccdd.eeff', hint: 'One per line: address group mac-address — IPv4 or IPv6 address' },
       { id: 'anchor', label: 'Guest anchor', control: 'text', default: '', hint: 'The DMZ controller’s mobility address; empty for none' },
       { id: 'anchor_policy', label: 'Policy profile to anchor', control: 'text', default: 'PP-GUEST', showWhen: { input: 'anchor', notEquals: [''] } },
     ],
@@ -709,6 +761,33 @@ const BLUEPRINTS                             = [
         .filter((parts) => parts.length >= 2);
       const anchor = str(values, 'anchor', '');
       const policy = str(values, 'anchor_policy', 'PP-GUEST');
+      const local = str(values, 'local_address', '');
+      const localFamily = familyOf(local);
+      const findings            = [];
+      if (!isIp(local)) findings.push(error('network.wlc.bad-mobility-address', 'This controller’s mobility address is not a valid IPv4 or IPv6 address.', { source: 'ArchToolKit' }));
+      // Mobility tunnels run in the family of the wireless management interface: every peer, and the anchor, must match it.
+      for (const address of [...peers.map((parts) => parts[0] ?? ''), ...(anchor ? [anchor] : [])]) {
+        if (!isIp(address)) {
+          findings.push(error('network.wlc.bad-peer', `The mobility peer ${address} is not a valid IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
+        } else if (localFamily !== null && familyOf(address) !== localFamily) {
+          findings.push(
+            error('network.wlc.mobility-family', `The mobility peer ${address} is IPv${familyOf(address)} but this controller’s mobility address is IPv${localFamily}. A mobility tunnel is one family end to end.`, {
+              source: 'ArchToolKit',
+            }),
+          );
+        }
+      }
+      // A 9800 peer is keyed by its MAC address; without it the command is incomplete.
+      const noMac = peers.filter((parts) => !/^[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}$/i.test(parts[2] ?? ''));
+      if (noMac.length > 0) {
+        findings.push(
+          error('network.wlc.peer-mac', `A 9800 mobility peer needs its wireless management MAC address (aabb.ccdd.eeff): missing or malformed for ${noMac.map((parts) => parts[0]).join(', ')}.`, {
+            remediation: 'Read it with show wireless mobility summary on the peer.',
+            source: 'ArchToolKit',
+          }),
+        );
+      }
+      const v6 = localFamily === 6 || peers.some((parts) => familyOf(parts[0] ?? '') === 6);
 
       return {
         platform: PLATFORM,
@@ -718,19 +797,21 @@ const BLUEPRINTS                             = [
           'Every controller in the group needs the same group name and each other as peers, with matching MAC addresses. A one-sided peering shows as a tunnel that never comes up.',
           ...(anchor ? ['Guest anchoring tunnels guest traffic to the DMZ controller. Both ends need the same WLAN profile name and the same security settings, or clients associate and are dropped.'] : []),
           'Mobility tunnels use UDP 16666 and 16667. Check the path between the controllers permits them.',
+          ...(v6 ? ['VERIFY: mobility tunnels over IPv6 need a 9800 release that supports them on both controllers, and the wireless management interface of each must have the IPv6 address used here.'] : []),
         ],
         before: ['show wireless mobility summary', 'show wireless mobility peer ip <peer>', 'show wireless client summary'],
         config: [
           `wireless mobility group name ${group}`,
-          ...peers.map((parts) => `wireless mobility group member ip ${parts[0]} group ${parts[1] ?? group}${parts[2] ? ` public-ip ${parts[0]}` : ''}`),
+          ...peers.map((parts) => `wireless mobility group member mac-address ${parts[2] ?? '<REQUIRED>'} ip ${parts[0]} group ${parts[1] ?? group}`),
           '!',
           ...(anchor ? [`wireless profile policy ${policy}`, `  mobility anchor ${anchor} priority 1`, '!'] : []),
         ],
         verify: ['show wireless mobility summary', 'show wireless mobility peer ip ' + (peers[0]?.[0] ?? '<peer>'), ...(anchor ? [`show wireless profile policy detailed ${policy}`, 'show wireless client summary anchor'] : [])],
         backout: [
           ...(anchor ? [`wireless profile policy ${policy}`, `  no mobility anchor ${anchor}`, '!'] : []),
-          ...peers.map((parts) => `no wireless mobility group member ip ${parts[0]}`),
+          ...peers.map((parts) => `no wireless mobility group member mac-address ${parts[2] ?? '<REQUIRED>'}`),
         ],
+        findings,
       };
     },
   }),

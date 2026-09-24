@@ -12,22 +12,35 @@
  * Cloud NAT is emitted whenever a private subnet exists, because on Google a
  * subnet without a public address has no outbound path at all without it — the
  * default is no egress, which surprises people coming from AWS.
+ *
+ * Dual stack (`ipv6`) sets `stack_type = "IPV4_IPV6"` on each subnet, and
+ * Google allocates the IPv6 range: a public subnet takes an EXTERNAL (global)
+ * /64, a private one an INTERNAL (ULA) /64, which needs
+ * `enable_ula_internal_ipv6` on the network. A firewall rule holds ranges of one
+ * family only, so IPv6 sources get their own rule. Cloud NAT is IPv4.
  */
 
-import { info, warning,              } from '../core/findings.js';
+import { hasErrors, info, warning,              } from '../core/findings.js';
+import { byFamily } from '../core/ip.js';
 import { renderFile, str, num, bool, strings, raw,               } from './hcl.js';
 import {
+  checkFoundationAddresses,
   identifier,
   resourceName,
+  worldIngress,
                       
                         
 } from './foundation.js';
 
 export function emitGoogleFoundation(plan                )                   {
-  const findings            = [];
+  const findings            = checkFoundationAddresses(plan, 'google', 'A Google VPC subnet');
+  if (hasErrors(findings)) return { files: {}, findings };
   const blocks             = [];
   const base = resourceName(plan.name);
   const region = plan.region ?? 'us-central1';
+  const v6 = plan.ipv6 === true;
+  // An INTERNAL IPv6 subnet draws on the network's ULA range, which is off by default.
+  const internalV6 = v6 && plan.subnets.some((s) => !s.public);
 
   blocks.push({
     type: 'resource',
@@ -38,8 +51,18 @@ export function emitGoogleFoundation(plan                )                   {
       { name: 'name', value: str(`${base}-vpc`) },
       { name: 'auto_create_subnetworks', value: bool(false) },
       { name: 'routing_mode', value: str('REGIONAL') },
+      ...(internalV6 ? [{ name: 'enable_ula_internal_ipv6', value: bool(true) }] : []),
     ],
   });
+  if (v6 && (plan.ipv6Cidr || plan.subnets.some((s) => s.ipv6Cidr))) {
+    findings.push(
+      info(
+        'terraform.google.ipv6-allocated-by-google',
+        'Google allocates each dual-stack subnet\'s IPv6 /64, so the IPv6 ranges given were not used.',
+        { path: 'ipv6Cidr' },
+      ),
+    );
+  }
 
   for (const subnet of plan.subnets) {
     blocks.push({
@@ -52,23 +75,37 @@ export function emitGoogleFoundation(plan                )                   {
         { name: 'region', value: str(region) },
         // Lets instances without external addresses reach Google APIs.
         { name: 'private_ip_google_access', value: bool(true) },
+        ...(v6
+          ? [
+              { name: 'stack_type', value: str('IPV4_IPV6') },
+              // Google allocates the /64: global for a public subnet, ULA for a private one.
+              { name: 'ipv6_access_type', value: str(subnet.public ? 'EXTERNAL' : 'INTERNAL') },
+            ]
+          : []),
       ],
     });
   }
 
   const cidrs = plan.allowedIngressCidrs ?? [];
   const ports = plan.allowedTcpPorts ?? [];
-  if (cidrs.length > 0 && ports.length > 0) {
+  // One family per rule: Google rejects a rule that mixes IPv4 and IPv6 ranges.
+  const split = byFamily(cidrs);
+  const families                               = [
+    ['allow_ingress', `${base}-allow-ingress`, split.v4],
+    ['allow_ingress_ipv6', `${base}-allow-ingress-ipv6`, split.v6],
+  ];
+  for (const [label, ruleName, ranges] of families) {
+    if (ranges.length === 0 || ports.length === 0) continue;
     blocks.push({
       type: 'resource',
-      labels: ['google_compute_firewall', 'allow_ingress'],
+      labels: ['google_compute_firewall', label],
       attributes: [
-        { name: 'name', value: str(`${base}-allow-ingress`) },
+        { name: 'name', value: str(ruleName) },
         { name: 'network', value: raw('google_compute_network.this.name') },
         { name: 'direction', value: str('INGRESS') },
         { name: 'priority', value: num(1000) },
         // source_ranges is ingress-only; egress rules use destination_ranges.
-        { name: 'source_ranges', value: strings([...cidrs]) },
+        { name: 'source_ranges', value: strings(ranges) },
       ],
       blocks: [
         {
@@ -147,11 +184,12 @@ export function emitGoogleFoundation(plan                )                   {
     },
   ];
 
-  if (cidrs.includes('0.0.0.0/0')) {
+  const world = worldIngress(plan);
+  if (world.length > 0) {
     findings.push(
       warning(
         'terraform.google.ingress-from-anywhere',
-        'A firewall rule allows 0.0.0.0/0.',
+        `A firewall rule allows ${world.join(' and ')}.`,
         { path: 'allowedIngressCidrs', remediation: 'Narrow it to the networks that need access.' },
       ),
     );
@@ -162,6 +200,15 @@ export function emitGoogleFoundation(plan                )                   {
         'terraform.google.nat-emitted',
         'Cloud NAT was generated because a private subnet exists; without it those instances have no outbound connectivity.',
         { source: 'google_compute_router_nat' },
+      ),
+    );
+  }
+  if (internalV6) {
+    findings.push(
+      info(
+        'terraform.google.internal-ipv6-no-egress',
+        'Private subnets get INTERNAL (ULA) IPv6, which reaches only the VPC and its peers; Cloud NAT here translates IPv4 only.',
+        { path: 'subnets[].public' },
       ),
     );
   }

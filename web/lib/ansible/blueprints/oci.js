@@ -13,6 +13,9 @@ import { str } from '../../kit/blueprint.js';
 import { playbookFiles } from '../from-plays.js';
 import { AWS_REGIONS, AZURE_LOCATIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from './regions.js';
 import { HOSTS_INPUT } from './common.js';
+import { error, info, warning,              } from '../../core/findings.js';
+import { familyOf, isIp } from '../../core/ip.js';
+import { dualStackInput, ipv4Range, isOn, listOf, slash64, withAnsibleUtils } from './ipv6.js';
 
 const BLUEPRINTS                       = [
   {
@@ -160,11 +163,24 @@ const BLUEPRINTS                       = [
             { id: "vcn_cidr", label: "VCN CIDR", control: 'text', default: "10.50.0.0/16", hint: "VCN CIDR block" },
             { id: "vcn_display_name", label: "VCN display name", control: 'text', default: "app-vcn", hint: "VCN name" },
             { id: "public_subnet_cidr", label: "Public subnet CIDR", control: 'text', default: "10.50.1.0/24", hint: "Public subnet" },
-            { id: "private_subnet_cidr", label: "Private subnet CIDR", control: 'text', default: "10.50.2.0/24", hint: "Private subnet" }
+            { id: "private_subnet_cidr", label: "Private subnet CIDR", control: 'text', default: "10.50.2.0/24", hint: "Private subnet" },
+            dualStackInput("Oracle allocates a /56 to the VCN; each subnet takes a /64, and ::/0 routes to the gateway")
           ],
     emits: [],
-    build: (values                 , name        ) =>
-      playbookFiles(
+    build: (values                 , name        ) => {
+      const code = 'ansible.oci.vcn_baseline';
+      const v6 = isOn(values.enable_ipv6);
+      const findings            = [
+        ...ipv4Range(values.vcn_cidr, 'vcn_cidr', 'The VCN CIDR', code),
+        ...ipv4Range(values.public_subnet_cidr, 'public_subnet_cidr', 'The public subnet CIDR', code),
+        ...ipv4Range(values.private_subnet_cidr, 'private_subnet_cidr', 'The private subnet CIDR', code),
+      ];
+      if (v6) {
+        findings.push(info(`${code}.private-ipv6-no-egress`, 'The private subnet gets IPv6 addresses but no route out; OCI\'s NAT gateway translates IPv4 only.', { path: 'enable_ipv6' }));
+      }
+      // The n-th /64 of the VCN's Oracle-allocated /56, as oci_network_vcn registers it.
+      const subnetV6 = (n        ) => (v6 ? { ipv6_cidr_blocks: [slash64('vcn.data.ipv6_cidr_blocks[0]', n)] } : {});
+      const out = playbookFiles(
         ((vals                , hosts        ) => {
             return [
               {
@@ -185,7 +201,9 @@ const BLUEPRINTS                       = [
                     "oracle.oci.oci_network_vcn": {
                       compartment_id: "{{ compartment_ocid }}",
                       cidr_block: "{{ vcn_cidr }}",
-                      display_name: "{{ vcn_display_name }}"
+                      display_name: "{{ vcn_display_name }}",
+                      // Oracle allocates a global /56; subnets take /64s of it.
+                      ...(v6 ? { is_ipv6_enabled: true } : {})
                     },
                     register: "vcn"
                   },
@@ -205,6 +223,7 @@ const BLUEPRINTS                       = [
                       compartment_id: "{{ compartment_ocid }}",
                       vcn_id: "{{ vcn.data.id }}",
                       cidr_block: "{{ public_subnet_cidr }}",
+                      ...subnetV6(0),
                       display_name: "{{ vcn_display_name }}-public",
                       prohibit_public_ip_on_vnic: false
                     },
@@ -216,6 +235,7 @@ const BLUEPRINTS                       = [
                       compartment_id: "{{ compartment_ocid }}",
                       vcn_id: "{{ vcn.data.id }}",
                       cidr_block: "{{ private_subnet_cidr }}",
+                      ...subnetV6(1),
                       display_name: "{{ vcn_display_name }}-private",
                       prohibit_public_ip_on_vnic: true
                     },
@@ -231,7 +251,10 @@ const BLUEPRINTS                       = [
                         {
                           cidr_block: "0.0.0.0/0",
                           network_entity_id: "{{ igw.data.id }}"
-                        }
+                        },
+                        ...(v6
+                          ? [{ destination: "::/0", destination_type: "CIDR_BLOCK", network_entity_id: "{{ igw.data.id }}" }]
+                          : [])
                       ]
                     },
                     register: "public_rt"
@@ -249,7 +272,10 @@ const BLUEPRINTS                       = [
           })(values, str(values, 'hosts', 'all')),
         name,
         'Network – VCN + subnets + IGW',
-      ),
+      );
+      const built = { ...out, findings: [...findings, ...out.findings] };
+      return v6 ? withAnsibleUtils(built) : built;
+    },
   },
   {
     id: 'load_balancer',
@@ -272,8 +298,24 @@ const BLUEPRINTS                       = [
             }
           ],
     emits: [],
-    build: (values                 , name        ) =>
-      playbookFiles(
+    build: (values                 , name        ) => {
+      const code = 'ansible.oci.load_balancer';
+      const findings            = [];
+      const v4           = [];
+      const v6           = [];
+      for (const ip of listOf(values.backend_ip)) {
+        if (!isIp(ip)) findings.push(error(`${code}.invalid-backend`, `"${ip}" is not an IPv4 or IPv6 address.`, { path: 'backend_ip' }));
+        else (familyOf(ip) === 6 ? v6 : v4).push(ip);
+      }
+      if (v6.length > 0) {
+        // Uncertain support is not emitted: an IPv6 backend needs an IPv6-mode load balancer.
+        findings.push(
+          warning(`${code}.ipv6-backends-not-generated`, `VERIFY: IPv6 backends (${v6.join(', ')}) were not generated. They need the load balancer created with ip_mode IPV6 on dual-stack subnets; confirm oracle.oci.oci_loadbalancer_load_balancer and your region support it, then add them.`, {
+            path: 'backend_ip',
+          }),
+        );
+      }
+      const out = playbookFiles(
         ((vals                , hosts        ) => {
             return [
               {
@@ -286,7 +328,7 @@ const BLUEPRINTS                       = [
                   subnet1_ocid: vals.subnet1_ocid,
                   subnet2_ocid: vals.subnet2_ocid,
                   lb_display_name: vals.lb_display_name,
-                  backend_ip_list: vals.backend_ip.split(",").map((s        ) => s.trim()),
+                  backend_ip_list: v4,
                   port: Number(vals.port)
                 },
                 tasks: [
@@ -343,7 +385,9 @@ const BLUEPRINTS                       = [
           })(values, str(values, 'hosts', 'all')),
         name,
         'Load Balancer – Public HTTP',
-      ),
+      );
+      return { ...out, findings: [...findings, ...out.findings] };
+    },
   },
   {
     id: 'autonomous_database',

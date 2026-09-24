@@ -24,6 +24,7 @@ import { apiStep, importBundle, importMd, kubeStep, manualStep, verifyFor, workf
 import { packageNameOf, prologue, toPackage, type AutomationPackage } from '../vro/to-package.ts';
 import type { VroActionDef } from '../vro/core.ts';
 import type { VroConfigAttribute } from '../../kit/vro-package.ts';
+import { familyOf, overlapsAny } from '../../core/ip.ts';
 
 const PLATFORM = 'vcf-automation' as const;
 const SRC = 'ArchToolKit';
@@ -393,7 +394,15 @@ interface WorkflowTask {
 }
 
 /** Basic authorization from two settings, for a REST API that takes it. */
-const basicFrom = (user: string, password: string) => `var auth = { "Authorization": "Basic " + core.base64(String(setting(${q(user)})) + ":" + String(setting(${q(password)}))) };`;
+/**
+ * An IPv6 address in full form (eight groups of four), or null when it is not
+ * one: to validate the input and to compare it with what the DNS API lists,
+ * which may compress it differently. Plain ES5 for Orchestrator.
+ */
+const V6_FULL =
+  'function v6Full(s) { var p = String(s).toLowerCase().split("::"); if (p.length > 2) return null; var h = p[0] ? p[0].split(":") : []; var t = p.length > 1 && p[1] ? p[1].split(":") : []; if (p.length === 1 ? h.length !== 8 : h.length + t.length > 7) return null; var g = h.slice(); for (var k = h.length + t.length; k < 8; k++) g.push("0"); g = g.concat(t); for (var i = 0; i < 8; i++) { if (!/^[0-9a-f]{1,4}$/.test(g[i])) return null; g[i] = ("000" + g[i]).slice(-4); } return g.join(":"); }';
+
+const basicFrom = (user: string, password: string) =>`var auth = { "Authorization": "Basic " + core.base64(String(setting(${q(user)})) + ":" + String(setting(${q(password)}))) };`;
 
 const WORKFLOW_TASKS: Readonly<Record<string, WorkflowTask>> = {
   'ad-computer': {
@@ -463,36 +472,40 @@ const WORKFLOW_TASKS: Readonly<Record<string, WorkflowTask>> = {
   },
   'dns-record': {
     label: 'Register DNS record',
-    about: 'Creates an A record (and the PTR if the DNS API does it for you) through the DNS or IPAM REST API, so a machine is resolvable before anybody tries to reach it.',
+    about: 'Creates an A record for an IPv4 address or an AAAA record for an IPv6 one (and the PTR if the DNS API does it for you) through the DNS or IPAM REST API, so a machine is resolvable before anybody tries to reach it.',
     inputs: [
       { name: 'hostname', type: 'string', description: 'Short host name.' },
       { name: 'zone', type: 'string', description: 'DNS zone, e.g. example.com.' },
-      { name: 'ipAddress', type: 'string', description: 'IPv4 address for the A record.' },
+      { name: 'ipAddress', type: 'string', description: 'IPv4 address (A record) or IPv6 address (AAAA record).' },
     ],
     outputs: [{ name: 'fqdn', type: 'string', description: 'The name that was registered.' }],
     settings: [
       { key: 'dnsRestHost', type: 'REST:RESTHost', description: 'The DNS or IPAM API, added once with "Add a REST host". Its authentication lives on the host object, not in this script.', example: '(a REST host in the inventory)' },
       { key: 'recordPath', type: 'string', description: 'Path the A record is POSTed to. Infoblox WAPI, for example, is /wapi/v2.12/record:a.', example: '/wapi/v2.12/record:a' },
+      { key: 'recordPathV6', type: 'string', description: 'Path the AAAA record is POSTed to, for an IPv6 address. Infoblox WAPI, for example, is /wapi/v2.12/record:aaaa.', example: '/wapi/v2.12/record:aaaa' },
       { key: 'allowedZones', type: 'string', description: 'Comma-separated zones this workflow may write to.', example: 'example.com, lab.example.com' },
     ],
     act: [
       'var zones = setting("allowedZones").split(",").map(function (z) { return z.trim().toLowerCase(); });',
       'if (zones.indexOf(zone.toLowerCase()) < 0) throw "Zone " + zone + " is not in allowedZones — refusing.";',
-      'if (!/^\\d{1,3}(\\.\\d{1,3}){3}$/.test(ipAddress)) throw "Not an IPv4 address: " + ipAddress;',
+      V6_FULL,
+      'var v6 = String(ipAddress).indexOf(":") >= 0;',
+      'if (v6 ? !v6Full(ipAddress) : !/^\\d{1,3}(\\.\\d{1,3}){3}$/.test(ipAddress)) throw "Not an IPv4 or IPv6 address: " + ipAddress;',
       'fqdn = hostname + "." + zone;',
       '',
       'var host = RESTHostManager.createTransientHostFrom(setting("dnsRestHost"));',
       'host.operationTimeout = TIMEOUT_SECONDS;',
-      'var body = JSON.stringify({ name: fqdn, ipv4addr: ipAddress });',
+      '// Infoblox WAPI: record:a takes ipv4addr, record:aaaa takes ipv6addr.',
+      'var body = JSON.stringify(v6 ? { name: fqdn, ipv6addr: ipAddress } : { name: fqdn, ipv4addr: ipAddress });',
       'checkDeadline();',
-      'var request = host.createRequest("POST", setting("recordPath"), body);',
+      'var request = host.createRequest("POST", setting(v6 ? "recordPathV6" : "recordPath"), body);',
       'request.contentType = "application/json";',
       'var response = request.execute();',
       'if (response.statusCode >= 300) throw "DNS API returned " + response.statusCode + ": " + response.contentAsString;',
       'System.log("Registered " + fqdn + " -> " + ipAddress);',
     ],
     wouldDo: '"DRY RUN: would register " + hostname + "." + zone + " -> " + ipAddress',
-    undo: 'Delete the A record (and PTR) through the same API. A stale record is how the next machine with that IP gets the wrong name.',
+    undo: 'Delete the A or AAAA record (and PTR) through the same API. A stale record is how the next machine with that IP gets the wrong name.',
     scope: 'Records in the zones listed in the configuration element',
     pkg: {
       settings: [
@@ -501,6 +514,8 @@ const WORKFLOW_TASKS: Readonly<Record<string, WorkflowTask>> = {
         { name: 'dnsPassword', type: 'SecureString', description: 'Its password (sent as Basic authorization)' },
         { name: 'lookupPath', type: 'string', value: '/wapi/v2.12/record:a?name={name}', description: 'GET path listing the A records of a name, {name} replaced; answers a JSON array (Infoblox WAPI shown — VERIFY yours)' },
         { name: 'recordPath', type: 'string', value: '/wapi/v2.12/record:a', description: 'POST path creating an A record from {name, ipv4addr} (Infoblox WAPI shown — VERIFY yours)' },
+        { name: 'lookupPathV6', type: 'string', value: '/wapi/v2.12/record:aaaa?name={name}', description: 'GET path listing the AAAA records of a name, for an IPv6 address (Infoblox WAPI shown — VERIFY yours)' },
+        { name: 'recordPathV6', type: 'string', value: '/wapi/v2.12/record:aaaa', description: 'POST path creating an AAAA record from {name, ipv6addr} (Infoblox WAPI shown — VERIFY yours)' },
         { name: 'allowedZones', type: 'string', value: '', description: 'Comma-separated zones this workflow may write to, e.g. example.com, lab.example.com' },
       ],
       body: [
@@ -508,20 +523,25 @@ const WORKFLOW_TASKS: Readonly<Record<string, WorkflowTask>> = {
         'var zoneOk = false;',
         'for (var z = 0; z < zones.length; z++) { if (zones[z].replace(/^\\s+|\\s+$/g, "") === String(zone).toLowerCase()) zoneOk = true; }',
         'if (!zoneOk) throw new Error("Zone " + zone + " is not in allowedZones; refusing.");',
-        'if (!/^\\d{1,3}(\\.\\d{1,3}){3}$/.test(String(ipAddress))) throw new Error("Not an IPv4 address: " + ipAddress);',
+        V6_FULL,
+        '// An IPv6 address is an AAAA record (ipv6addr), an IPv4 one an A record (ipv4addr).',
+        'var v6 = String(ipAddress).indexOf(":") >= 0;',
+        'if (v6 ? !v6Full(ipAddress) : !/^\\d{1,3}(\\.\\d{1,3}){3}$/.test(String(ipAddress))) throw new Error("Not an IPv4 or IPv6 address: " + ipAddress);',
+        'var kind = v6 ? "AAAA" : "A";',
         'fqdn = hostname + "." + zone;',
         'var base = String(setting("dnsBaseUrl")).replace(/\\/+$/, "");',
         basicFrom('dnsUsername', 'dnsPassword'),
-        'var found = core.http("GET", base + String(setting("lookupPath")).split("{name}").join(encodeURIComponent(fqdn)), auth, null, SAFE).body;',
+        'var found = core.http("GET", base + String(setting(v6 ? "lookupPathV6" : "lookupPath")).split("{name}").join(encodeURIComponent(fqdn)), auth, null, SAFE).body;',
         'var records = Object.prototype.toString.call(found) === "[object Array]" ? found : (found && found.result ? found.result : []);',
         'if (records.length > 0) {',
         '  var same = false;',
-        '  for (var r = 0; r < records.length; r++) { if (String(records[r].ipv4addr) === String(ipAddress)) same = true; }',
-        '  if (!same) throw new Error(fqdn + " already resolves to another address; refusing to add a second A record. Correct it by hand.");',
+        '  // IPv6 is compared in full form: the API may list it compressed differently.',
+        '  for (var r = 0; r < records.length; r++) { if (v6 ? v6Full(records[r].ipv6addr) === v6Full(ipAddress) : String(records[r].ipv4addr) === String(ipAddress)) same = true; }',
+        '  if (!same) throw new Error(fqdn + " already resolves to another address; refusing to add a second " + kind + " record. Correct it by hand.");',
         '  System.log("Exists, left as it is: " + fqdn + " -> " + ipAddress);',
         '} else {',
         '  checkDeadline();',
-        '  core.act(ctx, "register " + fqdn + " -> " + ipAddress, function () { return core.http("POST", base + String(setting("recordPath")), auth, { name: fqdn, ipv4addr: String(ipAddress) }, SAFE); });',
+        '  core.act(ctx, "register " + kind + " " + fqdn + " -> " + ipAddress, function () { return core.http("POST", base + String(setting(v6 ? "recordPathV6" : "recordPath")), auth, v6 ? { name: fqdn, ipv6addr: String(ipAddress) } : { name: fqdn, ipv4addr: String(ipAddress) }, SAFE); });',
         '}',
       ],
     },
@@ -787,9 +807,9 @@ const CUSTOM_TYPES: Readonly<Record<string, CustomType>> = {
     properties: {
       hostname: { type: 'string', title: 'Host name', example: 'app01' },
       zone: { type: 'string', title: 'Zone', example: 'example.com' },
-      ipAddress: { type: 'string', title: 'IPv4 address', example: '10.0.10.21' },
+      ipAddress: { type: 'string', title: 'IPv4 or IPv6 address', example: '10.0.10.21' },
     },
-    what: 'DNS A records in the allowed zones',
+    what: 'DNS A and AAAA records in the allowed zones',
     deleteMeans: 'A deleted record can be recreated, but anything that cached the old answer keeps it until the TTL runs out.',
   },
   'Custom.BackupJob': {
@@ -1147,7 +1167,7 @@ export const VCF_AUTOMATION_EXTEND: readonly AutomationBlueprint[] = [
             verify: [
               ...verifyFor(imported),
               ...(taskId === 'ad-computer' ? ['The Active Directory plugin calls (ActiveDirectory.searchExactMatch, OU.createComputerAD) are as the plugin library workflows use them; VERIFY them against the plugin on your Orchestrator.'] : []),
-              ...(taskId === 'dns-record' ? ['The DNS paths default to the Infoblox WAPI (GET record:a?name=, POST record:a {name, ipv4addr}); VERIFY the WAPI version your grid runs, or set lookupPath and recordPath for your DNS API.'] : []),
+              ...(taskId === 'dns-record' ? ['The DNS paths default to the Infoblox WAPI (GET record:a?name=, POST record:a {name, ipv4addr}; for an IPv6 address GET record:aaaa?name=, POST record:aaaa {name, ipv6addr}); VERIFY the WAPI version your grid runs, or set lookupPath/recordPath and lookupPathV6/recordPathV6 for your DNS API.'] : []),
               ...(taskId === 'backup-job' ? ['listPath and addPath are placeholders for a backup product REST API; VERIFY both against your product’s API reference before running the workflow.'] : []),
               'The package reads its settings from the configuration element in its own folder (see step 3), not from the path set on the page, which the plain workflow keeps using.',
             ],
@@ -2916,8 +2936,8 @@ core.notify(settings.webhook, summary);`,
       { id: 'worker_replicas', label: 'Workers per pool', control: 'number', default: 3, min: 0, max: 150 },
       { id: 'worker_pools', label: 'Worker pools', control: 'text', default: 'np-general', hint: 'Comma-separated; each gets the class and count above' },
       { id: 'storage_class', label: 'Storage class', control: 'text', default: 'vsan-default-storage-policy' },
-      { id: 'pod_cidr', label: 'Pod CIDR', control: 'text', default: '192.168.0.0/16' },
-      { id: 'service_cidr', label: 'Service CIDR', control: 'text', default: '10.96.0.0/12' },
+      { id: 'pod_cidr', label: 'Pod CIDR', control: 'text', default: '192.168.0.0/16', hint: 'IPv4: VKS pod networks are not dual-stack' },
+      { id: 'service_cidr', label: 'Service CIDR', control: 'text', default: '10.96.0.0/12', hint: 'IPv4: VKS service networks are not dual-stack' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
       const clusterName = str(values, 'cluster_name', 'cluster').toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -2973,6 +2993,25 @@ core.notify(settings.webhook, summary);`,
             source: SRC,
           }),
         );
+      }
+      // Pod and service networks: one IPv4 block each. A second (IPv6) block in
+      // cidrBlocks is how Cluster API asks for dual-stack, which VKS clusters on
+      // a Supervisor do not offer; the cluster would be refused or come up broken.
+      for (const [what, value] of [['Pod', podCidr], ['Service', serviceCidr]] as const) {
+        const blocks = listOf(value);
+        if (blocks.some((b) => familyOf(b) === 6)) {
+          findings.push(
+            error('vcfa.vks.ipv6', `${what} CIDR ${value}: VKS clusters on vSphere Supervisor do not support IPv6 or dual-stack pod and service networks.`, {
+              remediation: 'Use one IPv4 block. VERIFY: IPv6 and dual-stack in the release notes of your VKS version and its Antrea before planning around them.',
+              source: SRC,
+            }),
+          );
+        } else if (blocks.length !== 1 || familyOf(blocks[0]!) !== 4 || !blocks[0]!.includes('/')) {
+          findings.push(error('vcfa.vks.bad-cidr', `${what} CIDR "${value}" is not one IPv4 CIDR.`, { source: SRC }));
+        }
+      }
+      if (familyOf(podCidr) === 4 && familyOf(serviceCidr) === 4 && overlapsAny(podCidr, serviceCidr)) {
+        findings.push(error('vcfa.vks.cidr-overlap', `The pod CIDR ${podCidr} overlaps the service CIDR ${serviceCidr}.`, { remediation: 'Pods and services need separate ranges, and neither may overlap the Supervisor workload network or anything the pods must reach.', source: SRC }));
       }
 
       const variables = [

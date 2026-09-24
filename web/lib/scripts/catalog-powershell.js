@@ -867,9 +867,9 @@ export const POWERSHELL_CATALOG                          = [
     {
       name: 'New-NetFirewallRule',
       task: 'add a firewall rule',
-      syntax: 'New-NetFirewallRule -DisplayName "App 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -RemoteAddress 10.0.0.0/8 -Action Allow',
+      syntax: 'New-NetFirewallRule -DisplayName "App 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -RemoteAddress 10.0.0.0/8, 2001:db8::/32 -Action Allow',
       effect: 'changes',
-      note: 'Without -RemoteAddress the rule is open to everything that can reach the machine. Scope it, and use -Profile to say which network profiles it applies to.',
+      note: 'Without -RemoteAddress the rule is open to everything that can reach the machine, over IPv4 and IPv6. Scope it — one rule takes networks of both families — and use -Profile to say which network profiles it applies to.',
     },
     {
       name: 'Get-Clipboard',
@@ -905,11 +905,27 @@ export const POWERSHELL_CATALOG                          = [
       availability: 'Windows only',
     },
     {
+      name: 'Resolve-DnsName -Type AAAA',
+      task: 'look up the IPv6 address of a name',
+      syntax: 'Resolve-DnsName -Name www.example.com -Type AAAA -Server 2001:4860:4860::8888 -DnsOnly',
+      effect: 'read',
+      note: 'A dual-stack client tries the AAAA answer first. If a name works from one machine and hangs for twenty seconds from another, check whether it has an AAAA record pointing somewhere that does not answer.',
+      availability: 'Windows only',
+    },
+    {
       name: 'Get-NetIPAddress',
       task: 'list IP addresses',
       syntax: 'Get-NetIPAddress -AddressFamily IPv4 | Where-Object PrefixOrigin -ne WellKnown | Select-Object InterfaceAlias, IPAddress, PrefixLength',
       effect: 'read',
       note: 'PrefixOrigin says whether an address came from DHCP or was set by hand, which is the thing you are usually trying to establish.',
+      related: ['ps.get-netipaddress-addressfamily-ipv6'],
+    },
+    {
+      name: 'Get-NetIPAddress -AddressFamily IPv6',
+      task: 'list IPv6 addresses and where each one came from',
+      syntax: "Get-NetIPAddress -AddressFamily IPv6 | Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' } | Select-Object InterfaceAlias, IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin",
+      effect: 'read',
+      note: 'PrefixOrigin RouterAdvertisement with SuffixOrigin Random is a temporary privacy address that changes daily; the stable one has SuffixOrigin Link or Manual. Register and allow-list the stable one, never the temporary one.',
     },
     {
       name: 'Get-NetAdapter',
@@ -924,6 +940,13 @@ export const POWERSHELL_CATALOG                          = [
       syntax: 'Get-NetRoute -AddressFamily IPv4 | Sort-Object RouteMetric | Select-Object -First 20',
       effect: 'read',
       note: 'Find-NetRoute -RemoteIPAddress answers "which interface would this actually go out of", which is the question when a machine has several.',
+    },
+    {
+      name: 'Get-NetRoute -AddressFamily IPv6',
+      task: 'show the IPv6 default route and where it came from',
+      syntax: 'Get-NetRoute -AddressFamily IPv6 -DestinationPrefix ::/0 | Select-Object InterfaceAlias, NextHop, RouteMetric, Protocol',
+      effect: 'read',
+      note: 'The next hop is a fe80:: link-local address, and that is correct — IPv6 routers are reached by link-local. Protocol RouterAdvertisement means the router handed it out; no ::/0 route at all means IPv6 only works on the local subnet.',
     },
     {
       name: 'Get-NetTCPConnection',
@@ -962,6 +985,14 @@ export const POWERSHELL_CATALOG                          = [
       module: 'DnsServer',
       effect: 'read',
       note: 'A record with no timestamp is static, and static records never scavenge. That is why a zone with scavenging on still fills up with stale entries.',
+    },
+    {
+      name: 'Get-DnsServerResourceRecord -RRType AAAA',
+      task: 'read IPv6 (AAAA) DNS records from a server',
+      syntax: 'Get-DnsServerResourceRecord -ComputerName dc01 -ZoneName example.com -RRType AAAA | Select-Object HostName, Timestamp, @{ n = "Address"; e = { $_.RecordData.IPv6Address } }',
+      module: 'DnsServer',
+      effect: 'read',
+      note: 'Reports that only ask for -RRType A never see these, so stale AAAA records outlive the machines they pointed at — and dual-stack clients try them first.',
     },
     {
       name: 'Get-DhcpServerv4Scope',

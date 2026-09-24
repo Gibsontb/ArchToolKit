@@ -22,6 +22,8 @@ import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { splunkBlueprint, type SplunkBlueprint } from '../from-app.ts';
 import { defaultMeta, listOf, splunkName, type SplunkApp } from '../splunk.ts';
+import { splitHostPort } from '../../core/ip.ts';
+import { acceptFromOf, CONNECT_IP_VERSION, connectFindings, LISTEN_ON_IPV6, serverListOf } from './forwarder.ts';
 
 const TIER = 'heavy_forwarder' as const;
 
@@ -190,6 +192,7 @@ export const HEAVY_FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
       { id: 'hec_url', label: 'HEC URL', control: 'text', default: 'https://splunk-hec.corp.example.com:8088', hint: 'The indexers’ HEC, through a load balancer', showWhen: { input: 'collector', equals: ['sc4s'] } },
       { id: 'tls_verify', label: 'Verify the HEC certificate', control: 'toggle', default: true, showWhen: { input: 'collector', equals: ['sc4s'] } },
       { id: 'tls_listener', label: 'TLS syslog listener on 6514', control: 'toggle', default: true, showWhen: { input: 'collector', equals: ['sc4s'] } },
+      { id: 'ipv6', label: 'Listen on IPv6 too (dual-stack)', control: 'toggle', default: false, hint: 'SC4S_IPV6_ENABLE; rsyslog listens on both families already', showWhen: { input: 'collector', equals: ['sc4s'] } },
       { id: 'sources', label: 'Dedicated ports', control: 'textarea', default: 'cisco_asa | udp | 5005 | cisco:asa | netfw\npan_panos | tcp | 5010 | pan:log | netfw\nfortinet_fortios | udp | 5015 | fortigate_log | netfw', hint: 'vendor_product | udp/tcp/tls/rfc6587 | port | sourcetype | index — the last two are used by rsyslog; SC4S decides them itself' },
       { id: 'overrides', label: 'Index overrides (splunk_metadata.csv)', control: 'textarea', default: 'pan_panos_threat | netids', hint: 'SC4S key | index', showWhen: { input: 'collector', equals: ['sc4s'] } },
       { id: 'peak_eps', label: 'Peak events per second, all sources', control: 'number', default: 3000, min: 1, max: 10000000 },
@@ -290,6 +293,14 @@ export const HEAVY_FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
                 '# server.pem (PEM, key without a passphrase); extra CAs go in trusted.pem.',
                 'SC4S_SOURCE_TLS_ENABLE=yes',
                 'SC4S_LISTEN_DEFAULT_TLS_PORT=6514',
+                '',
+              ]
+            : []),
+          ...(bool(values, 'ipv6', false)
+            ? [
+                '# Dual-stack: every listener (the defaults and the dedicated ports) on IPv6',
+                '# as well as IPv4. The host (and podman/docker host networking) needs IPv6.',
+                'SC4S_IPV6_ENABLE=yes',
                 '',
               ]
             : []),
@@ -634,8 +645,9 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_hf_routing' },
       { id: 'default_group', label: 'Default output group', control: 'text', default: 'primary_indexers' },
-      { id: 'groups', label: 'Indexer groups', control: 'textarea', default: 'primary_indexers | idx1.corp.example.com:9997, idx2.corp.example.com:9997\nsoc_siem | soc-idx.partner.example.com:9997', hint: 'name | host:port, host:port' },
-      { id: 'syslog_groups', label: 'Syslog receivers', control: 'textarea', default: 'legacy_siem | siem.corp.example.com:514 | tcp', hint: 'name | host:port | tcp/udp' },
+      { id: 'groups', label: 'Indexer groups', control: 'textarea', default: 'primary_indexers | idx1.corp.example.com:9997, idx2.corp.example.com:9997\nsoc_siem | soc-idx.partner.example.com:9997', hint: 'name | host:port, [IPv6]:port' },
+      { id: 'syslog_groups', label: 'Syslog receivers', control: 'textarea', default: 'legacy_siem | siem.corp.example.com:514 | tcp', hint: 'name | host:port or [IPv6]:port | tcp/udp' },
+      { id: 'ip_version', label: 'Connect using', control: 'select', default: 'auto', options: CONNECT_IP_VERSION, hint: 'connectUsingIpVersion in server.conf [general]; set to 4-first by itself when a server is an IPv6 address' },
       { id: 'rules', label: 'Rules', control: 'textarea', default: 'sourcetype:pan:log | ,TRAFFIC,start, | drop |\nsourcetype:pan:log | ,THREAT, | copy | soc_siem\nhost:dmz-* | . | syslog | legacy_siem\nsourcetype:linux_secure | sshd\\[\\d+\\] | clone | linux_secure:sshd', hint: 'sourcetype:X, host:X or source:X | regex | drop / route / copy / syslog / clone | target' },
       { id: 'index_locally', label: 'Also index on this forwarder', control: 'toggle', default: false },
       { id: 'use_ack', label: 'Indexer acknowledgement (useACK)', control: 'toggle', default: true },
@@ -664,14 +676,25 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
         findings.push(warning('splunk.routing-plaintext', 'Without TLS, everything this forwarder sends to the indexer groups crosses the network in clear — including the copies sent to another organisation.', { source: 'ArchToolKit' }));
       }
 
+      // Every server host:port, IPv6 as [address]:port; which families are
+      // literal decides connectUsingIpVersion.
+      const families = new Set<4 | 6>();
       const groups = rows(str(values, 'groups', '')).map((line) => {
         const [name = '', servers = ''] = cols(line);
-        return { name: splunkName(name, ''), servers: listOf(servers) };
+        const list = serverListOf(listOf(servers), `Group ${name}`, 'splunk.routing');
+        findings.push(...list.findings);
+        list.families.forEach((f) => families.add(f));
+        return { name: splunkName(name, ''), servers: list.servers };
       }).filter((g) => g.name);
       const syslogGroups = rows(str(values, 'syslog_groups', '')).map((line) => {
         const [name = '', server = '', type = 'tcp'] = cols(line);
-        return { name: splunkName(name, ''), server, type: type.toLowerCase() === 'udp' ? 'udp' : 'tcp' };
+        const list = serverListOf(server ? [server] : [], `Syslog receiver ${name}`, 'splunk.routing-syslog');
+        findings.push(...list.findings);
+        list.families.forEach((f) => families.add(f));
+        return { name: splunkName(name, ''), server: list.servers[0] ?? '', type: type.toLowerCase() === 'udp' ? 'udp' : 'tcp' };
       }).filter((g) => g.name && g.server);
+      const connect = connectFindings(str(values, 'ip_version', 'auto'), families, 'splunk.routing');
+      findings.push(...connect.findings);
       const groupNames = new Set(groups.map((g) => g.name));
       const syslogNames = new Set(syslogGroups.map((g) => g.name));
 
@@ -810,6 +833,9 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
           'Routing only acts on data this forwarder parses: inputs it runs itself, and data from universal forwarders. Data already parsed ("cooked") by another heavy forwarder passes through untouched.',
           'nullQueue drops are permanent and silent. Before deploying a drop rule, run its regex over a day of indexed data: index=<idx> sourcetype=<st> | regex _raw="<regex>" | stats count — that count is what disappears.',
           'Syslog output sends _raw after parsing, not the original datagram; a receiver that expects the device’s own header may need timestampformat or a different priority.',
+          ...(syslogGroups.some((g) => g.server.startsWith('['))
+            ? ['VERIFY: a [syslog:] group with an IPv6 server ([address]:port) on your Splunk version; if it does not connect, give the receiver a host name with an AAAA record instead.']
+            : []),
           ...(tls
             ? [`Every indexer group is TLS ${tlsVersions === 'tls1.2' ? '1.2' : '1.2 or 1.3'} with the indexer certificate and host name verified. A group run by another organisation usually needs its own clientCert and CA: change that group’s stanza, and put its CA in the bundle sslRootCAPath points at.`]
             : []),
@@ -819,12 +845,18 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
           'splunk cmd btool outputs list --debug',
           'splunk cmd btool props list --debug | grep -B2 TRANSFORMS',
           ...rules.filter((r) => r.action === 'drop').map((r) => `index=* ${r.on.startsWith('sourcetype:') ? `sourcetype=${r.on.slice(11)}` : r.on.replace(':', '=')} earliest=-24h | regex _raw="${r.regex}" | stats count   # what rule ${r.n} would drop per day`),
-          ...syslogGroups.map((g) => `nc -vz ${g.server.replace(':', ' ')}   # reachability of ${g.name}`),
+          ...syslogGroups.map((g) => {
+            const { host, port } = splitHostPort(g.server);
+            return `nc -vz ${host} ${port}   # reachability of ${g.name}`;
+          }),
         ],
         files: {
           'default/props.conf': props,
           'default/transforms.conf': transforms,
           'default/outputs.conf': outputs,
+          ...(connect.setting
+            ? { 'default/server.conf': ['[general]', '# Which family this forwarder connects with. auto follows listenOnIPv6 (no on a', '# default install: IPv4 only), so an IPv6 server in outputs.conf needs this.', `connectUsingIpVersion = ${connect.setting}`] }
+            : {}),
           'metadata/default.meta': defaultMeta(),
         },
         verify: [
@@ -873,6 +905,8 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
       ] },
       { id: 'splunk_url', label: 'Management URL', control: 'text', default: 'https://hf1.corp.example.com:8089' },
       { id: 'hec_url', label: 'HEC URL clients use', control: 'text', default: 'https://hec.corp.example.com:8088' },
+      { id: 'listen_ipv6', label: 'Listen on IPv6', control: 'select', default: 'no', options: LISTEN_ON_IPV6, hint: 'listenOnIPv6 in server.conf [general]: HEC runs on splunkd, so it is instance-wide' },
+      { id: 'accept_from', label: 'Accept from', control: 'text', default: '', placeholder: '10.0.0.0/8, 2001:db8::/32', hint: 'acceptFrom on [http]: IPv4 or IPv6 networks, host patterns, !exclusions; empty accepts everyone' },
     ],
     app: (values: BlueprintValues): SplunkApp => {
       const app = splunkName(str(values, 'app_name', 'org_hec'), 'org_hec');
@@ -888,7 +922,18 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
       const tokenSource = str(values, 'token_source', 'rest');
       const splunkUrl = str(values, 'splunk_url', 'https://localhost:8089').trim();
       const hecUrl = str(values, 'hec_url', 'https://localhost:8088').trim();
+      const listenV6 = ['yes', 'only'].includes(str(values, 'listen_ipv6', 'no')) ? str(values, 'listen_ipv6', 'no') : 'no';
+      const accept = acceptFromOf(str(values, 'accept_from', ''));
       const findings: Finding[] = [];
+      if (accept.bad.length > 0) {
+        findings.push(error('splunk.accept-from-invalid', `acceptFrom: ${accept.bad.join(', ')} ${accept.bad.length === 1 ? 'is' : 'are'} not an address, network or host pattern. Splunk refuses the [http] stanza.`, { source: 'inputs.conf spec' }));
+      }
+      if (listenV6 === 'no' && accept.families.has(6)) {
+        findings.push(warning('splunk.input-ipv6-not-listening', 'acceptFrom names IPv6 networks, but splunkd listens on IPv4 only (listenOnIPv6 = no), so no IPv6 client can connect.', { remediation: 'Set Listen on IPv6 to yes (dual-stack).', source: 'server.conf spec' }));
+      }
+      if (listenV6 === 'only' && accept.families.has(4)) {
+        findings.push(warning('splunk.input-ipv4-not-listening', 'acceptFrom names IPv4 networks, but splunkd listens on IPv6 only (listenOnIPv6 = only), so no IPv4 client can connect.', { remediation: 'Set Listen on IPv6 to yes (dual-stack).', source: 'server.conf spec' }));
+      }
 
       if (allowed.length === 0) {
         findings.push(
@@ -962,6 +1007,7 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
         'maxSockets = 0',
         '# Tokens are managed on this instance, not pushed from a deployment server.',
         'useDeploymentServer = 0',
+        ...(accept.list.length > 0 ? ['# Who may connect to HEC at all; IPv6 networks are written like IPv4 ones.', `acceptFrom = ${accept.list.join(', ')}`] : []),
         '',
         ...(tokenSource === 'conf'
           ? tokenStanza
@@ -1147,6 +1193,9 @@ exit 1
         ],
         files: {
           'default/inputs.conf': inputs,
+          ...(listenV6 !== 'no'
+            ? { 'default/server.conf': ['[general]', `# HEC is served by splunkd: ${listenV6 === 'yes' ? 'IPv4 and IPv6' : 'IPv6 only'} for HEC and the management port alike.`, `listenOnIPv6 = ${listenV6}`] }
+            : {}),
           ...(tokenSource === 'rest' ? { 'ops/create-hec-token.sh': createScript } : {}),
           'ops/hec-send.sh': sendScript,
           'metadata/default.meta': defaultMeta(['admin'], ['admin']),

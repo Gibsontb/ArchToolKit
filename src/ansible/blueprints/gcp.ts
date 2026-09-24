@@ -13,6 +13,8 @@ import { str } from '../../kit/blueprint.ts';
 import { playbookFiles } from '../from-plays.ts';
 import { AWS_REGIONS, AZURE_LOCATIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from './regions.ts';
 import { HOSTS_INPUT } from './common.ts';
+import { info, type Finding } from '../../core/findings.ts';
+import { ipv4Range, sources } from './ipv6.ts';
 
 const BLUEPRINTS: readonly Blueprint[] = [
   {
@@ -98,11 +100,34 @@ const BLUEPRINTS: readonly Blueprint[] = [
             { id: "network_name", label: "VPC network name", control: 'text', default: "app-vpc", hint: "Custom VPC" },
             { id: "subnet_name", label: "Subnet name", control: 'text', default: "app-subnet", hint: "Subnet" },
             { id: "subnet_cidr", label: "Subnet CIDR", control: 'text', default: "10.40.0.0/24", hint: "CIDR block" },
-            { id: "region", label: "Subnet region", control: 'select', options: GCP_REGIONS.map((r: string) => ({ value: r, label: r })), default: "us-central1", hint: "Region, e.g. us-central1" }
+            { id: "region", label: "Subnet region", control: 'select', options: GCP_REGIONS.map((r: string) => ({ value: r, label: r })), default: "us-central1", hint: "Region, e.g. us-central1" },
+            { id: "ssh_source_ranges", label: "SSH allowed from", control: 'text', default: "0.0.0.0/0", hint: "IPv4 or IPv6, comma-separated. One rule per family" },
+            { id: "http_source_ranges", label: "HTTP allowed from", control: 'text', default: "0.0.0.0/0", hint: "IPv4 or IPv6, comma-separated. One rule per family" }
           ],
     emits: [],
-    build: (values: BlueprintValues, name: string) =>
-      playbookFiles(
+    build: (values: BlueprintValues, name: string) => {
+      const code = 'ansible.gcp.vpc_network';
+      // The subnet this play builds is IPv4 (see the note), so an IPv6 source is flagged.
+      const ssh = sources(str(values, 'ssh_source_ranges', '0.0.0.0/0'), 'ssh_source_ranges', code, { ipv6Network: false });
+      const http = sources(str(values, 'http_source_ranges', '0.0.0.0/0'), 'http_source_ranges', code, { ipv6Network: false });
+      const findings: Finding[] = [
+        ...ipv4Range(values.subnet_cidr, 'subnet_cidr', 'The subnet CIDR', code),
+        ...ssh.findings,
+        ...http.findings,
+        info(`${code}.ipv4-only-subnet`, 'VERIFY: the subnet is IPv4 only. Dual stack needs stack_type IPV4_IPV6 and ipv6_access_type on the subnetwork; confirm google.cloud.gcp_compute_subnetwork accepts them in your collection version, or use the Terraform blueprint, which does.', { path: 'subnet_cidr' }),
+      ];
+      // A firewall rule holds ranges of one family only, so each family is its own rule.
+      const firewall = (label: string, port: string, suffix: string, ranges: string[]) => ranges.length === 0 ? [] : [{
+        name: `Allow ${label} ingress${suffix ? ' over IPv6' : ''}`,
+        "google.cloud.gcp_compute_firewall": {
+          project: "{{ gcp_project }}",
+          name: `{{ network_name }}-allow-${label.toLowerCase()}${suffix}`,
+          network: "{{ network_name }}",
+          allowed: [{ IPProtocol: "tcp", ports: [port] }],
+          source_ranges: ranges
+        }
+      }];
+      const out = playbookFiles(
         ((vals: TemplateValues, hosts: string) => {
             return [
               {
@@ -136,33 +161,19 @@ const BLUEPRINTS: readonly Blueprint[] = [
                       ip_cidr_range: "{{ subnet_cidr }}"
                     }
                   },
-                  {
-                    name: "Allow SSH ingress",
-                    "google.cloud.gcp_compute_firewall": {
-                      project: "{{ gcp_project }}",
-                      name: "{{ network_name }}-allow-ssh",
-                      network: "{{ network_name }}",
-                      allowed: [{ IPProtocol: "tcp", ports: ["22"] }],
-                      source_ranges: ["0.0.0.0/0"]
-                    }
-                  },
-                  {
-                    name: "Allow HTTP ingress",
-                    "google.cloud.gcp_compute_firewall": {
-                      project: "{{ gcp_project }}",
-                      name: "{{ network_name }}-allow-http",
-                      network: "{{ network_name }}",
-                      allowed: [{ IPProtocol: "tcp", ports: ["80"] }],
-                      source_ranges: ["0.0.0.0/0"]
-                    }
-                  }
+                  ...firewall("SSH", "22", "", ssh.v4),
+                  ...firewall("SSH", "22", "-ipv6", ssh.v6),
+                  ...firewall("HTTP", "80", "", http.v4),
+                  ...firewall("HTTP", "80", "-ipv6", http.v6)
                 ]
               }
             ];
           })(values, str(values, 'hosts', 'all')),
         name,
         'Network – VPC + subnet + firewall',
-      ),
+      );
+      return { ...out, findings: [...findings, ...out.findings] };
+    },
   },
   {
     id: 'gcs_bucket',

@@ -13,6 +13,8 @@ import { str } from '../../kit/blueprint.ts';
 import { playbookFiles } from '../from-plays.ts';
 import { AWS_REGIONS, AZURE_LOCATIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from './regions.ts';
 import { HOSTS_INPUT } from './common.ts';
+import { info, type Finding } from '../../core/findings.ts';
+import { dualStackInput, ipv4Range, isOn, slash64, sources, withAnsibleUtils } from './ipv6.ts';
 
 const BLUEPRINTS: readonly Blueprint[] = [
   {
@@ -44,11 +46,23 @@ const BLUEPRINTS: readonly Blueprint[] = [
             { id: "key_name", label: "SSH key name", control: 'text', default: "default", hint: "Key pair name" },
             { id: "vpc_subnet_id", label: "Subnet ID", control: 'text', default: "subnet-xxxx", hint: "VPC subnet" },
             { id: "security_group_name", label: "Security group name", control: 'text', default: "sg-web", hint: "SG name" },
-            { id: "allowed_http_cidr", label: "HTTP allowed CIDR", control: 'text', default: "0.0.0.0/0", hint: "Lock this down in prod" }
+            { id: "allowed_http_cidr", label: "HTTP allowed CIDR", control: 'text', default: "0.0.0.0/0", hint: "IPv4 or IPv6, comma-separated. Lock this down in prod" },
+            { id: "allowed_ssh_cidr", label: "SSH allowed CIDR", control: 'text', default: "0.0.0.0/0", hint: "IPv4 or IPv6, comma-separated. Lock this down in prod" }
           ],
     emits: [],
-    build: (values: BlueprintValues, name: string) =>
-      playbookFiles(
+    build: (values: BlueprintValues, name: string) => {
+      const code = 'ansible.aws.ec2_instance';
+      const http = sources(values.allowed_http_cidr, 'allowed_http_cidr', code);
+      const ssh = sources(str(values, 'allowed_ssh_cidr', '0.0.0.0/0'), 'allowed_ssh_cidr', code);
+      const one = (list: string[]): string | string[] => (list.length === 1 ? list[0]! : list);
+      // A rule entry takes cidr_ip (IPv4) or cidr_ipv6, so each family is its own entry.
+      const rules = [
+        ...(ssh.v4.length > 0 ? [{ proto: "tcp", from_port: 22, to_port: 22, cidr_ip: one(ssh.v4) }] : []),
+        ...(ssh.v6.length > 0 ? [{ proto: "tcp", from_port: 22, to_port: 22, cidr_ipv6: one(ssh.v6) }] : []),
+        ...(http.v4.length > 0 ? [{ proto: "tcp", from_port: 80, to_port: 80, cidr_ip: "{{ allowed_http_cidr }}" }] : []),
+        ...(http.v6.length > 0 ? [{ proto: "tcp", from_port: 80, to_port: 80, cidr_ipv6: "{{ allowed_http_cidr_ipv6 }}" }] : []),
+      ];
+      const out = playbookFiles(
         ((vals: TemplateValues, hosts: string) => ([
             {
               name: "Provision EC2 instance",
@@ -63,7 +77,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
                 key_name: vals.key_name,
                 vpc_subnet_id: vals.vpc_subnet_id,
                 security_group_name: vals.security_group_name,
-                allowed_http_cidr: vals.allowed_http_cidr
+                ...(http.v4.length > 0 ? { allowed_http_cidr: one(http.v4) } : {}),
+                ...(http.v6.length > 0 ? { allowed_http_cidr_ipv6: one(http.v6) } : {})
               },
               tasks: [
                 {
@@ -72,10 +87,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                     name: "{{ security_group_name }}",
                     description: "Web security group",
                     region: "{{ aws_region }}",
-                    rules: [
-                      { proto: "tcp", from_port: 22, to_port: 22, cidr_ip: "0.0.0.0/0" },
-                      { proto: "tcp", from_port: 80, to_port: 80, cidr_ip: "{{ allowed_http_cidr }}" }
-                    ]
+                    rules
                   }
                 },
                 {
@@ -96,7 +108,9 @@ const BLUEPRINTS: readonly Blueprint[] = [
           ]))(values, str(values, 'hosts', 'all')),
         name,
         'Provision EC2 instance',
-      ),
+      );
+      return { ...out, findings: [...http.findings, ...ssh.findings, ...out.findings] };
+    },
   },
   {
     id: 's3_bucket',
@@ -207,11 +221,27 @@ const BLUEPRINTS: readonly Blueprint[] = [
             { id: "vpc_cidr", label: "VPC CIDR", control: 'text', default: "10.0.0.0/16", hint: "CIDR block" },
             { id: "public_cidr", label: "Public subnet CIDR", control: 'text', default: "10.0.1.0/24", hint: "Public subnet" },
             { id: "private_cidr", label: "Private subnet CIDR", control: 'text', default: "10.0.2.0/24", hint: "Private subnet" },
-            { id: "name_prefix", label: "Name prefix", control: 'text', default: "app-vpc", hint: "Tag prefix" }
+            { id: "name_prefix", label: "Name prefix", control: 'text', default: "app-vpc", hint: "Tag prefix" },
+            dualStackInput("Amazon allocates a /56; each subnet takes a /64 of it and the public one routes ::/0 to the gateway")
           ],
     emits: [],
-    build: (values: BlueprintValues, name: string) =>
-      playbookFiles(
+    build: (values: BlueprintValues, name: string) => {
+      const code = 'ansible.aws.vpc_baseline';
+      const v6 = isOn(values.enable_ipv6);
+      const findings: Finding[] = [
+        ...ipv4Range(values.vpc_cidr, 'vpc_cidr', 'The VPC CIDR', code),
+        ...ipv4Range(values.public_cidr, 'public_cidr', 'The public subnet CIDR', code),
+        ...ipv4Range(values.private_cidr, 'private_cidr', 'The private subnet CIDR', code),
+      ];
+      // The VPC's Amazon-allocated /56, as ec2_vpc_net registers it.
+      const block = "vpc.vpc.ipv6_cidr_block_association_set[0].ipv6_cidr_block";
+      const subnetV6 = (n: number) => (v6 ? { ipv6_cidr: slash64(block, n), assign_instances_ipv6: true } : {});
+      if (v6) {
+        findings.push(
+          info(`${code}.private-ipv6-no-egress`, 'VERIFY: the private subnet gets IPv6 but no route out. Add an egress-only internet gateway (amazon.aws.ec2_vpc_egress_igw) and a ::/0 route to it once the route table module\'s handling of it is confirmed for your collection version.', { path: 'enable_ipv6' }),
+        );
+      }
+      const out = playbookFiles(
         ((vals: TemplateValues, hosts: string) => ([
             {
               name: "Create baseline VPC",
@@ -231,6 +261,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
                   "amazon.aws.ec2_vpc_net": {
                     name: "{{ name_prefix }}",
                     cidr_block: "{{ vpc_cidr }}",
+                    // Ask Amazon for the VPC's IPv6 /56.
+                    ...(v6 ? { ipv6_cidr: true } : {}),
                     region: "{{ aws_region }}",
                     tags: { Name: "{{ name_prefix }}" }
                   },
@@ -251,6 +283,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                   "amazon.aws.ec2_vpc_subnet": {
                     vpc_id: "{{ vpc.vpc.id }}",
                     cidr: "{{ public_cidr }}",
+                    ...subnetV6(0),
                     az: "{{ aws_region }}a",
                     map_public: true,
                     region: "{{ aws_region }}",
@@ -263,6 +296,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                   "amazon.aws.ec2_vpc_subnet": {
                     vpc_id: "{{ vpc.vpc.id }}",
                     cidr: "{{ private_cidr }}",
+                    ...subnetV6(1),
                     az: "{{ aws_region }}b",
                     region: "{{ aws_region }}",
                     tags: { Name: "{{ name_prefix }}-private" }
@@ -277,7 +311,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
                     tags: { Name: "{{ name_prefix }}-public-rt" },
                     subnets: ["{{ public_subnet.subnet.id }}"],
                     routes: [
-                      { dest: "0.0.0.0/0", gateway_id: "{{ igw.gateway_id }}" }
+                      { dest: "0.0.0.0/0", gateway_id: "{{ igw.gateway_id }}" },
+                      ...(v6 ? [{ dest: "::/0", gateway_id: "{{ igw.gateway_id }}" }] : [])
                     ]
                   }
                 }
@@ -286,7 +321,10 @@ const BLUEPRINTS: readonly Blueprint[] = [
           ]))(values, str(values, 'hosts', 'all')),
         name,
         'Create VPC + subnets',
-      ),
+      );
+      const built = { ...out, findings: [...findings, ...out.findings] };
+      return v6 ? withAnsibleUtils(built) : built;
+    },
   },
   {
     id: 'rds_instance',

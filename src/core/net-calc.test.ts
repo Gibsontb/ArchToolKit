@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import { expect } from '../testing/expect.ts';
-import { checkContains, checkContains6, checkOverlap, checkOverlap6, describeIPv6, describeSubnet, splitSubnet, splitSubnet6, supernet, supernet6, vlsm, vlsm6 } from './net-calc.ts';
+import { addressClass, checkContains, checkContains6, checkOverlap, checkOverlap6, describeIPv6, describeSubnet, hexOf, hostsFor, splitSubnet, splitSubnet6, subnetBitmap, supernet, supernet6, vlsm, vlsm6 } from './net-calc.ts';
+import { parseIPv4 } from './net.ts';
 
 describe('net-calc: one subnet', () => {
   it('describes a /22 from an address inside it', () => {
@@ -85,6 +86,20 @@ describe('net-calc: IPv6', () => {
     expect(d.kind).toBe('Global unicast');
     expect((describeIPv6('fe80::1/64') as { kind: string }).kind).toBe('Link-local');
     expect(typeof describeIPv6('2001:db8:::1')).toBe('string');
+  });
+});
+
+describe('net-calc: the classic calculator fields', () => {
+  it('gives the class, hosts per prefix, hex and the subnet bitmap', () => {
+    expect(addressClass(parseIPv4('10.1.2.3')!).cls).toBe('A');
+    expect(addressClass(parseIPv4('172.20.5.9')!).prefix).toBe(16);
+    expect(addressClass(parseIPv4('192.168.10.77')!).cls).toBe('C');
+    expect(addressClass(parseIPv4('239.1.1.1')!).cls).toBe('D');
+    expect(hostsFor(24)).toBe(254);
+    expect(hostsFor(31)).toBe(2);
+    expect(hostsFor(32)).toBe(1);
+    expect(hexOf(parseIPv4('10.20.30.40')!)).toBe('0A.14.1E.28');
+    expect(subnetBitmap(24, 26)).toBe('nnnnnnnn.nnnnnnnn.nnnnnnnn.sshhhhhh');
   });
 });
 

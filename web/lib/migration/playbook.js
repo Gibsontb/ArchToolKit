@@ -12,7 +12,7 @@
                                           
                                         
 
-                                                               
+                                                                      
 
 const PROVIDER_BULLETS                                                                          = {
   aws: {
@@ -21,6 +21,7 @@ const PROVIDER_BULLETS                                                          
     data: ['DMS (database)', 'DataSync (file)', 'Snowball (bulk)'],
     net: ['VPC, subnets, route tables', 'Security groups + NACLs', 'PrivateLink where needed'],
     ops: ['CloudWatch alarms and dashboards', 'AWS Backup', 'DR: pilot light or warm standby'],
+    v6: ['Dual-stack VPC: an IPv6 /56 on the VPC and a /64 per subnet; egress-only internet gateway for private IPv6 egress (NAT gateways are IPv4)'],
   },
   azure: {
     landing: ['Azure landing zone', 'Management groups', 'Azure Policy baseline', 'Entra ID + Log Analytics / Sentinel'],
@@ -28,6 +29,7 @@ const PROVIDER_BULLETS                                                          
     data: ['Database Migration Service', 'AzCopy / Data Factory', 'Azure File Sync (file)'],
     net: ['VNet and subnets', 'NSGs + user-defined routes', 'Private endpoints where needed'],
     ops: ['Azure Monitor alerts', 'Azure Backup', 'Site Recovery where applicable'],
+    v6: ['Dual-stack VNet: an IPv6 address space beside the IPv4 one and a /64 per subnet; NSG rules and UDRs for each family'],
   },
   gcp: {
     landing: ['Organisation, folders and projects', 'IAM baseline', 'Cloud Logging', 'Security Command Center; VPC-SC if needed'],
@@ -35,6 +37,7 @@ const PROVIDER_BULLETS                                                          
     data: ['Database Migration Service', 'Storage Transfer Service', 'Transfer Appliance (bulk)'],
     net: ['VPC and subnets', 'Firewall rules', 'Cloud NAT; Private Service Connect where needed'],
     ops: ['Cloud Monitoring alerts', 'Backup strategy', 'Multi-zone or regional DR patterns'],
+    v6: ['Dual-stack subnets (stack type IPV4_IPV6), internal or external IPv6 per subnet; firewall rules for each family'],
   },
   oci: {
     landing: ['Compartments', 'IAM baseline', 'Logging', 'Cloud Guard'],
@@ -42,6 +45,7 @@ const PROVIDER_BULLETS                                                          
     data: ['OCI Database Migration', 'Object Storage bulk transfer', 'Data Transfer Appliance'],
     net: ['VCN and subnets', 'NSGs and security lists', 'Service gateway where needed'],
     ops: ['Monitoring and alarms', 'Backups', 'Multi-AD or multi-region DR patterns'],
+    v6: ['IPv6-enabled VCN with a /56 prefix and a /64 per subnet; security rules and route rules for each family'],
   },
 };
 
@@ -110,6 +114,7 @@ export function playbookFor(route       , cloud       , regulated         )     
     'Confirm the workload context: users, peak windows, batch schedules',
     'Map the dependencies: ports, DNS, certificates, service accounts, integrations',
     'Capture what it needs to run: OS baseline, middleware, runtime versions, agents',
+    'Record every address it uses or is configured with, IPv4 and IPv6: A and AAAA records, literals in config files, allow lists, firewall rules, certificate SANs',
   ]);
 
   add('2) Landing zone alignment: networking, identity, logging, guardrails.', [
@@ -129,6 +134,9 @@ export function playbookFor(route       , cloud       , regulated         )     
 
   add('5) Build the target environment: subnets, security groups, routing.', [
     ...bullets.net,
+    'Re-addressing plan: target IPv4 ranges that overlap nothing on-premises or in the other VPCs and VNets, and an old-to-new address map for every server and VIP',
+    'Decide dual-stack or IPv4-only per subnet; if the application has AAAA records or IPv6 clients today, the target must too',
+    ...bullets.v6,
     regulated ? 'Prefer private connectivity (Direct Connect, ExpressRoute, Interconnect, FastConnect) and keep public endpoints to a minimum' : null,
   ]);
 
@@ -136,11 +144,14 @@ export function playbookFor(route       , cloud       , regulated         )     
     'Pilot first, on something non-production or low risk',
     'Record the baselines: latency, throughput, job duration, error rates',
     'Prove the rollback: snapshots, backups, DNS revert, traffic shift reversal',
+    'Test over IPv4 and IPv6 separately: a working IPv4 path hides a broken AAAA record until the first dual-stack client arrives',
   ]);
 
   add('7) Cut over: freeze, final sync, switch DNS, validate.', [
     'Run the runbook: freeze, final sync, promote the primary, switch the endpoints',
     'Smoke tests and business validation; confirm the monitoring and alerts',
+    'Lower the DNS TTLs a day ahead, and change the A and AAAA records together, so no client is left on the old address of one family',
+    'Update what holds the old addresses: allow lists, firewall rules, partner VPNs, hard-coded IPs in config, for both IPv4 and IPv6',
   ]);
 
   add('8) Stabilise: monitoring, backups, DR, incident runbooks.', [
@@ -150,7 +161,7 @@ export function playbookFor(route       , cloud       , regulated         )     
 
   add('9) Decommission on-premises: licences, contracts, CMDB.', [
     'Check retention and legal holds before anything is shut down',
-    'Update the CMDB, contracts and monitoring; reclaim the addresses and DNS records',
+    'Update the CMDB, contracts and monitoring; reclaim the IPv4 and IPv6 addresses and the A, AAAA and PTR records',
   ]);
 
   const extra = ADDENDUM[route];

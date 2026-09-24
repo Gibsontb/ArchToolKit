@@ -212,7 +212,24 @@ export function emitTerraform(spec: SddcSpec): TerraformOutput {
   });
 
   // networks
-  for (const network of spec.networkSpecs) {
+  // vcf_instance's network block has no ip_address_version, so an IPv6 twin
+  // would come out as a second IPv4 network of the same type. It is left out
+  // rather than written wrong.
+  const v6Networks = spec.networkSpecs.filter((n) => n.ipAddressVersion === 'IPv6');
+  if (v6Networks.length > 0) {
+    findings.push(
+      warning(
+        'vcf.terraform.ipv6-network-not-expressible',
+        `VERIFY: ${v6Networks.length} IPv6 network(s) (${v6Networks.map((n) => n.networkType).join(', ')}) are in the specification but vcf_instance's network block has no ip_address_version, so they are absent from the generated configuration.`,
+        {
+          path: 'networkSpecs',
+          remediation: 'Deploy dual stack with the JSON specification until the provider documents IPv6 networks.',
+          source: 'terraform-provider-vcf — vcf_instance schema',
+        },
+      ),
+    );
+  }
+  for (const network of spec.networkSpecs.filter((n) => n.ipAddressVersion !== 'IPv6')) {
     const vlan = vlanNumber(network.vlanId);
     resourceBlocks.push({
       type: 'network',

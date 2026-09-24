@@ -13,6 +13,33 @@ import { str } from '../../kit/blueprint.js';
 import { playbookFiles } from '../from-plays.js';
 import { AWS_REGIONS, AZURE_LOCATIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from './regions.js';
 import { HOSTS_INPUT } from './common.js';
+import { error, info,              } from '../../core/findings.js';
+import { containsAny } from '../../core/ip.js';
+                                                      
+import { dualStackInput, ipv4Range, ipv6Range, isOn, nthSlash64 } from './ipv6.js';
+
+/**
+ * The VM playbooks build their own VNet and subnet, whose ranges were fixed
+ * literals; they are inputs now, and IPv4 (a VNet cannot be IPv6-only). A
+ * dual-stack NIC is not generated here — see the note — so these stay IPv4.
+ */
+function withVmNetworkChecks(values                 , code        , out               )                {
+  const findings            = [
+    ...ipv4Range(str(values, 'vnet_prefix', '10.10.0.0/16'), 'vnet_prefix', 'The VNet address prefix', code),
+    ...ipv4Range(str(values, 'subnet_prefix', '10.10.1.0/24'), 'subnet_prefix', 'The subnet prefix', code),
+  ];
+  const vnet = str(values, 'vnet_prefix');
+  const subnet = str(values, 'subnet_prefix');
+  if (findings.length === 0 && vnet && subnet && !containsAny(vnet, subnet.split('/')[0] )) {
+    findings.push(error(`${code}.subnet-outside-vnet`, `${subnet} is not inside ${vnet}.`, { path: 'subnet_prefix' }));
+  }
+  findings.push(
+    info(`${code}.ipv4-only-nic`, 'VERIFY: this VM is IPv4 only. A dual-stack NIC needs a second ip_configuration with private_ip_address_version IPv6 on azure_rm_networkinterface; confirm your azure.azcollection version accepts it before adding it.', {
+      path: 'subnet_prefix',
+    }),
+  );
+  return { ...out, findings: [...findings, ...out.findings] };
+}
 
 const BLUEPRINTS                       = [
   {
@@ -33,11 +60,13 @@ const BLUEPRINTS                       = [
             { id: "resource_group", label: "Resource group", control: 'text', default: "rg-ansible-demo", hint: "Existing or to create" },
             { id: "vm_name", label: "VM name", control: 'text', default: "vm-linux-01", hint: "Name of the VM" },
             { id: "vm_size", label: "VM size", control: 'text', default: "Standard_B2s", hint: "e.g. Standard_B2s" },
-            { id: "admin_username", label: "Admin username", control: 'text', default: "azureuser", hint: "SSH user" }
+            { id: "admin_username", label: "Admin username", control: 'text', default: "azureuser", hint: "SSH user" },
+            { id: "vnet_prefix", label: "VNet address prefix", control: 'text', default: "10.10.0.0/16", hint: "IPv4 range" },
+            { id: "subnet_prefix", label: "Subnet address prefix", control: 'text', default: "10.10.1.0/24", hint: "IPv4, inside the VNet" }
           ],
     emits: [],
     build: (values                 , name        ) =>
-      playbookFiles(
+      withVmNetworkChecks(values, 'ansible.azure.vm_linux', playbookFiles(
         ((vals                , hosts        ) => {
             return [
               {
@@ -65,7 +94,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_virtualnetwork": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ resource_group }}-vnet",
-                      address_prefixes: ["10.10.0.0/16"]
+                      address_prefixes: [str(vals, 'vnet_prefix', '10.10.0.0/16')]
                     }
                   },
                   {
@@ -73,7 +102,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_subnet": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ resource_group }}-subnet",
-                      address_prefix: "10.10.1.0/24",
+                      address_prefix: str(vals, 'subnet_prefix', '10.10.1.0/24'),
                       virtual_network: "{{ resource_group }}-vnet"
                     }
                   },
@@ -117,7 +146,7 @@ const BLUEPRINTS                       = [
           })(values, str(values, 'hosts', 'all')),
         name,
         'Compute – Linux VM',
-      ),
+      )),
   },
   {
     id: 'vm_windows',
@@ -138,11 +167,13 @@ const BLUEPRINTS                       = [
             { id: "vm_name", label: "VM name", control: 'text', default: "vm-win-01", hint: "Name of the VM" },
             { id: "vm_size", label: "VM size", control: 'text', default: "Standard_B2ms", hint: "e.g. Standard_B2ms" },
             { id: "admin_username", label: "Admin username", control: 'text', default: "azureadmin", hint: "Local admin user" },
-            { id: "admin_password", label: "Admin password", control: 'text', default: "CHANGE_ME!", hint: "Use secret in real life" }
+            { id: "admin_password", label: "Admin password", control: 'text', default: "CHANGE_ME!", hint: "Use secret in real life" },
+            { id: "vnet_prefix", label: "VNet address prefix", control: 'text', default: "10.20.0.0/16", hint: "IPv4 range" },
+            { id: "subnet_prefix", label: "Subnet address prefix", control: 'text', default: "10.20.1.0/24", hint: "IPv4, inside the VNet" }
           ],
     emits: [],
     build: (values                 , name        ) =>
-      playbookFiles(
+      withVmNetworkChecks(values, 'ansible.azure.vm_windows', playbookFiles(
         ((vals                , hosts        ) => {
             return [
               {
@@ -171,7 +202,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_virtualnetwork": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ resource_group }}-vnet",
-                      address_prefixes: ["10.20.0.0/16"]
+                      address_prefixes: [str(vals, 'vnet_prefix', '10.20.0.0/16')]
                     }
                   },
                   {
@@ -179,7 +210,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_subnet": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ resource_group }}-subnet",
-                      address_prefix: "10.20.1.0/24",
+                      address_prefix: str(vals, 'subnet_prefix', '10.20.1.0/24'),
                       virtual_network: "{{ resource_group }}-vnet"
                     }
                   },
@@ -225,7 +256,7 @@ const BLUEPRINTS                       = [
           })(values, str(values, 'hosts', 'all')),
         name,
         'Compute – Windows VM',
-      ),
+      )),
   },
   {
     id: 'vnet_baseline',
@@ -246,11 +277,67 @@ const BLUEPRINTS                       = [
             { id: "vnet_name", label: "VNet name", control: 'text', default: "app-vnet", hint: "Virtual network name" },
             { id: "address_prefix", label: "VNet address prefix", control: 'text', default: "10.30.0.0/16", hint: "CIDR" },
             { id: "public_subnet_prefix", label: "Public subnet prefix", control: 'text', default: "10.30.1.0/24", hint: "CIDR" },
-            { id: "private_subnet_prefix", label: "Private subnet prefix", control: 'text', default: "10.30.2.0/24", hint: "CIDR" }
+            { id: "private_subnet_prefix", label: "Private subnet prefix", control: 'text', default: "10.30.2.0/24", hint: "CIDR" },
+            dualStackInput("Adds an IPv6 range to the VNet and a /64 to each subnet"),
+            {
+              id: "vnet_ipv6_prefix",
+              label: "VNet IPv6 address prefix",
+              control: 'text',
+              default: "fd00:db8:deca::/48",
+              hint: "A /48 is usual: ULA (fd00::/8) or your assigned global range",
+              showWhen: { input: "enable_ipv6", equals: ["true"] }
+            },
+            {
+              id: "public_subnet_ipv6_prefix",
+              label: "Public subnet IPv6 prefix",
+              control: 'text',
+              default: "",
+              placeholder: "First /64 of the VNet range",
+              hint: "A /64 — the only IPv6 size an Azure subnet takes",
+              showWhen: { input: "enable_ipv6", equals: ["true"] }
+            },
+            {
+              id: "private_subnet_ipv6_prefix",
+              label: "Private subnet IPv6 prefix",
+              control: 'text',
+              default: "",
+              placeholder: "Second /64 of the VNet range",
+              hint: "A /64",
+              showWhen: { input: "enable_ipv6", equals: ["true"] }
+            }
           ],
     emits: [],
-    build: (values                 , name        ) =>
-      playbookFiles(
+    build: (values                 , name        ) => {
+      const code = 'ansible.azure.vnet_baseline';
+      const v6 = isOn(values.enable_ipv6);
+      const findings            = [
+        ...ipv4Range(values.address_prefix, 'address_prefix', 'The VNet address prefix', code),
+        ...ipv4Range(values.public_subnet_prefix, 'public_subnet_prefix', 'The public subnet prefix', code),
+        ...ipv4Range(values.private_subnet_prefix, 'private_subnet_prefix', 'The private subnet prefix', code),
+      ];
+      let vnetV6 = '';
+      const subnetsV6           = [];
+      if (v6) {
+        const vnet = ipv6Range(values.vnet_ipv6_prefix, 'vnet_ipv6_prefix', 'The VNet IPv6 address prefix', code, { maxPrefix: 63 });
+        findings.push(...vnet.findings);
+        vnetV6 = vnet.cidr ?? '';
+        (['public_subnet_ipv6_prefix', 'private_subnet_ipv6_prefix']         ).forEach((id, n) => {
+          if (str(values, id)) {
+            const sub = ipv6Range(values[id], id, 'A subnet IPv6 prefix', code, { maxPrefix: 64, exact: true });
+            findings.push(...sub.findings);
+            if (sub.cidr && vnet.cidr && !containsAny(vnet.cidr, sub.cidr.split('/')[0] )) {
+              findings.push(error(`${code}.subnet-ipv6-outside`, `${sub.cidr} is not inside ${vnet.cidr}.`, { path: id }));
+            }
+            subnetsV6.push(sub.cidr ?? '');
+          } else {
+            subnetsV6.push(vnet.cidr ? nthSlash64(vnet.cidr, n) : '');
+          }
+        });
+      }
+      // Dual stack: a list of both families, in the plural argument.
+      const subnetPrefix = (v4Var        , n        ) =>
+        v6 ? { address_prefixes_cidr: [`{{ ${v4Var} }}`, `{{ ${n === 0 ? 'public' : 'private'}_subnet_ipv6_prefix }}`] } : { address_prefix: `{{ ${v4Var} }}` };
+      const out = playbookFiles(
         ((vals                , hosts        ) => {
             return [
               {
@@ -264,7 +351,14 @@ const BLUEPRINTS                       = [
                   vnet_name: vals.vnet_name,
                   address_prefix: vals.address_prefix,
                   public_subnet_prefix: vals.public_subnet_prefix,
-                  private_subnet_prefix: vals.private_subnet_prefix
+                  private_subnet_prefix: vals.private_subnet_prefix,
+                  ...(v6
+                    ? {
+                        vnet_ipv6_prefix: vnetV6,
+                        public_subnet_ipv6_prefix: subnetsV6[0] ?? '',
+                        private_subnet_ipv6_prefix: subnetsV6[1] ?? ''
+                      }
+                    : {})
                 },
                 tasks: [
                   {
@@ -279,7 +373,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_virtualnetwork": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ vnet_name }}",
-                      address_prefixes: ["{{ address_prefix }}"]
+                      address_prefixes: v6 ? ["{{ address_prefix }}", "{{ vnet_ipv6_prefix }}"] : ["{{ address_prefix }}"]
                     }
                   },
                   {
@@ -287,7 +381,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_subnet": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ vnet_name }}-public",
-                      address_prefix: "{{ public_subnet_prefix }}",
+                      ...subnetPrefix('public_subnet_prefix', 0),
                       virtual_network: "{{ vnet_name }}"
                     }
                   },
@@ -296,7 +390,7 @@ const BLUEPRINTS                       = [
                     "azure.azcollection.azure_rm_subnet": {
                       resource_group: "{{ resource_group }}",
                       name: "{{ vnet_name }}-private",
-                      address_prefix: "{{ private_subnet_prefix }}",
+                      ...subnetPrefix('private_subnet_prefix', 1),
                       virtual_network: "{{ vnet_name }}"
                     }
                   }
@@ -306,7 +400,9 @@ const BLUEPRINTS                       = [
           })(values, str(values, 'hosts', 'all')),
         name,
         'Network – VNet + subnets',
-      ),
+      );
+      return { ...out, findings: [...findings, ...out.findings] };
+    },
   },
   {
     id: 'storage_account',

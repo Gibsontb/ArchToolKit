@@ -30,6 +30,7 @@ import { automationBlueprint,                          } from '../from-automatio
 import { listOf, slugOf,                 } from '../automation.js';
 import { blueprintYaml, importBundle, importMd, kubeStep, manualStep, verifyFor,                 } from '../vcfa-import.js';
 import { packageNameOf, toPackage } from '../vro/to-package.js';
+import { familyOf, isAnyNetwork, parseCidrAny } from '../../core/ip.js';
 
 const ALL_APPS = 'VCF Automation 9.1 / 9.1.1 All Apps organizations';
 const PROVIDER = 'VCF Automation 9.1 / 9.1.1, provider (System) side';
@@ -1938,7 +1939,16 @@ export const VCF_AUTOMATION_91                                 = [
       if (publicAddresses > 0) {
         findings.push(info('vcfa91.vpc.public', `${publicAddresses} Public addresses come from the provider’s external IP block and are routed to the Tier-0.`, { remediation: 'Public is for what has to be reached from outside. Most tiers are Private behind NAT, or PrivateTGW when other VPCs on the same transit gateway need them.', source: SRC }));
       }
-      if (withBlock && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(blockCidr)) {
+      // VPC subnets from the NSX operator are sized with ipv4SubnetSize: there is
+      // no IPv6 in this path, so an IPv6 block would be one nothing can use.
+      if (withBlock && familyOf(blockCidr) === 6) {
+        findings.push(
+          error('vcfa91.vpc.ipv6', `External IP blocks for NSX VPCs on VCF Automation 9.1 do not support IPv6 (${blockCidr}): VPC subnets are carved as IPv4 (ipv4SubnetSize).`, {
+            remediation: 'Give an IPv4 block. VERIFY: IPv6 for VPCs in the NSX release behind your 9.1.x before planning around it.',
+            source: SRC,
+          }),
+        );
+      } else if (withBlock && (familyOf(blockCidr) !== 4 || !blockCidr.includes('/'))) {
         findings.push(error('vcfa91.vpc.cidr', `"${blockCidr}" is not an IPv4 CIDR.`, { source: SRC }));
       }
 
@@ -2056,6 +2066,7 @@ export const VCF_AUTOMATION_91                                 = [
           '9.1 adds several transit gateways per organization with NAT, IPsec VPN and gateway firewall, organization-wide shared subnets, and shared VLAN extension subnets from the provider. Those are set in the organization portal; subnets here attach to whatever the VPC is connected to.',
           'VMs join a subnet by name in spec.network.interfaces (kind Subnet or SubnetSet) — see "A VM Service virtual machine".',
           'The VPC itself — the region default <region>-default-vpc, or another — is chosen when the namespace is made. There is no separate VPC object to write here that could be confirmed on 9.1.',
+          'IPv4 only: the NSX operator Subnet is sized with ipv4SubnetSize and the external IP block behind Public subnets is IPv4, so this writes no IPv6 and refuses an IPv6 block. VERIFY: IPv6 for VPCs in the NSX release behind your 9.1.x.',
         ],
         findings,
       };
@@ -3640,7 +3651,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
       { id: 'namespace', label: 'Namespace', control: 'text', default: 'team-a-prod-q4m8z' },
       { id: 'policy_name', label: 'Policy name', control: 'text', default: 'web-tier' },
       { id: 'applied_to', label: 'Applies to VMs labelled', control: 'text', default: 'app=web01' },
-      { id: 'rules', label: 'Allow', control: 'textarea', default: 'from 10.0.0.0/8 tcp/443\nfrom app=bastion tcp/22', hint: 'from <label=value | CIDR> <tcp|udp>/<port>, one per line' },
+      { id: 'rules', label: 'Allow', control: 'textarea', default: 'from 10.0.0.0/8 tcp/443\nfrom app=bastion tcp/22', hint: 'from <label=value | IPv4 or IPv6 CIDR> <tcp|udp>/<port>, one per line' },
       { id: 'default_drop', label: 'Drop all other inbound traffic', control: 'toggle', default: true },
       { id: 'priority', label: 'Priority', control: 'number', default: 10, min: 0, max: 1000, hint: 'Lower is evaluated first' },
     ],
@@ -3668,9 +3679,16 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
             return undefined;
           }
           const [, from = '', proto = 'tcp', port = '0'] = m;
-          const cidr = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(from);
-          if (from === '0.0.0.0/0') findings.push(warning('vcfa91.sp.any', `Rule ${i + 1} allows ${proto}/${port} from anywhere.`, { source: SRC }));
-          return { name: `allow-${proto.toLowerCase()}-${port}-${i + 1}`, from, cidr, proto: proto.toUpperCase(), port: Number(port) };
+          // A source is a label selector (has =) or a CIDR of either family; an
+          // ipBlocks cidr may be IPv6, one family per block.
+          const parsed = from.includes('=') ? null : parseCidrAny(from);
+          const cidr = parsed !== null && from.includes('/');
+          if (!from.includes('=') && !cidr) {
+            findings.push(warning('vcfa91.sp.rule', `Could not read "${line}": ${from} is neither label=value nor an IPv4 or IPv6 CIDR.`, { remediation: 'from <label=value | CIDR> <tcp|udp>/<port>', source: SRC }));
+            return undefined;
+          }
+          if (cidr && isAnyNetwork(from)) findings.push(warning('vcfa91.sp.any', `Rule ${i + 1} allows ${proto}/${port} from anywhere${parsed .family === 6 ? ' on IPv6' : ''}.`, { source: SRC }));
+          return { name: `allow-${proto.toLowerCase()}-${port}-${i + 1}`, from: cidr && parsed .family === 6 ? `${parsed .network}/${parsed .prefix}` : from, cidr, proto: proto.toUpperCase(), port: Number(port) };
         })
         .filter((r)                             => r !== undefined);
       if (!drop) findings.push(info('vcfa91.sp.no-drop', 'Without a drop rule the allows change nothing — everything else is still allowed by the default rule.', { source: SRC }));
@@ -3756,7 +3774,12 @@ else {
             verify: ['The SecurityPolicy apiVersion and resource name (crd.nsx.vmware.com/v1alpha1, securitypolicies): kubectl api-resources | grep -i securitypolic. The workflow stops before sending anything if the group is not served.', KUBE_VERIFY],
           }),
         },
-        notes: ['9.1 what’s new: providers can delegate vDefend Distributed and Gateway Firewall to organization administrators, with RBAC labels for dynamic groups. Gateway firewall on a transit gateway is set in the organization portal.'],
+        notes: [
+          '9.1 what’s new: providers can delegate vDefend Distributed and Gateway Firewall to organization administrators, with RBAC labels for dynamic groups. Gateway firewall on a transit gateway is set in the organization portal.',
+          ...(rules.some((r) => r.cidr && r.from.includes(':'))
+            ? ['IPv6 sources are written as their own ipBlocks entries (cidr: 2001:db8::/32), one family per rule; the distributed firewall matches IPv6 as well as IPv4. VERIFY: kubectl explain securitypolicy.spec.rules.sources.ipBlocks accepts an IPv6 cidr on your NSX operator.']
+            : []),
+        ],
         findings,
       };
     },

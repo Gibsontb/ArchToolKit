@@ -272,7 +272,7 @@ describe('pkg vcfa-extend: vcfa_orchestrator_workflow', { skip: !CURL }, () => {
     expect(result.error).toBe(null);
     expect(writes).toEqual([]);
     expect(calls(requests)).toEqual(['GET /wapi/v2.12/record:a', 'POST /hook']);
-    expect(result.logs.some((l) => l.message === 'DRY RUN: would register app01.example.com -> 10.0.10.21')).toBe(true);
+    expect(result.logs.some((l) => l.message === 'DRY RUN: would register A app01.example.com -> 10.0.10.21')).toBe(true);
     expect(result.outputs.fqdn).toBe('app01.example.com');
     assertNoSecret(result, DNS_PASSWORD);
   });
@@ -304,10 +304,10 @@ describe('pkg vcfa-extend: vcfa_orchestrator_workflow', { skip: !CURL }, () => {
 
   it('stops at the cap, and at the first failure with the password scrubbed', async () => {
     const capped = await run(files, dnsRoutes(), (h) => dns(h, { dryRun: false, cap: 0 }), 'Register DNS record', { ...inputs, dryRun: false });
-    expect(capped.result.error ?? '').toContain('Cap reached: 0 change(s) made, the cap is 0; stopping before: register app01.example.com');
+    expect(capped.result.error ?? '').toContain('Cap reached: 0 change(s) made, the cap is 0; stopping before: register A app01.example.com');
     expect(capped.writes).toEqual([]);
     const failed = await run(files, dnsRoutes([], 500), (h) => dns(h, { dryRun: false }), 'Register DNS record', { ...inputs, dryRun: false });
-    expect(failed.result.error ?? '').toContain('Stopped after 0 change(s): register app01.example.com -> 10.0.10.21 failed');
+    expect(failed.result.error ?? '').toContain('Stopped after 0 change(s): register A app01.example.com -> 10.0.10.21 failed');
     expect(failed.result.error ?? '').toContain('returned HTTP 500');
     assertNoSecret(failed.result, DNS_PASSWORD);
   });

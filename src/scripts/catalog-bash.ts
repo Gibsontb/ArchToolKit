@@ -471,6 +471,21 @@ export const BASH_CATALOG: readonly CommandGroup[] = [
       syntax: 'ip r get 10.20.30.40',
       effect: 'read',
       note: '`ip r get` answers the question people actually have — which interface and source address this specific destination will use — rather than making you read the table and work it out.',
+      related: ['sh.ip-6-r'],
+    },
+    {
+      name: 'ip -6 r',
+      task: 'see or test IPv6 routing',
+      syntax: 'ip -6 r get 2001:db8::40 && ip -6 r show default',
+      effect: 'read',
+      note: '`ip r` on its own shows only IPv4. The IPv6 default route normally comes from a router advertisement (proto ra) and its next hop is an fe80:: link-local address — that is correct, not a misconfiguration.',
+    },
+    {
+      name: 'ip -6 neigh',
+      task: 'see the IPv6 neighbour cache, the IPv6 version of arp',
+      syntax: 'ip -6 neigh show',
+      effect: 'read',
+      note: 'Entries stuck in FAILED or INCOMPLETE mean neighbour discovery is not getting answers — almost always a firewall dropping ICMPv6, which breaks IPv6 while ping over IPv4 still works.',
     },
     {
       name: 'ip link set',
@@ -512,7 +527,14 @@ export const BASH_CATALOG: readonly CommandGroup[] = [
       ],
       effect: 'read',
       note: 'dig ignores /etc/hosts and nsswitch, so it can return the "right" answer while the application resolves something else. To see what the application sees, use getent hosts.',
-      related: ['sh.getent'],
+      related: ['sh.getent', 'sh.dig-aaaa'],
+    },
+    {
+      name: 'dig AAAA',
+      task: 'look up the IPv6 address of a name',
+      syntax: 'dig +short @2001:db8::53 app.example.com AAAA',
+      effect: 'read',
+      note: 'Clients that have IPv6 try the AAAA answer first. A name that works from one machine and stalls from another often has an AAAA record pointing at something that does not answer on IPv6.',
     },
     {
       name: 'getent',
@@ -582,6 +604,14 @@ export const BASH_CATALOG: readonly CommandGroup[] = [
       syntax: "nmcli con mod ens192 ipv4.addresses 10.0.0.9/24 ipv4.gateway 10.0.0.1 ipv4.method manual && nmcli con up ens192",
       effect: 'changes',
       note: 'The change is saved on `con mod` but does not take effect until `con up`, and `con up` on the interface you are connected through will drop your session. Do it from the console, or wrap it in a scheduled revert.',
+      related: ['sh.nmcli-ipv6'],
+    },
+    {
+      name: 'nmcli ipv6',
+      task: 'set a static IPv6 address persistently on RHEL-family hosts',
+      syntax: "nmcli con mod ens192 ipv6.addresses 2001:db8:0:1::9/64 ipv6.gateway 2001:db8:0:1::1 ipv6.method manual && nmcli con up ens192",
+      effect: 'changes',
+      note: 'ipv6.method manual means no address and no default route from router advertisements, so the gateway has to be given; ipv6.method auto keeps SLAAC and adds the static address beside it. The same `con up` warning applies: it drops a session over that interface.',
     },
     {
       name: 'ethtool',
@@ -596,6 +626,13 @@ export const BASH_CATALOG: readonly CommandGroup[] = [
       syntax: 'ping -c4 -W2 -M do -s 1472 10.0.0.1',
       effect: 'read',
       note: '-M do -s 1472 is the MTU test: 1472 plus 28 bytes of headers is exactly 1500, so if that fails and a smaller size works, something in the path is fragmenting. That is the usual cause of "ssh connects then freezes".',
+    },
+    {
+      name: 'ping -6',
+      task: 'check IPv6 reachability and path MTU',
+      syntax: 'ping -6 -c4 -W2 -M do -s 1452 2001:db8::1',
+      effect: 'read',
+      note: 'IPv6 headers are 48 bytes with ICMPv6, so the 1500-byte test is -s 1452, not 1472. Routers never fragment IPv6: if this fails and smaller sizes work, something is dropping ICMPv6 packet-too-big and path MTU discovery is broken.',
     },
   ]),
 
@@ -694,9 +731,9 @@ export const BASH_CATALOG: readonly CommandGroup[] = [
     {
       name: 'ufw',
       task: 'open a port on a Debian-family host',
-      syntax: 'ufw allow from 10.0.0.0/8 to any port 22 proto tcp',
+      syntax: 'ufw allow from 10.0.0.0/8 to any port 22 proto tcp && ufw allow from 2001:db8::/32 to any port 22 proto tcp',
       effect: 'changes',
-      note: '`ufw enable` over SSH will lock you out unless the SSH rule is already there. Add the rule, verify with `ufw show added`, then enable.',
+      note: '`ufw enable` over SSH will lock you out unless the SSH rule is already there. Add the rule, verify with `ufw show added`, then enable. A rule from a network is one family; IPv6 rules need IPV6=yes in /etc/default/ufw, which is the default on current releases.',
     },
     {
       name: 'nft',
@@ -704,6 +741,13 @@ export const BASH_CATALOG: readonly CommandGroup[] = [
       syntax: 'nft list ruleset',
       effect: 'read',
       note: 'On current kernels iptables is a compatibility front end over nftables, so `iptables -L` can show something different from what is actually loaded. This is the truth.',
+    },
+    {
+      name: 'ip6tables',
+      task: 'check the IPv6 firewall rules as well as the IPv4 ones',
+      syntax: 'ip6tables -S INPUT && ip6tables -L INPUT -n -v --line-numbers',
+      effect: 'read',
+      note: 'iptables rules do not touch IPv6 at all. A host with a careful iptables policy and an empty ip6tables one is wide open on every address a router advertisement gave it.',
     },
   ]),
 

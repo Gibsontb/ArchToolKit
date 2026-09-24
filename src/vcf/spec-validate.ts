@@ -14,7 +14,9 @@
  */
 
 import { error, warning, info, type Finding } from '../core/findings.ts';
-import { parseCidr, parseIPv4, cidrsOverlap, formatCidr, usableAddresses } from '../core/net.ts';
+import { parseCidr, parseIPv4, usableAddresses } from '../core/net.ts';
+import { familyOf, isIp, parseCidrAny, formatCidrAny, overlapsAny, containsAny, type Family } from '../core/ip.ts';
+import { parseIPv6, v6ToBig } from '../core/net-calc.ts';
 import {
   SDDC_SPEC_REQUIRED_KEYS,
   REMOVED_IN_91_KEYS,
@@ -23,6 +25,8 @@ import {
   type SddcSpec,
   type SddcNetworkSpec,
   type VcfManagementComponentsNetworkSpec,
+  type IPv4Pool,
+  type IPv6Pool,
 } from './spec-types.ts';
 import {
   VLAN_MIN,
@@ -54,6 +58,103 @@ export interface ValidateOptions {
 
 function vlanOf(spec: SddcNetworkSpec): number {
   return typeof spec.vlanId === 'string' ? Number(spec.vlanId) : spec.vlanId;
+}
+
+/**
+ * The family a network entry declares. The API has no separate IPv6 fields:
+ * an IPv6 entry sets ipAddressVersion and reuses subnet/gateway, so the
+ * version decides how those are read. Absent means IPv4.
+ */
+function versionOf(spec: SddcNetworkSpec): Family {
+  return spec.ipAddressVersion === 'IPv6' ? 6 : 4;
+}
+
+/** An address as a number for range arithmetic, in either family. */
+function addressValue(text: unknown): { family: Family; value: bigint } | null {
+  if (typeof text !== 'string' || !isIp(text)) return null;
+  const t = text.trim();
+  if (familyOf(t) === 6) {
+    const groups = parseIPv6(t);
+    return groups ? { family: 6, value: v6ToBig(groups) } : null;
+  }
+  const v = parseIPv4(t);
+  return v === null ? null : { family: 4, value: BigInt(v) };
+}
+
+/** Addresses a prefix can hand out. IPv6 has no broadcast; the network address is the subnet-router anycast. */
+function usableCount(c: { family: Family; prefix: number; network: string }): bigint {
+  if (c.family === 4) {
+    const v4 = parseCidr(`${c.network}/${c.prefix}`);
+    return v4 ? BigInt(usableAddresses(v4)) : 0n;
+  }
+  const size = 1n << BigInt(128 - c.prefix);
+  return c.prefix >= 127 ? size : size - 1n;
+}
+
+/** Large IPv6 counts only need comparing against small minimums. */
+const clampCount = (n: bigint): number => (n > 1_000_000n ? 1_000_000 : Number(n));
+
+/**
+ * Check one VCF Management Services pool in the family it is declared for and
+ * return how many addresses it provides. ipv4Pool and ipv6Pool take the same
+ * three forms, so a value of the other family is an error in either.
+ */
+function checkVspPool(
+  findings: Finding[],
+  pool: IPv4Pool | IPv6Pool,
+  family: Family,
+  path: string,
+): number {
+  const other = family === 4 ? 'vspClusterSpec.ipv6Pool' : 'vspClusterSpec.ipv4Pool';
+  const wrong = (field: string, value: unknown): void => {
+    findings.push(
+      error('vcf.spec.vsp-pool-family', `${path}.${field} "${String(value)}" is not a valid IPv${family} value.`, {
+        path: `${path}.${field}`,
+        remediation: `Only IPv${family} belongs in ${path}; the other family goes in ${other}.`,
+        source: 'VCF Installer API — SddcVspClusterSpec',
+      }),
+    );
+  };
+
+  (pool.excludedAddresses ?? []).forEach((a, i) => {
+    if (addressValue(a)?.family !== family) wrong(`excludedAddresses[${i}]`, a);
+  });
+
+  if (pool.addresses) {
+    let good = 0;
+    pool.addresses.forEach((a, i) => {
+      if (addressValue(a)?.family === family) good += 1;
+      else wrong(`addresses[${i}]`, a);
+    });
+    return good;
+  }
+  if (pool.ipRange) {
+    const start = addressValue(pool.ipRange.startIpAddress);
+    const end = addressValue(pool.ipRange.endIpAddress);
+    if (start?.family !== family) wrong('ipRange.startIpAddress', pool.ipRange.startIpAddress);
+    if (end?.family !== family) wrong('ipRange.endIpAddress', pool.ipRange.endIpAddress);
+    if (start?.family === family && end?.family === family) {
+      if (end.value < start.value) {
+        findings.push(
+          error('vcf.spec.inverted-vsp-range', `Range ${pool.ipRange.startIpAddress}-${pool.ipRange.endIpAddress} is inverted.`, {
+            path: `${path}.ipRange`,
+          }),
+        );
+        return 0;
+      }
+      return clampCount(end.value - start.value + 1n);
+    }
+    return 0;
+  }
+  if (pool.cidr) {
+    const cidr = parseCidrAny(pool.cidr);
+    if (!cidr || cidr.family !== family || !pool.cidr.includes('/')) {
+      wrong('cidr', pool.cidr);
+      return 0;
+    }
+    return clampCount(usableCount(cidr));
+  }
+  return 0;
 }
 
 /**
@@ -170,14 +271,26 @@ export function validateSddcSpec(
         );
       }
       nameservers.forEach((ns, i) => {
-        if (parseIPv4(ns) === null) {
+        if (!isIp(ns)) {
           findings.push(
-            error('vcf.spec.invalid-nameserver', `"${ns}" is not a valid IPv4 address.`, {
+            error('vcf.spec.invalid-nameserver', `"${ns}" is not a valid IPv4 or IPv6 address.`, {
               path: `dnsSpec.nameservers[${i}]`,
             }),
           );
         }
       });
+      // The DnsSpec schema types nameservers as plain strings with no family
+      // restriction, but no published example uses an IPv6 resolver.
+      const v6Resolvers = nameservers.filter((ns) => isIp(ns) && familyOf(ns) === 6);
+      if (v6Resolvers.length > 0) {
+        findings.push(
+          info(
+            'vcf.spec.ipv6-nameserver',
+            `VERIFY: ${v6Resolvers.join(', ')} ${v6Resolvers.length === 1 ? 'is an IPv6 resolver' : 'are IPv6 resolvers'}. Confirm the installer and every appliance reach DNS over IPv6, or list an IPv4 resolver first.`,
+            { path: 'dnsSpec.nameservers', source: 'VCF Installer API — DnsSpec' },
+          ),
+        );
+      }
     }
   }
 
@@ -201,17 +314,25 @@ export function validateSddcSpec(
   // --- networks ------------------------------------------------------------
   const networks = Array.isArray(spec.networkSpecs) ? spec.networkSpecs : [];
   const seenTypes = new Set<string>();
+  // Dual stack is two entries of one networkType, one per ipAddressVersion, so
+  // a duplicate is the same type twice in the same family.
+  const seenTypeVersions = new Set<string>();
 
   networks.forEach((net, i) => {
     const at = `networkSpecs[${i}]`;
+    const version = versionOf(net);
 
-    if (seenTypes.has(net.networkType)) {
+    const typeVersion = `${net.networkType}/${version}`;
+    if (seenTypeVersions.has(typeVersion)) {
       findings.push(
-        error('vcf.spec.duplicate-network-type', `Duplicate networkType "${net.networkType}".`, {
-          path: at,
-        }),
+        error(
+          'vcf.spec.duplicate-network-type',
+          `Duplicate networkType "${net.networkType}"${version === 6 ? ' for IPv6' : ''}.`,
+          { path: at },
+        ),
       );
     }
+    seenTypeVersions.add(typeVersion);
     seenTypes.add(net.networkType);
 
     const vlan = vlanOf(net);
@@ -244,38 +365,120 @@ export function validateSddcSpec(
       }
     }
 
-    if (net.subnet !== undefined && parseCidr(net.subnet) === null) {
+    // subnet and gateway are read in the family ipAddressVersion declares; a
+    // value of the other family is a mismatch, not merely a bad address.
+    const parsedSubnet =
+      typeof net.subnet === 'string' && net.subnet.includes('/') ? parseCidrAny(net.subnet) : null;
+    if (net.subnet !== undefined && parsedSubnet === null) {
       findings.push(
         error('vcf.spec.invalid-subnet', `"${net.subnet}" is not a valid CIDR.`, {
           path: `${at}.subnet`,
         }),
       );
-    }
-
-    if (net.gateway !== undefined && parseIPv4(net.gateway) === null) {
+    } else if (parsedSubnet && parsedSubnet.family !== version) {
       findings.push(
-        error('vcf.spec.invalid-gateway', `"${net.gateway}" is not a valid IPv4 address.`, {
+        error(
+          'vcf.spec.subnet-version-mismatch',
+          `${net.networkType} declares ipAddressVersion IPv${version} but its subnet ${net.subnet} is IPv${parsedSubnet.family}.`,
+          {
+            path: `${at}.subnet`,
+            remediation: `Set ipAddressVersion to "IPv${parsedSubnet.family}", or add a separate ${net.networkType} entry for that family.`,
+            source: 'VCF Installer API — SddcNetworkSpec',
+          },
+        ),
+      );
+    }
+    const cidr = parsedSubnet && parsedSubnet.family === version ? parsedSubnet : null;
+
+    const gwFamily = typeof net.gateway === 'string' && isIp(net.gateway) ? familyOf(net.gateway) : null;
+    if (net.gateway !== undefined && gwFamily === null) {
+      findings.push(
+        error('vcf.spec.invalid-gateway', `"${net.gateway}" is not a valid IPv${version} address.`, {
           path: `${at}.gateway`,
         }),
+      );
+    } else if (gwFamily !== null && gwFamily !== version) {
+      findings.push(
+        error(
+          'vcf.spec.gateway-version-mismatch',
+          `${net.networkType} declares ipAddressVersion IPv${version} but its gateway ${net.gateway} is IPv${gwFamily}.`,
+          { path: `${at}.gateway`, source: 'VCF Installer API — SddcNetworkSpec' },
+        ),
       );
     }
 
     // A gateway outside its own subnet is a classic copy-paste error that the
     // installer only catches late, during bring-up.
-    const cidr = net.subnet ? parseCidr(net.subnet) : null;
-    const gw = net.gateway ? parseIPv4(net.gateway) : null;
-    if (cidr && gw !== null) {
-      const masked = parseCidr(`${net.gateway}/${cidr.prefix}`);
-      if (masked && masked.network !== cidr.network) {
+    if (cidr && gwFamily === version && !containsAny(formatCidrAny(cidr), net.gateway as string)) {
+      findings.push(
+        error(
+          'vcf.spec.gateway-outside-subnet',
+          `Gateway ${net.gateway} is not inside ${formatCidrAny(cidr)}.`,
+          { path: `${at}.gateway` },
+        ),
+      );
+    }
+
+    // SLAAC derives the interface ID from 64 bits, so it is IPv6-only and
+    // needs a /64 (RFC 4862).
+    if (net.ipAddressAssignmentMode === 'SLAAC') {
+      if (version !== 6) {
         findings.push(
-          error(
-            'vcf.spec.gateway-outside-subnet',
-            `Gateway ${net.gateway} is not inside ${formatCidr(cidr)}.`,
-            { path: `${at}.gateway` },
-          ),
+          error('vcf.spec.slaac-needs-ipv6', `${net.networkType} uses SLAAC, which assigns IPv6 addresses only.`, {
+            path: `${at}.ipAddressAssignmentMode`,
+            remediation: 'Use STATIC or DHCP for the IPv4 entry; SLAAC belongs on the IPv6 entry.',
+          }),
+        );
+      } else if (cidr && cidr.prefix !== 64) {
+        findings.push(
+          error('vcf.spec.slaac-needs-64', `SLAAC needs a /64; ${net.networkType} is ${formatCidrAny(cidr)}.`, {
+            path: `${at}.subnet`,
+            source: 'RFC 4862',
+          }),
         );
       }
     }
+
+    // Static ranges are handed to VMkernel adapters, so they must be in the
+    // entry's own family and inside its subnet.
+    (net.includeIpAddressRanges ?? []).forEach((range, ri) => {
+      const start = addressValue(range.startIpAddress);
+      const end = addressValue(range.endIpAddress);
+      const path = `${at}.includeIpAddressRanges[${ri}]`;
+      if (start?.family !== version || end?.family !== version) {
+        findings.push(
+          error(
+            'vcf.spec.invalid-network-range',
+            `Range ${range.startIpAddress}-${range.endIpAddress} must be two IPv${version} addresses to match ipAddressVersion.`,
+            { path },
+          ),
+        );
+      } else if (end.value < start.value) {
+        findings.push(
+          error('vcf.spec.inverted-network-range', `Range ${range.startIpAddress}-${range.endIpAddress} is inverted.`, { path }),
+        );
+      } else if (
+        cidr &&
+        (!containsAny(formatCidrAny(cidr), range.startIpAddress) || !containsAny(formatCidrAny(cidr), range.endIpAddress))
+      ) {
+        findings.push(
+          error(
+            'vcf.spec.range-outside-subnet',
+            `Range ${range.startIpAddress}-${range.endIpAddress} is not inside ${formatCidrAny(cidr)}.`,
+            { path },
+          ),
+        );
+      }
+    });
+    (net.includeIpAddress ?? []).forEach((addr, ai) => {
+      if (addressValue(addr)?.family !== version) {
+        findings.push(
+          error('vcf.spec.invalid-network-address', `"${addr}" is not a valid IPv${version} address.`, {
+            path: `${at}.includeIpAddress[${ai}]`,
+          }),
+        );
+      }
+    });
 
     if (net.portGroupKey !== undefined && net.portGroupKey.length > 80) {
       findings.push(
@@ -294,14 +497,15 @@ export function validateSddcSpec(
         }),
       );
     }
-    // Overlapping subnets on different VLANs will route unpredictably.
+    // Overlapping subnets on different VLANs will route unpredictably. Checked
+    // within a family: an IPv4 and an IPv6 subnet never overlap.
     for (let i = 0; i < networks.length; i += 1) {
       for (let j = i + 1; j < networks.length; j += 1) {
         const a = networks[i] as SddcNetworkSpec;
         const b = networks[j] as SddcNetworkSpec;
-        const ca = a.subnet ? parseCidr(a.subnet) : null;
-        const cb = b.subnet ? parseCidr(b.subnet) : null;
-        if (ca && cb && vlanOf(a) !== vlanOf(b) && cidrsOverlap(ca, cb)) {
+        const valid = (n: SddcNetworkSpec): boolean =>
+          typeof n.subnet === 'string' && n.subnet.includes('/') && parseCidrAny(n.subnet) !== null;
+        if (valid(a) && valid(b) && vlanOf(a) !== vlanOf(b) && overlapsAny(a.subnet!, b.subnet!)) {
           findings.push(
             error(
               'vcf.spec.overlapping-subnets',
@@ -354,11 +558,13 @@ export function validateSddcSpec(
   // Management subnet must hold the hosts plus the component addresses. The
   // community builders use "10 + hostCount" as the floor; VCF's own IP
   // requirements are considerably higher once VCFMS and Automation are counted.
-  const mgmt = networks.find((n) => n.networkType === 'MANAGEMENT');
-  if (mgmt?.subnet && hosts.length > 0) {
-    const cidr = parseCidr(mgmt.subnet);
-    if (cidr) {
-      const available = usableAddresses(cidr);
+  // Checked per family: on dual stack each family's management prefix has to
+  // hold its own copy of every address.
+  for (const mgmt of networks.filter((n) => n.networkType === 'MANAGEMENT')) {
+    if (!mgmt.subnet || hosts.length === 0) continue;
+    const cidr = mgmt.subnet.includes('/') ? parseCidrAny(mgmt.subnet) : null;
+    if (cidr && cidr.family === versionOf(mgmt)) {
+      const available = clampCount(usableCount(cidr));
       const needed = hosts.length + VCFMS_MIN_IPS + AUTOMATION_IP_COUNT + 12;
       if (available < needed) {
         findings.push(
@@ -366,7 +572,7 @@ export function validateSddcSpec(
             'vcf.spec.management-subnet-too-small',
             `Management subnet ${mgmt.subnet} has ${available} usable addresses but this design needs roughly ${needed}.`,
             {
-              path: 'networkSpecs[MANAGEMENT].subnet',
+              path: cidr.family === 6 ? 'networkSpecs[MANAGEMENT/IPv6].subnet' : 'networkSpecs[MANAGEMENT].subnet',
               remediation:
                 'Widen the management subnet, or move VCF Management Services onto a dedicated FLEET_MANAGEMENT network.',
               source: 'VCF 9.1 IP address requirements',
@@ -501,6 +707,29 @@ export function validateSddcSpec(
       }
       (pool.subnets ?? []).forEach((subnet, si) => {
         const at = `nsxtSpec.ipAddressPoolSpec.subnets[${si}]`;
+        // NSX itself can run IPv6 host TEPs, but the installer's host TEP pool
+        // (IpAddressPoolSubnetSpec) is IPv4 only in every published 9.1
+        // example and definition, so IPv6 here is refused rather than guessed.
+        const v6Values = [
+          subnet.cidr,
+          subnet.gateway,
+          ...(subnet.ipAddressPoolRanges ?? []).flatMap((r) => [r.start, r.end]),
+        ].filter((v) => typeof v === 'string' && familyOf(v) === 6);
+        if (v6Values.length > 0) {
+          findings.push(
+            error(
+              'vcf.spec.tep-ipv6-unsupported',
+              `NSX host TEP pool on VCF 9.1 does not support IPv6 (${v6Values.join(', ')}).`,
+              {
+                path: at,
+                remediation:
+                  'Give the host TEP pool an IPv4 subnet, gateway and range. VERIFY: IPv6 host TEPs are an NSX capability the VCF 9.1 installer spec does not document.',
+                source: 'VCF Installer API — IpAddressPoolSubnetSpec',
+              },
+            ),
+          );
+          return;
+        }
         if (parseCidr(subnet.cidr) === null) {
           findings.push(
             error('vcf.spec.invalid-tep-cidr', `"${subnet.cidr}" is not a valid CIDR.`, {
@@ -685,41 +914,60 @@ export function validateSddcSpec(
       }
     }
 
-    const pool = vsp.ipv4Pool;
-    if (pool) {
+    // ipv4Pool and ipv6Pool take the same forms and the same minimum; each is
+    // checked in its own family.
+    const pools: [Family, string, IPv4Pool | IPv6Pool | undefined][] = [
+      [4, 'vspClusterSpec.ipv4Pool', vsp.ipv4Pool],
+      [6, 'vspClusterSpec.ipv6Pool', vsp.ipv6Pool],
+    ];
+    for (const [family, path, pool] of pools) {
+      if (!pool) continue;
       const supplied = [pool.cidr, pool.ipRange, pool.addresses].filter((v) => v !== undefined);
       if (supplied.length === 0) {
         findings.push(
-          error('vcf.spec.vsp-pool-empty', 'vspClusterSpec.ipv4Pool needs one of cidr, ipRange or addresses.', {
-            path: 'vspClusterSpec.ipv4Pool',
+          error('vcf.spec.vsp-pool-empty', `${path} needs one of cidr, ipRange or addresses.`, {
+            path,
           }),
         );
       }
 
-      let count = 0;
-      if (pool.addresses) count = pool.addresses.length;
-      else if (pool.ipRange) {
-        const start = parseIPv4(pool.ipRange.startIpAddress);
-        const end = parseIPv4(pool.ipRange.endIpAddress);
-        if (start !== null && end !== null && end >= start) count = end - start + 1;
-      } else if (pool.cidr) {
-        const cidr = parseCidr(pool.cidr);
-        if (cidr) count = usableAddresses(cidr);
-      }
-
+      const count = checkVspPool(findings, pool, family, path);
       if (count > 0 && count < VCFMS_MIN_IPS) {
         findings.push(
           error(
             'vcf.spec.vcfms-pool-too-small',
             `VCF Management Services requires at least ${VCFMS_MIN_IPS} IP addresses; this pool provides ${count}.`,
             {
-              path: 'vspClusterSpec.ipv4Pool',
+              path,
               remediation: `${VCFMS_MIN_IPS} is a hard minimum; 30 is recommended.`,
               source: 'VCF 9.1 IP requirements / KB 440630',
             },
           ),
         );
       }
+    }
+
+    // An IPv6 pool is only reachable over an IPv6 network entry.
+    if (vsp.ipv6Pool && networks.length > 0 && !networks.some((n) => versionOf(n) === 6)) {
+      findings.push(
+        warning(
+          'vcf.spec.ipv6-pool-without-ipv6-network',
+          'vspClusterSpec.ipv6Pool is set but no networkSpecs entry declares ipAddressVersion IPv6, so nothing can carry those addresses.',
+          {
+            path: 'vspClusterSpec.ipv6Pool',
+            remediation: 'Add the IPv6 twin of the network the management services live on, or remove ipv6Pool.',
+          },
+        ),
+      );
+    }
+    if (vsp.ipv6Pool && !vsp.internalClusterCidrIpv6) {
+      findings.push(
+        info(
+          'vcf.spec.ipv6-pool-without-internal-cidr',
+          `VERIFY: vspClusterSpec.ipv6Pool is set without internalClusterCidrIpv6. Whether the runtime then falls back to ${INTERNAL_CLUSTER_CIDRS_V6[0]} is not documented; set it explicitly.`,
+          { path: 'vspClusterSpec.internalClusterCidrIpv6', source: 'VCF Installer API — SddcVspClusterSpec' },
+        ),
+      );
     }
 
     if (!vsp.fleetFqdn && !options.secondaryInstance) {
@@ -754,6 +1002,28 @@ export function validateSddcSpec(
           { path: 'vcfAutomationSpec.nodePrefix' },
         ),
       );
+    }
+    if (Array.isArray(automation.ipPool)) {
+      automation.ipPool.forEach((addr, ai) => {
+        const family = addressValue(addr)?.family;
+        if (family === undefined) {
+          findings.push(
+            error('vcf.spec.invalid-automation-address', `"${addr}" is not a valid IP address.`, {
+              path: `vcfAutomationSpec.ipPool[${ai}]`,
+            }),
+          );
+        } else if (family === 6) {
+          // The pool is a bare string list with no IPv6 counterpart, unlike
+          // vspClusterSpec, and no published example carries IPv6 in it.
+          findings.push(
+            warning(
+              'vcf.spec.automation-ipv6-unverified',
+              `VERIFY: vcfAutomationSpec.ipPool entry ${addr} is IPv6. The 9.1 API documents no IPv6 form for VCF Automation's pool; use IPv4 addresses unless Broadcom confirms it.`,
+              { path: `vcfAutomationSpec.ipPool[${ai}]`, source: 'VCF Installer API — VcfAutomationSpec' },
+            ),
+          );
+        }
+      });
     }
     if (Array.isArray(automation.ipPool) && automation.ipPool.length < AUTOMATION_IP_COUNT) {
       findings.push(
@@ -913,6 +1183,44 @@ export function validateSddcSpec(
             ),
           );
         }
+      }
+      // gateway/subnetMask are the IPv4 half; IPv6 has its own pair of fields.
+      const at = `vcfManagementComponentsInfrastructureSpec.${key}`;
+      if (network.gateway && addressValue(network.gateway)?.family !== 4) {
+        findings.push(
+          error('vcf.spec.management-network-gateway', `${at}.gateway "${network.gateway}" is not an IPv4 address.`, {
+            path: `${at}.gateway`,
+            remediation: 'gateway takes the IPv4 gateway; an IPv6 gateway goes in ipv6Gateway with ipv6Prefix.',
+            source: 'VCF Installer API — VcfManagementComponentsNetworkSpec',
+          }),
+        );
+      }
+      if (network.ipv6Gateway !== undefined && addressValue(network.ipv6Gateway)?.family !== 6) {
+        findings.push(
+          error('vcf.spec.management-network-ipv6-gateway', `${at}.ipv6Gateway "${network.ipv6Gateway}" is not an IPv6 address.`, {
+            path: `${at}.ipv6Gateway`,
+          }),
+        );
+      }
+      if (
+        network.ipv6Prefix !== undefined &&
+        !(Number.isInteger(network.ipv6Prefix) && network.ipv6Prefix >= 1 && network.ipv6Prefix <= 128)
+      ) {
+        findings.push(
+          error('vcf.spec.management-network-ipv6-prefix', `${at}.ipv6Prefix must be an integer 1-128; got ${String(network.ipv6Prefix)}.`, {
+            path: `${at}.ipv6Prefix`,
+            source: 'VCF Installer API — VcfManagementComponentsNetworkSpec',
+          }),
+        );
+      }
+      if ((network.ipv6Gateway === undefined) !== (network.ipv6Prefix === undefined)) {
+        findings.push(
+          warning(
+            'vcf.spec.management-network-ipv6-incomplete',
+            `${at} sets only one of ipv6Gateway and ipv6Prefix; the segment's IPv6 side needs both.`,
+            { path: at },
+          ),
+        );
       }
     }
   }

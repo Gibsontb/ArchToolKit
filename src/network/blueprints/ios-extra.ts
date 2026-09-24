@@ -17,7 +17,9 @@
 import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
-import { description, listOf, netmask, parseCidr, wildcard, type DeviceChange } from '../device.ts';
+import { description, listOf, netmask, parseCidr, parseCidrDual, wildcard, type DeviceChange } from '../device.ts';
+import { familyOf, urlHost } from '../../core/ip.ts';
+import { V6, aclOperand, addressList, cidrList, interfaceAddressLines, invalidEntries, isLinkLocal, noIpv6, routerIdFindings } from './ios-v6.ts';
 
 const PLATFORM = 'cisco_ios' as const;
 const SECRET = '<REQUIRED>';
@@ -32,20 +34,25 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     description: 'Turn a switch port into a routed interface with an address — the usual way to connect a router, a firewall or another layer 3 device.',
     inputs: [
       { id: 'interface', label: 'Interface', control: 'text', default: 'GigabitEthernet1/0/24' },
-      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/30', hint: 'A /30 or /31 on a point-to-point link' },
+      { id: 'address', label: 'Address', control: 'text', default: '10.0.12.1/30', hint: 'IPv4, IPv6 or one of each: 10.0.12.1/30, 2001:db8:0:12::1/127' },
       { id: 'port_description', label: 'Description', control: 'text', default: 'Link to core' },
       { id: 'mtu', label: 'MTU', control: 'number', default: 1500, min: 1500, max: 9216 },
       { id: 'vrf', label: 'VRF', control: 'text', default: '', hint: 'Leave empty for the global table' },
-      { id: 'ospf_process', label: 'Add to OSPF process', control: 'number', default: 0, min: 0, hint: '0 for none' },
+      { id: 'ospf_process', label: 'Add to OSPF process', control: 'number', default: 0, min: 0, hint: '0 for none. An IPv6 address joins OSPFv3 with the same process number' },
       { id: 'ospf_area', label: 'OSPF area', control: 'text', default: '0', showWhen: { input: 'ospf_process', notEquals: ['0', ''] } },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const iface = str(values, 'interface', '');
-      const cidr = parseCidr(str(values, 'address', ''));
+      const addresses = cidrList(str(values, 'address', ''));
+      const cidr = addresses.v4[0];
+      const cidr6 = addresses.v6;
       const vrf = str(values, 'vrf', '');
       const ospf = num(values, 'ospf_process', 0);
+      const area = str(values, 'ospf_area', '0');
       const findings: Finding[] = [];
-      if (!cidr) findings.push(error('network.ios.bad-address', 'The address is not a valid address and prefix.', { remediation: 'Write it as 10.0.12.1/30.', source: 'ArchToolKit' }));
+      if (!cidr && cidr6.length === 0) findings.push(error('network.ios.bad-address', 'The address is not a valid address and prefix.', { remediation: 'Write it as 10.0.12.1/30, 2001:db8:0:12::1/127, or both.', source: 'ArchToolKit' }));
+      findings.push(...invalidEntries('network.ios.bad-address', 'Address', addresses.invalid));
+      if (addresses.v4.length > 1) findings.push(warning('network.ios.second-v4', 'An interface has one primary IPv4 address; only the first was used.', { source: 'ArchToolKit' }));
 
       return {
         platform: PLATFORM,
@@ -53,21 +60,30 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         impact: 'outage',
         notes: [
           '`no switchport` drops the interface out of layer 2 and clears its switchport configuration. Whatever was passing through it stops until this is complete.',
-          ...(vrf ? [`Putting the interface in VRF ${vrf} removes any address it already had. The VRF has to exist first.`] : []),
+          ...(vrf ? [`Putting the interface in VRF ${vrf} removes any address it already had. The VRF has to exist first${cidr6.length > 0 ? ', with an IPv6 address family' : ''}.`] : []),
+          ...(ospf > 0 && cidr6.length > 0 ? [`OSPFv3 process ${ospf} starts on this interface. On a device with no IPv4 address it needs a router id set under \`router ospfv3 ${ospf}\` first.`] : []),
         ],
-        before: [`show run interface ${iface}`, `show interfaces ${iface} status`, 'show ip interface brief'],
+        before: [`show run interface ${iface}`, `show interfaces ${iface} status`, 'show ip interface brief', ...(cidr6.length > 0 ? ['show ipv6 interface brief'] : [])],
         config: [
           `interface ${iface}`,
           ` description ${description(str(values, 'port_description', ''), 'Routed link')}`,
           ' no switchport',
           ...(vrf ? [` vrf forwarding ${vrf}`] : []),
-          ...(cidr ? [` ip address ${cidr.address} ${netmask(cidr.prefix)}`] : []),
+          ...interfaceAddressLines(cidr, cidr6),
           ...(num(values, 'mtu', 1500) !== 1500 ? [` mtu ${num(values, 'mtu', 1500)}`] : []),
-          ...(ospf > 0 ? [` ip ospf ${ospf} area ${str(values, 'ospf_area', '0')}`, ' ip ospf network point-to-point'] : []),
+          ...(ospf > 0 && cidr ? [` ip ospf ${ospf} area ${area}`, ' ip ospf network point-to-point'] : []),
+          ...(ospf > 0 && cidr6.length > 0 ? [` ospfv3 ${ospf} ipv6 area ${area}`, ' ospfv3 network point-to-point'] : []),
           ' no shutdown',
           '!',
         ],
-        verify: [`show ip interface brief | include ${iface}`, `show interfaces ${iface}`, ...(ospf > 0 ? ['show ip ospf neighbor'] : []), ...(cidr ? [`ping ${cidr.address}`] : [])],
+        verify: [
+          `show ip interface brief | include ${iface}`,
+          `show interfaces ${iface}`,
+          ...(ospf > 0 && cidr ? ['show ip ospf neighbor'] : []),
+          ...(cidr ? [`ping ${cidr.address}`] : []),
+          ...(cidr6.length > 0 ? [`show ipv6 interface ${iface}`, `ping ${cidr6[0]!.address}`] : []),
+          ...(ospf > 0 && cidr6.length > 0 ? ['show ospfv3 neighbor'] : []),
+        ],
         backout: [`interface ${iface}`, ' shutdown', ' default interface', '!', `interface ${iface}`, ' switchport', '!'],
         findings,
       };
@@ -82,7 +98,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     description: 'A loopback for the router id, management, and as the source for BGP, TACACS+, SNMP and syslog.',
     inputs: [
       { id: 'number', label: 'Loopback number', control: 'number', default: 0, min: 0, max: 2147483647 },
-      { id: 'address', label: 'Address', control: 'text', default: '10.255.0.1/32' },
+      { id: 'address', label: 'Address', control: 'text', default: '10.255.0.1/32', hint: 'IPv4, IPv6 or one of each: 10.255.0.1/32, 2001:db8::1/128' },
       { id: 'port_description', label: 'Description', control: 'text', default: 'Router id and management source' },
       { id: 'source_for', label: 'Use as the source for', control: 'select', default: 'all', options: [
         { value: 'all', label: 'Everything (SNMP, syslog, NTP, TACACS+, SSH)' },
@@ -92,13 +108,18 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const id = num(values, 'number', 0);
-      const cidr = parseCidr(str(values, 'address', ''));
+      const addresses = cidrList(str(values, 'address', ''));
+      const cidr = addresses.v4[0];
+      const cidr6 = addresses.v6;
       const use = str(values, 'source_for', 'all');
-      const findings: Finding[] = [];
+      const findings: Finding[] = [...invalidEntries('network.ios.bad-address', 'Loopback address', addresses.invalid)];
       if (cidr && cidr.prefix !== 32) {
         findings.push(warning('network.ios.loopback-mask', 'A loopback is normally a /32. Anything else advertises a subnet that does not exist.', { source: 'ArchToolKit' }));
       }
-      if (!cidr) findings.push(error('network.ios.bad-address', 'The loopback address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      if (cidr6.some((c) => c.prefix !== 128)) {
+        findings.push(warning('network.ios.loopback-mask', 'An IPv6 loopback is normally a /128. Anything else advertises a subnet that does not exist.', { source: 'ArchToolKit' }));
+      }
+      if (!cidr && cidr6.length === 0) findings.push(error('network.ios.bad-address', 'The loopback address is not a valid address and prefix.', { source: 'ArchToolKit' }));
 
       return {
         platform: PLATFORM,
@@ -109,7 +130,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         config: [
           `interface Loopback${id}`,
           ` description ${description(str(values, 'port_description', ''), 'Loopback')}`,
-          ...(cidr ? [` ip address ${cidr.address} ${netmask(cidr.prefix)}`] : []),
+          ...interfaceAddressLines(cidr, cidr6),
           '!',
           ...(use === 'all'
             ? [
@@ -123,7 +144,12 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
               ? [`logging source-interface Loopback${id}`]
               : []),
         ],
-        verify: [`show ip interface brief | include Loopback${id}`, 'show run | include source-interface', ...(cidr ? [`ping ${cidr.address}`] : [])],
+        verify: [
+          `show ip interface brief | include Loopback${id}`,
+          'show run | include source-interface',
+          ...(cidr ? [`ping ${cidr.address}`] : []),
+          ...(cidr6.length > 0 ? [`show ipv6 interface brief Loopback${id}`, `ping ${cidr6[0]!.address}`] : []),
+        ],
         backout: [
           ...(use !== 'none' ? ['no logging source-interface'] : []),
           ...(use === 'all' ? ['no ip ssh source-interface', 'no ntp source', 'no snmp-server source-interface traps', 'no ip tacacs source-interface'] : []),
@@ -172,9 +198,15 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           ' exit-address-family',
           ...(ipv6 ? [' address-family ipv6', ...(rt ? [`  route-target export ${rt}`, `  route-target import ${rt}`] : []), ' exit-address-family'] : []),
           '!',
-          ...members.flatMap((iface) => [`interface ${iface}`, ` vrf forwarding ${name}`, ' ! re-apply the address here: ip address <address> <mask>', '!']),
+          ...members.flatMap((iface) => [
+            `interface ${iface}`,
+            ` vrf forwarding ${name}`,
+            ' ! re-apply the address here: ip address <address> <mask>',
+            ...(ipv6 ? [' ! and the IPv6 address: ipv6 address <prefix>/<length>'] : []),
+            '!',
+          ]),
         ],
-        verify: [`show vrf ${name}`, `show ip route vrf ${name}`, ...members.map((iface) => `show run interface ${iface}`)],
+        verify: [`show vrf ${name}`, `show ip route vrf ${name}`, ...(ipv6 ? [`show ipv6 route vrf ${name}`] : []), ...members.map((iface) => `show run interface ${iface}`)],
         backout: [...members.flatMap((iface) => [`interface ${iface}`, ` no vrf forwarding ${name}`, '!']), `no vrf definition ${name}`],
       };
     },
@@ -190,24 +222,46 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'instance', label: 'Instance name', control: 'text', default: 'CAMPUS' },
       { id: 'as_number', label: 'Autonomous system', control: 'number', default: 100, min: 1, max: 65535 },
       { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.0.1' },
-      { id: 'networks', label: 'Networks', control: 'textarea', default: '10.10.0.0/16', hint: 'One prefix per line' },
+      { id: 'networks', label: 'Networks', control: 'textarea', default: '10.10.0.0/16', hint: 'One prefix per line. An IPv6 prefix turns on the IPv6 address family, which runs on every IPv6 interface' },
       { id: 'active', label: 'Interfaces that should form neighbours', control: 'text', default: 'GigabitEthernet1/0/24' },
       { id: 'auth', label: 'Authenticate neighbours', control: 'toggle', default: true },
-      { id: 'summary', label: 'Summary to advertise', control: 'text', default: '', hint: 'Optional: a prefix to summarise outbound' },
+      { id: 'summary', label: 'Summary to advertise', control: 'text', default: '', hint: 'Optional: an IPv4 or IPv6 prefix (or one of each) to summarise outbound' },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const name = str(values, 'instance', 'CAMPUS').toUpperCase();
       const asn = num(values, 'as_number', 100);
-      const nets = str(values, 'networks', '')
+      const lines = str(values, 'networks', '')
         .split(/\n+/)
-        .map((line) => parseCidr(line.trim()))
-        .filter((c): c is { address: string; prefix: number } => c !== null);
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const nets = lines.map((line) => parseCidr(line)).filter((c): c is { address: string; prefix: number } => c !== null);
+      const nets6 = lines.map((line) => parseCidrDual(line)).filter((c) => c?.family === 6);
       const active = listOf(str(values, 'active', ''));
       const auth = bool(values, 'auth', true);
-      const summary = parseCidr(str(values, 'summary', ''));
-      const findings: Finding[] = [];
-      if (nets.length === 0) findings.push(error('network.ios.no-networks', 'No valid networks, so EIGRP would advertise nothing.', { source: 'ArchToolKit' }));
+      const summaries = cidrList(str(values, 'summary', ''));
+      const summary = summaries.v4[0];
+      const summary6 = summaries.v6[0];
+      const routerId = str(values, 'router_id', '10.255.0.1');
+      const v4 = nets.length > 0 || nets6.length === 0;
+      const v6 = nets6.length > 0;
+      const findings: Finding[] = [...routerIdFindings(routerId), ...invalidEntries('network.ios.bad-summary', 'Summary', summaries.invalid)];
+      if (nets.length === 0 && nets6.length === 0) findings.push(error('network.ios.no-networks', 'No valid networks, so EIGRP would advertise nothing.', { source: 'ArchToolKit' }));
       if (auth) findings.push(warning('network.ios.eigrp-key', `The key chain is left as ${SECRET}. Put the real key in from your vault.`, { source: 'ArchToolKit' }));
+      if (summary6 && !v6) {
+        findings.push(error('network.ios.eigrp-summary-family', 'The IPv6 summary has no IPv6 address family to go in, so it was left out.', { remediation: 'List an IPv6 network as well.', source: 'ArchToolKit' }));
+      }
+      const afInterfaces = (summaryLine: string | null) => [
+        '  af-interface default',
+        '   passive-interface',
+        '  exit-af-interface',
+        ...active.flatMap((iface) => [
+          `  af-interface ${iface}`,
+          '   no passive-interface',
+          ...(auth ? ['   authentication mode hmac-sha-256 0 ' + SECRET] : []),
+          ...(summaryLine ? [summaryLine] : []),
+          '  exit-af-interface',
+        ]),
+      ];
 
       return {
         platform: PLATFORM,
@@ -216,30 +270,34 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         notes: [
           'Named mode, not classic: it keeps the authentication and the timers with the address family rather than on each interface.',
           ...(auth ? [`Replace ${SECRET} with the key. Both ends need the same key and key id.`] : []),
-          ...(summary ? ['A summary suppresses the components behind it. Make sure nothing needs them individually.'] : []),
+          ...(summary || summary6 ? ['A summary suppresses the components behind it. Make sure nothing needs them individually.'] : []),
+          ...(v6 ? ['The IPv6 address family has no network statements: it runs on every interface with IPv6 enabled, and passive-by-default keeps it from peering anywhere not named. `ipv6 unicast-routing` must be on.'] : []),
         ],
-        before: ['show ip eigrp neighbors', 'show ip protocols', 'show run | section router eigrp'],
+        before: ['show ip eigrp neighbors', 'show ip protocols', 'show run | section router eigrp', ...(v6 ? ['show ipv6 eigrp neighbors'] : [])],
         config: [
           ...(auth ? ['key chain EIGRP-KEYS', ' key 1', `  key-string ${SECRET}`, '  cryptographic-algorithm hmac-sha-256', '!'] : []),
           `router eigrp ${name}`,
           ' !',
-          ` address-family ipv4 unicast autonomous-system ${asn}`,
-          `  eigrp router-id ${str(values, 'router_id', '10.255.0.1')}`,
-          ...nets.map((n) => `  network ${n.address} ${wildcard(n.prefix)}`),
-          '  af-interface default',
-          '   passive-interface',
-          '  exit-af-interface',
-          ...active.flatMap((iface) => [
-            `  af-interface ${iface}`,
-            '   no passive-interface',
-            ...(auth ? ['   authentication mode hmac-sha-256 0 ' + SECRET] : []),
-            ...(summary ? [`   summary-address ${summary.address} ${netmask(summary.prefix)}`] : []),
-            '  exit-af-interface',
-          ]),
-          ' exit-address-family',
+          ...(v4
+            ? [
+                ` address-family ipv4 unicast autonomous-system ${asn}`,
+                `  eigrp router-id ${routerId}`,
+                ...nets.map((n) => `  network ${n.address} ${wildcard(n.prefix)}`),
+                ...afInterfaces(summary ? `   summary-address ${summary.address} ${netmask(summary.prefix)}` : null),
+                ' exit-address-family',
+              ]
+            : []),
+          ...(v6
+            ? [
+                ` address-family ipv6 unicast autonomous-system ${asn}`,
+                `  eigrp router-id ${routerId}`,
+                ...afInterfaces(summary6 ? `   summary-address ${summary6.network}/${summary6.prefix}` : null),
+                ' exit-address-family',
+              ]
+            : []),
           '!',
         ],
-        verify: ['show ip eigrp neighbors', 'show ip eigrp topology', 'show ip route eigrp', 'show ip protocols'],
+        verify: ['show ip eigrp neighbors', 'show ip eigrp topology', 'show ip route eigrp', 'show ip protocols', ...(v6 ? ['show ipv6 eigrp neighbors', 'show ipv6 eigrp topology', 'show ipv6 route eigrp'] : [])],
         backout: [`no router eigrp ${name}`, ...(auth ? ['no key chain EIGRP-KEYS'] : [])],
         findings,
       };
@@ -256,7 +314,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
       { id: 'interface', label: 'Interface', control: 'text', default: 'Vlan10' },
       { id: 'protocol', label: 'Protocol', control: 'select', default: 'hsrp', options: [{ value: 'hsrp', label: 'HSRP' }, { value: 'vrrp', label: 'VRRP' }] },
       { id: 'group', label: 'Group', control: 'number', default: 10, min: 0, max: 255 },
-      { id: 'virtual_address', label: 'Virtual address', control: 'text', default: '10.10.10.254' },
+      { id: 'virtual_address', label: 'Virtual address', control: 'text', default: '10.10.10.254', placeholder: '10.10.10.254, fe80::1, 2001:db8:10::254/64', hint: 'IPv4 and/or IPv6. IPv6: a link-local (fe80::1) and optionally a global address with its prefix length' },
       { id: 'role', label: 'This switch is', control: 'select', default: 'primary', options: [{ value: 'primary', label: 'Primary (priority 110)' }, { value: 'secondary', label: 'Secondary (priority 100)' }] },
       { id: 'track', label: 'Track object', control: 'number', default: 0, min: 0, max: 500, hint: '0 for none; the priority drops when the tracked object goes down' },
       { id: 'auth', label: 'Authenticate', control: 'toggle', default: true },
@@ -266,36 +324,117 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
       const iface = str(values, 'interface', 'Vlan10');
       const hsrp = str(values, 'protocol', 'hsrp') === 'hsrp';
       const group = num(values, 'group', 10);
-      const address = str(values, 'virtual_address', '');
+      const entries = listOf(str(values, 'virtual_address', ''));
+      const v6Entries = entries.filter((a) => familyOf(a) === 6);
+      const v4Entries = entries.filter((a) => !v6Entries.includes(a));
+      // A value that is not IPv6 stays on the IPv4 line, as it always did.
+      const address = v4Entries[0] ?? (v6Entries.length === 0 ? '' : undefined);
+      const linkLocal = v6Entries.find((a) => isLinkLocal(a) && !a.includes('/'));
+      const globals6 = v6Entries.filter((a) => !isLinkLocal(a) && a.includes('/'));
+      const bareGlobals6 = v6Entries.filter((a) => !isLinkLocal(a) && !a.includes('/'));
+      const v6 = linkLocal !== undefined || globals6.length > 0;
       const priority = str(values, 'role', 'primary') === 'primary' ? 110 : 100;
       const track = num(values, 'track', 0);
       const auth = bool(values, 'auth', true);
       const keyword = hsrp ? 'standby' : 'vrrp';
+      const version2 = hsrp && (bool(values, 'version2', true) || v6);
+      // HSRP keeps IPv4 and IPv6 groups apart, so the IPv6 group gets its own number.
+      const group6 = hsrp && address !== undefined ? (group <= 2047 ? group + 2048 : group - 2048) : group;
+      // IPv6 VRRP is VRRPv3 only, and once VRRPv3 is on the old `vrrp N ip` syntax is gone for both families.
+      const vrrp3 = !hsrp && v6;
+      const findings: Finding[] = [];
+      if (bareGlobals6.length > 0) {
+        findings.push(error('network.ios.fhrp6-prefix', `${bareGlobals6.join(', ')} needs its prefix length, such as 2001:db8:10::254/64, so it was left out.`, { source: 'ArchToolKit' }));
+      }
+      if (hsrp && v6 && !bool(values, 'version2', true)) {
+        findings.push(warning('network.ios.hsrp6-version', 'HSRP for IPv6 exists only in version 2, so version 2 was set. The partner switch must run version 2 as well.', { source: 'ArchToolKit' }));
+      }
+      if (vrrp3 && !linkLocal) {
+        findings.push(error('network.ios.vrrp6-link-local', 'VRRPv3 for IPv6 needs a link-local virtual address as its primary — hosts use it as their gateway. The IPv6 group was not written.', { remediation: 'Add fe80::1 (or any fe80:: address) to the virtual addresses.', source: 'ArchToolKit' }));
+      }
+      if (vrrp3 && auth) {
+        findings.push(warning('network.ios.vrrp3-auth', 'VRRPv3 has no authentication (RFC 5798 removed it), so no key was written. Filter VRRP (protocol 112) at the edge instead.', { source: 'ArchToolKit' }));
+      }
+
+      const hsrp6Lines =
+        hsrp && v6
+          ? [
+              linkLocal ? ` standby ${group6} ipv6 ${linkLocal}` : ` standby ${group6} ipv6 autoconfig`,
+              ...globals6.map((a) => ` standby ${group6} ipv6 ${a}`),
+              ` standby ${group6} priority ${priority}`,
+              ` standby ${group6} preempt delay minimum 60`,
+              ...(auth ? [` standby ${group6} authentication md5 key-string ${SECRET}`] : []),
+              ...(track > 0 ? [` standby ${group6} track ${track} decrement 20`] : []),
+              ` standby ${group6} name GW6-${group6}`,
+            ]
+          : [];
+      const vrrp3Family = (family: 'ipv4' | 'ipv6', primary: string, extra: readonly string[]) => [
+        ` vrrp ${group} address-family ${family}`,
+        `  address ${primary} primary`,
+        ...extra.map((a) => `  address ${a}`),
+        `  priority ${priority}`,
+        '  preempt delay minimum 60',
+        ...(track > 0 ? [`  track ${track} decrement 20`] : []),
+        `  description GW-${group}`,
+        ' exit-vrrp',
+      ];
+
+      const config = vrrp3
+        ? [
+            'fhrp version vrrp v3',
+            '!',
+            `interface ${iface}`,
+            ...(address !== undefined && address ? vrrp3Family('ipv4', address, []) : []),
+            ...(linkLocal ? vrrp3Family('ipv6', linkLocal, globals6) : []),
+            '!',
+          ]
+        : [
+            `interface ${iface}`,
+            ...(version2 ? [' standby version 2'] : []),
+            ...(address !== undefined
+              ? [
+                  ` ${keyword} ${group} ip ${address}`,
+                  ` ${keyword} ${group} priority ${priority}`,
+                  ` ${keyword} ${group} preempt${hsrp ? ' delay minimum 60' : ''}`,
+                  ...(auth ? [hsrp ? ` standby ${group} authentication md5 key-string ${SECRET}` : ` vrrp ${group} authentication text ${SECRET}`] : []),
+                  ...(track > 0 ? [` ${keyword} ${group} track ${track} decrement 20`] : []),
+                  ` ${keyword} ${group} name GW-${group}`,
+                ]
+              : []),
+            ...hsrp6Lines,
+            '!',
+          ];
 
       return {
         platform: PLATFORM,
-        title: `${hsrp ? 'HSRP' : 'VRRP'} group ${group} on ${iface}`,
+        title: `${hsrp ? 'HSRP' : vrrp3 ? 'VRRPv3' : 'VRRP'} group ${group}${hsrp && v6 && group6 !== group ? ` and ${group6}` : ''} on ${iface}`,
         impact: 'brief',
         notes: [
           'The partner switch takes the same group and virtual address with the other priority. Two primaries, or two different virtual addresses, and hosts lose their gateway.',
-          ...(hsrp && bool(values, 'version2', true) ? ['Version 2 has to match on both ends. Mixing versions means two routers that never see each other and both go active.'] : []),
+          ...(version2 ? ['Version 2 has to match on both ends. Mixing versions means two routers that never see each other and both go active.'] : []),
+          ...(hsrp && v6 && group6 !== group ? [`The IPv6 gateway is HSRP group ${group6}, separate from IPv4 group ${group}. The partner switch needs the same two numbers.`] : []),
+          ...(vrrp3 ? ['`fhrp version vrrp v3` is global: every existing VRRP group on this device has to be rewritten in the address-family form at the same time, or it stops.'] : []),
           ...(track > 0 ? [`Track object ${track} has to exist already — the IP SLA change creates one.`] : []),
-          ...(auth ? [`Replace ${SECRET} with the group key.`] : []),
+          ...(auth && !vrrp3 ? [`Replace ${SECRET} with the group key.`] : []),
         ],
         before: [`show run interface ${iface}`, hsrp ? 'show standby brief' : 'show vrrp brief'],
-        config: [
-          `interface ${iface}`,
-          ...(hsrp && bool(values, 'version2', true) ? [' standby version 2'] : []),
-          ` ${keyword} ${group} ip ${address}`,
-          ` ${keyword} ${group} priority ${priority}`,
-          ` ${keyword} ${group} preempt${hsrp ? ' delay minimum 60' : ''}`,
-          ...(auth ? [hsrp ? ` standby ${group} authentication md5 key-string ${SECRET}` : ` vrrp ${group} authentication text ${SECRET}`] : []),
-          ...(track > 0 ? [` ${keyword} ${group} track ${track} decrement 20`] : []),
-          ` ${keyword} ${group} name GW-${group}`,
-          '!',
+        config,
+        verify: [
+          hsrp ? `show standby ${iface} brief` : 'show vrrp brief',
+          ...(address ? [`ping ${address}`] : []),
+          ...(v6 ? [`show ipv6 interface ${iface}`, ...(globals6[0] ? [`ping ${globals6[0].split('/')[0]}`] : [])] : []),
+          hsrp ? 'show standby all' : 'show vrrp all',
         ],
-        verify: [hsrp ? `show standby ${iface} brief` : 'show vrrp brief', `ping ${address}`, hsrp ? 'show standby all' : 'show vrrp all'],
-        backout: [`interface ${iface}`, ` no ${keyword} ${group}`, ...(hsrp && bool(values, 'version2', true) ? [' no standby version 2'] : []), '!'],
+        backout: vrrp3
+          ? [`interface ${iface}`, ...(address ? [` no vrrp ${group} address-family ipv4`] : []), ` no vrrp ${group} address-family ipv6`, '!']
+          : [
+              `interface ${iface}`,
+              ...(address !== undefined ? [` no ${keyword} ${group}`] : []),
+              ...(hsrp && v6 ? [` no standby ${group6}`] : []),
+              ...(version2 ? [' no standby version 2'] : []),
+              '!',
+            ],
+        findings,
       };
     },
   }),
@@ -314,7 +453,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         { value: 'http', label: 'HTTP GET — does the service answer' },
         { value: 'tcp-connect', label: 'TCP connect — does the port answer' },
       ] },
-      { id: 'destination', label: 'Destination', control: 'text', default: '8.8.8.8' },
+      { id: 'destination', label: 'Destination', control: 'text', default: '8.8.8.8', hint: 'An IPv4 or IPv6 address (2001:4860:4860::8888), or a name for HTTP' },
       { id: 'port', label: 'Port', control: 'number', default: 443, min: 1, max: 65535, showWhen: { input: 'probe', equals: ['tcp-connect'] } },
       { id: 'source', label: 'Source interface', control: 'text', default: '', hint: 'Optional, but a probe without one can take a different path than the traffic' },
       { id: 'frequency', label: 'Frequency (seconds)', control: 'number', default: 5, min: 1, max: 604800 },
@@ -333,7 +472,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         probe === 'icmp-echo'
           ? ` icmp-echo ${destination}${source ? ` source-interface ${source}` : ''}`
           : probe === 'http'
-            ? ` http get http://${destination}${source ? ` source-interface ${source}` : ''}`
+            ? ` http get http://${urlHost(destination)}${source ? ` source-interface ${source}` : ''}`
             : ` tcp-connect ${destination} ${num(values, 'port', 443)}${source ? ` source-interface ${source}` : ''}`;
 
       return {
@@ -385,7 +524,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         { value: 'bgp', label: 'BGP' },
       ] },
       { id: 'into_id', label: 'Into process or AS', control: 'text', default: '1' },
-      { id: 'prefixes', label: 'Prefixes allowed to cross', control: 'textarea', default: '10.20.0.0/16', hint: 'One per line; everything else is denied' },
+      { id: 'prefixes', label: 'Prefixes allowed to cross', control: 'textarea', default: '10.20.0.0/16', hint: 'One per line, IPv4 or IPv6; everything else is denied. IPv6 prefixes are redistributed in the IPv6 side of the protocol (OSPFv3, IPv6 EIGRP, the BGP IPv6 family)' },
       { id: 'metric', label: 'Metric', control: 'text', default: '', hint: 'Optional. EIGRP needs a full metric; OSPF takes a cost' },
       { id: 'tag', label: 'Route tag', control: 'number', default: 100, min: 0, hint: 'Tag what crosses so it can be filtered coming back' },
     ],
@@ -394,14 +533,18 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
       const fromId = str(values, 'from_id', '');
       const into = str(values, 'into_protocol', 'ospf');
       const intoId = str(values, 'into_id', '1');
-      const prefixes = str(values, 'prefixes', '')
+      const lines = str(values, 'prefixes', '')
         .split(/\n+/)
-        .map((line) => parseCidr(line.trim()))
-        .filter((c): c is { address: string; prefix: number } => c !== null);
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const prefixes = lines.map((line) => parseCidr(line)).filter((c): c is { address: string; prefix: number } => c !== null);
+      const prefixes6 = lines.map((line) => parseCidrDual(line)).filter((c) => c?.family === 6).map((c) => c!);
       const tag = num(values, 'tag', 100);
       const metric = str(values, 'metric', '');
       const findings: Finding[] = [];
-      if (prefixes.length === 0) {
+      const v6 = prefixes6.length > 0;
+      const v4 = prefixes.length > 0 || !v6;
+      if (prefixes.length === 0 && prefixes6.length === 0) {
         findings.push(
           error('network.ios.no-redistribute-filter', 'No prefixes were listed, so the route map would deny everything — redistribution would do nothing.', {
             remediation: 'List what should cross between the protocols.',
@@ -412,33 +555,72 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
 
       const listName = `PL-${from.toUpperCase()}-TO-${into.toUpperCase()}`;
       const mapName = `RM-${from.toUpperCase()}-TO-${into.toUpperCase()}`;
+      const listName6 = `${listName}${V6}`;
+      const mapName6 = `${mapName}${V6}`;
       const source = `${from}${fromId ? ` ${fromId}` : ''}`;
+      const redistribute6 = ` redistribute ${source}${metric ? ` metric ${metric}` : ''} route-map ${mapName6}`;
+      // Where IPv6 routes are redistributed: the OSPFv3 process, the classic
+      // IPv6 EIGRP process or the BGP IPv6 address family — never `router ospf`.
+      const into6 =
+        into === 'ospf'
+          ? { open: [`router ospfv3 ${intoId}`, ' address-family ipv6 unicast'], line: ` ${redistribute6}`, close: [' exit-address-family'], section: 'router ospfv3' }
+          : into === 'bgp'
+            ? { open: [`router bgp ${intoId}`, ' address-family ipv6 unicast'], line: ` ${redistribute6}`, close: [' exit-address-family'], section: 'router bgp' }
+            : { open: [`ipv6 router eigrp ${intoId}`], line: redistribute6, close: [], section: 'ipv6 router eigrp' };
 
       return {
         platform: PLATFORM,
-        title: `Redistribute ${source} into ${into} ${intoId}`,
+        title: `Redistribute ${source} into ${into} ${intoId}${v6 ? (v4 ? ' (IPv4 and IPv6)' : ' (IPv6)') : ''}`,
         impact: 'brief',
         notes: [
           'Redistribution without a filter is how a routing loop starts. Everything here goes through the prefix list, and the route map denies what it does not name.',
           `Routes that cross are tagged ${tag}. Use that tag to stop them coming back the other way.`,
           ...(into === 'eigrp' && !metric ? ['EIGRP will not install redistributed routes without a metric. Set one, or add `default-metric` to the instance.'] : []),
+          ...(v6 ? [`IPv6 routes cross through their own prefix list and route map (${listName6}, ${mapName6}), redistributed under ${into6.section}. The source protocol has to be running for IPv6 too.`] : []),
+          ...(v6 && into === 'eigrp' ? ['VERIFY: this writes classic IPv6 EIGRP (`ipv6 router eigrp`). If the device runs EIGRP in named mode, put the redistribute line under `address-family ipv6` → `topology base` of the named instance instead.'] : []),
         ],
-        before: [`show run | section router ${into}`, 'show ip route', `show route-map ${mapName}`],
+        before: [`show run | section router ${into}`, ...(v4 ? ['show ip route'] : []), ...(v6 ? [`show run | section ${into6.section}`, 'show ipv6 route'] : []), `show route-map ${v4 ? mapName : mapName6}`],
         config: [
-          ...prefixes.map((p, i) => `ip prefix-list ${listName} seq ${(i + 1) * 5} permit ${p.address}/${p.prefix}`),
-          '!',
-          `route-map ${mapName} permit 10`,
-          ` match ip address prefix-list ${listName}`,
-          ...(tag > 0 ? [` set tag ${tag}`] : []),
-          '!',
-          `route-map ${mapName} deny 99`,
-          '!',
-          `router ${into} ${intoId}`,
-          ` redistribute ${source}${metric ? ` metric ${metric}` : ''} route-map ${mapName}${into === 'ospf' ? ' subnets' : ''}`,
-          '!',
+          ...(v4
+            ? [
+                ...prefixes.map((p, i) => `ip prefix-list ${listName} seq ${(i + 1) * 5} permit ${p.address}/${p.prefix}`),
+                '!',
+                `route-map ${mapName} permit 10`,
+                ` match ip address prefix-list ${listName}`,
+                ...(tag > 0 ? [` set tag ${tag}`] : []),
+                '!',
+                `route-map ${mapName} deny 99`,
+                '!',
+                `router ${into} ${intoId}`,
+                ` redistribute ${source}${metric ? ` metric ${metric}` : ''} route-map ${mapName}${into === 'ospf' ? ' subnets' : ''}`,
+                '!',
+              ]
+            : []),
+          ...(v6
+            ? [
+                ...prefixes6.map((p, i) => `ipv6 prefix-list ${listName6} seq ${(i + 1) * 5} permit ${p.network}/${p.prefix}`),
+                '!',
+                `route-map ${mapName6} permit 10`,
+                ` match ipv6 address prefix-list ${listName6}`,
+                ...(tag > 0 ? [` set tag ${tag}`] : []),
+                '!',
+                `route-map ${mapName6} deny 99`,
+                '!',
+                ...into6.open,
+                into6.line,
+                ...into6.close,
+                '!',
+              ]
+            : []),
         ],
-        verify: [`show route-map ${mapName}`, `show ip route ${into === 'ospf' ? 'ospf' : into}`, 'show ip route summary', `show ip prefix-list ${listName}`],
-        backout: [`router ${into} ${intoId}`, ` no redistribute ${source}`, '!', `no route-map ${mapName}`, `no ip prefix-list ${listName}`],
+        verify: [
+          ...(v4 ? [`show route-map ${mapName}`, `show ip route ${into === 'ospf' ? 'ospf' : into}`, 'show ip route summary', `show ip prefix-list ${listName}`] : []),
+          ...(v6 ? [`show route-map ${mapName6}`, `show ipv6 route ${into}`, `show ipv6 prefix-list ${listName6}`] : []),
+        ],
+        backout: [
+          ...(v4 ? [`router ${into} ${intoId}`, ` no redistribute ${source}`, '!', `no route-map ${mapName}`, `no ip prefix-list ${listName}`] : []),
+          ...(v6 ? [...into6.open, `${into6.close.length > 0 ? ' ' : ''} no redistribute ${source}`, ...into6.close, '!', `no route-map ${mapName6}`, `no ipv6 prefix-list ${listName6}`] : []),
+        ],
         findings,
       };
     },
@@ -465,14 +647,29 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         .split(/\n+/)
         .map((line) => parseCidr(line.trim()))
         .filter((c): c is { address: string; prefix: number } => c !== null);
-      const statics = str(values, 'static_entries', '')
+      const networks6 = str(values, 'inside_networks', '')
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter((line) => familyOf(line) === 6);
+      const allStatics = str(values, 'static_entries', '')
         .split(/\n+/)
         .map((line) => line.trim().split(/\s+/))
         .filter((parts) => parts.length >= 2);
+      const statics6 = allStatics.filter((parts) => familyOf(parts[0] ?? '') === 6 || familyOf(parts[1] ?? '') === 6);
+      const statics = allStatics.filter((parts) => !statics6.includes(parts));
       const acl = str(values, 'acl_name', 'ACL-NAT').toUpperCase();
       const findings: Finding[] = [];
-      if (networks.length === 0 && statics.length === 0) {
+      if (networks.length === 0 && statics.length === 0 && networks6.length === 0 && statics6.length === 0) {
         findings.push(error('network.ios.nat-empty', 'Nothing to translate: no networks and no static entries.', { source: 'ArchToolKit' }));
+      }
+      // `ip nat` is IPv4 only. IPv6 hosts are routed, not translated; the
+      // closest IOS-XE has is NPTv6 (`nat66 prefix`), which is a stateless
+      // prefix swap on some routers only, and is not what this change builds.
+      if (networks6.length > 0) {
+        findings.push(noIpv6('network.ios.nat-ipv6', `NAT overload (PAT) of ${networks6.join(', ')}`, 'Route the IPv6 prefix instead. VERIFY: NPTv6 (`nat66 prefix inside … outside …`) exists on some IOS-XE routers (ISR 4000, ASR 1000, Catalyst 8000) if a prefix swap is really needed; it is not generated here.'));
+      }
+      if (statics6.length > 0) {
+        findings.push(noIpv6('network.ios.nat-ipv6', `Static NAT of ${statics6.map((p) => p.join(' ')).join(', ')}`, 'IPv6 addresses are globally routable; publish the host by routing and filtering, not translation.'));
       }
 
       return {
@@ -523,45 +720,83 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     description: 'A DHCP pool on the switch itself, with the excluded addresses, the gateway, DNS and lease.',
     inputs: [
       { id: 'pool_name', label: 'Pool name', control: 'text', default: 'USERS' },
-      { id: 'network', label: 'Network', control: 'text', default: '10.10.10.0/24' },
-      { id: 'gateway', label: 'Default gateway', control: 'text', default: '10.10.10.1' },
-      { id: 'dns', label: 'DNS servers', control: 'text', default: '10.0.0.10, 10.0.0.11' },
+      { id: 'network', label: 'Network', control: 'text', default: '10.10.10.0/24', hint: 'IPv4, IPv6 or one of each: 10.10.10.0/24, 2001:db8:10::/64. An IPv6 network builds a stateful DHCPv6 pool' },
+      { id: 'gateway', label: 'Default gateway', control: 'text', default: '10.10.10.1', hint: 'IPv4 only — IPv6 hosts learn their gateway from router advertisements' },
+      { id: 'dns', label: 'DNS servers', control: 'text', default: '10.0.0.10, 10.0.0.11', hint: 'IPv4 servers go in the IPv4 pool, IPv6 servers in the DHCPv6 pool' },
       { id: 'domain', label: 'Domain name', control: 'text', default: 'corp.local' },
       { id: 'exclude_from', label: 'Exclude from', control: 'text', default: '10.10.10.1' },
-      { id: 'exclude_to', label: 'Exclude to', control: 'text', default: '10.10.10.20', hint: 'Keep the infrastructure addresses out of the pool' },
+      { id: 'exclude_to', label: 'Exclude to', control: 'text', default: '10.10.10.20', hint: 'Keep the infrastructure addresses out of the pool (IPv4)' },
       { id: 'lease_days', label: 'Lease (days)', control: 'number', default: 1, min: 0, max: 365 },
+      { id: 'v6_interface', label: 'Serve the DHCPv6 pool on', control: 'text', default: '', placeholder: 'Vlan10', hint: 'IPv6 pools only: the interface the clients are on' },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const name = str(values, 'pool_name', 'POOL').toUpperCase();
-      const network = parseCidr(str(values, 'network', ''));
-      const dns = listOf(str(values, 'dns', ''));
+      const networks = cidrList(str(values, 'network', ''));
+      const network = networks.v4[0];
+      const network6 = networks.v6[0];
+      const dnsAll = addressList(str(values, 'dns', ''));
+      const dns = [...dnsAll.v4, ...dnsAll.other];
       const from = str(values, 'exclude_from', '');
       const to = str(values, 'exclude_to', '');
-      const findings: Finding[] = [];
-      if (!network) findings.push(error('network.ios.bad-network', 'The pool network is not a valid prefix.', { source: 'ArchToolKit' }));
+      const days = num(values, 'lease_days', 1);
+      const iface6 = str(values, 'v6_interface', '');
+      const v4 = !!network || !network6;
+      const findings: Finding[] = [...invalidEntries('network.ios.bad-network', 'Pool network', networks.invalid)];
+      if (!network && !network6) findings.push(error('network.ios.bad-network', 'The pool network is not a valid prefix.', { source: 'ArchToolKit' }));
+      if (familyOf(from) === 6 || familyOf(to) === 6) {
+        findings.push(noIpv6('network.ios.dhcp6-exclude', '`ip dhcp excluded-address`', 'Leave the exclusion to the IPv4 pool. VERIFY whether your release has any exclusion for a DHCPv6 address prefix; otherwise keep static IPv6 addresses out of the pool’s prefix.'));
+      }
+      if (network6 && network6.prefix !== 64) {
+        findings.push(warning('network.ios.dhcp6-prefix', `DHCPv6 pools normally hand out addresses from a /64; ${network6.network}/${network6.prefix} is unusual and SLAAC will not work alongside it.`, { source: 'ArchToolKit' }));
+      }
+      if (network6 && !iface6) {
+        findings.push(error('network.ios.dhcp6-no-interface', 'A DHCPv6 pool serves nothing until an interface points at it, and no interface was given.', { remediation: 'Name the interface the clients are on, such as Vlan10.', source: 'ArchToolKit' }));
+      }
+      // DHCPv6 lifetimes are in seconds; preferred is half of valid, as IOS does by default.
+      const valid = days === 0 ? 'infinite' : String(days * 86400);
+      const preferred = days === 0 ? 'infinite' : String(days * 43200);
 
       return {
         platform: PLATFORM,
-        title: `DHCP pool ${name}`,
+        title: `DHCP pool ${name}${network6 ? (v4 ? ' (IPv4 and DHCPv6)' : ' (DHCPv6)') : ''}`,
         impact: 'none',
         notes: [
           'Exclude the gateway, the HSRP addresses and anything static before the pool is live, or the switch will hand out an address something is already using.',
           'A switch handing out addresses is convenient and hard to see. If there is a DHCP server, use a helper address instead.',
+          ...(network6 ? ['The DHCPv6 pool is stateful: the interface sets the managed-config flag so hosts ask for an address, and turns off autoconfiguration on the prefix. The gateway still comes from router advertisements, so `ipv6 unicast-routing` must be on.'] : []),
         ],
-        before: [`show run | section ip dhcp pool ${name}`, 'show ip dhcp binding', 'show ip dhcp conflict'],
+        before: [...(v4 ? [`show run | section ip dhcp pool ${name}`, 'show ip dhcp binding', 'show ip dhcp conflict'] : []), ...(network6 ? [`show run | section ipv6 dhcp pool ${name}`, 'show ipv6 dhcp pool'] : [])],
         config: [
-          ...(from && to ? [`ip dhcp excluded-address ${from} ${to}`] : []),
-          '!',
-          `ip dhcp pool ${name}`,
-          ...(network ? [` network ${network.address} ${netmask(network.prefix)}`] : []),
-          ` default-router ${str(values, 'gateway', '')}`,
-          ...(dns.length > 0 ? [` dns-server ${dns.join(' ')}`] : []),
-          ` domain-name ${str(values, 'domain', 'corp.local')}`,
-          ` lease ${num(values, 'lease_days', 1)}`,
-          '!',
+          ...(v4
+            ? [
+                ...(from && to && familyOf(from) !== 6 && familyOf(to) !== 6 ? [`ip dhcp excluded-address ${from} ${to}`] : []),
+                '!',
+                `ip dhcp pool ${name}`,
+                ...(network ? [` network ${network.address} ${netmask(network.prefix)}`] : []),
+                ` default-router ${str(values, 'gateway', '')}`,
+                ...(dns.length > 0 ? [` dns-server ${dns.join(' ')}`] : []),
+                ` domain-name ${str(values, 'domain', 'corp.local')}`,
+                ` lease ${days}`,
+                '!',
+              ]
+            : []),
+          ...(network6
+            ? [
+                `ipv6 dhcp pool ${name}`,
+                ` address prefix ${network6.network}/${network6.prefix} lifetime ${valid} ${preferred}`,
+                ...dnsAll.v6.map((server) => ` dns-server ${server}`),
+                ` domain-name ${str(values, 'domain', 'corp.local')}`,
+                '!',
+                ...(iface6 ? [`interface ${iface6}`, ` ipv6 dhcp server ${name}`, ' ipv6 nd managed-config-flag', ` ipv6 nd prefix ${network6.network}/${network6.prefix} no-autoconfig`, '!'] : []),
+              ]
+            : []),
         ],
-        verify: ['show ip dhcp binding', 'show ip dhcp pool ' + name, 'show ip dhcp conflict'],
-        backout: [`no ip dhcp pool ${name}`, ...(from && to ? [`no ip dhcp excluded-address ${from} ${to}`] : [])],
+        verify: [...(v4 ? ['show ip dhcp binding', 'show ip dhcp pool ' + name, 'show ip dhcp conflict'] : []), ...(network6 ? ['show ipv6 dhcp pool', 'show ipv6 dhcp binding', ...(iface6 ? [`show ipv6 dhcp interface ${iface6}`] : [])] : [])],
+        backout: [
+          ...(network6 && iface6 ? [`interface ${iface6}`, ` no ipv6 dhcp server ${name}`, ' no ipv6 nd managed-config-flag', ` no ipv6 nd prefix ${network6.network}/${network6.prefix}`, '!'] : []),
+          ...(network6 ? [`no ipv6 dhcp pool ${name}`] : []),
+          ...(v4 ? [`no ip dhcp pool ${name}`, ...(from && to && familyOf(from) !== 6 && familyOf(to) !== 6 ? [`no ip dhcp excluded-address ${from} ${to}`] : [])] : []),
+        ],
         findings,
       };
     },
@@ -655,7 +890,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     group: 'Security',
     description: 'RADIUS servers, the global 802.1X configuration, and ports set to authenticate with MAC authentication bypass behind it.',
     inputs: [
-      { id: 'radius_servers', label: 'RADIUS servers', control: 'text', default: '10.0.0.30, 10.0.0.31', hint: 'ISE or NPS' },
+      { id: 'radius_servers', label: 'RADIUS servers', control: 'text', default: '10.0.0.30, 10.0.0.31', hint: 'ISE or NPS; IPv4 or IPv6 addresses' },
       { id: 'ports', label: 'Ports to authenticate', control: 'text', default: 'GigabitEthernet1/0/1-4' },
       { id: 'host_mode', label: 'Host mode', control: 'select', default: 'multi-domain', options: [
         { value: 'multi-domain', label: 'Multi-domain — one data device and one phone' },
@@ -672,11 +907,19 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const servers = listOf(str(values, 'radius_servers', ''));
+      const servers6 = servers.filter((server) => familyOf(server) === 6);
       const ports = listOf(str(values, 'ports', ''));
       const mode = str(values, 'mode', 'monitor');
       const mab = bool(values, 'mab', true);
       const critical = num(values, 'critical_vlan', 0);
       const findings: Finding[] = [];
+      if (servers6.length > 0) {
+        findings.push(
+          warning('network.ios.coa-ipv6', `RADIUS over IPv6 is written for ${servers6.join(', ')}, but they were not added as change-of-authorisation clients. VERIFY that your release accepts an IPv6 \`client\` under \`aaa server radius dynamic-author\` before adding it by hand, or CoA from those servers is ignored.`, {
+            source: 'ArchToolKit',
+          }),
+        );
+      }
       if (mode === 'closed') {
         findings.push(
           warning('network.ios.dot1x-closed', 'Closed mode from the start will lock out anything that cannot authenticate — printers, cameras, badge readers, the lot.', {
@@ -703,7 +946,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         before: ['show authentication sessions', 'show aaa servers', 'show run | section dot1x'],
         config: [
           'aaa new-model',
-          ...servers.map((server, i) => [`radius server RADIUS-${i + 1}`, ` address ipv4 ${server} auth-port 1812 acct-port 1813`, ` key ${SECRET}`, ' automate-tester username probe-user ignore-acct-port', '!'].join('\n')),
+          ...servers.map((server, i) => [`radius server RADIUS-${i + 1}`, ` address ${familyOf(server) === 6 ? 'ipv6' : 'ipv4'} ${server} auth-port 1812 acct-port 1813`, ` key ${SECRET}`, ' automate-tester username probe-user ignore-acct-port', '!'].join('\n')),
           'aaa group server radius ISE',
           ...servers.map((_, i) => ` server name RADIUS-${i + 1}`),
           ' deadtime 5',
@@ -712,7 +955,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           'aaa authorization network default group ISE',
           'aaa accounting dot1x default start-stop group ISE',
           'aaa server radius dynamic-author',
-          ...servers.map((server) => ` client ${server} server-key ${SECRET}`),
+          ...servers.filter((server) => familyOf(server) !== 6).map((server) => ` client ${server} server-key ${SECRET}`),
           '!',
           'radius-server attribute 6 on-for-login-auth',
           'radius-server attribute 8 include-in-access-req',
@@ -756,7 +999,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     group: 'Baseline',
     description: 'Administrative login through TACACS+ with a local fallback, privilege from the server, and command accounting.',
     inputs: [
-      { id: 'servers', label: 'TACACS+ servers', control: 'text', default: '10.0.0.30, 10.0.0.31' },
+      { id: 'servers', label: 'TACACS+ servers', control: 'text', default: '10.0.0.30, 10.0.0.31', hint: 'IPv4 or IPv6 addresses' },
       { id: 'source_interface', label: 'Source interface', control: 'text', default: 'Loopback0' },
       { id: 'local_user', label: 'Local fallback username', control: 'text', default: 'netadmin', hint: 'The account that works when TACACS+ does not' },
       { id: 'command_accounting', label: 'Account for commands', control: 'toggle', default: true, hint: 'Logs every configuration command to the server' },
@@ -785,13 +1028,16 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           `Replace every ${SECRET}: the TACACS+ key and the local account's secret. Neither is generated here.`,
           'Keep a second session open while you apply this. If the key is wrong, the next login fails and only the local account gets you back in.',
           'The local fallback only works when the server is unreachable — a rejection from a reachable server is still a rejection.',
+          ...(source && servers.some((server) => familyOf(server) === 6)
+            ? [`VERIFY: \`ip tacacs source-interface\` sets the IPv4 source. The IPv6 servers are reached from whichever address routing picks unless your release offers an IPv6 source command — make sure ${source}'s IPv6 address is the one the servers permit.`]
+            : []),
         ],
         before: ['show run | section aaa', 'show tacacs', 'show users'],
         config: [
           'aaa new-model',
           `username ${user} privilege 15 algorithm-type sha256 secret ${SECRET}`,
           '!',
-          ...servers.map((server, i) => [`tacacs server TACACS-${i + 1}`, ` address ipv4 ${server}`, ` key ${SECRET}`, ' timeout 3', '!'].join('\n')),
+          ...servers.map((server, i) => [`tacacs server TACACS-${i + 1}`, ` address ${familyOf(server) === 6 ? 'ipv6' : 'ipv4'} ${server}`, ` key ${SECRET}`, ' timeout 3', '!'].join('\n')),
           'aaa group server tacacs+ TACACS-GROUP',
           ...servers.map((_, i) => ` server name TACACS-${i + 1}`),
           ...(source ? [` ip tacacs source-interface ${source}`] : []),
@@ -867,7 +1113,8 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     group: 'Operations',
     description: 'A flow record, an exporter and a monitor applied to interfaces — what feeds a collector like Splunk, SolarWinds or Stealthwatch.',
     inputs: [
-      { id: 'collector', label: 'Collector address', control: 'text', default: '10.0.0.40' },
+      { id: 'collector', label: 'Collector address', control: 'text', default: '10.0.0.40', hint: 'IPv4 or IPv6' },
+      { id: 'ipv6_flows', label: 'Also record IPv6 flows', control: 'toggle', default: false, hint: 'A second record and monitor, applied with ipv6 flow monitor' },
       { id: 'port', label: 'Collector port', control: 'number', default: 2055, min: 1, max: 65535, hint: '2055 for NetFlow v9, 4739 for IPFIX' },
       { id: 'source_interface', label: 'Source interface', control: 'text', default: 'Loopback0' },
       { id: 'interfaces', label: 'Interfaces to monitor', control: 'text', default: 'GigabitEthernet1/0/48' },
@@ -880,6 +1127,24 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
       const interfaces = listOf(str(values, 'interfaces', ''));
       const direction = str(values, 'direction', 'input');
       const directions = direction === 'both' ? ['input', 'output'] : [direction];
+      const v6 = bool(values, 'ipv6_flows', false);
+      // The IPv6 record matches the IPv6 header fields; one exporter carries both.
+      const record6 = [
+        'flow record CFG-RECORD-V6',
+        ' match ipv6 traffic-class',
+        ' match ipv6 protocol',
+        ' match ipv6 source address',
+        ' match ipv6 destination address',
+        ' match transport source-port',
+        ' match transport destination-port',
+        ' match interface input',
+        ' collect interface output',
+        ' collect counter bytes long',
+        ' collect counter packets long',
+        ' collect timestamp absolute first',
+        ' collect timestamp absolute last',
+        '!',
+      ];
 
       return {
         platform: PLATFORM,
@@ -919,12 +1184,34 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           ` cache timeout active ${num(values, 'active_timeout', 60)}`,
           ' cache timeout inactive 15',
           '!',
-          ...interfaces.flatMap((iface) => [`interface ${iface}`, ...directions.map((d) => ` ip flow monitor CFG-MONITOR ${d}`), '!']),
+          ...(v6
+            ? [
+                ...record6,
+                'flow monitor CFG-MONITOR-V6',
+                ' exporter CFG-EXPORT',
+                ' record CFG-RECORD-V6',
+                ` cache timeout active ${num(values, 'active_timeout', 60)}`,
+                ' cache timeout inactive 15',
+                '!',
+              ]
+            : []),
+          ...interfaces.flatMap((iface) => [
+            `interface ${iface}`,
+            ...directions.map((d) => ` ip flow monitor CFG-MONITOR ${d}`),
+            ...(v6 ? directions.map((d) => ` ipv6 flow monitor CFG-MONITOR-V6 ${d}`) : []),
+            '!',
+          ]),
         ],
-        verify: ['show flow monitor CFG-MONITOR cache', 'show flow exporter CFG-EXPORT statistics', 'show processes cpu sorted | include CPU'],
+        verify: ['show flow monitor CFG-MONITOR cache', ...(v6 ? ['show flow monitor CFG-MONITOR-V6 cache'] : []), 'show flow exporter CFG-EXPORT statistics', 'show processes cpu sorted | include CPU'],
         backout: [
-          ...interfaces.flatMap((iface) => [`interface ${iface}`, ...directions.map((d) => ` no ip flow monitor CFG-MONITOR ${d}`), '!']),
+          ...interfaces.flatMap((iface) => [
+            `interface ${iface}`,
+            ...directions.map((d) => ` no ip flow monitor CFG-MONITOR ${d}`),
+            ...(v6 ? directions.map((d) => ` no ipv6 flow monitor CFG-MONITOR-V6 ${d}`) : []),
+            '!',
+          ]),
           'no flow monitor CFG-MONITOR',
+          ...(v6 ? ['no flow monitor CFG-MONITOR-V6', 'no flow record CFG-RECORD-V6'] : []),
           'no flow exporter CFG-EXPORT',
           'no flow record CFG-RECORD',
         ],
@@ -1017,21 +1304,34 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     description: 'A point-to-point GRE tunnel with the MTU and MSS set so nothing fragments, and a keepalive so it goes down when it should.',
     inputs: [
       { id: 'number', label: 'Tunnel number', control: 'number', default: 0, min: 0, max: 2147483647 },
-      { id: 'address', label: 'Tunnel address', control: 'text', default: '10.254.0.1/30' },
+      { id: 'address', label: 'Tunnel address', control: 'text', default: '10.254.0.1/30', hint: 'Inside the tunnel: IPv4, IPv6 or one of each (10.254.0.1/30, 2001:db8:fe::1/64)' },
       { id: 'source', label: 'Tunnel source', control: 'text', default: 'GigabitEthernet0/0/0', hint: 'An interface or an address' },
-      { id: 'destination', label: 'Tunnel destination', control: 'text', default: '203.0.113.2' },
+      { id: 'destination', label: 'Tunnel destination', control: 'text', default: '203.0.113.2', hint: 'IPv4, or IPv6 for GRE over IPv6 (tunnel mode gre ipv6)' },
       { id: 'protected', label: 'Protect with IPsec profile', control: 'text', default: '', hint: 'The profile name from the VPN change; empty for plain GRE' },
       { id: 'keepalive', label: 'Keepalive (seconds)', control: 'number', default: 10, min: 0, max: 3600, hint: '0 for none — but then the tunnel stays up even when the far end is gone' },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const id = num(values, 'number', 0);
-      const cidr = parseCidr(str(values, 'address', ''));
+      const addresses = cidrList(str(values, 'address', ''));
+      const cidr = addresses.v4[0];
+      const cidr6 = addresses.v6;
       const source = str(values, 'source', '');
       const destination = str(values, 'destination', '');
       const profile = str(values, 'protected', '');
       const keepalive = num(values, 'keepalive', 10);
-      const findings: Finding[] = [];
-      if (!cidr) findings.push(error('network.ios.bad-address', 'The tunnel address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      const transport6 = familyOf(destination) === 6;
+      const findings: Finding[] = [...invalidEntries('network.ios.bad-address', 'Tunnel address', addresses.invalid)];
+      if (!cidr && cidr6.length === 0) findings.push(error('network.ios.bad-address', 'The tunnel address is not a valid address and prefix.', { source: 'ArchToolKit' }));
+      if (familyOf(source) !== null && familyOf(destination) !== null && familyOf(source) !== familyOf(destination)) {
+        findings.push(error('network.ios.tunnel-family', `The tunnel source ${source} and destination ${destination} are different families. GRE runs over one family: both IPv4 (gre ip) or both IPv6 (gre ipv6).`, { source: 'ArchToolKit' }));
+      }
+      if (transport6 && keepalive > 0 && !profile) {
+        findings.push(
+          warning('network.ios.gre6-keepalive', 'GRE keepalives were not written for a tunnel over IPv6. VERIFY your release supports `keepalive` with `tunnel mode gre ipv6` before adding it; otherwise detect failure with BFD, a routing protocol or IP SLA.', {
+            source: 'ArchToolKit',
+          }),
+        );
+      }
       if (profile && keepalive > 0) {
         findings.push(
           warning('network.ios.gre-keepalive-ipsec', 'GRE keepalives do not work through an IPsec-protected tunnel. Use a routing protocol or IP SLA to detect failure instead.', {
@@ -1047,23 +1347,30 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
         notes: [
           'GRE adds 24 bytes. The MTU and the TCP MSS are set here so packets do not fragment — the usual symptom of getting this wrong is that small things work and large ones hang.',
           'Both ends need the mirror image: source and destination swapped, same tunnel subnet.',
+          ...(transport6 ? ['Over IPv6 the tunnel costs 44 bytes (a 40-byte IPv6 header and GRE), not 24. The 1400 MTU still leaves room. The tunnel source needs an IPv6 address.'] : []),
         ],
         before: [`show run interface Tunnel${id}`, 'show ip interface brief | include Tunnel', `ping ${destination}`],
         config: [
           `interface Tunnel${id}`,
           ` description GRE to ${destination}`,
-          ...(cidr ? [` ip address ${cidr.address} ${netmask(cidr.prefix)}`] : []),
+          ...interfaceAddressLines(cidr, cidr6),
           ' ip mtu 1400',
           ' ip tcp adjust-mss 1360',
+          ...(cidr6.length > 0 ? [' ipv6 mtu 1400', ' ipv6 tcp adjust-mss 1340'] : []),
           ` tunnel source ${source}`,
           ` tunnel destination ${destination}`,
-          ' tunnel mode gre ip',
-          ...(keepalive > 0 && !profile ? [` keepalive ${keepalive} 3`] : []),
+          transport6 ? ' tunnel mode gre ipv6' : ' tunnel mode gre ip',
+          ...(keepalive > 0 && !profile && !transport6 ? [` keepalive ${keepalive} 3`] : []),
           ...(profile ? [` tunnel protection ipsec profile ${profile}`] : []),
           ' no shutdown',
           '!',
         ],
-        verify: [`show interfaces Tunnel${id}`, `ping ${cidr ? cidr.address.replace(/\.\d+$/, '.2') : destination}`, ...(profile ? ['show crypto ipsec sa', 'show crypto ikev2 sa'] : [])],
+        verify: [
+          `show interfaces Tunnel${id}`,
+          `ping ${cidr ? cidr.address.replace(/\.\d+$/, '.2') : destination}`,
+          ...(cidr6.length > 0 ? [`show ipv6 interface Tunnel${id}`] : []),
+          ...(profile ? ['show crypto ipsec sa', 'show crypto ikev2 sa'] : []),
+        ],
         backout: [`no interface Tunnel${id}`],
         findings,
       };
@@ -1077,8 +1384,8 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     group: 'WAN and VPN',
     description: 'An IKEv2 proposal, policy, keyring and profile with a transform set and an IPsec profile — the crypto half of a route-based VPN.',
     inputs: [
-      { id: 'peer', label: 'Peer address', control: 'text', default: '203.0.113.2' },
-      { id: 'local_id', label: 'Local identity', control: 'text', default: '203.0.113.1', hint: 'Usually the public address of this device' },
+      { id: 'peer', label: 'Peer address', control: 'text', default: '203.0.113.2', hint: 'IPv4 or IPv6' },
+      { id: 'local_id', label: 'Local identity', control: 'text', default: '203.0.113.1', hint: 'Usually the public address of this device, in the same family as the peer' },
       { id: 'profile_name', label: 'Profile name', control: 'text', default: 'VPN-PROFILE' },
       { id: 'encryption', label: 'Encryption', control: 'select', default: 'aes-gcm-256', options: [
         { value: 'aes-gcm-256', label: 'AES-GCM-256 (preferred)' },
@@ -1094,10 +1401,22 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const peer = str(values, 'peer', '');
+      const localId = str(values, 'local_id', '');
       const profile = str(values, 'profile_name', 'VPN-PROFILE').toUpperCase();
       const gcm = str(values, 'encryption', 'aes-gcm-256') === 'aes-gcm-256';
       const dh = str(values, 'dh_group', '20');
       const dpd = num(values, 'dpd', 10);
+      // IKEv2 writes an IPv4 peer with a dotted mask and an IPv6 peer with a
+      // prefix length: address 203.0.113.2 / address 2001:db8::2/128.
+      const peer6 = familyOf(peer) === 6;
+      const peerMatch = peer6 ? `${peer}/128` : `${peer} 255.255.255.255`;
+      const findings: Finding[] = [];
+      if (familyOf(peer) === null) {
+        findings.push(error('network.ios.bad-peer', 'The peer is not an IPv4 or IPv6 address.', { remediation: 'Write it as 203.0.113.2 or 2001:db8::2.', source: 'ArchToolKit' }));
+      }
+      if (familyOf(localId) !== null && familyOf(peer) !== null && familyOf(localId) !== familyOf(peer)) {
+        findings.push(warning('network.ios.ike-id-family', `The local identity ${localId} and the peer ${peer} are different families. IKE runs over one family, and the far end usually expects this device's address on that family as its identity.`, { source: 'ArchToolKit' }));
+      }
 
       return {
         platform: PLATFORM,
@@ -1108,6 +1427,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           'Both ends must agree on the proposal, the group and the lifetimes. A mismatch shows as a tunnel that negotiates and immediately drops.',
           'This is the crypto only. Apply the profile to a tunnel interface (the GRE change takes a profile name), or the VPN protects nothing.',
           ...(dpd === 0 ? ['Without dead peer detection, a peer that disappears leaves a tunnel that looks up and passes nothing.'] : []),
+          ...(peer6 ? ['The peer is IPv6, so the tunnel interface that carries this profile has to run over IPv6 too: `tunnel mode gre ipv6` (the GRE change does this for an IPv6 destination) or `tunnel mode ipsec ipv6`.'] : []),
         ],
         before: ['show crypto ikev2 sa', 'show crypto ipsec sa', 'show run | section crypto'],
         config: [
@@ -1121,14 +1441,14 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           ' proposal CFG-PROPOSAL',
           '!',
           'crypto ikev2 keyring CFG-KEYRING',
-          ` peer ${peer}`,
-          `  address ${peer}`,
+          ` peer ${peer6 ? `PEER-${peer.replace(/:/g, '-')}` : peer}`,
+          `  address ${peer6 ? `${peer}/128` : peer}`,
           `  pre-shared-key local ${SECRET}`,
           `  pre-shared-key remote ${SECRET}`,
           '!',
           `crypto ikev2 profile ${profile}`,
-          ` match identity remote address ${peer} 255.255.255.255`,
-          ` identity local address ${str(values, 'local_id', '')}`,
+          ` match identity remote address ${peerMatch}`,
+          ` identity local address ${localId}`,
           ' authentication local pre-share',
           ' authentication remote pre-share',
           ' keyring local CFG-KEYRING',
@@ -1144,7 +1464,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           ' set pfs group' + dh,
           '!',
         ],
-        verify: ['show crypto ikev2 sa detailed', 'show crypto ipsec sa peer ' + peer, 'show crypto session', 'show crypto ikev2 statistics'],
+        verify: ['show crypto ikev2 sa detailed', peer6 ? 'show crypto ipsec sa ipv6' : 'show crypto ipsec sa peer ' + peer, 'show crypto session', 'show crypto ikev2 statistics'],
         backout: [
           `no crypto ipsec profile ${profile}`,
           'no crypto ipsec transform-set CFG-TS',
@@ -1153,6 +1473,7 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           'no crypto ikev2 policy CFG-POLICY',
           'no crypto ikev2 proposal CFG-PROPOSAL',
         ],
+        findings,
       };
     },
   }),
@@ -1167,16 +1488,19 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
     inputs: [
       { id: 'netconf', label: 'NETCONF (port 830)', control: 'toggle', default: true },
       { id: 'restconf', label: 'RESTCONF (HTTPS)', control: 'toggle', default: false },
-      { id: 'management_acl', label: 'Management source prefix', control: 'text', default: '10.0.0.0/24' },
+      { id: 'management_acl', label: 'Management source prefix', control: 'text', default: '10.0.0.0/24', hint: 'IPv4 and/or IPv6, comma separated' },
       { id: 'user', label: 'Automation username', control: 'text', default: 'automation', hint: 'Privilege 15; its secret is not written here' },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const netconf = bool(values, 'netconf', true);
       const restconf = bool(values, 'restconf', false);
-      const mgmt = parseCidr(str(values, 'management_acl', ''));
+      const sources = cidrList(str(values, 'management_acl', ''));
+      const mgmt = sources.v4[0];
+      const mgmt6 = sources.v6;
+      const acl6 = `ACL-AUTOMATION${V6}`;
       const user = str(values, 'user', 'automation');
-      const findings: Finding[] = [];
-      if (!mgmt) {
+      const findings: Finding[] = [...invalidEntries('network.ios.bad-management-acl', 'Management source prefix', sources.invalid)];
+      if (!mgmt && mgmt6.length === 0) {
         findings.push(
           warning('network.ios.netconf-unrestricted', 'Without a management prefix, NETCONF and RESTCONF answer anything that can reach the device.', {
             remediation: 'Restrict them to the management network with a control-plane access list.',
@@ -1200,6 +1524,9 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           'IOS-XE only. Classic IOS has neither.',
           `Create the ${user} account with its own secret from your vault: this change does not write one.`,
           'The first NETCONF connection can take a minute while the YANG models load.',
+          ...(netconf && (mgmt || mgmt6.length > 0)
+            ? [`VERIFY: the access lists restrict RESTCONF only. Newer IOS-XE releases can also bind them to NETCONF (\`netconf-yang ssh ipv4 access-list name ACL-AUTOMATION\`${mgmt6.length > 0 ? `, \`netconf-yang ssh ipv6 access-list name ${acl6}\`` : ''}); check your release before adding it.`]
+            : []),
         ],
         before: ['show platform software yang-management process', 'show run | include netconf|restconf|ip http'],
         config: [
@@ -1213,11 +1540,14 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           ...(mgmt
             ? [
                 'ip access-list standard ACL-AUTOMATION',
-                ` permit ${mgmt.address} ${wildcard(mgmt.prefix)}`,
+                ...sources.v4.map((c) => ` permit ${c.address} ${wildcard(c.prefix)}`),
                 ' deny any log',
                 '!',
                 ...(restconf ? ['ip http access-class ipv4 ACL-AUTOMATION'] : []),
               ]
+            : []),
+          ...(mgmt6.length > 0
+            ? [`ipv6 access-list ${acl6}`, ...mgmt6.map((c) => ` permit ipv6 ${aclOperand(c)} any`), ' deny ipv6 any any log', '!', ...(restconf ? [`ip http access-class ipv6 ${acl6}`] : [])]
             : []),
         ],
         verify: [
@@ -1225,7 +1555,12 @@ export const IOS_EXTRA: readonly ChangeBlueprint[] = [
           ...(netconf ? ['ssh -p 830 <user>@<device> -s netconf   (from the control node)'] : []),
           ...(restconf ? ['curl -k https://<device>/restconf/data/Cisco-IOS-XE-native:native/hostname -u <user>'] : []),
         ],
-        backout: [...(netconf ? ['no netconf-yang'] : []), ...(restconf ? ['no restconf', 'no ip http secure-server'] : []), ...(mgmt ? ['no ip access-list standard ACL-AUTOMATION'] : [])],
+        backout: [
+          ...(netconf ? ['no netconf-yang'] : []),
+          ...(restconf ? ['no restconf', 'no ip http secure-server'] : []),
+          ...(mgmt ? ['no ip access-list standard ACL-AUTOMATION'] : []),
+          ...(mgmt6.length > 0 ? [...(restconf ? [`no ip http access-class ipv6 ${acl6}`] : []), `no ipv6 access-list ${acl6}`] : []),
+        ],
         findings,
       };
     },

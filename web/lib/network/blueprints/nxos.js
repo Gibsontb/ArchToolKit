@@ -12,7 +12,8 @@ import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { NXOS_EXTRA } from './nxos-extra.js';
 import { NXOS_EXTRA_2 } from './nxos-extra2.js';
-import { description, listOf, parseCidr, vlanIds, vlanRange,                   } from '../device.js';
+import { description, listOf, parseCidrDual, vlanIds, vlanRange,                   } from '../device.js';
+import { dualAddresses, dualCidrs, dualFindings, routerIdFindings } from './nxos-eos-dual.js';
 
 const PLATFORM = 'cisco_nxos'         ;
 const SECRET = '<REQUIRED>';
@@ -27,20 +28,34 @@ const BLUEPRINTS                             = [
     inputs: [
       { id: 'vlan_id', label: 'VLAN id', control: 'number', default: 100, min: 1, max: 4094 },
       { id: 'vlan_name', label: 'VLAN name', control: 'text', default: 'APP-TIER' },
-      { id: 'address', label: 'SVI address', control: 'text', default: '10.20.100.2/24' },
+      { id: 'address', label: 'SVI address', control: 'text', default: '10.20.100.2/24', hint: 'IPv4, IPv6, or one of each: 10.20.100.2/24, 2001:db8:100::2/64' },
       { id: 'vrf', label: 'VRF', control: 'text', default: '', hint: 'Leave empty for the default VRF' },
-      { id: 'hsrp', label: 'HSRP virtual address', control: 'text', default: '10.20.100.1', hint: 'Empty on a single switch' },
+      { id: 'hsrp', label: 'HSRP virtual address', control: 'text', default: '10.20.100.1', hint: 'Empty on a single switch; one IPv4 and one IPv6 for a dual-stack pair' },
       { id: 'hsrp_priority', label: 'HSRP priority', control: 'number', default: 110, min: 1, max: 255 },
       { id: 'mtu', label: 'MTU', control: 'number', default: 9216, min: 1500, max: 9216, hint: '9216 is the usual data-centre value' },
     ],
     change: (values                 )               => {
       const id = num(values, 'vlan_id', 100);
       const name = str(values, 'vlan_name', 'VLAN').replace(/\s+/g, '_').toUpperCase();
-      const cidr = parseCidr(str(values, 'address', ''));
+      const address = dualCidrs(str(values, 'address', ''));
       const vrf = str(values, 'vrf', '');
-      const hsrp = str(values, 'hsrp', '');
-      const findings            = [];
-      if (!cidr) findings.push(error('network.nxos.svi-address', 'The SVI address is not a valid address and prefix.', { remediation: 'Write it as 10.20.100.2/24.', source: 'ArchToolKit' }));
+      const virtual = dualAddresses(str(values, 'hsrp', ''));
+      const hsrp = virtual.v4 !== null || virtual.v6 !== null;
+      // HSRP version 1 stops at group 255 and has no IPv6; the group here is the VLAN id.
+      const version2 = virtual.v6 !== null || (hsrp && id > 255);
+      const priority = num(values, 'hsrp_priority', 110);
+      const findings            = [
+        ...dualFindings('network.nxos.svi-address', 'the SVI address', address, '10.20.100.2/24 or 2001:db8:100::2/64'),
+        ...dualFindings('network.nxos.hsrp-address', 'the HSRP virtual address', virtual, '10.20.100.1 or 2001:db8:100::1'),
+      ];
+      if (!address.v4 && !address.v6) findings.push(error('network.nxos.svi-address', 'The SVI address is not a valid address and prefix.', { remediation: 'Write it as 10.20.100.2/24.', source: 'ArchToolKit' }));
+      for (const family of [4, 6]         ) {
+        const has = family === 4 ? address.v4 : address.v6;
+        const wants = family === 4 ? virtual.v4 : virtual.v6;
+        if (wants && !has && (address.v4 || address.v6)) {
+          findings.push(error('network.nxos.hsrp-family', `The HSRP virtual address ${wants} is IPv${family}, and the SVI has no IPv${family} address for the group to run on.`, { remediation: `Add an IPv${family} address to the SVI, or remove the IPv${family} virtual address.`, source: 'ArchToolKit' }));
+        }
+      }
 
       return {
         platform: PLATFORM,
@@ -49,6 +64,8 @@ const BLUEPRINTS                             = [
         notes: [
           'NX-OS needs the features enabled before the commands exist. They are included and are safe to run again.',
           ...(hsrp ? ['The partner switch takes the same group with a lower priority.'] : []),
+          ...(version2 ? ['`hsrp version 2` changes the virtual MAC to 0000.0c9f.fxxx. Set it on both peers in the same window, or the pair disagrees about the gateway.'] : []),
+          ...(virtual.v6 ? ['VERIFY: the IPv6 group reuses the IPv4 group number with the `ipv6` keyword. Confirm the release in use accepts the same number for both families on one SVI.'] : []),
         ],
         before: [`show vlan id ${id}`, `show run interface Vlan${id}`, 'show feature | include hsrp|interface-vlan'],
         config: [
@@ -62,14 +79,20 @@ const BLUEPRINTS                             = [
           `  description ${name}`,
           `  mtu ${num(values, 'mtu', 9216)}`,
           ...(vrf ? [`  vrf member ${vrf}`] : []),
-          ...(cidr ? [`  ip address ${cidr.address}/${cidr.prefix}`] : []),
+          ...(address.v4 ? [`  ip address ${address.v4.text}`] : []),
+          ...(address.v6 ? [`  ipv6 address ${address.v6.text}`] : []),
           '  no shutdown',
-          ...(hsrp
-            ? [`  hsrp ${id}`, `    ip ${hsrp}`, `    priority ${num(values, 'hsrp_priority', 110)}`, '    preempt']
-            : []),
+          ...(version2 ? ['  hsrp version 2'] : []),
+          ...(virtual.v4 ? [`  hsrp ${id}`, `    ip ${virtual.v4}`, `    priority ${priority}`, '    preempt'] : []),
+          ...(virtual.v6 ? [`  hsrp ${id} ipv6`, `    ip ${virtual.v6}`, `    priority ${priority}`, '    preempt'] : []),
           '!',
         ],
-        verify: [`show vlan id ${id}`, `show ip interface brief${vrf ? ` vrf ${vrf}` : ''} | include Vlan${id}`, ...(hsrp ? [`show hsrp brief`] : [])],
+        verify: [
+          `show vlan id ${id}`,
+          ...(address.v4 || !address.v6 ? [`show ip interface brief${vrf ? ` vrf ${vrf}` : ''} | include Vlan${id}`] : []),
+          ...(address.v6 ? [`show ipv6 interface brief${vrf ? ` vrf ${vrf}` : ''} | include Vlan${id}`] : []),
+          ...(hsrp ? [`show hsrp brief`] : []),
+        ],
         backout: [`no interface Vlan${id}`, `no vlan ${id}`],
         findings,
       };
@@ -177,20 +200,31 @@ const BLUEPRINTS                             = [
     description: 'NTP, syslog, SNMPv3 and SSH on the management VRF, with an access list in front of them.',
     inputs: [
       { id: 'hostname', label: 'Hostname', control: 'text', default: 'dc-leaf-01' },
-      { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: '10.0.0.10, 10.0.0.11' },
-      { id: 'syslog_servers', label: 'Syslog servers', control: 'text', default: '10.0.0.20' },
+      { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: '10.0.0.10, 10.0.0.11', hint: 'IPv4 or IPv6 addresses, or names' },
+      { id: 'syslog_servers', label: 'Syslog servers', control: 'text', default: '10.0.0.20', hint: 'IPv4 or IPv6 addresses, or names' },
       { id: 'snmp_user', label: 'SNMPv3 user', control: 'text', default: 'monitor' },
-      { id: 'management_acl', label: 'Management source prefix', control: 'text', default: '10.0.0.0/24' },
+      { id: 'management_acl', label: 'Management source prefixes', control: 'text', default: '10.0.0.0/24', hint: 'IPv4 and IPv6, comma separated: 10.0.0.0/24, 2001:db8:0:100::/64' },
       { id: 'vrf', label: 'Management VRF', control: 'text', default: 'management' },
     ],
     change: (values                 )               => {
       const vrf = str(values, 'vrf', 'management');
       const ntp = listOf(str(values, 'ntp_servers', ''));
       const syslog = listOf(str(values, 'syslog_servers', ''));
-      const mgmt = parseCidr(str(values, 'management_acl', ''));
+      const prefixes = listOf(str(values, 'management_acl', '')).map((p) => ({ text: p, cidr: parseCidrDual(p) }));
+      const mgmt4 = prefixes.flatMap((p) => (p.cidr?.family === 4 ? [`${p.cidr.address}/${p.cidr.prefix}`] : []));
+      const mgmt6 = prefixes.flatMap((p) => (p.cidr?.family === 6 ? [`${p.cidr.network}/${p.cidr.prefix}`] : []));
       const user = str(values, 'snmp_user', 'monitor');
-      const findings            = [];
-      if (!mgmt) findings.push(warning('network.nxos.no-management-acl', 'No management prefix, so management services answer anything that can reach them.', { source: 'ArchToolKit' }));
+      const findings            = prefixes
+        .filter((p) => !p.cidr)
+        .map((p) => error('network.nxos.bad-management-prefix', `"${p.text}" is not a valid IPv4 or IPv6 prefix.`, { remediation: 'Write it as 10.0.0.0/24 or 2001:db8:0:100::/64.', source: 'ArchToolKit' }));
+      if (mgmt4.length === 0 && mgmt6.length === 0) findings.push(warning('network.nxos.no-management-acl', 'No management prefix, so management services answer anything that can reach them.', { source: 'ArchToolKit' }));
+      const acl4 = mgmt4.length > 0
+        ? ['ip access-list ACL-MGMT', ...mgmt4.map((p, i) => `  ${(i + 1) * 10} permit ip ${p} any`), `  ${(mgmt4.length + 1) * 10} deny ip any any log`, '!']
+        : [];
+      const acl6 = mgmt6.length > 0
+        ? ['ipv6 access-list ACL-MGMT-V6', ...mgmt6.map((p, i) => `  ${(i + 1) * 10} permit ipv6 ${p} any`), `  ${(mgmt6.length + 1) * 10} deny ipv6 any any log`, '!']
+        : [];
+      const vty = [...(mgmt4.length > 0 ? ['  access-class ACL-MGMT in'] : []), ...(mgmt6.length > 0 ? ['  ipv6 access-class ACL-MGMT-V6 in'] : [])];
 
       return {
         platform: PLATFORM,
@@ -207,16 +241,18 @@ const BLUEPRINTS                             = [
           ...syslog.map((server) => `logging server ${server} 6 use-vrf ${vrf}`),
           'logging timestamp milliseconds',
           '!',
-          ...(mgmt
-            ? ['ip access-list ACL-MGMT', `  10 permit ip ${mgmt.address}/${mgmt.prefix} any`, '  20 deny ip any any log', '!', 'line vty', '  access-class ACL-MGMT in', '  exec-timeout 10', '!']
-            : []),
+          ...acl4,
+          ...acl6,
+          ...(vty.length > 0 ? ['line vty', ...vty, '  exec-timeout 10', '!'] : []),
           `snmp-server user ${user} network-operator auth sha ${SECRET} priv aes-128 ${SECRET}`,
           'snmp-server enable traps link',
           '!',
         ],
         verify: ['show ntp peer-status', 'show logging server', 'show snmp user', 'show ssh server'],
         backout: [
-          ...(mgmt ? ['line vty', '  no access-class ACL-MGMT in', '!', 'no ip access-list ACL-MGMT'] : []),
+          ...(vty.length > 0 ? ['line vty', ...vty.map((line) => `  no ${line.trim()}`), '!'] : []),
+          ...(mgmt4.length > 0 ? ['no ip access-list ACL-MGMT'] : []),
+          ...(mgmt6.length > 0 ? ['no ipv6 access-list ACL-MGMT-V6'] : []),
           ...ntp.map((server) => `no ntp server ${server} use-vrf ${vrf}`),
           ...syslog.map((server) => `no logging server ${server}`),
           `no snmp-server user ${user}`,
@@ -245,10 +281,13 @@ const BLUEPRINTS                             = [
       const area = str(values, 'area', '0.0.0.0');
       const links = listOf(str(values, 'fabric_links', ''));
       const bfd = bool(values, 'bfd', true);
+      // OSPFv2 carries IPv4 only, and the router id doubles as the loopback address here.
+      const findings            = routerIdFindings('network.nxos.router-id', rid);
 
       return {
         platform: PLATFORM,
         title: `OSPF underlay ${tag}`,
+        findings,
         impact: 'brief',
         notes: [
           'Point-to-point on the fabric links: it skips the designated-router election and converges faster.',

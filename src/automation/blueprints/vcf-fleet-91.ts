@@ -26,6 +26,7 @@ import { automationBlueprint, type AutomationBlueprint } from '../from-automatio
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
 import { importGuide, type ImportStepSpec } from './vcf-networks-logs.ts';
+import { isIp, isIpv6 } from '../../core/ip.ts';
 
 const PLATFORM = 'vcf-fleet' as const;
 const SRC = 'ArchToolKit';
@@ -1169,7 +1170,19 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         default: 'both',
       },
       { id: 'setting_name', label: 'Setting name', control: 'text', default: 'Site A infrastructure services' },
-      { id: 'dns_servers', label: 'DNS servers', control: 'text', default: '10.0.0.10, 10.0.0.11', showWhen: { input: 'setting', notEquals: ['ntp'] } },
+      { id: 'dns_servers', label: 'DNS servers', control: 'text', default: '10.0.0.10, 10.0.0.11', hint: 'IPv4 or IPv6 addresses', showWhen: { input: 'setting', notEquals: ['ntp'] } },
+      {
+        id: 'record_types',
+        label: 'Addresses to check',
+        control: 'select',
+        options: [
+          { value: 'A', label: 'IPv4 — A records and their in-addr.arpa reverse' },
+          { value: 'AAAA', label: 'IPv6 — AAAA records and their ip6.arpa reverse' },
+          { value: 'both', label: 'Dual-stack — both, each forward and reverse' },
+        ],
+        default: 'A',
+        showWhen: { input: 'setting', notEquals: ['ntp'] },
+      },
       { id: 'names', label: 'Names that must resolve', control: 'textarea', default: 'vcfops.example.com\nvcenter-mgmt.example.com\nsddc-manager-01.example.com\nnsx-mgmt.example.com', hint: 'Forward and reverse. Use the components of the instance', showWhen: { input: 'setting', notEquals: ['ntp'] } },
       { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: 'ntp1.example.com, ntp2.example.com', showWhen: { input: 'setting', notEquals: ['dns'] } },
       { id: 'max_offset', label: 'Largest offset from this machine (seconds)', control: 'number', default: 2, min: 1, max: 300, showWhen: { input: 'setting', notEquals: ['dns'] } },
@@ -1192,6 +1205,20 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       if (doNtp && ntp.length < 2) findings.push(warning('fleet91.settings.one-ntp', 'One NTP server cannot be sanity-checked against another; if it drifts, the whole instance drifts with it.', { remediation: 'Give at least two, ideally three or four.', source: SRC }));
       if (doDns && names.length === 0) findings.push(error('fleet91.settings.no-names', 'The DNS precheck needs names to resolve. Give the FQDNs of the components in the instance.', { source: SRC }));
       if (instances.length === 0) findings.push(error('fleet91.settings.no-instance', 'Name at least one VCF instance to apply the setting to.', { source: SRC }));
+      const recordTypes = ({ A: ['A'], AAAA: ['AAAA'], both: ['A', 'AAAA'] } as Record<string, string[]>)[str(values, 'record_types', 'A')] ?? ['A'];
+      if (doDns) {
+        const notIp = dns.filter((s) => !isIp(s));
+        if (notIp.length > 0) findings.push(error('fleet91.settings.dns-not-ip', `DNS servers are given by address: ${notIp.join(', ')} ${notIp.length === 1 ? 'is' : 'are'} not an IPv4 or IPv6 address.`, { source: SRC }));
+      }
+      const v6Servers = [...(doDns ? dns : []), ...(doNtp ? ntp : [])].filter(isIpv6);
+      if (v6Servers.length > 0) {
+        findings.push(
+          warning('fleet91.settings.ipv6-server', `${v6Servers.join(', ')} ${v6Servers.length === 1 ? 'is an IPv6 server' : 'are IPv6 servers'}: every component the setting reaches must have IPv6 to use ${v6Servers.length === 1 ? 'it' : 'them'}, and the 9.1.0 license server is IPv4 only (IPv6 from 9.1.1).`, {
+            remediation: 'Keep an IPv4 server in the list for components without IPv6. VERIFY: the fleet setting accepts an IPv6 server address on your 9.1.x.',
+            source: SRC,
+          }),
+        );
+      }
 
       const precheck = [
         '#!/usr/bin/env bash',
@@ -1210,14 +1237,33 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               `DNS_SERVERS=(${dns.map(sq).join(' ')})`,
               `NAMES=(${names.map(sq).join(' ')})`,
               'command -v dig >/dev/null || { echo "dig is required (bind-utils / dnsutils)" >&2; exit 2; }',
-              'for s in "${DNS_SERVERS[@]}"; do',
-              '  for n in "${NAMES[@]}"; do',
-              '    ip=$(dig +short +time=2 +tries=1 @"$s" "$n" A | grep -E \'^[0-9.]+$\' | head -1)',
-              '    if [[ -z "$ip" ]]; then bad "$s does not resolve $n"; continue; fi',
-              '    back=$(dig +short +time=2 +tries=1 @"$s" -x "$ip" | head -1)',
-              '    b="${back%.}"; if [[ "${b,,}" != "${n,,}" ]]; then bad "$s: $ip reverses to \\"${back%.}\\", not $n"; else echo "ok   $s  $n -> $ip -> ${back%.}"; fi',
-              '  done',
-              'done',
+              ...(recordTypes.length === 1 && recordTypes[0] === 'A'
+                ? [
+                    'for s in "${DNS_SERVERS[@]}"; do',
+                    '  for n in "${NAMES[@]}"; do',
+                    '    ip=$(dig +short +time=2 +tries=1 @"$s" "$n" A | grep -E \'^[0-9.]+$\' | head -1)',
+                    '    if [[ -z "$ip" ]]; then bad "$s does not resolve $n"; continue; fi',
+                    '    back=$(dig +short +time=2 +tries=1 @"$s" -x "$ip" | head -1)',
+                    '    b="${back%.}"; if [[ "${b,,}" != "${n,,}" ]]; then bad "$s: $ip reverses to \\"${back%.}\\", not $n"; else echo "ok   $s  $n -> $ip -> ${back%.}"; fi',
+                    '  done',
+                    'done',
+                  ]
+                : [
+                    '# A is checked against in-addr.arpa and AAAA against ip6.arpa: dig -x',
+                    '# builds either reverse name from the address.',
+                    `TYPES=(${recordTypes.join(' ')})`,
+                    'for s in "${DNS_SERVERS[@]}"; do',
+                    '  for n in "${NAMES[@]}"; do',
+                    '    for t in "${TYPES[@]}"; do',
+                    '      if [[ "$t" == AAAA ]]; then pat=\'^[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*$\'; else pat=\'^[0-9.]+$\'; fi',
+                    '      ip=$(dig +short +time=2 +tries=1 @"$s" "$n" "$t" | grep -E "$pat" | head -1)',
+                    '      if [[ -z "$ip" ]]; then bad "$s has no $t record for $n"; continue; fi',
+                    '      back=$(dig +short +time=2 +tries=1 @"$s" -x "$ip" | head -1)',
+                    '      b="${back%.}"; if [[ "${b,,}" != "${n,,}" ]]; then bad "$s: $ip ($t) reverses to \\"${back%.}\\", not $n"; else echo "ok   $s  $n $t -> $ip -> ${back%.}"; fi',
+                    '    done',
+                    '  done',
+                    'done',
+                  ]),
               '',
             ]
           : []),

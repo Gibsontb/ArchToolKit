@@ -16,6 +16,8 @@ import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { listOf, netmask, parseCidr,                   } from '../device.js';
+import { isAnyNetwork,              } from '../../core/ip.js';
+import { addressBody, compareHosts, fgtCidr, fgtHost, fgtInterfaceAddress, fgtSubnet, looksLikeAddress, noIpv6, nthHost, splitFamilies, v6Name } from './fortios-ip.js';
 
 const PLATFORM = 'fortios'         ;
 const SECRET = '<REQUIRED>';
@@ -184,13 +186,15 @@ export const FORTIOS_EXTRA_2                             = [
       { id: 'interface', label: 'Listening interface', control: 'text', default: 'port1' },
       { id: 'port', label: 'Port', control: 'number', default: 10443, min: 1, max: 65535, hint: 'Not 443 if the interface also serves administration' },
       { id: 'pool_name', label: 'Address pool name', control: 'text', default: 'SSLVPN-POOL' },
-      { id: 'pool_range', label: 'Address range', control: 'text', default: '10.212.134.200-10.212.134.250' },
+      { id: 'pool_range', label: 'Address range', control: 'text', default: '10.212.134.200-10.212.134.250', hint: 'first-last, IPv4 or IPv6' },
+      { id: 'pool_range6', label: 'IPv6 address range', control: 'text', default: '', hint: 'Optional, for dual-stack tunnels: fd00:212:134::200-fd00:212:134::250' },
       { id: 'portal_name', label: 'Portal name', control: 'text', default: 'full-access' },
       { id: 'split_tunnel', label: 'Split tunnel', control: 'select', default: 'split', options: [
         { value: 'split', label: 'Split — only the corporate networks' },
         { value: 'full', label: 'Full — everything through the FortiGate' },
       ] },
       { id: 'split_networks', label: 'Networks through the tunnel', control: 'text', default: 'CORP-NETWORKS', hint: 'An existing address or group object', showWhen: { input: 'split_tunnel', equals: ['split'] } },
+      { id: 'split_networks6', label: 'IPv6 networks through the tunnel', control: 'text', default: '', hint: 'An existing address6 or addrgrp6 object — needed for IPv6 split tunnelling', showWhen: { input: 'split_tunnel', equals: ['split'] } },
       { id: 'user_group', label: 'User group allowed', control: 'text', default: 'GRP-VPN-USERS' },
       { id: 'dest_interface', label: 'Destination interface', control: 'text', default: 'port2' },
       { id: 'certificate', label: 'Server certificate', control: 'text', default: 'CERT-SSLVPN', hint: 'An imported certificate for the name users connect to — never a Fortinet_ factory one' },
@@ -204,6 +208,34 @@ export const FORTIOS_EXTRA_2                             = [
       const split = str(values, 'split_tunnel', 'split') === 'split';
       const certificate = str(values, 'certificate', 'CERT-SSLVPN');
       const findings            = [];
+      // Tunnel pools are per family: ip-pools/tunnel-ip-pools take IPv4
+      // address objects, ipv6-pools/tunnel-ipv6-pools take address6 ones.
+      const ranges = [range, str(values, 'pool_range6', '')].filter((r) => r.includes('-')).map((r) => {
+        const [first = '', last = ''] = r.split('-').map((s) => s.trim());
+        const a = fgtHost(first);
+        const b = fgtHost(last);
+        if (!a || !b) findings.push(error('network.fortios.bad-range', `"${r}" is not a range of two IPv4 or two IPv6 addresses.`, { source: 'ArchToolKit' }));
+        else if (a.family !== b.family) findings.push(error('network.fortios.range-mixed-family', `"${r}" starts in one family and ends in the other.`, { source: 'ArchToolKit' }));
+        else if (compareHosts(a.address, b.address) === 1) findings.push(error('network.fortios.range-inverted', `"${r}" ends before it starts.`, { source: 'ArchToolKit' }));
+        return { first, last, family: a && b && a.family === b.family ? a.family : null };
+      });
+      const range4 = ranges.filter((r) => r.family === 4);
+      const range6 = ranges.filter((r) => r.family === 6);
+      if (range4.length > 1 || range6.length > 1) findings.push(error('network.fortios.sslvpn-two-pools', 'Both ranges are the same family. Give one IPv4 range and, optionally, one IPv6 range.', { source: 'ArchToolKit' }));
+      // An IPv4 range as typed keeps the IPv4 output exactly as it was; an
+      // IPv6 one in the first field makes an IPv6-only tunnel.
+      const v4 = range4.length > 0 || range6.length === 0;
+      const v6 = range6[0];
+      const pool6 = v6Name(pool, v4 && !!v6);
+      const split6 = str(values, 'split_networks6', '');
+      if (v6 && split && !split6) {
+        findings.push(error('network.fortios.sslvpn-split6', 'IPv6 split tunnelling needs the IPv6 networks through the tunnel: an address6 or addrgrp6 object.', { source: 'ArchToolKit' }));
+      }
+      if (!v6 && split && split6) {
+        findings.push(warning('network.fortios.sslvpn-split6-no-pool', 'IPv6 split networks were given but no IPv6 address range, so clients get no IPv6 address and the IPv6 routes are not pushed.', { source: 'ArchToolKit' }));
+      }
+      const first4 = range4[0]?.first ?? range.split('-')[0] ?? '';
+      const last4 = range4[0]?.last ?? range.split('-')[1] ?? '';
       if (port === 443) {
         findings.push(warning('network.fortios.sslvpn-443', 'Port 443 on the same interface as administrative HTTPS means the two compete, and a mistake in either exposes the other. Move administration off this interface or move SSL VPN off 443.', { source: 'ArchToolKit' }));
       }
@@ -215,7 +247,7 @@ export const FORTIOS_EXTRA_2                             = [
           }),
         );
       }
-      if (!range.includes('-')) findings.push(error('network.fortios.bad-range', 'The address pool is not a range. Write it as 10.212.134.200-10.212.134.250.', { source: 'ArchToolKit' }));
+      if (!range.includes('-') && !v6) findings.push(error('network.fortios.bad-range', 'The address pool is not a range. Write it as 10.212.134.200-10.212.134.250.', { source: 'ArchToolKit' }));
       if (!bool(values, 'mfa', true)) {
         findings.push(warning('network.fortios.sslvpn-no-mfa', 'SSL VPN with a single factor is the most commonly exploited path into a network with a FortiGate on it. Require a second factor.', { source: 'ArchToolKit' }));
       }
@@ -234,26 +266,32 @@ export const FORTIOS_EXTRA_2                             = [
           'The user group must already exist with its members and authentication source. This change references it.',
           'The firewall policy is what decides where connected users may go. Without it they authenticate, get an address, and reach nothing.',
           'The internal network needs a route back to the pool, via the FortiGate.',
+          ...(v6 ? [`IPv6 clients get an address from ${pool6} (ipv6-pools / tunnel-ipv6-pools), and the policy carries it in srcaddr6/dstaddr6. The internal IPv6 network needs its own route back to that range.`] : []),
         ],
         before: ['show vpn ssl settings', 'show vpn ssl web portal', 'get vpn ssl monitor', 'show firewall policy | grep ssl', 'show firewall address'],
         config: [
-          'config firewall address',
-          `  edit "${pool}"`,
-          '    set type iprange',
-          `    set start-ip ${range.split('-')[0] ?? ''}`,
-          `    set end-ip ${range.split('-')[1] ?? ''}`,
-          '  next',
-          'end',
-          '',
+          ...(v4 ? ['config firewall address', `  edit "${pool}"`, '    set type iprange', `    set start-ip ${first4}`, `    set end-ip ${last4}`, '  next', 'end', ''] : []),
+          ...(v6 ? ['config firewall address6', `  edit "${pool6}"`, '    set type iprange', `    set start-ip ${fgtHost(v6.first)?.address ?? v6.first}`, `    set end-ip ${fgtHost(v6.last)?.address ?? v6.last}`, '  next', 'end', ''] : []),
           'config vpn ssl web portal',
           `  edit "${str(values, 'portal_name', 'full-access')}"`,
           '    set tunnel-mode enable',
           '    set web-mode disable',
-          `    set ip-pools "${pool}"`,
-          ...(split
-            ? ['    set split-tunneling enable', `    set split-tunneling-routing-address "${str(values, 'split_networks', '')}"`]
-            : ['    set split-tunneling disable']),
-          '    set dns-server1 10.0.1.10',
+          ...(v4
+            ? [
+                `    set ip-pools "${pool}"`,
+                ...(split
+                  ? ['    set split-tunneling enable', `    set split-tunneling-routing-address "${str(values, 'split_networks', '')}"`]
+                  : ['    set split-tunneling disable']),
+                '    set dns-server1 10.0.1.10',
+              ]
+            : []),
+          ...(v6
+            ? [
+                '    set ipv6-tunnel-mode enable',
+                `    set ipv6-pools "${pool6}"`,
+                ...(split ? ['    set ipv6-split-tunneling enable', `    set ipv6-split-tunneling-routing-address "${split6}"`] : ['    set ipv6-split-tunneling disable']),
+              ]
+            : []),
           '  next',
           'end',
           '',
@@ -262,7 +300,8 @@ export const FORTIOS_EXTRA_2                             = [
           `  set port ${port}`,
           `  set source-interface "${str(values, 'interface', 'port1')}"`,
           '  set source-address "all"',
-          `  set tunnel-ip-pools "${pool}"`,
+          ...(v4 ? [`  set tunnel-ip-pools "${pool}"`] : []),
+          ...(v6 ? [`  set tunnel-ipv6-pools "${pool6}"`] : []),
           `  set idle-timeout ${num(values, 'idle_timeout', 300)}`,
           '  set ssl-min-proto-ver tls1-2',
           '  set ciphersuite high',
@@ -282,8 +321,8 @@ export const FORTIOS_EXTRA_2                             = [
           '    set name "SSLVPN-TO-INTERNAL"',
           '    set srcintf "ssl.root"',
           `    set dstintf "${str(values, 'dest_interface', 'port2')}"`,
-          `    set srcaddr "${pool}"`,
-          `    set dstaddr ${split ? `"${str(values, 'split_networks', '')}"` : '"all"'}`,
+          ...(v4 ? [`    set srcaddr "${pool}"`, `    set dstaddr ${split ? `"${str(values, 'split_networks', '')}"` : '"all"'}`] : []),
+          ...(v6 ? [`    set srcaddr6 "${pool6}"`, `    set dstaddr6 ${split ? `"${split6}"` : '"all"'}`] : []),
           `    set groups "${str(values, 'user_group', 'GRP-VPN-USERS')}"`,
           '    set action accept',
           '    set schedule "always"',
@@ -329,7 +368,7 @@ export const FORTIOS_EXTRA_2                             = [
         { value: 'local', label: 'Local users' },
       ] },
       { id: 'server_name', label: 'Server object name', control: 'text', default: 'LDAP-AD' },
-      { id: 'servers', label: 'Servers', control: 'text', default: '10.0.5.10, 10.0.5.11' },
+      { id: 'servers', label: 'Servers', control: 'text', default: '10.0.5.10, 10.0.5.11', hint: 'Primary, secondary — IPv4, IPv6 or names' },
       { id: 'base_dn', label: 'Base DN', control: 'text', default: 'DC=example,DC=com', showWhen: { input: 'source', equals: ['ldap'] } },
       { id: 'bind_dn', label: 'Bind DN', control: 'text', default: 'CN=svc-fgt,OU=Service,DC=example,DC=com', showWhen: { input: 'source', equals: ['ldap'] } },
       { id: 'group_name', label: 'Group name', control: 'text', default: 'GRP-VPN-USERS' },
@@ -369,6 +408,9 @@ export const FORTIOS_EXTRA_2                             = [
           'The bind password or shared secret is `<REQUIRED>` and typed at apply time. It belongs in the vault the playbook reads, never in the change record.',
           'Test before relying on it: `diagnose test authserver ldap <server> <user> <password>` answers whether the bind, the base DN and the search all work, which no amount of reading the configuration will.',
           ...(bool(values, 'fsso', false) ? ['Single sign-on maps logged-in users to addresses. It needs a collector agent or polling configured separately — this only enables the FortiGate side.'] : []),
+          ...(source !== 'local' && servers.some((s) => fgtHost(s)?.family === 6)
+            ? ['An IPv6 server address is written as-is in `set server`. VERIFY on the running build that the server answers over IPv6 (the diagnose test below proves it), and that a route to it exists in `get router info6 routing-table`.']
+            : []),
         ],
         before: ['show user ldap', 'show user radius', 'show user group', 'show user local', 'diagnose test authserver ldap'],
         config: [
@@ -469,6 +511,10 @@ export const FORTIOS_EXTRA_2                             = [
         { value: 'application', label: 'Application category' },
         { value: 'address', label: 'Source and destination' },
       ] },
+      { id: 'ip_version', label: 'Traffic family', control: 'select', default: '4', options: [
+        { value: '4', label: 'IPv4 (srcaddr/dstaddr)' },
+        { value: '6', label: 'IPv6 (srcaddr6/dstaddr6)' },
+      ] },
       { id: 'applications', label: 'Applications', control: 'text', default: 'Video/Audio, Collaboration', showWhen: { input: 'policy_kind', equals: ['application'] } },
       { id: 'source', label: 'Source', control: 'text', default: 'all', showWhen: { input: 'policy_kind', equals: ['address'] } },
       { id: 'destination', label: 'Destination', control: 'text', default: 'all', showWhen: { input: 'policy_kind', equals: ['address'] } },
@@ -479,7 +525,13 @@ export const FORTIOS_EXTRA_2                             = [
       const perIp = str(values, 'kind', 'shared') === 'per-ip';
       const guaranteed = num(values, 'guaranteed', 10000);
       const maximum = num(values, 'maximum', 50000);
+      const six = str(values, 'ip_version', '4') === '6';
       const findings            = [];
+      if (str(values, 'policy_kind', 'application') === 'address') {
+        for (const name of [str(values, 'source', 'all'), str(values, 'destination', 'all')].filter(looksLikeAddress)) {
+          findings.push(error('network.fortios.shaping-literal-address', `"${name}" is an address, but a shaping policy names ${six ? 'address6' : 'address'} objects. Create the object first and name it here.`, { source: 'ArchToolKit' }));
+        }
+      }
       if (guaranteed > maximum) {
         findings.push(error('network.fortios.shaper-inverted', 'The guaranteed bandwidth is above the maximum, which the FortiGate accepts and then behaves unpredictably about.', { source: 'ArchToolKit' }));
       }
@@ -498,6 +550,7 @@ export const FORTIOS_EXTRA_2                             = [
           'A shaping policy is matched separately from the firewall policy. Traffic can be allowed by one and shaped by another, and the two lists are edited in different places.',
           'Guarantees only bind under congestion. On an idle circuit nothing changes, which makes this difficult to test before it matters.',
           'Set the interface’s outbandwidth to the real circuit speed, not the port speed, or the shaper has nothing meaningful to divide up.',
+          ...(six ? ['This shaping policy matches IPv6 (`set ip-version 6` with srcaddr6/dstaddr6 naming address6 objects). VERIFY: if the running build rejects `ip-version` in shaping-policy, drop that line — srcaddr6/dstaddr6 alone carry the IPv6 match.'] : []),
         ],
         before: ['show firewall shaper traffic-shaper', 'show firewall shaping-policy', 'diagnose firewall shaper traffic-shaper list', 'get system interface'],
         config: [
@@ -519,9 +572,10 @@ export const FORTIOS_EXTRA_2                             = [
           '  edit 0',
           `    set name "SHAPE-${name}"`,
           '    set status enable',
+          ...(six ? ['    set ip-version 6'] : []),
           ...(str(values, 'policy_kind', 'application') === 'application'
-            ? [`    set app-category ${listOf(str(values, 'applications', '')).map((a) => `"${a}"`).join(' ')}`, '    set srcaddr "all"', '    set dstaddr "all"']
-            : [`    set srcaddr "${str(values, 'source', 'all')}"`, `    set dstaddr "${str(values, 'destination', 'all')}"`]),
+            ? [`    set app-category ${listOf(str(values, 'applications', '')).map((a) => `"${a}"`).join(' ')}`, `    set srcaddr${six ? '6' : ''} "all"`, `    set dstaddr${six ? '6' : ''} "all"`]
+            : [`    set srcaddr${six ? '6' : ''} "${str(values, 'source', 'all')}"`, `    set dstaddr${six ? '6' : ''} "${str(values, 'destination', 'all')}"`]),
           `    set dstintf "${str(values, 'interface', 'port1')}"`,
           '    set service "ALL"',
           ...(perIp ? [`    set per-ip-shaper "${name}"`] : [`    set traffic-shaper "${name}"`, `    set traffic-shaper-reverse "${name}"`]),
@@ -560,7 +614,8 @@ export const FORTIOS_EXTRA_2                             = [
         { value: 'SNMP', label: 'SNMP' },
       ] },
       { id: 'allowed', label: 'Allowed source object', control: 'text', default: 'MGMT-NETWORKS', hint: 'An existing address or group object' },
-      { id: 'allowed_addresses', label: 'Create the object from', control: 'text', default: '10.0.1.0/24, 10.0.2.0/24', hint: 'Empty if the object already exists' },
+      { id: 'allowed_addresses', label: 'Create the object from', control: 'text', default: '10.0.1.0/24, 10.0.2.0/24', hint: 'IPv4 and/or IPv6 prefixes — empty if the object already exists. IPv6 ones become an addrgrp6 and a local-in-policy6' },
+      { id: 'allowed6', label: 'Allowed IPv6 source object', control: 'text', default: '', hint: 'An existing address6/addrgrp6 object — or empty to take it from the IPv6 prefixes above' },
       { id: 'action', label: 'Everything else', control: 'select', default: 'deny', options: [
         { value: 'deny', label: 'Deny' },
         { value: 'accept', label: 'Accept — count only, for a dry run' },
@@ -571,31 +626,76 @@ export const FORTIOS_EXTRA_2                             = [
       const iface = str(values, 'interface', 'port1');
       const service = str(values, 'service', 'HTTPS');
       const object = str(values, 'allowed', 'MGMT-NETWORKS');
-      const addresses = listOf(str(values, 'allowed_addresses', ''));
       const deny = str(values, 'action', 'deny') === 'deny';
+      const log = bool(values, 'log', true);
       const findings            = [];
-      for (const address of addresses) if (!parseCidr(address)) findings.push(error('network.fortios.bad-prefix', `"${address}" is not a valid prefix.`, { source: 'ArchToolKit' }));
+      const all = listOf(str(values, 'allowed_addresses', ''));
+      for (const address of all) if (!fgtCidr(address)) findings.push(error('network.fortios.bad-prefix', `"${address}" is not a valid IPv4 or IPv6 prefix.`, { source: 'ArchToolKit' }));
+      // IPv4 and IPv6 local-in rules are separate tables on 7.0–7.4
+      // (local-in-policy and local-in-policy6), each naming its own family's objects.
+      const addresses = all.filter((a) => fgtCidr(a)?.family !== 6);
+      const addresses6 = all.filter((a) => fgtCidr(a)?.family === 6);
+      const has4 = addresses.length > 0 || addresses6.length === 0;
+      const object6 = str(values, 'allowed6', '') || v6Name(object, has4);
+      const has6 = addresses6.length > 0 || str(values, 'allowed6', '') !== '';
+      for (const any of all.filter((a) => isAnyNetwork(a))) {
+        findings.push(warning('network.fortios.local-in-any', `${any} allows every address, so the permit rule restricts nothing.`, { source: 'ArchToolKit' }));
+      }
       findings.push(
         warning('network.fortios.local-in-lockout', 'A local-in policy that does not include the address you are connecting from will disconnect you the moment it applies, and there is no commit timer to save you. Confirm your own address is inside the allowed object, and have console access.', {
           remediation: 'Apply it from the console, or from an address you have verified is in the list.',
           source: 'ArchToolKit',
         }),
       );
+      // One permit and one catch-all for a table. local-in-policy6 is not
+      // given logtraffic: it is not a documented option there on every 7.x build.
+      const rules = (table        , allowed        , withLog         )           => [
+        `config firewall ${table}`,
+        '  edit 0',
+        `    set intf "${iface}"`,
+        `    set srcaddr "${allowed}"`,
+        '    set dstaddr "all"',
+        `    set service "${service}"`,
+        '    set action accept',
+        '    set schedule "always"',
+        '    set status enable',
+        `    set comments "Permit ${service} from ${allowed}"`,
+        '  next',
+        '  edit 0',
+        `    set intf "${iface}"`,
+        '    set srcaddr "all"',
+        '    set dstaddr "all"',
+        `    set service "${service}"`,
+        `    set action ${deny ? 'deny' : 'accept'}`,
+        '    set schedule "always"',
+        '    set status enable',
+        ...(withLog && log ? ['    set logtraffic enable'] : []),
+        `    set comments "Deny everything else"`,
+        '  next',
+        'end',
+      ];
       if (!deny) {
         findings.push(warning('network.fortios.local-in-dry-run', 'With the action set to accept this policy counts matches and blocks nothing. That is the safe way to see what would be denied — but remember to come back and set it to deny.', { source: 'ArchToolKit' }));
       }
 
       return {
         platform: PLATFORM,
-        title: `Local-in policy: ${service} on ${iface} from ${object} only`,
+        title: `Local-in policy: ${service} on ${iface} from ${[...(has4 ? [object] : []), ...(has6 ? [object6] : [])].join(' and ')} only`,
         impact: 'brief',
         notes: [
           'Ordinary firewall policy governs traffic *through* the FortiGate. Traffic *to* the FortiGate — its administration, its VPN listeners, its routing protocols — is governed only by local-in policy and the interface’s allowaccess. Both need to be right.',
           'Local-in policies are evaluated in order and the list is not visible in the web interface on every version. Keep the ordering deliberate.',
+          ...(has4 && !has6 ? ['This restricts IPv4 only. If the interface has an IPv6 address and ip6-allowaccess, the same service is still reachable over IPv6 — add IPv6 prefixes to cover it.'] : []),
+          ...(has6
+            ? [
+                `IPv6 is restricted in its own table, local-in-policy6, naming ${object6}.`,
+                'VERIFY: local-in-policy6 is the IPv6 table on FortiOS 7.0–7.4. On a later build that has merged it into local-in-policy, move the IPv6 rules there with srcaddr6/dstaddr6. Denied IPv6 attempts are logged only if that build offers logtraffic on the IPv6 rule.',
+              ]
+            : []),
         ],
-        before: ['show firewall local-in-policy', `show system interface ${iface}`, 'diagnose firewall iprope list 100024', 'get system admin list'],
+        before: ['show firewall local-in-policy', ...(has6 ? ['show firewall local-in-policy6'] : []), `show system interface ${iface}`, 'diagnose firewall iprope list 100024', 'get system admin list'],
         config: [
-          ...(addresses.length > 0
+          ...(has4 && addresses.length > 0
             ? [
                 'config firewall addrgrp',
                 `  ${'!'} If ${object} does not exist yet, create its members first:`,
@@ -614,38 +714,40 @@ export const FORTIOS_EXTRA_2                             = [
                 '',
               ]
             : []),
-          'config firewall local-in-policy',
-          '  edit 0',
-          `    set intf "${iface}"`,
-          `    set srcaddr "${object}"`,
-          '    set dstaddr "all"',
-          `    set service "${service}"`,
-          '    set action accept',
-          '    set schedule "always"',
-          '    set status enable',
-          `    set comments "Permit ${service} from ${object}"`,
-          '  next',
-          '  edit 0',
-          `    set intf "${iface}"`,
-          '    set srcaddr "all"',
-          '    set dstaddr "all"',
-          `    set service "${service}"`,
-          `    set action ${deny ? 'deny' : 'accept'}`,
-          '    set schedule "always"',
-          '    set status enable',
-          ...(bool(values, 'log', true) ? ['    set logtraffic enable'] : []),
-          `    set comments "Deny everything else"`,
-          '  next',
-          'end',
+          ...(has4 ? rules('local-in-policy', object, true) : []),
+          ...(has6
+            ? [
+                ...(has4 ? [''] : []),
+                ...(addresses6.length > 0
+                  ? [
+                      'config firewall address6',
+                      ...addresses6.flatMap((address, index) => [`  edit "${object6}-${index + 1}"`, ...addressBody(fgtCidr(address) , '    '), '  next']),
+                      'end',
+                      'config firewall addrgrp6',
+                      `  edit "${object6}"`,
+                      `    set member ${addresses6.map((_, index) => `"${object6}-${index + 1}"`).join(' ')}`,
+                      '  next',
+                      'end',
+                      '',
+                    ]
+                  : []),
+                ...rules('local-in-policy6', object6, false),
+              ]
+            : []),
         ],
         verify: [
-          'show firewall local-in-policy',
-          'diagnose firewall iprope list 100024',
+          ...(has4 ? ['show firewall local-in-policy', 'diagnose firewall iprope list 100024'] : []),
+          ...(has6 ? ['show firewall local-in-policy6'] : []),
           `${'!'} From an allowed address: connect. From somewhere else: confirm it is refused.`,
           'execute log filter category 1',
           'execute log display',
         ],
-        backout: ['config firewall local-in-policy', `  ${'!'} delete both rule ids shown by: show firewall local-in-policy`, '  purge', 'end'],
+        // Delete by id, never `purge`: purge empties the whole table, every
+        // local-in rule on the box, not just the two added here.
+        backout: [
+          ...(has4 ? ['config firewall local-in-policy', `  ${'!'} delete both rule ids shown by: show firewall local-in-policy`, 'end'] : []),
+          ...(has6 ? ['config firewall local-in-policy6', `  ${'!'} delete both rule ids shown by: show firewall local-in-policy6`, 'end'] : []),
+        ],
         findings,
       };
     },
@@ -723,13 +825,14 @@ export const FORTIOS_EXTRA_2                             = [
         { value: 'bgp', label: 'BGP' },
         { value: 'ospf', label: 'OSPF' },
       ] },
-      { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.2.1' },
+      { id: 'router_id', label: 'Router id', control: 'text', default: '10.255.2.1', hint: 'A 32-bit id in dotted form, also for IPv6' },
       { id: 'local_as', label: 'Local AS', control: 'number', default: 65020, min: 1, showWhen: { input: 'protocol', equals: ['bgp'] } },
-      { id: 'peer', label: 'Peer address', control: 'text', default: '10.0.12.1', showWhen: { input: 'protocol', equals: ['bgp'] } },
+      { id: 'peer', label: 'Peer address', control: 'text', default: '10.0.12.1', hint: 'IPv4 or IPv6', showWhen: { input: 'protocol', equals: ['bgp'] } },
       { id: 'peer_as', label: 'Peer AS', control: 'number', default: 65010, min: 1, showWhen: { input: 'protocol', equals: ['bgp'] } },
       { id: 'area', label: 'OSPF area', control: 'text', default: '0.0.0.0', showWhen: { input: 'protocol', equals: ['ospf'] } },
-      { id: 'ospf_networks', label: 'Networks in the area', control: 'text', default: '10.0.12.0/30', showWhen: { input: 'protocol', equals: ['ospf'] } },
-      { id: 'advertise', label: 'Prefixes to advertise', control: 'textarea', default: '10.20.0.0/16', hint: 'One per line' },
+      { id: 'ospf_networks', label: 'Networks in the area', control: 'text', default: '10.0.12.0/30', hint: 'IPv4 (OSPFv2 network statements)', showWhen: { input: 'protocol', equals: ['ospf'] } },
+      { id: 'ospf6_interfaces', label: 'OSPFv3 (IPv6) interfaces', control: 'text', default: '', hint: 'Interface names to run OSPFv3 on in the same area — empty for no IPv6', showWhen: { input: 'protocol', equals: ['ospf'] } },
+      { id: 'advertise', label: 'Prefixes to advertise', control: 'textarea', default: '10.20.0.0/16', hint: 'One per line, IPv4 (network) or IPv6 (network6)' },
       { id: 'authentication', label: 'Authenticate the adjacency', control: 'toggle', default: true },
       { id: 'graceful_restart', label: 'Graceful restart', control: 'toggle', default: true, hint: 'Keeps forwarding through an HA failover' },
     ],
@@ -740,7 +843,37 @@ export const FORTIOS_EXTRA_2                             = [
         .map((l) => l.trim())
         .filter(Boolean);
       const findings            = [];
-      for (const prefix of advertise) if (!parseCidr(prefix)) findings.push(error('network.fortios.bad-prefix', `"${prefix}" is not a prefix.`, { source: 'ArchToolKit' }));
+      for (const prefix of advertise) if (!fgtCidr(prefix)) findings.push(error('network.fortios.bad-prefix', `"${prefix}" is not a prefix.`, { source: 'ArchToolKit' }));
+      // IPv4 prefixes go in `config network`, IPv6 in `config network6` with
+      // prefix6; an IPv6 neighbour or IPv6 prefix needs activate6 on the peer.
+      const adv4 = advertise.filter((p) => fgtCidr(p)?.family !== 6);
+      const adv6 = advertise.filter((p) => fgtCidr(p)?.family === 6);
+      const peerText = str(values, 'peer', '');
+      const peer = fgtHost(peerText);
+      if (protocol === 'bgp' && peerText && !peer) findings.push(error('network.fortios.bad-peer', `The peer "${peerText}" is not an IPv4 or IPv6 address.`, { source: 'ArchToolKit' }));
+      const peerAddress = peer?.address ?? peerText;
+      const peer6 = peer?.family === 6;
+      const routerId = str(values, 'router_id', '');
+      if (fgtHost(routerId)?.family === 6) {
+        findings.push(error('network.fortios.router-id-ipv6', 'The router id is a 32-bit number written as dotted IPv4, even for IPv6 routing. An IPv6 address is not accepted here.', { source: 'ArchToolKit' }));
+      }
+      if (protocol === 'bgp' && ((peer6 && adv4.length > 0) || (!peer6 && peer && adv6.length > 0))) {
+        findings.push(
+          warning('network.fortios.bgp-cross-family', `IPv${peer6 ? 4 : 6} prefixes are advertised over an IPv${peer6 ? 6 : 4} session. VERIFY the peer negotiates that address family and that the next hop it receives is reachable — a cross-family next hop is dropped unless both ends handle it.`, { source: 'ArchToolKit' }),
+        );
+      }
+      const ospf6 = listOf(str(values, 'ospf6_interfaces', ''));
+      const ospfNetworks = listOf(str(values, 'ospf_networks', ''));
+      if (protocol === 'ospf') {
+        for (const network of ospfNetworks.filter((n) => fgtCidr(n)?.family === 6)) {
+          findings.push({ ...noIpv6('ospf-network-ipv6', `An OSPF (v2) network statement ("${network}")`), remediation: 'OSPFv3 carries IPv6 and is enabled per interface: name the interfaces in "OSPFv3 (IPv6) interfaces" instead.' });
+        }
+        if (ospf6.length > 0 && bool(values, 'authentication', true)) {
+          findings.push(
+            warning('network.fortios.ospf6-unauthenticated', 'OSPFv3 has no MD5 option: it is authenticated with IPsec (AH or ESP) keys per area or interface, which this change does not generate. The OSPFv3 adjacency is unauthenticated until that is added.', { source: 'ArchToolKit' }),
+          );
+        }
+      }
       if (advertise.length === 0) {
         findings.push(warning('network.fortios.no-advertisements', 'Nothing is being advertised, so this peers and receives only. That is a valid design and an easy mistake — confirm it is deliberate.', { source: 'ArchToolKit' }));
       }
@@ -770,20 +903,31 @@ export const FORTIOS_EXTRA_2                             = [
                 '  set ebgp-multipath enable',
                 ...(bool(values, 'graceful_restart', true) ? ['  set graceful-restart enable', '  set graceful-restart-time 120'] : []),
                 '  config neighbor',
-                `    edit "${str(values, 'peer', '')}"`,
+                `    edit "${peerAddress}"`,
                 `      set remote-as ${num(values, 'peer_as', 65010)}`,
+                ...(peer6 || adv6.length > 0 ? ['      set activate6 enable'] : []),
+                ...(peer6 && adv4.length === 0 ? ['      set activate disable'] : []),
                 '      set soft-reconfiguration enable',
+                ...(peer6 || adv6.length > 0 ? ['      set soft-reconfiguration6 enable'] : []),
                 '      set connect-timer 10',
                 ...(bool(values, 'authentication', true) ? [`      set password ${SECRET}`] : []),
                 ...(bool(values, 'graceful_restart', true) ? ['      set capability-graceful-restart enable'] : []),
+                ...(bool(values, 'graceful_restart', true) && (peer6 || adv6.length > 0) ? ['      set capability-graceful-restart6 enable'] : []),
                 '    next',
                 '  end',
-                '  config network',
-                ...advertise.flatMap((prefix, index) => {
-                  const cidr = parseCidr(prefix);
-                  return [`    edit ${index + 1}`, `      set prefix ${cidr ? `${cidr.address} ${netmask(cidr.prefix)}` : prefix}`, '    next'];
-                }),
-                '  end',
+                ...(adv4.length > 0 || adv6.length === 0
+                  ? [
+                      '  config network',
+                      ...adv4.flatMap((prefix, index) => {
+                        const cidr = parseCidr(prefix);
+                        return [`    edit ${index + 1}`, `      set prefix ${cidr ? `${cidr.address} ${netmask(cidr.prefix)}` : prefix}`, '    next'];
+                      }),
+                      '  end',
+                    ]
+                  : []),
+                ...(adv6.length > 0
+                  ? ['  config network6', ...adv6.flatMap((prefix, index) => [`    edit ${index + 1}`, `      set prefix6 ${fgtSubnet(fgtCidr(prefix) )}`, '    next']), '  end']
+                  : []),
                 'end',
               ]
             : [
@@ -796,23 +940,59 @@ export const FORTIOS_EXTRA_2                             = [
                 '    next',
                 '  end',
                 '  config network',
-                ...listOf(str(values, 'ospf_networks', '')).flatMap((network, index) => {
-                  const cidr = parseCidr(network);
-                  return [`    edit ${index + 1}`, `      set prefix ${cidr ? `${cidr.address} ${netmask(cidr.prefix)}` : network}`, `      set area ${str(values, 'area', '0.0.0.0')}`, '    next'];
-                }),
+                ...ospfNetworks
+                  .filter((network) => fgtCidr(network)?.family !== 6)
+                  .flatMap((network, index) => {
+                    const cidr = parseCidr(network);
+                    return [`    edit ${index + 1}`, `      set prefix ${cidr ? `${cidr.address} ${netmask(cidr.prefix)}` : network}`, `      set area ${str(values, 'area', '0.0.0.0')}`, '    next'];
+                  }),
                 '  end',
                 'end',
+                // OSPFv3: the same router id and area, enabled per interface.
+                ...(ospf6.length > 0
+                  ? [
+                      '',
+                      'config router ospf6',
+                      `  set router-id ${routerId}`,
+                      '  config area',
+                      `    edit ${str(values, 'area', '0.0.0.0')}`,
+                      '    next',
+                      '  end',
+                      '  config ospf6-interface',
+                      ...ospf6.flatMap((iface) => [`    edit "${iface}"`, `      set interface "${iface}"`, `      set area-id ${str(values, 'area', '0.0.0.0')}`, '    next']),
+                      '  end',
+                      'end',
+                    ]
+                  : []),
               ],
         verify: [
           `get router info ${protocol} ${protocol === 'bgp' ? 'summary' : 'neighbor'}`,
           ...(protocol === 'bgp' ? ['get router info bgp neighbors', 'get router info bgp network'] : ['get router info ospf neighbor', 'get router info ospf interface']),
+          ...(protocol === 'bgp' && (peer6 || adv6.length > 0) ? ['get router info6 bgp summary', 'get router info6 bgp network'] : []),
+          ...(protocol === 'ospf' && ospf6.length > 0 ? ['get router info6 ospf neighbor', 'get router info6 ospf interface'] : []),
           'get router info routing-table all',
+          ...((protocol === 'bgp' && (peer6 || adv6.length > 0)) || (protocol === 'ospf' && ospf6.length > 0) ? ['get router info6 routing-table'] : []),
           `${'!'} From the peer: confirm only the intended prefixes arrived`,
         ],
         backout:
           protocol === 'bgp'
-            ? ['config router bgp', '  config neighbor', `    delete "${str(values, 'peer', '')}"`, '  end', 'end']
-            : ['config router ospf', '  unset router-id', '  purge', 'end'],
+            ? [
+                'config router bgp',
+                '  config neighbor',
+                `    delete "${peerAddress}"`,
+                '  end',
+                ...(adv6.length > 0 ? ['  config network6', ...adv6.map((_, index) => `    delete ${index + 1}`), '  end'] : []),
+                'end',
+              ]
+            : [
+                'config router ospf',
+                '  unset router-id',
+                '  purge',
+                'end',
+                ...(ospf6.length > 0
+                  ? ['config router ospf6', '  config ospf6-interface', ...ospf6.map((iface) => `    delete "${iface}"`), '  end', '  config area', `    delete ${str(values, 'area', '0.0.0.0')}`, '  end', 'end']
+                  : []),
+              ],
         findings,
       };
     },
@@ -836,7 +1016,7 @@ export const FORTIOS_EXTRA_2                             = [
         { value: 'proxy', label: 'Proxy-based — more inspection features' },
       ] },
       { id: 'intervdom_link', label: 'Inter-VDOM link to', control: 'text', default: '', hint: 'Another VDOM name, or empty for none' },
-      { id: 'link_subnet', label: 'Link subnet', control: 'text', default: '10.254.1.0/30', showWhen: { input: 'intervdom_link', notEquals: [''] } },
+      { id: 'link_subnet', label: 'Link subnet', control: 'text', default: '10.254.1.0/30', hint: 'IPv4, IPv6 or both: 10.254.1.0/30, fd00:254:1::/64', showWhen: { input: 'intervdom_link', notEquals: [''] } },
       { id: 'resource_limits', label: 'Set resource limits', control: 'toggle', default: false },
       { id: 'session_limit', label: 'Maximum sessions', control: 'number', default: 100000, min: 0, showWhen: { input: 'resource_limits', equals: ['true'] } },
     ],
@@ -844,8 +1024,22 @@ export const FORTIOS_EXTRA_2                             = [
       const vdom = str(values, 'vdom_name', 'CUSTOMER-A').toUpperCase().replace(/\s+/g, '-');
       const ifaces = listOf(str(values, 'interfaces', ''));
       const link = str(values, 'intervdom_link', '');
-      const linkCidr = parseCidr(str(values, 'link_subnet', ''));
       const findings            = [];
+      const linkFam = link ? splitFamilies(listOf(str(values, 'link_subnet', '')), 'the link subnet', findings) : { v4: [], v6: [] };
+      const linkCidr = linkFam.v4[0] ? fgtCidr(linkFam.v4[0]) : null;
+      const linkCidr6 = linkFam.v6[0] ? fgtCidr(linkFam.v6[0]) : null;
+      if (linkFam.v4.length > 1 || linkFam.v6.length > 1) findings.push(error('network.fortios.link-subnets', 'Give one IPv4 and at most one IPv6 link subnet.', { source: 'ArchToolKit' }));
+      // Each end takes a host address from the subnet: the first two usable
+      // (both addresses of a /31 or /127, which have no network address to skip).
+      const ends = (c         )                   => {
+        const pointToPoint = c.prefix === (c.family === 4 ? 31 : 127);
+        return pointToPoint ? [nthHost(c, 0), nthHost(c, 1)] : [nthHost(c, 1), nthHost(c, 2)];
+      };
+      for (const c of [linkCidr, linkCidr6]) {
+        if (c && c.prefix > (c.family === 4 ? 30 : 126) && c.prefix !== (c.family === 4 ? 31 : 127)) {
+          findings.push(error('network.fortios.link-subnet-small', `${c.network}/${c.prefix} has no room for two link addresses.`, { source: 'ArchToolKit' }));
+        }
+      }
       if (ifaces.length > 0) {
         findings.push(
           warning('network.fortios.vdom-clears-interface', 'Moving an interface to another VDOM removes its addressing, its policies and everything that referenced it. This is not a reversible edit — capture the full interface and policy configuration first.', {
@@ -854,7 +1048,7 @@ export const FORTIOS_EXTRA_2                             = [
           }),
         );
       }
-      if (link && !linkCidr) findings.push(error('network.fortios.bad-link-subnet', 'The inter-VDOM link subnet is not a valid prefix.', { source: 'ArchToolKit' }));
+      if (link && !linkCidr && !linkCidr6) findings.push(error('network.fortios.bad-link-subnet', 'The inter-VDOM link subnet is not a valid IPv4 or IPv6 prefix.', { source: 'ArchToolKit' }));
       findings.push(
         warning('network.fortios.vdom-licensing', 'Beyond the included count, additional VDOMs need a licence. The FortiGate will refuse to create one past the limit, which is a better failure than most but still one to know about before the window.', { source: 'ArchToolKit' }),
       );
@@ -890,23 +1084,22 @@ export const FORTIOS_EXTRA_2                             = [
           '',
           ...ifaces.flatMap((iface) => ['config system interface', `  edit "${iface}"`, `    set vdom "${vdom}"`, '  next', 'end']),
           '',
-          ...(link && linkCidr
+          ...(link && (linkCidr || linkCidr6)
             ? [
                 'config system vdom-link',
                 `  edit "LINK1"`,
                 '  next',
                 'end',
                 'config system interface',
-                '  edit "LINK10"',
-                `    set vdom "${vdom}"`,
-                `    set ip ${linkCidr.address} ${netmask(linkCidr.prefix)}`,
-                '    set allowaccess ping',
-                '  next',
-                '  edit "LINK11"',
-                `    set vdom "${link}"`,
-                `    set ip ${linkCidr.address.replace(/(\d+)$/, (n) => String(Number(n) + 1))} ${netmask(linkCidr.prefix)}`,
-                '    set allowaccess ping',
-                '  next',
+                ...(['LINK10', 'LINK11']         ).flatMap((end, i) => [
+                  `  edit "${end}"`,
+                  `    set vdom "${i === 0 ? vdom : link}"`,
+                  ...(linkCidr ? [`    set ip ${ends(linkCidr)[i]} ${netmask(linkCidr.prefix)}`, '    set allowaccess ping'] : []),
+                  ...(linkCidr6
+                    ? ['    config ipv6', `      set ip6-address ${fgtInterfaceAddress({ ...linkCidr6, address: ends(linkCidr6)[i] })}`, '      set ip6-allowaccess ping', '    end']
+                    : []),
+                  '  next',
+                ]),
                 'end',
               ]
             : []),

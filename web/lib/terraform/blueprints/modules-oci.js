@@ -12,8 +12,11 @@
  * does.
  */
 
-                                                             
+                                                                                         
+import { error,              } from '../../core/findings.js';
+import { parseCidrAny } from '../../core/ip.js';
 import { moduleBlueprint,                          } from '../module-blueprint.js';
+import { ipv4Range, isOn, listOf } from './dual-stack.js';
 
 const SPECS                                 = [
   {
@@ -36,6 +39,18 @@ const SPECS                                 = [
       { input: 'create_service_gateway', default: 'true' },
       { input: 'lockdown_default_seclist', default: 'true' },
       { input: 'enable_vcn_logging', default: 'true' },
+      {
+        input: 'enable_ipv6',
+        label: 'Dual stack (IPv6)',
+        default: 'false',
+        hint: 'Oracle assigns the VCN a /56; subnets in the subnets map take /64s of it',
+      },
+      {
+        input: 'vcn_ipv6private_cidr_blocks',
+        label: 'Private IPv6 CIDRs (ULA)',
+        default: '',
+        hint: 'Optional, with dual stack: comma-separated ULA ranges, e.g. fd00:50::/48',
+      },
     ],
     outputs: ['vcn_id', 'internet_gateway_id', 'nat_gateway_id', 'service_gateway_id'],
   },
@@ -58,6 +73,12 @@ const SPECS                                 = [
       { input: 'vcn_id', label: 'Existing VCN OCID', default: '', hint: 'Only when not creating one' },
       { input: 'ssh_public_key_path', default: '~/.ssh/id_ed25519.pub' },
       { input: 'worker_pools', default: '', hint: 'A map of pools — write it in the file' },
+      {
+        input: 'enable_ipv6',
+        label: 'Dual stack (IPv6)',
+        default: 'false',
+        hint: 'IPv6 on the VCN the module creates',
+      },
     ],
     outputs: ['cluster_id', 'cluster_endpoints', 'vcn_id'],
   },
@@ -141,8 +162,40 @@ const SPECS                                 = [
   },
 ];
 
+/**
+ * The VCN's ranges: vcn_cidrs is IPv4 (OCI builds no IPv6-only VCN), and the
+ * private IPv6 ranges are IPv6 and need dual stack on to mean anything.
+ */
+function vcnFindings(values                 )            {
+  const code = 'terraform.oci_module_vcn';
+  const findings            = [];
+  for (const cidr of listOf(values.vcn_cidrs)) findings.push(...ipv4Range(cidr, 'vcn_cidrs', 'vcn_cidrs', code));
+  const ula = listOf(values.vcn_ipv6private_cidr_blocks);
+  for (const cidr of ula) {
+    const c = parseCidrAny(cidr);
+    if (!c || c.family !== 6 || !cidr.includes('/')) {
+      findings.push(error(`${code}.invalid-ipv6-cidr`, `"${cidr}" in vcn_ipv6private_cidr_blocks is not an IPv6 CIDR.`, { path: 'vcn_ipv6private_cidr_blocks' }));
+    }
+  }
+  if (ula.length > 0 && !isOn(values.enable_ipv6)) {
+    findings.push(error(`${code}.ipv6-cidrs-without-ipv6`, 'Private IPv6 CIDRs are set but dual stack is off, so the VCN has no IPv6.', { path: 'enable_ipv6' }));
+  }
+  return findings;
+}
+
+function checked(blueprint           )            {
+  if (blueprint.id !== 'oci_module_vcn') return blueprint;
+  return {
+    ...blueprint,
+    build: (values, name) => {
+      const out = blueprint.build(values, name);
+      return { ...out, findings: [...(out.findings ?? []), ...vcnFindings(values)] };
+    },
+  };
+}
+
 export const OCI_TERRAFORM_MODULES                 = {
   target: 'oci',
   label: 'Oracle Cloud Infrastructure (OCI)',
-  blueprints: SPECS.map((spec) => moduleBlueprint('oci', spec)),
+  blueprints: SPECS.map((spec) => checked(moduleBlueprint('oci', spec))),
 };

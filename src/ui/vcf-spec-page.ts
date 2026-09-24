@@ -96,6 +96,22 @@ interface Controls {
   internalClusterCidr: HTMLSelectElement;
   internalClusterCidrIpv6: HTMLSelectElement;
   dualStack: HTMLInputElement;
+  /** IPv6 side of each network, shown only with dual stack. */
+  mgmtV6Cidr: HTMLInputElement;
+  mgmtV6Gateway: HTMLInputElement;
+  vmMgmtV6Cidr: HTMLInputElement;
+  vmMgmtV6Gateway: HTMLInputElement;
+  vmotionV6Cidr: HTMLInputElement;
+  vmotionV6Gateway: HTMLInputElement;
+  vsanV6Cidr: HTMLInputElement;
+  vsanV6Gateway: HTMLInputElement;
+  fleetV6Cidr: HTMLInputElement;
+  fleetV6Gateway: HTMLInputElement;
+  vcfmsIpv6Pool: HTMLInputElement;
+  overlayIpv6Gateway: HTMLInputElement;
+  localIpv6Gateway: HTMLInputElement;
+  ipv6Fields: HTMLElement;
+  fleetIpv6Fields: HTMLElement;
   esxiCertsMode: HTMLSelectElement;
   ceipEnabled: HTMLInputElement;
   nfsServers: HTMLInputElement;
@@ -575,6 +591,31 @@ export function mountVcfSpecPage(root: HTMLElement): void {
       controls.managementNetworkModel.value as ManagementNetworkModel,
     );
     const overlaySegment = controls.overlaySegment.value.trim();
+    const dual = controls.dualStack.checked;
+    // The IPv6 side of a network. Always written, so an IPv6 prefix inherited
+    // from the estate is dropped once the field is cleared or dual stack is off.
+    const v6 = (cidr: HTMLInputElement, gateway: HTMLInputElement): Partial<NetworkPlan> => {
+      const c = cidr.value.trim();
+      const g = gateway.value.trim();
+      return dual && c
+        ? { ipv6Cidr: c, ipv6Gateway: g || undefined }
+        : { ipv6Cidr: undefined, ipv6Gateway: undefined };
+    };
+    // "2001:db8:11::1/64" into the API's separate ipv6Gateway and ipv6Prefix.
+    const v6GatewayPrefix = (input: HTMLInputElement): { ipv6Gateway?: string; ipv6Prefix?: number } => {
+      const [gateway = '', prefix] = input.value.trim().split('/');
+      if (!dual || !gateway) return {};
+      return { ipv6Gateway: gateway, ...(prefix !== undefined ? { ipv6Prefix: Number(prefix) } : {}) };
+    };
+    // Blank takes a range from the IPv6 prefix of the network the services
+    // live on; a CIDR or an address list is used as typed.
+    const vcfmsV6 = controls.vcfmsIpv6Pool.value.trim();
+    const vcfmsIpv6Pool: DeploymentPlan['vcfmsIpv6Pool'] =
+      dual && vcfmsV6
+        ? vcfmsV6.includes('/')
+          ? { mode: 'cidr', cidr: vcfmsV6 }
+          : { mode: 'addresses', addresses: list(controls.vcfmsIpv6Pool) }
+        : undefined;
 
     return {
       ...inheritedPlan,
@@ -592,10 +633,21 @@ export function mountVcfSpecPage(root: HTMLElement): void {
       dnsServers: [controls.dns1.value.trim(), controls.dns2.value.trim()].filter(Boolean),
       ntpServers: [controls.ntp1.value.trim(), controls.ntp2.value.trim()].filter(Boolean),
       // A gateway or MTU the estate supplied survives while the subnet is unchanged.
-      management: keep(inheritedPlan.management, controls.mgmtCidr.value.trim(), num(controls.mgmtVlan, 30)),
-      vmotion: keep(inheritedPlan.vmotion, controls.vmotionCidr.value.trim(), num(controls.vmotionVlan, 40)),
+      management: {
+        ...keep(inheritedPlan.management, controls.mgmtCidr.value.trim(), num(controls.mgmtVlan, 30)),
+        ...v6(controls.mgmtV6Cidr, controls.mgmtV6Gateway),
+      },
+      vmotion: {
+        ...keep(inheritedPlan.vmotion, controls.vmotionCidr.value.trim(), num(controls.vmotionVlan, 40)),
+        ...v6(controls.vmotionV6Cidr, controls.vmotionV6Gateway),
+      },
       ...(vsanSelected
-        ? { vsan: keep(inheritedPlan.vsan, controls.vsanCidr.value.trim(), num(controls.vsanVlan, 50)) }
+        ? {
+            vsan: {
+              ...keep(inheritedPlan.vsan, controls.vsanCidr.value.trim(), num(controls.vsanVlan, 50)),
+              ...v6(controls.vsanV6Cidr, controls.vsanV6Gateway),
+            },
+          }
         : {}),
       hostTep: { cidr: controls.tepCidr.value.trim(), vlanId: num(controls.tepVlan, 60) },
       ...(controls.vmMgmtCidr.value.trim()
@@ -603,6 +655,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
             vmManagement: {
               cidr: controls.vmMgmtCidr.value.trim(),
               vlanId: num(controls.vmMgmtVlan, 30),
+              ...v6(controls.vmMgmtV6Cidr, controls.vmMgmtV6Gateway),
             },
           }
         : {}),
@@ -614,6 +667,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
       ...(controls.dualStack.checked
         ? { internalClusterCidrIpv6: controls.internalClusterCidrIpv6.value }
         : {}),
+      ...(vcfmsIpv6Pool ? { vcfmsIpv6Pool } : {}),
       ...(controls.esxiCertsMode.value
         ? { esxiCertsMode: controls.esxiCertsMode.value as 'Custom' | 'VMCA' }
         : {}),
@@ -624,6 +678,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
             fleetManagement: {
               cidr: controls.fleetCidr.value.trim(),
               vlanId: num(controls.fleetVlan, 80),
+              ...v6(controls.fleetV6Cidr, controls.fleetV6Gateway),
             },
           }
         : {}),
@@ -634,6 +689,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
                 networkName: overlaySegment,
                 subnetMask: controls.overlayMask.value.trim(),
                 gateway: controls.overlayGateway.value.trim(),
+                ...v6GatewayPrefix(controls.overlayIpv6Gateway),
               },
               // The stretched model spans two regions, so the cross-region
               // segment is joined by a region-local one.
@@ -643,6 +699,7 @@ export function mountVcfSpecPage(root: HTMLElement): void {
                       networkName: controls.localSegment.value.trim(),
                       subnetMask: controls.localMask.value.trim(),
                       gateway: controls.localGateway.value.trim(),
+                      ...v6GatewayPrefix(controls.localIpv6Gateway),
                     },
                   }
                 : {}),
@@ -742,14 +799,20 @@ export function mountVcfSpecPage(root: HTMLElement): void {
     const model = managementNetworkModel(
       controls.managementNetworkModel.value as ManagementNetworkModel,
     );
-    for (const input of [controls.fleetCidr, controls.fleetVlan]) {
+    for (const input of [controls.fleetCidr, controls.fleetVlan, controls.fleetV6Cidr, controls.fleetV6Gateway]) {
       input.disabled = !model.requiresDedicatedNetwork;
     }
-    for (const input of [controls.overlaySegment, controls.overlayMask, controls.overlayGateway]) {
+    for (const input of [
+      controls.overlaySegment,
+      controls.overlayMask,
+      controls.overlayGateway,
+      controls.overlayIpv6Gateway,
+    ]) {
       input.disabled = !model.requiresOverlaySegment;
     }
     // Only the stretched model has a second region to name.
     controls.localRegionFields.hidden = !model.stretched;
+    controls.localIpv6Gateway.disabled = !model.stretched;
   }
 
   /**
@@ -770,6 +833,14 @@ export function mountVcfSpecPage(root: HTMLElement): void {
     controls.skipHclAutoDiskClaim.disabled = storage !== 'vsan-esa';
     controls.vsanRekeyMinutes.disabled = !controls.vsanEncryptionInTransit.checked;
     controls.internalClusterCidrIpv6.disabled = !controls.dualStack.checked;
+    // The IPv6 half of every network appears with dual stack, and vSAN's only
+    // when vSAN is the storage.
+    controls.ipv6Fields.hidden = !controls.dualStack.checked;
+    controls.fleetIpv6Fields.hidden = !controls.dualStack.checked;
+    controls.vsanV6Cidr.disabled = !vsan;
+    controls.vsanV6Gateway.disabled = !vsan;
+    controls.vmMgmtV6Cidr.disabled = !controls.vmMgmtCidr.value.trim();
+    controls.vmMgmtV6Gateway.disabled = !controls.vmMgmtCidr.value.trim();
   }
 
   function syncScenarioControls(): void {
@@ -882,14 +953,24 @@ function applySizingPlan(controls: Controls, plan: Partial<DeploymentPlan>): voi
     controls.ntp1.value = plan.ntpServers[0] ?? '';
     controls.ntp2.value = plan.ntpServers[1] ?? '';
   }
-  const net = (n: NetworkPlan | undefined, cidr: HTMLInputElement, vlan: HTMLInputElement): void => {
+  const net = (
+    n: NetworkPlan | undefined,
+    cidr: HTMLInputElement,
+    vlan: HTMLInputElement,
+    v6Cidr: HTMLInputElement,
+    v6Gateway: HTMLInputElement,
+  ): void => {
     if (!n) return;
     cidr.value = n.cidr;
     vlan.value = String(n.vlanId);
+    // The estate's IPv6 prefix, when its VMkernel adapters carry one.
+    v6Cidr.value = n.ipv6Cidr ?? '';
+    v6Gateway.value = n.ipv6Gateway ?? '';
   };
-  net(plan.management, controls.mgmtCidr, controls.mgmtVlan);
-  net(plan.vmotion, controls.vmotionCidr, controls.vmotionVlan);
-  net(plan.vsan, controls.vsanCidr, controls.vsanVlan);
+  net(plan.management, controls.mgmtCidr, controls.mgmtVlan, controls.mgmtV6Cidr, controls.mgmtV6Gateway);
+  net(plan.vmotion, controls.vmotionCidr, controls.vmotionVlan, controls.vmotionV6Cidr, controls.vmotionV6Gateway);
+  net(plan.vsan, controls.vsanCidr, controls.vsanVlan, controls.vsanV6Cidr, controls.vsanV6Gateway);
+  if (plan.dualStack !== undefined) controls.dualStack.checked = plan.dualStack;
 }
 
 function existingBlock(
@@ -1075,6 +1156,23 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
   controls.vsanEncryptionInTransit = bind(vsanDit.input);
   const dualStack = checkbox('Dual stack (emit IPv6 alongside IPv4)', false);
   controls.dualStack = bind(dualStack.input);
+  // IPv6 halves of the networks. Placeholders only: a documentation prefix
+  // typed in for someone would end up in a real spec.
+  controls.mgmtV6Cidr = bind(textInput('', 'e.g. 2001:db8:30::/64'));
+  controls.mgmtV6Gateway = bind(textInput('', 'e.g. 2001:db8:30::1'));
+  controls.vmMgmtV6Cidr = bind(textInput('', 'Defaults to the management IPv6 network'));
+  controls.vmMgmtV6Gateway = bind(textInput('', 'IPv6 gateway'));
+  controls.vmotionV6Cidr = bind(textInput('', 'e.g. 2001:db8:40::/64'));
+  controls.vmotionV6Gateway = bind(textInput('', 'Optional; blank if not routed'));
+  controls.vsanV6Cidr = bind(textInput('', 'e.g. 2001:db8:50::/64'));
+  controls.vsanV6Gateway = bind(textInput('', 'Optional; blank if not routed'));
+  controls.fleetV6Cidr = bind(textInput('', 'e.g. 2001:db8:80::/64'));
+  controls.fleetV6Gateway = bind(textInput('', 'e.g. 2001:db8:80::1'));
+  controls.vcfmsIpv6Pool = bind(
+    textInput('', 'Blank: a range from the services network’s IPv6 prefix'),
+  );
+  controls.overlayIpv6Gateway = bind(textInput('', 'e.g. 2001:db8:11::1/64'));
+  controls.localIpv6Gateway = bind(textInput('', 'e.g. 2001:db8:12::1/64'));
   const ceip = checkbox('Join the Customer Experience Improvement Program', false);
   controls.ceipEnabled = bind(ceip.input);
 
@@ -1177,6 +1275,32 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
       field('Local gateway', controls.localGateway),
     ),
   );
+  const v6Row = (label: string, cidr: HTMLInputElement, gateway: HTMLInputElement): HTMLElement =>
+    el('div', { class: 'field-row' }, field(`${label} IPv6 prefix`, cidr), field('IPv6 gateway', gateway));
+  controls.ipv6Fields = el(
+    'div',
+    { class: 'stack' },
+    el('p', {
+      class: 'muted small',
+      text: 'Each network with an IPv6 prefix is emitted a second time with ipAddressVersion IPv6 on the same VLAN. Host TEPs stay IPv4: the installer’s TEP pool takes no IPv6.',
+    }),
+    v6Row('Management', controls.mgmtV6Cidr, controls.mgmtV6Gateway),
+    v6Row('VM management', controls.vmMgmtV6Cidr, controls.vmMgmtV6Gateway),
+    v6Row('vMotion', controls.vmotionV6Cidr, controls.vmotionV6Gateway),
+    v6Row('vSAN', controls.vsanV6Cidr, controls.vsanV6Gateway),
+  );
+  controls.fleetIpv6Fields = el(
+    'div',
+    { class: 'stack' },
+    v6Row('Fleet network', controls.fleetV6Cidr, controls.fleetV6Gateway),
+    field(
+      'Management services IPv6 pool',
+      controls.vcfmsIpv6Pool,
+      'An IPv6 CIDR, or addresses separated by commas.',
+    ),
+    field('Segment IPv6 gateway/prefix', controls.overlayIpv6Gateway),
+    field('Local segment IPv6 gateway/prefix', controls.localIpv6Gateway, 'Stretched model only.'),
+  );
   controls.vsanFields = el(
     'div',
     { class: 'stack' },
@@ -1258,6 +1382,8 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
         field('Host TEP CIDR', controls.tepCidr),
         field('VLAN', controls.tepVlan),
       ),
+      el('div', { class: 'field' }, dualStack.wrap),
+      controls.ipv6Fields,
     ),
     card(
       'Fleet-level components',
@@ -1278,8 +1404,8 @@ function buildInputs(controls: Controls, onChange: () => void): HTMLElement {
         controls.internalClusterCidr,
         'Routed internally by the runtime; only these values are supported.',
       ),
-      el('div', { class: 'field' }, dualStack.wrap),
-      field('Internal CIDR (IPv6)', controls.internalClusterCidrIpv6),
+      field('Internal CIDR (IPv6)', controls.internalClusterCidrIpv6, 'Used with dual stack, ticked under Networks.'),
+      controls.fleetIpv6Fields,
       field('NSX overlay segment', controls.overlaySegment, 'Segment name, for the overlay models.'),
       el(
         'div',
