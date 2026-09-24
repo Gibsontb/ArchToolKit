@@ -137,8 +137,8 @@ function versionCheckLines(): string[] {
 
 function sendLines(): string[] {
   return [
-    'DRY_RUN=1',
-    '[[ " $* " == *" --execute "* ]] && DRY_RUN=0',
+    'DRY_RUN=0',
+    '[[ " $* " == *" --dry-run "* ]] && DRY_RUN=1',
     'send() {  # send METHOD PATH FILE [TYPE]',
     '  local method="$1" path="$2" file="$3" type="${4:-$(cloudapi_type)}"',
     '  if (( DRY_RUN )); then echo "DRY RUN: would ${method} ${file} to https://${VCFA_HOST}${path}"; return 0; fi',
@@ -201,13 +201,13 @@ function kubeScript(purpose: string, pre: readonly string[], files: readonly str
     '[[ "$CTX" == "$EXPECT_CONTEXT" ]] || { echo "Current context is $CTX, not $EXPECT_CONTEXT. Switch with vcf context use." >&2; exit 2; }',
     'echo "Context: $CTX"',
     '',
-    'MODE=(--dry-run=server)',
-    '[[ " $* " == *" --execute "* ]] && MODE=()',
+    'MODE=()',
+    '[[ " $* " == *" --dry-run "* ]] && MODE=(--dry-run=server)',
     '',
     ...pre,
     ...files.map((file) => `kubectl ${verb} "\${MODE[@]}" -f '${file}'`),
     '',
-    'if [[ ${#MODE[@]} -gt 0 ]]; then echo "Server-side dry run only. Nothing was created. Re-run with --execute."; fi',
+    'if [[ ${#MODE[@]} -gt 0 ]]; then echo "Server-side dry run only. Nothing was created. Run it without --dry-run to apply."; fi',
     '',
     `# Undo: ${undo}`,
     '',
@@ -233,14 +233,14 @@ function kubeReadScript(purpose: string, body: readonly string[]): string {
   ].join('\n');
 }
 
-/** terraform init/plan, and --execute applies exactly the saved plan. */
+/** terraform init, plan and apply of that plan; --dry-run stops after the plan. */
 function tfScript(purpose: string, undo: string): string {
   return [
     '#!/usr/bin/env bash',
     `# ${purpose}`,
     '#',
-    '# Without --execute: init and plan, saved to tfplan. With --execute: apply that saved',
-    '# plan and nothing else — Terraform refuses it if anything changed since it was made.',
+    '# init, plan (saved to tfplan), then apply exactly that plan. With --dry-run: stop',
+    '# after the plan so it can be read.',
     '# Terraform runs in the folder above scripts/, where the .tf files are.',
     'set -euo pipefail',
     'cd "$(dirname "$0")/.."',
@@ -253,16 +253,14 @@ function tfScript(purpose: string, undo: string): string {
     'fi',
     'export VCFA_URL VCFA_ORG VCFA_API_TOKEN',
     '',
-    'if [[ " $* " == *" --execute "* ]]; then',
-    '  [[ -f tfplan ]] || { echo "No saved plan. Run without --execute first and read it." >&2; exit 2; }',
-    '  terraform apply -input=false tfplan',
-    '  rm -f tfplan',
-    '  exit 0',
-    'fi',
-    '',
     'terraform init -input=false',
     'terraform plan -input=false -out=tfplan',
-    'echo "Plan saved to tfplan. Read it, then re-run with --execute to apply exactly this plan."',
+    'if [[ " $* " == *" --dry-run "* ]]; then',
+    '  echo "Dry run: plan saved to tfplan, nothing applied. Run it without --dry-run to apply."',
+    '  exit 0',
+    'fi',
+    'terraform apply -input=false tfplan',
+    'rm -f tfplan',
     '',
     `# Undo: ${undo}`,
     '',
@@ -384,7 +382,7 @@ const API_VERSION_ATTR = { name: 'apiVersion', type: 'string', value: '', descri
 const KUBE_ATTR = { name: 'kubeServer', type: 'string', value: '', description: 'The Kubernetes API server of the namespace context: kubectl config view --minify -o jsonpath=\'{.clusters[0].cluster.server}\' after vcf context use' } as const;
 const GUARD_ATTRS = (cap: number) =>
   [
-    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
+    { name: 'dryRun', type: 'boolean', value: false, description: 'Set to true to preview: nothing is changed while it is true' },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
   ] as const;
 const WEBHOOK_ATTR = { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' } as const;
@@ -1124,10 +1122,6 @@ export const VCF_AUTOMATION_91: readonly AutomationBlueprint[] = [
           remediation: 'The exchange script writes the new token back to the file before it does anything else. That only works if one job owns the file — two jobs sharing one token file with rotation on will lock each other out.',
           source: SRC,
         }),
-        info('vcfa91.token.iaas-login', 'The other VCF Automation scripts in this kit log in with POST /iaas/api/login and a refresh token — the 8.x method.', {
-          remediation: 'That still works for a VM Apps organization upgraded from 8.x. For a new organization, All Apps or VM Apps, use this exchange and hand those scripts VCFA_TOKEN from the access-token file.',
-          source: SRC,
-        }),
       );
 
       const exchange = [
@@ -1190,7 +1184,7 @@ export const VCF_AUTOMATION_91: readonly AutomationBlueprint[] = [
         act: true,
         body: [
           'ID="${1:-}"; NAME="${2:-}"',
-          '[[ -n "$ID" && -n "$NAME" && "$ID" != --execute && "$NAME" != --execute ]] || { echo "usage: $0 <token-id> <exact-token-name> [--execute]   (ids from vcfa-tokens-audit.sh)" >&2; exit 2; }',
+          '[[ -n "$ID" && -n "$NAME" && "$ID" != --dry-run && "$NAME" != --dry-run ]] || { echo "usage: $0 <token-id> <exact-token-name> [--dry-run]   (ids from vcfa-tokens-audit.sh)" >&2; exit 2; }',
           'TOKEN_JSON=$(probe "/cloudapi/1.0.0/tokens/${ID}") || exit 2',
           "ACTUAL=$(jq -r '.name' <<<\"$TOKEN_JSON\")",
           '[[ "$ACTUAL" == "$NAME" ]] || { echo "Token ${ID} is named \\"${ACTUAL}\\", not \\"${NAME}\\". Nothing revoked." >&2; exit 2; }',
@@ -3334,7 +3328,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
 
       const script = [
         '#!/usr/bin/env bash',
-        `# Change namespace ${ns}: saves it first, server-side dry run unless --execute.`,
+        `# Change namespace ${ns}: saves it first, checks with a server-side dry run, then applies (--dry-run stops after the check).`,
         'set -euo pipefail',
         'command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }',
         ': "${EXPECT_CONTEXT:?set EXPECT_CONTEXT to the organization/project context that owns the namespace}"',
@@ -3347,7 +3341,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         'echo "Saved the current namespace to before-${NS}-${STAMP}.yaml"',
         'kubectl patch supervisornamespace "$NS" --type merge --patch-file "$HERE/patch.json" --dry-run=server -o yaml > /dev/null',
         'echo "Server-side dry run passed."',
-        'if [[ " $* " != *" --execute "* ]]; then echo "Nothing changed. Re-run with --execute."; exit 0; fi',
+        'if [[ " $* " == *" --dry-run "* ]]; then echo "Dry run: nothing changed. Run it without --dry-run to apply."; exit 0; fi',
         'kubectl patch supervisornamespace "$NS" --type merge --patch-file "$HERE/patch.json"',
         '',
         '# Undo: kubectl replace -f before-<namespace>-<stamp>.yaml (after removing status and resourceVersion), or patch the old values back.',
@@ -3571,11 +3565,11 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         'echo "Change it now:"; argocd account update-password',
         `echo "Add the target cluster (its kubeconfig context must be current in kubectl: vcf cluster kubeconfig get ${dest}):"`,
         `echo "  argocd cluster add <kubeconfig-context> --name ${dest}"`,
-        'if [[ " $* " == *" --execute "* ]]; then',
+        'if [[ " $* " != *" --dry-run "* ]]; then',
         '  argocd app create -f "$(dirname "$0")/../application.yaml" --upsert=false',
         `  argocd app diff ${app} || true`,
         'else',
-        '  echo "DRY RUN: would create the application from application.yaml. Re-run with --execute."',
+        '  echo "DRY RUN: would create the application from application.yaml. Run it without --dry-run to create it."',
         'fi',
         '',
         `# Undo: argocd app delete ${app} --cascade=false keeps what it deployed; --cascade deletes it too.`,

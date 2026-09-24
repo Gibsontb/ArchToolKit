@@ -186,14 +186,14 @@ export function toPackage(spec                       )                    {
               `${urlSecrets.map((s) => `**${s}**`).join(', ')} ${urlSecrets.length > 1 ? 'are URLs, kept as SecureStrings' : 'is a URL, kept as a SecureString'}: a Slack, Teams or Google Chat webhook carries its secret in the path, so the URL is the credential. It is empty after import; type the URL you mean to use (left empty, nothing is posted), and the workflow logs only its host.`,
             ]
           : []),
-        ...(hasDryRun ? ['', 'dryRun is on in the configuration element. It is the arming switch: nothing changes until it is set to false, and the workflow input dryRun can only make a run safer, never arm it. cap is the most changes one run may make.'] : []),
+        ...(hasDryRun ? ['', 'dryRun in the configuration element is off: the workflow makes its changes when run. Set it (or the workflow input dryRun) to true to preview instead. cap is the most changes one run may make.'] : []),
       ],
     },
     {
-      heading: hasDryRun ? 'Run it once as a dry run and read the log' : 'Run it once and read the log',
+      heading: 'Run it and read the log',
       lines: [
         hasDryRun
-          ? `Run **${spec.workflow.name}** with dryRun = true. The log lists every "DRY RUN: would …" and an AUDIT summary; nothing is changed. Read every line, then set dryRun to false in the configuration element when you mean it.`
+          ? `Run **${spec.workflow.name}**. The log lists every change and ends with an AUDIT summary. To preview first, run it with the dryRun input set to true: it logs "DRY RUN: would …" and changes nothing.`
           : `Run **${spec.workflow.name}**. It only reads; the log ends with an AUDIT summary and the outputs hold the result.`,
       ],
     },

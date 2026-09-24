@@ -70,16 +70,16 @@ function vcfaSettings(org                        )                       {
       name: 'vcfaOrg',
       type: 'string',
       value: '',
-      description: org === 'all-apps' ? 'The All Apps organization name, as in its login URL' : 'The VM Apps organization name, as in its login URL; empty for Aria Automation 8.x (vcfaApiToken is then a refresh token)',
+      description: org === 'all-apps' ? 'The All Apps organization name, as in its login URL' : 'The VM Apps organization name, as in its login URL',
     },
-    { name: 'vcfaApiToken', type: 'SecureString', description: 'An API token of that organization (9.x), exchanged at /oauth/tenant/<org>/token; or an 8.x refresh token' },
+    { name: 'vcfaApiToken', type: 'SecureString', description: 'An API token of that organization, exchanged at /oauth/tenant/<org>/token' },
   ];
 }
 
 /** The arming switch, the cap and the webhook, as every changing package has them. */
 function guardSettings(cap        , what        )                       {
   return [
-    { name: 'dryRun', type: 'boolean', value: true, description: `The arming switch: nothing is ${what} while this is true` },
+    { name: 'dryRun', type: 'boolean', value: false, description: `Set to true to preview: nothing is ${what} while it is true` },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
     { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
   ];
@@ -264,7 +264,7 @@ const PKG_REQUIRES = 'For the package: the Orchestrator of VCF Automation 9.1 (V
 
 /** What every package that logs in to VCF Automation cannot confirm about the login. */
 const VERIFY_LOGIN =
-  'The package logs in with core.loginVcfAutomation: an organization API token exchanged at POST /oauth/tenant/<org>/token (grant_type=refresh_token), as vrealize.it ("VCF Automation 9 API Access") documents for both organization types; the 9.0 TechDocs page "Get Your Access Token for the VCF Automation VM Apps API" shows /tm/oauth/tenant/<org>/token instead — VERIFY which your release answers. With vcfaOrg empty it is the 8.x /iaas/api/login refresh-token login.';
+  'The package logs in with core.loginVcfAutomation: an organization API token exchanged at POST /oauth/tenant/<org>/token (grant_type=refresh_token), as vrealize.it ("VCF Automation 9 API Access") documents for both organization types; the 9.0 TechDocs page "Get Your Access Token for the VCF Automation VM Apps API" shows /tm/oauth/tenant/<org>/token instead — VERIFY which your release answers.';
 
 /** A fallback script moved under scripts/: it still reads the payloads beside the README. */
 function underScripts(script        )         {

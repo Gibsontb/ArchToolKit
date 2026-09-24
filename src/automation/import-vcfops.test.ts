@@ -182,7 +182,7 @@ describe('vcf-operations import: every blueprint', () => {
 });
 
 describe('vcf-operations import: reads back as a real export does', () => {
-  it('alert content XML round-trips through the Aria Ops reader', async () => {
+  it('alert content XML round-trips through the VCF Ops content reader', async () => {
     const files = automationFor('vcfops_alert_definition')!.build(defaultValues(automationFor('vcfops_alert_definition')!), 'x').files;
     const content = await readAriaFile('alert-definitions.xml', new TextEncoder().encode(files['import/alert-definitions.xml']!));
     expect(content.alerts.length).toBe(1);

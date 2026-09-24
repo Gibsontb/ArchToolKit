@@ -355,7 +355,7 @@ export interface ContentImportOptions {
  * import-content.sh: complete the package in import/vcfops-content.zip and
  * import it through Content Management.
  *
- * Dry run by default. With --execute it exports the same content type first —
+ * Imports when run (--dry-run only builds and lists the package). It exports the same content type first —
  * that export is the backup, and it carries the instance's `<n>L.v1` marker,
  * which is copied into the package — refuses to replace content that is already
  * there unless --overwrite, imports with force=false unless --overwrite (the
@@ -374,8 +374,8 @@ export function contentImportScript(opts: ContentImportOptions): string {
     '# carries the instance\'s own "<number>L.v1" marker file, which is copied from a',
     `# fresh export of ${opts.contentType}${dash ? ', and a dashboard is filed under the id of the user it is imported as' : ''}.`,
     '#',
-    '# Without --execute this builds the package without the marker, lists it and stops.',
-    `# With --execute it first exports the existing ${opts.contentType} content to`,
+    '# With --dry-run this builds the package without the marker, lists it and stops.',
+    `# Run without it, it first exports the existing ${opts.contentType} content to`,
     '# pre-import-backup-<time>.zip beside this script — the backup, and the source of the',
     '# marker — and refuses to import if this content is already there (same name or id)',
     '# unless --overwrite is also given. The import is sent with force=false unless',
@@ -389,13 +389,13 @@ export function contentImportScript(opts: ContentImportOptions): string {
     ...authPreamble(PLATFORM),
     'for tool in jq zip unzip curl; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 2; }; done',
     '',
-    'EXECUTE=0',
+    'EXECUTE=1',
     'OVERWRITE=0',
     'for arg in "$@"; do',
     '  case "$arg" in',
-    '    --execute) EXECUTE=1 ;;',
+    '    --dry-run) EXECUTE=0 ;;',
     '    --overwrite) OVERWRITE=1 ;;',
-    '    *) echo "Unknown argument $arg. Use --execute, and --overwrite to replace existing content." >&2; exit 2 ;;',
+    '    *) echo "Unknown argument $arg. Use --dry-run to preview, and --overwrite to replace existing content." >&2; exit 2 ;;',
     '  esac',
     'done',
     'HERE=$(cd "$(dirname "$0")" && pwd)',
@@ -461,7 +461,7 @@ export function contentImportScript(opts: ContentImportOptions): string {
     '  echo "Built $OUT (without the instance marker, which is added at import):"',
     '  unzip -l "$OUT"',
     `  echo "DRY RUN: would export ${opts.contentType} as a backup, copy its L.v1 marker in, then POST to https://\${VCFOPS_HOST}/suite-api/api/content/operations/import?force=false"`,
-    '  echo "Nothing was changed. Re-run with --execute."',
+    '  echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
     '  exit 0',
     'fi',
     '',
@@ -515,7 +515,7 @@ export function contentImportScript(opts: ContentImportOptions): string {
     '  if grep -rqF -- "$needle" "$WORK/existing"; then echo "Already in VCF Operations: $needle"; EXISTS=1; fi',
     'done',
     'if (( EXISTS && ! OVERWRITE )); then',
-    '  echo "Refusing to replace existing content. Compare it with the backup ($BACKUP); to replace it, re-run with --execute --overwrite." >&2',
+    '  echo "Refusing to replace existing content. Compare it with the backup ($BACKUP); to replace it, re-run with --overwrite." >&2',
     '  exit 1',
     'fi',
     '',
@@ -557,7 +557,7 @@ export function contentImportScript(opts: ContentImportOptions): string {
 
 /**
  * merge-policy.sh: export the policy, merge the `<Alerts>` overrides from
- * OVERRIDES into its XML, write import/policy-merged.zip, and — with --execute —
+ * OVERRIDES into its XML, write import/policy-merged.zip, and — unless --dry-run —
  * import it with POST /api/policies/import?forceImport=true (multipart
  * `policy`). The export it starts from is kept as the undo.
  */
@@ -572,8 +572,8 @@ export function policyMergeScript(overridesFile: string, policyName: string): st
     '# so this starts from an export of the policy as it is now, changes only the',
     '# <Alert> elements named in the overrides file, and imports that.',
     '#',
-    '# Without --execute it exports, merges, writes import/policy-merged.zip and shows',
-    '# what changed. With --execute it then POSTs the merged zip to',
+    '# It exports, merges, writes import/policy-merged.zip, shows what changed, and',
+    '# then POSTs the merged zip (with --dry-run it stops before the POST) to',
     '# /suite-api/api/policies/import?forceImport=true. The export is kept beside this',
     '# script as policy-before-<time>.zip: re-importing it the same way is the undo.',
     'set -euo pipefail',
@@ -581,8 +581,8 @@ export function policyMergeScript(overridesFile: string, policyName: string): st
     ...authPreamble(PLATFORM),
     ': "${POLICY_ID:?set POLICY_ID — GET /suite-api/api/policies and match by name}"',
     'for tool in curl python3; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 2; }; done',
-    'EXECUTE=0',
-    '[[ "${1:-}" == "--execute" ]] && EXECUTE=1',
+    'EXECUTE=1',
+    '[[ "${1:-}" == "--dry-run" ]] && EXECUTE=0',
     'HERE=$(cd "$(dirname "$0")" && pwd)',
     'mkdir -p "$HERE/import"',
     '',
@@ -652,7 +652,7 @@ export function policyMergeScript(overridesFile: string, policyName: string): st
     '',
     'if (( ! EXECUTE )); then',
     '  echo "DRY RUN: would POST import/policy-merged.zip to https://${VCFOPS_HOST}/suite-api/api/policies/import?forceImport=true"',
-    '  echo "Nothing was changed. Or import import/policy-merged.zip under Policies → Import yourself."',
+    '  echo "Dry run: nothing was changed. Run it without --dry-run to apply, or import import/policy-merged.zip under Policies → Import yourself."',
     '  exit 0',
     'fi',
     `curl -sS -f -X POST "https://\${VCFOPS_HOST}/suite-api/api/policies/import?forceImport=true" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -F "policy=@$HERE/import/policy-merged.zip;type=application/zip"`,
@@ -717,11 +717,11 @@ export function contentStep(contentType: string, script = 'import-content.sh'): 
     heading: 'Or: everything at once, through Content Management',
     files: [CONTENT_ZIP, script],
     how: [
-      `By API: \`./${script}\` builds the package and stops; \`./${script} --execute\` exports the existing ${contentType} content as a backup, copies the instance's own \`<number>L.v1\` marker from it into the package, and imports it (POST /suite-api/api/content/operations/import, force=false unless \`--overwrite\`).`,
+      `By API: \`./${script} --dry-run\` builds the package and stops; \`./${script}\` exports the existing ${contentType} content as a backup, copies the instance's own \`<number>L.v1\` marker from it into the package, and imports it (POST /suite-api/api/content/operations/import, force=false unless \`--overwrite\`).`,
       'In the interface: Administration → Control Panel → Content Management → Import, with "Skip" or "Overwrite existing content".',
     ],
     verify: [
-      `the package as generated has no \`<number>L.v1\` marker — its name is particular to each instance, and the importer is reported to reject a package without its own. ${script} --execute adds it; uploading ${CONTENT_ZIP} in the interface as it stands is not confirmed to work. To upload by hand, take the marker file from a Content Management export of the same instance and add it to the zip's root first.`,
+      `the package as generated has no \`<number>L.v1\` marker — its name is particular to each instance, and the importer is reported to reject a package without its own. ${script} adds it; uploading ${CONTENT_ZIP} in the interface as it stands is not confirmed to work. To upload by hand, take the marker file from a Content Management export of the same instance and add it to the zip's root first.`,
       'configuration.json keys other than superMetrics, views, reports, dashboards and type are not confirmed; the script prints the export\'s beside the package\'s to compare.',
     ],
   };
@@ -729,8 +729,8 @@ export function contentStep(contentType: string, script = 'import-content.sh'): 
 
 /** What a file that VCF Operations does not import is for, from its name. */
 function roleOf(file: string): string {
-  if (file === 'crontab.txt') return 'a line for the crontab of the account that runs the script. No secret is in it; the script logs in from its password file. Lines written commented out stay that way until a manual run has been read.';
-  if (/\.sh$/.test(file)) return 'a script run from a host of your own against the API (curl and jq). Its header says what it needs; a script that changes anything does nothing without --execute.';
+  if (file === 'crontab.txt') return 'a line for the crontab of the account that runs the script. No secret is in it; the script logs in from its password file. Its lines are written active.';
+  if (/\.sh$/.test(file)) return 'a script run from a host of your own against the API (curl and jq). Its header says what it needs; a script that changes anything applies when run; --dry-run previews.';
   if (/\.ps1$/.test(file)) return 'the same, for PowerShell 7.';
   if (/\.promql$/.test(file)) return 'queries to paste into the metrics explorer, one per block.';
   if (/\.csv$/.test(file)) return 'values to type in, or to keep as the record of what was set.';

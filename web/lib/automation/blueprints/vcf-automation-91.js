@@ -384,7 +384,7 @@ const API_VERSION_ATTR = { name: 'apiVersion', type: 'string', value: '', descri
 const KUBE_ATTR = { name: 'kubeServer', type: 'string', value: '', description: 'The Kubernetes API server of the namespace context: kubectl config view --minify -o jsonpath=\'{.clusters[0].cluster.server}\' after vcf context use' }         ;
 const GUARD_ATTRS = (cap        ) =>
   [
-    { name: 'dryRun', type: 'boolean', value: true, description: 'The arming switch: nothing is changed while this is true' },
+    { name: 'dryRun', type: 'boolean', value: false, description: 'Set to true to preview: nothing is changed while it is true' },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
   ]         ;
 const WEBHOOK_ATTR = { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' }         ;
@@ -1122,10 +1122,6 @@ export const VCF_AUTOMATION_91                                 = [
       findings.push(
         info('vcfa91.token.rotation', 'If the organization has API token rotation on, every exchange returns a new API token and the old one stops working.', {
           remediation: 'The exchange script writes the new token back to the file before it does anything else. That only works if one job owns the file — two jobs sharing one token file with rotation on will lock each other out.',
-          source: SRC,
-        }),
-        info('vcfa91.token.iaas-login', 'The other VCF Automation scripts in this kit log in with POST /iaas/api/login and a refresh token — the 8.x method.', {
-          remediation: 'That still works for a VM Apps organization upgraded from 8.x. For a new organization, All Apps or VM Apps, use this exchange and hand those scripts VCFA_TOKEN from the access-token file.',
           source: SRC,
         }),
       );

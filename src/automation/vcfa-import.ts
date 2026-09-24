@@ -202,11 +202,9 @@ function importPreamble(purpose: readonly string[], opts: { needsProject: boolea
     '#   VCFA_TOKEN                        a bearer token you already have',
     '#   VCFA_API_TOKEN_FILE + VCFA_ORG    VCF Automation 9.x: an organization API token',
     '#                                     (mode-600 file), exchanged at /oauth/tenant/$VCFA_ORG/token',
-    '#   VCFA_REFRESH_TOKEN_FILE           Aria Automation 8.x, or a VM Apps organization upgraded',
-    '#                                     from it: a refresh token (mode-600 file), at /iaas/api/login',
     '#',
     `# Usage: ${opts.flags}`,
-    '# Without --execute it reads, checks and prints what it would do. Nothing changes.',
+    '# Applies when run. With --dry-run it reads, checks and prints what it would do, and changes nothing.',
     'set -euo pipefail',
     '',
     'HERE=$(cd "$(dirname "$0")" && pwd)',
@@ -234,13 +232,9 @@ function importPreamble(purpose: readonly string[], opts: { needsProject: boolea
     '      echo "Token rotation is on: ${VCFA_API_TOKEN_FILE} now holds the new API token; the old one no longer works." >&2',
     '    fi',
     '    unset RESP NEW_REFRESH',
-    '  elif [[ -n "${VCFA_REFRESH_TOKEN_FILE:-}" ]]; then',
-    '    secret_file_ok "$VCFA_REFRESH_TOKEN_FILE"',
-    "    VCFA_TOKEN=$(jq -n --rawfile p \"$VCFA_REFRESH_TOKEN_FILE\" '{refreshToken: ($p | rtrimstr(\"\\n\"))}' |",
-    '      curl -sS -f -X POST "${VCFA_URL}/iaas/api/login" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- | jq -r \'.token // empty\')',
     '  fi',
     'fi',
-    '[[ -n "${VCFA_TOKEN:-}" ]] || { echo "No token: set VCFA_TOKEN, or VCFA_API_TOKEN_FILE and VCFA_ORG (9.x), or VCFA_REFRESH_TOKEN_FILE (8.x)" >&2; exit 2; }',
+    '[[ -n "${VCFA_TOKEN:-}" ]] || { echo "No token: set VCFA_TOKEN, or VCFA_API_TOKEN_FILE and VCFA_ORG" >&2; exit 2; }',
     '',
     "auth_cfg() { printf 'header = \"Authorization: Bearer %s\"\\n' \"$VCFA_TOKEN\"; }",
     'TMP=$(mktemp -d "${TMPDIR:-/tmp}/atk-import.XXXXXX")',
@@ -281,10 +275,10 @@ export function importTemplatesScript(): string {
         'the same name in the same project), then create the version named in its',
         'version: line. --release releases that version to the catalog.',
       ],
-      { needsProject: true, flags: './import-templates.sh [--execute] [--release]' },
+      { needsProject: true, flags: './import-templates.sh [--dry-run] [--release]' },
     ),
-    'DRY_RUN=1; RELEASE=0',
-    'for a in "$@"; do case "$a" in --execute) DRY_RUN=0 ;; --release) RELEASE=1 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done',
+    'DRY_RUN=0; RELEASE=0',
+    'for a in "$@"; do case "$a" in --dry-run) DRY_RUN=1 ;; --release) RELEASE=1 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done',
     'if (( RELEASE )); then WILL=" and release it to the catalog"; DONE=", released to the catalog"; else WILL=" (not released — add --release, or release it from Version History)"; DONE="$WILL"; fi',
     '',
     '# field FILE KEY — a top-level scalar from blueprint.yaml, with its quotes removed.',
@@ -356,7 +350,7 @@ export function importTemplatesScript(): string {
     'done',
     '',
     '(( COUNT > 0 )) || { echo "No templates/*/blueprint.yaml beside this script" >&2; exit 2; }',
-    'if (( DRY_RUN )); then echo "Nothing was changed. Re-run with --execute (and --release to publish to the catalog)."; fi',
+    'if (( DRY_RUN )); then echo "Dry run: nothing was changed. Run it without --dry-run to apply (add --release to publish to the catalog)."; fi',
     'exit $(( PROBLEMS > 0 ? 1 : 0 ))',
     '',
     '# Undo: DELETE /blueprint/api/blueprints/{id} (ids are in imported-templates.txt) while',
@@ -425,10 +419,10 @@ export function createAbxScript(): string {
         '(abx/<action>/subscription.json), disabled, with the new action id filled in.',
         'The ids of new actions are appended to abx/created-ids.txt.',
       ],
-      { needsProject: true, flags: './create-abx-action.sh [--execute]' },
+      { needsProject: true, flags: './create-abx-action.sh [--dry-run]' },
     ),
-    'DRY_RUN=1',
-    'for a in "$@"; do case "$a" in --execute) DRY_RUN=0 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done',
+    'DRY_RUN=0',
+    'for a in "$@"; do case "$a" in --dry-run) DRY_RUN=1 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done',
     '',
     '# The organization id comes from the project, so nothing here has to be typed twice.',
     'S=$(call GET "$VCFA_URL/iaas/api/projects/$VCFA_PROJECT_ID"); must "$S" "Reading project $VCFA_PROJECT_ID"',
@@ -492,7 +486,7 @@ export function createAbxScript(): string {
     'done',
     '',
     '(( COUNT > 0 )) || { echo "No abx/*/action.json beside this script" >&2; exit 2; }',
-    'if (( DRY_RUN )); then echo "Nothing was changed. Re-run with --execute."; fi',
+    'if (( DRY_RUN )); then echo "Dry run: nothing was changed. Run it without --dry-run to apply."; fi',
     '',
     '# Undo: DELETE /event-broker/api/subscriptions/{id} first, then',
     '# DELETE /abx/api/resources/actions/{id} (ids in abx/created-ids.txt).',
@@ -643,7 +637,7 @@ export function importOrchestratorScript(): string {
       'VRO_HOST: the Orchestrator host, when it is not VCFA_HOST (an external vRO).',
       'VRO_CATEGORY_ID: the folder id, when the folder name is not unique.',
     ],
-    { needsProject: false, flags: './import-orchestrator.sh [--execute | --build-only]' },
+    { needsProject: false, flags: './import-orchestrator.sh [--dry-run | --build-only]' },
   );
   // --build-only has to work before any credential is asked for, so it runs
   // ahead of the login part of the preamble.
@@ -651,8 +645,8 @@ export function importOrchestratorScript(): string {
   return [
     ...preamble.slice(0, loginAt + 1),
     '',
-    'DRY_RUN=1; BUILD_ONLY=0',
-    'for a in "$@"; do case "$a" in --execute) DRY_RUN=0 ;; --build-only) BUILD_ONLY=1 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done',
+    'DRY_RUN=0; BUILD_ONLY=0',
+    'for a in "$@"; do case "$a" in --dry-run) DRY_RUN=1 ;; --build-only) BUILD_ONLY=1 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done',
     '',
     ...build,
     '',
@@ -733,7 +727,7 @@ export function importOrchestratorScript(): string {
     '  echo "   imported as $WF_ID"',
     'done',
     '',
-    'if (( DRY_RUN )); then echo "Nothing was changed in Orchestrator. Re-run with --execute."; fi',
+    'if (( DRY_RUN )); then echo "Dry run: nothing was changed in Orchestrator. Run it without --dry-run to import."; fi',
     'exit $(( PROBLEMS > 0 ? 1 : 0 ))',
     '',
     '# Undo: DELETE /vco/api/workflows/{id} and DELETE /vco/api/actions/{id}, or delete them',
@@ -817,7 +811,7 @@ export function importBundle(spec: {
               lines: [
                 'Each folder is one template in the layout the git integration reads: one folder per template, the file named `blueprint.yaml`, `name:` and `version:` at the top. Pick one route:',
                 '',
-                '- **Script (any organization type, and Aria Automation 8.x):** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/import-templates.sh` validates each template on the server and says whether it would create or update it. Add `--execute` to create it (or update the draft of the template with that name in that project) and create the version in `version:`; add `--release` as well to release that version to the catalog. Ids go to `import/imported-templates.txt`.',
+                '- **Script (any organization type, and Aria Automation 8.x):** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/import-templates.sh` validates each template on the server, creates it (or updates the draft of the template with that name in that project) and creates the version in `version:` (`--dry-run` only validates and says what it would do); add `--release` as well to release that version to the catalog. Ids go to `import/imported-templates.txt`.',
                 ...(hasVmApps
                   ? ['- **VM Apps organization / Aria Automation 8.x, by hand:** Assembler → Design → Templates → New from → Upload; enter the name and project and choose `blueprint.yaml` (menu labels VERIFY on your release). Then Version, and Release to the catalog.']
                   : []),
@@ -838,7 +832,7 @@ export function importBundle(spec: {
               lines: [
                 'Pick one route:',
                 '',
-                '- **Script:** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/create-abx-action.sh` shows what it would create. `--execute` creates the action through the ABX API with the script inline (or updates the one with the same name in the project), writes the id of a new action to `import/abx/created-ids.txt`' +
+                '- **Script:** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/create-abx-action.sh` creates the action through the ABX API (`--dry-run` only shows what it would create) with the script inline (or updates the one with the same name in the project), writes the id of a new action to `import/abx/created-ids.txt`' +
                   (abx.some((a) => a.subscription) ? ', and creates the event subscription from `subscription.json`, disabled, pointing at it.' : '.'),
                 `- **By hand:** \`./import/package-abx.sh\` (or \`package-abx.ps1\` on Windows) builds \`import/abx/<action>-package.zip\` with the script at its root. In Assembler (VM Apps organization, or Aria Automation 8.x): Extensibility → Library → Actions → New, pick the project, choose ${abx.map((a) => (a.runtime === 'python' ? 'Python' : 'Node.js')).filter((v, i, all) => all.indexOf(v) === i).join(' / ')}, then Import package, select the zip, and set the Main function to \`main.handler\`. Set the timeout to ${abx.map((a) => `${a.timeoutSeconds}s`).join(' / ')}.` +
                   (abx.some((a) => a.subscription) ? ' Then Extensibility → Subscriptions → New with the topic and settings in `subscription.json`.' : ''),
@@ -860,7 +854,7 @@ export function importBundle(spec: {
                       '',
                     ]
                   : []),
-                `- **Script:** \`VCFA_HOST=… ./import/import-orchestrator.sh\` shows what it would do${workflows.length > 0 ? ' and builds the `.workflow` files into `import/orchestrator/build/`' : ''}; \`--execute\` ${[actions.length > 0 ? 'creates or updates the actions through /vco/api/actions (the module is created with its first action)' : '', workflows.length > 0 ? 'imports each workflow into its folder, replacing the same workflow id on a re-run' : ''].filter(Boolean).join(', and ')}. Set VRO_HOST if Orchestrator is not on the VCF Automation host.`,
+                `- **Script:** \`VCFA_HOST=… ./import/import-orchestrator.sh\` ${workflows.length > 0 ? 'builds the `.workflow` files into `import/orchestrator/build/` and ' : ''}${[actions.length > 0 ? 'creates or updates the actions through /vco/api/actions (the module is created with its first action)' : '', workflows.length > 0 ? 'imports each workflow into its folder, replacing the same workflow id on a re-run' : ''].filter(Boolean).join(', and ')} (\`--dry-run\` only shows what it would do). Set VRO_HOST if Orchestrator is not on the VCF Automation host.`,
                 ...(workflows.length > 0
                   ? ['- **By hand:** `./import/import-orchestrator.sh --build-only` builds the `.workflow` files without logging in (python3 needed). In the Orchestrator client: Library → Workflows → Import, pick the file and the folder.']
                   : []),
@@ -885,7 +879,7 @@ export function apiStep(heading: string, script: string, sends: readonly string[
   return {
     heading,
     lines: [
-      `\`./${script}\` shows what it would send; \`./${script} --execute\` sends, in this order:`,
+      `\`./${script}\` sends, in this order (\`--dry-run\` only shows what it would send):`,
       '',
       ...sends.map((line) => `- ${line}`),
       ...(extra.length > 0 ? ['', ...extra] : []),
@@ -899,7 +893,7 @@ export function kubeStep(heading: string, script: string, files: readonly string
   return {
     heading,
     lines: [
-      `\`${run}\` runs a server-side dry run; \`--execute\` creates. By hand, the same is \`kubectl create -f ${files.join(' -f ')}\` in the right context — \`create\`, not \`apply\`: the VCF Automation endpoint rejects the annotation \`apply\` adds, and \`create\` refuses to overwrite something that exists.`,
+      `\`${run}\` creates (\`--dry-run\` runs a server-side dry run only). By hand, the same is \`kubectl create -f ${files.join(' -f ')}\` in the right context — \`create\`, not \`apply\`: the VCF Automation endpoint rejects the annotation \`apply\` adds, and \`create\` refuses to overwrite something that exists.`,
       '',
       'Log in first: `vcf context create <name> --type cci --endpoint https://$VCFA_HOST --tenant-name <org>`, then `vcf context use <name>:<namespace>:<project>`.',
       ...(extra.length > 0 ? ['', ...extra] : []),
@@ -940,9 +934,9 @@ export type ImportAuth = 'import' | 'apply' | 'vcfa91' | 'kube' | 'terraform';
 
 const AUTH_TEXT: Readonly<Record<ImportAuth, string>> = {
   import:
-    '`import/*.sh`: `VCFA_HOST`, plus one of `VCFA_TOKEN`; `VCFA_API_TOKEN_FILE` and `VCFA_ORG` (9.x organization API token, exchanged at /oauth/tenant/<org>/token); or `VCFA_REFRESH_TOKEN_FILE` (8.x refresh token, /iaas/api/login). Token files must be mode 600.',
+    '`import/*.sh`: `VCFA_HOST`, plus `VCFA_TOKEN`, or `VCFA_API_TOKEN_FILE` and `VCFA_ORG` (an organization API token, exchanged at /oauth/tenant/<org>/token). Token files must be mode 600.',
   apply:
-    '`apply.sh`: `VCFA_HOST`, plus `VCFA_TOKEN` or `VCFA_REFRESH_TOKEN_FILE` (/iaas/api/login — Aria Automation 8.x and VM Apps organizations upgraded from it). On a new 9.x organization, get `VCFA_TOKEN` from the "API tokens" blueprint’s vcfa-token-exchange.sh.',
+    '`apply.sh`: `VCFA_HOST`, plus `VCFA_TOKEN`, or `VCFA_API_TOKEN_FILE` and `VCFA_ORG` (an organization API token, exchanged at /oauth/tenant/<org>/token).',
   vcfa91: 'The 9.1 scripts: `VCFA_HOST`, `VCFA_ORG`, and `VCFA_TOKEN` or `VCFA_API_TOKEN_FILE` (a mode-600 file holding a VCF Automation API token; provider scripts use the provider token).',
   kube: 'kubectl scripts: whatever context `vcf context use` selected, checked against `EXPECT_CONTEXT`. Nothing secret is read from the files.',
   terraform: 'Terraform: `VCFA_URL`, `VCFA_ORG` and `VCFA_API_TOKEN_FILE`; plan.sh reads the token and exports it for the vmware/vcfa provider.',
@@ -967,7 +961,7 @@ export function importMd(opts: {
     '',
     `Works with: ${opts.orgs ?? 'VCF Automation 9.1 / 9.1.1 VM Apps organizations, and Aria Automation 8.x where the format is the same'}.`,
     '',
-    'Do the steps in order: later ones refer to what earlier ones created. Every script is a dry run until you add `--execute`.',
+    'Do the steps in order: later ones refer to what earlier ones created. Every script applies when run; add `--dry-run` to preview.',
     '',
     ...steps.flatMap((step, index) => [`## ${index + 1}. ${step.heading}`, '', ...step.lines, '']),
     ...(opts.auth.length > 0 ? ['## Credentials', '', ...opts.auth.map((a) => `- ${AUTH_TEXT[a]}`), ''] : []),

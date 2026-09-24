@@ -43,6 +43,8 @@ import { isRecord,           } from '../editor/doc.js';
                                              
                                                                              
                              
+                                                                               
+                                                                   
                                                                             
                         
                                                          
@@ -119,6 +121,14 @@ import { isRecord,           } from '../editor/doc.js';
                                                                                                                                                                        
     
  
+
+/**
+ * The page shows errors and warnings about the values given, not general
+ * advice: info findings and the page's standing notes are left out.
+ */
+function aboutTheInput(findings                    )            {
+  return findings.filter((finding) => finding.severity !== 'info');
+}
 
 /**
  * The input, with anything the imported estate can answer folded in.
@@ -444,6 +454,7 @@ export function mountGeneratorPage(root             , options                  )
   let findings                     = [];
 
   const stepOne = el('div', { class: 'stack' });
+  const kindLabel = ()         => options.kindLabelFor?.(target) ?? options.kindLabel;
   const buildList = el('div', { class: 'stack' });
   const stepTwo = el('div', { class: 'stack' });
   const stepThree = el('div', { class: 'stack' });
@@ -455,7 +466,7 @@ export function mountGeneratorPage(root             , options                  )
       noun: `the ${options.noun} and its parameters`,
       fileName: () => `${String(values.__name ?? '').trim() || blueprint?.id || options.noun}-settings`,
       header: () => [
-        `ArchToolKit ${options.kindLabel} settings: ${blueprint?.label ?? ''}`,
+        `ArchToolKit ${kindLabel()} settings: ${blueprint?.label ?? ''}`,
         'Load this file on the same page to carry on. Passwords and keys are not saved.',
       ],
       save: () =>
@@ -557,7 +568,7 @@ export function mountGeneratorPage(root             , options                  )
       const out = blueprint.build(values, name);
       generated = out.files;
       builds = out.builds;
-      findings = [...(out.findings ?? []), ...(options.standingFindings?.() ?? [])];
+      findings = aboutTheInput(out.findings ?? []);
     } catch (err) {
       generated = null;
       findings = [
@@ -602,7 +613,7 @@ export function mountGeneratorPage(root             , options                  )
     const result = options.stack.build(stackItems, blueprintById, { target, stackName: stackName.value.trim() || undefined });
     generated = result.files;
     builds = undefined;
-    findings = [...result.findings, ...(options.standingFindings?.() ?? [])];
+    findings = aboutTheInput(result.findings);
     stackRefs = result.references;
     renderThree();
   }
@@ -782,7 +793,7 @@ export function mountGeneratorPage(root             , options                  )
             id: 'blueprint',
             label: options.noun.charAt(0).toUpperCase() + options.noun.slice(1),
             control: 'select',
-            hint: `What ${options.kindLabel} should build`,
+            hint: 'What to build',
           },
           list,
         ),
@@ -886,7 +897,7 @@ export function mountGeneratorPage(root             , options                  )
           { class: 'btn-row', style: { marginTop: 'var(--space-4)' } },
           el('button', {
             class: 'btn btn-primary',
-            text: `Generate ${options.kindLabel}`,
+            text: `Generate ${kindLabel()}`,
             attrs: { type: 'button', 'data-control': 'generate' },
             on: { click: generate },
           }),
@@ -1051,7 +1062,7 @@ export function mountGeneratorPage(root             , options                  )
     replace(
       stepThree,
       card(
-        `Step 3 — Generated ${options.kindLabel}`,
+        `Step 3 — Generated ${kindLabel()}`,
         el(
           'div',
           { class: `status-line ${errors > 0 ? 'is-bad' : generated ? 'is-good' : ''}` },
@@ -1118,13 +1129,16 @@ function orchestratorPackages(files                                  )          
 }
 
 function packagePanel(packages                          )              {
-  const download = async (button                   , pkg               ) => {
+  // One button builds and downloads every package, core library first.
+  const build = async (button                   ) => {
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = 'Building and signing…';
+    button.textContent = 'Building…';
     try {
-      const bytes = await buildVroPackage(readPackageSpec(pkg.files));
-      downloadFile(`${pkg.name}-${pkg.version}.package`, bytes, 'application/octet-stream');
+      for (const pkg of packages) {
+        const bytes = await buildVroPackage(readPackageSpec(pkg.files));
+        downloadFile(`${pkg.name}-${pkg.version}.package`, bytes, 'application/octet-stream');
+      }
       button.textContent = label;
     } catch (error) {
       button.textContent = `Could not build: ${error instanceof Error ? error.message : String(error)}`;
@@ -1132,35 +1146,21 @@ function packagePanel(packages                          )              {
       button.disabled = false;
     }
   };
-  const core = packages.filter((p) => p.name === 'com.archtoolkit.core');
-  const own = packages.filter((p) => p.name !== 'com.archtoolkit.core');
-  let step = 1;
   return el(
     'div',
     { class: 'callout', style: { marginBottom: 'var(--space-3)' } },
-    el('strong', { text: 'Import into VCF Automation — Orchestrator packages' }),
+    el('strong', { text: 'Import into VCF Automation' }),
     el('p', {
-      text: 'Download each .package and import it: VCF Automation → Orchestrate tab (All Apps organization) or Orchestrator tab (VM Apps organization) → Assets → Packages → Import. Trust the publisher certificate when asked. Then fill the settings (Assets → Configurations) and run the workflow once as a dry run — IMPORT.md, in the zip, has every step.',
+      text: 'Build the package, then import it: VCF Automation → Orchestrate tab (All Apps organization) or Orchestrator tab (VM Apps organization) → Assets → Packages → Import. Trust the publisher certificate when asked. Then fill the settings (Assets → Configurations) and run the workflow once as a dry run — IMPORT.md, in the zip, has every step.',
     }),
     el(
       'div',
       { class: 'btn-row' },
-      ...core.map((pkg) =>
-        el('button', {
-          class: 'btn',
-          text: `${step++}. Core library — ${pkg.name}-${pkg.version}.package (import once, first)`,
-          attrs: { title: 'The ArchToolKit core library every automation package uses. Importing it again only updates it.' },
-          on: { click: (event       ) => void download(event.currentTarget                     , pkg) },
-        }),
-      ),
-      ...own.map((pkg) =>
-        el('button', {
-          class: 'btn btn-primary',
-          text: `${step++}. This automation — ${pkg.name}-${pkg.version}.package`,
-          attrs: { title: 'The workflow, its actions, its settings and its payloads, as one signed Orchestrator package' },
-          on: { click: (event       ) => void download(event.currentTarget                     , pkg) },
-        }),
-      ),
+      el('button', {
+        class: 'btn btn-primary',
+        text: 'Build package',
+        on: { click: (event       ) => void build(event.currentTarget                     ) },
+      }),
     ),
   );
 }

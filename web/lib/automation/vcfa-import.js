@@ -202,8 +202,6 @@ function importPreamble(purpose                   , opts                        
     '#   VCFA_TOKEN                        a bearer token you already have',
     '#   VCFA_API_TOKEN_FILE + VCFA_ORG    VCF Automation 9.x: an organization API token',
     '#                                     (mode-600 file), exchanged at /oauth/tenant/$VCFA_ORG/token',
-    '#   VCFA_REFRESH_TOKEN_FILE           Aria Automation 8.x, or a VM Apps organization upgraded',
-    '#                                     from it: a refresh token (mode-600 file), at /iaas/api/login',
     '#',
     `# Usage: ${opts.flags}`,
     '# Without --execute it reads, checks and prints what it would do. Nothing changes.',
@@ -234,13 +232,9 @@ function importPreamble(purpose                   , opts                        
     '      echo "Token rotation is on: ${VCFA_API_TOKEN_FILE} now holds the new API token; the old one no longer works." >&2',
     '    fi',
     '    unset RESP NEW_REFRESH',
-    '  elif [[ -n "${VCFA_REFRESH_TOKEN_FILE:-}" ]]; then',
-    '    secret_file_ok "$VCFA_REFRESH_TOKEN_FILE"',
-    "    VCFA_TOKEN=$(jq -n --rawfile p \"$VCFA_REFRESH_TOKEN_FILE\" '{refreshToken: ($p | rtrimstr(\"\\n\"))}' |",
-    '      curl -sS -f -X POST "${VCFA_URL}/iaas/api/login" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- | jq -r \'.token // empty\')',
     '  fi',
     'fi',
-    '[[ -n "${VCFA_TOKEN:-}" ]] || { echo "No token: set VCFA_TOKEN, or VCFA_API_TOKEN_FILE and VCFA_ORG (9.x), or VCFA_REFRESH_TOKEN_FILE (8.x)" >&2; exit 2; }',
+    '[[ -n "${VCFA_TOKEN:-}" ]] || { echo "No token: set VCFA_TOKEN, or VCFA_API_TOKEN_FILE and VCFA_ORG" >&2; exit 2; }',
     '',
     "auth_cfg() { printf 'header = \"Authorization: Bearer %s\"\\n' \"$VCFA_TOKEN\"; }",
     'TMP=$(mktemp -d "${TMPDIR:-/tmp}/atk-import.XXXXXX")',
@@ -940,9 +934,9 @@ export function setupOrderStep(current        )             {
 
 const AUTH_TEXT                                       = {
   import:
-    '`import/*.sh`: `VCFA_HOST`, plus one of `VCFA_TOKEN`; `VCFA_API_TOKEN_FILE` and `VCFA_ORG` (9.x organization API token, exchanged at /oauth/tenant/<org>/token); or `VCFA_REFRESH_TOKEN_FILE` (8.x refresh token, /iaas/api/login). Token files must be mode 600.',
+    '`import/*.sh`: `VCFA_HOST`, plus `VCFA_TOKEN`, or `VCFA_API_TOKEN_FILE` and `VCFA_ORG` (an organization API token, exchanged at /oauth/tenant/<org>/token). Token files must be mode 600.',
   apply:
-    '`apply.sh`: `VCFA_HOST`, plus `VCFA_TOKEN` or `VCFA_REFRESH_TOKEN_FILE` (/iaas/api/login — Aria Automation 8.x and VM Apps organizations upgraded from it). On a new 9.x organization, get `VCFA_TOKEN` from the "API tokens" blueprint’s vcfa-token-exchange.sh.',
+    '`apply.sh`: `VCFA_HOST`, plus `VCFA_TOKEN`, or `VCFA_API_TOKEN_FILE` and `VCFA_ORG` (an organization API token, exchanged at /oauth/tenant/<org>/token).',
   vcfa91: 'The 9.1 scripts: `VCFA_HOST`, `VCFA_ORG`, and `VCFA_TOKEN` or `VCFA_API_TOKEN_FILE` (a mode-600 file holding a VCF Automation API token; provider scripts use the provider token).',
   kube: 'kubectl scripts: whatever context `vcf context use` selected, checked against `EXPECT_CONTEXT`. Nothing secret is read from the files.',
   terraform: 'Terraform: `VCFA_URL`, `VCFA_ORG` and `VCFA_API_TOKEN_FILE`; plan.sh reads the token and exports it for the vmware/vcfa provider.',

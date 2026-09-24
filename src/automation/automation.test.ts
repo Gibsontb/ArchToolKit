@@ -15,7 +15,7 @@ import { expect } from '../testing/expect.ts';
 import { defaultValues } from '../kit/blueprint.ts';
 import { hasErrors } from '../core/findings.ts';
 import { AUTOMATION_BLUEPRINTS, AUTOMATIONS, automationFor } from './blueprints/index.ts';
-import { AUTOMATION_PLATFORMS, EFFECT_MEANING, listOf, renderReadme, slugOf, standingFindings, type Automation } from './automation.ts';
+import { AUTOMATION_PLATFORMS, EFFECT_MEANING, listOf, renderReadme, slugOf, type Automation } from './automation.ts';
 
 /** Every automation, built from its own defaults. */
 function everyAutomation(): { id: string; automation: Automation }[] {
@@ -49,7 +49,7 @@ describe('automation: the vocabulary', () => {
     for (const group of AUTOMATION_BLUEPRINTS) {
       expect(group.blueprints.length).toBeGreaterThan(0);
     }
-    expect(AUTOMATION_BLUEPRINTS.length).toBe(6);
+    expect(AUTOMATION_BLUEPRINTS.length).toBe(5);
   });
 
   it('finds a blueprint by id', () => {
@@ -141,47 +141,6 @@ describe('automation: the contract every one of them keeps', () => {
   });
 });
 
-describe('automation: the standing findings', () => {
-  it('warns when something irreversible has nobody agreeing to it first', () => {
-    const base: Automation = {
-      platform: 'vcf-operations',
-      title: 'Delete things',
-      effect: 'irreversible',
-      trigger: { kind: 'schedule', detail: 'nightly' },
-      scope: { what: 'everything', decidedBy: ['a group'], ifWrong: 'bad' },
-      guardrails: [],
-      dryRun: ['report first'],
-      undo: ['you cannot'],
-      told: ['a log'],
-      requires: [],
-      files: {},
-    };
-    const codes = standingFindings(base).map((finding) => finding.code);
-    expect(codes.includes('automation.irreversible')).toBe(true);
-    expect(codes.includes('automation.no-guardrail')).toBe(true);
-
-    const guarded = standingFindings({ ...base, guardrails: [{ rule: 'A change ticket is required', because: 'because' }] }).map((f) => f.code);
-    expect(guarded.includes('automation.no-guardrail')).toBe(false);
-  });
-
-  it('always says to follow the scope chain when the trigger is an alert', () => {
-    const codes = standingFindings({
-      platform: 'vcf-operations',
-      title: 'x',
-      effect: 'read',
-      trigger: { kind: 'alert', detail: 'an alert' },
-      scope: { what: 'x', decidedBy: ['x'], ifWrong: 'x' },
-      guardrails: [],
-      dryRun: [],
-      undo: ['nothing'],
-      told: ['x'],
-      requires: [],
-      files: {},
-    }).map((finding) => finding.code);
-    expect(codes.includes('automation.alert-scope')).toBe(true);
-  });
-});
-
 describe('automation: the ones with a known trap in them', () => {
   it('calls a blocking extensibility action that fails closed an error', () => {
     const blueprint = automationFor('vcfa_abx_action');
@@ -190,15 +149,6 @@ describe('automation: the ones with a known trap in them', () => {
     const codes = (out.findings ?? []).map((finding) => finding.code);
     expect(codes.includes('vcfa.abx.blocking-fail-closed')).toBe(true);
     expect(hasErrors(out.findings ?? [])).toBe(true);
-  });
-
-  it('calls a log alert whose window is too short to limit it an error', () => {
-    const blueprint = automationFor('vcflog_alert_webhook');
-    if (!blueprint) throw new Error('missing blueprint');
-    // Logs snoozes a count alert for its own window, so the window is the rate
-    // limit; a window of a minute or two is the one that floods.
-    const out = blueprint.build({ ...defaultValues(blueprint), window_minutes: 1 }, 'x');
-    expect((out.findings ?? []).some((finding) => finding.code === 'vcflog.alert.no-rate-limit')).toBe(true);
   });
 
   it('refuses to let an approval policy approve what nobody answered', () => {
@@ -222,15 +172,8 @@ describe('automation: the ones with a known trap in them', () => {
     expect((out.findings ?? []).some((finding) => finding.code === 'vcfops.window.no-overrun-check')).toBe(true);
   });
 
-  it('notices a pipeline that applies to production with nobody in the loop', () => {
-    const blueprint = automationFor('pipe_ci_terraform');
-    if (!blueprint) throw new Error('missing blueprint');
-    const out = blueprint.build({ ...defaultValues(blueprint), auto_apply: true, require_approval: false }, 'x');
-    expect((out.findings ?? []).some((finding) => finding.code === 'pipe.ci.unattended-apply')).toBe(true);
-  });
-
   it('creates schedules disabled, whatever the platform', () => {
-    const shouldBeDisabled = ['vcfops_reclaim_schedule', 'vcflog_alert_webhook', 'pipe_azure_runbook'];
+    const shouldBeDisabled = ['vcfops_reclaim_schedule'];
     for (const id of shouldBeDisabled) {
       const blueprint = automationFor(id);
       if (!blueprint) throw new Error(`missing ${id}`);
@@ -314,7 +257,8 @@ describe('automation: every choice, not just the defaults', () => {
     expect(count('vcf-operations')).toBeGreaterThan(30);
     expect(count('vcf-automation')).toBeGreaterThan(30);
     expect(count('vcf-fleet')).toBeGreaterThan(20);
-    expect(count('pipeline')).toBeGreaterThan(8);
+    expect(count('vcf-operations-logs')).toBeGreaterThan(5);
+    expect(AUTOMATION_BLUEPRINTS.some((group) => String(group.target) === 'pipeline')).toBe(false);
   });
 });
 

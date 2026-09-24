@@ -4,7 +4,7 @@
  * Each target takes a payload over REST and each one authenticates differently.
  * The script around the call is the same everywhere, and that sameness is the
  * point: the token comes from the environment, the first run only says what it
- * would send, and `--execute` is the only way anything changes.
+ * sends, and `--dry-run` prints what it would send without changing anything.
  *
  * Nothing here is idempotent. A POST that half-worked and is run again makes a
  * second object, so the script says to check the id it returned rather than to
@@ -31,6 +31,10 @@
                               
                                                                                 
                             
+                                                                              
+                                
+                                                                                
+                                                                                 
     
  
 
@@ -48,19 +52,32 @@ const AUTH                                            = {
     host: 'VCFLOGS_HOST',
     token: 'VCFLOGS_TOKEN',
     hostExample: 'vcflogs.example.com:9543',
-    acquire: 'POST /api/v2/sessions',
+    acquire: 'POST /api/v2/sessions — the standalone 8.18 / 9.0 appliance only; 9.1 log management has no /api/v2',
     header: 'Authorization: Bearer ${VCFLOGS_TOKEN}',
-    label: 'VCF Operations for Logs',
+    // Only the move to 9.1 still talks to the standalone appliance, to export
+    // what it had. Everything on 9.1 log management goes through VCF Operations.
+    label: 'VCF Operations for Logs (standalone 8.18 / 9.0)',
     login: { path: '/api/v2/sessions', body: '{username: $u, password: $p, provider: "Local"}', pick: '.sessionId', secretVar: 'VCFLOGS_PASSWORD_FILE', secretHint: 'a file holding the password of VCFLOGS_USER, mode 600' },
   },
   'vcf-automation': {
     host: 'VCFA_HOST',
     token: 'VCFA_TOKEN',
     hostExample: 'vcfa.example.com',
-    acquire: 'POST /iaas/api/login with a refresh token',
+    acquire: 'POST /oauth/tenant/<org>/token, exchanging an organization API token',
     header: 'Authorization: Bearer ${VCFA_TOKEN}',
     label: 'VCF Automation',
-    login: { path: '/iaas/api/login', body: '{refreshToken: $p}', pick: '.token', secretVar: 'VCFA_REFRESH_TOKEN_FILE', secretHint: 'a file holding an API refresh token, mode 600' },
+    // VCF Automation 9: an API token made under My Account → API Tokens,
+    // exchanged per organization for a bearer token that lasts about an hour.
+    login: {
+      path: '/oauth/tenant/${VCFA_ORG}/token',
+      body: 'grant_type=refresh_token',
+      pick: '.access_token',
+      secretVar: 'VCFA_API_TOKEN_FILE',
+      secretHint: 'a file holding an organization API token (My Account → API Tokens), mode 600',
+      form: true,
+      formField: 'refresh_token',
+      needs: [{ name: 'VCFA_ORG', hint: 'the organization name, as it appears in its login URL' }],
+    },
   },
   // VCF 9.1: the fleet-wide APIs in VCF Operations (fleet management, tags,
   // certificates, passwords, lifecycle) take a Bearer token from the VCF
@@ -121,7 +138,7 @@ export function authPreamble(target             )           {
   const exchange = login.form
     ? [
         // The API token goes in the form body on stdin, never on the command line.
-        `  ${auth.token}=$( { printf '%s&api_token=' '${login.body}'; jq -jn --rawfile p "$${login.secretVar}" '$p | rtrimstr("\\n") | @uri'; } |`,
+        `  ${auth.token}=$( { printf '%s&${login.formField ?? 'api_token'}=' '${login.body}'; jq -jn --rawfile p "$${login.secretVar}" '$p | rtrimstr("\\n") | @uri'; } |`,
         `    curl -sS -f -X POST "https://\${${loginHost}}${login.path}" -H "Accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" --data-binary @- | jq -r '${login.pick}')`,
       ]
     : [
@@ -132,6 +149,7 @@ export function authPreamble(target             )           {
     `if [[ -z "\${${auth.token}:-}" && -n "\${${login.secretVar}:-}" ]]; then`,
     `  : "\${${loginHost}:?set ${loginHost}${login.hostVar ? ' to the VCF Identity Broker host (often the management vCenter)' : `, e.g. ${auth.hostExample}`}}"`,
     ...(needsUser ? [`  : "\${${user}:?set ${user} to the service account that ${login.secretVar} belongs to}"`] : []),
+    ...(login.needs ?? []).map((need) => `  : "\${${need.name}:?set ${need.name} to ${need.hint}}"`),
     '  command -v jq >/dev/null || { echo "jq is required to log in" >&2; exit 2; }',
     ...exchange,
     'fi',
@@ -186,7 +204,7 @@ export function hostVar(target             )         {
 }
 
 /**
- * A script that sends one or more payloads, dry run by default.
+ * A script that sends one or more payloads. `--dry-run` only prints them.
  *
  * Calls run in order and the script stops at the first that fails, because
  * the later ones usually refer to what the earlier ones created.
@@ -198,7 +216,7 @@ export function applyScript(target             , calls                      , un
     `# Apply the payloads beside this script to ${auth.label}.`,
     '#',
     '# The token is read from the environment; nothing here writes a credential to',
-    '# disk. Without --execute this only prints what it would send.',
+    '# disk. With --dry-run it only prints what it would send.',
     '#',
     '# Not idempotent. If a run fails part way, check what was created before',
     '# running it again, or you will have two of something.',
@@ -206,8 +224,8 @@ export function applyScript(target             , calls                      , un
     '',
     ...authPreamble(target),
     '',
-    'DRY_RUN=1',
-    '[[ "${1:-}" == "--execute" ]] && DRY_RUN=0',
+    'DRY_RUN=0',
+    '[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1',
     '',
     'send() {',
     '  local method="$1" path="$2" file="$3" type="$4"',
@@ -228,7 +246,7 @@ export function applyScript(target             , calls                      , un
     ...calls.map((call) => `send ${call.method} '${call.path}' '${call.payload}' '${call.contentType ?? 'application/json'}'`),
     '',
     'if (( DRY_RUN )); then',
-    '  echo "Nothing was changed. Read the payloads, then re-run with --execute."',
+    '  echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
     'fi',
     '',
     `# Undo: ${undo}`,

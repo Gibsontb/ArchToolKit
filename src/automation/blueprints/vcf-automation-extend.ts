@@ -70,16 +70,16 @@ function vcfaSettings(org: 'vm-apps' | 'all-apps'): VroConfigAttribute[] {
       name: 'vcfaOrg',
       type: 'string',
       value: '',
-      description: org === 'all-apps' ? 'The All Apps organization name, as in its login URL' : 'The VM Apps organization name, as in its login URL; empty for Aria Automation 8.x (vcfaApiToken is then a refresh token)',
+      description: org === 'all-apps' ? 'The All Apps organization name, as in its login URL' : 'The VM Apps organization name, as in its login URL',
     },
-    { name: 'vcfaApiToken', type: 'SecureString', description: 'An API token of that organization (9.x), exchanged at /oauth/tenant/<org>/token; or an 8.x refresh token' },
+    { name: 'vcfaApiToken', type: 'SecureString', description: 'An API token of that organization, exchanged at /oauth/tenant/<org>/token' },
   ];
 }
 
 /** The arming switch, the cap and the webhook, as every changing package has them. */
 function guardSettings(cap: number, what: string): VroConfigAttribute[] {
   return [
-    { name: 'dryRun', type: 'boolean', value: true, description: `The arming switch: nothing is ${what} while this is true` },
+    { name: 'dryRun', type: 'boolean', value: false, description: `Set to true to preview: nothing is ${what} while it is true` },
     { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
     { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
   ];
@@ -264,7 +264,7 @@ const PKG_REQUIRES = 'For the package: the Orchestrator of VCF Automation 9.1 (V
 
 /** What every package that logs in to VCF Automation cannot confirm about the login. */
 const VERIFY_LOGIN =
-  'The package logs in with core.loginVcfAutomation: an organization API token exchanged at POST /oauth/tenant/<org>/token (grant_type=refresh_token), as vrealize.it ("VCF Automation 9 API Access") documents for both organization types; the 9.0 TechDocs page "Get Your Access Token for the VCF Automation VM Apps API" shows /tm/oauth/tenant/<org>/token instead — VERIFY which your release answers. With vcfaOrg empty it is the 8.x /iaas/api/login refresh-token login.';
+  'The package logs in with core.loginVcfAutomation: an organization API token exchanged at POST /oauth/tenant/<org>/token (grant_type=refresh_token), as vrealize.it ("VCF Automation 9 API Access") documents for both organization types; the 9.0 TechDocs page "Get Your Access Token for the VCF Automation VM Apps API" shows /tm/oauth/tenant/<org>/token instead — VERIFY which your release answers.';
 
 /** A fallback script moved under scripts/: it still reads the payloads beside the README. */
 function underScripts(script: string): string {
@@ -318,20 +318,20 @@ function kubectlScript(purpose: string, files: readonly string[], undo: string):
     '# Uses whatever kubectl context is current. Log in first with the VCF CLI or',
     '# kubectl vsphere login, and check the context — that is the scope.',
     '#',
-    '# Without --execute this runs a server-side dry run: the Supervisor validates',
-    '# the request and nothing is created.',
+    '# Applies when run. With --dry-run it runs a server-side dry run only: the',
+    '# Supervisor validates the request and nothing is created.',
     'set -euo pipefail',
     '',
     'command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }',
     'echo "Context: $(kubectl config current-context)"',
     '',
-    'MODE=(--dry-run=server)',
-    '[[ "${1:-}" == "--execute" ]] && MODE=()',
+    'MODE=()',
+    '[[ "${1:-}" == "--dry-run" ]] && MODE=(--dry-run=server)',
     '',
     ...files.map((file) => `kubectl apply "\${MODE[@]}" -f '${file}'`),
     '',
     'if [[ ${#MODE[@]} -gt 0 ]]; then',
-    '  echo "Server-side dry run only. Nothing was created. Re-run with --execute."',
+    '  echo "Server-side dry run only. Nothing was created. Run it without --dry-run to apply."',
     'fi',
     '',
     `# Undo: ${undo}`,
@@ -2791,7 +2791,7 @@ core.notify(settings.webhook, summary);`,
         ],
         dryRun: [
           `Run the package workflow ${nsWorkflow}: until dryRun is set to false in its configuration element it lists the project's namespaces, logs "DRY RUN: would request …" and requests nothing.`,
-          `Run scripts/apply-kubectl.sh without --execute: a server-side dry run against the CCI endpoint, which checks the class and region exist.`,
+          `Run scripts/apply-kubectl.sh --dry-run: a server-side dry run against the CCI endpoint, which checks the class and region exist.`,
           'Request the template in a test project and check the namespace’s limits in vCenter match the class.',
         ],
         undo: ['Delete the deployment, or kubectl delete the SupervisorNamespace. Everything inside the namespace — VMs, clusters, volumes — is deleted with it.'],
@@ -2821,7 +2821,7 @@ core.notify(settings.webhook, summary);`,
               ]),
               imported.steps.templates,
               manualStep('Or request it directly with kubectl', [
-                `\`scripts/apply-kubectl.sh\` runs a server-side dry run of \`${base}-namespace.k8s.yaml\`; \`--execute\` applies it. Fill metadata.namespace (the project namespace) first. Against the VCF Automation endpoint, \`kubectl create -f ${base}-namespace.k8s.yaml\` is the safer verb: \`create\` refuses to overwrite.`,
+                `\`scripts/apply-kubectl.sh\` applies \`${base}-namespace.k8s.yaml\` (\`--dry-run\` runs a server-side dry run only). Fill metadata.namespace (the project namespace) first. Against the VCF Automation endpoint, \`kubectl create -f ${base}-namespace.k8s.yaml\` is the safer verb: \`create\` refuses to overwrite.`,
               ]),
             ],
             auth: ['import', 'kube'],
@@ -3222,7 +3222,7 @@ return { "Authorization": "Bearer " + r.body.session_id };`,
         ],
         dryRun: [
           `Run the package workflow ${vksWorkflow}: until dryRun is set to false in its configuration element it sends the Cluster to the Supervisor as a server-side dry run only (?dryRun=All — validated, not persisted), logs "DRY RUN: would create …" and creates nothing.`,
-          'Run scripts/apply-kubectl.sh without --execute: kubectl apply --dry-run=server validates the Cluster against the ClusterClass and the namespace.',
+          'Run scripts/apply-kubectl.sh --dry-run: kubectl apply --dry-run=server validates the Cluster against the ClusterClass and the namespace.',
           `kubectl get clusterclass -A and kubectl get kr, and check ${clusterClass} and ${version} are both listed.`,
         ],
         undo: [

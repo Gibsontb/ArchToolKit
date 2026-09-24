@@ -10,7 +10,7 @@
 
 import type { Blueprint, BlueprintValues, BuildResult } from '../kit/blueprint.ts';
 import type { Finding } from '../core/findings.ts';
-import { renderReadme, slugOf, standingFindings, type Automation, type AutomationPlatform } from './automation.ts';
+import { renderReadme, slugOf, type Automation, type AutomationPlatform } from './automation.ts';
 
 export interface AutomationBlueprint extends Blueprint {
   /** The platform this writes for, so the page can group by it. */
@@ -21,7 +21,8 @@ export interface AutomationBlueprint extends Blueprint {
 
 export function automationFiles(automation: Automation, name: string): BuildResult {
   const base = slugOf(name, 'automation');
-  const findings: Finding[] = [...(automation.findings ?? []), ...standingFindings(automation)];
+  // Errors and warnings about the values given. General advice (info) is not shown.
+  const findings: Finding[] = (automation.findings ?? []).filter((finding) => finding.severity !== 'info');
 
   return {
     files: {

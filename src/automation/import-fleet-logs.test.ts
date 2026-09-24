@@ -1,13 +1,12 @@
 /**
- * The VCF Operations for Logs, VCF Operations for Networks and fleet blueprints
- * (SDDC Manager, 9.1 fleet management, tags) have to emit files their target
+ * The VCF Operations for Networks and fleet blueprints (SDDC Manager, 9.1
+ * fleet management, tags) have to emit files their target
  * takes as they stand. These checks build every one of them with every select
  * option and every toggle flipped, and hold the output to the formats the
  * products document:
  *
  *   - every blueprint has an IMPORT.md, and every file under import/ is named in it;
- *   - every .json and .vlcp parses; every .vlcp has the top-level keys, element
- *     shapes and extracted-field encoding of the published content packs;
+ *   - every .json parses;
  *   - the tag standard's PowerCLI CSV has exactly Category,Cardinality,
  *     EntityType,Tag,Description, and the vCenter REST bodies exactly the create
  *     spec fields;
@@ -18,14 +17,14 @@
 import { describe, it } from 'node:test';
 import { expect } from '../testing/expect.ts';
 import { defaultValues, type BlueprintValues } from '../kit/blueprint.ts';
-import { LOGS_AUTOMATIONS, NETWORKS_AUTOMATIONS, vlcpInternalName } from './blueprints/vcf-networks-logs.ts';
-import { LOGS_MORE, NETWORKS_MORE } from './blueprints/vcf-logs-networks-more.ts';
+import { NETWORKS_AUTOMATIONS } from './blueprints/vcf-networks-logs.ts';
+import { NETWORKS_MORE } from './blueprints/vcf-logs-networks-more.ts';
 import { VCF_FLEET } from './blueprints/vcf-fleet.ts';
 import { VCF_FLEET_91 } from './blueprints/vcf-fleet-91.ts';
 import { VCF_TAGS } from './blueprints/vcf-tags.ts';
 
-/** The blueprints of these five files; other Logs and Networks files have their own tests. */
-const MINE = [...NETWORKS_AUTOMATIONS, ...LOGS_AUTOMATIONS, ...LOGS_MORE, ...NETWORKS_MORE, ...VCF_FLEET, ...VCF_FLEET_91, ...VCF_TAGS];
+/** The blueprints of these five files; other Networks files have their own tests. */
+const MINE = [...NETWORKS_AUTOMATIONS, ...NETWORKS_MORE, ...VCF_FLEET, ...VCF_FLEET_91, ...VCF_TAGS];
 
 interface Build {
   readonly id: string;
@@ -99,9 +98,9 @@ function b32decode(text: string): string {
   return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
-describe('automation/import: Logs, Networks and fleet blueprints emit what their targets import', () => {
+describe('automation/import: Networks and fleet blueprints emit what their targets import', () => {
   it('covers every blueprint in the five files', () => {
-    expect(MINE.length).toBe(35);
+    expect(MINE.length).toBe(26);
   });
 
   it('every build has an IMPORT.md that names every file under import/', () => {
@@ -117,7 +116,7 @@ describe('automation/import: Logs, Networks and fleet blueprints emit what their
     }
   });
 
-  it('every .json and .vlcp parses', () => {
+  it('every .json parses', () => {
     for (const build of BUILDS) {
       for (const [path, text] of Object.entries(build.files)) {
         if (!/\.(json|vlcp)$/.test(path)) continue;
@@ -127,76 +126,6 @@ describe('automation/import: Logs, Networks and fleet blueprints emit what their
           throw new Error(`${where(build, path)}: ${(err as Error).message}`);
         }
       }
-    }
-  });
-
-  it('the extracted-field internalName is encoded as the published packs encode it', () => {
-    expect(vlcpInternalName('com.dell.networkingos10', 'dell_eventlog')).toBe('ibadem27mnxw2ltemvwgyltomv2ho33snnuw4z3pomytazdfnrwf6zlwmvxhi3dpm4000000');
-    expect(vlcpInternalName('com.dell.networkingos10', 'dell_severity')).toBe('ibadem27mnxw2ltemvwgyltomv2ho33snnuw4z3pomytazdfnrwf643fozsxe2lupe000000');
-  });
-
-  it('every .vlcp has the content pack top level and element shapes', () => {
-    let packs = 0;
-    for (const build of BUILDS) {
-      for (const [path, text] of Object.entries(build.files)) {
-        if (!path.endsWith('.vlcp')) continue;
-        packs += 1;
-        expect(path.startsWith('import/')).toBe(true);
-        const pack = JSON.parse(text) as Record<string, unknown>;
-        for (const key of ['name', 'namespace', 'contentPackId', 'framework', 'version', 'extractedFields', 'queries', 'alerts', 'dashboardSections', 'author', 'contentVersion']) {
-          if (!(key in pack)) throw new Error(`${where(build, path)} has no ${key}`);
-        }
-        expect(pack.framework).toBe('#9c4');
-        expect(pack.version).toBe('2.4');
-        expect(pack.contentPackId).toBe(pack.namespace);
-        const ns = String(pack.namespace);
-        for (const field of pack.extractedFields as Record<string, unknown>[]) {
-          expect(Object.keys(field).sort().join(',')).toBe('constraints,displayName,info,internalName,postContext,preContext,regexValue');
-          expect(b32decode(String(field.internalName))).toBe(`@@${ns.length}_${ns}${String(field.displayName)}`);
-          JSON.parse(String(field.constraints));
-        }
-        for (const alert of pack.alerts as Record<string, unknown>[]) {
-          expect(Object.keys(alert).join(',')).toBe('name,info,alertType,chartQuery,messageQuery,hitCount,hitOperator,searchPeriod,searchInterval');
-          expect(Array.isArray((JSON.parse(String(alert.chartQuery)) as { fieldConstraints: unknown }).fieldConstraints)).toBe(true);
-        }
-        for (const query of pack.queries as Record<string, unknown>[]) {
-          expect(Object.keys(query).join(',')).toBe('name,info,chartQuery,messageQuery');
-          JSON.parse(String(query.chartQuery));
-        }
-        for (const section of pack.dashboardSections as { views: { name: string; rows: { widgets: Record<string, unknown>[] }[] }[] }[]) {
-          for (const view of section.views) {
-            expect(typeof view.name).toBe('string');
-            for (const widget of view.rows.flatMap((row) => row.widgets)) {
-              expect(Object.keys(widget).join(',')).toBe('name,info,chartType,chartOptions,widgetType,chartQuery,messageQuery');
-              JSON.parse(String(widget.chartQuery));
-            }
-          }
-        }
-      }
-    }
-    expect(packs > 0).toBe(true);
-  });
-
-  it('the agent configuration is well-formed INI', () => {
-    for (const build of BUILDS.filter((b) => b.id === 'vcflog_agent_group')) {
-      const ini = build.files['import/liagent.ini'];
-      expect(typeof ini).toBe('string');
-      for (const line of ini!.split('\n')) {
-        const t = line.trim();
-        if (t === '' || t.startsWith(';') || t.startsWith('#')) continue;
-        if (!/^\[[a-z]+(\|[A-Za-z0-9_-]+)?\]$/.test(t) && !/^[a-z_]+=/.test(t)) throw new Error(`${where(build, 'liagent.ini')}: "${t}"`);
-      }
-      expect(ini!.includes('[server]')).toBe(true);
-    }
-  });
-
-  it('the forwarder body has the fields the Logs API takes, with the queue in bytes', () => {
-    for (const build of BUILDS.filter((b) => b.id === 'vcflog_forwarding')) {
-      const path = Object.keys(build.files).find((p) => p.startsWith('import/') && p.endsWith('.json'))!;
-      const body = JSON.parse(build.files[path]!) as Record<string, unknown>;
-      expect(Object.keys(body).sort().join(',')).toBe('acceptCert,diskCacheSize,filter,forwardComplementaryFields,host,name,port,protocol,sslEnabled,tags,transportProtocol,workerCount');
-      expect(['syslog', 'cfapi', 'raw'].includes(String(body.protocol))).toBe(true);
-      expect(['tcp', 'udp'].includes(String(body.transportProtocol))).toBe(true);
     }
   });
 

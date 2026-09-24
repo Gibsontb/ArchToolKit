@@ -1,5 +1,5 @@
 /**
- * The Aria Operations content viewer.
+ * The VCF Operations (formerly Aria Operations) content viewer.
  *
  * Drop whatever the appliance gave you — the content package, the JSON
  * inventories a script pulled from the suite API, or both — and get the thing
@@ -457,7 +457,7 @@ export function mountAriaPage(root: HTMLElement): void {
     el('strong', { text: 'Drop the export here. ' }),
     el('span', {
       class: 'muted',
-      text: 'The content package (.zip) from Aria Operations, the dashboards folder from it, or the JSON inventories pulled from the suite API — in any combination, in any order.',
+      text: 'The content package (.zip) from VCF Operations (or Aria Operations 8.x), the dashboards folder from it, or the JSON inventories pulled from the suite API — in any combination, in any order.',
     }),
     el('span', { class: 'estate-actions' }, el('button', { class: 'btn btn-small', text: 'Choose files…', on: { click: () => input.click() } }), input),
     status,
@@ -495,7 +495,7 @@ export function mountAriaPage(root: HTMLElement): void {
         results,
         card(
           'What this reads',
-          el('p', { text: 'Aria Operations will export what is configured in it, and the export is accurate and unreadable — alert definitions as a five-megabyte JSON array, dashboards as a zip of zips. This reads all of it at once and answers the questions that are about the whole rather than about one object.' }),
+          el('p', { text: 'VCF Operations will export what is configured in it, and the export is accurate and unreadable — alert definitions as a five-megabyte JSON array, dashboards as a zip of zips. This reads all of it at once and answers the questions that are about the whole rather than about one object.' }),
           el(
             'ul',
             {},

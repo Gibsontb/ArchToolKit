@@ -388,16 +388,12 @@ const logoutVcfNetworks: VroActionDef = {
 const loginVcfAutomation: VroActionDef = {
   name: 'loginVcfAutomation',
   description:
-    'VCF Automation. With org empty: 8.x, POST /iaas/api/login with a refresh token. With org "provider": 9.x, POST /oauth/provider/token. Otherwise 9.x, POST /oauth/tenant/<org>/token with the organization API token (grant_type=refresh_token). Returns { Authorization: "Bearer <token>" }. When token rotation is on, 9.x returns a new token and the old one stops working: this warns, and the SecureString has to be replaced.',
+    'VCF Automation 9. With org "provider": POST /oauth/provider/token. Otherwise POST /oauth/tenant/<org>/token with the organization API token (grant_type=refresh_token). Returns { Authorization: "Bearer <token>" }. When token rotation is on, the exchange returns a new token and the old one stops working: this warns, and the SecureString has to be replaced.',
   resultType: 'Any',
-  params: [p('host', 'string', 'VCF Automation host'), p('token', 'string', 'API or refresh token, from a SecureString attribute'), p('org', 'string', 'Organization name, "provider", or empty for 8.x')],
+  params: [p('host', 'string', 'VCF Automation host'), p('token', 'string', 'API or refresh token, from a SecureString attribute'), p('org', 'string', 'Organization name, or "provider"')],
   script: String.raw`var core = System.getModule("com.archtoolkit.core");
 var r;
-if (!org) {
-  r = core.http("POST", "https://" + host + "/iaas/api/login", null, { refreshToken: String(token) }, { redact: [token] });
-  if (!r.body || !r.body.token) throw new Error("VCF Automation at " + host + " returned no token.");
-  return { "Authorization": "Bearer " + r.body.token };
-}
+if (!org) throw new Error("Set the VCF Automation organization name (or \"provider\") in the configuration element.");
 var path = String(org) === "provider" ? "/oauth/provider/token" : "/oauth/tenant/" + encodeURIComponent(String(org)) + "/token";
 var form = "grant_type=refresh_token&" + "refresh_token" + "=" + encodeURIComponent(String(token));
 r = core.http("POST", "https://" + host + path, null, form, { contentType: "application/x-www-form-urlencoded", accept: "application/*", redact: [token] });
@@ -445,15 +441,14 @@ throw new Error("More than " + limit + " pages; refusing to act on a partial lis
 const begin: VroActionDef = {
   name: 'begin',
   description:
-    'Start a guarded run. Returns the run context { dryRun, cap, count, planned, changes, failed, started }. It is a dry run when the dryRun input is true, or when the configuration element dryRun attribute is anything but false: the attribute is the arming switch, the input can only make a run safer. cap is the configuration element cap attribute: the most changes one run may make (0 allows none).',
+    'Start a guarded run. Returns the run context { dryRun, cap, count, planned, changes, failed, started }. It is a dry run only when the dryRun input is true or the configuration element dryRun attribute is true; otherwise it acts. cap is the configuration element cap attribute: the most changes one run may make (0 allows none).',
   resultType: 'Any',
   params: [p('settings', 'Any', 'What settings() returned'), p('dryRunInput', 'boolean', 'The workflow dryRun input, or null')],
-  script: String.raw`var armed = settings && (settings.dryRun === false || String(settings.dryRun) === "false");
-var dry = dryRunInput === true || String(dryRunInput) === "true" || !armed;
+  script: String.raw`var dry = dryRunInput === true || String(dryRunInput) === "true" || !!(settings && (settings.dryRun === true || String(settings.dryRun) === "true"));
 var cap = settings && settings.cap !== null && settings.cap !== undefined && settings.cap !== "" ? Number(settings.cap) : 0;
 if (!(cap >= 0)) cap = 0;
 var ctx = { dryRun: dry, cap: cap, count: 0, planned: [], changes: [], failed: null, started: new Date().toISOString() };
-System.log(dry ? "DRY RUN: nothing will be changed. Set dryRun to false in the configuration element, and run without the dryRun input, to act." : "LIVE RUN: at most " + cap + " change(s).");
+System.log(dry ? "DRY RUN: nothing will be changed." : "LIVE RUN: at most " + cap + " change(s).");
 return ctx;`,
 };
 

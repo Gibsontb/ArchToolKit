@@ -30,9 +30,9 @@
  * every runbook and half the documentation still says Aria.
  */
 
-import { info, warning,              } from '../core/findings.js';
+                                                   
 
-                                                                                                                                                    
+                                                                                                                                       
 
                                          
                                   
@@ -48,7 +48,7 @@ import { info, warning,              } from '../core/findings.js';
 /**
  * The targets, as VCF 9.1 names them.
  *
- * These are not five products. In 9.1 they are capabilities of one platform,
+ * These are not separate products. In 9.1 they are capabilities of one platform,
  * under one fleet and one identity, and the interesting automations cross
  * between them — a log alert that fires a VCF Automation action, a network
  * intent violation that raises an operations alert. They are separate here only
@@ -70,35 +70,29 @@ export const AUTOMATION_PLATFORMS                                               
     id: 'vcf-operations-networks',
     label: 'VCF Operations for Networks',
     formerly: 'Aria Operations for Networks, vRealize Network Insight, vRNI',
-    appliedWith: 'The Networks API, at /api/ni — the same appliance in 9.1, a separate one before it.',
+    appliedWith: 'The Networks API, at /api/ni, on its own appliance — still a separate component in 9.1, deployed and upgraded from fleet management.',
     dryRun: 'Every search here is a read. Run the search, look at the flows it returns, and only then let anything act on the result.',
   },
   'vcf-operations-logs': {
     id: 'vcf-operations-logs',
     label: 'VCF Operations for Logs',
     formerly: 'Aria Operations for Logs, vRealize Log Insight, vRLI',
-    appliedWith: 'The Logs API, at /api/v2 — alert queries, content packs and webhooks.',
+    appliedWith: 'VCF Operations → Log Management: in 9.1 logs are a service inside VCF Operations, reached through /suite-api (saved queries at /suite-api/api/logs/queryconfigs) with the KB 450054 token exchange. The standalone /api/v2 is 8.18 / 9.0 only.',
     dryRun: 'Run the query over the last day first. A log alert that matches ten thousand events an hour is a paging incident of its own.',
   },
   'vcf-automation': {
     id: 'vcf-automation',
     label: 'VCF Automation',
     formerly: 'Aria Automation, vRealize Automation, vRA',
-    appliedWith: 'The Assembler and Service Broker APIs, or a content source pointed at the repository these files live in.',
+    appliedWith: 'The VCF Automation 9 APIs with an organization API token (/oauth/tenant/<org>/token), Orchestrator packages imported under Assets → Packages, or a content source pointed at the repository these files live in.',
     dryRun: 'Deploy to a project with no real cloud zone, or run the action with its dry-run input set.',
   },
   'vcf-fleet': {
     id: 'vcf-fleet',
     label: 'Fleet management and tags',
-    formerly: 'SDDC Manager, Aria Suite Lifecycle, vRealize Suite Lifecycle Manager',
-    appliedWith: 'The SDDC Manager API at /v1 for each instance, and fleet management in VCF Operations for the components it now owns.',
+    formerly: 'Aria Suite Lifecycle, vRealize Suite Lifecycle Manager',
+    appliedWith: 'Fleet management in VCF Operations (passwords, certificates, lifecycle, identity, tags), with a token from the VCF Identity Broker; the SDDC Manager API at /v1 only for what stays with each instance — host commissioning, health and upgrade prechecks.',
     dryRun: 'Every script here reads first and prints what it would rotate, replace or check. The acting half is behind --execute.',
-  },
-  pipeline: {
-    id: 'pipeline',
-    label: 'Pipelines and runners',
-    appliedWith: 'Whichever runner the blueprint targets: Azure Automation, AWS Systems Manager, AWX, GitHub Actions or Azure Pipelines.',
-    dryRun: 'Every generated runner takes a dry-run switch, and the schedule is created disabled.',
   },
 };
 
@@ -239,55 +233,6 @@ export function renderReadme(automation            , name        )         {
   lines.push('');
 
   return `${lines.join('\n')}\n`;
-}
-
-/**
- * What is true of every automation, whatever it does.
- *
- * These are the four ways an automation goes wrong that are visible from the
- * definition rather than from watching it run.
- */
-export function standingFindings(automation            )            {
-  const findings            = [];
-
-  if (automation.effect === 'irreversible') {
-    const approved = automation.guardrails.some((guard) => /approv|confirm|ticket|change/i.test(guard.rule));
-    findings.push(
-      warning('automation.irreversible', `${automation.title} cannot be undone once it has run.`, {
-        remediation: approved
-          ? 'It has an approval or change guardrail, which is the right shape. Check that the approver is a person who can say no.'
-          : 'Nothing here requires a human to agree before it acts. Add an approval step, or make the first version report only.',
-        source: 'ArchToolKit',
-      }),
-    );
-  }
-
-  if (automation.guardrails.length === 0 && automation.effect !== 'read') {
-    findings.push(
-      warning('automation.no-guardrail', 'This automation changes something and has no guardrail on it.', {
-        remediation: 'At minimum: a cap on how many objects one run may touch, and an exclusion tag that takes an object out of scope without editing the automation.',
-        source: 'ArchToolKit',
-      }),
-    );
-  }
-
-  if (automation.trigger.kind === 'alert') {
-    findings.push(
-      info('automation.alert-scope', 'Its scope comes from the alert, and the alert’s scope comes from its policy, and the policy applies to a custom group.', {
-        remediation: 'Before turning this on, open the group and count the members. That number is the blast radius, not the alert name.',
-        source: 'ArchToolKit',
-      }),
-    );
-  }
-
-  findings.push(
-    info('automation.first-run', 'Run it once with the dry run on, read every line of what it lists, and only then take the flag off.', {
-      remediation: 'Most automation incidents are a correct automation pointed at the wrong set of objects. The dry run is the only place that is visible.',
-      source: 'ArchToolKit',
-    }),
-  );
-
-  return findings;
 }
 
 /** A name safe to use as a file name and an object name. */

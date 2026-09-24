@@ -10,7 +10,7 @@
 
                                                                                    
                                                    
-import { renderReadme, slugOf, standingFindings,                                          } from './automation.js';
+import { renderReadme, slugOf,                                          } from './automation.js';
 
                                                         
                                                                    
@@ -21,7 +21,8 @@ import { renderReadme, slugOf, standingFindings,                                
 
 export function automationFiles(automation            , name        )              {
   const base = slugOf(name, 'automation');
-  const findings            = [...(automation.findings ?? []), ...standingFindings(automation)];
+  // Errors and warnings about the values given. General advice (info) is not shown.
+  const findings            = (automation.findings ?? []).filter((finding) => finding.severity !== 'info');
 
   return {
     files: {

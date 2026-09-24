@@ -275,9 +275,9 @@ function vcfaActions(module        , withTemplates         )                 {
   const login               = {
     name: 'login',
     description:
-      'VCF Automation login through core.loginVcfAutomation (org empty: 8.x refresh token; an organization name: 9.x API token). When the 9.x exchange at /oauth/tenant/<org>/token answers 404, tries /tm/oauth/tenant/<org>/token, the path TechDocs 9.0 gives for a VM Apps organization. Returns { Authorization: "Bearer <token>" }.',
+      'VCF Automation login through core.loginVcfAutomation (an organization name, or "provider", with its API token). When the 9.x exchange at /oauth/tenant/<org>/token answers 404, tries /tm/oauth/tenant/<org>/token, the path TechDocs 9.0 gives for a VM Apps organization. Returns { Authorization: "Bearer <token>" }.',
     resultType: 'Any',
-    params: [p('host', 'string', 'VCF Automation host'), p('token', 'string', 'From a SecureString attribute'), p('org', 'string', 'Organization name, "provider", or empty for 8.x')],
+    params: [p('host', 'string', 'VCF Automation host'), p('token', 'string', 'From a SecureString attribute'), p('org', 'string', 'Organization name, or "provider"')],
     script: String.raw`var core = System.getModule("com.archtoolkit.core");
 try {
   return core.loginVcfAutomation(host, token, org || "");
@@ -521,7 +521,7 @@ return ctx.dryRun ? "" : id;`,
 function vcfaSettings(own                               , cap        )                       {
   return [
     { name: 'vcfaHost', type: 'string', value: '', description: 'VCF Automation host (FQDN)' },
-    { name: 'vcfaOrg', type: 'string', value: '', description: 'VCF Automation 9.x: the VM Apps organization name, as in its login URL. Empty for Aria Automation 8.x, where vcfaApiToken is a refresh token.' },
+    { name: 'vcfaOrg', type: 'string', value: '', description: 'The VM Apps organization name, as in its login URL.' },
     { name: 'vcfaApiToken', type: 'SecureString', description: 'The organization API token (9.x), or the refresh token (8.x), of an account that may create these objects' },
     { name: 'iaasApiVersion', type: 'string', value: '2021-07-15', description: 'apiVersion sent to /iaas/api (required in the 9.1 spec). VERIFY the value your release lists in its IaaS API reference.' },
     ...own,
