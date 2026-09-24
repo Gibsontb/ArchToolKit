@@ -1,7 +1,7 @@
 /**
- * The network calculator: opened from the header of every page (beside Clear
- * all) and from beside Clear list in a build list, it is a panel with four
- * tabs — Subnet, Split, VLSM and Check. Every tab takes IPv4 or IPv6.
+ * The network calculator: opened from the Network calculator button beside
+ * Clear list in a page's build list, it is a panel with four tabs — Subnet,
+ * Split, VLSM and Check. Every tab takes IPv4 or IPv6.
  */
 
 import { el, replace } from './dom.ts';
@@ -386,20 +386,3 @@ export function openCalculator(): void {
   show('subnet');
   dialog.showModal();
 }
-
-/** The same calculator from the header of every page, beside Clear all — it is useful well beyond the build lists. */
-export function mountNetCalc(header: Element): HTMLButtonElement {
-  const button = el('button', {
-    class: 'btn btn-small btn-netcalc',
-    text: 'Network calculator',
-    attrs: { type: 'button', title: 'Subnets, splits, VLSM and overlap checks — IPv4 and IPv6', 'data-control': 'netcalc' },
-    on: { click: () => openCalculator() },
-  }) as HTMLButtonElement;
-  const clear = header.querySelector('[data-control="clear-all"]');
-  if (clear) header.insertBefore(button, clear);
-  else header.appendChild(button);
-  return button;
-}
-
-const header = typeof document !== 'undefined' ? document.querySelector('.app-header') : null;
-if (header && !header.querySelector('[data-control="netcalc"]')) mountNetCalc(header);

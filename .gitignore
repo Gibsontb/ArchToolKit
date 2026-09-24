@@ -15,3 +15,8 @@ private/
 # Local downloads and build-only tool installs
 Temp DL/
 tools/archpad-build/node_modules/
+
+# ArchPad.exe build output
+desktop/ArchPad/bin/
+desktop/ArchPad/obj/
+desktop/ArchPad/publish/

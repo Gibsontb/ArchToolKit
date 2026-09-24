@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ArchPad</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+    <link rel="stylesheet" href="../lib/archpad/archpad.css" />
+    <style>
+      /* ArchPad.exe: the editor is the whole window, with no toolkit header. */
+      html, body { height: 100%; margin: 0; }
+      body { overflow: hidden; background: var(--bg); }
+      #archpad-root { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="archpad-root"></div>
+    <script type="module" src="../lib/archpad/standalone.js"></script>
+  </body>
+</html>

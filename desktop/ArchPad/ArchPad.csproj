@@ -1,0 +1,91 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ArchPad.exe: a WinForms window around a WebView2 that runs the same
+    ArchPad web code as the toolkit page. The web assets (web/archpad,
+    web/lib, web/styles) are zipped into the exe at build time and extracted
+    to %LOCALAPPDATA%\ArchPad\app\<hash> on first run, so the published
+    single-file exe is the whole distribution.
+
+    The toolkit build (node tools/build.mjs) must have run first so web/lib is
+    current; build.ps1 does both.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ArchPad</AssemblyName>
+    <RootNamespace>ArchPad</RootNamespace>
+    <Product>ArchPad</Product>
+    <Description>ArchPad text and code editor</Description>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>ArchPad.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Single-file publish: compress the bundle; WinForms is not trim-safe. -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <!-- Keep the WebView2 API docs (.xml) out of the publish folder: the exe is the whole distribution. -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <AllowedReferenceRelatedFileExtensions>.pdb</AllowedReferenceRelatedFileExtensions>
+
+    <ArchPadRepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\'))</ArchPadRepoRoot>
+    <ArchPadWebRoot>$(ArchPadRepoRoot)web\</ArchPadWebRoot>
+    <ArchPadStageDir>$(BaseIntermediateOutputPath)webstage\</ArchPadStageDir>
+    <ArchPadZip>$(BaseIntermediateOutputPath)app.zip</ArchPadZip>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="ArchPad.ico" LogicalName="ArchPad.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!--
+    The WebView2 package references its WPF control for every .NET 5+ app,
+    which drags in WindowsBase and a version-conflict warning. This is a
+    WinForms app; drop it.
+  -->
+  <Target Name="ArchPadDropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Stage web/archpad, web/lib and web/styles under obj/webstage (a fresh copy
+    each build so deleted files do not linger), zip it, and embed the zip.
+    All of web/lib goes in: the ArchPad page imports the editor, core and ui
+    modules, and copying the whole tree is cheaper than tracing imports and
+    cannot miss one.
+  -->
+  <Target Name="ArchPadStageWeb" BeforeTargets="BeforeBuild">
+    <Warning Condition="!Exists('$(ArchPadWebRoot)archpad\index.html')" Text="web\archpad\index.html is missing; the exe will build but show an empty page until the ArchPad page exists and the build is re-run." />
+    <Warning Condition="!Exists('$(ArchPadWebRoot)lib\archpad')" Text="web\lib\archpad is missing; run 'node tools/build.mjs' in the repo root (build.ps1 does this)." />
+
+    <ItemGroup>
+      <ArchPadWebFile Include="$(ArchPadWebRoot)archpad\**\*" Sub="archpad\" />
+      <ArchPadWebFile Include="$(ArchPadWebRoot)lib\**\*" Sub="lib\" />
+      <ArchPadWebFile Include="$(ArchPadWebRoot)styles\**\*" Sub="styles\" />
+    </ItemGroup>
+
+    <RemoveDir Directories="$(ArchPadStageDir)" />
+    <MakeDir Directories="$(ArchPadStageDir)" />
+    <Copy SourceFiles="@(ArchPadWebFile)" DestinationFiles="@(ArchPadWebFile->'$(ArchPadStageDir)%(Sub)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="false" />
+    <!-- A page that is not there yet still gets a placeholder, so the exe always has something to show. -->
+    <WriteLinesToFile Condition="!Exists('$(ArchPadWebRoot)archpad\index.html')" File="$(ArchPadStageDir)archpad\index.html" Lines="&lt;!doctype html&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;title&gt;ArchPad&lt;/title&gt;&lt;body style=&quot;background:#0b0f17%3Bcolor:#e8edf5%3Bfont:14px Segoe UI,sans-serif%3Bpadding:2em&quot;&gt;ArchPad: the editor page (web/archpad/index.html) was not built into this exe. Build the toolkit and rebuild ArchPad.exe.&lt;/body&gt;" Overwrite="true" />
+    <ZipDirectory SourceDirectory="$(ArchPadStageDir)" DestinationFile="$(ArchPadZip)" Overwrite="true" />
+
+    <ItemGroup>
+      <EmbeddedResource Include="$(ArchPadZip)" LogicalName="ArchPad.app.zip" />
+    </ItemGroup>
+  </Target>
+
+</Project>

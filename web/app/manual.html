@@ -49,6 +49,7 @@
         <a href="aria.html">VCF Ops content</a>
         <a href="automation.html">Automation and Operations</a>
         <a href="data-editor.html">Data Editor</a>
+        <a href="archpad.html">ArchPad</a>
         <a href="manual.html" aria-current="page">Manual</a>
       </nav>
     </header>
@@ -84,6 +85,7 @@
             <li><a href="#splunk">Splunk</a></li>
             <li><a href="#aria">VCF Operations content</a></li>
             <li><a href="#automation">Automation and Operations</a></li>
+            <li><a href="#archpad">ArchPad</a></li>
             <li><a href="#collector">The inventory collector</a></li>
             <li><a href="#updates">Keeping catalogs current</a></li>
             <li><a href="#workflows">Common workflows</a></li>
@@ -138,6 +140,7 @@
             <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
             <tr><td><a href="aria.html">VCF Ops content</a></td><td>Read a vROps 8.x or VCF Operations 9.x content export and find out what is wrong with the monitoring.</td></tr>
             <tr><td><a href="automation.html">Automation and Operations</a></td><td>Set up and automate VCF Operations, for Networks, for Logs, VCF Automation and the fleet, plus the pipelines that drive them &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
+            <tr><td><a href="archpad.html">ArchPad</a></td><td>A text and code editor with everything Notepad++ does, plus the toolkit's tools; every generator can open its files in it. Also runs as ArchPad.exe on Windows.</td></tr>
           </table>
 
           <!-- ================================================================ -->
@@ -1088,7 +1091,77 @@
             visible before it acts.
           </div>
 
-          <h2 id="collector">18. The inventory collector</h2>
+          <!-- ================================================================ -->
+          <h2 id="archpad">18. ArchPad</h2>
+          <p>
+            <a href="archpad.html">ArchPad</a> is the toolkit's text and code editor: everything Notepad++ does, in the
+            browser and offline, plus the toolkit's own tools in its menus. Use it to read or tidy what the
+            generators write before it goes anywhere, to edit a config pulled off a device, or as a general
+            editor on a machine where nothing can be installed.
+          </p>
+          <h3>What it does</h3>
+          <ul>
+            <li><strong>Tabs</strong> for any number of documents, each remembering its encoding (UTF-8, UTF-8 with BOM, UTF-16 LE/BE, Windows-1252) and line endings (CRLF, LF, CR), both shown and changeable in the status bar and the Encoding menu.</li>
+            <li><strong>Syntax highlighting</strong> for about forty-five languages, picked from the file's extension or the Language menu: JSON, YAML, XML, HTML, CSS, JavaScript, Python, PowerShell, shell, SQL, Markdown, TOML, properties and INI, nginx, Dockerfile, C#, Java, Go, Rust and more.</li>
+            <li><strong>Search</strong>: find and replace with match case, whole word and regular expressions; find in files across a folder; go to line; mark all.</li>
+            <li><strong>Editing</strong>: column (rectangular) selection with <kbd>Alt</kbd>+drag, multiple cursors, folding, show whitespace and line endings, line operations (duplicate, move, sort, remove duplicates, trim), case conversion, comment toggling.</li>
+            <li><strong>Compare</strong> two documents side by side.</li>
+            <li><strong>Tools and Network menus</strong>: the toolkit's converters and checks (JSON and YAML formatting and validation, hashes, Base64, URL encoding and more) and the IPv4/IPv6 network calculator.</li>
+          </ul>
+          <h3>Opening and saving</h3>
+          <p>
+            In Edge or Chrome, Open and Save work on the real file: Save writes back to the file you opened, as a desktop
+            editor does. In browsers without the File System Access API (Firefox, Safari), Open uses the ordinary file
+            picker and Save downloads the file. Nothing is uploaded anywhere either way.
+          </p>
+          <p>
+            Every generator page (Terraform, Ansible, Network, Scripts, Splunk, Automation and Operations) has an
+            <strong>Open in ArchPad</strong> button beside each file's Copy and Download, and an
+            <strong>Open all in ArchPad</strong> button beneath them. If an ArchPad tab is already open the files go to it;
+            otherwise a new ArchPad tab opens with them. If the browser blocks the new tab, open ArchPad from the menu and
+            the files will be waiting for about ten minutes.
+          </p>
+          <h3>Keyboard shortcuts</h3>
+          <p>The Notepad++ defaults, so hands that know one know the other. Each menu item shows its shortcut.</p>
+          <table>
+            <tr><th>Keys</th><th>Does</th></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>New document</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Open</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd></td><td>Save / Save As</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>Close the tab</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Tab</kbd></td><td>Next tab</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / Redo</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>Find</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>H</kbd></td><td>Replace</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>Find in Files</td></tr>
+            <tr><td><kbd>F3</kbd> / <kbd>Shift</kbd>+<kbd>F3</kbd></td><td>Find next / previous</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Go to line</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Duplicate the line</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Up</kbd> / <kbd>Down</kbd></td><td>Move the line up / down</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Delete the line</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></td><td>Lower case / UPPER CASE</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Q</kbd></td><td>Toggle comment</td></tr>
+            <tr><td><kbd>Alt</kbd>+drag, <kbd>Alt</kbd>+<kbd>Shift</kbd>+arrows</td><td>Column selection</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>Fold / unfold the current block</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></td><td>Record / play back a macro</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>Zoom in / out</td></tr>
+          </table>
+          <div class="tip">
+            In the browser some keys belong to the browser first (<kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>N</kbd>,
+            <kbd>Ctrl</kbd>+<kbd>Tab</kbd>). Use the File and Window menus for those, or use ArchPad.exe, where every
+            shortcut is ArchPad's.
+          </div>
+          <h3>ArchPad.exe</h3>
+          <p>
+            The same editor as a Windows program: <code>ArchPad.exe</code> hosts this page in Microsoft Edge WebView2, so
+            it looks and behaves identically, and adds what a browser cannot do — opening files from the command line
+            (<code>ArchPad.exe file1.txt file2.json</code>), from Explorer's <em>Open with</em> or by dropping them on the
+            window; saving to the full path without a dialog; reloading a file when it changes on disk; and asking about
+            unsaved changes when the window closes. It needs the WebView2 runtime, which Windows 10 and 11 already carry,
+            and nothing else; it makes no network calls.
+          </p>
+
+          <h2 id="collector">19. The inventory collector</h2>
           <p><code>tools\collector\Export-AtkInventory.ps1</code> is a read-only PowerShell script that collects more than RVTools does, because VCF readiness depends on hardware facts RVTools lacks: NIC link speeds, NVMe presence, VMkernel adapters, boot device, TPM, and historical CPU and memory use.</p>
           <pre>Install-Module VMware.PowerCLI -Scope CurrentUser
 .\Export-AtkInventory.ps1 -Server vcenter.corp.local
@@ -1096,7 +1169,7 @@
           <p>Options: <code>-StatDays</code> (days of history, default 30; 0 is much faster), <code>-IncludeVmDetail</code> (per-VM disks and NICs), <code>-Credential</code>. It writes one JSON file and sends nothing anywhere. Import it on the inventory page, alone or together with the RVTools workbook.</p>
 
           <!-- ================================================================ -->
-          <h2 id="updates">19. Keeping catalogs current</h2>
+          <h2 id="updates">20. Keeping catalogs current</h2>
           <p>The lists the toolkit checks against are stored in the toolkit so it works offline. Refreshing them is the only thing that uses the network, and only to read. Each finding says how old its catalog is and warns after 90 days.</p>
           <table>
             <tr><th>Command</th><th>Refreshes</th><th>Needs</th></tr>
@@ -1111,7 +1184,7 @@
           <p>A fetch that fails leaves that catalog as it was. After refreshing, run <code>npm run build</code> (and <code>npm test</code>).</p>
 
           <!-- ================================================================ -->
-          <h2 id="workflows">20. Common workflows</h2>
+          <h2 id="workflows">21. Common workflows</h2>
           <h3>From an RVTools export to a VCF deployment spec</h3>
           <ol>
             <li>VMware Inventory: import the RVTools <code>.xlsx</code> (and the collector JSON if you have it). Read the readiness and blockers.</li>
@@ -1148,7 +1221,7 @@
           </ol>
 
           <!-- ================================================================ -->
-          <h2 id="trouble">21. Troubleshooting</h2>
+          <h2 id="trouble">22. Troubleshooting</h2>
           <table>
             <tr><th>What you see</th><th>Why, and what to do</th></tr>
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
@@ -1156,7 +1229,7 @@
             <tr><td>A page fills itself in with an old estate</td><td>The estate stays until forgotten. Press <strong>Forget</strong> on the estate strip, or <strong>Clear all</strong>.</td></tr>
             <tr><td>Full view or Print does nothing on the Multi-Cloud page</td><td>A pop-up blocker stopped the new window. Allow pop-ups for the toolkit's address.</td></tr>
             <tr><td>"That file was saved from … page, not this one"</td><td>Settings files belong to the page that saved them. Open it on that page.</td></tr>
-            <tr><td>A finding says a catalog is more than 90 days old</td><td>Run the update in <a href="#updates">section 15</a>, or carry on; the names are just less certain.</td></tr>
+            <tr><td>A finding says a catalog is more than 90 days old</td><td>Run the update in <a href="#updates">section 20</a>, or carry on; the names are just less certain.</td></tr>
             <tr><td>A build list item says its blueprint is gone</td><td>The list was saved on another platform. Switch the platform back, or remove that item.</td></tr>
             <tr><td>A stack renamed a resource</td><td>Two items declared the same address, so the second was renamed after its item, declaration and references together. Rename the item if you want a different name.</td></tr>
             <tr><td>A site playbook says a variable is not set</td><td>A playbook uses <code>{{ something }}</code> that nothing supplies. Fill it in in <code>group_vars/all.yml</code>, or pass it with <code>-e</code>.</td></tr>
@@ -1166,7 +1239,7 @@
           </table>
 
           <!-- ================================================================ -->
-          <h2 id="limits">22. Known limits</h2>
+          <h2 id="limits">23. Known limits</h2>
           <ul>
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
@@ -1183,7 +1256,7 @@
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">23. Licence and disclaimer</h2>
+          <h2 id="licence">24. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.
@@ -1241,7 +1314,6 @@
       </div>
     </main>
     <script type="module" src="../lib/ui/clear-all.js"></script>
-    <script type="module" src="../lib/ui/net-calc.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>
 </html>

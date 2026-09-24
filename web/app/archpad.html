@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ArchPad · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+    <link rel="stylesheet" href="../lib/archpad/archpad.css" />
+    <style>
+      /* The editor takes the whole window below the header: the body is a
+         column, the editor the part that grows, the licence line the last row. */
+      html, body { height: 100%; }
+      body.archpad-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      .archpad-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+      #archpad-root { flex: 1 1 auto; min-height: 0; }
+    </style>
+  </head>
+  <body class="archpad-body">
+    <header class="app-header">
+      <a class="brand" href="../index.html">
+        <span class="brand-mark">AT</span>
+        <span>ArchToolKit</span>
+      </a>
+      <nav class="header-nav">
+        <a href="../index.html">Home</a>
+        <a href="inventory.html">VMware Inventory</a>
+        <a href="vcf-sizing.html">VCF Sizing</a>
+        <a href="vcf-spec.html">VCF Spec Builder</a>
+        <a href="multicloud.html">Multi-Cloud</a>
+        <a href="migration.html">Migration</a>
+        <a href="terraform.html">Terraform</a>
+        <a href="ansible.html">Ansible</a>
+        <a href="network.html">Network</a>
+        <a href="scripts.html">Scripts</a>
+        <a href="splunk.html">Splunk</a>
+        <a href="aria.html">VCF Ops content</a>
+        <a href="automation.html">Automation and Operations</a>
+        <a href="data-editor.html">Data Editor</a>
+        <a href="archpad.html" aria-current="page">ArchPad</a>
+        <a href="manual.html">Manual</a>
+      </nav>
+    </header>
+
+    <main class="archpad-main">
+      <div id="archpad-root"></div>
+    </main>
+
+    <script type="module" src="../lib/archpad/page.js"></script>
+    <script type="module" src="../lib/ui/clear-all.js"></script>
+    <script type="module" src="../lib/ui/site-footer.js"></script>
+  </body>
+</html>

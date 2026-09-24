@@ -23,6 +23,7 @@ import { currentTagStandard, tagChoices } from '../kit/tag-standard.js';
 import { tagStandardBuilder } from './tag-standard-builder.js';
 import { autogrow, isListField, listEditor, tableEditor, tableShape } from './multi-editors.js';
 import { openCalculator } from './net-calc.js';
+import { openInArchPad } from '../archpad/handoff.js';
 import { card, findingsList } from './components.js';
 import { getTarget, setTarget,               } from '../kit/target.js';
 import { estateOptionsFor } from '../kit/estate.js';
@@ -1071,6 +1072,7 @@ export function mountGeneratorPage(root             , options                  )
                 text: 'Download',
                 on: { click: () => downloadFile(filename, body, 'text/plain') },
               }),
+              archPadButton('Open in ArchPad', () => [{ name: filename, text: body }]),
             ),
           ),
           el('pre', { class: 'mono code-block' }, body),
@@ -1143,6 +1145,7 @@ export function mountGeneratorPage(root             , options                  )
                   ),
               },
             }),
+            archPadButton('Open all in ArchPad', () => Object.entries(all).map(([name, text]) => ({ name, text }))),
           ),
         );
       }
@@ -1193,6 +1196,28 @@ export function mountGeneratorPage(root             , options                  )
 }
 
 // --- Orchestrator packages ----------------------------------------------------
+
+/**
+ * Hands generated text to ArchPad — an ArchPad tab already open if there is
+ * one, else a new tab. The files are read at click time so the button always
+ * sends what is on screen.
+ */
+function archPadButton(label        , files                                        )                    {
+  return el('button', {
+    class: 'btn btn-small',
+    text: label,
+    attrs: { title: 'Edit in ArchPad, the toolkit’s text editor' },
+    on: {
+      click: (event       ) => {
+        const button = event.currentTarget                     ;
+        void openInArchPad(files()).then((where) => {
+          button.textContent = where === 'blocked' ? 'Pop-up blocked — open ArchPad from the menu' : where === 'tab' ? 'Sent to ArchPad' : label;
+          if (where !== 'new') globalThis.setTimeout(() => (button.textContent = label), 2500);
+        });
+      },
+    },
+  });
+}
 
 /** A file inside a package folder: import/<name>.package/<path>. */
 const PACKAGE_PATH = /^(?:.*\/)?[^/]+\.package\//;
