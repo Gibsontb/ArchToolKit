@@ -477,10 +477,10 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
             '#!/usr/bin/env bash',
             '# Give the forwarder user read access to the root-only logs, and keep it',
             '# across log rotation. Run as root on each host, or from config management.',
-            '# Usage: bash grant-log-access.sh            (dry run: prints what it would do)',
-            '#        bash grant-log-access.sh --execute',
+            '# Usage: bash grant-log-access.sh',
+            '#        bash grant-log-access.sh --dry-run  (prints what it would do)',
             'set -euo pipefail',
-            'EXECUTE=0; [[ "${1:-}" == "--execute" ]] && EXECUTE=1',
+            'EXECUTE=1; [[ "${1:-}" == "--dry-run" ]] && EXECUTE=0',
             'FWD_USER="${FWD_USER:-splunkfwd}"',
             'run() { if (( EXECUTE )); then "$@"; else printf "DRY RUN:"; printf " %q" "$@"; printf "\\n"; fi; }',
             'id "$FWD_USER" >/dev/null',
@@ -548,18 +548,13 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
       { id: 'use_estate', label: 'Hosts from the imported estate', control: 'toggle', default: true, hint: 'Powered-on Windows and Linux VMs; falls back to the lists below when no estate is loaded' },
       { id: 'linux_hosts', label: 'Linux hosts', control: 'textarea', default: 'app01.example.com\napp02.example.com' },
       { id: 'windows_hosts', label: 'Windows hosts', control: 'textarea', default: 'win01.example.com\nwin02.example.com' },
-      { id: 'linux_package', label: 'Linux package file', control: 'text', default: 'splunkforwarder-9.4.3-linux-amd64.rpm', hint: '.rpm, .deb or .tgz, as downloaded from splunk.com' },
-      { id: 'windows_msi', label: 'Windows MSI file', control: 'text', default: 'splunkforwarder-9.4.3-windows-x64.msi' },
-      { id: 'run_as', label: 'Run the forwarder as', control: 'select', default: 'least', options: [
-        { value: 'least', label: 'splunkfwd on Linux, the virtual account on Windows' },
-        { value: 'root', label: 'root / LocalSystem' },
-      ] },
+      { id: 'linux_package', label: 'Linux package file', control: 'text', default: 'splunkforwarder-10.4.3-linux-amd64.rpm', hint: '.rpm, .deb or .tgz, as downloaded from splunk.com' },
+      { id: 'windows_msi', label: 'Windows MSI file', control: 'text', default: 'splunkforwarder-10.4.3-windows-x64.msi' },
     ],
     app: (values                 )            => {
       const app = splunkName(str(values, 'app_name', 'org_all_deploymentclient'), 'org_all_deploymentclient');
       const ds = str(values, 'deployment_server', '');
       const phoneHome = Math.max(30, num(values, 'phone_home', 60));
-      const root = str(values, 'run_as', 'least') === 'root';
       const linuxPkg = str(values, 'linux_package', 'splunkforwarder-linux-amd64.rpm').replace(/[^A-Za-z0-9._-]/g, '');
       const msi = str(values, 'windows_msi', 'splunkforwarder-windows-x64.msi').replace(/[^A-Za-z0-9._-]/g, '');
       const findings            = [];
@@ -583,14 +578,6 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
           }),
         );
       }
-      if (root) {
-        findings.push(
-          warning('splunk.uf-as-root', 'A forwarder running as root or LocalSystem runs every scripted input from every app the deployment server sends it as root. Whoever can write to deployment-apps can then run anything on every host.', {
-            remediation: 'Run as splunkfwd (Linux) or the default virtual account (Windows), and grant read on the specific logs that need it.',
-            source: 'ArchToolKit',
-          }),
-        );
-      }
       if (linuxHosts.length === 0 && windowsHosts.length === 0) {
         findings.push(warning('splunk.uf-no-hosts', 'No hosts to install on.', { source: 'ArchToolKit' }));
       }
@@ -606,7 +593,7 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
         '[target-broker:deploymentServer]',
         `targetUri = ${dsHost}:${dsPort || '8089'}`,
       ];
-      const fwdUser = root ? 'root' : 'splunkfwd';
+      const fwdUser = 'splunkfwd';
 
       return {
         tier: TIER,
@@ -615,10 +602,11 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
         activation: 'restart',
         notes: [
           estate ? `Hosts come from the imported estate (${currentEstate()?.origin ?? 'current estate'}): powered-on VMs by guest OS, addressed by DNS name, then IP.` : 'Hosts come from the lists entered on the form.',
-          'The scripts are dry runs by default: they print every command they would run. Add --execute (Linux) or -Execute (Windows) to act.',
+          'The scripts apply when run. Add --dry-run (Linux) or -DryRun (Windows) first to preview: they then print every command they would run.',
           'Linux: ops/make-admin-hash.sh reads the admin password from the terminal with echo off and writes only its SHA-512 crypt hash, mode 600. The install writes that hash into user-seed.conf, which Splunk consumes and deletes on first start. The plain text never touches a file or a command line.',
           'Windows: GENRANDOMPASSWORD=1 gives each forwarder a random admin password nobody knows. That is deliberate — a managed forwarder needs no local login, and a shared admin password across a thousand hosts is one leak from all of them.',
           ds ? `The deployment client app is installed on each host by the script. Once a forwarder phones home, everything else — outputs, inputs, add-ons — comes from serverclasses on ${dsHost}.` : 'No deployment client app is written, because no deployment server was given.',
+          'The forwarder never runs as root: splunkfwd on Linux (the rpm and deb create it; the script creates it for a .tgz), started by systemd, and the virtual account on Windows. Splunk 10 does not start as root without --run-as-root, which is not used. Upgrade to 10.4 directly from a 10.0.x or later forwarder.',
           'Outputs are deliberately not set here. Map an outputs app (splunk_outputs) to every forwarder in a serverclass so the indexer list is in one place.',
         ],
         before: [
@@ -656,11 +644,11 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
           'ops/install-uf-linux.sh': [
             '# Install the universal forwarder on every host in linux-hosts.txt.',
             '# Runs from an admin workstation with ssh keys and passwordless sudo.',
-            '# Usage: bash install-uf-linux.sh             (dry run)',
-            '#        bash install-uf-linux.sh --execute',
+            '# Usage: bash install-uf-linux.sh',
+            '#        bash install-uf-linux.sh --dry-run   (prints what it would do)',
             '# Env:   PKG=<path to package>  HASH_FILE=<made by make-admin-hash.sh>',
             'set -euo pipefail',
-            'EXECUTE=0; [[ "${1:-}" == "--execute" ]] && EXECUTE=1',
+            'EXECUTE=1; [[ "${1:-}" == "--dry-run" ]] && EXECUTE=0',
             'HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
             `PKG="\${PKG:-$HERE/${linuxPkg}}"`,
             'HASH_FILE="${HASH_FILE:-$HOME/.splunk/uf-admin.hash}"',
@@ -740,14 +728,15 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
           ],
           'ops/install-uf-windows.ps1': [
             '# Install the universal forwarder on every host in windows-hosts.txt over',
-            '# WinRM. Dry run by default; -Execute to act.',
-            '# Usage: .\\install-uf-windows.ps1 [-Execute] [-Msi <path>]',
+            '# WinRM. Applies when run; -DryRun previews.',
+            '# Usage: .\\install-uf-windows.ps1 [-DryRun] [-Msi <path>]',
             'param(',
-            '  [switch]$Execute,',
+            '  [switch]$DryRun,',
             `  [string]$Msi = (Join-Path $PSScriptRoot '${msi}'),`,
             "  [string]$HostsFile = (Join-Path $PSScriptRoot 'windows-hosts.txt')",
             ')',
             "$ErrorActionPreference = 'Stop'",
+            '$Execute = -not $DryRun',
             "if (-not (Test-Path $Msi)) { throw \"MSI not found: $Msi\" }",
             '$msiName = Split-Path $Msi -Leaf',
             '# No password anywhere: GENRANDOMPASSWORD=1 generates a random admin',
@@ -758,9 +747,10 @@ export const FORWARDER_MORE_BLUEPRINTS                             = [
             "  'SPLUNKUSERNAME=admin',",
             "  'GENRANDOMPASSWORD=1',",
             ...(ds ? [`  'DEPLOYMENT_SERVER=${dsHost}:${dsPort || '8089'}',`] : []),
-            ...(root
-              ? ["  # Runs as LocalSystem — see the finding.", "  'USE_LOCAL_SYSTEM=1',"]
-              : ["  # 9.1+: runs as the least-privileged virtual account by default, with", "  # the rights to read the event logs granted by the installer.", "  'USE_LOCAL_SYSTEM=0',"]),
+            "  # Runs as the least-privileged virtual account, with the rights to read",
+            "  # the event logs granted by the installer. 10.2 and later no longer run",
+            "  # as Local System or Administrator.",
+            "  'USE_LOCAL_SYSTEM=0',",
             "  'LAUNCHSPLUNK=1',",
             "  'SERVICESTARTTYPE=auto',",
             "  '/quiet', '/norestart',",

@@ -143,7 +143,7 @@ export const INDEXER_BLUEPRINTS: readonly SplunkBlueprint[] = [
           `| rest /services/data/indexes | search title=${index} | table title, currentDBSizeMB, maxTotalDataSizeMB, frozenTimePeriodInSecs, totalEventCount`,
           `| dbinspect index=${index} | stats count by state`,
           `index=${index} | head 1`,
-          `| rest /services/cluster/master/indexes | search title=${index}   # on the cluster manager`,
+          `| rest /services/cluster/manager/indexes | search title=${index}   # on the cluster manager`,
           '| rest /services/server/status/partitions-space | table mount_point, available',
         ],
         backout: [

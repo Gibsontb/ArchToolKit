@@ -21,6 +21,7 @@ import { tarGz, zip } from '../kit/archive.ts';
 import { buildVroPackage, readPackageSpec } from '../kit/vro-package.ts';
 import { currentTagStandard, tagChoices } from '../kit/tag-standard.ts';
 import { tagStandardBuilder } from './tag-standard-builder.ts';
+import { autogrow, isListField, listEditor, tableEditor, tableShape } from './multi-editors.ts';
 import { card, findingsList } from './components.ts';
 import { getTarget, setTarget, type TargetId } from '../kit/target.ts';
 import { estateOptionsFor } from '../kit/estate.ts';
@@ -139,6 +140,35 @@ function withCurrentTags(blueprint: Blueprint, values: BlueprintValues): Bluepri
   return saved && input ? { ...values, [input.id]: saved } : values;
 }
 
+/** What the page remembers for fields that offer it (index names defined on the Splunk page, …). */
+const REMEMBER_PREFIX = 'archtoolkit.remember.';
+function remembered(key: string): string[] {
+  try {
+    const raw = globalThis.localStorage?.getItem(REMEMBER_PREFIX + key);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(list) ? list.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function remember(key: string, value: string): void {
+  const v = value.trim();
+  if (!v) return;
+  try {
+    const list = remembered(key).filter((x) => x !== v);
+    globalThis.localStorage?.setItem(REMEMBER_PREFIX + key, JSON.stringify([v, ...list].slice(0, 50)));
+  } catch {
+    // Not remembering only means the other fields do not offer it.
+  }
+}
+/** A field that offers remembered values: they come first, under their own heading. */
+function withRemembered(input: BlueprintInput): BlueprintInput {
+  if (!input.offer) return input;
+  const mine = remembered(input.offer).filter((v) => !(input.options ?? []).some((o) => o.value === v && o.group === undefined));
+  if (mine.length === 0) return input;
+  return { ...input, control: input.control === 'text' ? 'combo' : input.control, options: [...mine.map((v) => ({ value: v, label: v, group: 'Defined on this page' })), ...(input.options ?? [])] };
+}
+
 /** An input that names categories or tags, offered from the tag standard rather than typed. */
 function withTags(input: BlueprintInput): BlueprintInput {
   if (!input.fromTags) return input;
@@ -217,6 +247,10 @@ function withBlank(input: BlueprintInput): readonly SelectOption[] {
 
 function control(input: BlueprintInput, value: unknown, onChange: () => void, onStructure: () => void = onChange): HTMLElement {
   if (input.control === 'tag-standard') return tagStandardBuilder(String(value ?? ''), onChange, onStructure);
+  // Several things in one field: chips for a list, a grid for rows of columns.
+  if (isListField(input)) return listEditor(input, String(value ?? ''), onChange);
+  const shape = tableShape(input);
+  if (shape) return tableEditor(shape, String(value ?? ''), onChange);
 
   if (input.control === 'checklist') {
     const picked = new Set(String(value ?? '').split(',').map((v) => v.trim()).filter(Boolean));
@@ -320,7 +354,7 @@ function control(input: BlueprintInput, value: unknown, onChange: () => void, on
     }) as HTMLTextAreaElement;
     node.value = String(value ?? '');
     node.addEventListener('input', onChange);
-    return node;
+    return autogrow(node);
   }
 
   const node = el('input', {
@@ -612,6 +646,8 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
       generated = out.files;
       builds = out.builds;
       findings = aboutTheInput(out.findings ?? []);
+      // What was built here is offered in the other blueprints (an index defined here, in every index field).
+      for (const input of blueprint.inputs) if (input.remember) remember(input.remember, String(values[input.id] ?? ''));
     } catch (err) {
       generated = null;
       findings = [
@@ -885,11 +921,13 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 
     for (const raw of blueprint.inputs) {
       if (!isVisible(raw, values)) continue;
-      const input = withTags(withEstate(raw, target));
+      const input = withRemembered(withTags(withEstate(raw, target)));
       const node = control(input, values[input.id], () => {
         let raw: string;
         if (node.classList.contains('tag-builder')) {
           raw = (node.querySelector('.tag-standard-value') as HTMLTextAreaElement).value;
+        } else if (node.classList.contains('list-editor') || node.classList.contains('table-editor')) {
+          raw = (node.querySelector('.multi-value') as HTMLTextAreaElement).value;
         } else if (node.classList.contains('checklist')) {
           raw = (node.querySelector('.checklist-value') as HTMLInputElement).value;
         } else if (node.classList.contains('combo')) {
@@ -919,7 +957,9 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
         box.focus();
       };
       const reference =
-        input.control === 'select' || input.control === 'toggle' || input.control === 'checklist' || input.control === 'tag-standard' ? null : referenceButton(setValue);
+        input.control === 'select' || input.control === 'toggle' || input.control === 'checklist' || input.control === 'tag-standard' || node.classList.contains('list-editor') || node.classList.contains('table-editor')
+          ? null
+          : referenceButton(setValue);
       const field = labelledField(input, reference ? el('div', { class: 'with-ref' }, node, reference) : node);
       if (input.section === undefined) {
         fields.push(field);

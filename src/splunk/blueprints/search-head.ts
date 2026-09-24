@@ -269,11 +269,14 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         app,
         activation: 'reload',
         notes: [
-          'Test it before enabling it: run the search over the last week with the condition as a `where`, and count how many times it would have fired. An alert that would have fired two hundred times is not an alert.',
+          'It is enabled and scheduled as soon as the app is deployed. Test it before deploying: run the search over the last week with the condition as a `where`, and count how many times it would have fired. An alert that would have fired two hundred times is not an alert.',
           ...(throttleMinutes > 0
             ? [`Throttling suppresses ${throttleField ? `each ${throttleField}` : 'the alert'} for ${throttleMinutes} minutes after it fires. The condition can keep being true; the notification stops.`]
             : []),
           'The severity is metadata, not behaviour. It shows in Triggered Alerts and can be read by whatever consumes the webhook — it does not change when or how the alert fires.',
+          ...(action === 'webhook'
+            ? ['Add the webhook URL to the webhook allow list: alert_actions.conf [webhook] allowlist.<name> = <regex> (editing it needs the edit_webhook_allow_list capability). VERIFY on your version whether the list is enforced by default (enable_allowlist); where it is, a URL that matches no entry is not called.']
+            : []),
           ...(action === 'ticket' ? ['Results are also written to a summary index, so "how often did this fire last quarter" is a search rather than an archaeology exercise through email.'] : []),
         ],
         before: [
@@ -285,7 +288,7 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
           'default/savedsearches.conf': [
             `[${title}]`,
             ...foldSearch(pipeline),
-            'description = Test against history before enabling.',
+            'description = Tested against history before deployment.',
             'enableSched = 1',
             `cron_schedule = ${spreadCron(title, everyMinutes)}`,
             `dispatch.earliest_time = ${window.earliest}`,
@@ -359,17 +362,13 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
     tier: TIER,
     label: 'Dashboard',
     group: 'Dashboards',
-    description: 'A dashboard with a time picker and a filter that actually reach every panel, and a base search so six panels are not six separate searches over the same data.',
+    description: 'A Dashboard Studio dashboard with a time picker and a filter that actually reach every panel, and a base search so six panels are not six separate searches over the same data.',
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_dashboards' },
       { id: 'title', label: 'Dashboard title', control: 'text', default: 'Service overview' },
       { id: 'index', label: 'Index', control: 'text', default: 'app' },
       { id: 'sourcetype', label: 'Sourcetype', control: 'text', default: 'app:json' },
-      { id: 'format', label: 'Format', control: 'select', default: 'xml', options: [
-        { value: 'xml', label: 'Simple XML — editable by hand, works everywhere' },
-        { value: 'studio', label: 'Dashboard Studio (JSON) — newer, better looking, less portable' },
-      ] },
-      { id: 'panels', label: 'Panels', control: 'textarea', default: 'Requests over time | timechart | count\nErrors by endpoint | table | status>=500 | endpoint\nSlowest endpoints | table | | endpoint', hint: 'Title | type | filter | group by' },
+      { id: 'panels', label: 'Panels', control: 'textarea', default: 'Requests over time | timechart | | \nErrors by endpoint | table | status>=500 | endpoint\nSlowest endpoints | table | | endpoint', hint: 'Title | type (timechart, chart, table, single) | filter | group by' },
       { id: 'filter_field', label: 'Filter dropdown on', control: 'text', default: 'environment', hint: 'A token every panel uses — empty for none' },
       { id: 'base_search', label: 'Share one base search', control: 'toggle', default: true },
       { id: 'refresh', label: 'Auto refresh', control: 'select', default: 'none', options: [
@@ -384,7 +383,6 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
       const id = splunkName(title, 'dashboard');
       const index = splunkName(str(values, 'index', ''), 'main');
       const sourcetype = str(values, 'sourcetype', '');
-      const studio = str(values, 'format', 'xml') === 'studio';
       const filterField = str(values, 'filter_field', '');
       const baseSearch = bool(values, 'base_search', true);
       const refresh = str(values, 'refresh', 'none');
@@ -422,132 +420,90 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
       }
 
       const base = `index=${index}${sourcetype ? ` sourcetype=${sourcetype}` : ''}${filterField ? ` ${filterField}=$${filterField}_token$` : ''}`;
+      const transform = (panel: { type: string; by: string }) =>
+        panel.type === 'timechart' ? `| timechart span=5m count${panel.by ? ` by ${panel.by}` : ''}` : `| stats count${panel.by ? ` by ${panel.by}` : ''} | sort - count`;
+      const vizType = (type: string) => (type === 'timechart' ? 'splunk.line' : type === 'chart' ? 'splunk.column' : type === 'single' ? 'splunk.singlevalue' : 'splunk.table');
+      const timeParameters = { earliest: '$global_time.earliest$', latest: '$global_time.latest$' };
+      const refreshOptions = refresh !== 'none' ? { refresh, refreshType: 'delay' } : {};
 
-      const xml = [
-        `<form version="1.1" theme="light"${refresh !== 'none' ? '' : ''}>`,
-        `  <label>${title}</label>`,
-        `  <description></description>`,
-        '  <fieldset submitButton="false" autoRun="true">',
-        '    <input type="time" token="time_token">',
-        '      <label>Time range</label>',
-        '      <default>',
-        '        <earliest>-24h@h</earliest>',
-        '        <latest>now</latest>',
-        '      </default>',
-        '    </input>',
-        ...(filterField
-          ? [
-              `    <input type="dropdown" token="${filterField}_token" searchWhenChanged="true">`,
-              `      <label>${filterField}</label>`,
-              '      <choice value="*">All</choice>',
-              '      <default>*</default>',
-              '      <fieldForLabel>' + filterField + '</fieldForLabel>',
-              '      <fieldForValue>' + filterField + '</fieldForValue>',
-              '      <search>',
-              `        <query>index=${index}${sourcetype ? ` sourcetype=${sourcetype}` : ''} | stats count by ${filterField} | sort - count</query>`,
-              '        <earliest>-7d@d</earliest>',
-              '        <latest>now</latest>',
-              '      </search>',
-              '    </input>',
-            ]
-          : []),
-        '  </fieldset>',
-        ...(baseSearch
-          ? [
-              '  <!-- One search feeds every panel. Six panels that each search the',
-              '       same data are six concurrent searches for one page view. -->',
-              '  <search id="base">',
-              `    <query>${base}</query>`,
-              '    <earliest>$time_token.earliest$</earliest>',
-              '    <latest>$time_token.latest$</latest>',
-              '  </search>',
-            ]
-          : []),
-        '  <row>',
-        ...panels.flatMap((panel, panelIndex) => {
-          const visual = panel.type === 'timechart' || panel.type === 'chart' ? 'chart' : panel.type === 'single' ? 'single' : 'table';
-          const query = baseSearch
-            ? `${panel.filter ? `| search ${panel.filter} ` : ''}${panel.type === 'timechart' ? `| timechart span=5m count${panel.by ? ` by ${panel.by}` : ''}` : `| stats count${panel.by ? ` by ${panel.by}` : ''} | sort - count`}`
-            : `${base}${panel.filter ? ` ${panel.filter}` : ''} ${panel.type === 'timechart' ? `| timechart span=5m count${panel.by ? ` by ${panel.by}` : ''}` : `| stats count${panel.by ? ` by ${panel.by}` : ''} | sort - count`}`;
-          return [
-            ...(panelIndex > 0 && panelIndex % 2 === 0 ? ['  </row>', '  <row>'] : []),
-            '    <panel>',
-            `      <title>${panel.title}</title>`,
-            `      <${visual}>`,
-            baseSearch ? '        <search base="base">' : '        <search>',
-            `          <query>${query.trim()}</query>`,
-            ...(baseSearch ? [] : ['          <earliest>$time_token.earliest$</earliest>', '          <latest>$time_token.latest$</latest>']),
-            ...(refresh !== 'none' ? [`          <refresh>${refresh}</refresh>`, '          <refreshType>delay</refreshType>'] : []),
-            '        </search>',
-            ...(visual === 'chart' ? ['        <option name="charting.chart">line</option>', '        <option name="charting.legend.placement">bottom</option>'] : []),
-            ...(visual === 'table' ? ['        <option name="count">20</option>', '        <option name="drilldown">cell</option>'] : []),
-            `      </${visual}>`,
-            '    </panel>',
-          ];
-        }),
-        '  </row>',
-        '</form>',
-      ];
-
+      // Dashboard Studio. With a base search, each panel is a ds.chain that
+      // post-processes the one ds_base search, so a page view is one search.
       const studioJson = JSON.stringify(
         {
+          title,
+          description: '',
           visualizations: Object.fromEntries(
             panels.map((panel, panelIndex) => [
               `viz_${panelIndex}`,
               {
-                type: panel.type === 'timechart' ? 'splunk.line' : 'splunk.table',
-                options: { ...(panel.type === 'timechart' ? { legendDisplay: 'bottom' } : { count: 20 }) },
-                dataSources: { primary: `ds_${panelIndex}` },
+                type: vizType(panel.type),
                 title: panel.title,
+                dataSources: { primary: `ds_${panelIndex}` },
+                ...(panel.type === 'timechart' ? { options: { legendDisplay: 'bottom' } } : panel.type === 'table' ? { options: { count: 20 } } : {}),
               },
             ]),
           ),
-          dataSources: Object.fromEntries(
-            panels.map((panel, panelIndex) => [
-              `ds_${panelIndex}`,
-              {
-                type: 'ds.search',
-                options: {
-                  query: `${base}${panel.filter ? ` ${panel.filter}` : ''} ${panel.type === 'timechart' ? `| timechart span=5m count${panel.by ? ` by ${panel.by}` : ''}` : `| stats count${panel.by ? ` by ${panel.by}` : ''} | sort - count`}`,
-                  queryParameters: { earliest: '$time_token.earliest$', latest: '$time_token.latest$' },
-                  ...(refresh !== 'none' ? { refresh, refreshType: 'delay' } : {}),
-                },
-                name: panel.title,
-              },
-            ]),
-          ),
+          dataSources: {
+            ...(baseSearch
+              ? { ds_base: { type: 'ds.search', name: 'Base search', options: { query: base, queryParameters: timeParameters, ...refreshOptions } } }
+              : {}),
+            ...Object.fromEntries(
+              panels.map((panel, panelIndex) => [
+                `ds_${panelIndex}`,
+                baseSearch
+                  ? { type: 'ds.chain', name: panel.title, options: { extend: 'ds_base', query: `${panel.filter ? `| search ${panel.filter} ` : ''}${transform(panel)}` } }
+                  : { type: 'ds.search', name: panel.title, options: { query: `${base}${panel.filter ? ` ${panel.filter}` : ''} ${transform(panel)}`, queryParameters: timeParameters, ...refreshOptions } },
+              ]),
+            ),
+            ...(filterField
+              ? {
+                  ds_filter: {
+                    type: 'ds.search',
+                    name: `${filterField} values`,
+                    options: { query: `index=${index}${sourcetype ? ` sourcetype=${sourcetype}` : ''} | stats count by ${filterField} | sort - count`, queryParameters: { earliest: '-7d@d', latest: 'now' } },
+                  },
+                }
+              : {}),
+          },
           inputs: {
-            input_time: {
+            input_global_trp: {
               type: 'input.timerange',
-              options: { token: 'time_token', defaultValue: '-24h@h,now' },
               title: 'Time range',
+              options: { token: 'global_time', defaultValue: '-24h@h,now' },
             },
             ...(filterField
               ? {
                   input_filter: {
                     type: 'input.dropdown',
-                    options: { token: `${filterField}_token`, defaultValue: '*', items: [{ label: 'All', value: '*' }] },
                     title: filterField,
+                    dataSources: { primary: 'ds_filter' },
+                    options: { token: `${filterField}_token`, defaultValue: '*', items: '>frame(label, value) | prepend(formattedStatics) | objects()' },
+                    context: {
+                      formattedConfig: { number: { prefix: '' } },
+                      formattedStatics: '>statics | formatByType(formattedConfig)',
+                      statics: [['All'], ['*']],
+                      label: `>primary | seriesByName("${filterField}") | renameSeries("label") | formatByType(formattedConfig)`,
+                      value: `>primary | seriesByName("${filterField}") | renameSeries("value") | formatByType(formattedConfig)`,
+                    },
                   },
                 }
               : {}),
           },
           layout: {
             type: 'grid',
-            options: { display: 'auto-scale' },
+            options: { width: 1200, height: Math.max(1, Math.ceil(panels.length / 2)) * 300 },
             structure: panels.map((_, panelIndex) => ({
               item: `viz_${panelIndex}`,
               type: 'block',
               position: { x: (panelIndex % 2) * 600, y: Math.floor(panelIndex / 2) * 300, w: 600, h: 300 },
             })),
-            globalInputs: ['input_time', ...(filterField ? ['input_filter'] : [])],
+            globalInputs: ['input_global_trp', ...(filterField ? ['input_filter'] : [])],
           },
-          description: '',
-          title,
         },
         null,
         2,
       ).split('\n');
+
 
       return {
         tier: TIER,
@@ -557,14 +513,12 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         notes: [
           'The time picker is a token every panel reads, so changing it changes the whole page. A panel with its own hard-coded time range ignores the picker, which is the most common reason a dashboard "does not respond".',
           ...(baseSearch ? ['The base search runs once and every panel post-processes it. Without that, opening this page starts one search per panel at the same moment.'] : []),
-          ...(studio
-            ? ['Dashboard Studio is JSON and is edited in the interface. It cannot be hand-merged as easily as Simple XML, and it is a newer format — check the Splunk version supports it before deploying.']
-            : ['Simple XML is text, so it diffs and merges in version control. It looks older and it is much easier to maintain.']),
+          'Dashboard Studio (a version="2" view holding the JSON definition). Splunk Enterprise 10.4 no longer loads Simple XML version="1.0" or HTML dashboards, so Studio is the format generated. Edit it in the Studio editor, or change the JSON and redeploy.',
           `Without \`metadata/default.meta\` the dashboard is private to nobody and nobody can see it. That file is included.`,
         ],
         before: [`| rest /servicesNS/-/${app}/data/ui/views | search title="${title}"`, `index=${index}${sourcetype ? ` sourcetype=${sourcetype}` : ''} | head 5`, ...(filterField ? [`index=${index} | stats count by ${filterField}`] : [])],
         files: {
-          ...(studio ? { [`default/data/ui/views/${id}.xml`]: ['<dashboard version="2" theme="light">', `  <definition><![CDATA[`, ...studioJson.map((l) => `  ${l}`), '  ]]></definition>', '</dashboard>'] } : { [`default/data/ui/views/${id}.xml`]: xml }),
+          [`default/data/ui/views/${id}.xml`]: ['<dashboard version="2" theme="light">', `  <label>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</label>`, '  <definition><![CDATA[', ...studioJson.map((l) => `  ${l}`), '  ]]></definition>', '</dashboard>'],
           'metadata/default.meta': defaultMeta(),
         },
         verify: [
@@ -964,7 +918,7 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         app,
         activation: 'reload',
         notes: [
-          `Tune it before enabling it. Run the search over thirty days and count how often it would have fired: \`${title}\` firing fifty times a day is noise, not a detection.`,
+          `It is enabled and scheduled as soon as the app is deployed, so tune it before deploying. Run the search over thirty days and count how often it would have fired: \`${title}\` firing fifty times a day is noise, not a detection.`,
           `Known false positives: ${falsePositives || '(none recorded — write them down)'}`,
           notable
             ? 'This raises a notable every time it fires. Watch the queue for the first two weeks and be ready to turn it into risk-only.'

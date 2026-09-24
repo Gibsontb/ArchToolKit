@@ -36,9 +36,10 @@ const TIER = 'addon' as const;
 const SRC = 'ArchToolKit';
 
 // --- small helpers -----------------------------------------------------------
+// Exported for the other onboarding blueprints (onboarding-more.ts).
 
 /** Non-empty, non-comment lines of a textarea. */
-function linesOf(value: string): string[] {
+export function linesOf(value: string): string[] {
   return String(value ?? '')
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -46,7 +47,7 @@ function linesOf(value: string): string[] {
 }
 
 /** Something a shell, PowerShell or a syslog filter will accept as a host name or address. */
-function hostAddress(value: string | undefined): string {
+export function hostAddress(value: string | undefined): string {
   const v = String(value ?? '').trim();
   return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(v) ? v : '';
 }
@@ -70,7 +71,7 @@ function sourcetypeOf(value: string, fallback: string): string {
 }
 
 /** An index name Splunk accepts: lower case letters, digits, _ and -, not starting with _ or -. */
-function indexName(value: string, fallback: string): string {
+export function indexName(value: string, fallback: string): string {
   const cleaned = String(value ?? '')
     .trim()
     .toLowerCase()
@@ -80,7 +81,7 @@ function indexName(value: string, fallback: string): string {
 }
 
 /** A value quoted for SPL when it contains anything but word characters. */
-function splQuote(value: string): string {
+export function splQuote(value: string): string {
   return /^[\w.:-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`;
 }
 
@@ -90,7 +91,7 @@ function py(value: string): string {
 }
 
 /** app.conf for an app that has to stand on its own: Splunk Cloud vetting and the deployer both read it. */
-function appConfLines(id: string, label: string, description: string): string[] {
+export function appConfLines(id: string, label: string, description: string): string[] {
   return [
     '[install]',
     'state = enabled',
@@ -116,7 +117,7 @@ function appConfLines(id: string, label: string, description: string): string[] 
   ];
 }
 
-function csvCell(value: string | number): string {
+export function csvCell(value: string | number): string {
   const s = String(value);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
@@ -469,7 +470,7 @@ interface NetworkPlatform {
 
 const NET: Readonly<Record<Platform, NetworkPlatform>> = {
   cisco_ios: {
-    addon: 'Cisco Networks Add-on for Splunk Enterprise (TA-cisco_ios, Splunkbase 1467), or Cisco’s newer Cisco Enterprise Networking Add-on (Splunkbase 7538), which SC4S now references — VERIFY which one you standardise on; do not install both',
+    addon: 'Cisco Enterprise Networking (Catalyst) Add-on for Splunk (Splunkbase 7538), which SC4S references. It replaces the deprecated Cisco Networks Add-on (TA-cisco_ios, Splunkbase 1467): remove that one where it is installed, do not run both',
     sourcetype: 'cisco:ios',
     produces: ['cisco:ios'],
     firewall: false,
@@ -479,7 +480,7 @@ const NET: Readonly<Record<Platform, NetworkPlatform>> = {
     sendsZone: true,
   },
   cisco_nxos: {
-    addon: 'the same Cisco add-on as IOS — NX-OS arrives as cisco:ios',
+    addon: 'the same Catalyst add-on as IOS (Splunkbase 7538) — NX-OS arrives as cisco:ios; VERIFY NX-OS coverage in the add-on’s release notes',
     sourcetype: 'cisco:ios',
     produces: ['cisco:ios'],
     firewall: false,
@@ -489,7 +490,7 @@ const NET: Readonly<Record<Platform, NetworkPlatform>> = {
     sendsZone: false,
   },
   cisco_wlc: {
-    addon: 'the same Cisco add-on as IOS — the Catalyst 9800 is IOS-XE and arrives as cisco:ios',
+    addon: 'the same Catalyst add-on as IOS (Splunkbase 7538) — the Catalyst 9800 is IOS-XE and arrives as cisco:ios',
     sourcetype: 'cisco:ios',
     produces: ['cisco:ios'],
     firewall: false,
@@ -520,7 +521,7 @@ const NET: Readonly<Record<Platform, NetworkPlatform>> = {
     sendsZone: false,
   },
   panos: {
-    addon: 'Splunk Add-on for Palo Alto Networks (Splunkbase 7523, Splunk-supported; supersedes the Palo Alto Networks Add-on, Splunkbase 2757)',
+    addon: 'Splunk Add-on for Palo Alto Networks 4.0.0 (Splunkbase 7523, Splunk-supported; supersedes the Palo Alto Networks Add-on, Splunkbase 2757)',
     sourcetype: 'pan:firewall',
     produces: ['pan:traffic', 'pan:threat', 'pan:system', 'pan:config', 'pan:globalprotect', 'pan:userid'],
     firewall: true,
@@ -530,7 +531,7 @@ const NET: Readonly<Record<Platform, NetworkPlatform>> = {
     sendsZone: false,
   },
   fortios: {
-    addon: 'Fortinet FortiGate Add-On for Splunk (Splunk_TA_fortinet_fortigate, Splunkbase 2846, Fortinet-published) — version 1.6 and later expects fortigate_* sourcetypes, earlier ones fgt_*',
+    addon: 'Fortinet FortiGate Add-On for Splunk 1.6.10 (Splunk_TA_fortinet_fortigate, Splunkbase 2846, Fortinet-published, not Splunk-supported) — version 1.6 and later expects fortigate_* sourcetypes, earlier ones fgt_*',
     sourcetype: 'fortigate_log',
     produces: ['fortigate_traffic', 'fortigate_utm', 'fortigate_event'],
     firewall: true,
@@ -847,7 +848,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
       { id: 'native_fields', label: 'Fields already named as the CIM names them', control: 'text', default: 'reason', hint: 'Comma separated — counted as mapped' },
       { id: 'lookup', label: 'Lookup for event descriptions', control: 'toggle', default: true },
       { id: 'lookup_key', label: 'Lookup key field', control: 'text', default: 'event_id', showWhen: { input: 'lookup', equals: ['true'] } },
-      { id: 'input_path', label: 'Monitor path (inputs.conf, disabled)', control: 'text', default: '/var/log/acme/widget.log' },
+      { id: 'input_path', label: 'Monitor path (inputs.conf)', control: 'text', default: '/var/log/acme/widget.log' },
       {
         id: 'sample',
         label: 'Sample events',
@@ -1248,7 +1249,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         notes: [
           'One copy of this add-on goes to every tier: the search heads (deployer), the indexers (cluster manager), any heavy forwarder that parses this data, and the forwarders that collect it (deployment server). Each tier uses its part and ignores the rest.',
           `Index-time settings — LINE_BREAKER, TIME_*, TRUNCATE${dropRegex ? ', the nullQueue transform' : ''} — take effect on whichever node parses the data first: the indexers, or a heavy forwarder in front of them. They do not apply to data indexed before they were deployed.`,
-          `inputs.conf ships with the input disabled. Enable it on the collecting forwarders only, in local/inputs.conf of the deployment-apps copy, or in a separate inputs app — never on the search heads and indexers that also receive this add-on.`,
+          `inputs.conf ships with the input enabled: every node that receives this add-on and has the file reads it. On search heads and indexers that do not have the file it reads nothing; to keep them from ever reading it, set disabled = 1 in their local/inputs.conf.`,
           `Run python3 ops/test_parsing.py before deploying: it applies the line breaking and timestamp settings to ops/sample.log (the sample events from the form) and prints each event and the time it would get.`,
           `Then index the sample into a test index with the add-on in place (Settings > Add data > Upload, sourcetype ${st}) and run the coverage search. ops/CIM_MAPPING.txt lists every field the model needs and what maps it.`,
           `The index (${index}) is not created here; create it on the indexers first (the splunk_index blueprint).`,
@@ -1281,10 +1282,10 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
             ...tags.map((t) => `${t} = enabled`),
           ],
           'default/inputs.conf': [
-            '# Disabled here, on purpose: this add-on goes to every tier. Enable it in',
-            '# local/inputs.conf on the forwarders that read the file.',
+            '# Enabled: every node with this add-on that has the file reads it.',
+            '# Set disabled = 1 in local/inputs.conf on nodes that must not.',
             `[monitor://${inputPath}]`,
-            'disabled = 1',
+            'disabled = 0',
             `index = ${index}`,
             `sourcetype = ${st}`,
             '# Rotated copies are the same data again.',
@@ -1589,7 +1590,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         ],
         before: [
           `| rest /services/data/indexes | search title IN (${indexList}) | table title, splunk_server`,
-          `| rest /services/apps/local | search title IN (TA-cisco_ios, Splunk_TA_cisco-asa, Splunk_TA_paloalto, Splunk_TA_paloalto_networks, Splunk_TA_fortinet_fortigate, Splunk_TA_f5-bigip) | table title, version, splunk_server`,
+          `| rest /services/apps/local | search title IN (TA-cisco_ios, Splunk_TA_cisco-asa, Splunk_TA_paloalto, Splunk_TA_paloalto_networks, Splunk_TA_fortinet_fortigate, Splunk_TA_f5-bigip) OR label="*Cisco*Networking*" | table title, label, version, splunk_server   # TA-cisco_ios is deprecated: replace it with the Catalyst add-on (7538). VERIFY that add-on's app folder name`,
           collector === 'sc4s' ? `ss -ltnup | grep -E ':(514|6514)\\b'   # on ${target}: SC4S listening` : `ss -ltnup | grep -E ':(${hfPorts.map(([port]) => port).join('|')})\\b'   # on ${target}: nothing already on these ports`,
           'show ntp associations   # (IOS/NX-OS/ASA; "show ntp status" on EOS, "diagnose sys ntp status" on FortiOS) — synchronised before logging is turned on',
         ],
@@ -1654,7 +1655,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
     label: 'Onboard the VCF / vSphere estate',
     group: 'Onboard what you built',
     description:
-      'ESXi, vCenter and NSX syslog straight to Splunk with the official ESXi and vCenter log add-ons, and SDDC Manager, VCF Operations and VCF Automation through VCF Operations for Logs forwarding — with a PowerCLI script for the hosts, a REST script for vCenter and NSX (both dry runs by default), and a search for every expected component that is not reporting.',
+      'ESXi, vCenter and NSX syslog straight to Splunk with the official ESXi and vCenter log add-ons, and SDDC Manager, VCF Operations and VCF Automation through VCF Operations for Logs forwarding — with a PowerCLI script for the hosts, a REST script for vCenter and NSX (both apply when run; --dry-run previews), and a search for every expected component that is not reporting.',
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_vmware_onboarding' },
       { id: 'use_estate', label: 'ESXi hosts and vCenters from the imported estate', control: 'toggle', default: true, hint: 'Falls back to the lists below when no estate is loaded' },
@@ -1774,7 +1775,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '# Adds the target to Syslog.global.logHost (keeping any existing target,',
         '# such as VCF Operations for Logs), opens the syslog firewall ruleset,',
         '# reloads syslog and sends a test mark.',
-        '# Dry run by default: -Execute to act.',
+        '# Applies when run; -DryRun previews.',
         '#',
         '# Credentials never go on the command line. Either:',
         '#   -CredentialFile <path>  a PSCredential saved with',
@@ -1785,16 +1786,17 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '# VCF 9.1 API tokens: VERIFY whether your PowerCLI (VCF.PowerCLI 9.x)',
         '# Connect-VIServer accepts one; until then use a PSCredential.',
         '#',
-        `# Usage: pwsh ./esxi-syslog.ps1 -VCenter ${vcenters[0] ?? 'vc01.example.com'} [-CredentialFile <path>] [-Execute] [-Replace]`,
+        `# Usage: pwsh ./esxi-syslog.ps1 -VCenter ${vcenters[0] ?? 'vc01.example.com'} [-CredentialFile <path>] [-DryRun] [-Replace]`,
         'param(',
         '  [Parameter(Mandatory = $true)][string]$VCenter,',
         '  [string]$CredentialFile,',
         "  [string]$HostsFile = (Join-Path $PSScriptRoot 'esxi-hosts.txt'),",
         `  [string]$Target = '${esxiTarget}',`,
         '  [switch]$Replace,',
-        '  [switch]$Execute',
+        '  [switch]$DryRun',
         ')',
         "$ErrorActionPreference = 'Stop'",
+        '$Execute = -not $DryRun',
         'if ($CredentialFile) { $cred = Import-Clixml -Path $CredentialFile } else { $cred = Get-Credential -Message "vCenter $VCenter" }',
         'Connect-VIServer -Server $VCenter -Credential $cred | Out-Null',
         '# Hosts not found in this vCenter are collected; the script exits 1 with the',
@@ -1831,16 +1833,16 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
       const proto = transport === 'udp' ? 'UDP' : transport === 'tls' ? 'TLS' : 'TCP';
       const sh: string[] = [
         '# Point vCenter (appliance log forwarding) and each NSX Manager node at the',
-        '# Splunk syslog collector. Dry run by default; --execute to act.',
+        '# Splunk syslog collector. Applies when run; --dry-run previews.',
         '#',
         '# Credentials: curl netrc files, mode 600, never on a command line:',
         '#   ~/.vcf/vcenter.netrc   machine vc01.example.com login administrator@vsphere.local password ...',
         '#   ~/.vcf/nsx.netrc       machine nsx01a.example.com login admin password ...',
         '# CACERT=<bundle> to verify the appliances’ certificates (VMCA root, NSX CA).',
         '#',
-        '# Usage: bash vcf-syslog.sh [--execute]',
+        '# Usage: bash vcf-syslog.sh [--dry-run]',
         'set -euo pipefail',
-        'EXECUTE=0; [[ "${1:-}" == "--execute" ]] && EXECUTE=1',
+        'EXECUTE=1; [[ "${1:-}" == "--dry-run" ]] && EXECUTE=0',
         'VC_NETRC="${VC_NETRC:-$HOME/.vcf/vcenter.netrc}"',
         'NSX_NETRC="${NSX_NETRC:-$HOME/.vcf/nsx.netrc}"',
         `TARGET_HOST="${target}"`,
@@ -2011,15 +2013,15 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
             ? 'On that forwarding rule, filter out the ESXi, vCenter and NSX sources — they reach Splunk directly here, and forwarding them too indexes every event twice.'
             : 'Everything reaches Splunk through VCF Operations for Logs, so the ESXi and vCenter add-ons will not recognise the events: they arrive with the forwarding rule’s framing, not as vmw-syslog. VERIFY what your forwarding rule sends before relying on either add-on.',
           'ops/esxi-syslog.ps1 appends the Splunk target to Syslog.global.logHost, so an existing target (VCF Operations for Logs) stays. -Replace overwrites instead.',
-          'ops/vcf-syslog.sh sets vCenter appliance forwarding (at most three targets) and an exporter on each NSX Manager node. Both scripts are dry runs until -Execute / --execute.',
+          'ops/vcf-syslog.sh sets vCenter appliance forwarding (at most three targets) and an exporter on each NSX Manager node. Both scripts apply when run; -DryRun / --dry-run previews.',
           'The Splunk Add-on for VMware (Splunk_TA_vmware, with a data collection node) collects performance and inventory through the vSphere API. It is a different thing from these log add-ons and is not configured here.',
           `Create the indexes first: ${indexes.join(', ')}.`,
         ],
         before: [
           `| rest /services/data/indexes | search title IN (${indexList}) | table title, splunk_server`,
           '| rest /services/apps/local | search title IN (Splunk_TA_esxilogs, Splunk_TA_vcenter) | table title, version, splunk_server',
-          `pwsh ./ops/esxi-syslog.ps1 -VCenter ${vcenters[0] ?? '<vcenter>'}   # dry run: shows each host’s current logHost`,
-          'bash ops/vcf-syslog.sh   # dry run: shows current vCenter forwarding and NSX exporters',
+          `pwsh ./ops/esxi-syslog.ps1 -VCenter ${vcenters[0] ?? '<vcenter>'} -DryRun   # shows each host’s current logHost`,
+          'bash ops/vcf-syslog.sh --dry-run   # shows current vCenter forwarding and NSX exporters',
           `nc -vz ${target} ${port.esxi}   # from an ESXi host (nc is on ESXi): the collector is reachable`,
         ],
         files: {
@@ -2061,7 +2063,7 @@ export const ADDON_BLUEPRINTS: readonly SplunkBlueprint[] = [
           `index=${vcfIndex} earliest=-15m | stats count by host, sourcetype   # NSX, SDDC Manager, VCF Operations, VCF Automation`,
         ],
         backout: [
-          'ESXi: pwsh ./ops/esxi-syslog.ps1 shows the old value in its dry run; set it back with Get-AdvancedSetting -Name Syslog.global.logHost | Set-AdvancedSetting -Value <old>, then esxcli system syslog reload',
+          'ESXi: pwsh ./ops/esxi-syslog.ps1 -DryRun shows the old value; set it back with Get-AdvancedSetting -Name Syslog.global.logHost | Set-AdvancedSetting -Value <old>, then esxcli system syslog reload',
           'vCenter: PUT /api/appliance/logging/forwarding with the cfg_list as it was (the script prints it)',
           'NSX: DELETE /api/v1/node/services/syslog/exporters/splunk on each Manager node',
           `Remove ${app} from the search heads${collector === 'hf' ? ' and the listener app from the heavy forwarders' : ' and the ops/sc4s entries from SC4S'}`,

@@ -343,7 +343,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         `# Set the LDAP bind password for strategy "${strategy}" through REST, from a file.`,
         '#',
         '# usage: set-ldap-bind-password.sh --token-file ~/.splunk/admin.token \\',
-        '#          --password-file ~/.splunk/ldap-bind.pw [--url https://sh:8089] [--cacert ca.pem] [--execute]',
+        '#          --password-file ~/.splunk/ldap-bind.pw [--url https://sh:8089] [--cacert ca.pem] [--dry-run]',
         '#',
         '# Both files must be mode 600. The password reaches curl in a config on stdin',
         '# (curl -K -), so it is never on a command line, in ps, or in shell history.',
@@ -352,14 +352,14 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         `SPLUNK_URL=${shq(str(values, 'splunk_url', 'https://localhost:8089'))}`,
         `STRATEGY=${shq(strategy)}`,
         `APP=${shq(app)}`,
-        'TOKEN_FILE=""; PASSWORD_FILE=""; CA_FILE=""; EXECUTE=0',
+        'TOKEN_FILE=""; PASSWORD_FILE=""; CA_FILE=""; EXECUTE=1',
         'while [ $# -gt 0 ]; do',
         '  case $1 in',
         '    --url) SPLUNK_URL=$2; shift 2 ;;',
         '    --token-file) TOKEN_FILE=$2; shift 2 ;;',
         '    --password-file) PASSWORD_FILE=$2; shift 2 ;;',
         '    --cacert) CA_FILE=$2; shift 2 ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    *) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
         '  esac',
         'done',
@@ -377,7 +377,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         'api GET "$EP?output_mode=json" | jq -r \'.entry[0].content | "host=\\(.host) port=\\(.port) SSLEnabled=\\(.SSLEnabled) bindDN=\\(.bindDN)"\' >&2',
         '',
         'if [ "$EXECUTE" != 1 ]; then',
-        '  note "Dry run: would set bindDNpassword for $STRATEGY from $PASSWORD_FILE. Re-run with --execute."',
+        '  note "Dry run: would set bindDNpassword for $STRATEGY from $PASSWORD_FILE. Nothing was changed. Run it without --dry-run to apply."',
         '  exit 0',
         'fi',
         '',
@@ -651,8 +651,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
       { id: 'server_cert', label: 'Server certificate file (cert + key + chain)', control: 'text', default: 'splunk-server.pem' },
       { id: 'ca_file', label: 'CA bundle', control: 'text', default: 'ca-chain.pem' },
       { id: 'key_encrypted', label: 'Private key is passphrase-protected', control: 'toggle', default: true },
-      { id: 'tls13', label: 'Also allow TLS 1.3', control: 'toggle', default: false, hint: 'Only on versions that accept tls1.3 in sslVersions — VERIFY' },
-      { id: 'legacy_tls', label: 'Allow TLS 1.0/1.1 for old forwarders', control: 'toggle', default: false },
+      { id: 'tls13', label: 'Also allow TLS 1.3', control: 'toggle', default: false, hint: 'Splunk 10.4 and later; TLS 1.0 and 1.1 are removed in 10.4' },
       { id: 'verify_cert', label: 'Verify peer certificates', control: 'toggle', default: true },
       { id: 'verify_name', label: 'Verify peer host names', control: 'toggle', default: true },
       { id: 'require_client', label: 'Require client certificates (mutual TLS) on splunkd and receiving', control: 'toggle', default: false },
@@ -672,7 +671,6 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
       const caFile = `${dir}/${str(values, 'ca_file', 'ca-chain.pem')}`;
       const encrypted = bool(values, 'key_encrypted', true);
       const tls13 = bool(values, 'tls13', false);
-      const legacy = bool(values, 'legacy_tls', false);
       const verifyCert = bool(values, 'verify_cert', true);
       const verifyName = bool(values, 'verify_name', true);
       const mutual = bool(values, 'require_client', false);
@@ -685,7 +683,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
       const checkHosts = listOf(str(values, 'check_hosts', ''));
       const findings            = [];
 
-      const versions = legacy ? 'tls1.0, tls1.1, tls1.2' : tls13 ? 'tls1.2, tls1.3' : 'tls1.2';
+      const versions = tls13 ? 'tls1.2, tls1.3' : 'tls1.2';
       const cipherSuite = 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256';
       const passwordLine = encrypted ? 'sslPassword = <REQUIRED: set in local/ on each host; splunkd encrypts it on restart>' : 'sslPassword =';
 
@@ -694,14 +692,8 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
       } else if (!verifyName) {
         findings.push(warning('splunk.tls-no-name-check', 'Certificates are verified against the CA but not the host name, so any certificate your CA ever issued is accepted for any Splunk host.', { source: 'ArchToolKit' }));
       }
-      if (legacy) {
-        findings.push(error('splunk.tls-legacy', 'TLS 1.0 and 1.1 are deprecated (RFC 8996) and fail every current compliance baseline. The forwarders that need them are old enough to be out of support.', { remediation: 'Upgrade those forwarders; keep sslVersions = tls1.2.', source: 'RFC 8996' }));
-      }
       if (bool(values, 'default_certs', false)) {
         findings.push(error('splunk.tls-default-certs', 'The default Splunk certificates are signed by a CA whose private key ships in every Splunk download. Anyone can mint a certificate your instances will trust.', { remediation: 'Replace $SPLUNK_HOME/etc/auth/server.pem, cacert.pem and the splunkweb cert with your own; the check script flags any that remain.', source: 'Splunk: About securing Splunk with TLS' }));
-      }
-      if (tls13) {
-        findings.push(warning('splunk.tls13-verify', 'tls1.3 in sslVersions is accepted only by recent Splunk versions; an older splunkd ignores or rejects the value. Check the server.conf spec for your exact version before rolling this out.', { source: 'VERIFY' }));
       }
       if (mutual) {
         findings.push(warning('splunk.tls-mutual', 'requireClientCert on splunkd means every client — the CLI, REST scripts, forwarders, the monitoring console — must present a certificate. Roll it out after everything has one.', { source: 'ArchToolKit' }));
@@ -714,8 +706,8 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '[sslConfig]',
         '# splunkd management port (8089): REST, CLI, clustering, deployment server.',
         'enableSplunkdSSL = true',
-        '# Protocol floor. tls1.2 is the only version every supported Splunk build and',
-        '# forwarder agrees on.' + (tls13 ? ' tls1.3 — VERIFY your version accepts it.' : ''),
+        '# Protocol floor. Splunk 10.4 removed TLS 1.0 and 1.1; tls1.2 is what every',
+        '# supported build and forwarder agrees on.' + (tls13 ? ' tls1.3 needs 10.4 or later.' : ''),
         `sslVersions = ${versions}`,
         `sslVersionsForClient = ${versions}`,
         '# ECDHE with AES-GCM only: forward secrecy, authenticated encryption.',
@@ -739,8 +731,9 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '# The KV store (MongoDB) uses the [sslConfig] serverCert by default. It needs',
         '# the key in the same PEM and fails to start on a certificate without',
         '# clientAuth in its extended key usage — the CSR script requests both.',
-        '# Check after restart: splunk show kvstore-status. VERIFY on 9.4+/10.x, where',
-        '# the KV store server version changed.',
+        '# Check after restart: splunk show kvstore-status. 10.4 adds a',
+        '# [kvstoreSslClientConfig] stanza for the KV store client side; VERIFY its',
+        '# settings in the 10.4 server.conf.spec before relying on these two.',
         `sslVerifyServerCert = ${verifyCert}`,
         `sslVerifyServerName = ${verifyName}`,
       ];
@@ -766,6 +759,8 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         `# listeners cannot share the port.`,
         `[splunktcp-ssl:${receiving}]`,
         'disabled = 0',
+        '# Splunk-to-Splunk compression, matching compressed = true on the forwarders.',
+        'compressed = true',
         '',
         '[SSL]',
         `serverCert = ${serverCert}`,
@@ -778,19 +773,22 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
 
       const outputsConf = [
         '# outputs.conf for the forwarders — deploy it in the forwarders’ outputs app,',
-        '# not this one. Each forwarder needs the CA chain; a client certificate only',
-        '# if the indexers set requireClientCert.',
+        '# not this one. The CA chain each forwarder trusts is sslRootCAPath in its',
+        '# server.conf [sslConfig]; outputs.conf no longer takes it.',
         '[tcpout]',
         'defaultGroup = primary_indexers',
         '',
         '[tcpout:primary_indexers]',
         `server = ${indexers.join(', ')}`,
-        ...(mutual ? [`clientCert = ${dir}/forwarder-client.pem`, encrypted ? 'sslPassword = <REQUIRED: set in local/outputs.conf>' : 'sslPassword ='] : []),
+        '# The forwarder’s certificate and key in one PEM (presented to the indexers',
+        '# when they set requireClientCert).',
+        `clientCert = ${dir}/forwarder-client.pem`,
+        ...(encrypted ? ['# sslPassword for that key: set it in local/outputs.conf on each forwarder.'] : []),
+        `sslVersions = ${versions}`,
         `sslVerifyServerCert = ${verifyCert}`,
         `sslVerifyServerName = ${verifyName}`,
-        '# Compression inside TLS costs CPU on both ends for data Splunk already',
-        '# compresses on the wire; keep it off.',
-        'useClientSSLCompression = false',
+        '# Splunk-to-Splunk compression; TLS-level compression is deprecated.',
+        'compressed = true',
         'useACK = true',
       ];
 
@@ -799,7 +797,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '# Make a private key and a CSR for a Splunk host. The key is written mode 600',
         '# and never printed. The passphrase, if any, is read from a mode-600 file.',
         '#',
-        '# usage: make-csr.sh [--cn host] [--san a,b] [--out-dir dir] [--passphrase-file f] [--execute]',
+        '# usage: make-csr.sh [--cn host] [--san a,b] [--out-dir dir] [--passphrase-file f] [--dry-run]',
         '#        make-csr.sh assemble --cert signed.pem --key key.pem --chain chain.pem --out splunk-server.pem',
         'set -euo pipefail',
         'umask 077',
@@ -807,7 +805,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         `SANS=${shq(sans.join(','))}`,
         'OUT_DIR=.',
         'PASS_FILE=""',
-        'EXECUTE=0',
+        'EXECUTE=1',
         'die() { printf "error: %s\\n" "$*" >&2; exit 2; }',
         'check_private() { local m; m=$(stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"); case $m in 600|400) ;; *) die "$1 is mode $m; chmod 600 it" ;; esac; }',
         'command -v openssl >/dev/null || die "openssl is required"',
@@ -830,7 +828,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '    --san) SANS=$2; shift 2 ;;',
         '    --out-dir) OUT_DIR=$2; shift 2 ;;',
         '    --passphrase-file) PASS_FILE=$2; shift 2 ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    *) die "unknown option: $1" ;;',
         '  esac',
         'done',
@@ -842,7 +840,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '',
         'echo "Would create: $KEY (RSA 2048, mode 600)$([ -n "$PASS_FILE" ] && echo ", AES-256 with the passphrase in $PASS_FILE")"',
         'echo "             $CSR  CN=$CN  SAN=$SAN_EXT  EKU=serverAuth,clientAuth"',
-        '[ "$EXECUTE" = 1 ] || { echo "Dry run. Re-run with --execute."; exit 0; }',
+        '[ "$EXECUTE" = 1 ] || { echo "Dry run: nothing was changed. Run it without --dry-run to apply."; exit 0; }',
         '',
         'mkdir -p "$OUT_DIR"',
         'if [ -n "$PASS_FILE" ]; then',
@@ -867,12 +865,12 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
 
       const checkScript = [
         '#!/usr/bin/env bash',
-        '# Check the certificate each Splunk port presents: expiry, issuer, and whether',
-        '# it is still a default Splunk certificate.',
+        '# Check the certificate each Splunk port presents: expiry, issuer, whether it',
+        '# is still a default Splunk certificate, and whether it is SHA-1 signed.',
         '#',
         '# usage: check-cert-expiry.sh [--days N] [host:port ...]',
-        '# exit: 0 all good, 1 something expires within N days, 2 expired or a default',
-        '#       Splunk certificate, 3 a host could not be reached.',
+        '# exit: 0 all good, 1 something expires within N days, 2 expired, SHA-1 or a',
+        '#       default Splunk certificate, 3 a host could not be reached.',
         'set -uo pipefail',
         `DAYS=${warnDays}`,
         `HOSTS=(${checkHosts.map(shq).join(' ')})`,
@@ -892,8 +890,11 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '  issuer=$(printf "%s\\n" "$pem" | openssl x509 -noout -issuer)',
         '  end_s=$(date -d "$end" +%s 2>/dev/null || date -j -f "%b %e %T %Y %Z" "$end" +%s)',
         '  left=$(( (end_s - NOW) / 86400 ))',
+        '  sig=$(printf "%s\\n" "$pem" | openssl x509 -noout -text | grep -m1 "Signature Algorithm")',
         '  status=OK',
         '  if printf "%s" "$issuer" | grep -qiE "SplunkCommonCA|O ?= ?Splunk"; then status="DEFAULT-SPLUNK-CERT"; worst 2',
+        '  # Splunk 10.4 rejects SHA-1 signed certificates.',
+        '  elif printf "%s" "$sig" | grep -qi sha1; then status="SHA1-SIGNED"; worst 2',
         '  elif [ "$left" -lt 0 ]; then status=EXPIRED; worst 2',
         '  elif [ "$left" -lt "$DAYS" ]; then status="EXPIRES-SOON"; worst 1',
         '  fi',
@@ -912,6 +913,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
           'Order of rollout: certificates and CA chain on every host first, with verification still off; then turn on sslVerifyServerCert everywhere; then, if wanted, requireClientCert. Turning verification on before every peer has a valid certificate breaks clustering and forwarding at once.',
           `Private keys and passphrases stay on the host. ${encrypted ? 'sslPassword is a <REQUIRED> placeholder in default/: set the real value in local/server.conf, local/web.conf and local/inputs.conf on each host, and splunkd encrypts it with splunk.secret on the next restart.' : 'The key is unencrypted, so sslPassword is empty; protect the file with mode 600, owned by the splunk user.'}`,
           'Indexer cluster peers get server.conf and inputs.conf through the cluster manager bundle (manager-apps), not by hand.',
+          `Written for Splunk Enterprise 10.4: sslVersions ${versions} (TLS 1.0 and 1.1 are removed${tls13 ? '; tls1.3 is accepted from 10.4, so older forwarders negotiate 1.2' : ''}), and SHA-1 signed certificates are rejected — ops/check-cert-expiry.sh flags them. Compression is Splunk-to-Splunk (compressed = true on both ends), not TLS compression.`,
           'Splunk Cloud Platform manages its own certificates; this app is for Splunk Enterprise and for the forwarders that send to either.',
         ],
         before: [
@@ -1194,7 +1196,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
     tier: TIER,
     label: 'REST automation kit for day-2 admin',
     group: 'Automation',
-    description: 'Bash and PowerShell scripts for the chores done by hand in the UI — enable and disable searches, change schedules, reassign orphaned objects, rotate a HEC token, create an index — dry run by default, with an undo log.',
+    description: 'Bash and PowerShell scripts for the chores done by hand in the UI — enable and disable searches, change schedules, reassign orphaned objects, rotate a HEC token, create an index — applied when run (--dry-run previews), with an undo log.',
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_rest_ops' },
       { id: 'splunk_url', label: 'Management URL', control: 'text', default: 'https://splunk-sh1.corp.example.com:8089' },
@@ -1230,7 +1232,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
       findings.push(info('splunk.rest-token-perms', 'Both scripts refuse a token file that anyone but its owner can read (mode other than 600/400, or a Windows ACL granting Everyone, Users or Authenticated Users).', { source: 'ArchToolKit' }));
 
       const usage = [
-        '# Commands (dry run unless --execute):',
+        '# Commands (apply when run; --dry-run previews):',
         '#   list-searches   [--app A|--all-apps] [--scheduled]',
         '#   disable-search  --name PATTERN [--app A|--all-apps]     (PATTERN may use * and ?)',
         '#   enable-search   --name PATTERN [--app A|--all-apps]',
@@ -1247,7 +1249,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '# Splunk day-2 REST operations. Every change is logged before and after, with',
         '# the command that undoes it, to $LOG_DIR.',
         '#',
-        '# usage: splunk-rest-ops.sh COMMAND [options] [--execute]',
+        '# usage: splunk-rest-ops.sh COMMAND [options] [--dry-run]',
         ...usage,
         '#',
         '# Common options: --url URL  --token-file F (mode 600)  --cacert F  --log-dir D',
@@ -1258,7 +1260,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         `APP=${shq(defaultApp)}`,
         `LOG_DIR=${shq(logDir)}`,
         'CMD=${1:-help}; [ $# -gt 0 ] && shift',
-        'EXECUTE=0; ALL_APPS=0; NAME=""; CRON=""; NEW_OWNER=""; FROM_OWNER=""; ORPHANS=0; TYPE=savedsearch',
+        'EXECUTE=1; ALL_APPS=0;NAME=""; CRON=""; NEW_OWNER=""; FROM_OWNER=""; ORPHANS=0; TYPE=savedsearch',
         'OUT=""; MAX_MB=""; RETENTION_DAYS=""; DATATYPE=event; SCHEDULED=0',
         'while [ $# -gt 0 ]; do',
         '  case $1 in',
@@ -1279,7 +1281,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '    --retention-days) RETENTION_DAYS=$2; shift 2 ;;',
         '    --datatype) DATATYPE=$2; shift 2 ;;',
         '    --scheduled) SCHEDULED=1; shift ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    *) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
         '  esac',
         'done',
@@ -1344,7 +1346,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '    if [ "$EXECUTE" = 1 ]; then',
         '      api POST "$link/$want" -o /dev/null',
         '      log "after  $a/$n disabled=$target"',
-        '      log "undo   $0 $([ "$want" = disable ] && echo enable-search || echo disable-search) --app $(printf %q "$a") --name $(printf %q "$n") --execute"',
+        '      log "undo   $0 $([ "$want" = disable ] && echo enable-search || echo disable-search) --app $(printf %q "$a") --name $(printf %q "$n")"',
         '    fi',
         '  done < "$WORK/searches.tsv"',
         '  [ "$hits" -gt 0 ] || die "no saved search matches $NAME"',
@@ -1381,7 +1383,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '        api POST "$link" --data-urlencode "cron_schedule=$CRON" -o /dev/null',
         '        log "after  $a/$n cron_schedule=$CRON"',
         '        if [ "$c" = - ]; then log "undo   (it had no cron_schedule) curl -X POST <url>$link --data-urlencode cron_schedule="',
-        '        else log "undo   $0 set-schedule --app $(printf %q "$a") --name $(printf %q "$n") --cron $(printf %q "$c") --execute"; fi',
+        '        else log "undo   $0 set-schedule --app $(printf %q "$a") --name $(printf %q "$n") --cron $(printf %q "$c")"; fi',
         '      fi',
         '    done < "$WORK/searches.tsv"',
         '    [ "$found" = 1 ] || die "no saved search named $NAME"',
@@ -1436,7 +1438,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '      mv -f -- "$tmp_out" "$OUT"',
         '      log "after  hec $NEW created; value written to $OUT"',
         '      log "undo   curl -X DELETE <url>/services/data/inputs/http/$NEW"',
-        '      echo "New token $NEW written to $OUT. Move the senders, then: $0 retire-hec --name $(printf %q "$NAME") --execute"',
+        '      echo "New token $NEW written to $OUT. Move the senders, then: $0 retire-hec --name $(printf %q "$NAME")"',
         '    fi',
         '    ;;',
         '  retire-hec)',
@@ -1470,6 +1472,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '  *) die "unknown command $CMD (try --help)" ;;',
         'esac',
         '[ -s "$LOG" ] && echo "Logged to $LOG"',
+        '[ "$EXECUTE" = 1 ] || echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
         'exit 0',
       ];
 
@@ -1477,10 +1480,10 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '#Requires -Version 7.0',
         '<#',
         '  Splunk day-2 REST operations (PowerShell 7). Same commands as splunk-rest-ops.sh.',
-        '  Dry run unless -Execute. Every change is logged with its undo to -LogDir.',
+        '  Applies when run; -DryRun previews. Every change is logged with its undo to -LogDir.',
         '',
         '  ./SplunkRestOps.ps1 -Command list-searches -App search',
-        '  ./SplunkRestOps.ps1 -Command disable-search -App search -Name "Old *" -Execute',
+        '  ./SplunkRestOps.ps1 -Command disable-search -App search -Name "Old *" -DryRun',
         '  ./SplunkRestOps.ps1 -Command reassign -Orphans -NewOwner svc_splunk -App search',
         '#>',
         '[CmdletBinding()]',
@@ -1502,10 +1505,11 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '  [int]$RetentionDays,',
         '  [ValidateSet("event","metric")][string]$Datatype = "event",',
         '  [switch]$Scheduled,',
-        '  [switch]$Execute',
+        '  [switch]$DryRun',
         ')',
         'Set-StrictMode -Version Latest',
         '$ErrorActionPreference = "Stop"',
+        '$Execute = -not $DryRun',
         'if ($AllApps) { $App = "" }',
         '$TokenFile = $TokenFile -replace "^~", $HOME',
         '$LogDir = $LogDir -replace "^~", $HOME',
@@ -1586,7 +1590,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '        Invoke-Splunk POST "$($o.Link)/$want" | Out-Null',
         '        $undo = if ($want -eq "disable") { "enable-search" } else { "disable-search" }',
         '        Write-Log "after  $($o.App)/$($o.Name) disabled=$($want -eq \'disable\')"',
-        '        Write-Log "undo   ./SplunkRestOps.ps1 -Command $undo -App \'$($o.App)\' -Name \'$($o.Name)\' -Execute"',
+        '        Write-Log "undo   ./SplunkRestOps.ps1 -Command $undo -App \'$($o.App)\' -Name \'$($o.Name)\'"',
         '      }',
         '    }',
         '  }',
@@ -1601,7 +1605,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '    if ($Execute) {',
         '      Invoke-Splunk POST $o.Link @{ cron_schedule = $Cron } | Out-Null',
         '      Write-Log "after  $($o.App)/$($o.Name) cron_schedule=$Cron"',
-        '      Write-Log "undo   ./SplunkRestOps.ps1 -Command set-schedule -App \'$($o.App)\' -Name \'$($o.Name)\' -Cron \'$($o.Cron)\' -Execute"',
+        '      Write-Log "undo   ./SplunkRestOps.ps1 -Command set-schedule -App \'$($o.App)\' -Name \'$($o.Name)\' -Cron \'$($o.Cron)\'"',
         '    }',
         '  }',
         '  "orphans" { Get-Orphans | Format-Table Name, App, Owner, Sharing -AutoSize }',
@@ -1648,7 +1652,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '      Set-Content -LiteralPath $Out -Value $value -NoNewline',
         '      Write-Log "after  hec $new created; value written to $Out"',
         '      Write-Log "undo   DELETE /services/data/inputs/http/$new"',
-        '      "New token $new written to $Out. Move the senders, then retire-hec -Name $Name -Execute"',
+        '      "New token $new written to $Out. Move the senders, then retire-hec -Name $Name"',
         '    }',
         '  }',
         '  "retire-hec" {',
@@ -1678,6 +1682,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '  }',
         '}',
         'if ((Test-Path -LiteralPath $Log)) { "Logged to $Log" }',
+        'if ($DryRun) { "Dry run: nothing was changed. Run it without -DryRun to apply." }',
       ];
 
       const orphanReport = [
@@ -1710,7 +1715,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         notes: [
           'The scripts run from an operator workstation or a jump host, not inside Splunk. The app itself carries only two reports (orphaned searches, objects by owner) for the search head.',
           'Authentication is a Splunk authentication token (Settings > Tokens, or the token lifecycle blueprint) in a mode-600 file. The header reaches curl through -H @file from a private temp directory, so the token never appears in ps output or shell history.',
-          'Every command is a dry run until --execute (-Execute). Changes are logged before and after with the command that reverses them; keep the log with the change record.',
+          'Every command applies when run; add --dry-run (-DryRun) first to preview. Changes are logged before and after with the command that reverses them; keep the log with the change record.',
           'A name pattern (--name "Nightly *") across all apps is refused unless --all-apps is given — the same pattern in a dozen apps is how a quick clean-up disables someone else’s alert.',
           'HEC rotation creates a second token with the same settings and leaves the old one running, because senders cannot all switch at the same instant. retire-hec disables the old one once _internal shows no traffic on it. On a HEC tier behind a load balancer, tokens are distributed by the deployment server instead; rotate there.',
           'create-index refuses on a clustered indexer: cluster indexes go in the manager bundle (see the indexer blueprints).',
@@ -1804,7 +1809,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '# Splunk authentication tokens: enable, create, list, revoke. The token value',
         '# only ever goes from the REST response to a mode-600 file.',
         '#',
-        '# usage: splunk-tokens.sh COMMAND [options] [--execute]',
+        '# usage: splunk-tokens.sh COMMAND [options] [--dry-run]',
         '#   enable                                    turn on token authentication',
         '#   create  --user U --audience A [--expires +90d] [--not-before +0d] --out FILE',
         '#   list    [--user U] [--expiring-days N]    exit 1 if any listed token expires within N days',
@@ -1818,7 +1823,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         'TOKEN_FILE=""; LOGIN_FILE=""; CA_FILE=""',
         'CMD=${1:-help}; [ $# -gt 0 ] && shift',
         `T_USER=${shq(user)}; AUDIENCE=${shq(audience)}; EXPIRES=${shq(expires)}; NOT_BEFORE=${shq(notBefore)}`,
-        `OUT=""; ID=""; EXPIRING_DAYS=${warnDays}; EXECUTE=0; USER_FILTER=""`,
+        `OUT=""; ID=""; EXPIRING_DAYS=${warnDays}; EXECUTE=1; USER_FILTER=""`,
         'while [ $# -gt 0 ]; do',
         '  case $1 in',
         '    --url) SPLUNK_URL=$2; shift 2 ;;',
@@ -1832,7 +1837,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
         '    --out) OUT=$2; shift 2 ;;',
         '    --id) ID=$2; shift 2 ;;',
         '    --expiring-days) EXPIRING_DAYS=$2; shift 2 ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    *) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
         '  esac',
         'done',
@@ -1996,7 +2001,7 @@ export const MANAGEMENT_SECURITY_BLUEPRINTS                             = [
           'index=_internal sourcetype=splunkd component=JsonWebToken log_level!=INFO | head 20',
         ],
         backout: [
-          `bash ops/splunk-tokens.sh revoke --token-file ~/.splunk/admin.token --user ${user} --id <token id> --execute`,
+          `bash ops/splunk-tokens.sh revoke --token-file ~/.splunk/admin.token --user ${user} --id <token id>`,
           `rm -rf $SPLUNK_HOME/etc/apps/${app}   # removes the report; token auth stays as set in system/local unless disabled there`,
           '# Disabling token authentication (tokens_auth disabled = true) stops every token at once — HEC is separate and unaffected.',
         ],

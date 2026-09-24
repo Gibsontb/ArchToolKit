@@ -335,7 +335,14 @@ export const FORWARDER_BLUEPRINTS                             = [
         { value: 'discovery', label: 'Indexer discovery from the cluster manager' },
       ] },
       { id: 'manager_uri', label: 'Cluster manager', control: 'text', default: 'https://cm01.example.com:8089', showWhen: { input: 'discovery', equals: ['discovery'] } },
+      { id: 'use_ack', label: 'Indexer acknowledgement (useACK)', control: 'toggle', default: true, hint: 'Each block is kept until an indexer confirms it is written' },
       { id: 'tls', label: 'TLS to the indexers', control: 'toggle', default: true },
+      { id: 'tls_versions', label: 'TLS versions', control: 'select', default: 'tls1.2', options: [
+        { value: 'tls1.2', label: 'TLS 1.2' },
+        { value: 'tls1.2, tls1.3', label: 'TLS 1.2 and 1.3' },
+      ], showWhen: { input: 'tls', equals: ['true'] } },
+      { id: 'client_cert', label: 'Forwarder certificate (clientCert)', control: 'text', default: '$SPLUNK_HOME/etc/auth/mycerts/forwarder.pem', hint: 'Certificate and key in one PEM', showWhen: { input: 'tls', equals: ['true'] } },
+      { id: 'indexer_cn', label: 'Indexer certificate name', control: 'text', default: 'idx.example.com', hint: 'sslCommonNameToCheck: the CN (or a SAN) on the indexers’ certificate', showWhen: { input: 'tls', equals: ['true'] } },
       { id: 'queue_size', label: 'Output queue (in memory)', control: 'text', default: 'auto', hint: 'maxQueueSize: auto (7MB with useACK), or a few MB. It is RAM on every forwarder and does not survive a restart — it is not a disk buffer' },
       { id: 'auto_lb_seconds', label: 'Switch indexer every (seconds)', control: 'number', default: 30, min: 5, max: 300 },
       { id: 'compression', label: 'Compress on the wire', control: 'toggle', default: false, hint: 'Saves bandwidth, costs forwarder CPU' },
@@ -346,6 +353,10 @@ export const FORWARDER_BLUEPRINTS                             = [
       const indexers = listOf(str(values, 'indexers', '').replace(/\n/g, ','));
       const discovery = str(values, 'discovery', 'list') === 'discovery';
       const tls = bool(values, 'tls', true);
+      const useAck = bool(values, 'use_ack', true);
+      const tlsVersions = str(values, 'tls_versions', 'tls1.2') === 'tls1.2, tls1.3' ? 'tls1.2, tls1.3' : 'tls1.2';
+      const clientCert = str(values, 'client_cert', '$SPLUNK_HOME/etc/auth/mycerts/forwarder.pem').trim();
+      const indexerCn = str(values, 'indexer_cn', '').trim();
       const queueRaw = str(values, 'queue_size', 'auto').trim() || 'auto';
       const queueMatch = /^(\d+)\s*(KB|MB|GB)?$/i.exec(queueRaw);
       const queueSize = /^auto$/i.test(queueRaw) ? 'auto' : queueMatch ? `${queueMatch[1]}${(queueMatch[2] ?? '').toUpperCase()}` : 'auto';
@@ -382,6 +393,27 @@ export const FORWARDER_BLUEPRINTS                             = [
           }),
         );
       }
+      if (tls && !clientCert) {
+        findings.push(error('splunk.forwarding-no-cert', 'TLS is on but no forwarder certificate (clientCert) is given, so the forwarder cannot open a TLS connection.', { source: 'outputs.conf spec' }));
+      }
+      if (tls && /\/etc\/auth\/server\.pem$/.test(clientCert)) {
+        findings.push(
+          warning('splunk.forwarding-default-cert', 'etc/auth/server.pem is Splunk’s default certificate, the same on every installation, and it is SHA-1 signed on older builds, which Splunk 10.4 rejects.', {
+            remediation: 'Issue a certificate from your own CA and point clientCert at it.',
+            source: 'ArchToolKit',
+          }),
+        );
+      }
+      if (tls && !indexerCn) {
+        findings.push(warning('splunk.forwarding-no-cn', 'sslVerifyServerName is on but no indexer certificate name is given, so the name checked is the host name in the server list; a certificate issued for another name is refused.', { source: 'outputs.conf spec' }));
+      }
+      if (!useAck) {
+        findings.push(
+          warning('splunk.forwarding-no-ack', 'Without useACK, a block the forwarder has sent is gone from it before the indexer has written it; an indexer restart loses whatever was in flight.', {
+            source: 'outputs.conf spec',
+          }),
+        );
+      }
       if (bool(values, 'index_and_forward', false)) {
         findings.push(
           warning('splunk.index-and-forward', 'Indexing locally as well as forwarding doubles the storage and gives two copies that can drift. It is occasionally right on a heavy forwarder and almost never right otherwise.', {
@@ -397,10 +429,16 @@ export const FORWARDER_BLUEPRINTS                             = [
         activation: 'restart',
         notes: [
           'Auto load balancing switches indexer on a timer, not per event. A forwarder sending one large file will stick to one indexer for the whole file unless forceTimebasedAutoLB is on — which is why one indexer sometimes looks far busier than the rest.',
-          `The output queue (maxQueueSize = ${queueSize}) is memory, not disk: it smooths short stalls and is gone on a restart. What carries an indexer outage is back-pressure — the forwarder stops reading monitored files and resumes at its saved offset, so a file is only lost if it rotates out of the monitored path before the indexers return. useACK keeps a copy of each block in a wait queue until an indexer confirms it is written.`,
+          `The output queue (maxQueueSize = ${queueSize}) is memory, not disk: it smooths short stalls and is gone on a restart. What carries an indexer outage is back-pressure — the forwarder stops reading monitored files and resumes at its saved offset, so a file is only lost if it rotates out of the monitored path before the indexers return.${useAck ? ' useACK keeps a copy of each block in a wait queue until an indexer confirms it is written.' : ''}`,
           'Inputs that cannot pause — TCP/UDP network inputs, scripted inputs, FIFOs — lose data under back-pressure. For those, the disk-backed buffer is persistentQueueSize on the input stanza in inputs.conf (for example [udp://514] persistentQueueSize = 5GB); outputs.conf has no persistent queue.',
           ...(discovery ? ['Indexer discovery means the list maintains itself as peers are added and removed. The forwarder needs to reach the cluster manager on 8089, and the manager needs a pass4SymmKey that matches.'] : []),
-          ...(tls ? ['The certificate paths point at Splunk\u2019s defaults, which are the same self-signed certificate on every installation. Replace them with your own before this is anything but a lab.'] : []),
+          ...(tls
+            ? [
+                `TLS ${tlsVersions === 'tls1.2' ? '1.2' : '1.2 or 1.3'}, with the indexer certificate and its name verified (sslVerifyServerCert and sslVerifyServerName, both off by default). The CA chain the forwarder trusts is sslRootCAPath in server.conf [sslConfig] on the forwarder; outputs.conf no longer takes it.`,
+                'Put the key password (sslPassword) in local/outputs.conf on each forwarder, not in this app; Splunk encrypts it on the next restart.',
+                'Splunk 10.4 removed TLS 1.0 and 1.1 and rejects SHA-1 signed certificates, on the indexers\u2019 receiving port as much as here.',
+              ]
+            : []),
           'Restart after deploying. outputs.conf is not picked up by a reload.',
         ],
         before: [
@@ -423,9 +461,9 @@ export const FORWARDER_BLUEPRINTS                             = [
             '# FIFO input stanzas in inputs.conf, not here. Monitored files need none:',
             '# the forwarder stops reading and resumes at its saved offset.',
             `maxQueueSize = ${queueSize}`,
-            '# The forwarder keeps each block until an indexer confirms it is written,',
-            '# and resends it elsewhere if that indexer goes away first.',
-            'useACK = true',
+            ...(useAck
+              ? ['# The forwarder keeps each block until an indexer confirms it is written,', '# and resends it elsewhere if that indexer goes away first.', 'useACK = true']
+              : ['useACK = false']),
             '',
             '[tcpout:primary_indexers]',
             ...(discovery
@@ -439,24 +477,27 @@ export const FORWARDER_BLUEPRINTS                             = [
             '# Without this, a forwarder sending one large file stays on one',
             '# indexer for the whole file and the load looks uneven.',
             'forceTimebasedAutoLB = true',
-            ...(bool(values, 'compression', false) ? ['compressed = true'] : []),
+            ...(bool(values, 'compression', false)
+              ? ['# Splunk-to-Splunk compression; TLS-level compression is deprecated.', '# The indexers\u2019 receiving port must also have compressed = true.', 'compressed = true']
+              : []),
             '',
             ...(tls
               ? [
-                  '# These are Splunk\u2019s default certificates, which are identical on',
-                  '# every installation. Replace them before this is anything but a lab.',
-                  'clientCert = $SPLUNK_HOME/etc/auth/server.pem',
-                  'sslPassword = <REQUIRED>',
-                  'useClientSSLCompression = true',
+                  '# Certificate and key in one PEM. The key password (sslPassword) goes',
+                  '# in local/outputs.conf on each forwarder, not here. The CA chain is',
+                  '# sslRootCAPath in server.conf [sslConfig].',
+                  `clientCert = ${clientCert}`,
+                  `sslVersions = ${tlsVersions}`,
                   'sslVerifyServerCert = true',
-                  'sslCommonNameToCheck = <the indexer certificate common name>',
+                  'sslVerifyServerName = true',
+                  ...(indexerCn ? [`sslCommonNameToCheck = ${indexerCn}`] : []),
                   '',
                 ]
               : []),
             ...(discovery
               ? [
                   '[indexer_discovery:cluster_manager]',
-                  `master_uri = ${str(values, 'manager_uri', '')}`,
+                  `manager_uri = ${str(values, 'manager_uri', '')}`,
                   'pass4SymmKey = <REQUIRED>',
                   '# The key must match the one on the cluster manager. It is',
                   '# encrypted in place on first restart.',

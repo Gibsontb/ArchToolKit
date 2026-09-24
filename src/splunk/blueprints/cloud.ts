@@ -32,7 +32,7 @@ const TIER = 'cloud' as const;
  * A shell script as a template, with bash's own `${...}` written `\${...}`.
  * String.raw keeps `\n` in a printf as `\n`; only `${` needs escaping.
  */
-function script(strings: TemplateStringsArray, ...values: unknown[]): string[] {
+export function script(strings: TemplateStringsArray, ...values: unknown[]): string[] {
   return String.raw(strings, ...values)
     .replace(/\\\$\{/g, '${')
     .replace(/^\n/, '')
@@ -41,12 +41,12 @@ function script(strings: TemplateStringsArray, ...values: unknown[]): string[] {
 }
 
 /** A value safe inside bash single quotes. */
-function shq(value: string): string {
+export function shq(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Lines of a textarea, with comments and blanks dropped. */
-function rows(value: string): string[] {
+export function rows(value: string): string[] {
   return String(value ?? '')
     .split('\n')
     .map((line) => line.trim())
@@ -54,7 +54,7 @@ function rows(value: string): string[] {
 }
 
 /** A Splunk Cloud stack name: the part before .splunkcloud.com. */
-function stackOf(values: BlueprintValues): string {
+export function stackOf(values: BlueprintValues): string {
   return str(values, 'stack', 'example-stack')
     .toLowerCase()
     .replace(/^https?:\/\//, '')
@@ -62,14 +62,14 @@ function stackOf(values: BlueprintValues): string {
     .trim();
 }
 
-function stackFindings(stack: string): Finding[] {
+export function stackFindings(stack: string): Finding[] {
   return /^[a-z0-9][a-z0-9-]*$/.test(stack)
     ? []
     : [error('splunk.acs-bad-stack', `"${stack}" is not a stack name. It is the first label of the stack URL: for https://acme-prod.splunkcloud.com the stack is acme-prod.`, { source: 'ArchToolKit' })];
 }
 
 /** Index names Splunk accepts: lower case, digits, _ and -, not starting with _ or -. */
-const INDEX_NAME = /^[a-z0-9][a-z0-9_-]*$/;
+export const INDEX_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
 /** A parsed IPv4 CIDR, or why it is not one. */
 interface Cidr {
@@ -168,7 +168,7 @@ function cidrFindings(list: readonly string[], what: string, codePrefix: string)
  * The shared bash prelude for every ACS script: private files, a private work
  * directory, and one curl function that never puts the token on a command line.
  */
-function acsPrelude(): string[] {
+export function acsPrelude(): string[] {
   return script`
 die() { printf 'error: %s\n' "$*" >&2; exit 2; }
 note() { printf '%s\n' "$*" >&2; }
@@ -302,18 +302,18 @@ wait_applied() {
 }
 
 /** The option parsing every ACS script shares; extra cases go in `more`. */
-function acsArgs(stack: string, more: readonly string[] = []): string[] {
+export function acsArgs(stack: string, more: readonly string[] = []): string[] {
   return [
     `STACK=${shq(stack)}`,
     'TOKEN_FILE="${ACS_TOKEN_FILE:-$HOME/.splunk/acs.token}"',
-    'EXECUTE=0; CONFIRM=""; TARGET=""',
+    'EXECUTE=1; CONFIRM=""; TARGET=""',
     'CMD=${1:-help}; [ $# -gt 0 ] && shift',
     'while [ $# -gt 0 ]; do',
     '  case $1 in',
     '    --stack) STACK=$2; shift 2 ;;',
     '    --token-file) TOKEN_FILE=$2; shift 2 ;;',
     '    --confirm) CONFIRM=$2; shift 2 ;;',
-    '    --execute) EXECUTE=1; shift ;;',
+    '    --dry-run) EXECUTE=0; shift ;;',
     ...more.map((line) => `    ${line}`),
     '    -*) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
     '    *) TARGET=$1; shift ;;',
@@ -323,11 +323,11 @@ function acsArgs(stack: string, more: readonly string[] = []): string[] {
 }
 
 /** app.conf for an operations package: not visible, not configured, versioned. */
-function kitConf(app: string, description: string): string[] {
+export function kitConf(app: string, description: string): string[] {
   return ['[install]', 'is_configured = 0', '', '[ui]', 'is_visible = 0', `label = ${app}`, '', '[launcher]', 'author = Automation', `description = ${description}`, 'version = 1.0.0', '', '[package]', `id = ${app}`];
 }
 
-const TOKEN_NOTE =
+export const TOKEN_NOTE =
   'The ACS token is a JWT for a user with the sc_admin role — create it in Settings > Tokens on the stack (or with acs login), put it alone in ~/.splunk/acs.token, chmod 600. The scripts refuse a token file other users can read, and send it from a private header file, never on the command line.';
 
 // --- blueprints ------------------------------------------------------------
@@ -428,9 +428,9 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '#',
         '# usage: acs-indexes.sh COMMAND [options]',
         '#   plan                    compare the desired indexes with the stack (no changes)',
-        '#   apply --execute         create what is missing, update what differs',
+        '#   apply [--dry-run]       create what is missing, update what differs',
         '#   list                    every index on the stack, with size and retention',
-        '#   delete NAME --confirm NAME --execute    delete an index AND ALL ITS DATA',
+        '#   delete NAME --confirm NAME [--dry-run]  delete an index AND ALL ITS DATA',
         '# options:',
         '#   --stack S               the stack (default below)',
         '#   --token-file F          ACS token, alone in a mode-600 file (default ~/.splunk/acs.token)',
@@ -551,7 +551,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '          fi ;;',
         '      esac',
         '    done < "$WORK/plan.tsv"',
-        '    [ "$CMD" = plan ] || [ "$EXECUTE" = 1 ] || echo "Dry run. Re-run with apply --execute to make these changes."',
+        '    [ "$CMD" = plan ] || [ "$EXECUTE" = 1 ] || echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
         '    [ "$conflicts" -eq 0 ] || exit 1',
         '    ;;',
         '  delete)',
@@ -597,7 +597,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         activation: 'reload',
         notes: [
           TOKEN_NOTE,
-          'ops/acs-indexes.sh plan shows what would be created or changed; apply --execute makes the changes. The desired state is ops/indexes.csv — edit it, or feed the migration planner’s index-mapping.csv with --csv.',
+          'ops/acs-indexes.sh plan shows what would be created or changed; apply makes the changes (apply --dry-run previews). The desired state is ops/indexes.csv — edit it, or feed the migration planner’s index-mapping.csv with --csv.',
           'An index in Splunk Cloud is not usable until something can write to it: a HEC token allowing it (splunk_acs_hec), or forwarders sending to it, and the roles that should search it given it in srchIndexesAllowed.',
           'name and datatype cannot be changed after creation. ACS will not turn DDAA off or switch an index between DDAA and DDSS; that is the Splunk Cloud UI.',
           ...(archive === 'ddss' ? ['DDSS writes to your bucket as data ages out; the bucket needs the policy Splunk shows when you add the self-storage location, and it is then your data to keep, lifecycle and pay for. Data in DDSS is not searchable from Splunk Cloud; bring it back by thawing it into a Splunk Enterprise instance.'] : []),
@@ -625,7 +625,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
           `| eventcount summarize=false index=${names[0] ?? '<index>'} | stats sum(count) by index`,
         ],
         backout: [
-          `bash ops/acs-indexes.sh delete <name> --confirm <name> --stack ${stack} --execute   # an index created by mistake, before data arrives`,
+          `bash ops/acs-indexes.sh delete <name> --confirm <name> --stack ${stack}   # an index created by mistake, before data arrives`,
           '# A retention change is backed out by PATCHing the old value (from the list output taken before). Data already removed by a shorter retention is not recoverable.',
         ],
         findings,
@@ -712,7 +712,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '#   usage NAME               the search that shows traffic per token',
         '#   disable NAME | enable NAME',
         '#   delete NAME --confirm NAME',
-        '# options: --stack S  --token-file F (the ACS token, mode 600)  --spec F  --execute',
+        '# options: --stack S  --token-file F (the ACS token, mode 600)  --spec F  --dry-run',
         '#',
         '# A token value is only ever written from an ACS response to a mode-600 file.',
         '# It is never printed, logged or passed as an argument.',
@@ -845,7 +845,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         before: [
           `bash ops/acs-hec.sh list --stack ${stack}`,
           `bash ops/acs-indexes.sh list --stack ${stack} | grep -E "^(${[defaultIndex, ...allowed].filter(Boolean).join('|') || 'main'}) "   # the indexes exist`,
-          `bash ops/acs-hec.sh create --stack ${stack}   # dry run: shows the request`,
+          `bash ops/acs-hec.sh create --stack ${stack} --dry-run   # shows the request`,
         ],
         files: {
           'default/app.conf': kitConf(app, `ACS HEC token ${name} for ${stack}`),
@@ -877,8 +877,8 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
           `index=_internal sourcetype=splunkd component=HttpInputDataHandler earliest=-1h | stats count by log_level, message | sort - count   # rejected events and why`,
         ],
         backout: [
-          `bash ops/acs-hec.sh disable ${name} --stack ${stack} --execute   # reversible: enable brings it back with the same value`,
-          `bash ops/acs-hec.sh delete ${name} --confirm ${name} --stack ${stack} --execute`,
+          `bash ops/acs-hec.sh disable ${name} --stack ${stack}   # reversible: enable brings it back with the same value`,
+          `bash ops/acs-hec.sh delete ${name} --confirm ${name} --stack ${stack}`,
           `rm -f ~/.splunk/hec/${name}.token`,
         ],
         findings,
@@ -955,16 +955,16 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '# Splunk Cloud IP allow lists and outbound ports through ACS.',
         '#',
         '# usage: acs-network.sh COMMAND [options]',
-        '#   plan | apply --execute   bring one allow list to the subnets in allowlist-<feature>.txt',
+        '#   plan | apply             bring one allow list to the subnets in allowlist-<feature>.txt',
         '#   show                     the current allow list for --feature',
-        '#   outbound-plan | outbound-apply --execute   the rule in outbound-ports.spec',
+        '#   outbound-plan | outbound-apply   the rule in outbound-ports.spec',
         '# options:',
         `#   --feature F              search-api search-ui hec s2s idm-api idm-ui (default ${feature})`,
         '#   --subnets-file F         one CIDR per line (default allowlist-<feature>.txt beside this script)',
         `#   --remove-open            remove 0.0.0.0/0 after the subnets are in place${removeOpen ? ' (on by default here)' : ''}`,
         `#   --exact                  also remove every subnet not in the file${exact ? ' (on by default here)' : ''}`,
         '#   --allow-lockout          skip the check that your own address stays allowed',
-        '#   --stack S  --token-file F  --execute',
+        '#   --stack S  --token-file F  --dry-run (apply and outbound-apply only preview)',
         '#',
         '# Order is always: add, wait for the stack to apply it, then remove — so there',
         '# is never a moment when the list is narrower than both the old and new state.',
@@ -1063,7 +1063,8 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '      echo "  (this host, $ME, stays allowed)"',
         '    fi',
         '    if [ ! -s "$WORK/add" ] && [ ! -s "$WORK/remove" ]; then echo "no change"; exit 0; fi',
-        '    [ "$CMD" = apply ] && [ "$EXECUTE" = 1 ] || { echo "Dry run. Re-run with apply --execute."; exit 0; }',
+        '    if [ "$CMD" = plan ]; then echo "Plan only: nothing was changed. Run apply to make these changes."; exit 0; fi',
+        '    [ "$EXECUTE" = 1 ] || { echo "Dry run: nothing was changed. Run it without --dry-run to apply."; exit 0; }',
         '    if [ -s "$WORK/add" ]; then',
         '      mapfile -t a < "$WORK/add"; body "\${a[@]}" > "$WORK/add.json"',
         '      acs_json POST "$AL" "$WORK/add.json" > /dev/null',
@@ -1155,7 +1156,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         ],
         backout: [
           `# Put back the subnets from the "show" output taken before: write them to a file and run`,
-          `bash ops/acs-network.sh apply --feature ${feature} --subnets-file before.txt --exact --keep-open --stack ${stack} --execute`,
+          `bash ops/acs-network.sh apply --feature ${feature} --subnets-file before.txt --exact --keep-open --stack ${stack}`,
           '# In an emergency (locked out of search-api and search-ui): the Splunk Cloud Admin UI is also blocked, so open a P1 case with Splunk Support to restore access.',
           ...(outbound ? [`acs outbound-port delete ${outPort} --subnets ${outValid.join(',')}`] : []),
         ],
@@ -1230,18 +1231,18 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '# splunk-appinspect locally against the Splunk Cloud checks before uploading.',
         '# Nothing here needs a credential; it runs entirely on this machine.',
         '#',
-        `# usage: appinspect-local.sh [APP_DIR] [--tags ${tags}] [--execute]`,
-        '#   without --execute: show what would be packaged and the checks that would run',
+        `# usage: appinspect-local.sh [APP_DIR] [--tags ${tags}] [--dry-run]`,
+        '#   with --dry-run: show what would be packaged and the checks that would run',
         '#   APP_DIR defaults to the app folder named below, next to this package',
         'set -euo pipefail',
         'HERE=$(cd "$(dirname "$0")" && pwd)',
         `APP_ID=${shq(appId)}`,
         `TAGS=${shq(tags)}`,
-        'APP_DIR=""; EXECUTE=0',
+        'APP_DIR=""; EXECUTE=1',
         'while [ $# -gt 0 ]; do',
         '  case $1 in',
         '    --tags) TAGS=$2; shift 2 ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    -*) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
         '    *) APP_DIR=$1; shift ;;',
         '  esac',
@@ -1308,11 +1309,11 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         '# usage: acs-apps.sh COMMAND [options]',
         '#   list                                    installed apps',
         '#   describe NAME',
-        '#   install-private PKG --appinspect-login F --execute',
-        '#   install-splunkbase ID [--version V] [--license-url URL] --splunkbase-login F --execute',
-        '#   upgrade-splunkbase NAME --version V [--license-url URL] --splunkbase-login F --execute',
-        '#   uninstall NAME --confirm NAME --execute',
-        '# options: --stack S  --token-file F (the ACS token, mode 600)',
+        '#   install-private PKG --appinspect-login F',
+        '#   install-splunkbase ID [--version V] [--license-url URL] --splunkbase-login F',
+        '#   upgrade-splunkbase NAME --version V [--license-url URL] --splunkbase-login F',
+        '#   uninstall NAME --confirm NAME',
+        '# options: --stack S  --token-file F (the ACS token, mode 600)  --dry-run (preview only)',
         '#   --appinspect-login F   mode 600: line 1 your splunk.com user, line 2 its password',
         '#   --splunkbase-login F   mode 600: the same, for Splunkbase',
         '#',
@@ -1485,7 +1486,7 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
         ],
         before: [
           `bash ops/acs-apps.sh list --stack ${stack}`,
-          ...(privateApp ? [`bash ops/appinspect-local.sh /path/to/${appId}   # dry run: packaging checks`, `bash ops/appinspect-local.sh /path/to/${appId} --execute   # package and inspect`] : [`curl -fsS "https://splunkbase.splunk.com/api/v1/app/${sbId}/?include=release" | jq '{title, release: .release.title}'   # the app and its current release (VERIFY API)`]),
+          ...(privateApp ? [`bash ops/appinspect-local.sh /path/to/${appId} --dry-run   # packaging checks only`, `bash ops/appinspect-local.sh /path/to/${appId}   # package and inspect`] : [`curl -fsS "https://splunkbase.splunk.com/api/v1/app/${sbId}/?include=release" | jq '{title, release: .release.title}'   # the app and its current release (VERIFY API)`]),
         ],
         files: {
           'default/app.conf': kitConf(app, `ACS app installs for ${stack}`),
@@ -1518,8 +1519,8 @@ export const CLOUD_BLUEPRINTS: readonly SplunkBlueprint[] = [
           'index=_internal sourcetype=splunkd component=ApplicationUpdater OR component=AppsManager earliest=-1h | table _time, log_level, message   # VERIFY component names',
         ],
         backout: [
-          `bash ops/acs-apps.sh uninstall ${privateApp ? appId : '<app name>'} --confirm ${privateApp ? appId : '<app name>'} --stack ${stack} --execute`,
-          ...(privateApp ? ['# Or install the previous package with a higher version number: ACS does not downgrade a private app.'] : ['# Or on Victoria: bash ops/acs-apps.sh upgrade-splunkbase <app name> --version <previous> --execute']),
+          `bash ops/acs-apps.sh uninstall ${privateApp ? appId : '<app name>'} --confirm ${privateApp ? appId : '<app name>'} --stack ${stack}`,
+          ...(privateApp ? ['# Or install the previous package with a higher version number: ACS does not downgrade a private app.'] : ['# Or on Victoria: bash ops/acs-apps.sh upgrade-splunkbase <app name> --version <previous>']),
         ],
         findings,
       };
@@ -1647,7 +1648,7 @@ FAILED=()
 spl() {
   local name=$1 q=$2 earliest=\${3:--24h}
   note "searching: $name"
-  curl -sS --fail -H @"$WORK/auth.h" \${CURL_TLS[@]+"\${CURL_TLS[@]}"} "$SPLUNK_URL/services/search/jobs/export" \
+  curl -sS --fail -H @"$WORK/auth.h" \${CURL_TLS[@]+"\${CURL_TLS[@]}"} "$SPLUNK_URL/services/search/v2/jobs/export" \
     --data-urlencode "search=$q" -d output_mode=json -d earliest_time="$earliest" -d latest_time=now \
     | jq -c 'select(.result) | .result' > "$OUT/$name.jsonl" || { note "  FAILED: $name (continuing; the run exits 1)"; : > "$OUT/$name.jsonl"; FAILED+=("$name"); }
 }
@@ -1683,8 +1684,8 @@ csv() {
         "spl modinputs '| rest /servicesNS/-/-/data/inputs/all splunk_server=* count=0 | search disabled=0 eai:type!=monitor eai:type!=script eai:type!=tcp eai:type!=udp eai:type!=http | table splunk_server, eai:type, title, eai:acl.app'",
         'csv modinputs splunk_server eai:type title eai:acl.app',
         '',
-        "spl commands '| rest /servicesNS/-/-/configs/conf-commands splunk_server=local count=0 | table title, eai:acl.app, filename, type, python.version, chunked'",
-        'csv commands title eai:acl.app filename type python.version chunked',
+        "spl commands '| rest /servicesNS/-/-/configs/conf-commands splunk_server=local count=0 | table title, eai:acl.app, filename, type, python.version, python.required, chunked'",
+        'csv commands title eai:acl.app filename type python.version python.required chunked',
         '',
         "spl realtime '| rest /servicesNS/-/-/saved/searches splunk_server=local count=0 | search is_scheduled=1 disabled=0 | rename dispatch.earliest_time as det | eval realtime=if(match(det, \"^rt\"), 1, 0) | stats count as scheduled, sum(realtime) as realtime by eai:acl.app'",
         'csv realtime eai:acl.app scheduled realtime',
@@ -1742,9 +1743,9 @@ csv() {
         '  echo',
         '  echo "## Custom search commands"',
         '  echo',
-        '  echo "Custom commands must be Python 3 and pass Cloud vetting. Commands in built-in apps are listed for completeness and can be ignored."',
+        '  echo "Custom commands must pass Cloud vetting and run on the stack’s Python: Splunk Cloud Platform 10.5 runs 3.9 and 3.13, so declare python.required = 3.9, 3.13 and ship no compiled modules. A command pinned to python2 or python3.7 must be rewritten. Commands in built-in apps are listed for completeness and can be ignored."',
         '  echo',
-        "  jq -r -s --arg b \"$BUILTIN\" '.[] | select((.[\"eai:acl.app\"] | test($b)) | not) | \"- \\(.title) in \\(.[\"eai:acl.app\"]) (\\(.filename // \"?\"), python \\(.[\"python.version\"] // \"default\"), chunked=\\(.chunked // \"0\"))\"' \"$OUT/commands.jsonl\"",
+        "  jq -r -s --arg b \"$BUILTIN\" '.[] | select((.[\"eai:acl.app\"] | test($b)) | not) | \"- \\(.title) in \\(.[\"eai:acl.app\"]) (\\(.filename // \"?\"), python \\(.[\"python.required\"] // .[\"python.version\"] // \"default\"), chunked=\\(.chunked // \"0\"))\"' \"$OUT/commands.jsonl\"",
         '  echo',
         '  echo "## Indexes"',
         '  echo',
@@ -1785,8 +1786,8 @@ csv() {
 # app 100_<stack>_splunkcloud: outputs.conf to the stack's inputs endpoints and
 # the client certificate. Splunk generated it; it is not edited here.
 #
-# usage: stage-cloud-uf.sh SPL [--deployment-apps DIR] [--dual|--switch] [--execute]
-#          on the deployment server: stage the apps (dry run without --execute)
+# usage: stage-cloud-uf.sh SPL [--deployment-apps DIR] [--dual|--switch] [--dry-run]
+#          on the deployment server: stage the apps (--dry-run previews)
 #        stage-cloud-uf.sh --check [--dual|--switch] [--splunk-home DIR] [--cloud-group G]
 #          on a pilot forwarder, after the deployment server has pushed the apps:
 #          splunk btool outputs list tcpout --debug must show the intended
@@ -1799,7 +1800,7 @@ csv() {
 # the forwarder silently keeps sending to one side only. btool shows what wins.
 set -euo pipefail
 DEP_APPS=${shq(depApps)}
-MODE=${dual ? 'dual' : 'switch'}; EXECUTE=0; SPL=""; CHECK=0; CLOUD_GROUP_ARG=""
+MODE=${dual ? 'dual' : 'switch'}; EXECUTE=1; SPL=""; CHECK=0; CLOUD_GROUP_ARG=""
 SPLUNK_HOME="\${SPLUNK_HOME:-/opt/splunkforwarder}"
 ONPREM_GROUP=${shq(onpremGroup)}
 DUAL_APP=${shq(dualApp)}
@@ -1808,7 +1809,7 @@ while [ $# -gt 0 ]; do
     --deployment-apps) DEP_APPS=$2; shift 2 ;;
     --dual) MODE=dual; shift ;;
     --switch) MODE=switch; shift ;;
-    --execute) EXECUTE=1; shift ;;
+    --dry-run) EXECUTE=0; shift ;;
     --check) CHECK=1; shift ;;
     --splunk-home) SPLUNK_HOME=$2; shift 2 ;;
     --cloud-group) CLOUD_GROUP_ARG=$2; shift 2 ;;
@@ -1936,7 +1937,7 @@ EOF
         '',
         '## Pilot',
         '',
-        '- [ ] `stage-cloud-uf.sh splunkclouduf.spl` on the deployment server, dry run, then --execute.',
+        '- [ ] `stage-cloud-uf.sh splunkclouduf.spl` on the deployment server (add --dry-run first to preview).',
         '- [ ] Map to a pilot serverclass of a few forwarders of each type; reload.',
         `- [ ] On each pilot forwarder, after it restarts: \`bash stage-cloud-uf.sh --check --${dual ? 'dual' : 'switch'}\` (copy the script there). It runs \`splunk btool outputs list tcpout --debug\` and exits 1 if the effective defaultGroup is not ${dual ? `${onpremGroup} + the Cloud group` : 'the Cloud group'} — naming the file that overrides it (typically etc/system/local/outputs.conf from \`splunk add forward-server\`, or an app's local/outputs.conf).`,
         dual

@@ -2547,3 +2547,13 @@ textarea {
 .tag-creates { font-size: 0.78rem; display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; }
 .tag-creates-cat { color: var(--text-muted); }
 .tag-creates-cat strong { color: var(--text); }
+
+/* Fields that hold several things: chips for lists, a grid for tables, boxes that grow. */
+.list-editor { display: flex; flex-direction: column; gap: 0.35rem; }
+.list-editor .tag-add-row input { flex: 1 1 auto; min-width: 0; }
+.table-editor { display: flex; flex-direction: column; gap: 0.35rem; }
+.table-editor-grid th { font-size: 0.72rem; white-space: nowrap; }
+.table-editor-grid td { padding: 0.15rem 0.2rem; }
+.table-editor-grid input { width: 100%; min-width: 5rem; font-size: 0.8rem; padding: 0.2rem 0.35rem; }
+.table-editor-x { width: 1.5rem; }
+textarea.autogrow { resize: vertical; overflow-y: hidden; min-height: 4.5rem; }

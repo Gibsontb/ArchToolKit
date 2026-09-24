@@ -816,14 +816,14 @@ export const SEARCH_HEAD_MORE_BLUEPRINTS: readonly SplunkBlueprint[] = [
 # never echoed. Create one in Settings > Tokens, then:
 #   umask 077; mkdir -p ~/.splunk; read -rs T; printf "%s" "$T" > ~/.splunk/token; unset T
 #
-# Usage (dry run by default: prints the request, sends nothing):
+# Usage (sends the request when run; --dry-run prints it and sends nothing):
 #   bash kvstore-rest.sh list [limit]
 #   bash kvstore-rest.sh get <key>
 #   bash kvstore-rest.sh upsert <record.json>        one JSON object; its _key decides insert or update
 #   bash kvstore-rest.sh batch <records.json>        a JSON array, up to 1000 records per call by default
 #   bash kvstore-rest.sh delete-query '{"owner":"nobody"}' [--confirm-count N]
 #   bash kvstore-rest.sh config | status
-#   add --execute to send it
+#   add --dry-run to preview without sending
 #
 # delete-query always counts first — a GET with the same query, even in a dry run,
 # so it needs the token — and shows how many records match. It refuses:
@@ -835,10 +835,10 @@ export const SEARCH_HEAD_MORE_BLUEPRINTS: readonly SplunkBlueprint[] = [
 #     the count exactly.
 # Records written between the count and the delete are deleted too if they match.
 set -euo pipefail
-EXECUTE=0; CONFIRM_COUNT=""; ARGS=()
+EXECUTE=1; CONFIRM_COUNT=""; ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
-    --execute) EXECUTE=1; shift ;;
+    --dry-run) EXECUTE=0; shift ;;
     --confirm-count) [ $# -ge 2 ] || { echo "--confirm-count needs the number of matching records" >&2; exit 2; }; CONFIRM_COUNT=$2; shift 2 ;;
     --*) echo "Unknown option: $1" >&2; exit 2 ;;
     *) ARGS+=("$1"); shift ;;
@@ -922,8 +922,8 @@ if [[ "$ACTION" == "delete-query" ]]; then
   [[ "$matched" -lt "$total" ]] || { echo "Refusing: the query matches every record in $COLL. To empty the collection, DELETE $BASE/data/$COLL deliberately (see DEPLOY.md back-out)." >&2; exit 1; }
   if (( ! EXECUTE )); then
     echo "DRY RUN: DELETE $URL   ($matched records)"
-    (( matched <= CONFIRM_ABOVE )) || echo "  More than $CONFIRM_ABOVE records: re-run with --confirm-count $matched --execute."
-    (( matched > CONFIRM_ABOVE )) || echo "  Re-run with --execute."
+    (( matched <= CONFIRM_ABOVE )) || echo "  Dry run: nothing was changed. More than $CONFIRM_ABOVE records: run it without --dry-run and with --confirm-count $matched to apply."
+    (( matched > CONFIRM_ABOVE )) || echo "  Dry run: nothing was changed. Run it without --dry-run to apply."
     exit 0
   fi
   if (( matched > CONFIRM_ABOVE )) && [[ "$CONFIRM_COUNT" != "$matched" ]]; then
@@ -940,7 +940,7 @@ fi
 if (( ! EXECUTE )); then
   echo "DRY RUN: $METHOD $URL"
   [[ -n "$BODY" ]] && echo "  body: $BODY ($(jq length "$BODY") records)"
-  echo "  Authorization header from $TOKEN_FILE (not shown). Re-run with --execute."
+  echo "  Authorization header from $TOKEN_FILE (not shown). Dry run: nothing was changed. Run it without --dry-run to apply."
   exit 0
 fi
 
@@ -967,8 +967,8 @@ echo`
             ? `replicate = true: the collection is copied into the knowledge bundle so the lookup can run on the indexers. Roughly ${sizeMb}MB per bundle, refreshed only when the bundle is.`
             : 'replicate = false: the lookup runs on the search head. Put it after the first transforming command (| stats ... | lookup ...), so it looks up a few hundred rows rather than every event.',
           'Enforced types are converted on write: a number field given "n/a" is rejected rather than stored as text. Without enforcement the KV store stores whatever arrives and comparisons in searches become string comparisons.',
-          `ops/kvstore-rest.sh reads the token from ~/.splunk/token (mode 600) and passes it in a private header file. It is a dry run until --execute. delete-query counts the matching records first (a GET with the same query), refuses an empty or match-everything query, and above 10 records needs --confirm-count with that exact count. Batch writes are limited by [kvstore] max_documents_per_batch_save in limits.conf (1000 by default), and a read returns at most max_rows_per_query (50000) — VERIFY both on your version.`,
-          ...(maintain && pruneDays > 0 ? [`"${pruneTitle}" rewrites the collection without records older than ${pruneDays} days. It is disabled: run it by hand once and compare counts before scheduling it — outputlookup without append replaces the whole collection.`] : []),
+          `ops/kvstore-rest.sh reads the token from ~/.splunk/token (mode 600) and passes it in a private header file. It applies when run; --dry-run previews. delete-query counts the matching records first (a GET with the same query), refuses an empty or match-everything query, and above 10 records needs --confirm-count with that exact count. Batch writes are limited by [kvstore] max_documents_per_batch_save in limits.conf (1000 by default), and a read returns at most max_rows_per_query (50000) — VERIFY both on your version.`,
+          ...(maintain && pruneDays > 0 ? [`"${pruneTitle}" rewrites the collection without records older than ${pruneDays} days. It is enabled and scheduled daily — outputlookup without append replaces the whole collection, so check the record counts after its first run.`] : []),
         ],
         before: [
           '| rest splunk_server=local /services/kvstore/status | table current.status, current.replicationStatus, current.storageEngine',
@@ -1024,8 +1024,7 @@ echo`
                     ? [
                         `[${pruneTitle}]`,
                         ...foldSearch(pruneLines),
-                        `description = Removes records of ${collection} not seen for ${pruneDays} days by rewriting the collection. Disabled until reviewed.`,
-                        'disabled = 1',
+                        `description = Removes records of ${collection} not seen for ${pruneDays} days by rewriting the collection.`,
                         'enableSched = 1',
                         `cron_schedule = ${spreadCron(pruneTitle, 1440)}`,
                         'dispatch.earliest_time = -1m',
@@ -1043,13 +1042,13 @@ echo`
           `| inputlookup ${lookup} | head 10`,
           `| inputlookup ${lookup} | stats count, dc(_key) as keys   # equal when every record has its own key`,
           ...(accelerated[0] ? [`| makeresults | eval ${accelerated[0]}="example" | lookup ${lookup} ${accelerated[0]}`] : []),
-          `bash ops/kvstore-rest.sh list 5 --execute`,
+          `bash ops/kvstore-rest.sh list 5`,
           ...(maintain ? [`index=_internal sourcetype=scheduler savedsearch_name="${title}" | table _time, status, result_count, run_time`] : []),
           'index=_internal sourcetype=splunkd component=KVStore* log_level IN (WARN, ERROR) earliest=-1h | stats count by component   # VERIFY component names on your version',
         ],
         backout: [
           ...(maintain ? [`| rest /servicesNS/nobody/${app}/saved/searches/${encodeURIComponent(title)} disabled=1   # stop writing first`] : []),
-          `bash ops/kvstore-rest.sh list 50000 --execute > ${collection}-backup.json   # keep the records`,
+          `bash ops/kvstore-rest.sh list 50000 >${collection}-backup.json   # keep the records`,
           `rm -rf $SPLUNK_HOME/etc/apps/${app}   # then restart; the collection definition goes with the app`,
           '# Removing the app does not necessarily purge the records. To delete them as well, before removing the app:',
           `#   curl -X DELETE $SPLUNK_URL${collectionPath}/data/${collection}   (with the header file, as ops/kvstore-rest.sh builds it)`,
@@ -1913,7 +1912,7 @@ echo`
           severity: '4',
           viz: 'table',
           panel: 'Indexer cluster errors',
-          extra: ['# VERIFY component names on your version (9.x renamed some master/slave components', '# to manager/peer). For the authoritative view, on the cluster manager:', '#   | rest splunk_server=local /services/cluster/manager/health'],
+          extra: ['# VERIFY component names on 10.4: some log components kept their older names', '# (CMMaster, CMSlave) after the manager/peer rename, so both are searched. For the authoritative view, on the cluster manager:', '#   | rest splunk_server=local /services/cluster/manager/health'],
         });
       }
 
@@ -2001,7 +2000,7 @@ echo`
           'Everything here reads _internal, _audit or REST, which needs the admin role (or a role with access to internal indexes). The app is readable by admin roles only.',
           `Every alert is throttled per affected object for ${throttle}: one silent host is one email per ${throttle}, and a second host going silent still alerts.`,
           'On Splunk Cloud Platform the Cloud Monitoring Console covers licence, ingestion and skipped searches, and _internal from the indexers is available but the cluster checks are Splunk’s to act on — keep the forwarder, HEC and search checks, disable the cluster one.',
-          ...(bool(values, 'dashboard', true) ? ['The dashboard is Dashboard Studio (JSON inside a version="2" view). It needs Splunk Enterprise 8.2 or later (9.x recommended); edit it in the Studio editor rather than by hand.'] : []),
+          ...(bool(values, 'dashboard', true) ? ['The dashboard is Dashboard Studio (JSON inside a version="2" view). Written for Splunk Enterprise 10.4 and Splunk Cloud Platform 10.5; edit it in the Studio editor rather than by hand.'] : []),
         ],
         before: [
           '| tstats latest(_time) as last_seen where (index=* OR index=_internal) earliest=-24h by host | eval age_min=round((now() - last_seen) / 60) | sort - age_min | head 20',

@@ -54,7 +54,7 @@ export const TIERS                                         = {
   indexer: {
     id: 'indexer',
     label: 'Indexer',
-    deployTo: '$SPLUNK_HOME/etc/apps/<app>/ on every indexer, or on the cluster master',
+    deployTo: '$SPLUNK_HOME/etc/apps/<app>/ on every indexer, or in $SPLUNK_HOME/etc/manager-apps/<app>/ on the cluster manager',
     distributedBy: 'The indexer cluster manager: splunk apply cluster-bundle',
     responsibility:
       'Index-time: indexes, retention, line breaking, timestamp recognition, routing and masking. This is the only tier where those take effect for data arriving over a forwarder.',

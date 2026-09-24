@@ -119,10 +119,10 @@ enc() { jq -rn --arg v "$1" '$v|@uri'; }
 `;
 }
 
-/** A dry-run wrapper for cloud CLIs: prints the command unless --execute was given. */
+/** A dry-run wrapper for cloud CLIs: runs the command, or prints it when --dry-run was given. */
 function runWrapper(): string[] {
   return script`
-# Every change goes through run: printed in a dry run, executed with --execute.
+# Every change goes through run: executed when run, only printed with --dry-run.
 run() {
   if [ "$EXECUTE" = 1 ]; then
     "$@"
@@ -388,17 +388,17 @@ export const HEAVY_FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
           '#!/usr/bin/env bash',
           '# Install SC4S from this app’s ops/ directory. Run as root on the syslog host.',
           '#',
-          '# usage: sc4s-setup.sh --hec-token-file /root/.sc4s/hec.token [--execute]',
+          '# usage: sc4s-setup.sh --hec-token-file /root/.sc4s/hec.token [--dry-run]',
           '#',
           '# The token file must be mode 600. Its content reaches',
           runtime === 'podman' ? '# podman secret create on stdin, never as an argument.' : '# /opt/sc4s/hec_token.env (mode 600) through a redirect, never as an argument.',
           'set -euo pipefail',
           'SRC=$(cd "$(dirname "$0")" && pwd)',
-          'HEC_TOKEN_FILE=""; EXECUTE=0',
+          'HEC_TOKEN_FILE=""; EXECUTE=1',
           'while [ $# -gt 0 ]; do',
           '  case $1 in',
           '    --hec-token-file) HEC_TOKEN_FILE=$2; shift 2 ;;',
-          '    --execute) EXECUTE=1; shift ;;',
+          '    --dry-run) EXECUTE=0; shift ;;',
           '    *) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
           '  esac',
           'done',
@@ -638,14 +638,31 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
       { id: 'syslog_groups', label: 'Syslog receivers', control: 'textarea', default: 'legacy_siem | siem.corp.example.com:514 | tcp', hint: 'name | host:port | tcp/udp' },
       { id: 'rules', label: 'Rules', control: 'textarea', default: 'sourcetype:pan:log | ,TRAFFIC,start, | drop |\nsourcetype:pan:log | ,THREAT, | copy | soc_siem\nhost:dmz-* | . | syslog | legacy_siem\nsourcetype:linux_secure | sshd\\[\\d+\\] | clone | linux_secure:sshd', hint: 'sourcetype:X, host:X or source:X | regex | drop / route / copy / syslog / clone | target' },
       { id: 'index_locally', label: 'Also index on this forwarder', control: 'toggle', default: false },
-      { id: 'use_ack', label: 'Indexer acknowledgement', control: 'toggle', default: true },
+      { id: 'use_ack', label: 'Indexer acknowledgement (useACK)', control: 'toggle', default: true },
+      { id: 'tls', label: 'TLS to the indexer groups', control: 'toggle', default: true },
+      { id: 'tls_versions', label: 'TLS versions', control: 'select', default: 'tls1.2', options: [
+        { value: 'tls1.2', label: 'TLS 1.2' },
+        { value: 'tls1.2, tls1.3', label: 'TLS 1.2 and 1.3' },
+      ], showWhen: { input: 'tls', equals: ['true'] } },
+      { id: 'client_cert', label: 'Forwarder certificate (clientCert)', control: 'text', default: '$SPLUNK_HOME/etc/auth/mycerts/hf-client.pem', hint: 'Certificate and key in one PEM', showWhen: { input: 'tls', equals: ['true'] } },
+      { id: 'compressed', label: 'Compress on the wire', control: 'toggle', default: false, hint: 'Splunk-to-Splunk compression; the receiving port needs compressed = true too' },
     ],
     app: (values: BlueprintValues): SplunkApp => {
       const app = splunkName(str(values, 'app_name', 'org_hf_routing'), 'org_hf_routing');
       const defaultGroup = splunkName(str(values, 'default_group', 'primary_indexers'), 'primary_indexers');
       const indexLocally = bool(values, 'index_locally', false);
       const useAck = bool(values, 'use_ack', true);
+      const tls = bool(values, 'tls', true);
+      const tlsVersions = str(values, 'tls_versions', 'tls1.2') === 'tls1.2, tls1.3' ? 'tls1.2, tls1.3' : 'tls1.2';
+      const clientCert = str(values, 'client_cert', '$SPLUNK_HOME/etc/auth/mycerts/hf-client.pem').trim();
+      const compressed = bool(values, 'compressed', false);
       const findings: Finding[] = [];
+      if (tls && !clientCert) {
+        findings.push(error('splunk.routing-no-cert', 'TLS is on but no forwarder certificate (clientCert) is given, so no indexer group can be reached over TLS.', { source: 'outputs.conf spec' }));
+      }
+      if (!tls) {
+        findings.push(warning('splunk.routing-plaintext', 'Without TLS, everything this forwarder sends to the indexer groups crosses the network in clear — including the copies sent to another organisation.', { source: 'ArchToolKit' }));
+      }
 
       const groups = rows(str(values, 'groups', '')).map((line) => {
         const [name = '', servers = ''] = cols(line);
@@ -755,7 +772,18 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
         ...groups.flatMap((g) => [
           `[tcpout:${g.name}]`,
           `server = ${g.servers.join(', ')}`,
-          ...(useAck ? ['useACK = true'] : []),
+          `useACK = ${useAck}`,
+          ...(tls
+            ? [
+                '# The CA chain is sslRootCAPath in server.conf [sslConfig]; the key password',
+                '# (sslPassword) goes in local/outputs.conf on the forwarder.',
+                `clientCert = ${clientCert}`,
+                `sslVersions = ${tlsVersions}`,
+                'sslVerifyServerCert = true',
+                'sslVerifyServerName = true',
+              ]
+            : []),
+          ...(compressed ? ['compressed = true'] : []),
           ...(g.name !== defaultGroup
             ? ['# A secondary destination sheds its copy after 60 seconds of being unable to', '# deliver, rather than blocking delivery to the default group.', 'dropEventsOnQueueFull = 60']
             : []),
@@ -782,7 +810,9 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
           'Routing only acts on data this forwarder parses: inputs it runs itself, and data from universal forwarders. Data already parsed ("cooked") by another heavy forwarder passes through untouched.',
           'nullQueue drops are permanent and silent. Before deploying a drop rule, run its regex over a day of indexed data: index=<idx> sourcetype=<st> | regex _raw="<regex>" | stats count — that count is what disappears.',
           'Syslog output sends _raw after parsing, not the original datagram; a receiver that expects the device’s own header may need timestampformat or a different priority.',
-          'If a routing group receives data from a different organisation, give it its own TLS settings (clientCert, sslVerifyServerCert) in the tcpout stanza; those are not generated here.',
+          ...(tls
+            ? [`Every indexer group is TLS ${tlsVersions === 'tls1.2' ? '1.2' : '1.2 or 1.3'} with the indexer certificate and host name verified. A group run by another organisation usually needs its own clientCert and CA: change that group’s stanza, and put its CA in the bundle sslRootCAPath points at.`]
+            : []),
           'Deploy to the heavy forwarders through their own serverclass; a restart is needed for props, transforms and outputs.',
         ],
         before: [
@@ -948,7 +978,7 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
         `# Create HEC token "${tokenName}" through REST and save the value to a private file.`,
         '#',
         '# usage: create-hec-token.sh --token-file ~/.splunk/admin.token --out ~/.splunk/hec-' + tokenName + '.token \\',
-        '#          [--use-existing-token FILE] [--url https://hf:8089] [--cacert ca.pem] [--execute]',
+        '#          [--use-existing-token FILE] [--url https://hf:8089] [--cacert ca.pem] [--dry-run]',
         '#',
         '# First forwarder: Splunk generates the GUID and the script writes it to --out',
         '# (mode 600). Every other forwarder behind the same load balancer: pass that',
@@ -965,7 +995,7 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
         `INDEXES=${shq(allowed.join(','))}`,
         `SOURCETYPE=${shq(sourcetype)}`,
         `USEACK=${useAck ? 1 : 0}`,
-        'TOKEN_FILE=""; OUT_FILE=""; EXISTING_FILE=""; CA_FILE=""; EXECUTE=0',
+        'TOKEN_FILE=""; OUT_FILE=""; EXISTING_FILE=""; CA_FILE=""; EXECUTE=1',
         'while [ $# -gt 0 ]; do',
         '  case $1 in',
         '    --url) SPLUNK_URL=$2; shift 2 ;;',
@@ -973,7 +1003,7 @@ printf 'Next: journalctl -u sc4s -f   and search index=* sourcetype=sc4s:events\
         '    --out) OUT_FILE=$2; shift 2 ;;',
         '    --use-existing-token) EXISTING_FILE=$2; shift 2 ;;',
         '    --cacert) CA_FILE=$2; shift 2 ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    *) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
         '  esac',
         'done',
@@ -998,7 +1028,7 @@ esac
 
 note "Would create http://$NAME in app $APP: index=$INDEX indexes=\${INDEXES:-<any>} sourcetype=$SOURCETYPE useACK=$USEACK"
 if [ "$EXECUTE" != 1 ]; then
-  note "Dry run. Re-run with --execute."
+  note "Dry run: nothing was changed. Run it without --dry-run to apply."
   exit 0
 fi
 
@@ -1417,13 +1447,13 @@ exit 1
       const diag = [
         '#!/usr/bin/env bash',
         '# Create the consumer group, the send rule, the reader role assignment and the',
-        '# diagnostic settings that stream logs to the hubs. Dry run by default.',
+        '# diagnostic settings that stream logs to the hubs. Applies when run; --dry-run previews.',
         '#',
-        '# usage: azure-diagnostics.sh [--execute]   (after az login, with rights to',
+        '# usage: azure-diagnostics.sh [--dry-run]   (after az login, with rights to',
         '#        the namespace, the resources and — for Entra ID — Security Administrator)',
         'set -euo pipefail',
-        'EXECUTE=0',
-        '[ "${1:-}" = --execute ] && EXECUTE=1',
+        'EXECUTE=1',
+        '[ "${1:-}" = --dry-run ] && EXECUTE=0',
         `SUB=${shq(subscription)}`,
         `RG=${shq(rg)}`,
         `NS=${shq(nsShort)}`,
@@ -1493,7 +1523,7 @@ run az rest --method put \
   --body @"$WORK/entra.json"
 `
           : []),
-        '[ "$EXECUTE" = 1 ] || echo "Dry run. Re-run with --execute." >&2',
+        '[ "$EXECUTE" = 1 ] || echo "Dry run: nothing was changed. Run it without --dry-run to apply." >&2',
       ];
 
       return {
@@ -1513,7 +1543,7 @@ run az rest --method put \
           `az eventhubs eventhub list --resource-group ${rg} --namespace-name ${nsShort} --query "[].{name:name, partitions:partitionCount}" -o table`,
           `az eventhubs eventhub consumer-group list --resource-group ${rg} --namespace-name ${nsShort} --eventhub-name ${resourceHub} -o table`,
           `nc -vz ${nsFqdn} 443`,
-          'bash ops/azure-diagnostics.sh   # dry run: prints every change',
+          'bash ops/azure-diagnostics.sh --dry-run   # prints every change',
         ],
         files: {
           'default/inputs.conf': inputs,
@@ -1629,13 +1659,13 @@ run az rest --method put \
       const sinkParent = scope === 'organization' ? ['--organization="$ORG"', '--include-children'] : ['--project="$LOG_PROJECT"'];
       const sink = [
         '#!/usr/bin/env bash',
-        '# Topic, subscription, log sink and IAM for the Splunk Pub/Sub input. Dry run by default.',
+        '# Topic, subscription, log sink and IAM for the Splunk Pub/Sub input. Applies when run; --dry-run previews.',
         '#',
-        '# usage: gcp-log-sink.sh [--execute]   (after gcloud auth login, as someone who',
+        '# usage: gcp-log-sink.sh [--dry-run]   (after gcloud auth login, as someone who',
         `#        can create ${scope === 'organization' ? 'organisation' : 'project'} sinks and set Pub/Sub IAM)`,
         'set -euo pipefail',
-        'EXECUTE=0',
-        '[ "${1:-}" = --execute ] && EXECUTE=1',
+        'EXECUTE=1',
+        '[ "${1:-}" = --dry-run ] && EXECUTE=0',
         `LOG_PROJECT=${shq(project)}`,
         `ORG=${shq(orgId)}`,
         `TOPIC=${shq(topic)}`,
@@ -1676,7 +1706,7 @@ run gcloud pubsub subscriptions add-iam-policy-binding "$SUB" --project="$LOG_PR
         ...(credential === 'adc'
           ? ['', '# No key: attach the service account to the forwarder VM (or bind it through', '# workload identity) and let the add-on use Application Default Credentials.', 'echo "Attach $SA to the forwarder instance: gcloud compute instances set-service-account <vm> --service-account=$SA --scopes=cloud-platform" >&2']
           : ['', '# A key is needed. Create it straight into a private file, paste it into the', '# add-on UI, then delete the file: it should exist nowhere else.', 'echo "Key: (umask 077; gcloud iam service-accounts keys create ~/.gcp-splunk-key.json --iam-account=$SA) — paste it into the add-on, then shred -u ~/.gcp-splunk-key.json" >&2']),
-        '[ "$EXECUTE" = 1 ] || echo "Dry run. Re-run with --execute." >&2',
+        '[ "$EXECUTE" = 1 ] || echo "Dry run: nothing was changed. Run it without --dry-run to apply." >&2',
       ];
 
       return {
@@ -1696,7 +1726,7 @@ run gcloud pubsub subscriptions add-iam-policy-binding "$SUB" --project="$LOG_PR
         before: [
           `gcloud pubsub subscriptions describe ${subscription} --project=${project}`,
           `gcloud logging read '${filter.replace(/'/g, "'\\''") || 'timestamp>="-1h"'}' ${scope === 'organization' ? `--organization=${orgId}` : `--project=${project}`} --freshness=1h --limit=5   # what the filter matches`,
-          'bash ops/gcp-log-sink.sh   # dry run',
+          'bash ops/gcp-log-sink.sh --dry-run   # preview',
         ],
         files: {
           'ops/google_cloud_pubsub_inputs.conf': pubsubConf,
@@ -1863,7 +1893,7 @@ run gcloud pubsub subscriptions add-iam-policy-binding "$SUB" --project="$LOG_PR
         `# Create the DB Connect identity "${identity}" from a password file, through REST.`,
         '#',
         '# usage: create-dbx-identity.sh --token-file ~/.splunk/admin.token --password-file ~/.dbx/erp.pw \\',
-        '#          [--url https://hf:8089] [--cacert ca.pem] [--execute]',
+        '#          [--url https://hf:8089] [--cacert ca.pem] [--dry-run]',
         '#',
         '# Both files mode 600. The password is read by jq from the file into the JSON',
         '# body, which reaches curl on stdin — never an argument, never printed.',
@@ -1873,14 +1903,14 @@ run gcloud pubsub subscriptions add-iam-policy-binding "$SUB" --project="$LOG_PR
         `SPLUNK_URL=${shq(splunkUrl)}`,
         `IDENTITY=${shq(identity)}`,
         `DB_USER=${shq(dbUser)}`,
-        'TOKEN_FILE=""; PASSWORD_FILE=""; CA_FILE=""; EXECUTE=0',
+        'TOKEN_FILE=""; PASSWORD_FILE=""; CA_FILE=""; EXECUTE=1',
         'while [ $# -gt 0 ]; do',
         '  case $1 in',
         '    --url) SPLUNK_URL=$2; shift 2 ;;',
         '    --token-file) TOKEN_FILE=$2; shift 2 ;;',
         '    --password-file) PASSWORD_FILE=$2; shift 2 ;;',
         '    --cacert) CA_FILE=$2; shift 2 ;;',
-        '    --execute) EXECUTE=1; shift ;;',
+        '    --dry-run) EXECUTE=0; shift ;;',
         '    *) printf "unknown option: %s\\n" "$1" >&2; exit 2 ;;',
         '  esac',
         'done',
@@ -1895,7 +1925,7 @@ check_private "$PASSWORD_FILE"
 EP="/servicesNS/nobody/splunk_app_db_connect/db_connect/dbxproxy/identities"
 note "Identity $IDENTITY for user $DB_USER at $SPLUNK_URL$EP"
 if [ "$EXECUTE" != 1 ]; then
-  note "Dry run: would create identity $IDENTITY from $PASSWORD_FILE. Re-run with --execute."
+  note "Dry run: would create identity $IDENTITY from $PASSWORD_FILE. Nothing was changed. Run it without --dry-run to apply."
   exit 0
 fi
 

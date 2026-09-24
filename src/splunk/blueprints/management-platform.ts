@@ -15,7 +15,7 @@
  * restart, using `etc/auth/splunk.secret` — which is why that file is backed
  * up, encrypted, with the configuration it decrypts.
  *
- * Every script is a dry run unless given `--execute`. Every CLI call assumes
+ * Every script applies when run; `--dry-run` previews. Every CLI call assumes
  * the operator ran `splunk login` first, which prompts and caches a session,
  * so no password is ever on argv.
  */
@@ -59,9 +59,9 @@ function quoteSh(value: string): string {
 }
 
 /**
- * The part every generated script shares: usage, dry run by default, strict
- * mode, a private umask, and a `run` that prints instead of acting until
- * `--execute` is given.
+ * The part every generated script shares: usage, strict mode, a private
+ * umask, and a `run` that acts when run and only prints when `--dry-run` is
+ * given.
  */
 function bashScript(name: string, purpose: readonly string[], options: readonly ScriptOption[], body: readonly string[]): string[] {
   const usage = options.map((o) => (o.value === undefined ? `[${o.flag}]` : `[${o.flag} ${o.variable}]`)).join(' ');
@@ -69,8 +69,8 @@ function bashScript(name: string, purpose: readonly string[], options: readonly 
     '#!/usr/bin/env bash',
     ...purpose.map((line) => `# ${line}`),
     '#',
-    `# Usage: bash bin/${name} [--execute]${usage ? ` ${usage}` : ''}`,
-    '#   --execute   Act. Without it the script prints what it would do and changes nothing.',
+    `# Usage: bash bin/${name} [--dry-run]${usage ? ` ${usage}` : ''}`,
+    '#   --dry-run   Preview. The script prints what it would do and changes nothing.',
     ...options.map((o) => `#   ${(o.value === undefined ? o.flag : `${o.flag} ${o.variable}`).padEnd(11)} ${o.help}${o.value !== undefined && o.value !== '' ? ` (default: ${o.value})` : ''}`),
     '#',
     '# Run it as the user splunkd runs as. Authenticate the CLI first with',
@@ -78,11 +78,11 @@ function bashScript(name: string, purpose: readonly string[], options: readonly 
     '# the command line, where any user on the host could read it from ps.',
     'set -euo pipefail',
     'umask 077',
-    'EXECUTE=0',
+    'EXECUTE=1',
     ...options.map((o) => `${o.variable}=${o.value === undefined ? '0' : quoteSh(o.value)}`),
     'while [[ $# -gt 0 ]]; do',
     '  case "$1" in',
-    '    --execute) EXECUTE=1; shift ;;',
+    '    --dry-run) EXECUTE=0; shift ;;',
     ...options.map((o) => (o.value === undefined ? `    ${o.flag}) ${o.variable}=1; shift ;;` : `    ${o.flag}) ${o.variable}="\${2:?${o.flag} needs a value}"; shift 2 ;;`)),
     '    -h|--help) grep "^#" "$0" | head -40; exit 0 ;;',
     '    *) echo "Unknown option: $1" >&2; exit 2 ;;',
@@ -609,7 +609,7 @@ function indexerCluster(): SplunkBlueprint {
       const label = splunkName(str(values, 'label', 'idxc1'), 'idxc1');
       const findings: Finding[] = [];
 
-      findings.push(warning('splunk.pass4symmkey-placeholder', 'pass4SymmKey is a placeholder in every generated file. Until it is set — to the same value on the manager, every peer and every search head — peers will not register and searches will not reach them.', { remediation: 'Run bin/set-pass4symmkey.sh --stanza clustering --secret-file <mode-600 file> --execute on each node, then restart.', source: 'ArchToolKit' }));
+      findings.push(warning('splunk.pass4symmkey-placeholder', 'pass4SymmKey is a placeholder in every generated file. Until it is set — to the same value on the manager, every peer and every search head — peers will not register and searches will not reach them.', { remediation: 'Run bin/set-pass4symmkey.sh --stanza clustering --secret-file <mode-600 file> on each node, then restart.', source: 'ArchToolKit' }));
       if (sf > rf) findings.push(error('splunk.sf-exceeds-rf', `search_factor ${sf} is greater than replication_factor ${rf}; the cluster manager will not start with that.`, { source: 'server.conf.spec [clustering]' }));
       if (rf > peers.length) findings.push(error('splunk.rf-exceeds-peers', `replication_factor ${rf} with ${peers.length} peer${peers.length === 1 ? '' : 's'}: the cluster can never place ${rf} copies on separate peers, and stays incomplete for ever.`, { remediation: `Add peers or lower replication_factor to ${peers.length}.`, source: 'server.conf.spec [clustering]' }));
       if (rf < 3) findings.push(warning('splunk.rf-below-3', `replication_factor ${rf}: one peer down for maintenance leaves a single copy of its buckets.`, { source: SOURCE_ARCH }));
@@ -651,8 +651,8 @@ function indexerCluster(): SplunkBlueprint {
         activation: 'restart',
         notes: [
           'Order: the manager first (it waits for peers), then each peer, then the search heads. Each needs a restart after its server.conf changes.',
-          'mode = manager and manager_uri are the Splunk 9.0+ names. mode = master and master_uri are still accepted but deprecated; do not mix the two spellings on one host.',
-          `The peers’ receiving port (${receivingPort}) and their indexes belong in an app in $SPLUNK_HOME/etc/manager-apps on the manager (master-apps before 9.0), pushed as the cluster bundle — not in each peer’s system/local.`,
+          'Written for Splunk Enterprise 10.4: mode = manager / peer / searchhead and manager_uri throughout. The old master and slave spellings are not generated.',
+          `The peers’ receiving port (${receivingPort}) and their indexes belong in an app in $SPLUNK_HOME/etc/manager-apps on the manager, pushed as the cluster bundle into $SPLUNK_HOME/etc/peer-apps on each peer — not in each peer’s system/local.`,
           'bin/bundle-push.sh validates first and shows whether the bundle needs a restart. A restart-requiring bundle rolls every peer; push it in a change window.',
           'Maintenance mode stops bucket fix-up while a peer is deliberately down. Turn it off afterwards, or the cluster never repairs a real failure.',
           ...(multisite ? [`Search heads: site = ${shSite || '<unset>'}. site0 turns off search affinity, so the search head reads whichever copy answers — use it for a search head that serves every site.`] : []),
@@ -710,8 +710,8 @@ function indexerCluster(): SplunkBlueprint {
             'bundle-push.sh',
             [
               'Validate and push the cluster bundle from the manager (etc/manager-apps).',
-              'Always validates and reports whether the push restarts the peers; only',
-              'applies with --execute.',
+              'Always validates and reports whether the push restarts the peers, then',
+              'applies; --dry-run stops before the push.',
             ],
             [{ flag: '--skip-restart-check', variable: 'SKIP_CHECK', help: 'Do not stop when the bundle needs a restart' }],
             sh`
@@ -835,7 +835,7 @@ function searchHeadCluster(): SplunkBlueprint {
       const preserve = bool(values, 'preserve_lookups', true);
       const findings: Finding[] = [];
 
-      findings.push(warning('splunk.pass4symmkey-placeholder', 'The search head cluster pass4SymmKey is a placeholder. It must be the same on every member and the deployer, and should differ from the indexer cluster key.', { remediation: 'bin/set-pass4symmkey.sh --stanza shclustering --secret-file <mode-600 file> --execute on each member and the deployer.', source: 'ArchToolKit' }));
+      findings.push(warning('splunk.pass4symmkey-placeholder', 'The search head cluster pass4SymmKey is a placeholder. It must be the same on every member and the deployer, and should differ from the indexer cluster key.', { remediation: 'bin/set-pass4symmkey.sh --stanza shclustering --secret-file <mode-600 file> on each member and the deployer.', source: 'ArchToolKit' }));
       if (members.length < 3) findings.push(error('splunk.shc-too-small', `${members.length} member${members.length === 1 ? '' : 's'}: a search head cluster needs at least three to elect a captain.`, { source: 'Splunk Distributed Search Manual: SHC system requirements' }));
       if (members.length >= 3 && members.length % 2 === 0) findings.push(warning('splunk.shc-even', `${members.length} members: captain election needs a majority, so ${members.length} tolerates no more failures than ${members.length - 1}.`, { source: 'Splunk Distributed Search Manual: captain election' }));
       if (rf > members.length) findings.push(error('splunk.shc-rf-exceeds-members', `Replication factor ${rf} with ${members.length} members.`, { source: 'server.conf.spec [shclustering]' }));
@@ -1123,7 +1123,7 @@ function deploymentServer(): SplunkBlueprint {
           'splunk btool deploymentclient list --debug   # on a forwarder',
         ],
         backout: [
-          '# Remove the class stanzas (or restore serverclass.conf from backup) and run bin/reload.sh --execute.',
+          '# Remove the class stanzas (or restore serverclass.conf from backup) and run bin/reload.sh.',
           '# With stateOnClient = enabled, an app removed from a class is uninstalled from its clients on their next phone home.',
           'splunk reload deploy-server',
         ],
@@ -1229,14 +1229,12 @@ function licenseManager(): SplunkBlueprint {
           ],
           'ops/license-peer-server.conf': [
             '# $SPLUNK_HOME/etc/system/local/server.conf on every other node',
-            '# (manager_uri replaces master_uri from Splunk 9.0)',
             '[license]',
             `manager_uri = ${lm}`,
           ],
           'ops/license-manager-pools.conf': [
             '# Add to $SPLUNK_HOME/etc/system/local/server.conf on the license manager.',
-            '# peers = * or a comma-separated list of peer GUIDs. Older releases call',
-            '# this setting "slaves"; VERIFY the name in your server.conf.spec.',
+            '# peers = * or a comma-separated list of peer GUIDs.',
             '',
             ...pools.flatMap((p) => [
               `[lmpool:${p.name}]`,
@@ -1652,11 +1650,12 @@ function upgrade(): SplunkBlueprint {
     tier: TIER,
     label: 'Upgrade runbook',
     group: 'Lifecycle',
-    description: 'An upgrade runbook for your topology and versions: the supported path, prechecks (KV store, Python, TLS, disk, deprecated features), the order — management nodes, search head cluster rolling upgrade, indexer rolling upgrade, heavy then universal forwarders — and a dry-run script for each step.',
+    description: 'An upgrade runbook to Splunk Enterprise 10.x for your topology: the supported path, prechecks (KV store server version and CPU, Python 3.13, Simple XML and jQuery, TLS 1.2+, service user, disk), the order — management nodes, search head cluster rolling upgrade, indexer rolling upgrade, KV store server upgrade, heavy then universal forwarders — and a script for each step, with --dry-run to preview.',
     inputs: [
       { id: 'app_name', label: 'Package name', control: 'text', default: 'org_upgrade_runbook' },
       { id: 'from', label: 'Current version', control: 'select', default: '9.4', options: VERSIONS.slice(0, -1).map((v) => ({ value: v, label: `${v}.x` })) },
-      { id: 'to', label: 'Target version', control: 'select', default: '10.0', options: ['9.4', '10.0', '10.2', '10.4'].map((v) => ({ value: v, label: `${v}.x` })) },
+      { id: 'to', label: 'Target version', control: 'select', default: '10.4', options: ['10.0', '10.2', '10.4'].map((v) => ({ value: v, label: `${v}.x` })) },
+      { id: 'splunk_user', label: 'Service user', control: 'text', default: 'splunk', hint: 'The non-root account splunkd runs as; the scripts start it as this user' },
       { id: 'idx_cluster', label: 'Indexer cluster', control: 'toggle', default: true },
       { id: 'shc', label: 'Search head cluster', control: 'toggle', default: true },
       { id: 'heavy_forwarders', label: 'Heavy forwarders', control: 'toggle', default: true },
@@ -1671,7 +1670,8 @@ function upgrade(): SplunkBlueprint {
     app: (values: BlueprintValues): SplunkApp => {
       const app = splunkName(str(values, 'app_name', 'org_upgrade_runbook'), 'org_upgrade_runbook');
       const from = str(values, 'from', '9.4');
-      const to = str(values, 'to', '10.0');
+      const to = str(values, 'to', '10.4');
+      const splunkUser = str(values, 'splunk_user', 'splunk').trim();
       const idx = bool(values, 'idx_cluster', true);
       const shc = bool(values, 'shc', true);
       const hf = bool(values, 'heavy_forwarders', true);
@@ -1688,13 +1688,17 @@ function upgrade(): SplunkBlueprint {
       } else if (path.length > 2) {
         findings.push(warning('splunk.upgrade-multi-hop', `${from} cannot go directly to ${to}; the supported path is ${path.join(' → ')}. Each hop is a full upgrade of every tier — let each one settle (KV store migrated, cluster healthy) before starting the next.`, { source: 'Splunk Installation Manual: supported upgrade paths (VERIFY for your exact maintenance releases)' }));
       }
-      if (['9.2', '9.3'].includes(to) || path?.some((v) => v === '9.2' || v === '9.3')) {
-        findings.push(info('splunk.upgrade-path-verify', 'The supported sources for an upgrade to 9.2 or 9.3 are not confirmed in this runbook’s table. VERIFY against that version’s upgrade documentation.', { source: 'ArchToolKit' }));
+      if (path?.some((v) => v === '9.2' || v === '9.3')) {
+        findings.push(info('splunk.upgrade-path-verify', 'The path goes through 9.2 or 9.3, whose supported sources are not confirmed in this runbook’s table. VERIFY against that version’s upgrade documentation.', { source: 'ArchToolKit' }));
+      }
+      if (!/^[a-z_][a-z0-9_-]*$/.test(splunkUser) || splunkUser === 'root') {
+        findings.push(error('splunk.upgrade-service-user', `"${splunkUser || '(empty)'}" cannot be the service user: splunkd must run as a non-root account, and Splunk 10 refuses to start as root without --run-as-root.`, { remediation: 'Name the account splunkd runs as today, or create one (splunk) and chown $SPLUNK_HOME to it before the upgrade.', source: 'Splunk Enterprise 10 release notes' }));
       }
       if (premium) {
         findings.push(warning('splunk.upgrade-premium-compat', 'Enterprise Security and ITSI support specific Splunk Enterprise versions. Check the premium app’s compatibility matrix for the target before upgrading the platform — it may need upgrading first, or a newer platform may not be supported yet.', { source: 'Splunk products version compatibility matrix' }));
       }
-      const toMajor10 = versionIndex(to) >= versionIndex('10.0');
+      const to102 = versionIndex(to) >= versionIndex('10.2');
+      const to104 = versionIndex(to) >= versionIndex('10.4');
 
       const hops = path ?? [from, to];
       const steps: string[] = [
@@ -1707,13 +1711,16 @@ function upgrade(): SplunkBlueprint {
         '## 0. Prechecks (every node) — bin/00-precheck.sh',
         '',
         '- Back up: bin/backup-before-upgrade (or the splunk_backup package): $SPLUNK_HOME/etc and the KV store on every search head.',
-        '- App compatibility: install the Splunk Platform Upgrade Readiness App on a search head and clear its findings (Python and jQuery). Check every Splunkbase add-on’s supported versions.',
-        `- Python: 9.x defaults to Python 3.9; ${toMajor10 ? '10.0 removes Python 3.7 — apps that pin python.version = python3.7 must be updated first.' : 'apps still requiring Python 2 do not run.'}`,
-        '- KV store: must be the wiredTiger storage engine (splunk show kvstore-status --verbose). 9.4 needs KV store server version 4.2 or later before the upgrade and moves it to 7.0 during the upgrade. Migrate an old mmapv1 store first: splunk migrate kvstore-storage-engine --target-engine wiredTiger (VERIFY for your version).',
-        ...(toMajor10 ? ['- KV store 7.x needs CPUs with AVX, SSE4.2 and AES-NI. Check /proc/cpuinfo on every search head.', '- 10.x no longer runs as root by default. If splunkd runs as root today, move it to a service account before the upgrade.'] : []),
-        ...(versionIndex(to) >= versionIndex('10.2') ? ['- 10.2 clusters need their Postgres ports open between members (VERIFY which ports in the 10.2 release notes).'] : []),
-        '- TLS: check sslVersions, cipherSuite and certificate expiry (splunk btool server list sslConfig; openssl x509 -enddate). A new version may disallow older protocols.',
-        '- Deprecated and removed features: read the release notes’ "Deprecated and removed" list for every version in the path.',
+        '- App compatibility: install the Splunk Platform Upgrade Readiness App (Splunkbase 5483) on a search head and clear its findings (Python 3 and jQuery 3.5). From 10.4, Splunk also validates configuration against its schemas at startup. Check every Splunkbase add-on’s supported versions.',
+        `- Python: 10.0 removed Python 2.7 and 3.7 and runs 3.9 only; ${to104 ? '10.4 adds Python 3.13 and deprecates 3.9. Apps should declare python.required = 3.9, 3.13 (read from 10.2) and ship no compiled binary modules; an app that pins python.version = python2 or python3.7 must be updated first.' : 'an app that pins python.version = python2 or python3.7 must be updated first.'}`,
+        `- Dashboards: ${to104 ? 'Simple XML dashboards at version="1.0" (jQuery 2) and HTML dashboards do not load on 10.4.' : 'Simple XML version="1.0" (jQuery 2) and HTML dashboards are removed in 10.4.'} Rebuild them in Dashboard Studio, or move Simple XML to version="1.1" and test it; bin/00-precheck.sh lists them.`,
+        '- KV store storage engine: must be wiredTiger (splunk show kvstore-status --verbose). Migrate an old mmapv1 store first: splunk migrate kvstore-storage-engine --target-engine wiredTiger (VERIFY for your version).',
+        `- KV store server version: 9.4 moves the server to 7.0 on upgrade; 10.2 and later move it to 8.0 (MongoDB 8).${to104 ? ' Version 4.2 is removed in 10.4, so every KV store must already be at 7.0 or later before upgrading to 10.4 — see step 4.' : ''}`,
+        `- KV store CPU and OS: ${to102 ? 'KV store 8.0 needs AVX, SSE4.2 and AES-NI on x86_64 and glibc 2.27 or later.' : 'KV store 7.0 needs AVX on x86_64.'} bin/00-precheck.sh checks /proc/cpuinfo and glibc on each node.`,
+        `- Service user: splunkd runs as ${splunkUser}, never root. Splunk 10 refuses to start as root on Linux without --run-as-root, which this runbook does not use; if splunkd runs as root today, chown $SPLUNK_HOME to ${splunkUser} and move it first. On Windows, 10.2 no longer runs as Local System or Administrator.`,
+        ...(to102 ? ['- 10.2 clusters need their Postgres ports open between members (VERIFY which ports in the 10.2 release notes).'] : []),
+        `- TLS: ${to104 ? '10.4 removes TLS 1.0 and 1.1 and rejects SHA-1 signed certificates.' : '10.4 will remove TLS 1.0 and 1.1 and reject SHA-1 signed certificates; fix them now.'} sslVersions must be tls1.2 (tls1.3 is accepted from 10.4); check cipherSuite and certificate expiry (splunk btool server list sslConfig; openssl x509 -enddate).`,
+        '- Removed in 10.x: hybrid search (use Federated Search), Hadoop Data Roll, the populate_lookup alert action (use the lookup action), some Search API v1 endpoints (use v2), Node.js. Read the release notes’ "Deprecated and removed" list for every version in the path.',
         '- Disk: at least the size of the new package plus $SPLUNK_HOME/etc free; ext2 file systems must be moved to ext3 or later first.',
         '- Premium apps: confirm ES/ITSI compatibility with the target.',
         '',
@@ -1729,12 +1736,12 @@ function upgrade(): SplunkBlueprint {
         steps.push(
           '## 2. Search head cluster — rolling upgrade (bin/30-search-head-cluster.sh)',
           '',
-          '1. On any member: `bash bin/30-search-head-cluster.sh --phase init --execute` (splunk upgrade-init shcluster-members).',
+          '1. On any member: `bash bin/30-search-head-cluster.sh --phase init` (splunk upgrade-init shcluster-members).',
           '2. For each member, **the captain last** (the first upgraded member becomes captain when it restarts):',
-          '   - `--phase detain --execute` (manual detention on; wait until it has no active searches)',
-          '   - `bash bin/10-upgrade-node.sh --package <file> --execute`',
-          '   - `--phase release --execute` (manual detention off), then check `splunk show shcluster-status --verbose`.',
-          '3. `--phase finalize --execute` (splunk upgrade-finalize shcluster-members).',
+          '   - `--phase detain` (manual detention on; wait until it has no active searches)',
+          '   - `bash bin/10-upgrade-node.sh --package <file>`',
+          '   - `--phase release` (manual detention off), then check `splunk show shcluster-status --verbose`.',
+          '3. `--phase finalize` (splunk upgrade-finalize shcluster-members).',
           '4. Upgrade the deployer immediately afterwards: it must run the same version as the members.',
           '',
         );
@@ -1745,23 +1752,35 @@ function upgrade(): SplunkBlueprint {
         steps.push(
           '## 3. Indexer cluster peers — rolling upgrade (bin/20-indexer-cluster.sh)',
           '',
-          '1. On the cluster manager: `--phase init --execute` (splunk upgrade-init cluster-peers; puts the cluster in maintenance mode for the upgrade).',
+          '1. On the cluster manager: `--phase init` (splunk upgrade-init cluster-peers; puts the cluster in maintenance mode for the upgrade).',
           '2. For each peer, one at a time (in a multisite cluster, a site at a time):',
-          '   - on the peer: `--phase offline --execute` (splunk offline: finishes in-flight searches and hands off primaries)',
-          '   - `bash bin/10-upgrade-node.sh --package <file> --execute` (upgrades and starts it)',
+          '   - on the peer: `--phase offline` (splunk offline: finishes in-flight searches and hands off primaries)',
+          '   - `bash bin/10-upgrade-node.sh --package <file>` (upgrades and starts it)',
           '   - on the manager: `--phase status` until the peer is Up and the cluster is searchable.',
-          '3. On the manager: `--phase finalize --execute` (splunk upgrade-finalize cluster-peers).',
+          '3. On the manager: `--phase finalize` (splunk upgrade-finalize cluster-peers).',
           '4. No bundle pushes, rolling restarts or peer additions until finalized.',
           '',
         );
       } else {
         steps.push('## 3. Indexers', '', 'Upgrade each indexer with bin/10-upgrade-node.sh. Forwarders buffer while one is down if they load-balance across several.', '');
       }
-      if (hf) steps.push('## 4. Heavy forwarders', '', 'One at a time, with bin/10-upgrade-node.sh. A heavy forwarder must not be newer than the indexers it sends to.', '');
-      if (uf) steps.push('## 5. Universal forwarders', '', 'Last. With the package manager or your configuration management — the deployment server cannot upgrade the forwarder binary. Forwarders may run older versions than the indexers (check the forwarder compatibility matrix); they must not be newer.', '');
+      steps.push(
+        '## 4. KV store server upgrade (bin/40-kvstore-upgrade.sh)',
+        '',
+        `Once every search head of a hop is on the new version, the KV store server has to follow it: 9.4 moves it to 7.0 and 10.2 and later to 8.0, on startup by default.${to104 ? ' 10.4 no longer ships 4.2: a KV store still on 4.2 must reach 7.0 or later on 9.4, 10.0 or 10.2 before the hop to 10.4.' : ''}`,
+        '',
+        `1. Check: \`bash bin/40-kvstore-upgrade.sh --phase status\` (splunk show kvstore-status --verbose). Expect serverVersion ${to102 ? '8.0' : '7.0'} and status ready.`,
+        `2. If it has not moved on its own, preview with \`--phase check\` (Splunk’s own dry run: ${shc ? 'splunk start-shcluster-upgrade kvstore -isDryRun true' : 'splunk start-standalone-upgrade kvstore -dryRun true'}), then \`--phase upgrade\`.`,
+        `3. Follow it with \`--phase progress\` (${shc ? 'splunk show shcluster-kvupgrade-status' : 'splunk show standalone-kvupgrade-status'}) until it completes${shc ? '; `--phase stop` (splunk stop-shcluster-upgrade kvstore) halts a cluster upgrade that is going wrong' : ''}.`,
+        '4. To control the timing yourself, set server.conf [kvstore] kvstoreUpgradeOnStartupEnabled = false on the search heads before the binary upgrade, and run this step in its own window.',
+        '',
+      );
+      if (hf) steps.push('## 5. Heavy forwarders', '', 'One at a time, with bin/10-upgrade-node.sh. A heavy forwarder must not be newer than the indexers it sends to.', '');
+      if (uf) steps.push('## 6. Universal forwarders', '', 'Last. With the package manager or your configuration management — the deployment server cannot upgrade the forwarder binary. Forwarders may run older versions than the indexers (check the forwarder compatibility matrix); they must not be newer.', '');
       steps.push('## Rollback', '', 'Splunk does not downgrade in place. Stop splunkd, restore $SPLUNK_HOME (binaries and etc) and the KV store from the pre-upgrade backup, and start the old version. A cluster that has been finalized on the new version cannot rejoin old peers.');
 
-      const needAvx = versionIndex(to) >= versionIndex('10.0') ? 1 : 0;
+      const needKv8 = to102 ? 1 : 0;
+      const at104 = to104 ? 1 : 0;
       const installCmd =
         pkg === 'rpm'
           ? 'run rpm -U --replacepkgs "$PACKAGE"'
@@ -1776,8 +1795,8 @@ function upgrade(): SplunkBlueprint {
         activation: 'restart',
         notes: [
           `Supported path: ${hops.join(' → ')}. Read from Splunk’s upgrade path tables for 9.4, 10.0, 10.2 and 10.4; recheck them for your exact maintenance release.`,
-          'Order: license manager, cluster manager, monitoring console and deployment server; then search heads (rolling, captain last, then the deployer); then indexer peers (rolling); then heavy forwarders; then universal forwarders.',
-          'Every script is a dry run unless given --execute, and each prints the commands it would run.',
+          'Order: license manager, cluster manager, monitoring console and deployment server; then search heads (rolling, captain last, then the deployer); then indexer peers (rolling); then the KV store server; then heavy forwarders; then universal forwarders.',
+          `Every script applies when run; add --dry-run first to preview the commands it would run. bin/10-upgrade-node.sh may run as root for the package install; it hands $SPLUNK_HOME to ${splunkUser} and starts splunkd as ${splunkUser}. Nothing here uses --run-as-root.`,
           'Back up $SPLUNK_HOME/etc and the KV store before anything else — rollback is a restore, not a downgrade.',
         ],
         before: [
@@ -1787,13 +1806,14 @@ function upgrade(): SplunkBlueprint {
           'splunk show shcluster-status --verbose   # on a member',
           '| rest /services/server/info splunk_server=* | table splunk_server, version, os_name, server_roles',
           '| rest /services/kvstore/status splunk_server=* | table splunk_server, current.storageEngine, current.serverVersion   # VERIFY field names',
+          '| rest /servicesNS/-/-/data/ui/views splunk_server=local count=0 | search eai:data="*version=\\"1.0\\"*" OR eai:type=html | table title, eai:acl.app, eai:type   # dashboards 10.4 will not load (VERIFY the eai:type value for HTML dashboards)',
         ],
         files: {
           'RUNBOOK.md': steps,
           'bin/00-precheck.sh': bashScript(
             '00-precheck.sh',
             [
-              'Read-only checks before upgrading this node. Changes nothing, with or without --execute.',
+              'Read-only checks before upgrading this node. Changes nothing, with or without --dry-run.',
               'Every section runs even when one finds nothing; the exit code is the verdict:',
               '0 = no blocking problem found, 1 = at least one PROBLEM line to fix first.',
             ],
@@ -1810,7 +1830,16 @@ function upgrade(): SplunkBlueprint {
 
               echo "== Running as"
               pid=$( { head -1 "$SPLUNK_HOME/var/run/splunk/splunkd.pid"; } 2>/dev/null || true)
-              if [[ -n "$pid" ]]; then ps -o user= -p "$pid" 2>/dev/null || echo "  splunkd not running (stale pid file)"; else echo "  splunkd not running"; fi
+              if [[ -n "$pid" ]]; then
+                owner=$(ps -o user= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+                if [[ -z "$owner" ]]; then echo "  splunkd not running (stale pid file)"
+                elif [[ "$owner" == root ]]; then problem "splunkd runs as root. Splunk 10 will not start as root without --run-as-root: chown -R ${splunkUser} $SPLUNK_HOME and run it as ${splunkUser} first"
+                else echo "  $owner"; fi
+              else
+                echo "  splunkd not running"
+              fi
+              home_owner=$(stat -c %U "$SPLUNK_HOME" 2>/dev/null || true)
+              [[ -z "$home_owner" || "$home_owner" == ${quoteSh(splunkUser)} ]] || problem "$SPLUNK_HOME is owned by $home_owner, not ${splunkUser}"
 
               echo "== Disk"
               { df -h "$SPLUNK_HOME" | tail -1; } || true
@@ -1824,15 +1853,22 @@ function upgrade(): SplunkBlueprint {
               echo "== File system type"
               { df -T "$SPLUNK_HOME" | tail -1 | awk '{print "  " $2}'; } 2>/dev/null || echo "  unknown"
 
-              # MongoDB 5.0 and later need AVX on x86_64, and the KV store server that
-              # Splunk 10 runs is MongoDB 7. sse4_2 and aes are reported for information.
-              echo "== CPU flags for KV store 7 (x86_64 needs avx)"
+              # The KV store server Splunk 10.0 runs is MongoDB 7 (AVX on x86_64);
+              # 10.2 and later move it to MongoDB 8, which also needs SSE4.2, AES-NI
+              # and glibc 2.27 or later.
+              echo "== CPU flags for the KV store server"
               arch=$(uname -m)
               for f in avx sse4_2 aes; do
                 if grep -qw "$f" /proc/cpuinfo 2>/dev/null; then echo "  $f: yes"
-                elif [[ "$f" == avx && "$arch" == x86_64 && ${needAvx} -eq 1 ]]; then problem "CPU has no avx: the KV store server in the target version will not start on this host"
+                elif [[ "$arch" == x86_64 && ( "$f" == avx || ${needKv8} -eq 1 ) ]]; then problem "CPU has no $f: the KV store server in the target version will not start on this host"
                 else echo "  $f: missing ($arch)"; fi
               done
+              if [[ ${needKv8} -eq 1 ]]; then
+                glibc=$( { ldd --version 2>/dev/null | head -1 | grep -Eo '[0-9]+\.[0-9]+$'; } || true)
+                if [[ -z "$glibc" ]]; then echo "  glibc: unknown"
+                elif [[ "$(printf '%s\n2.27\n' "$glibc" | sort -V | head -1)" != 2.27 ]]; then problem "glibc $glibc: KV store 8.0 needs 2.27 or later"
+                else echo "  glibc: $glibc"; fi
+              fi
 
               echo "== KV store"
               kv=$("$SPLUNK" show kvstore-status --verbose 2>/dev/null || true)
@@ -1841,21 +1877,45 @@ function upgrade(): SplunkBlueprint {
               else
                 { printf '%s\n' "$kv" | grep -Ei "storageEngine|serverVersion|status"; } || true
                 if printf '%s\n' "$kv" | grep -Eqi '^[[:space:]]*status[[:space:]]*:[[:space:]]*failed'; then problem "KV store status is failed; fix it before upgrading"; fi
+                if printf '%s\n' "$kv" | grep -Eqi 'mmapv1'; then problem "KV store storage engine is mmapv1; migrate to wiredTiger first"; fi
+                kvver=$( { printf '%s\n' "$kv" | grep -Ei 'serverVersion' | head -1 | grep -Eo '[0-9]+\.[0-9]+'; } || true)
+                if [[ ${at104} -eq 1 && -n "$kvver" && "$(printf '%s\n7.0\n' "$kvver" | sort -V | head -1)" != 7.0 ]]; then
+                  problem "KV store server $kvver: 10.4 removes 4.2. Upgrade it to 7.0 or later on the current version first (bin/40-kvstore-upgrade.sh)"
+                fi
               fi
 
-              echo "== Python versions pinned by apps"
-              pinned=$( { grep -Hs "^python.version" "$SPLUNK_HOME"/etc/apps/*/default/*.conf "$SPLUNK_HOME"/etc/apps/*/local/*.conf || true; } | sed "s#^$SPLUNK_HOME/etc/apps/##" | sort)
-              if [[ -n "$pinned" ]]; then printf '%s\n' "$pinned" | awk -F: '{ print "  " $0 }' | sed -n 1,20p; else echo "  none pinned"; fi
+              echo "== Python versions declared by apps"
+              pinned=$( { grep -HsE "^python\.(version|required)" "$SPLUNK_HOME"/etc/apps/*/default/*.conf "$SPLUNK_HOME"/etc/apps/*/local/*.conf || true; } | sed "s#^$SPLUNK_HOME/etc/apps/##" | sort)
+              if [[ -n "$pinned" ]]; then printf '%s\n' "$pinned" | awk -F: '{ print "  " $0 }' | sed -n 1,20p; else echo "  none declared"; fi
+              old=$( { printf '%s\n' "$pinned" | grep -E "python\.version[[:space:]]*=[[:space:]]*(python2|python3\.7|default)" || true; } | cut -d/ -f1 | sort -u)
+              [[ -z "$old" ]] || problem "apps pinned to Python 2 or 3.7, which 10.x removed: $(printf '%s ' $old)"
+              binmods=$( { find "$SPLUNK_HOME"/etc/apps -name "*.so" -path "*/bin/*" 2>/dev/null || true; } | sed "s#^$SPLUNK_HOME/etc/apps/##" | cut -d/ -f1 | sort -u)
+              [[ -z "$binmods" ]] || echo "  compiled Python modules (rebuild for 3.13 or remove): $(printf '%s ' $binmods)"
+
+              echo "== Dashboards 10.4 will not load (Simple XML 1.0 / jQuery 2, HTML)"
+              legacy=$( { grep -lsE '<(dashboard|form)[^>]*version="1\.0"' "$SPLUNK_HOME"/etc/apps/*/default/data/ui/views/*.xml "$SPLUNK_HOME"/etc/apps/*/local/data/ui/views/*.xml "$SPLUNK_HOME"/etc/users/*/*/local/data/ui/views/*.xml || true; } | sed "s#^$SPLUNK_HOME/etc/##")
+              html=$( { ls -1 "$SPLUNK_HOME"/etc/apps/*/*/data/ui/html/*.html 2>/dev/null || true; } | sed "s#^$SPLUNK_HOME/etc/##")
+              if [[ -n "$legacy$html" ]]; then
+                printf '%s\n' $legacy $html | sed -n 1,30p | awk '{ print "  " $0 }'
+                if [[ ${at104} -eq 1 ]]; then problem "Simple XML version 1.0 or HTML dashboards found: rebuild them in Dashboard Studio (or move Simple XML to version 1.1) before 10.4"; fi
+              else
+                echo "  none found (VERIFY with the Upgrade Readiness App: dashboards with no version attribute are not listed here)"
+              fi
 
               echo "== TLS settings"
               ssl=$("$SPLUNK" btool server list sslConfig 2>/dev/null || true)
               { printf '%s\n' "$ssl" | grep -E "sslVersions|cipherSuite|serverCert"; } || echo "  (no sslConfig read)"
+              if [[ ${at104} -eq 1 ]]; then
+                weak=$( { "$SPLUNK" btool server list 2>/dev/null; "$SPLUNK" btool outputs list 2>/dev/null; "$SPLUNK" btool inputs list 2>/dev/null; "$SPLUNK" btool web list 2>/dev/null; } | grep -E "^sslVersions[[:space:]]*=" | grep -Ei "tls1\.0|tls1\.1|ssl3|\*" || true)
+                [[ -z "$weak" ]] || problem "sslVersions still allows TLS 1.0/1.1, which 10.4 removes: $(printf '%s' "$weak" | sort -u | tr '\n' ';')"
+              fi
               cert=$(printf '%s\n' "$ssl" | awk -F' = ' '/^serverCert/ { print $2; exit }')
               cert="$\{cert//\$SPLUNK_HOME/$SPLUNK_HOME}"
               if [[ -n "$cert" && -f "$cert" ]]; then
                 openssl x509 -noout -enddate -in "$cert" || problem "cannot read $cert"
                 if ! openssl x509 -noout -checkend 0 -in "$cert" >/dev/null 2>&1; then problem "server certificate $cert has expired"
                 elif ! openssl x509 -noout -checkend $((30 * 86400)) -in "$cert" >/dev/null 2>&1; then echo "  warning: $cert expires within 30 days"; fi
+                if [[ ${at104} -eq 1 ]] && openssl x509 -noout -text -in "$cert" 2>/dev/null | grep -qi "Signature Algorithm: sha1"; then problem "server certificate $cert is SHA-1 signed; 10.4 rejects it"; fi
               else
                 echo "  server certificate: default or not found"
               fi
@@ -1878,14 +1938,22 @@ function upgrade(): SplunkBlueprint {
             [
               `Upgrade this node in place from a ${pkg} package: stop, back up etc, install, start.`,
               'In a cluster, run it only at the point the runbook says (after offline or detention).',
+              `Run as root only for the package install: splunkd itself is stopped and started`,
+              `as the service user, and $SPLUNK_HOME is handed back to it. No --run-as-root.`,
             ],
             [
               { flag: '--package', variable: 'PACKAGE', value: '', help: `The Splunk ${to} .${pkg} package on this host` },
+              { flag: '--user', variable: 'SPLUNK_USER', value: splunkUser, help: 'The non-root account splunkd runs as' },
               { flag: '--backup-dir', variable: 'BACKUP_DIR', value: '/var/tmp/splunk-upgrade', help: 'Where the etc backup goes' },
               { flag: '--no-stop', variable: 'NO_STOP', help: 'splunkd is already stopped (for example after splunk offline)' },
             ],
             sh`
               [[ -n "$PACKAGE" && -f "$PACKAGE" ]] || { echo "--package must name the downloaded package" >&2; exit 2; }
+              [[ "$SPLUNK_USER" != root ]] || { echo "--user must not be root: Splunk 10 does not run as root" >&2; exit 2; }
+              id "$SPLUNK_USER" >/dev/null || { echo "No such user: $SPLUNK_USER" >&2; exit 2; }
+              # splunkd commands run as the service user, whoever runs this script.
+              as_splunk() { if [[ $EUID -eq 0 ]]; then sudo -u "$SPLUNK_USER" -- "$@"; else "$@"; fi; }
+              if [[ $EUID -ne 0 && "$(id -un)" != "$SPLUNK_USER" ]]; then echo "Run as root (for the package) or as $SPLUNK_USER." >&2; exit 2; fi
               echo "== Checksum of the package (compare with the one on splunk.com):"
               sha512sum "$PACKAGE"
               ${pkg === 'tgz' ? sh`
@@ -1899,13 +1967,14 @@ function upgrade(): SplunkBlueprint {
                 echo "Extract it by hand, or run with SPLUNK_HOME set to the directory it should replace." >&2
                 exit 2
               fi
-              echo "== Package unpacks to $want/ under $(dirname "$SPLUNK_HOME")"`.join('\n') : ''}
+              echo "== Package unpacks to $want/ under $(dirname "$SPLUNK_HOME")"`.join(`\n${' '.repeat(14)}`) : ''}
               stamp=$(date +%Y%m%d%H%M%S)
               run mkdir -p "$BACKUP_DIR"
-              if [[ $NO_STOP -eq 0 ]]; then run "$SPLUNK" stop; fi
+              if [[ $NO_STOP -eq 0 ]]; then run as_splunk "$SPLUNK" stop; fi
               run tar -czf "$BACKUP_DIR/etc-$(hostname -s)-$stamp.tgz" -C "$SPLUNK_HOME" etc
               ${installCmd}
-              run "$SPLUNK" start --accept-license --answer-yes --no-prompt
+              if [[ $EUID -eq 0 ]]; then run chown -R "$SPLUNK_USER:" "$SPLUNK_HOME"; fi
+              run as_splunk "$SPLUNK" start --accept-license --answer-yes --no-prompt
               if [[ $EXECUTE -eq 1 ]]; then "$SPLUNK" version; fi
             `,
           ),
@@ -1959,11 +2028,45 @@ function upgrade(): SplunkBlueprint {
                 ),
               }
             : {}),
+          'bin/40-kvstore-upgrade.sh': bashScript(
+            '40-kvstore-upgrade.sh',
+            [
+              `Upgrade the KV store server after the binaries (${to102 ? '8.0 on 10.2 and later' : '7.0 on 9.4 and 10.0'}).`,
+              shc ? 'A search head cluster upgrades from any one member; standalone search heads each run it.' : 'Run it on each search head.',
+            ],
+            [
+              { flag: '--phase', variable: 'PHASE', value: 'status', help: 'status, check, upgrade, progress or stop' },
+              { flag: '--scope', variable: 'SCOPE', value: shc ? 'shcluster' : 'standalone', help: 'shcluster (from one member) or standalone' },
+            ],
+            sh`
+              case "$SCOPE" in shcluster|standalone) ;; *) echo "--scope must be shcluster or standalone" >&2; exit 2 ;; esac
+              case "$PHASE" in
+                status)
+                  "$SPLUNK" show kvstore-status --verbose ;;
+                check)
+                  # Splunk's own dry run: reports whether the upgrade can proceed, changes nothing.
+                  if [[ "$SCOPE" == shcluster ]]; then "$SPLUNK" start-shcluster-upgrade kvstore -isDryRun true
+                  else "$SPLUNK" start-standalone-upgrade kvstore -dryRun true; fi ;;
+                upgrade)
+                  "$SPLUNK" show kvstore-status --verbose | sed -n 1,20p
+                  if [[ "$SCOPE" == shcluster ]]; then run "$SPLUNK" start-shcluster-upgrade kvstore
+                  else run "$SPLUNK" start-standalone-upgrade kvstore; fi
+                  if [[ $EXECUTE -eq 1 ]]; then echo "== Started. Follow it with: bash bin/40-kvstore-upgrade.sh --phase progress --scope $SCOPE"; fi ;;
+                progress)
+                  if [[ "$SCOPE" == shcluster ]]; then "$SPLUNK" show shcluster-kvupgrade-status
+                  else "$SPLUNK" show standalone-kvupgrade-status; fi ;;
+                stop)
+                  [[ "$SCOPE" == shcluster ]] || { echo "stop applies to a search head cluster upgrade only" >&2; exit 2; }
+                  run "$SPLUNK" stop-shcluster-upgrade kvstore ;;
+                *) echo "--phase must be status, check, upgrade, progress or stop" >&2; exit 2 ;;
+              esac
+            `,
+          ),
         },
         verify: [
           'splunk version   # on every node',
           '| rest /services/server/info splunk_server=* | stats count by version',
-          'splunk show kvstore-status --verbose   # ready, wiredTiger, expected server version',
+          `splunk show kvstore-status --verbose   # ready, wiredTiger, serverVersion ${to102 ? '8.0' : '7.0'}`,
           'splunk show cluster-status --verbose   # RF and SF met',
           'splunk show shcluster-status --verbose   # captain elected, all members up',
           'index=_internal sourcetype=splunkd log_level=ERROR earliest=-1h | stats count by component | sort - count',
@@ -2042,7 +2145,7 @@ function backup(): SplunkBlueprint {
           encrypt ? `Archives are encrypted with openssl (AES-256, PBKDF2) using a key file: create it once with (umask 077; openssl rand -base64 48 > /etc/splunk-backup.key) and keep a copy of it somewhere other than the backups. The key is read with -pass file:, never on the command line.` : 'Archives are not encrypted.',
           ...(kv ? ['The KV store backup is taken through the REST API with a token read from a mode-600 file (create a token for a service account with the admin role, or a role with the needed capability — VERIFY which capability your version requires). The archive lands in $SPLUNK_DB/kvstorebackup ($SPLUNK_HOME/var/lib/splunk/kvstorebackup by default) and is copied to the destination only once kvstore/status reports backupRestoreStatus=Ready again; the script exits 1 on an HTTP error, a Failed status or a timeout (--timeout-min, default 30).', 'In a search head cluster, back up the KV store on one member; it holds the whole replicated store.'] : []),
           ...(bundleDir ? [`${bundleDir} is also archived separately, because it is what you need first to rebuild a ${role.replace(/_/g, ' ')}.`] : []),
-          `Backups older than ${retention} days (etc, bundle and KV store archives from this host) are removed from ${dest} — only with --execute, and only after a run in which every archive succeeded. An archive is written as NAME.partial and renamed when complete, so a file with a normal name is never a truncated one.`,
+          `Backups older than ${retention} days (etc, bundle and KV store archives from this host) are removed from ${dest} — never with --dry-run, and only after a run in which every archive succeeded. An archive is written as NAME.partial and renamed when complete, so a file with a normal name is never a truncated one.`,
           'Output of both cron jobs goes to $SPLUNK_HOME/var/log/splunk/splunk-backup.log, a directory the splunk user owns; each script exits non-zero when anything failed.',
           'Test a restore on a spare instance at least once. A backup that has never been restored is a hope.',
         ],
@@ -2244,8 +2347,8 @@ function backup(): SplunkBlueprint {
             '# that directory normally indexes it into _internal, so a failed run is searchable',
             '# (VERIFY: splunk btool inputs list monitor:///opt/splunk/var/log/splunk). Both',
             '# scripts exit non-zero on any failure, so cron also mails MAILTO if it is set.',
-            `${cron} splunk bash $SPLUNK_HOME/etc/apps/${app}/bin/backup-config.sh --execute >> $SPLUNK_HOME/var/log/splunk/splunk-backup.log 2>&1`,
-            ...(kv ? [`${cron.replace(/^\d+/, (m) => String((Number(m) + 15) % 60))} splunk bash $SPLUNK_HOME/etc/apps/${app}/bin/backup-kvstore.sh --execute >> $SPLUNK_HOME/var/log/splunk/splunk-backup.log 2>&1`] : []),
+            `${cron} splunk bash $SPLUNK_HOME/etc/apps/${app}/bin/backup-config.sh >> $SPLUNK_HOME/var/log/splunk/splunk-backup.log 2>&1`,
+            ...(kv ? [`${cron.replace(/^\d+/, (m) => String((Number(m) + 15) % 60))} splunk bash $SPLUNK_HOME/etc/apps/${app}/bin/backup-kvstore.sh >> $SPLUNK_HOME/var/log/splunk/splunk-backup.log 2>&1`] : []),
           ],
           'RESTORE.md': [
             '# Restoring a Splunk node from these backups',

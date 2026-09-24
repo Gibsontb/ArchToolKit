@@ -98,6 +98,10 @@ export interface BlueprintInput {
    * 'tag' a dropdown of Category=value.
    */
   readonly fromTags?: 'category' | 'categories' | 'tag';
+  /** Remember what is entered here under this key, for fields that `offer` it. */
+  readonly remember?: string;
+  /** Offer what the page has remembered under this key, above the field's own options. */
+  readonly offer?: string;
 }
 
 /** Values as the page collects them, keyed by input id. */
