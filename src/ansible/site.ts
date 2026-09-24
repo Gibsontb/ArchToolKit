@@ -286,7 +286,7 @@ function readme(siteName: string, items: readonly StackItem[], files: Readonly<R
   return `${[
     `# ${siteName}`,
     '',
-    `An Ansible site playbook built by ArchToolKit, from ${items.length} playbook${items.length === 1 ? '' : 's'}.`,
+    `An Ansible site playbook, from ${items.length} playbook${items.length === 1 ? '' : 's'}.`,
     '',
     '## What it runs, in order',
     '',

@@ -246,7 +246,7 @@ function pythonBody(command: CommandEntry, values: BlueprintValues): string[] {
   const changes = command.effect !== 'read';
 
   const lines: string[] = [
-    '"""Wrapped from the ArchToolKit command catalogue. Read the notes below."""',
+    '"""Wrapped from the command catalogue. Read the notes below."""',
     '',
     'import argparse',
     'import logging',

@@ -1,201 +1,326 @@
 /**
- * The tag standard, built by picking.
+ * The tag list, built one entry at a time.
  *
- * Add a category from the common list (or name your own), then choose single
- * or multiple, tick the object types it goes on, pick the types it is required
- * on, and add its values one at a time. Every change rewrites the standard in
- * the line format the tag blueprints read, and the page remembers it so the
- * other tag blueprints offer these categories and tags as choices.
+ * An entry is some items of one object type and the tags they get: pick the
+ * type, add the items (app01, app02), add one or a few tags (Environment:
+ * prod, Application: payments), then Add to tag list. The form clears for the
+ * next entry. The list starts empty.
+ *
+ * The categories and tags are worked out from the entries, so nothing is
+ * created that is not attached to something, and Generate writes both the
+ * catalogue and the assignments. The value is the standard in the line format
+ * the tag blueprints read, followed by the entries as '@' lines.
  */
 
 import { el, replace } from './dom.ts';
 import {
   TAG_OBJECT_TYPES,
   TAG_PRESETS,
-  parseTagStandard,
+  categoriesFromEntries,
+  parseTagEntries,
   rememberTagStandard,
-  serializeTagStandard,
-  type TagCategory,
+  serializeTagList,
+  type TagEntry,
 } from '../kit/tag-standard.ts';
 
 const typeLabel = (value: string): string => TAG_OBJECT_TYPES.find((t) => t.value === value)?.label ?? value;
+const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+const OTHER = '__other__';
+
+interface Draft {
+  type: string;
+  items: string[];
+  tags: { category: string; tag: string }[];
+  category: string;
+}
+
+const blank = (type = 'VirtualMachine'): Draft => ({ type, items: [], tags: [], category: '' });
 
 /**
- * A builder whose value is the serialized standard. The element carries a
- * hidden textarea (class `tag-standard-value`) that always holds the current
- * text, so the page reads it like any other field.
+ * A builder whose value is the tag list. The element carries a hidden textarea
+ * (class `tag-standard-value`) holding it, so the page reads it like any other
+ * field. A value with categories and no entries (an older standard) is left as
+ * it is until the first entry is added.
  */
 export function tagStandardBuilder(value: string, onChange: () => void, onStructure: () => void = () => {}): HTMLElement {
-  let categories: TagCategory[] = parseTagStandard(value);
+  let entries: TagEntry[] = parseTagEntries(value);
+  let draft = blank();
+  let editing = -1;
+  let message = '';
+
   const store = el('textarea', { class: 'tag-standard-value', attrs: { hidden: true } }) as HTMLTextAreaElement;
-  const list = el('div', { class: 'tag-builder-list' });
-  const adder = el('div', { class: 'tag-builder-add' });
-  const root = el('div', { class: 'tag-builder' }, list, adder, store);
+  store.value = entries.length > 0 ? serializeTagList(entries) : value;
+  const editor = el('div', { class: 'tag-editor' });
+  const list = el('div', { class: 'tag-list' });
+  const root = el(
+    'div',
+    { class: 'tag-builder' },
+    el('p', {
+      class: 'tag-intro',
+      text: 'Pick what kind of object, add the items, give them one or a few tags, then Add to tag list. The form clears for the next one. The categories and tags are worked out from what you add; Generate creates them and puts each tag on its items.',
+    }),
+    editor,
+    list,
+    store,
+  );
 
   const commit = (): void => {
-    store.value = serializeTagStandard(categories);
+    store.value = serializeTagList(entries);
     rememberTagStandard(store.value);
     onChange();
-  };
-  const update = (index: number, next: Partial<TagCategory>): void => {
-    categories = categories.map((c, i) => (i === index ? { ...c, ...next } : c));
-    commit();
+    onStructure();
   };
 
-  function renderAdder(): void {
-    const taken = new Set(categories.map((c) => c.name.toLowerCase()));
-    const pick = el('select') as HTMLSelectElement;
-    pick.appendChild(el('option', { text: 'Add a category…', attrs: { value: '' } }));
-    for (const preset of TAG_PRESETS) {
-      if (taken.has(preset.name.toLowerCase())) continue;
-      pick.appendChild(el('option', { text: `${preset.name} — ${preset.description}`, attrs: { value: preset.name } }));
-    }
-    pick.appendChild(el('option', { text: 'Your own category…', attrs: { value: '__own__' } }));
-    pick.addEventListener('change', () => {
-      if (pick.value === '') return;
-      const preset = TAG_PRESETS.find((p) => p.name === pick.value);
-      categories = [
-        ...categories,
-        preset ?? { name: '', cardinality: 'single', types: ['VirtualMachine'], values: [], freeText: false, requiredOn: [], description: '' },
-      ];
-      commit();
-      render();
-      onStructure();
-      if (!preset) (root.querySelector('.tag-builder-list')?.lastElementChild?.querySelector('.tag-cat-name') as HTMLInputElement | null)?.focus();
-    });
-    replace(adder, pick);
-  }
+  /** Categories to offer: the ones already in the list, then the common ones. */
+  const categoryNames = (): string[] => {
+    const used = categoriesFromEntries(entries).map((c) => c.name);
+    return [...used, ...TAG_PRESETS.map((p) => p.name).filter((n) => !used.some((u) => same(u, n)))];
+  };
+  /** Tags to offer for a category: the ones used so far, then its common ones. */
+  const tagNames = (category: string): string[] => {
+    const used = categoriesFromEntries(entries).find((c) => same(c.name, category))?.values ?? [];
+    const common = TAG_PRESETS.find((p) => same(p.name, category))?.values ?? [];
+    return [...used, ...common.filter((v) => !used.some((u) => same(u, v)))];
+  };
 
-  function categoryCard(c: TagCategory, index: number): HTMLElement {
-    const name = el('input', { class: 'tag-cat-name', attrs: { type: 'text', placeholder: 'Category name, e.g. Environment' } }) as HTMLInputElement;
-    name.value = c.name;
-    name.addEventListener('input', () => update(index, { name: name.value.trim() }));
+  function renderEditor(): void {
+    const d = draft;
+    const redraw = (): void => {
+      message = '';
+      renderEditor();
+    };
 
-    const card = el('select') as HTMLSelectElement;
-    for (const [v, label] of [
-      ['single', 'One tag per object'],
-      ['multiple', 'Several tags per object'],
-    ] as const) {
-      const opt = el('option', { text: label, attrs: { value: v } }) as HTMLOptionElement;
-      if (c.cardinality === v) opt.selected = true;
-      card.appendChild(opt);
-    }
-    card.addEventListener('change', () => update(index, { cardinality: card.value === 'multiple' ? 'multiple' : 'single' }));
-
-    // Object types: ticking one adds it; the required-on list follows.
-    const types = el('div', { class: 'tag-chips' });
+    // 1. What kind of object.
+    const type = el('select', { attrs: { 'aria-label': 'Object type' } }) as HTMLSelectElement;
     for (const t of TAG_OBJECT_TYPES) {
-      const box = el('input', { attrs: { type: 'checkbox' } }) as HTMLInputElement;
-      box.checked = c.types.includes(t.value);
-      box.addEventListener('change', () => {
-        const next = box.checked ? [...categories[index]!.types, t.value] : categories[index]!.types.filter((x) => x !== t.value);
-        update(index, { types: next, requiredOn: categories[index]!.requiredOn.filter((r) => next.includes(r)) });
-        render();
-      });
-      types.appendChild(el('label', { class: 'tag-check' }, box, el('span', { text: t.label })));
+      const opt = el('option', { text: t.label, attrs: { value: t.value } }) as HTMLOptionElement;
+      if (t.value === d.type) opt.selected = true;
+      type.appendChild(opt);
     }
+    type.addEventListener('change', () => {
+      draft.type = type.value;
+      redraw();
+    });
 
-    const required = el('div', { class: 'tag-chips' });
-    const requiredChoices = c.types.length > 0 ? c.types : TAG_OBJECT_TYPES.map((t) => t.value);
-    for (const t of requiredChoices) {
-      const box = el('input', { attrs: { type: 'checkbox' } }) as HTMLInputElement;
-      box.checked = c.requiredOn.includes(t);
-      box.addEventListener('change', () => {
-        const cur = categories[index]!.requiredOn;
-        update(index, { requiredOn: box.checked ? [...cur, t] : cur.filter((x) => x !== t) });
-      });
-      required.appendChild(el('label', { class: 'tag-check' }, box, el('span', { text: typeLabel(t) })));
-    }
-
-    // Values as chips, added one at a time.
-    const chips = el('div', { class: 'tag-chips' });
-    for (const v of c.values) {
-      chips.appendChild(
+    // 2. The items.
+    const items = el('div', { class: 'tag-chips' });
+    for (const item of d.items) {
+      items.appendChild(
         el(
           'span',
           { class: 'tag-chip' },
-          el('span', { text: v }),
+          el('span', { text: item }),
+          el('button', { class: 'tag-chip-x', text: '×', attrs: { type: 'button', title: `Remove ${item}`, 'aria-label': `Remove ${item}` }, on: { click: () => ((draft.items = draft.items.filter((x) => x !== item)), redraw()) } }),
+        ),
+      );
+    }
+    const itemBox = el('input', { class: 'tag-item-input', attrs: { type: 'text', placeholder: `${typeLabel(d.type)} name, e.g. ${d.type === 'VirtualMachine' ? 'app01' : d.type === 'HostSystem' ? 'esx01' : 'name'}`, 'aria-label': 'Item name' } }) as HTMLInputElement;
+    const addItems = (refocus: boolean): void => {
+      const parts = itemBox.value.split(',').map((p) => p.trim()).filter(Boolean);
+      itemBox.value = '';
+      const fresh = parts.filter((p, i) => !draft.items.some((x) => same(x, p)) && parts.findIndex((q) => same(q, p)) === i);
+      if (fresh.length === 0) return;
+      draft.items = [...draft.items, ...fresh];
+      redraw();
+      if (refocus) (editor.querySelector('.tag-item-input') as HTMLInputElement | null)?.focus();
+    };
+    itemBox.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') {
+        e.preventDefault();
+        addItems(true);
+      }
+    });
+    itemBox.addEventListener('input', () => {
+      if (itemBox.value.includes(',')) addItems(true);
+    });
+    itemBox.addEventListener('change', () => {
+      if (itemBox.value.trim()) setTimeout(() => addItems(false), 0);
+    });
+
+    // 3. The tags: a category, then one of its tags.
+    const tags = el('div', { class: 'tag-chips' });
+    for (const t of d.tags) {
+      tags.appendChild(
+        el(
+          'span',
+          { class: 'tag-chip' },
+          el('span', { text: `${t.category}: ${t.tag}` }),
+          el('button', { class: 'tag-chip-x', text: '×', attrs: { type: 'button', title: 'Remove', 'aria-label': `Remove ${t.category} ${t.tag}` }, on: { click: () => ((draft.tags = draft.tags.filter((x) => x !== t)), redraw()) } }),
+        ),
+      );
+    }
+    const catSelect = el('select', { attrs: { 'aria-label': 'Category' } }) as HTMLSelectElement;
+    catSelect.appendChild(el('option', { text: 'Category…', attrs: { value: '' } }));
+    for (const n of categoryNames()) {
+      const opt = el('option', { text: n, attrs: { value: n } }) as HTMLOptionElement;
+      if (same(n, d.category)) opt.selected = true;
+      catSelect.appendChild(opt);
+    }
+    const catIsOther = d.category !== '' && !categoryNames().some((n) => same(n, d.category));
+    const otherOpt = el('option', { text: 'New category…', attrs: { value: OTHER } }) as HTMLOptionElement;
+    if (catIsOther) otherOpt.selected = true;
+    catSelect.appendChild(otherOpt);
+    const catOther = el('input', { attrs: { type: 'text', placeholder: 'Category name', 'aria-label': 'New category name' } }) as HTMLInputElement;
+    catOther.value = catIsOther ? d.category : '';
+    catOther.hidden = !catIsOther;
+    catSelect.addEventListener('change', () => {
+      if (catSelect.value === OTHER) {
+        catOther.hidden = false;
+        catOther.focus();
+        draft.category = catOther.value;
+      } else {
+        draft.category = catSelect.value;
+        redraw();
+      }
+    });
+    catOther.addEventListener('input', () => (draft.category = catOther.value));
+    catOther.addEventListener('change', () => redraw());
+
+    const tagSelect = el('select', { attrs: { 'aria-label': 'Tag' } }) as HTMLSelectElement;
+    tagSelect.appendChild(el('option', { text: d.category ? 'Tag…' : 'Pick a category first', attrs: { value: '' } }));
+    for (const v of d.category ? tagNames(d.category) : []) tagSelect.appendChild(el('option', { text: v, attrs: { value: v } }));
+    if (d.category) tagSelect.appendChild(el('option', { text: 'New tag…', attrs: { value: OTHER } }));
+    tagSelect.disabled = !d.category;
+    const tagOther = el('input', { attrs: { type: 'text', placeholder: 'Tag', 'aria-label': 'New tag' } }) as HTMLInputElement;
+    tagOther.hidden = true;
+    const addTag = (): void => {
+      const category = draft.category.trim();
+      const tag = (tagSelect.value === OTHER ? tagOther.value : tagSelect.value).trim();
+      if (!category || !tag) {
+        message = !category ? 'Pick a category.' : 'Pick or type a tag.';
+        renderEditor();
+        return;
+      }
+      if (!draft.tags.some((t) => same(t.category, category) && same(t.tag, tag))) draft.tags = [...draft.tags, { category, tag }];
+      redraw();
+    };
+    tagSelect.addEventListener('change', () => {
+      if (tagSelect.value === OTHER) {
+        tagOther.hidden = false;
+        tagOther.focus();
+      } else if (tagSelect.value) addTag();
+    });
+    tagOther.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') {
+        e.preventDefault();
+        addTag();
+      }
+    });
+    const addTagButton = el('button', { class: 'btn btn-small', text: 'Add tag', attrs: { type: 'button' }, on: { mousedown: (e: Event) => e.preventDefault(), click: addTag } });
+
+    const addEntry = (): void => {
+      if (itemBox.value.trim()) addItems(false);
+      const problem = draft.items.length === 0 ? 'Add at least one item.' : draft.tags.length === 0 ? 'Give it at least one tag.' : '';
+      if (problem) {
+        message = problem;
+        renderEditor();
+        return;
+      }
+      const entry: TagEntry = { type: draft.type, items: [...draft.items], tags: [...draft.tags] };
+      entries = editing >= 0 ? entries.map((e, i) => (i === editing ? entry : e)) : [...entries, entry];
+      message = `Added ${entry.items.length} item${entry.items.length === 1 ? '' : 's'} with ${entry.tags.length} tag${entry.tags.length === 1 ? '' : 's'}.`;
+      editing = -1;
+      // The next entry is usually the same kind of object.
+      draft = blank(entry.type);
+      commit();
+      render();
+      (editor.querySelector('.tag-item-input') as HTMLInputElement | null)?.focus();
+    };
+
+    const field = (label: string, ...nodes: HTMLElement[]): HTMLElement => el('div', { class: 'tag-editor-field' }, el('div', { class: 'tag-editor-label', text: label }), ...nodes);
+
+    replace(
+      editor,
+      el('div', { class: 'tag-editor-head' }, el('strong', { text: editing >= 0 ? `Editing entry ${editing + 1}` : 'New entry' })),
+      el(
+        'div',
+        { class: 'tag-editor-grid' },
+        field('1. Object type', type),
+        field('2. Items', items, el('div', { class: 'tag-add-row' }, itemBox, el('button', { class: 'btn btn-small', text: 'Add item', attrs: { type: 'button' }, on: { mousedown: (e: Event) => e.preventDefault(), click: () => addItems(true) } }))),
+        field('3. Tags', tags, el('div', { class: 'tag-add-row' }, catSelect, catOther, tagSelect, tagOther, addTagButton)),
+      ),
+      el(
+        'div',
+        { class: 'btn-row tag-editor-actions' },
+        el('button', { class: 'btn btn-primary btn-small', text: editing >= 0 ? 'Update in tag list' : 'Add to tag list', attrs: { type: 'button' }, on: { mousedown: (e: Event) => e.preventDefault(), click: addEntry } }),
+        el('button', { class: 'btn btn-small', text: editing >= 0 ? 'Cancel' : 'Clear', attrs: { type: 'button' }, on: { click: () => ((draft = blank(draft.type)), (editing = -1), (message = ''), render()) } }),
+        message ? el('span', { class: message.startsWith('Added') ? 'tag-msg-ok' : 'tag-msg-bad', text: message }) : null,
+      ),
+    );
+  }
+
+  function renderList(): void {
+    const rows = entries.map((e, i) =>
+      el(
+        'tr',
+        { class: i === editing ? 'is-editing' : '' },
+        el('td', { text: typeLabel(e.type) }),
+        el('td', {}, el('div', { class: 'tag-chips' }, ...e.items.map((x) => el('span', { class: 'tag-chip tag-chip-static tag-chip-item', text: x })))),
+        el('td', {}, el('div', { class: 'tag-chips' }, ...e.tags.map((t) => el('span', { class: 'tag-chip tag-chip-static', text: `${t.category}: ${t.tag}` })))),
+        el(
+          'td',
+          { class: 'tag-row-actions' },
           el('button', {
-            class: 'tag-chip-x',
-            text: '×',
-            attrs: { type: 'button', title: `Remove ${v}`, 'aria-label': `Remove ${v}` },
+            class: 'btn btn-small',
+            text: 'Edit',
+            attrs: { type: 'button' },
             on: {
               click: () => {
-                update(index, { values: categories[index]!.values.filter((x) => x !== v) });
+                draft = { type: e.type, items: [...e.items], tags: [...e.tags], category: '' };
+                editing = i;
+                message = '';
+                render();
+                editor.scrollIntoView({ block: 'nearest' });
+              },
+            },
+          }),
+          el('button', {
+            class: 'tag-cat-x',
+            text: '×',
+            attrs: { type: 'button', title: 'Remove this entry', 'aria-label': `Remove entry ${i + 1}` },
+            on: {
+              click: () => {
+                entries = entries.filter((_, j) => j !== i);
+                if (editing === i) ((editing = -1), (draft = blank(draft.type)));
+                else if (editing > i) editing--;
+                message = '';
+                commit();
                 render();
               },
             },
           }),
         ),
-      );
-    }
-    const addValue = el('input', { attrs: { type: 'text', placeholder: c.freeText ? 'Free text: any value' : 'Add a tag, then Enter' } }) as HTMLInputElement;
-    addValue.disabled = c.freeText;
-    const add = (): void => {
-      const parts = addValue.value.split(',').map((p) => p.trim()).filter(Boolean);
-      const cur = categories[index]!.values;
-      const fresh = parts.filter((p) => !cur.some((x) => x.toLowerCase() === p.toLowerCase()));
-      if (fresh.length === 0) return;
-      update(index, { values: [...cur, ...fresh] });
-      render();
-      (list.children[index]?.querySelector('.tag-value-input') as HTMLInputElement | null)?.focus();
-    };
-    addValue.classList.add('tag-value-input');
-    addValue.addEventListener('keydown', (event) => {
-      if ((event as KeyboardEvent).key === 'Enter') {
-        event.preventDefault();
-        add();
-      }
-    });
-    const freeBox = el('input', { attrs: { type: 'checkbox' } }) as HTMLInputElement;
-    freeBox.checked = c.freeText;
-    freeBox.addEventListener('change', () => {
-      update(index, { freeText: freeBox.checked });
-      render();
-    });
-
-    const description = el('input', { attrs: { type: 'text', placeholder: 'What it is for' } }) as HTMLInputElement;
-    description.value = c.description;
-    description.addEventListener('input', () => update(index, { description: description.value }));
-
-    const row = (label: string, ...nodes: HTMLElement[]): HTMLElement => el('div', { class: 'tag-row' }, el('div', { class: 'tag-row-label', text: label }), el('div', { class: 'tag-row-body' }, ...nodes));
-
-    return el(
-      'div',
-      { class: 'tag-cat' },
-      el(
-        'div',
-        { class: 'tag-cat-head' },
-        name,
-        el('button', {
-          class: 'btn btn-small',
-          text: 'Remove',
-          attrs: { type: 'button' },
-          on: {
-            click: () => {
-              categories = categories.filter((_, i) => i !== index);
-              commit();
-              render();
-              onStructure();
-            },
-          },
-        }),
       ),
-      row('Tags per object', card),
-      row('Goes on', types),
-      row('Required on', required),
-      row('Tags', chips, el('div', { class: 'tag-add-row' }, addValue, el('button', { class: 'btn btn-small', text: 'Add', attrs: { type: 'button' }, on: { click: add } }), el('label', { class: 'tag-check' }, freeBox, el('span', { text: 'Free text' })))),
-      row('Description', description),
+    );
+
+    const cats = categoriesFromEntries(entries);
+    const itemCount = entries.reduce((n, e) => n + e.items.length, 0);
+    replace(
+      list,
+      el('div', { class: 'tag-list-head' }, el('strong', { text: `Tag list (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, ${itemCount} item${itemCount === 1 ? '' : 's'})` })),
+      entries.length === 0
+        ? el('p', { class: 'muted', text: 'Empty. Add the first entry above.' })
+        : el(
+            'div',
+            { class: 'table-wrap' },
+            el('table', { class: 'data-table tag-table' }, el('thead', {}, el('tr', {}, ...['Type', 'Items', 'Tags', ''].map((h) => el('th', { text: h })))), el('tbody', {}, ...rows)),
+          ),
+      cats.length > 0
+        ? el(
+            'div',
+            { class: 'tag-creates' },
+            el('span', { class: 'muted', text: 'Generate creates: ' }),
+            ...cats.map((c) => el('span', { class: 'tag-creates-cat' }, el('strong', { text: c.name }), el('span', { text: ` (${c.cardinality === 'multiple' ? 'several' : 'one'} per object, on ${c.types.map(typeLabel).join(', ')}): ${c.values.join(', ')}` }))),
+          )
+        : null,
     );
   }
 
   function render(): void {
-    replace(list, ...categories.map(categoryCard));
-    if (categories.length === 0) list.appendChild(el('p', { class: 'muted', text: 'No categories yet. Add one below.' }));
-    renderAdder();
+    renderEditor();
+    renderList();
   }
 
-  store.value = serializeTagStandard(categories);
   render();
   return root;
 }

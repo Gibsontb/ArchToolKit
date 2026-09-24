@@ -492,7 +492,7 @@ export const POWERSHELL_CATALOG: readonly CommandGroup[] = [
     {
       name: 'New-EventLog',
       task: 'register an event source so a script can write to the log',
-      syntax: "New-EventLog -LogName Application -Source 'ArchToolKit'",
+      syntax: "New-EventLog -LogName Application -Source 'Automation'",
       effect: 'changes',
       note: 'Needs administrator once, then Write-EventLog works for anyone. A script writing to an unregistered source fails with a permissions error that does not mention registration.',
     },

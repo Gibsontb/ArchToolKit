@@ -160,13 +160,13 @@ export function authPreamble(target: ApplyTarget): string[] {
 }
 
 /** The environment a scheduled job needs, for a crontab line: no secret in it. */
-export function scheduledEnv(target: ApplyTarget, account = 'svc-archtoolkit'): string {
+export function scheduledEnv(target: ApplyTarget, account = 'svc-automation'): string {
   const auth = AUTH[target];
   const user = auth.token.replace(/_TOKEN$/, '_USER');
   const needsUser = auth.login.body.includes('$u');
   const name = auth.login.secretVar.toLowerCase().replace(/_file$/, '').replace(/_/g, '-');
   const idb = auth.login.hostVar ? ` ${auth.login.hostVar}=vcenter-mgmt.example.com` : '';
-  return `${auth.host}=${auth.hostExample.split(':')[0]}${idb}${needsUser ? ` ${user}=${account}` : ''} ${auth.login.secretVar}=/etc/archtoolkit/${name}`;
+  return `${auth.host}=${auth.hostExample.split(':')[0]}${idb}${needsUser ? ` ${user}=${account}` : ''} ${auth.login.secretVar}=/etc/vcf-automation/${name}`;
 }
 
 /**
@@ -189,14 +189,14 @@ function headerFileLines(target: ApplyTarget): string[] {
   const auth = AUTH[target];
   const name = headerVar(target);
   return [
-    `${name}="$(umask 077; mktemp "\${TMPDIR:-/tmp}/atk-auth.XXXXXX")"`,
+    `${name}="$(umask 077; mktemp "\${TMPDIR:-/tmp}/auth.XXXXXX")"`,
     `trap 'rm -f "$${name}"' EXIT`,
     `printf '%s\\n' "${auth.header}" > "$${name}"`,
   ];
 }
 
 function headerVar(target: ApplyTarget): string {
-  return `ATK_AUTH_${target.replace(/[^a-z]/gi, '_').toUpperCase()}`;
+  return `AUTH_HDR_${target.replace(/[^a-z]/gi, '_').toUpperCase()}`;
 }
 
 export function hostVar(target: ApplyTarget): string {

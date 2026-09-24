@@ -65,7 +65,7 @@ describe('ansible/yaml: quoting', () => {
   });
 
   it('leaves ordinary values alone', () => {
-    for (const value of ['esxi-01', 'vcf/mgmt', 'us-east-1', 'Managed by ArchToolKit']) {
+    for (const value of ['esxi-01', 'vcf/mgmt', 'us-east-1', 'Managed by automation']) {
       expect(needsQuoting(value)).toBe(false);
     }
   });

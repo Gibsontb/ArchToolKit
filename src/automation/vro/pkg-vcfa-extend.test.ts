@@ -43,7 +43,7 @@ function build(id: string, overrides: BlueprintValues = {}): Record<string, stri
 /** The automation's own package (not the core library). */
 function ownPackage(files: Record<string, string>): { dir: string; spec: VroPackageSpec; configKey: string } {
   const packages = packagesIn(files);
-  const dir = Object.keys(packages).find((d) => d !== 'com.archtoolkit.core.package');
+  const dir = Object.keys(packages).find((d) => d !== 'vcf.automation.core.package');
   if (!dir) throw new Error('no automation package');
   const spec = readPackageSpec(packages[dir]!);
   return { dir, spec, configKey: `${spec.configs[0]!.categoryPath}/${spec.configs[0]!.name}` };
@@ -121,11 +121,11 @@ describe('pkg vcfa-extend: every automation is an Orchestrator package', () => {
     const problems: string[] = [];
     for (const v of variants) {
       const packages = packagesIn(v.files);
-      if (!packages['com.archtoolkit.core.package']) problems.push(`${v.id} (${v.label}): no core library`);
+      if (!packages['vcf.automation.core.package']) problems.push(`${v.id} (${v.label}): no core library`);
       try {
         const { spec } = ownPackage(v.files);
         if (spec.workflows.length === 0 || spec.configs.length !== 1) problems.push(`${v.id} (${v.label}): ${spec.workflows.length} workflows, ${spec.configs.length} configs`);
-        if (!spec.name.startsWith('com.') || /[^a-z0-9_.]/.test(spec.name)) problems.push(`${v.id} (${v.label}): package name ${spec.name}`);
+        if (/[^a-z0-9_.]/.test(spec.name)) problems.push(`${v.id} (${v.label}): package name ${spec.name}`);
       } catch (e) {
         problems.push(`${v.id} (${v.label}): ${String(e)}`);
       }
@@ -155,14 +155,14 @@ describe('pkg vcfa-extend: every automation is an Orchestrator package', () => {
     expect(problems).toEqual([]);
   });
 
-  it('arms nothing by default: every changing package starts as a dry run', () => {
+  it('acts by default: every changing package has a dryRun setting, off', () => {
     const problems: string[] = [];
     for (const v of variants) {
       const { spec } = ownPackage(v.files);
       const dry = spec.configs[0]!.attributes.find((a) => a.name === 'dryRun');
       if (v.id === 'vcfa_orchestrator_action') {
         if (dry) problems.push(`${v.id}: a read-only package has a dryRun`);
-      } else if (dry?.value !== true) problems.push(`${v.id} (${v.label}): dryRun is ${String(dry?.value)}`);
+      } else if (dry?.value !== false) problems.push(`${v.id} (${v.label}): dryRun is ${String(dry?.value)}`);
     }
     expect(problems).toEqual([]);
   });
@@ -260,7 +260,7 @@ describe('pkg vcfa-extend: vcfa_orchestrator_workflow', { skip: !CURL }, () => {
   const dns = (host: string, extra: Record<string, unknown> = {}) => ({ dnsBaseUrl: `https://${host}`, dnsUsername: 'svc-dns', dnsPassword: DNS_PASSWORD, allowedZones: 'lab.example.com, example.com', webhook: `https://${host}/hook`, ...extra });
 
   it('is a package: the workflow with the task inputs and dryRun, and settings with the password empty', () => {
-    expect(dir).toBe('com.archtoolkit.vcfa.workflow.vcfa_orchestrator_workflow.package');
+    expect(dir).toBe('vcf.automation.vcfa.workflow.vcfa_orchestrator_workflow.package');
     expect(spec.workflows.map((w) => w.name)).toEqual(['Register DNS record']);
     expect(spec.workflows[0]!.xml.includes('<param name="dryRun" type="boolean"')).toBe(true);
     expect(spec.configs[0]!.attributes.find((a) => a.name === 'dnsPassword')?.type).toBe('SecureString');
@@ -406,11 +406,11 @@ describe('pkg vcfa-extend: vcfa_orchestrator_action', { skip: !CURL }, () => {
     assertNoSecret(result, IPAM_PASSWORD);
   });
 
-  it('puts an action whose module is not a package name in com.archtoolkit.vcfa.action.*, and the form follows it', async () => {
+  it('puts an action whose module is not a package name in vcf.automation.vcfa.action.*, and the form follows it', async () => {
     const odd = build('vcfa_orchestrator_action', { module: 'Company-Infra', source: 'custom' });
     const own = ownPackage(odd);
-    expect(own.spec.name).toBe('com.archtoolkit.vcfa.action.company_infra');
-    expect(odd['vcfa-orchestrator-action-form-field.json']!.includes('"id": "com.archtoolkit.vcfa.action.company_infra/listOptions"')).toBe(true);
+    expect(own.spec.name).toBe('vcf.automation.vcfa.action.company_infra');
+    expect(odd['vcfa-orchestrator-action-form-field.json']!.includes('"id": "vcf.automation.vcfa.action.company_infra/listOptions"')).toBe(true);
     const { result, requests } = await run(odd, [], () => ({}), 'Try listOptions', { filter: '' });
     expect(result.outputs.result).toEqual(['option-a', 'option-b']);
     expect(requests.length).toBe(0);
@@ -438,7 +438,7 @@ describe('pkg vcfa-extend: vcfa_resource_action', { skip: !CURL }, () => {
   const settings = (extra: Record<string, unknown> = {}) => (host: string) => vcfaSettings(host, { projectName: 'Team A', approvers: ['GROUP:platform-leads@example.com'], ...extra });
 
   it('holds the register workflow and the backing workflow, whose id the resource action names', () => {
-    expect(dir).toBe('com.archtoolkit.vcfa.day2.vcfa_resource_action.package');
+    expect(dir).toBe('vcf.automation.vcfa.day2.vcfa_resource_action.package');
     expect(spec.workflows.map((w) => w.name).sort()).toEqual(['Extend disk', 'Register Extend disk']);
     expect(JSON.parse(files['import/orchestrator/workflows/extend-disk/workflow.json']!).id).toBe(backingId);
     expect(files['IMPORT.md']!.includes(backingId)).toBe(true);
@@ -540,9 +540,9 @@ describe('pkg vcfa-extend: vcfa_resource_action', { skip: !CURL }, () => {
     };
     const runIt = (f: ReturnType<typeof fakes>, size: number, settings: Record<string, unknown>) => run(files, [], () => settings, 'Extend disk', { diskIndex: 0, newSizeGb: size, dryRun: false }, prepare(f));
 
-    it('dry run changes nothing, even when VCF Automation passes dryRun = false', async () => {
+    it('a dry run set in the configuration changes nothing, even when VCF Automation passes dryRun = false', async () => {
       const f = fakes();
-      const { result } = await runIt(f, 60, {});
+      const { result } = await runIt(f, 60, { dryRun: true });
       expect(result.error).toBe(null);
       expect(f.reconfigured.length).toBe(0);
       expect(result.logs.some((l) => l.message === 'DRY RUN: would extend disk 0 of app01 to 60 GB')).toBe(true);
@@ -575,7 +575,7 @@ describe('pkg vcfa-extend: vcfa_day2_policy', { skip: !CURL }, () => {
   const settings = (extra: Record<string, unknown> = {}) => (host: string) => vcfaSettings(host, { approvers: ['GROUP:platform-leads@example.com'], ...extra });
 
   it('is a package whose settings carry the project from the page', () => {
-    expect(dir).toBe('com.archtoolkit.vcfa.policy.vcfa_day2_policy.package');
+    expect(dir).toBe('vcf.automation.vcfa.policy.vcfa_day2_policy.package');
     expect(spec.configs[0]!.attributes.find((a) => a.name === 'projectName')?.value).toBe('Team A');
     expect(JSON.parse(files['vcfa-day2-policy.json']!).projectId).toContain('<REQUIRED');
   });
@@ -643,7 +643,7 @@ describe('pkg vcfa-extend: vcfa_custom_resource', { skip: !CURL }, () => {
   const settings = (extra: Record<string, unknown> = {}) => (host: string) => vcfaSettings(host, { projectName: 'Team A', ...extra });
 
   it('holds the register workflow and the lifecycle workflows, with the ids mainActions names', () => {
-    expect(dir).toBe('com.archtoolkit.vcfa.custom.aduser.package');
+    expect(dir).toBe('vcf.automation.vcfa.custom.aduser.package');
     expect(spec.workflows.map((w) => w.name).sort()).toEqual(['Create AD user', 'Delete AD user', 'Register Custom.ADUser', 'Update AD user']);
     expect(spec.workflows.find((w) => w.name === 'Create AD user')!.id).toBe(nativeCreate);
   });
@@ -679,7 +679,7 @@ describe('pkg vcfa-extend: vcfa_custom_resource', { skip: !CURL }, () => {
     const template = bodyOf(requests, 'POST', '/blueprint/api/blueprints') as { name: string; projectId: string; content: string; requestScopeOrg: boolean };
     expect([template.name, template.projectId, template.requestScopeOrg]).toEqual(['AD user request', 'p-1', false]);
     expect(template.content.includes('type: Custom.ADUser')).toBe(true);
-    expect(bodyOf(requests, 'POST', '/blueprint/api/blueprints/bp-1/versions')).toEqual({ version: '1.0.0', description: 'Generated by ArchToolKit. Requests one Custom.ADUser.', changeLog: 'Imported by the ArchToolKit package', release: false });
+    expect(bodyOf(requests, 'POST', '/blueprint/api/blueprints/bp-1/versions')).toEqual({ version: '1.0.0', description: 'Requests one Custom.ADUser.', changeLog: 'Imported by the vcf.automation package', release: false });
     assertNoSecret(result, VCFA_TOKEN, ACCESS);
   });
 
@@ -752,7 +752,7 @@ describe('pkg vcfa-extend: vcfa_supervisor_namespace', { skip: !CURL }, () => {
     expect(bodyOf(requests, 'POST', CCI)).toEqual({
       apiVersion: 'infrastructure.cci.vmware.com/v1alpha3',
       kind: 'SupervisorNamespace',
-      metadata: { generateName: 'team-a-dev-', namespace: 'team-a-project', labels: { 'archtoolkit.io/request': 'team-a-dev' } },
+      metadata: { generateName: 'team-a-dev-', namespace: 'team-a-project', labels: { 'vcf.automation/request': 'team-a-dev' } },
       spec: { className: 'small', regionName: 'region1' },
     });
     expect(requests[2]!.headers.authorization).toBe(`Bearer ${ACCESS}`);
@@ -761,12 +761,12 @@ describe('pkg vcfa-extend: vcfa_supervisor_namespace', { skip: !CURL }, () => {
   });
 
   it('leaves the namespace it requested before alone, and refuses to guess between two', async () => {
-    const mine = { metadata: { name: 'team-a-dev-abcde', labels: { 'archtoolkit.io/request': 'team-a-dev' } } };
+    const mine = { metadata: { name: 'team-a-dev-abcde', labels: { 'vcf.automation/request': 'team-a-dev' } } };
     const once = await run(files, routes([{ metadata: { name: 'other' } }, mine]), settings({ dryRun: false }), workflow, { dryRun: false });
     expect(once.result.error).toBe(null);
     expect(once.writes).toEqual([]);
     expect(once.result.outputs.namespaceName).toBe('team-a-dev-abcde');
-    const twice = await run(files, routes([mine, { metadata: { name: 'team-a-dev-fghij', labels: { 'archtoolkit.io/request': 'team-a-dev' } } }]), settings({ dryRun: false }), workflow, { dryRun: false });
+    const twice = await run(files, routes([mine, { metadata: { name: 'team-a-dev-fghij', labels: { 'vcf.automation/request': 'team-a-dev' } } }]), settings({ dryRun: false }), workflow, { dryRun: false });
     expect(twice.result.error ?? '').toContain('refusing to guess');
     expect(twice.writes).toEqual([]);
   });

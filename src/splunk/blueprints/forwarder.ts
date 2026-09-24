@@ -307,10 +307,10 @@ export const FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
         },
         verify: [
           `ss -ln${protocol === 'tcp' ? 't' : 'u'} | grep ${port}`,
-          ...(protocol === 'udp' ? [`logger -n <this host> -P ${port} "archtoolkit test message"`, 'netstat -su | grep -i "packet receive errors"   # a rising count means the buffer is too small'] : []),
-          ...(protocol === 'tcp' ? [`echo "archtoolkit test message" | nc <this host> ${port}`] : []),
+          ...(protocol === 'udp' ? [`logger -n <this host> -P ${port} "test message"`, 'netstat -su | grep -i "packet receive errors"   # a rising count means the buffer is too small'] : []),
+          ...(protocol === 'tcp' ? [`echo "test message" | nc <this host> ${port}`] : []),
           ...(protocol === 'hec'
-            ? [`curl -k https://<this host>:${port}/services/collector/event -H "Authorization: Splunk <token>" -d '{"event":"archtoolkit test","sourcetype":"${sourcetype}"}'`, '| rest /services/data/inputs/http | table title, index, disabled']
+            ? [`curl -k https://<this host>:${port}/services/collector/event -H "Authorization: Splunk <token>" -d '{"event":"hec test","sourcetype":"${sourcetype}"}'`, '| rest /services/data/inputs/http | table title, index, disabled']
             : []),
           `index=${index} earliest=-5m | stats count by host, sourcetype`,
           'index=_internal sourcetype=splunkd component=TcpInputProc OR component=UDPInputProcessor | tail 20',

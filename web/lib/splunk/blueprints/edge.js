@@ -529,7 +529,7 @@ export const EDGE_BLUEPRINTS                             = [
         findings.push(info('splunk.otel-metrics-only', 'No log files: the collector will send host metrics only.', { source: 'ArchToolKit' }));
       }
 
-      const configPath = windows ? 'C:\\ProgramData\\Splunk\\OpenTelemetry Collector\\archtoolkit_config.yaml' : '/etc/otel/collector/archtoolkit_config.yaml';
+      const configPath = windows ? 'C:\\ProgramData\\Splunk\\OpenTelemetry Collector\\vcf-config.yaml' : '/etc/otel/collector/vcf-config.yaml';
       const tls = ['    tls:', `      insecure_skip_verify: ${insecure}`];
       const logsPipelineReceivers = [...(paths.length > 0 ? ['filelog'] : []), ...(eventLogs ? ['windowseventlog/system', 'windowseventlog/application', 'windowseventlog/security'] : [])];
       const config           = [

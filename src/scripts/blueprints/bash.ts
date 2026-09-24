@@ -80,7 +80,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
       { id: 'lock', label: 'Refuse to run twice at once', control: 'toggle', default: true },
       { id: 'require_root', label: 'Require root', control: 'toggle', default: false },
       { id: 'dry_run', label: 'Include --dry-run', control: 'toggle', default: true },
-      { id: 'log_file', label: 'Also write to a log file', control: 'text', default: '/var/log/archtoolkit', hint: 'Empty for stderr only' },
+      { id: 'log_file', label: 'Also write to a log file', control: 'text', default: '/var/log/vcf-automation', hint: 'Empty for stderr only' },
     ],
     script: (values: BlueprintValues): Script => {
       const name = snake(str(values, 'script_name', 'script'), 'script');
@@ -1019,7 +1019,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
         usage: [`sudo ./${name}.sh --dry-run`, `sudo ./${name}.sh`, `sudo ./${name}.sh --verbose`],
         undo: [
           'Users created: userdel -r <username>   (that removes the home directory too)',
-          `Sudo rule: rm /etc/sudoers.d/archtoolkit-${name}`,
+          `Sudo rule: rm /etc/sudoers.d/vcf-${name}`,
           ...(bool(values, 'disable_password_login', true) ? ['SSH configuration: the original is kept beside it with a .bak suffix and the timestamp.'] : []),
         ],
         body: [
@@ -1156,7 +1156,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
           '',
           ...(sudo !== 'none'
             ? [
-                `  local sudoers="/etc/sudoers.d/archtoolkit-${name}"`,
+                `  local sudoers="/etc/sudoers.d/vcf-${name}"`,
                 '  log "Writing $sudoers"',
                 '  if (( ! DRY_RUN )); then',
                 '    # Write to a temporary file and check it before installing it.',

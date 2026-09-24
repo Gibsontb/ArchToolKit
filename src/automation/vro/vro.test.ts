@@ -84,8 +84,8 @@ describe('vro: packages are Orchestrator JavaScript', () => {
   it('every core action is in the core package, with a stable id', () => {
     const files = build('vcfa_approval_policy');
     for (const action of CORE_ACTIONS) {
-      expect(typeof files[`${CORE_PACKAGE_DIR}/actions/com.archtoolkit.core/${action.name}.js`]).toBe('string');
-      const side = JSON.parse(files[`${CORE_PACKAGE_DIR}/actions/com.archtoolkit.core/${action.name}.json`]!) as { id: string };
+      expect(typeof files[`${CORE_PACKAGE_DIR}/actions/vcf.automation.core/${action.name}.js`]).toBe('string');
+      const side = JSON.parse(files[`${CORE_PACKAGE_DIR}/actions/vcf.automation.core/${action.name}.json`]!) as { id: string };
       expect(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(side.id)).toBe(true);
     }
     // The same core library in every automation, byte for byte.
@@ -94,7 +94,7 @@ describe('vro: packages are Orchestrator JavaScript', () => {
   });
 
   it('refuses a package or element name Orchestrator would not take', () => {
-    const spec = { packageName: 'com.archtoolkit.x', description: '', categoryPath: 'A/B', workflow: { name: 'W', description: '', inputs: [], outputs: [], script: '' }, config: { name: 'C', description: '', attributes: [] } };
+    const spec = { packageName: 'vcf.automation.x', description: '', categoryPath: 'A/B', workflow: { name: 'W', description: '', inputs: [], outputs: [], script: '' }, config: { name: 'C', description: '', attributes: [] } };
     expect(() => toPackage({ ...spec, packageName: 'Com.Bad-Name' })).toThrow(/package name/);
     expect(() => toPackage({ ...spec, workflow: { ...spec.workflow, name: 'a/b' } })).toThrow(/has a "\/"/);
   });
@@ -164,7 +164,7 @@ describe('vro: the core library guards', { skip: !CURL }, () => {
   const files = build('vcfa_approval_policy');
   const servers: FakeServer[] = [];
   after(() => servers.forEach((s) => s.stop()));
-  const core = (emulator: VroEmulator) => emulator.module('com.archtoolkit.core') as Record<string, (...args: unknown[]) => unknown>;
+  const core = (emulator: VroEmulator) => emulator.module('vcf.automation.core') as Record<string, (...args: unknown[]) => unknown>;
 
   it('notify: a failed post names only the webhook host, never its path or query (regression)', async () => {
     const server = await startFakeServer([
@@ -231,7 +231,7 @@ describe('vro: webhook URLs are secrets in every automation', () => {
     for (const blueprint of AUTOMATIONS) {
       const files = blueprint.build(defaultValues(blueprint), blueprint.id).files;
       for (const [dir, pkg] of Object.entries(packagesIn(files))) {
-        if (dir === 'com.archtoolkit.core.package') continue;
+        if (dir === 'vcf.automation.core.package') continue;
         for (const config of readPackageSpec(pkg).configs) {
           for (const a of config.attributes) {
             if (!WEBHOOKISH.test(a.name)) continue;

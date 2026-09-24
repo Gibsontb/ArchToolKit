@@ -63,7 +63,7 @@ function build(id: string, overrides: BlueprintValues = {}): Record<string, stri
 /** The automation's own package (not the core library). */
 function own(files: Record<string, string>): { dir: string; spec: VroPackageSpec } {
   const packages = packagesIn(files);
-  const dirs = Object.keys(packages).filter((d) => d !== 'com.archtoolkit.core.package');
+  const dirs = Object.keys(packages).filter((d) => d !== 'vcf.automation.core.package');
   if (dirs.length !== 1) throw new Error(`expected one automation package, got ${dirs.join(', ')}`);
   return { dir: dirs[0]!, spec: readPackageSpec(packages[dirs[0]!]!) };
 }
@@ -157,7 +157,7 @@ describe('vcfa 9.1 packages: built, ES5, secrets empty, named in IMPORT.md', () 
     it(`${id}: every variant builds one package that parses and runs as Orchestrator JavaScript`, () => {
       for (const { label, files } of variants(id)) {
         const { dir, spec } = own(files);
-        expect(spec.name.startsWith('com.archtoolkit.vcfa91.')).toBe(true);
+        expect(spec.name.startsWith('vcf.automation.vcfa91.')).toBe(true);
         expect(spec.workflows.length).toBe(1);
         expect(spec.configs.length).toBe(1);
         const problems: string[] = [];
@@ -173,7 +173,7 @@ describe('vcfa 9.1 packages: built, ES5, secrets empty, named in IMPORT.md', () 
         for (const r of spec.resources) if (r.name.endsWith('.json')) JSON.parse(r.content);
         const importMd = files['IMPORT.md'] ?? '';
         expect(importMd.includes(`import/${dir}`)).toBe(true);
-        expect(importMd.includes('import/com.archtoolkit.core.package')).toBe(true);
+        expect(importMd.includes('import/vcf.automation.core.package')).toBe(true);
         // The emulator loads it (it refuses anything beyond ES5).
         new VroEmulator(files);
         // The fallback scripts moved under scripts/; none is left at the top.
@@ -182,7 +182,7 @@ describe('vcfa 9.1 packages: built, ES5, secrets empty, named in IMPORT.md', () 
     });
   }
 
-  it('changing workflows have a dryRun input and arm only from the configuration element', () => {
+  it('changing workflows have a dryRun input and a dryRun setting that is off by default', () => {
     for (const id of IDS) {
       const { spec } = own(build(id, id === 'vcfa91_api_tokens' ? { include_revoke: true } : {}));
       const attrs = spec.configs[0]!.attributes;
@@ -192,7 +192,7 @@ describe('vcfa 9.1 packages: built, ES5, secrets empty, named in IMPORT.md', () 
         expect(dry).toBe(undefined);
         expect(hasInput).toBe(false);
       } else {
-        expect(dry?.value).toBe(true);
+        expect(dry?.value).toBe(false);
         expect(hasInput).toBe(true);
       }
     }
@@ -247,7 +247,8 @@ describe('vcfa 9.1: API tokens, as an Orchestrator package', { skip: !CURL }, ()
     audit.stop();
     revoke.stop();
   });
-  const settings = () => ({ vcfaOrg: 'team-a', webhook: '' });
+  // Runs act unless dryRun is true: the preview tests ask for one, the armed ones pass dryRun: false.
+  const settings = () => ({ vcfaOrg: 'team-a', webhook: '', dryRun: true });
 
   it('audits: exchanges the token, reads every page, flags the one expiring, fails the run, only reads', async () => {
     const run = await audit.run(tokenRoutes(), settings);
@@ -327,8 +328,8 @@ describe('vcfa 9.1: organization, as an Orchestrator package', { skip: !CURL }, 
   });
   const none = [at('GET', ORG_LIST, { resultTotal: 0, values: [] }), at('POST', '/cloudapi/1.0.0/orgs', { id: 'urn:vcloud:org:a1', name: 'team-a' }), at('GET', QUOTAS, { resultTotal: 0, values: [] })];
 
-  it('dry run by default: looks the organization up, plans its creation, writes nothing', async () => {
-    const run = await allApps.run(none, () => ({}));
+  it('dry run when asked: looks the organization up, plans its creation, writes nothing', async () => {
+    const run = await allApps.run(none, () => ({ dryRun: true }));
     expect(run.result.error).toBe(null);
     expect(run.writes).toEqual([]);
     expect(run.result.logs.some((l) => l.message === 'DRY RUN: would create All Apps organization team-a')).toBe(true);
@@ -341,7 +342,7 @@ describe('vcfa 9.1: organization, as an Orchestrator package', { skip: !CURL }, 
     expect(run.calls).toEqual([`GET ${ORG_LIST}`, 'POST /cloudapi/1.0.0/orgs', `GET ${QUOTAS}`]);
     const post = run.requests.find((r) => r.method === 'POST' && r.path === '/cloudapi/1.0.0/orgs')!;
     expect(post.headers['content-type']).toBe('application/json;version=40.0');
-    expect(JSON.parse(post.body)).toEqual({ name: 'team-a', displayName: 'Team A', description: 'Managed by ArchToolKit', isEnabled: true, canManageOrgs: false, isClassicTenant: false });
+    expect(JSON.parse(post.body)).toEqual({ name: 'team-a', displayName: 'Team A', description: '', isEnabled: true, canManageOrgs: false, isClassicTenant: false });
     expect(run.result.outputs.organizationId).toBe('urn:vcloud:org:a1');
     expect(run.result.outputs.problemCount).toBe(1);
     expect(run.result.logs.some((l) => l.message.startsWith('PROBLEM: no region quota yet'))).toBe(true);
@@ -456,7 +457,8 @@ describe('vcfa 9.1: the read-only provider workflows', { skip: !CURL }, () => {
 const K = '/k8s';
 const NS_DEV = 'team-a-dev-x7k2p';
 const NS_PROD = 'team-a-prod-q4m8z';
-const kubeSettings = (host: string) => ({ vcfaOrg: 'team-a', kubeServer: `https://${host}${K}/` });
+// Runs act unless dryRun is true: the preview tests ask for one, the armed ones pass dryRun: false.
+const kubeSettings = (host: string) => ({ vcfaOrg: 'team-a', kubeServer: `https://${host}${K}/`, dryRun: true });
 const served = (gv: string) => at('GET', `${K}/apis/${gv}`, { kind: 'APIResourceList', groupVersion: gv });
 const absent = (path: string) => at('GET', `${K}${path}`, { kind: 'Status', code: 404 }, 404);
 const present = (path: string) => at('GET', `${K}${path}`, { metadata: { name: path.split('/').pop() } });
@@ -666,7 +668,7 @@ describe('vcfa 9.1: namespace day 2, as an Orchestrator package', { skip: !CURL 
   const NSPATH = `/cci/kubernetes/apis/infrastructure.cci.vmware.com/v1alpha3/namespaces/proj-a/supervisornamespaces/${NS_DEV}`;
   const current = (cpu: string) => ({ apiVersion: 'infrastructure.cci.vmware.com/v1alpha3', kind: 'SupervisorNamespace', metadata: { name: NS_DEV }, spec: { className: 'small', initialClassConfigOverrides: { zones: [{ name: 'zone-a', cpuLimit: cpu, memoryLimit: '98304Mi' }] } } });
   const routes = (cpu = '10000M', patchStatus?: number) => [at('GET', NSPATH, current(cpu)), { method: 'PATCH', path: `^${esc(NSPATH)}(\\?dryRun=All)?$`, body: patchStatus ? { message: 'exceeds quota' } : current('30000M'), ...(patchStatus ? { status: patchStatus } : {}) }];
-  const settings = () => ({ vcfaOrg: 'team-a', project: 'proj-a' });
+  const settings = () => ({ vcfaOrg: 'team-a', project: 'proj-a', dryRun: true });
 
   it('dry run: reads it (the undo), validates the merge patch on the server, changes nothing', async () => {
     const run = await h.run(routes(), settings);
@@ -716,7 +718,7 @@ describe('vcfa 9.1: tag placement, as an Orchestrator package', { skip: !CURL },
     at('POST', '/blueprint/api/blueprints/bp-9/versions', { id: 'v1' }),
     ...extra,
   ];
-  const settings = () => ({ vcfaOrg: 'team-a', projectId: 'proj-1' });
+  const settings = () => ({ vcfaOrg: 'team-a', projectId: 'proj-1', dryRun: true });
 
   it('dry run: reads the zones and validates the template; writes nothing', async () => {
     const run = await h.run(routes(), settings);
@@ -741,7 +743,7 @@ describe('vcfa 9.1: tag placement, as an Orchestrator package', { skip: !CURL },
     expect(template.projectId).toBe('proj-1');
     expect(template.requestScopeOrg).toBe(false);
     expect(template.content).toBe(h.files[Object.keys(h.files).find((p) => p.startsWith('import/templates/') && p.endsWith('/blueprint.yaml'))!]!);
-    expect(bodyOf(run, 'POST', '/blueprint/api/blueprints/bp-9/versions')).toEqual({ version: '1.0.0', description: 'Generated by ArchToolKit. Placement constraints and resource tags from the tag standard.', changeLog: 'Imported by ArchToolKit', release: false });
+    expect(bodyOf(run, 'POST', '/blueprint/api/blueprints/bp-9/versions')).toEqual({ version: '1.0.0', description: 'Placement constraints and resource tags from the tag standard.', changeLog: '', release: false });
   });
 
   it('skips a zone whose name is not unique, and fails when a hard constraint then cannot be met', async () => {
@@ -791,7 +793,7 @@ describe('vcfa 9.1: template versions, as an Orchestrator package', { skip: !CUR
     at('POST', '/blueprint/api/blueprints/bp-1/versions', { id: 'v' }),
     at('POST', '/blueprint/api/blueprints', { id: 'bp-77' }),
   ];
-  const settings = () => ({ vcfaOrg: 'team-a' });
+  const settings = () => ({ vcfaOrg: 'team-a', dryRun: true });
 
   it('dry run: finds the one template, exports its YAML, plans the version, writes nothing', async () => {
     const run = await h.run(source(), settings);
@@ -805,7 +807,7 @@ describe('vcfa 9.1: template versions, as an Orchestrator package', { skip: !CUR
     const run = await h.run(source(), () => ({ ...settings(), dryRun: false }));
     expect(run.result.error).toBe(null);
     expect(run.calls).toEqual([`GET ${LIST}`, 'GET /blueprint/api/blueprints/bp-1', 'GET /blueprint/api/blueprints/bp-1/versions?size=200', 'POST /blueprint/api/blueprints/bp-1/versions']);
-    expect(bodyOf(run, 'POST', '/blueprint/api/blueprints/bp-1/versions')).toEqual({ version: '1.4.0', description: 'Generated by ArchToolKit. Pin image to rhel9-2026-09; lease 60 days', changeLog: 'Pin image to rhel9-2026-09; lease 60 days', release: true });
+    expect(bodyOf(run, 'POST', '/blueprint/api/blueprints/bp-1/versions')).toEqual({ version: '1.4.0', description: 'Pin image to rhel9-2026-09; lease 60 days', changeLog: 'Pin image to rhel9-2026-09; lease 60 days', release: true });
   });
 
   it('leaves an existing version alone, and refuses a name two templates share', async () => {
@@ -825,7 +827,7 @@ describe('vcfa 9.1: template versions, as an Orchestrator package', { skip: !CUR
     expect(login.body).toBe(`grant_type=refresh_token&refresh_token=${TARGET_TOKEN}`);
     const create = run.requests.find((r) => r.method === 'POST' && r.path === '/blueprint/api/blueprints')!;
     expect(create.headers.authorization).toBe(`Bearer ${TARGET_ACCESS}`);
-    expect(JSON.parse(create.body)).toEqual({ name: 'Standard Linux server', description: 'Imported by ArchToolKit', projectId: 'proj-b', requestScopeOrg: false, content: YAML });
+    expect(JSON.parse(create.body)).toEqual({ name: 'Standard Linux server', description: '', projectId: 'proj-b', requestScopeOrg: false, content: YAML });
     expect(run.result.outputs.importedId).toBe('bp-77');
     const unset = await moved.run(source(), () => ({ ...settings(), dryRun: false }));
     expect(unset.result.error ?? '').toContain('Set targetApiToken and targetProjectId');

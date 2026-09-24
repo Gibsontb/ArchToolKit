@@ -399,7 +399,7 @@ export function contentImportScript(opts                      )         {
     '  esac',
     'done',
     'HERE=$(cd "$(dirname "$0")" && pwd)',
-    'WORK=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/atk-work.XXXXXX")',
+    'WORK=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/work.XXXXXX")',
     `trap 'rm -rf "$WORK" "\${${authHeader(PLATFORM).slice(3, -1)}:-}"' EXIT`,
     '',
     '# unpack SRC DEST: a zip, or the folder of the same name when the files were',

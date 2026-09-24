@@ -5,7 +5,7 @@
  * it calls, the settings, the payloads — and this writes the text files of two
  * packages beside each other in the output:
  *
- *   import/com.archtoolkit.core.package/…     the shared core library
+ *   import/vcf.automation.core.package/…     the shared core library
  *   import/<packageName>.package/…            this automation
  *
  * The page's "Download as .zip" builds and signs each folder into a real
@@ -21,7 +21,7 @@
  * The workflow is the central component: one scriptable task, whose script
  * this prefixes with the lines every automation starts with —
  *
- *   var core = System.getModule("com.archtoolkit.core");
+ *   var core = System.getModule("vcf.automation.core");
  *   var mod = System.getModule("<packageName>");
  *   var SETTINGS_PATH = "<categoryPath>", SETTINGS_NAME = "<config name>";
  *   var RESOURCE_PATH = "<categoryPath>";
@@ -40,12 +40,12 @@ import { stableId, workflowId, workflowXml,                                     
 import { CORE_PACKAGE_DIR, CORE_REF, actionFiles, corePackageFiles,                   } from './core.js';
 
                                         
-                                                                                                            
+                                                                                                           
                                
                                
                                                                                                      
                             
-                                                                                                        
+                                                                                                       
                                 
                       
                           
@@ -85,13 +85,13 @@ import { CORE_PACKAGE_DIR, CORE_REF, actionFiles, corePackageFiles,             
 
 const NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
-/** A package name from free text: com.archtoolkit.<parts>, each part lower case letters, digits and underscores. */
+/** A package name from free text: vcf.automation.<parts>, each part lower case letters, digits and underscores. */
 export function packageNameOf(...parts                   )         {
   const clean = parts
     .map((part) => part.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''))
     .filter(Boolean)
     .map((part) => (/^[0-9]/.test(part) ? `n${part}` : part));
-  return ['com', 'archtoolkit', ...clean].join('.');
+  return ['vcf', 'automation', ...clean].join('.');
 }
 
 /** The lines the workflow script starts with. */
@@ -109,7 +109,7 @@ export function prologue(spec                                                   
 }
 
 export function toPackage(spec                       )                    {
-  if (!NAME.test(spec.packageName)) throw new Error(`${spec.packageName}: a package name is lower-case dotted words, e.g. com.archtoolkit.tags.compliance`);
+  if (!NAME.test(spec.packageName)) throw new Error(`${spec.packageName}: a package name is lower-case dotted words, e.g. vcf.automation.tags.compliance`);
   for (const [what, value] of [['workflow', spec.workflow.name], ['configuration element', spec.config.name], ...(spec.resources ?? []).map((r) => ['resource', r.name])]         ) {
     if (!value || value.includes('/')) throw new Error(`The ${what} name "${value}" is empty or has a "/"; the folder is categoryPath.`);
   }
@@ -159,7 +159,7 @@ export function toPackage(spec                       )                    {
     {
       heading: 'Import the two Orchestrator packages',
       lines: [
-        `The download holds \`${CORE_PACKAGE_DIR}\` (the shared ArchToolKit core library) and \`${dir}\` (this automation), each built and signed as a .package when you download the .zip. Import the core library first; it is the same in every ArchToolKit automation, so after the first time importing it again only updates it.`,
+        `The download holds \`${CORE_PACKAGE_DIR}\` (the shared vcf.automation core library) and \`${dir}\` (this automation), each built and signed as a .package when you download the .zip. Import the core library first; it is the same in every vcf.automation package, so after the first time importing it again only updates it.`,
         '',
         'VCF 9.1: in VCF Automation, the **Orchestrate** tab (All Apps organization) or the **Orchestrator** tab (VM Apps organization); VCF Operations orchestrator standalone: its own client. Then **Assets → Packages → Import**, choose the .package, and trust the publisher certificate when asked — it is a certificate made for this download, so check it is the one you expect. Element ids are stable, so a regenerated package updates the same workflow, actions and settings rather than adding copies; each element carries the package version, so when re-importing over an older import either raise the version or accept the import dialog\'s offer to replace elements of the same version (VERIFY the dialog wording on your release).',
         '',

@@ -14,20 +14,20 @@
 
 /** The vSphere object types a vCenter tag category can be associated with, as vCenter spells them. */
 export const TAG_OBJECT_TYPES: readonly { readonly value: string; readonly label: string }[] = [
-  { value: 'VirtualMachine', label: 'Virtual machines' },
+  { value: 'VirtualMachine', label: 'VMs' },
   { value: 'HostSystem', label: 'Hosts' },
   { value: 'ClusterComputeResource', label: 'Clusters' },
   { value: 'Datastore', label: 'Datastores' },
-  { value: 'StoragePod', label: 'Datastore clusters' },
+  { value: 'StoragePod', label: 'DS clusters' },
   { value: 'Network', label: 'Networks' },
-  { value: 'DistributedVirtualPortgroup', label: 'Distributed port groups' },
-  { value: 'VmwareDistributedVirtualSwitch', label: 'Distributed switches' },
+  { value: 'DistributedVirtualPortgroup', label: 'Port groups' },
+  { value: 'VmwareDistributedVirtualSwitch', label: 'dvSwitches' },
   { value: 'Folder', label: 'Folders' },
   { value: 'Datacenter', label: 'Datacenters' },
   { value: 'ResourcePool', label: 'Resource pools' },
   { value: 'VirtualApp', label: 'vApps' },
-  { value: 'com.vmware.content.Library', label: 'Content libraries' },
-  { value: 'com.vmware.content.library.Item', label: 'Content library items' },
+  { value: 'com.vmware.content.Library', label: 'Libraries' },
+  { value: 'com.vmware.content.library.Item', label: 'Library items' },
 ];
 
 export interface TagCategory {
@@ -101,7 +101,7 @@ export function parseTagStandard(text: string): TagCategory[] {
   const out: TagCategory[] = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
+    if (!line || line.startsWith('#') || line.startsWith('@')) continue;
     const [name = '', card = '', types = '', values = '', required = '', description = ''] = line.split('|').map((f) => f.trim());
     if (!name) continue;
     out.push({
@@ -117,9 +117,95 @@ export function parseTagStandard(text: string): TagCategory[] {
   return out;
 }
 
+// --- entries: which items get which tags ------------------------------------
+
+/**
+ * One line of the tag list: some items of one object type, and the tags they
+ * get. The categories and tags the standard needs are worked out from these,
+ * so nothing is created that is not attached to something.
+ *
+ * Stored beside the category lines as
+ *
+ *   @ VirtualMachine | app01, app02 | Environment=prod; Application=payments
+ *
+ * which parseTagStandard and the blueprints' own reader skip.
+ */
+export interface TagEntry {
+  readonly type: string;
+  readonly items: readonly string[];
+  readonly tags: readonly { readonly category: string; readonly tag: string }[];
+}
+
+export function parseTagEntries(text: string): TagEntry[] {
+  const out: TagEntry[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line.startsWith('@')) continue;
+    const [type = '', items = '', tags = ''] = line.slice(1).split('|').map((f) => f.trim());
+    const pairs = tags
+      .split(';')
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .map((t) => {
+        const at = t.indexOf('=');
+        return { category: t.slice(0, at).trim(), tag: t.slice(at + 1).trim() };
+      })
+      .filter((t) => t.category && t.tag);
+    const list = listOf(items);
+    if (type && list.length > 0 && pairs.length > 0) out.push({ type, items: list, tags: pairs });
+  }
+  return out;
+}
+
+const cleanItem = (text: string): string => text.replace(/[|,;=\r\n]/g, ' ').trim();
+
+export function serializeTagEntries(entries: readonly TagEntry[]): string[] {
+  return entries.map((e) => `@ ${e.type} | ${e.items.map(cleanItem).join(', ')} | ${e.tags.map((t) => `${cleanItem(t.category)}=${cleanItem(t.tag)}`).join('; ')}`);
+}
+
+/**
+ * The categories the entries need: every category used, with the tags used in
+ * it and the object types it was put on. A common category keeps its usual
+ * description; a category that one item got two tags from allows several.
+ */
+export function categoriesFromEntries(entries: readonly TagEntry[]): TagCategory[] {
+  const byName = new Map<string, { name: string; types: string[]; values: string[]; multiple: boolean }>();
+  for (const e of entries) {
+    const perCategory = new Map<string, number>();
+    for (const t of e.tags) {
+      const key = t.category.toLowerCase();
+      const c = byName.get(key) ?? { name: t.category, types: [], values: [], multiple: false };
+      if (!c.types.includes(e.type)) c.types.push(e.type);
+      if (!c.values.some((v) => v.toLowerCase() === t.tag.toLowerCase())) c.values.push(t.tag);
+      perCategory.set(key, (perCategory.get(key) ?? 0) + 1);
+      if ((perCategory.get(key) ?? 0) > 1) c.multiple = true;
+      byName.set(key, c);
+    }
+  }
+  return [...byName.values()].map((c) => {
+    const preset = TAG_PRESETS.find((p) => p.name.toLowerCase() === c.name.toLowerCase());
+    return {
+      name: c.name,
+      cardinality: c.multiple || preset?.cardinality === 'multiple' ? 'multiple' : 'single',
+      types: c.types,
+      values: c.values,
+      freeText: false,
+      requiredOn: [],
+      description: preset?.description ?? '',
+    };
+  });
+}
+
+/** The whole value: the categories worked out from the entries, then the entries. */
+export function serializeTagList(entries: readonly TagEntry[]): string {
+  return entries.length === 0 ? '' : [serializeTagStandard(categoriesFromEntries(entries)), ...serializeTagEntries(entries)].join('\n');
+}
+
 // --- the standard the page is working with ----------------------------------
 
-const KEY = 'archtoolkit.tag-standard';
+// The tag list of items and their tags. (Earlier builds kept a categories-only standard under
+// archtoolkit.tag-standard; that one is ignored, so the list starts empty.)
+const KEY = 'archtoolkit.tag-list';
 
 /** The standard last built on the page in this browser, if there is one. */
 export function currentTagStandard(): string | undefined {

@@ -74,7 +74,7 @@ server.listen(0, '127.0.0.1', () => console.log('PORT ' + server.address().port)
 `;
 
 export async function startFakeServer(routes: readonly FakeRoute[]): Promise<FakeServer> {
-  const dir = mkdtempSync(join(tmpdir(), 'atk-fake-'));
+  const dir = mkdtempSync(join(tmpdir(), 'fake-'));
   writeFileSync(join(dir, 'server.mjs'), SERVER);
   writeFileSync(join(dir, 'routes.json'), JSON.stringify(routes));
   writeFileSync(join(dir, 'log.jsonl'), '');

@@ -505,6 +505,8 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
   const buildList = el('div', { class: 'stack' });
   const stepTwo = el('div', { class: 'stack' });
   const stepThree = el('div', { class: 'stack' });
+  // A blueprint with a wide input (the tag standard) gets the parameters the width of two columns.
+  const grid = el('div', { class: 'generator-grid' }, el('div', {}, stepOne), el('div', {}, stepTwo), el('div', {}, stepThree));
 
   append(root, buildList);
   append(
@@ -578,13 +580,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
         renderThree();
       },
     }),
-    el(
-      'div',
-      { class: 'generator-grid' },
-      el('div', {}, stepOne),
-      el('div', {}, stepTwo),
-      el('div', {}, stepThree),
-    ),
+    grid,
   );
 
   // If the tab has no target yet, record the one being shown so the other pages
@@ -862,6 +858,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 
   // --- step 2 --------------------------------------------------------------
   function renderTwo(): void {
+    grid.classList.toggle('generator-grid-wide', !!blueprint?.inputs.some((i) => i.control === 'tag-standard'));
     if (!blueprint) {
       replace(stepTwo, card('Step 2 — Parameters', el('p', { text: 'Choose something to build.' })));
       return;
@@ -1153,7 +1150,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 const PACKAGE_PATH = /^(?:.*\/)?[^/]+\.package\//;
 
 interface PackageFolder {
-  /** com.archtoolkit.core */
+  /** vcf.automation.core */
   readonly name: string;
   readonly version: string;
   readonly files: Record<string, string>;
@@ -1179,7 +1176,7 @@ function orchestratorPackages(files: Readonly<Record<string, string>>): PackageF
     }
     out.push({ name, version, files: folder });
   }
-  return out.sort((a, b) => (a.name === 'com.archtoolkit.core' ? -1 : b.name === 'com.archtoolkit.core' ? 1 : a.name.localeCompare(b.name)));
+  return out.sort((a, b) => (a.name === 'vcf.automation.core' ? -1 : b.name === 'vcf.automation.core' ? 1 : a.name.localeCompare(b.name)));
 }
 
 function packagePanel(packages: readonly PackageFolder[]): HTMLElement {

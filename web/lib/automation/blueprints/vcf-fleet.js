@@ -41,7 +41,7 @@ function sddcImport(intro        , steps                                        
 function scheduleStep(script        , base        , extra                    = [])                 {
   return {
     heading: 'Run it once, then schedule it',
-    lines: [`Copy the files to /opt/archtoolkit/${base} on a host that reaches SDDC Manager, run \`./${script}\` by hand and compare with the SDDC Manager interface, then install the line in crontab.txt with \`crontab -e\`. It only reads.`, ...extra],
+    lines: [`Copy the files to /opt/vcf-automation/${base} on a host that reaches SDDC Manager, run \`./${script}\` by hand and compare with the SDDC Manager interface, then install the line in crontab.txt with \`crontab -e\`. It only reads.`, ...extra],
   };
 }
 
@@ -217,7 +217,7 @@ export const VCF_FLEET                                 = [
         files: {
           [`${base}.sh`]: script,
           'tasks.jq': tasksJq,
-          'crontab.txt': `# Hourly, from the directory holding ${base}.sh and tasks.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
+          'crontab.txt': `# Hourly, from the directory holding ${base}.sh and tasks.jq.\n# The password file is mode 600 and owned by the account that runs this.\n0 * * * * cd /opt/vcf-automation/${base} && ${scheduledEnv('sddc-manager')} ./${base}.sh\n`,
           'IMPORT.md': sddcImport('Nothing is imported: this reads SDDC Manager on a schedule.', [scheduleStep(`${base}.sh`, base)]),
         },
         notes: [

@@ -172,17 +172,16 @@ describe('automation: the ones with a known trap in them', () => {
     expect((out.findings ?? []).some((finding) => finding.code === 'vcfops.window.no-overrun-check')).toBe(true);
   });
 
-  it('creates schedules disabled, whatever the platform', () => {
-    const shouldBeDisabled = ['vcfops_reclaim_schedule'];
-    for (const id of shouldBeDisabled) {
+  it('creates schedules enabled, whatever the platform', () => {
+    const shouldBeEnabled = ['vcfops_reclaim_schedule'];
+    for (const id of shouldBeEnabled) {
       const blueprint = automationFor(id);
       if (!blueprint) throw new Error(`missing ${id}`);
-      const text = Object.values(blueprint.build(defaultValues(blueprint), id).files).join('\n');
       const files = blueprint.build(defaultValues(blueprint), id).files;
-      // Either the platform object is created disabled, or the only schedule is
-      // a cron line that is written commented out.
-      const cronIsOff = (files['crontab.txt'] ?? '').split('\n').every((line) => !line.trim() || line.trim().startsWith('#'));
-      expect(/"enabled":\s*false|isEnabled: false|enabled: false/.test(text) || ('crontab.txt' in files && cronIsOff)).toBe(true);
+      const text = Object.values(files).join('\n');
+      // Nothing is created disabled, and a cron schedule is a live line, not a commented one.
+      expect(/"enabled":\s*false|isEnabled: false|enabled: false/.test(text)).toBe(false);
+      if ('crontab.txt' in files) expect(files['crontab.txt']!.split('\n').some((line) => line.trim() !== '' && !line.trim().startsWith('#'))).toBe(true);
     }
   });
 });
@@ -323,6 +322,6 @@ describe('automation: tags, which everything else scopes by', () => {
     const script = Object.entries(files).find(([name]) => name.endsWith('.sh') && /cleanup/.test(name))?.[1] ?? Object.values(files).join('\n');
     expect(/export|backup/i.test(script)).toBe(true);
     expect(/attached/i.test(script)).toBe(true);
-    expect(/--execute/.test(script)).toBe(true);
+    expect(/--dry-run/.test(script)).toBe(true);
   });
 });

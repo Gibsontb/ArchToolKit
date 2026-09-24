@@ -246,7 +246,7 @@ function pythonBody(command              , values                 )           {
   const changes = command.effect !== 'read';
 
   const lines           = [
-    '"""Wrapped from the ArchToolKit command catalogue. Read the notes below."""',
+    '"""Wrapped from the command catalogue. Read the notes below."""',
     '',
     'import argparse',
     'import logging',

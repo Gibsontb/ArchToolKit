@@ -117,7 +117,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
               ]
             : []),
           ...(bool(values, 'safe_search', false) ? [`${prefix} profiles url-filtering ${profile} safe-search-enforcement yes`] : []),
-          'commit description "URL filtering profile from ArchToolKit"',
+          'commit description "URL filtering profile"',
         ],
         verify: [
           `show profiles url-filtering ${profile}`,
@@ -219,7 +219,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
               : servers.flatMap(([name, address]) => [`${prefix} user-id-collector server-monitor ${name} address ${address}`, `${prefix} user-id-collector server-monitor ${name} proto syslog`])),
           '',
           ...zones.map((zone) => `set zone ${zone} enable-user-identification yes`),
-          'commit description "User-ID and group mapping from ArchToolKit"',
+          'commit description "User-ID and group mapping"',
         ],
         verify: [
           'show user group-mapping statistics',
@@ -327,7 +327,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
           `${'!'} Then attach the profile and role to each administrator:`,
           `${'!'} set mgt-config users <name> authentication-profile ${authProfile}`,
           `${'!'} set mgt-config users <name> permissions role-based custom profile ${role}`,
-          'commit description "Administrator roles and authentication from ArchToolKit"',
+          'commit description "Administrator roles and authentication"',
         ],
         verify: [
           'show admins',
@@ -426,7 +426,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
           `set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list GW external-gateway ${gateway} address ${str(values, 'external_address', '')}`,
           `set global-protect global-protect-portal ${portal} client-config configs DEFAULT gateways external list GW external-gateway ${gateway} priority 1`,
           '',
-          'commit description "GlobalProtect from ArchToolKit"',
+          'commit description "GlobalProtect"',
         ],
         verify: [
           'show global-protect-gateway gateway',
@@ -513,10 +513,10 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
           `${prefix} rulebase application-override rules ${rule} protocol ${str(values, 'protocol', 'tcp')}`,
           `${prefix} rulebase application-override rules ${rule} port ${str(values, 'ports', '')}`,
           `${prefix} rulebase application-override rules ${rule} application ${app}`,
-          `${prefix} rulebase application-override rules ${rule} description "Created by ArchToolKit — App-ID bypassed for this flow"`,
+          `${prefix} rulebase application-override rules ${rule} description " — App-ID bypassed for this flow"`,
           '',
           `${'!'} A security rule must still permit ${app} between these zones, or the traffic is renamed and then dropped.`,
-          'commit description "Application override from ArchToolKit"',
+          'commit description "Application override"',
         ],
         verify: [
           'show running application-override-policy',
@@ -625,7 +625,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
               ]
             : []),
           '',
-          'commit description "Virtual router routing from ArchToolKit"',
+          'commit description "Virtual router routing"',
         ],
         verify: [
           `show routing protocol ${protocol} summary`,
@@ -706,7 +706,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
           `${prefix} rulebase qos rules QOS-BULK application [ ${listOf(str(values, 'bulk_apps', '')).join(' ')} ]`,
           `${prefix} rulebase qos rules QOS-BULK action class 4`,
           '',
-          'commit description "QoS from ArchToolKit"',
+          'commit description "QoS"',
         ],
         verify: [
           `show qos interface ${iface}`,
@@ -820,7 +820,7 @@ export const PANOS_EXTRA_2: readonly ChangeBlueprint[] = [
               ]
             : []),
           '',
-          'commit description "Authentication profile from ArchToolKit"',
+          'commit description "Authentication profile"',
         ],
         verify: [
           `show shared authentication-profile ${profile}`,

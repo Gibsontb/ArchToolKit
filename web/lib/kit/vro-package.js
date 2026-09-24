@@ -98,7 +98,7 @@ import { zip } from './archive.js';
  
 
                                  
-                                                              
+                                                             
                         
                                
                            
@@ -399,7 +399,7 @@ export async function createSigner(commonName = 'ArchToolKit package signer', wh
 
   return {
     // The subject string vropkg writes: shortName=value, joined with commas.
-    subject: `C=XX,O=ArchToolKit,OU=Generated,CN=${commonName}`,
+    subject: `C=XX,O=Automation,OU=Generated,CN=${commonName}`,
     certificate,
     sign(data            )             {
       const t = concat([new Uint8Array(MD5_DIGEST_INFO), md5(data)]);
@@ -449,7 +449,7 @@ export async function buildVroPackage(spec                , signer         )    
         {
           'pkg-id': await uuidV5(`http://${pkgName}.package`, UUID_NAMESPACE_URL),
           'pkg-name': pkgName,
-          'pkg-description': spec.description || 'Built by ArchToolKit',
+          'pkg-description': spec.description || '',
           'pkg-signer': s.subject,
           'pkg-owner': s.subject,
         },

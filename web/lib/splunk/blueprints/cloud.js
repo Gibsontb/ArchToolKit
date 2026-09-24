@@ -324,7 +324,7 @@ function acsArgs(stack        , more                    = [])           {
 
 /** app.conf for an operations package: not visible, not configured, versioned. */
 function kitConf(app        , description        )           {
-  return ['[install]', 'is_configured = 0', '', '[ui]', 'is_visible = 0', `label = ${app}`, '', '[launcher]', 'author = ArchToolKit', `description = ${description}`, 'version = 1.0.0', '', '[package]', `id = ${app}`];
+  return ['[install]', 'is_configured = 0', '', '[ui]', 'is_visible = 0', `label = ${app}`, '', '[launcher]', 'author = Automation', `description = ${description}`, 'version = 1.0.0', '', '[package]', `id = ${app}`];
 }
 
 const TOKEN_NOTE =
@@ -872,8 +872,8 @@ export const CLOUD_BLUEPRINTS                             = [
         },
         verify: [
           `bash ops/acs-hec.sh describe ${name} --stack ${stack}`,
-          `curl -sS -H @<(printf 'Authorization: Splunk %s\\n' "$(cat ~/.splunk/hec/${name}.token)") https://${hecHost}/services/collector/event -d '{"event":"archtoolkit hec test","index":"${spec.defaultIndex}"}'   # {"text":"Success","code":0}`,
-          `index=${spec.defaultIndex} "archtoolkit hec test" earliest=-15m | table _time, index, sourcetype, source, host`,
+          `curl -sS -H @<(printf 'Authorization: Splunk %s\\n' "$(cat ~/.splunk/hec/${name}.token)") https://${hecHost}/services/collector/event -d '{"event":"hec test","index":"${spec.defaultIndex}"}'   # {"text":"Success","code":0}`,
+          `index=${spec.defaultIndex} "hec test" earliest=-15m | table _time, index, sourcetype, source, host`,
           `index=_internal sourcetype=splunkd component=HttpInputDataHandler earliest=-1h | stats count by log_level, message | sort - count   # rejected events and why`,
         ],
         backout: [

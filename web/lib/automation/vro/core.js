@@ -1,5 +1,5 @@
 /**
- * The ArchToolKit core library for Orchestrator: package com.archtoolkit.core.
+ * The vcf.automation core library for Orchestrator: package vcf.automation.core.
  *
  * Every automation package calls these actions instead of carrying its own
  * copy of login, HTTP, paging, guardrails and audit. The package is imported
@@ -18,7 +18,7 @@
  * object, and http() puts neither in an error; options.redact scrubs a secret
  * the far end echoes back.
  *
- * Calls are System.getModule("com.archtoolkit.core").<action>(...), which is
+ * Calls are System.getModule("vcf.automation.core").<action>(...), which is
  * how Orchestrator runs an action from a script: in the same JavaScript
  * context, so objects and functions pass in and out unchanged (the guard's
  * act() takes a function).
@@ -27,8 +27,8 @@
 import { stableId } from '../vcfa-import.js';
                                                              
 
-export const CORE_MODULE = 'com.archtoolkit.core';
-export const CORE_PACKAGE = 'com.archtoolkit.core';
+export const CORE_MODULE = 'vcf.automation.core';
+export const CORE_PACKAGE = 'vcf.automation.core';
 export const CORE_VERSION = '1.0.0';
 /** Where the core package's text files go in an automation's output. */
 export const CORE_PACKAGE_DIR = `import/${CORE_PACKAGE}.package`;
@@ -54,7 +54,7 @@ const settings               = {
   name: 'settings',
   description: 'Read one configuration element into a plain object, { attribute: value }. SecureString attributes come back as their value, and their values are also listed in _secrets, to pass to http() as options.redact. Never log the result.',
   resultType: 'Any',
-  params: [p('categoryPath', 'string', 'Configuration folder, e.g. ArchToolKit/Tags'), p('name', 'string', 'Configuration element name')],
+  params: [p('categoryPath', 'string', 'Configuration folder, e.g. Automation/Tags'), p('name', 'string', 'Configuration element name')],
   script: String.raw`if (!categoryPath || !name) throw new Error("settings: categoryPath and name are required");
 var category = Server.getConfigurationElementCategoryWithPath(String(categoryPath));
 if (!category) throw new Error("No configuration folder '" + categoryPath + "'. Import the package again, or look under Assets > Configurations.");
@@ -79,7 +79,7 @@ const resource               = {
   name: 'resource',
   description: 'The content of a resource element, as text: the payloads and reference data an automation carries.',
   resultType: 'string',
-  params: [p('categoryPath', 'string', 'Resource folder, e.g. ArchToolKit/Tags'), p('name', 'string', 'Resource element name, e.g. tag-standard.json')],
+  params: [p('categoryPath', 'string', 'Resource folder, e.g. Automation/Tags'), p('name', 'string', 'Resource element name, e.g. tag-standard.json')],
   script: String.raw`var category = Server.getResourceElementCategoryWithPath(String(categoryPath));
 if (!category) throw new Error("No resource folder '" + categoryPath + "'. Import the package again, or look under Assets > Resources.");
 var list = category.allResourceElements || [];
@@ -150,7 +150,7 @@ var where = String(method) + " " + base + path.split("?")[0];
 for (var r = 0; r < extra.length; r++) if (extra[r] && String(extra[r]) !== "/") where = where.split(String(extra[r])).join("****");
 var content = null;
 if (body !== null && body !== undefined) content = typeof body === "string" ? body : JSON.stringify(body);
-var host = RESTHostManager.createHost("archtoolkit");
+var host = RESTHostManager.createHost("vcf-automation");
 host.url = base;
 host.connectionTimeout = opts.timeout || 60;
 host.operationTimeout = opts.timeout || 60;
@@ -188,7 +188,7 @@ const loginVcfOps               = {
   description: 'VCF Operations: POST /suite-api/api/auth/token/acquire. Returns the header { Authorization: "OpsToken <token>" }.',
   resultType: 'Any',
   params: [p('host', 'string', 'VCF Operations host[:port]'), p('username', 'string', 'Account'), p('password', 'string', 'From a SecureString attribute'), p('authSource', 'string', 'Authentication source, empty for local')],
-  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+  script: String.raw`var core = System.getModule("vcf.automation.core");
 var credentials = { username: String(username), password: String(password) };
 if (authSource) credentials.authSource = String(authSource);
 var r = core.http("POST", "https://" + host + "/suite-api/api/auth/token/acquire", null, credentials, { redact: [password] });
@@ -202,7 +202,7 @@ const logoutVcfOps               = {
   resultType: 'boolean',
   params: [p('host', 'string', 'VCF Operations host[:port]'), p('headers', 'Any', 'What loginVcfOps returned')],
   script: String.raw`try {
-  System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/suite-api/api/auth/token/release", headers, null, {});
+  System.getModule("vcf.automation.core").http("POST", "https://" + host + "/suite-api/api/auth/token/release", headers, null, {});
   return true;
 } catch (e) {
   System.warn("Could not release the VCF Operations session (" + e + ")");
@@ -215,7 +215,7 @@ const loginVcfFleet               = {
   description: 'VCF 9.1 identity broker: exchange an API token (issued to an API client in VCF Operations) for a bearer token, POST https://<idb>/acs/t/CUSTOMER/token. Returns { Authorization: "Bearer <access token>" }.',
   resultType: 'Any',
   params: [p('idbHost', 'string', 'VCF Identity Broker host'), p('apiToken', 'string', 'From a SecureString attribute')],
-  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+  script: String.raw`var core = System.getModule("vcf.automation.core");
 var form = ["grant_type=" + encodeURIComponent("urn:custom:vcf:params:oauth:grant-type:api-token"), "api_token" + "=" + encodeURIComponent(String(apiToken))].join("&");
 var r = core.http("POST", "https://" + idbHost + "/acs/t/CUSTOMER/token", null, form, { contentType: "application/x-www-form-urlencoded", redact: [apiToken] });
 if (!r.body || !r.body.access_token) throw new Error("The identity broker at " + idbHost + " returned no access token.");
@@ -227,7 +227,7 @@ const loginSddcManager               = {
   description: 'SDDC Manager: POST /v1/tokens. Returns { Authorization: "Bearer <accessToken>" }.',
   resultType: 'Any',
   params: [p('host', 'string', 'SDDC Manager host'), p('username', 'string', 'Account'), p('password', 'string', 'From a SecureString attribute')],
-  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+  script: String.raw`var core = System.getModule("vcf.automation.core");
 var r = core.http("POST", "https://" + host + "/v1/tokens", null, { username: String(username), password: String(password) }, { redact: [password] });
 if (!r.body || !r.body.accessToken) throw new Error("SDDC Manager at " + host + " returned no access token.");
 return { "Authorization": "Bearer " + r.body.accessToken };`,
@@ -238,7 +238,7 @@ const loginVcenter               = {
   description: 'vCenter with a user and password: POST /api/session with Basic authorization. Returns { "vmware-api-session-id": <id> }.',
   resultType: 'Any',
   params: [p('host', 'string', 'vCenter host'), p('username', 'string', 'Account, user@domain'), p('password', 'string', 'From a SecureString attribute')],
-  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+  script: String.raw`var core = System.getModule("vcf.automation.core");
 var basic = { "Authorization": "Basic " + core.base64(String(username) + ":" + String(password)) };
 var r = core.http("POST", "https://" + host + "/api/session", basic, null, { redact: [password] });
 if (typeof r.body !== "string" || !r.body) throw new Error("vCenter " + host + " returned no session id.");
@@ -251,7 +251,7 @@ const loginVcenterToken               = {
     'vCenter in VCF 9.1 with an API token and no password: identity broker access token, exchanged at /api/vcenter/authentication/token for a SAML token, which is gzipped, base64-encoded and presented in a SIGN authorization header to POST /api/session. VERIFY on your release: the exchange and the SIGN header follow davidwzhang.com, "VCF 9.1 API Access (4)". Returns { "vmware-api-session-id": <id> }.',
   resultType: 'Any',
   params: [p('host', 'string', 'vCenter host'), p('idbHost', 'string', 'VCF Identity Broker host'), p('apiToken', 'string', 'From a SecureString attribute')],
-  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+  script: String.raw`var core = System.getModule("vcf.automation.core");
 var bearer = core.loginVcfFleet(idbHost, apiToken);
 var access = String(bearer.Authorization).substring("Bearer ".length);
 var form = [
@@ -324,7 +324,7 @@ const logoutVcenter               = {
   resultType: 'boolean',
   params: [p('host', 'string', 'vCenter host'), p('headers', 'Any', 'What loginVcenter or loginVcenterToken returned')],
   script: String.raw`try {
-  System.getModule("com.archtoolkit.core").http("DELETE", "https://" + host + "/api/session", headers, null, {});
+  System.getModule("vcf.automation.core").http("DELETE", "https://" + host + "/api/session", headers, null, {});
   return true;
 } catch (e) {
   System.warn("Could not end the vCenter session on " + host + ": " + e);
@@ -337,7 +337,7 @@ const loginNsx               = {
   description: 'NSX Manager: the Basic authorization header (NSX takes it on every call). Returns { Authorization: "Basic ..." }.',
   resultType: 'Any',
   params: [p('username', 'string', 'Account'), p('password', 'string', 'From a SecureString attribute')],
-  script: String.raw`return { "Authorization": "Basic " + System.getModule("com.archtoolkit.core").base64(String(username) + ":" + String(password)) };`,
+  script: String.raw`return { "Authorization": "Basic " + System.getModule("vcf.automation.core").base64(String(username) + ":" + String(password)) };`,
 };
 
 const exchangeVcfOpsToken               = {
@@ -346,7 +346,7 @@ const exchangeVcfOpsToken               = {
     'VCF Operations 9.1: exchange an OpsToken session for a JWT that a VCF management service accepts (KB 450054), POST /suite-api/api/auth/token/exchange {"serviceKeys":[<serviceKey>]}. serviceKey "ops-li" is 9.1 log management. Returns { Authorization: "Bearer <jwt>" }.',
   resultType: 'Any',
   params: [p('host', 'string', 'VCF Operations host[:port]'), p('headers', 'Any', 'What loginVcfOps returned'), p('serviceKey', 'string', 'The service, e.g. ops-li')],
-  script: String.raw`var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/suite-api/api/auth/token/exchange", headers, { serviceKeys: [String(serviceKey)] }, {});
+  script: String.raw`var r = System.getModule("vcf.automation.core").http("POST", "https://" + host + "/suite-api/api/auth/token/exchange", headers, { serviceKeys: [String(serviceKey)] }, {});
 var b = r.body || {};
 var jwt = b.token || b.accessToken || b.access_token || (b.tokens && b.tokens.length ? (b.tokens[0].token || b.tokens[0].accessToken) : null);
 if (!jwt) throw new Error("The token exchange for " + serviceKey + " at " + host + " returned no token (VERIFY the response shape on your release).");
@@ -366,7 +366,7 @@ const loginVcfNetworks               = {
     p('domain', 'string', 'Directory domain; empty = local'),
   ],
   script: String.raw`var body = { username: String(username), password: String(password), domain: { domain_type: domainType ? String(domainType) : "LOCAL", value: domain ? String(domain) : "local" } };
-var r = System.getModule("com.archtoolkit.core").http("POST", "https://" + host + "/api/ni/auth/token", null, body, { redact: [password] });
+var r = System.getModule("vcf.automation.core").http("POST", "https://" + host + "/api/ni/auth/token", null, body, { redact: [password] });
 if (!r.body || !r.body.token) throw new Error("VCF Operations for Networks at " + host + " returned no token.");
 return { "Authorization": "NetworkInsight " + r.body.token };`,
 };
@@ -377,7 +377,7 @@ const logoutVcfNetworks               = {
   resultType: 'boolean',
   params: [p('host', 'string', 'Platform host'), p('headers', 'Any', 'What loginVcfNetworks returned')],
   script: String.raw`try {
-  System.getModule("com.archtoolkit.core").http("DELETE", "https://" + host + "/api/ni/auth/token", headers, null, { allow: [404] });
+  System.getModule("vcf.automation.core").http("DELETE", "https://" + host + "/api/ni/auth/token", headers, null, { allow: [404] });
   return true;
 } catch (e) {
   System.warn("Could not end the VCF Operations for Networks session (" + e + ")");
@@ -391,7 +391,7 @@ const loginVcfAutomation               = {
     'VCF Automation 9. With org "provider": POST /oauth/provider/token. Otherwise POST /oauth/tenant/<org>/token with the organization API token (grant_type=refresh_token). Returns { Authorization: "Bearer <token>" }. When token rotation is on, the exchange returns a new token and the old one stops working: this warns, and the SecureString has to be replaced.',
   resultType: 'Any',
   params: [p('host', 'string', 'VCF Automation host'), p('token', 'string', 'API or refresh token, from a SecureString attribute'), p('org', 'string', 'Organization name, or "provider"')],
-  script: String.raw`var core = System.getModule("com.archtoolkit.core");
+  script: String.raw`var core = System.getModule("vcf.automation.core");
 var r;
 if (!org) throw new Error("Set the VCF Automation organization name (or \"provider\") in the configuration element.");
 var path = String(org) === "provider" ? "/oauth/provider/token" : "/oauth/tenant/" + encodeURIComponent(String(org)) + "/token";
@@ -490,7 +490,7 @@ const audit               = {
   params: [p('ctx', 'Any', 'What begin() returned, or null for a read-only run'), p('summary', 'Any', 'Object with whatever the automation reports: counts, ids, a verdict')],
   script: String.raw`var c = ctx || { dryRun: false, cap: 0, count: 0, planned: [], changes: [], failed: null, started: null };
 var record = {
-  source: "archtoolkit",
+  source: "vcf-automation",
   workflow: typeof workflow !== "undefined" && workflow && workflow.rootWorkflow ? String(workflow.rootWorkflow.name) : null,
   started: c.started,
   finished: new Date().toISOString(),
@@ -521,7 +521,7 @@ var path = parts ? parts[2] : "";
 var hidden = [url, path, path.split("?")[0], path.split("?")[1] || ""];
 try {
   var body = typeof payload === "string" ? payload : JSON.stringify(payload);
-  System.getModule("com.archtoolkit.core").http("POST", url, null, body, { redact: hidden });
+  System.getModule("vcf.automation.core").http("POST", url, null, body, { redact: hidden });
   return true;
 } catch (e) {
   var reason = String(e && e.message ? e.message : e);
@@ -570,13 +570,13 @@ export function actionFiles(module        , action              )               
   };
 }
 
-/** The core package's text files, under import/com.archtoolkit.core.package/. */
+/** The core package's text files, under import/vcf.automation.core.package/. */
 export function corePackageFiles()                         {
   const inner                         = {
     'package.json': `${JSON.stringify(
       {
         name: CORE_PACKAGE,
-        description: 'ArchToolKit core library: settings, REST calls, logins, paging, guardrails and audit, shared by every ArchToolKit automation package. Import it once, before them.',
+        description: 'vcf.automation core library: settings, REST calls, logins, paging, guardrails and audit, shared by every vcf.automation package. Import it once, before them.',
         version: CORE_VERSION,
       },
       null,

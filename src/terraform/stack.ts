@@ -437,7 +437,7 @@ function readme(items: readonly StackItem[], stackName: string, target: string |
   const lines = [
     `# ${stackName}`,
     '',
-    `A Terraform root module built by ArchToolKit${target ? ` for ${target}` : ''}, from ${items.length} blueprint${items.length === 1 ? '' : 's'}.`,
+    `A Terraform root module${target ? ` for ${target}` : ''}, from ${items.length} blueprint${items.length === 1 ? '' : 's'}.`,
     '',
     '## What is in it',
     '',

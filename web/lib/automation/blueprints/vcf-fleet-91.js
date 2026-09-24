@@ -297,7 +297,7 @@ const cron = (base        , schedule        , script        , args = '')        
   [
     `# ${base}: the script logs in for itself from the API token file (mode 600,`,
     '# written and rotated by fleet91_api_clients). No token is in this line.',
-    `${schedule} cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./${script}${args ? ` ${args}` : ''} >> /var/log/archtoolkit/${base}.log 2>&1`,
+    `${schedule} cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-fleet')} ./${script}${args ? ` ${args}` : ''} >> /var/log/vcf-automation/${base}.log 2>&1`,
     '',
   ].join('\n');
 
@@ -394,7 +394,7 @@ export const VCF_FLEET_91                                 = [
 
       const policy = {
         name: policyName,
-        description: 'Written by ArchToolKit.',
+        description: '',
         complexityConstraints: { minLength: len, minLowercase: lower, minUppercase: upper, minNumeric: digits, minSpecial: special, passwordHistory: history },
         expirationConstraints: { maxDays, warnDays },
         lockoutConstraints: { lockoutMaxAuthFailures: failures, lockoutEvaluationPeriod: lockWindow, lockoutPeriod: lockPeriod },
@@ -1261,7 +1261,7 @@ export const VCF_FLEET_91                                 = [
 
       const payload = {
         name: settingName,
-        description: 'Written by ArchToolKit.',
+        description: '',
         ...(doDns ? { dnsServers: dns } : {}),
         ...(doNtp ? { ntpServers: ntp } : {}),
         instances: instances.length ? instances : ['<REQUIRED — VCF instance name>'],
@@ -1526,7 +1526,7 @@ export const VCF_FLEET_91                                 = [
           '',
         ];
       } else if (task === 'role') {
-        files['vcf-role.json'] = json({ roleName, roleDisplayName: roleName, roleDescription: 'Written by ArchToolKit.', componentRoles });
+        files['vcf-role.json'] = json({ roleName, roleDisplayName: roleName, roleDescription: '', componentRoles });
         script = [
           ...head(`Create the custom VCF role "${roleName}".`, ['  ./identity.sh components    list component types and their roles (read only)', '  ./identity.sh               create it', '  ./identity.sh --dry-run     preview, change nothing']),
           ...parseArgs(),
@@ -1701,8 +1701,8 @@ export const VCF_FLEET_91                                 = [
     description:
       'Every fleet script in this kit logs in with VCF_API_TOKEN_FILE: the API token of an API client, exchanged at the identity broker for a half-hour access token. This creates that client and gives it a role, issues its token into a mode-600 file, reports how long it has left, rotates it before it expires — issuing the new one, proving it works, swapping the file atomically — and only then revokes the old one.',
     inputs: [
-      { id: 'client_id', label: 'API client id', control: 'text', default: 'archtoolkit-automation', hint: 'Letters, digits, dash, underscore' },
-      { id: 'client_name', label: 'Display name', control: 'text', default: 'ArchToolKit automation' },
+      { id: 'client_id', label: 'API client id', control: 'text', default: 'vcf-automation', hint: 'Letters, digits, dash, underscore' },
+      { id: 'client_name', label: 'Display name', control: 'text', default: 'VCF automation' },
       { id: 'role_name', label: 'Role', control: 'combo', options: [{ value: 'vcf_viewer', label: 'vcf_viewer — read-only reports' }, { value: 'sddc_admin', label: 'sddc_admin' }, { value: 'fleetmgmt-admin', label: 'fleetmgmt-admin (custom role)' }], default: 'fleetmgmt-admin', hint: 'The token can do exactly what this role can' },
       {
         id: 'scope_type',
@@ -1728,11 +1728,11 @@ export const VCF_FLEET_91                                 = [
         ],
         default: 'overlap',
       },
-      { id: 'token_file', label: 'Token file', control: 'text', default: '/etc/archtoolkit/vcf-api-token', hint: 'What every other script reads as VCF_API_TOKEN_FILE' },
+      { id: 'token_file', label: 'Token file', control: 'text', default: '/etc/vcf-automation/vcf-api-token', hint: 'What every other script reads as VCF_API_TOKEN_FILE' },
       { id: 'webhook', label: 'Report to', control: 'text', default: 'https://runbooks.example.com/hooks/vcf-api-tokens' },
     ],
     automation: (values                 , name        )             => {
-      const clientId = str(values, 'client_id', 'archtoolkit-automation');
+      const clientId = str(values, 'client_id', 'vcf-automation');
       const clientName = str(values, 'client_name', clientId);
       const roleName = str(values, 'role_name', 'fleetmgmt-admin');
       const scopeType = str(values, 'scope_type', 'SSO_REALM');
@@ -1741,7 +1741,7 @@ export const VCF_FLEET_91                                 = [
       const rotateDays = num(values, 'rotate_days', 21);
       const accessMinutes = num(values, 'access_minutes', 30);
       const strategy = str(values, 'strategy', 'overlap');
-      const tokenFile = str(values, 'token_file', '/etc/archtoolkit/vcf-api-token');
+      const tokenFile = str(values, 'token_file', '/etc/vcf-automation/vcf-api-token');
       const webhook = str(values, 'webhook', '');
       const base = slugOf(name || 'api-token', 'api-token');
 
@@ -1828,7 +1828,7 @@ export const VCF_FLEET_91                                 = [
         '}',
         '',
         'issue() {',
-        '  jq -n --arg c "$CLIENT_ID" --arg n "${CLIENT_ID}-$(date +%Y%m%d)" --arg ttl "$TTL_MIN" --arg at "$ACCESS_MIN" --arg d "Issued by ArchToolKit api-token.sh" --arg tt API_CLIENT \\',
+        '  jq -n --arg c "$CLIENT_ID" --arg n "${CLIENT_ID}-$(date +%Y%m%d)" --arg ttl "$TTL_MIN" --arg at "$ACCESS_MIN" --arg d "Issued api-token.sh" --arg tt API_CLIENT \\',
         '    \'{apiClientId: $c, tokenName: $n, tokenDescription: $d, tokenType: $tt, apiTokenTtl: $ttl, accessTokenTtl: $at}\' \\',
         '    | api POST "${FM}/iam/ssorealms/${REALM}/api-tokens" --data @-',
         '}',
@@ -1857,7 +1857,7 @@ export const VCF_FLEET_91                                 = [
         '      exit 0',
         '    fi',
         '    if [[ -z "$EXISTING" ]]; then',
-        '      EXISTING=$(jq -n --arg c "$CLIENT_ID" --arg n "$CLIENT_NAME" \'{clientId: $c, clientName: $n, clientDescription: "Fleet automation (ArchToolKit)"}\' \\',
+        '      EXISTING=$(jq -n --arg c "$CLIENT_ID" --arg n "$CLIENT_NAME" \'{clientId: $c, clientName: $n, clientDescription: "Fleet automation"}\' \\',
         '        | api POST "${FM}/iam/ssorealms/${REALM}/api-clients" --data @- | jq -r \'.clientUuid // empty\')',
         '      [[ -n "$EXISTING" ]] || { echo "The API client was sent but no clientUuid came back; check Identity > API clients." >&2; exit 1; }',
         '      echo "Created API client ${CLIENT_ID} (${EXISTING})"',
@@ -1931,8 +1931,8 @@ export const VCF_FLEET_91                                 = [
         `# ${base}: status every morning (alerts on the exit code), rotation attempt every`,
         '# night — it does nothing until the token is inside the rotation window.',
         '# Both authenticate with the token file itself; no token is in these lines.',
-        `15 7 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./api-token.sh status >> /var/log/archtoolkit/${base}.log 2>&1`,
-        `45 2 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-fleet')} ./api-token.sh rotate >> /var/log/archtoolkit/${base}.log 2>&1`,
+        `15 7 * * * cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-fleet')} ./api-token.sh status >> /var/log/vcf-automation/${base}.log 2>&1`,
+        `45 2 * * * cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-fleet')} ./api-token.sh rotate >> /var/log/vcf-automation/${base}.log 2>&1`,
         '',
       ].join('\n');
 
@@ -2161,7 +2161,7 @@ export const VCF_FLEET_91                                 = [
         '[[ -n "$VCENTER_SESSION" ]] || { echo "No vCenter session." >&2; exit 1; }',
         '# The session id goes to curl from a private header file (-H @file), never as',
         '# an argument that ps and /proc would show to every user on the host.',
-        'VC_HDR=$(umask 077; mktemp "${TMPDIR:-/tmp}/atk-vc.XXXXXX")',
+        'VC_HDR=$(umask 077; mktemp "${TMPDIR:-/tmp}/vc.XXXXXX")',
         'trap \'rm -f "$VC_HDR"\' EXIT',
         'printf \'vmware-api-session-id: %s\\n\' "$VCENTER_SESSION" > "$VC_HDR"',
         'vc() {',
@@ -2305,7 +2305,7 @@ export const VCF_FLEET_91                                 = [
 
       const files                         = remediate
         ? { 'remediate-drift.sh': remediateScript, 'salt-status.sh': salt }
-        : { 'detect-drift.sh': detect, 'salt-status.sh': salt, 'crontab.txt': [`# ${base}: daily drift check. vCenter login comes from the mode-600 password file;`, '# no password is in this line.', `30 6 * * * cd /opt/archtoolkit/${base} && VCENTER_USER=svc-drift@vsphere.local VCENTER_PASSWORD_FILE=/etc/archtoolkit/vcenter-password ./detect-drift.sh >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n') };
+        : { 'detect-drift.sh': detect, 'salt-status.sh': salt, 'crontab.txt': [`# ${base}: daily drift check. vCenter login comes from the mode-600 password file;`, '# no password is in this line.', `30 6 * * * cd /opt/vcf-automation/${base} && VCENTER_USER=svc-drift@vsphere.local VCENTER_PASSWORD_FILE=/etc/vcf-automation/vcenter-password ./detect-drift.sh >> /var/log/vcf-automation/${base}.log 2>&1`, ''].join('\n') };
       files['IMPORT.md'] = fleetImport(
         'Nothing is imported: the scripts call the vCenter configuration-profile API and the VCF Operations Salt API.',
         [remediate ? { heading: 'Remediate one cluster', lines: ['`./remediate-drift.sh` (add `--dry-run` first: precheck and export of the current configuration only).'] } : cronStep('detect-drift.sh')],
@@ -2439,7 +2439,7 @@ export const VCF_FLEET_91                                 = [
         'LCM_AT=0',
         '# The Fleet LCM token lives in its own private header file, like the OpsToken:',
         '# curl reads it with -H @file, so it is never an argument. Both files go at exit.',
-        'LCM_HDR=$(umask 077; mktemp "${TMPDIR:-/tmp}/atk-lcm.XXXXXX")',
+        'LCM_HDR=$(umask 077; mktemp "${TMPDIR:-/tmp}/lcm.XXXXXX")',
         `trap 'rm -f "${OPS_HDR}" "$LCM_HDR"' EXIT`,
         'lcm_login() {',
         '  (( $(date +%s) - LCM_AT < 1200 )) && return 0',
@@ -2631,7 +2631,7 @@ export const VCF_FLEET_91                                 = [
       const files                         = {
         'fleet-lifecycle.sh': script,
         'restore-notes.txt': restore,
-        'crontab.txt': [`# ${base}: backup freshness every morning. The script logs in from the password`, '# file (mode 600); no password or token is in this line.', `0 8 * * * cd /opt/archtoolkit/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh backup-status >> /var/log/archtoolkit/${base}.log 2>&1`, ''].join('\n'),
+        'crontab.txt': [`# ${base}: backup freshness every morning. The script logs in from the password`, '# file (mode 600); no password or token is in this line.', `0 8 * * * cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh backup-status >> /var/log/vcf-automation/${base}.log 2>&1`, ''].join('\n'),
       };
       if (doBackup) files['backup-config.json'] = json(backupSpec);
       files['IMPORT.md'] = fleetImport(
@@ -2719,7 +2719,7 @@ export const VCF_FLEET_91                                 = [
       if (outbound && !/^https?:\/\/[^\s:]+:\d+/.test(outbound)) findings.push(warning('fleet91.cp.outbound', `"${outbound}" does not look like http(s)://host:port.`, { source: SRC }));
       if (/@/.test(outbound)) findings.push(error('fleet91.cp.outbound-creds', 'Do not put proxy credentials in the URL; they end up in files and logs. Enter them in the OVA properties at deploy time.', { source: SRC }));
 
-      const group = { name: groupName, description: 'Written by ArchToolKit.', collectorId: ['<REQUIRED — cloud proxy ids; collector-group.sh fills them from the names>'], haEnabled: true, lbEnabled: lb, ...(vip ? { virtualIP: vip } : {}) };
+      const group = { name: groupName, description: '', collectorId: ['<REQUIRED — cloud proxy ids; collector-group.sh fills them from the names>'], haEnabled: true, lbEnabled: lb, ...(vip ? { virtualIP: vip } : {}) };
 
       const apply = [
         ...head(`Create or update the HA collector group "${groupName}" with ${proxies.join(', ')}.`, [

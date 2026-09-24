@@ -291,7 +291,7 @@ const VERSIONS_TF = [
 function cronLine(schedule        , env        , script        , log        )         {
   return [
     '# Crontab entry. No secret in it: the script reads the API token from the file named.',
-    `${schedule} ${env} /opt/archtoolkit/scripts/${script} >>/var/log/archtoolkit/${log} 2>&1`,
+    `${schedule} ${env} /opt/vcf-automation/scripts/${script} >>/var/log/vcf-automation/${log} 2>&1`,
     '',
   ].join('\n');
 }
@@ -555,14 +555,14 @@ const TEMPLATE_JS = String.raw`function importTemplate(ctx, api, auth, t) {
     }
   }
   core.act(ctx, "create version " + t.version + " of template " + t.name + (t.release ? " and release it" : ""), function () {
-    return core.http("POST", api + "/blueprint/api/blueprints/" + id + "/versions", auth, { version: t.version, description: t.description, changeLog: t.changeLog || "Imported by ArchToolKit", release: t.release === true }, SAFE).body;
+    return core.http("POST", api + "/blueprint/api/blueprints/" + id + "/versions", auth, { version: t.version, description: t.description, changeLog: t.changeLog || "", release: t.release === true }, SAFE).body;
   });
   return id;
 }
 `;
 
 /** Where each blueprint's package goes, and its name. */
-const AREA = 'ArchToolKit/VCF Automation 9.1';
+const AREA = 'Automation/VCF Automation 9.1';
 
 const CSV_JS = String.raw`function csv(v) {
   var s = v === null || v === undefined ? "" : String(v);
@@ -768,7 +768,7 @@ for (var r = 0; r < REQUIRED.length; r++) {
 for (var m = 0; m < missing.length; m++) System.warn("NO ZONE carries " + missing[m] + " — requests asking for it will fail placement.");
 var templateId = "";
 if (settings.projectId) {
-  templateId = importTemplate(ctx, api, auth, { name: TEMPLATE.name, description: TEMPLATE.description, version: TEMPLATE.version, content: core.resource(RESOURCE_PATH, "example-template.yaml"), projectId: String(settings.projectId), release: settings.releaseTemplate === true, changeLog: "Imported by ArchToolKit" }) || "";
+  templateId = importTemplate(ctx, api, auth, { name: TEMPLATE.name, description: TEMPLATE.description, version: TEMPLATE.version, content: core.resource(RESOURCE_PATH, "example-template.yaml"), projectId: String(settings.projectId), release: settings.releaseTemplate === true, changeLog: "" }) || "";
 } else {
   System.log("projectId is empty in " + SETTINGS_NAME + ": the example template is not imported.");
 }
@@ -825,7 +825,7 @@ if (T.target) {
     imported = String(there[0].id);
   } else {
     imported = core.act(ctx, "import template " + T.name + " into project " + settings.targetProjectId + " of " + T.target + " as a draft", function () {
-      var r = core.http("POST", api + "/blueprint/api/blueprints", targetAuth, { name: T.name, description: "Imported by ArchToolKit", projectId: String(settings.targetProjectId), requestScopeOrg: false, content: content }, SAFE);
+      var r = core.http("POST", api + "/blueprint/api/blueprints", targetAuth, { name: T.name, description: "", projectId: String(settings.targetProjectId), requestScopeOrg: false, content: content }, SAFE);
       if (!r.body || !r.body.id) throw new Error("POST /blueprint/api/blueprints in " + T.target + " returned no id.");
       return String(r.body.id);
     }) || "";
@@ -1085,8 +1085,8 @@ export const VCF_AUTOMATION_91                                 = [
         default: 'tenant',
       },
       { id: 'org', label: 'Organization', control: 'text', default: 'team-a', hint: 'The name in its login URL', showWhen: { input: 'scope', equals: ['tenant'] } },
-      { id: 'token_file', label: 'API token file', control: 'text', default: '/etc/archtoolkit/vcfa-api-token', hint: 'Mode 600, owned by the account that runs the scripts' },
-      { id: 'access_file', label: 'Write the access token to', control: 'text', default: '/run/archtoolkit/vcfa-access-token', hint: 'Other scripts read VCFA_TOKEN from here' },
+      { id: 'token_file', label: 'API token file', control: 'text', default: '/etc/vcf-automation/vcfa-api-token', hint: 'Mode 600, owned by the account that runs the scripts' },
+      { id: 'access_file', label: 'Write the access token to', control: 'text', default: '/run/vcf-automation/vcfa-access-token', hint: 'Other scripts read VCFA_TOKEN from here' },
       { id: 'expiry_warn_days', label: 'Warn when a token expires within (days)', control: 'number', default: 30, min: 1, max: 365 },
       { id: 'schedule_refresh', label: 'Refresh the access token every 45 minutes', control: 'toggle', default: true },
       { id: 'include_revoke', label: 'Include the revoke script', control: 'toggle', default: false },
@@ -1094,8 +1094,8 @@ export const VCF_AUTOMATION_91                                 = [
     automation: (values                 , name        )             => {
       const scope = (str(values, 'scope', 'tenant') === 'provider' ? 'provider' : 'tenant')         ;
       const org = str(values, 'org', 'team-a');
-      const tokenFile = str(values, 'token_file', '/etc/archtoolkit/vcfa-api-token');
-      const accessFile = str(values, 'access_file', '/run/archtoolkit/vcfa-access-token');
+      const tokenFile = str(values, 'token_file', '/etc/vcf-automation/vcfa-api-token');
+      const accessFile = str(values, 'access_file', '/run/vcf-automation/vcfa-access-token');
       const warnDays = num(values, 'expiry_warn_days', 30);
       const schedule = bool(values, 'schedule_refresh', true);
       const revoke = bool(values, 'include_revoke', false);
@@ -1205,7 +1205,7 @@ export const VCF_AUTOMATION_91                                 = [
       // the package is the audit (and, when asked for, the revoke).
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'tokens', scope === 'provider' ? 'provider' : org),
-        description: `Audits the VCF Automation API tokens of ${scope === 'provider' ? 'the provider account' : `an account in organization ${org}`}${revoke ? ', and revokes one by id and exact name' : ''}. Generated by ArchToolKit.`,
+        description: `Audits the VCF Automation API tokens of ${scope === 'provider' ? 'the provider account' : `an account in organization ${org}`}${revoke ? ', and revokes one by id and exact name' : ''}.`,
         categoryPath: `${AREA}/API tokens/${scope === 'provider' ? 'provider' : org}`,
         workflow: {
           name: 'Audit VCF Automation API tokens',
@@ -1265,7 +1265,7 @@ export const VCF_AUTOMATION_91                                 = [
           'Rotating a VCF Automation API token without an outage',
           '',
           `1. Log in to https://<vcfa>/${scope === 'provider' ? 'provider' : `tenant/${org}`} as the account the token belongs to.`,
-          '2. My Account → API Tokens → NEW. Name it with the date, e.g. archtoolkit-2026-09. Copy it once;',
+          '2. My Account → API Tokens → NEW. Name it with the date, e.g. vcf-2026-09. Copy it once;',
           '   it is not shown again.',
           `3. Write it to ${tokenFile}.new with umask 077, then mv it over ${tokenFile}.`,
           '4. Run scripts/vcfa-token-exchange.sh by hand and confirm it writes the access token. In',
@@ -1313,7 +1313,7 @@ export const VCF_AUTOMATION_91                                 = [
           'An exchange needs no undo: the access token expires within the hour.',
           'A revoked API token cannot be restored. Create a new one and replace the file.',
         ],
-        told: ['VCF Automation records token creation and use against the user in its event log.', 'The workflow log and its AUDIT lines, the summary output, and the webhook when one is set; a run with tokens about to expire fails.', schedule ? 'The cron log, /var/log/archtoolkit/vcfa-token.log.' : 'The terminal it was run in.'],
+        told: ['VCF Automation records token creation and use against the user in its event log.', 'The workflow log and its AUDIT lines, the summary output, and the webhook when one is set; a run with tokens about to expire fails.', schedule ? 'The cron log, /var/log/vcf-automation/vcfa-token.log.' : 'The terminal it was run in.'],
         requires: [
           'VCF Automation 9.x, with the account the token belongs to able to log in to the portal.',
           'An API token made in My Account → API Tokens, in the configuration element (Orchestrator) or the token file (scripts).',
@@ -1439,7 +1439,7 @@ export const VCF_AUTOMATION_91                                 = [
         `resource "vcfa_org" "${tf}" {`,
         `  name         = ${q(orgName)}`,
         `  display_name = ${q(display)}`,
-        '  description  = "Managed by ArchToolKit / Terraform"',
+        '  description  = "Managed by Terraform"',
         '  is_enabled   = true',
         `  # true makes a VM Apps (classic) organization. It cannot be changed afterwards.`,
         `  is_classic_tenant = ${allApps ? 'false' : 'true'}`,
@@ -1578,10 +1578,10 @@ export const VCF_AUTOMATION_91                                 = [
         '',
       ].join('\n');
 
-      const orgBody = { name: orgName, displayName: display, description: 'Managed by ArchToolKit', isEnabled: true, canManageOrgs: false, isClassicTenant: !allApps };
+      const orgBody = { name: orgName, displayName: display, description: '', isEnabled: true, canManageOrgs: false, isClassicTenant: !allApps };
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'org', orgName),
-        description: `Creates the ${allApps ? 'All Apps' : 'VM Apps'} organization ${orgName} in VCF Automation 9.1 if it does not exist${allApps ? ', and checks its region quota' : ''}. Generated by ArchToolKit.`,
+        description: `Creates the ${allApps ? 'All Apps' : 'VM Apps'} organization ${orgName} in VCF Automation 9.1 if it does not exist${allApps ? ', and checks its region quota' : ''}.`,
         categoryPath: `${AREA}/Organizations/${orgName}`,
         workflow: {
           name: `Create organization ${label(orgName, 'org')}`,
@@ -1724,7 +1724,7 @@ export const VCF_AUTOMATION_91                                 = [
         ...supervisors.flatMap((s, i) => [`data "vcfa_supervisor" "sv${i}" {`, `  name       = ${q(s)}`, '  vcenter_id = data.vcfa_vcenter.vc.id', '}', '']),
         `resource "vcfa_region" "${tf}" {`,
         `  name                 = ${q(region)}`,
-        '  description          = "Managed by ArchToolKit / Terraform"',
+        '  description          = "Managed by Terraform"',
         '  nsx_manager_id       = data.vcfa_nsx_manager.nsx.id',
         `  supervisor_ids       = [${supervisors.map((_, i) => `data.vcfa_supervisor.sv${i}.id`).join(', ')}]`,
         `  storage_policy_names = [${policies.map(q).join(', ')}]`,
@@ -1795,7 +1795,7 @@ export const VCF_AUTOMATION_91                                 = [
 
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'region', region),
-        description: `Inventories region ${region} of VCF Automation 9.1 from the provider side: status, zones, supervisors, VM classes, storage policies and classes. Reads only. Generated by ArchToolKit.`,
+        description: `Inventories region ${region} of VCF Automation 9.1 from the provider side: status, zones, supervisors, VM classes, storage policies and classes. Reads only.`,
         categoryPath: `${AREA}/Regions/${region}`,
         workflow: {
           name: `Inventory region ${label(region, 'region')}`,
@@ -1947,14 +1947,14 @@ export const VCF_AUTOMATION_91                                 = [
         object: {
           apiVersion: 'crd.nsx.vmware.com/v1alpha1',
           kind: 'Subnet',
-          metadata: { name: sn.name, namespace, labels: { 'archtoolkit/managed': 'true' } },
+          metadata: { name: sn.name, namespace, labels: { 'vcf.automation/managed': 'true' } },
           spec: { accessMode: sn.mode, ipv4SubnetSize: Number.isFinite(sn.size) ? sn.size : 16, subnetDHCPConfig: { mode: dhcp ? 'DHCPServer' : 'DHCPDeactivated' } },
         },
       }));
       const yaml = k8sYaml(subnetObjects.map((o) => ({ comment: ['VERIFY apiVersion and field names: kubectl explain subnet.spec (crd.nsx.vmware.com)'], object: o.object })));
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'vpc', namespace),
-        description: `Creates ${subnets.length} VPC subnet(s) in the All Apps namespace ${namespace}. Generated by ArchToolKit.`,
+        description: `Creates ${subnets.length} VPC subnet(s) in the All Apps namespace ${namespace}.`,
         categoryPath: `${AREA}/VPC subnets/${namespace}`,
         workflow: {
           name: `Create VPC subnets in ${label(namespace, 'namespace')}`,
@@ -1990,7 +1990,7 @@ export const VCF_AUTOMATION_91                                 = [
         '',
         `resource "vcfa_ip_space" "${label(blockName, 'block').replace(/-/g, '_')}" {`,
         `  name                          = ${q(blockName)}`,
-        '  description                   = "Managed by ArchToolKit / Terraform"',
+        '  description                   = "Managed by Terraform"',
         '  region_id                     = data.vcfa_region.region.id',
         `  default_quota_max_subnet_size = ${maxSize}`,
         '  default_quota_max_cidr_count  = 4',
@@ -2181,7 +2181,7 @@ export const VCF_AUTOMATION_91                                 = [
         ...(needsPassword ? ['variable "subscription_password" {', '  description = "From TF_VAR_subscription_password — never written to a file"', '  type        = string', '  sensitive   = true', '}', ''] : []),
         `resource "vcfa_content_library" "${tf}" {`,
         `  name              = ${q(lib)}`,
-        '  description       = "Managed by ArchToolKit / Terraform"',
+        '  description       = "Managed by Terraform"',
         `  org_id            = ${owner === 'provider' ? 'data.vcfa_org.system.id' : 'data.vcfa_org.org.id'}`,
         '  storage_class_ids = [data.vcfa_storage_class.sc.id]',
         ...(owner !== 'provider' ? ['  auto_attach       = true', `  is_project_scoped = ${owner === 'project' ? 'true' : 'false'}`, `  all_projects_permission = ${q(permission)}`] : []),
@@ -2199,7 +2199,7 @@ export const VCF_AUTOMATION_91                                 = [
         ...items.flatMap((it, i) => [
           `resource "vcfa_content_library_item" "item${i}" {`,
           `  name               = ${q(it.name)}`,
-          '  description        = "Uploaded by ArchToolKit / Terraform"',
+          '  description        = "Managed by Terraform"',
           `  content_library_id = vcfa_content_library.${tf}.id`,
           `  file_paths         = [${it.paths.map(q).join(', ')}]`,
           '  upload_piece_size  = 10',
@@ -2237,7 +2237,7 @@ export const VCF_AUTOMATION_91                                 = [
 
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'library', lib),
-        description: `Checks the VCF Automation 9.1 content library ${lib} and lists its items with their VM image identifiers. Reads only. Generated by ArchToolKit.`,
+        description: `Checks the VCF Automation 9.1 content library ${lib} and lists its items with their VM image identifiers. Reads only.`,
         categoryPath: `${AREA}/Content libraries/${lib}`,
         workflow: {
           name: `Check content library ${label(lib, 'library')}`,
@@ -2411,7 +2411,7 @@ export const VCF_AUTOMATION_91                                 = [
           object: {
             apiVersion: `vmoperator.vmware.com/${api}`,
             kind: 'VirtualMachine',
-            metadata: { name: vm, namespace: ns, labels: { app: vm, 'archtoolkit/managed': 'true' } },
+            metadata: { name: vm, namespace: ns, labels: { app: vm, 'vcf.automation/managed': 'true' } },
             spec: {
               className: cls,
               imageName: image || '<REQUIRED — vmi-… from kubectl get vmi>',
@@ -2451,7 +2451,7 @@ if (IMAGE && !kubeGet(collectionPath(VMOP, NS, "virtualmachineimages") + "/" + e
 if (!kubeGet(collectionPath(VMOP, NS, "virtualmachineclasses") + "/" + encodeURIComponent(VM_CLASS))) System.warn("VM class " + VM_CLASS + " is not listed in " + NS + "; the create will say whether it is bound.");`;
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'vm', ns, vm),
-        description: `Creates the VM Service virtual machine ${vm} in the All Apps namespace ${ns}. Generated by ArchToolKit.`,
+        description: `Creates the VM Service virtual machine ${vm} in the All Apps namespace ${ns}.`,
         categoryPath: `${AREA}/VM Service/${ns}/${vm}`,
         workflow: {
           name: `Create VM ${vm}`,
@@ -2605,7 +2605,7 @@ if (!kubeGet(collectionPath(VMOP, NS, "virtualmachineclasses") + "/" + encodeURI
         object: {
           apiVersion: 'databases.dataservices.vmware.com/v1alpha1',
           kind,
-          metadata: { name: db, namespace: ns, labels: { 'archtoolkit/managed': 'true' } },
+          metadata: { name: db, namespace: ns, labels: { 'vcf.automation/managed': 'true' } },
           spec: {
             version,
             adminUsername: user,
@@ -2628,7 +2628,7 @@ if (!settings.dbAdminPassword) throw new Error("Set dbAdminPassword in the confi
 items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", metadata: { name: adminSecretName, namespace: ${JSON.stringify(ns)} }, type: "Opaque", stringData: { username: ${JSON.stringify(user)}, password: String(settings.dbAdminPassword) } } });`;
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'db', ns, db),
-        description: `Creates the ${pg ? 'PostgreSQL' : 'MySQL'} database ${db} from VCF Data Services Manager in the All Apps namespace ${ns}. Generated by ArchToolKit.`,
+        description: `Creates the ${pg ? 'PostgreSQL' : 'MySQL'} database ${db} from VCF Data Services Manager in the All Apps namespace ${ns}.`,
         categoryPath: `${AREA}/Data Services/${ns}/${db}`,
         workflow: {
           name: `Create database ${db}`,
@@ -2955,11 +2955,11 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
       const exampleTemplate = snippet
         .replace(/^inputs:\n(?=resources:)/m, '')
         .replace('\n    properties:\n', '\n    properties:\n      image: "<REQUIRED — an image mapping name>"\n      flavor: "<REQUIRED — a flavor mapping name>"\n');
-      const exampleArtifact = { name: 'Tag placement example', description: 'Generated by ArchToolKit. Placement constraints and resource tags from the tag standard.', yaml: exampleTemplate };
+      const exampleArtifact = { name: 'Tag placement example', description: 'Placement constraints and resource tags from the tag standard.', yaml: exampleTemplate };
       const imported = importBundle({ templates: [exampleArtifact] });
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'tag', 'placement'),
-        description: `Adds the tag standard's capability tags to ${zones.length} cloud zone(s), checks every hard constraint can be met, and imports the example template. Generated by ArchToolKit.`,
+        description: `Adds the tag standard's capability tags to ${zones.length} cloud zone(s), checks every hard constraint can be met, and imports the example template.`,
         categoryPath: `${AREA}/Tag placement`,
         workflow: {
           name: 'Tag placement',
@@ -3119,7 +3119,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
       }
       if (target && !LABEL.test(target)) findings.push(warning('vcfa91.bp.target', `"${target}" does not look like an organization login name.`, { source: SRC }));
 
-      const versionPayload = { version, description: `Generated by ArchToolKit. ${changeLog}`.trim(), changeLog, release };
+      const versionPayload = { version, description: changeLog, changeLog, release };
 
       const exportScript = restScript({
         purpose: `Export template "${tpl}" and its version list from the organization in VCFA_ORG.`,
@@ -3177,7 +3177,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
           '  echo "A template named \\"$NAME\\" already exists in $VCFA_ORG — add a version there instead of a second copy." >&2; exit 2',
           'fi',
           `jq -n --arg n "$NAME" --arg p "$TARGET_PROJECT_ID" --rawfile c "$HERE/export/${base}.yaml" \\`,
-          "  '{name: $n, description: \"Imported by ArchToolKit\", projectId: $p, requestScopeOrg: false, content: $c}' > \"$HERE/.import.json\"",
+          "  '{name: $n, description: \"\", projectId: $p, requestScopeOrg: false, content: $c}' > \"$HERE/.import.json\"",
           'send POST /blueprint/api/blueprints "$HERE/.import.json" application/json',
           'rm -f "$HERE/.import.json"',
           'echo "Imported as a draft. Test it in the target, then create and release a version there."',
@@ -3187,7 +3187,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
 
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'template', base),
-        description: `Creates version ${version} of the template "${tpl}"${release ? ' and releases it' : ''}${target ? `, and imports it into organization ${target}` : ''}. Generated by ArchToolKit.`,
+        description: `Creates version ${version} of the template "${tpl}"${release ? ' and releases it' : ''}${target ? `, and imports it into organization ${target}` : ''}.`,
         categoryPath: `${AREA}/Templates/${base}`,
         workflow: {
           name: `Version template ${base}`,
@@ -3350,7 +3350,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
 
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'namespace', ns),
-        description: `Changes the existing Supervisor namespace ${ns} (VCF Automation 9.1 day 2). Generated by ArchToolKit.`,
+        description: `Changes the existing Supervisor namespace ${ns} (VCF Automation 9.1 day 2).`,
         categoryPath: `${AREA}/Namespaces/${ns}`,
         workflow: {
           name: `Change namespace ${label(ns, 'namespace')}`,
@@ -3538,7 +3538,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
 }`;
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'argocd', ns, inst),
-        description: `Creates the Argo CD instance ${inst} in the All Apps namespace ${ns}, and optionally the Application ${app}. Generated by ArchToolKit.`,
+        description: `Creates the Argo CD instance ${inst} in the All Apps namespace ${ns}, and optionally the Application ${app}.`,
         categoryPath: `${AREA}/Argo CD/${ns}/${inst}`,
         workflow: {
           name: `Create Argo CD ${inst}`,
@@ -3710,7 +3710,7 @@ else {
 }`;
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'security', ns, pol),
-        description: `Creates the vDefend security policy ${pol} for VMs in the All Apps namespace ${ns}. Generated by ArchToolKit.`,
+        description: `Creates the vDefend security policy ${pol} for VMs in the All Apps namespace ${ns}.`,
         categoryPath: `${AREA}/Security policies/${ns}/${pol}`,
         workflow: {
           name: `Create security policy ${pol}`,
@@ -3823,7 +3823,7 @@ else {
 
       const pkg = toPackage({
         packageName: packageNameOf('vcfa91', 'health'),
-        description: 'A daily provider-side health check of VCF Automation 9.1: organizations, regions, region quotas, content libraries and the provider account\'s API tokens. Reads only. Generated by ArchToolKit.',
+        description: 'A daily provider-side health check of VCF Automation 9.1: organizations, regions, region quotas, content libraries and the provider account\'s API tokens. Reads only.',
         categoryPath: `${AREA}/Health`,
         workflow: {
           name: 'VCF Automation health check',
@@ -3874,7 +3874,7 @@ else {
             ],
           }),
           'scripts/vcfa-health.sh': script,
-          ...(schedule ? { 'crontab.txt': cronLine('30 6 * * *', 'VCFA_HOST=vcfa.example.com VCFA_API_TOKEN_FILE=/etc/archtoolkit/vcfa-provider-api-token', 'vcfa-health.sh', 'vcfa-health.log') } : {}),
+          ...(schedule ? { 'crontab.txt': cronLine('30 6 * * *', 'VCFA_HOST=vcfa.example.com VCFA_API_TOKEN_FILE=/etc/vcf-automation/vcfa-provider-api-token', 'vcfa-health.sh', 'vcfa-health.log') } : {}),
           'what-it-checks.txt': [
             'GET /api/versions                       the API version the scripts use is offered',
             'GET /cloudapi/1.0.0/orgs                every organization enabled',

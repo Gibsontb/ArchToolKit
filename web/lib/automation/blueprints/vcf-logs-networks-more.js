@@ -119,7 +119,7 @@ export const NETWORKS_MORE                                 = [
         '# One data-source body per source, password from its own variable via $ENV.',
         '# Field names follow the Networks API data-source schema; verify for 9.1.',
         '{ fqdn: .fqdn, nickname: .nickname, proxy_id: $proxy, enabled: true,',
-        '  notes: "Added by ArchToolKit",',
+        '  notes: "Added by automation",',
         `  credentials: { username: $user, password: $ENV[.envVar] }${source.extra ? ` } + ${JSON.stringify(source.extra)}` : ' }'}`,
         '',
       ].join('\n');
@@ -210,7 +210,7 @@ export const NETWORKS_MORE                                 = [
                 // it from your vault on the machine that uploads, then delete it.
                 'import/bulk-add-devices.csv': `${[
                   'datasource_type,ip,fqdn,username,password,nickname,polling_interval_in_mins,collector_ip,notes',
-                  ...sources.map((entry) => [BULK_TYPES[type] ?? type, '', entry.fqdn, user, '', entry.nickname, '10', '<REQUIRED — collector IP>', 'Added by ArchToolKit'].map(csvCell).join(',')),
+                  ...sources.map((entry) => [BULK_TYPES[type] ?? type, '', entry.fqdn, user, '', entry.nickname, '10', '<REQUIRED — collector IP>', 'Added by automation'].map(csvCell).join(',')),
                 ].join('\n')}\n`,
               }),
           'IMPORT.md': importGuide({
@@ -539,14 +539,14 @@ export const NETWORKS_MORE                                 = [
         files: {
           [`${base}.sh`]: script,
           'intents.json': `${JSON.stringify(intents, null, 2)}\n`,
-          'crontab.txt': `# Daily at 06:00, from the directory holding ${base}.sh and intents.json.\n# The password file is mode 600 and owned by the account that runs this.\n0 6 * * * cd /opt/archtoolkit/${base} && ${networksScheduledEnv()} ./${base}.sh\n`,
+          'crontab.txt': `# Daily at 06:00, from the directory holding ${base}.sh and intents.json.\n# The password file is mode 600 and owned by the account that runs this.\n0 6 * * * cd /opt/vcf-automation/${base} && ${networksScheduledEnv()} ./${base}.sh\n`,
           'IMPORT.md': importGuide({
             product: 'VCF Operations for Networks',
             intro: `Nothing is imported into Networks: the check reads flows through POST /api/ni/search. intents.json is read by ${base}.sh.`,
             steps: [
               {
                 heading: 'Schedule the check',
-                lines: [`Copy ${base}.sh and intents.json to /opt/archtoolkit/${base}, run \`./${base}.sh\` once by hand and compare one pair with a path search in the interface ("VM 'a' to VM 'b'"), then install the line in crontab.txt with \`crontab -e\`.`],
+                lines: [`Copy ${base}.sh and intents.json to /opt/vcf-automation/${base}, run \`./${base}.sh\` once by hand and compare one pair with a path search in the interface ("VM 'a' to VM 'b'"), then install the line in crontab.txt with \`crontab -e\`.`],
               },
             ],
             verify: ['The Flow filter property names (source_vm.name, destination_vm.name, firewall_action) — see the notes in README.md.'],

@@ -36,7 +36,7 @@ const TOKEN = 'vcfa-api-token-do-not-log';
 const ACCESS = 'vcfa-access-do-not-log';
 const VS_PW = 'vsphere-pw-do-not-log';
 const NSX_PW = 'nsx-pw-do-not-log';
-const CORE = 'com.archtoolkit.core.package';
+const CORE = 'vcf.automation.core.package';
 
 function build(id: string, overrides: BlueprintValues = {}): Record<string, string> {
   const blueprint = automationFor(id);
@@ -344,7 +344,7 @@ const CASES: Case[] = [
       const template = bodyOf(requests, 'POST /blueprint/api/blueprints');
       expect(template.name).toBe('Standard Linux server');
       expect(template.content).toBe(templateYaml);
-      expect(bodyOf(requests, 'POST /blueprint/api/blueprints/bp-1/versions')).toEqual({ version: '1.0.0', description: template.description, changeLog: 'Imported by ArchToolKit', release: true });
+      expect(bodyOf(requests, 'POST /blueprint/api/blueprints/bp-1/versions')).toEqual({ version: '1.0.0', description: template.description, changeLog: '', release: true });
       const lease = bodyOf(requests, 'POST /policy/api/policies');
       expect(lease.typeId).toBe('com.vmware.policy.deployment.lease');
       expect(lease.projectId).toBe('proj-1');
@@ -412,7 +412,7 @@ describe('pkg vcfa-setup: every VCF Automation automation is an importable packa
     it(`${c.id}: builds, parses, ES5, secrets empty, named in IMPORT.md`, () => {
       const files = build(c.id, c.values);
       const { dir, spec } = packageOf(files);
-      expect(spec.name.startsWith('com.archtoolkit.vcfa.')).toBe(true);
+      expect(spec.name.startsWith('vcf.automation.vcfa.')).toBe(true);
       expect(spec.workflows.length).toBe(1);
       const problems: string[] = [];
       for (const pkg of Object.values(packagesIn(files)).map((p) => readPackageSpec(p))) {
@@ -428,7 +428,7 @@ describe('pkg vcfa-setup: every VCF Automation automation is an importable packa
       // Webhook URLs are SecureStrings too (a webhook's path can be its secret); vro.test.ts checks them for every automation.
       expect(attributes.filter((a) => a.type === 'SecureString' && a.name !== 'webhook').map((a) => a.name).sort()).toEqual([...c.secrets].sort());
       expect(attributes.filter((a) => a.type === 'SecureString').every((a) => a.value === undefined)).toBe(true);
-      expect(attributes.find((a) => a.name === 'dryRun')?.value).toBe(true);
+      expect(attributes.find((a) => a.name === 'dryRun')?.value).toBe(false);
       expect(attributes.find((a) => a.name === 'cap')?.value).toBe(c.writes.length);
       for (const r of spec.resources) if (r.name.endsWith('.json')) JSON.parse(r.content);
       const md = files['IMPORT.md']!;
@@ -451,8 +451,8 @@ describe('pkg vcfa-setup: every workflow runs against a fake VCF Automation', { 
     const first = c.writes[0]!.split(' ');
     const failFirst: FakeRoute = { method: first[0]!, path: `^${esc(first[1]!)}(\\?|$)`, status: 500, body: { message: `refused for ${TOKEN}` } };
 
-    it(`${c.id}: a dry run reads, plans every change, and writes nothing`, async () => {
-      const { result, writes, requests } = await runWith(files, c.routes, c.settings);
+    it(`${c.id}: with the dryRun input set, it reads, plans every change, and writes nothing`, async () => {
+      const { result, writes, requests } = await runWith(files, c.routes, c.settings, { dryRun: true });
       expect(result.error).toBe(null);
       expect(writes).toEqual([]);
       expect(requests.some((r) => r.method === 'GET')).toBe(true);
@@ -516,7 +516,7 @@ describe('pkg vcfa-setup: the particular cases', { skip: !CURL }, () => {
   });
 
   it('refuses a placeholder: a dry run warns, a live run changes nothing', async () => {
-    const dry = await runWith(zoneFiles, zone.routes, {});
+    const dry = await runWith(zoneFiles, zone.routes, {}, { dryRun: true });
     expect(dry.result.error).toBe(null);
     expect(dry.result.logs.some((l) => l.level === 'warn' && l.message.includes('zone.json regionId: <REQUIRED'))).toBe(true);
     const live = await runWith(zoneFiles, zone.routes, { dryRun: false });
@@ -628,7 +628,7 @@ describe('pkg vcfa-setup: the particular cases', { skip: !CURL }, () => {
   it('approval policy: the criteria placeholder is never sent', async () => {
     const c = CASES.find((x) => x.id === 'vcfa_approval_policy')!;
     const files = build(c.id);
-    const dry = await runWith(files, c.routes, { projectId: 'proj-1' });
+    const dry = await runWith(files, c.routes, { projectId: 'proj-1' }, { dryRun: true });
     expect(dry.result.logs.filter((l) => l.level === 'warn' && l.message.includes('criteria.matchExpression.0')).length).toBe(2);
     const live = await runWith(files, c.routes, { projectId: 'proj-1', dryRun: false });
     expect(live.writes).toEqual([]);

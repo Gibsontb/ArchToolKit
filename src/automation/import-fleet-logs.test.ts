@@ -22,6 +22,7 @@ import { NETWORKS_MORE } from './blueprints/vcf-logs-networks-more.ts';
 import { VCF_FLEET } from './blueprints/vcf-fleet.ts';
 import { VCF_FLEET_91 } from './blueprints/vcf-fleet-91.ts';
 import { VCF_TAGS } from './blueprints/vcf-tags.ts';
+import { parseTagEntries, serializeTagList } from '../kit/tag-standard.ts';
 
 /** The blueprints of these five files; other Networks files have their own tests. */
 const MINE = [...NETWORKS_AUTOMATIONS, ...NETWORKS_MORE, ...VCF_FLEET, ...VCF_FLEET_91, ...VCF_TAGS];
@@ -32,10 +33,21 @@ interface Build {
   readonly files: Readonly<Record<string, string>>;
 }
 
+/** The tag standard's list starts empty; these checks need one with something in it. */
+const SAMPLE_TAG_LIST = serializeTagList(
+  parseTagEntries(
+    [
+      '@ VirtualMachine | app01, app02 | Environment=prod; Application=payments; Owner=team-payments',
+      '@ Folder | Payments | CostCenter=CC1001',
+      '@ ClusterComputeResource | wld01-cl01 | Tier=1; Environment=prod',
+    ].join('\n'),
+  ),
+);
+
 function everyBuild(): Build[] {
   const out: Build[] = [];
   for (const blueprint of MINE) {
-    const base = defaultValues(blueprint);
+    const base = { ...defaultValues(blueprint), ...(blueprint.id === 'tags_taxonomy' ? { standard: SAMPLE_TAG_LIST } : {}) };
     const variants: { label: string; values: BlueprintValues }[] = [{ label: 'defaults', values: { ...base } }];
     for (const input of blueprint.inputs) {
       if (input.control === 'select') for (const option of input.options ?? []) variants.push({ label: `${input.id}=${option.value}`, values: { ...base, [input.id]: option.value } });

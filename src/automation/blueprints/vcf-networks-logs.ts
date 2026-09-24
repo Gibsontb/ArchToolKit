@@ -55,8 +55,8 @@ export function networksPreamble(): string[] {
 }
 
 /** The environment a scheduled Networks job needs, for a crontab line: no secret in it. */
-export function networksScheduledEnv(account = 'svc-archtoolkit'): string {
-  return `VCFNET_HOST=vcfnet.example.com VCFNET_USER=${account} VCFNET_PASSWORD_FILE=/etc/archtoolkit/vcfnet-password`;
+export function networksScheduledEnv(account = 'svc-automation'): string {
+  return `VCFNET_HOST=vcfnet.example.com VCFNET_USER=${account} VCFNET_PASSWORD_FILE=/etc/vcf-automation/vcfnet-password`;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
             'exit 1',
             '',
           ].join('\n'),
-          'crontab.txt': `# Daily at 05:30, from the directory holding run-check.sh and ${base}.json.\n# The password file is mode 600 and owned by the account that runs this.\n30 5 * * * cd /opt/archtoolkit/${base} && ${networksScheduledEnv()} ./run-check.sh\n`,
+          'crontab.txt': `# Daily at 05:30, from the directory holding run-check.sh and ${base}.json.\n# The password file is mode 600 and owned by the account that runs this.\n30 5 * * * cd /opt/vcf-automation/${base} && ${networksScheduledEnv()} ./run-check.sh\n`,
           'IMPORT.md': importGuide({
             product: 'VCF Operations for Networks',
             intro: `Networks has no file import for a search or a saved search. What goes into the product is the search text; what runs it is run-check.sh on a schedule. ${base}.json is read by run-check.sh, not by Networks.`,
@@ -248,7 +248,7 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
               {
                 heading: 'Schedule run-check.sh',
                 lines: [
-                  `Copy run-check.sh and ${base}.json to /opt/archtoolkit/${base} on a host that reaches Networks, run \`./run-check.sh\` once by hand, then install the line in crontab.txt with \`crontab -e\`. POST /api/ni/search/ql takes {query, size} — the body the script builds from ${base}.json.`,
+                  `Copy run-check.sh and ${base}.json to /opt/vcf-automation/${base} on a host that reaches Networks, run \`./run-check.sh\` once by hand, then install the line in crontab.txt with \`crontab -e\`. POST /api/ni/search/ql takes {query, size} — the body the script builds from ${base}.json.`,
                 ],
               },
             ],

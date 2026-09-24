@@ -98,7 +98,7 @@ export interface VroResourceSpec {
 }
 
 export interface VroPackageSpec {
-  /** Fully qualified, e.g. com.archtoolkit.tags.compliance */
+  /** Fully qualified, e.g. vcf.automation.tags.compliance */
   readonly name: string;
   readonly description: string;
   readonly version: string;
@@ -399,7 +399,7 @@ export async function createSigner(commonName = 'ArchToolKit package signer', wh
 
   return {
     // The subject string vropkg writes: shortName=value, joined with commas.
-    subject: `C=XX,O=ArchToolKit,OU=Generated,CN=${commonName}`,
+    subject: `C=XX,O=Automation,OU=Generated,CN=${commonName}`,
     certificate,
     sign(data: Uint8Array): Uint8Array {
       const t = concat([new Uint8Array(MD5_DIGEST_INFO), md5(data)]);
@@ -449,7 +449,7 @@ export async function buildVroPackage(spec: VroPackageSpec, signer?: Signer): Pr
         {
           'pkg-id': await uuidV5(`http://${pkgName}.package`, UUID_NAMESPACE_URL),
           'pkg-name': pkgName,
-          'pkg-description': spec.description || 'Built by ArchToolKit',
+          'pkg-description': spec.description || '',
           'pkg-signer': s.subject,
           'pkg-owner': s.subject,
         },

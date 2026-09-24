@@ -291,12 +291,12 @@ export const INDEXER_BLUEPRINTS                             = [
               : []),
             ...(format === 'syslog' ? ['# Syslog priority and host are handled by the standard rules.', 'TRANSFORMS-syslog = syslog-host', ''] : []),
             'category = Custom',
-            `description = ${sourcetype}, configured by ArchToolKit`,
+            `description = ${sourcetype}, configured`,
             '',
             ...(targetIndex || drop || mask
               ? [
                   '# Index-time transforms, applied in this order.',
-                  `TRANSFORMS-archtoolkit = ${[...(drop ? ['drop_noise'] : []), ...(targetIndex ? ['route_index'] : [])].join(', ')}`,
+                  `TRANSFORMS-vcf = ${[...(drop ? ['drop_noise'] : []), ...(targetIndex ? ['route_index'] : [])].join(', ')}`,
                   ...(mask ? [`SEDCMD-mask = s/${mask}/***MASKED***/g`] : []),
                 ]
               : []),
