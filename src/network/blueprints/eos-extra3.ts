@@ -26,11 +26,11 @@ const isClusterId = (value: string): boolean => isIpv4(value) || (/^\d+$/.test(v
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The body of a change, inside a session that rolls back unless committed. */
-const inSession = (name: string, body: readonly string[]): string[] => [`configure session ${name}`, '  commit timer 00:05:00', ...body.map((l) => `  ${l}`)];
+const inSession = (name: string, body: readonly string[]): string[] => [`configure session ${name}`, ...body.map((l) => `  ${l}`), '  commit timer 00:05:00'];
 /** The back-out, in its own session, committed straight away. */
 const rollback = (name: string, body: readonly string[]): string[] => [`configure session ${name}`, ...body.map((l) => `  ${l}`), '  commit'];
 /** The first two verification steps of every session change. */
-const confirm = (name: string): string[] => ['show session-config diffs', `configure session ${name} commit`];
+const confirm = (name: string): string[] => [`show session-config named ${name} diffs`, `configure session ${name} commit`];
 
 export const EOS_EXTRA_3: readonly ChangeBlueprint[] = [
   /* ------------------------------------------------------------------- OSPF */

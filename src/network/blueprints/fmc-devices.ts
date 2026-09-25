@@ -275,7 +275,7 @@ const DEVICE: readonly ChangeBlueprint[] = [
           data: {
             id: `{{ ${ikeSettings}[0].id }}`,
             type: 'IkeSettings',
-            ikeV2Settings: { authenticationType: 'MANUAL_PRE_SHARED_KEY', manualPreSharedKey: SECRET, enforceHexBasedPreSharedKeyOnly: false, policies: [ref(fact('ikepol', ike), 'Ikev2Policy')] },
+            ikeV2Settings: { authenticationType: 'MANUAL_PRE_SHARED_KEY', manualPreSharedKey: SECRET, enforceHexBasedPreSharedKeyOnly: false, policies: [ref(fact('ikepol', ike), `{{ ${fact('ikepol', ike)}[0].type }}`)] },
           },
           path_params: inTopology({ objectId: `{{ ${ikeSettings}[0].id }}` }),
         },

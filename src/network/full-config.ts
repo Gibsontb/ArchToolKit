@@ -459,8 +459,22 @@ export function fullConfig(platform: Platform, steps: readonly FullConfigStep[],
   ];
 
   if (platform === 'f5') {
-    const merged = mergeAs3(mine, name);
-    return { text: merged.text ? deviceFile(platform, merged.text) : merged.text, findings: [...merged.findings] };
+    // Onboarding (VLANs, self IPs, routes, HA, provisioning) is tmsh, which a
+    // declaration cannot carry: those steps run from their own scripts, first.
+    const isDeclaration = (step: FullConfigStep): boolean => /^\s*\{/.test(step.change.config.join('\n'));
+    const scripts = mine.filter((step) => !isDeclaration(step));
+    const merged = mergeAs3(mine.filter(isDeclaration), name);
+    const onboarding =
+      scripts.length > 0
+        ? [
+            info(
+              'network.full.f5-onboarding',
+              `${scripts.map((step) => `"${step.label}"`).join(', ')} ${scripts.length === 1 ? 'is a tmsh script' : 'are tmsh scripts'}, not part of the declaration: run ${scripts.length === 1 ? 'it' : 'them'} from ${scripts.length === 1 ? 'its' : 'their'} own step file${scripts.length === 1 ? '' : 's'}, in order, before posting this declaration.`,
+              { source: 'ArchToolKit' },
+            ),
+          ]
+        : [];
+    return { text: merged.text ? deviceFile(platform, merged.text) : merged.text, findings: [...onboarding, ...merged.findings] };
   }
 
   if (platform === 'panos') {

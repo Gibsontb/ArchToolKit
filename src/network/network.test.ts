@@ -461,6 +461,15 @@ describe('the complete configuration', () => {
     expect(text.includes('  address-family ipv4 unicast')).toBe(true);
   });
 
+  it('keeps F5 onboarding scripts out of the declaration, and says to run them first', () => {
+    const build = (id: string) => ({ label: id, change: byId(id)!.change(defaultValues(byId(id)!), id) });
+    const whole = fullConfig('f5', [build('f5_vlan_self_ip'), build('f5_http_virtual')], 'lb');
+    expect(whole.findings.some((f) => f.code === 'network.full.f5-onboarding' && f.message.includes('f5_vlan_self_ip'))).toBe(true);
+    expect(whole.findings.some((f) => f.code === 'network.full.bad-declaration')).toBe(false);
+    const json = whole.text.slice(whole.text.indexOf('{'));
+    expect(JSON.parse(json).class).toBe('AS3');
+  });
+
   it('merges FortiOS entries by name, and keeps a nested table whole', () => {
     const step = (label: string, config: string[]): { label: string; change: DeviceChange } => ({
       label,

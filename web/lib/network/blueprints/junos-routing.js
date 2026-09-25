@@ -120,7 +120,7 @@ export const JUNOS_ROUTING                             = [
           ...(exportPolicy ? [`set protocols ospf export ${ident(exportPolicy, 'OSPF-EXPORT')}`] : []),
         ],
         verify: ['show ospf neighbor', 'show ospf interface', 'show ospf database', 'show route protocol ospf'],
-        backout: [...[...list, ...passive].map((i) => `delete protocols ospf area ${area} interface ${i}`), 'delete protocols ospf reference-bandwidth', ...(exportPolicy ? ['delete protocols ospf export'] : []), 'commit'],
+        backout: [...[...list, ...passive].map((i) => `delete protocols ospf area ${area} interface ${i}`), 'delete protocols ospf reference-bandwidth', ...(exportPolicy ? [`delete protocols ospf export ${ident(exportPolicy, 'OSPF-EXPORT')}`] : []), 'commit'],
       };
     },
   }),
@@ -352,6 +352,7 @@ export const JUNOS_ROUTING                             = [
         verify: ['show mpls interface', ...(ldp ? ['show ldp neighbor', 'show ldp session', 'show route table inet.3'] : []), ...(rsvp ? ['show rsvp neighbor', 'show mpls lsp'] : [])],
         backout: [
           ...(lspTo ? [`delete protocols mpls label-switched-path ${lspName}`] : []),
+          ...(rsvp && igp === 'ospf' ? ['delete protocols ospf traffic-engineering'] : []),
           ...(rsvp ? list.map((i) => `delete protocols rsvp interface ${i}`) : []),
           ...(ldp ? [...list.map((i) => `delete protocols ldp interface ${i}`), 'delete protocols ldp interface lo0.0'] : []),
           ...list.map((i) => `delete protocols mpls interface ${i}`),

@@ -152,8 +152,9 @@ export const PLATFORMS: Readonly<Record<Platform, PlatformInfo>> = {
     networkOs: 'junipernetworks.junos.junos',
     save: 'commit check, then commit confirmed 5, then commit within five minutes to keep it',
     extension: '.set',
-    // "load set terminal" and "load set <file>" skip lines starting with #.
-    commentsAccepted: true,
+    // Set commands only, like PAN-OS: the file is loaded over NETCONF by
+    // junos_config as well as by hand, and the notes belong in the record.
+    commentsAccepted: false,
   },
   aruba_aoscx: {
     id: 'aruba_aoscx',
@@ -422,7 +423,7 @@ export function applySteps(change: DeviceChange, file: string): string[] {
     case 'juniper_junos':
       return [
         `Copy \`${file}\` to /var/tmp, then in configuration mode \`load set /var/tmp/${file}\` (or paste after \`load set terminal\`), review with \`show | compare\`, \`commit check\`, \`commit confirmed 5\`, and \`commit\` once the checks pass.`,
-        'Lines starting with # are comments; load set skips them.',
+        'The file is set commands only; the notes are here rather than in the file.',
       ];
     case 'cisco_fmc':
       return [

@@ -228,7 +228,7 @@ export const FORTIOS_EXTRA_3                             = [
           'config switch-controller managed-switch',
           `    edit "${serial}"`,
           '        config ports',
-          ...ports.flatMap((port) => [`            edit "${port}"`, '                set vlan "_default"', ...(tagged.length > 0 ? ['                unset allowed-vlans'] : []), '            next']),
+          ...ports.flatMap((port) => [`            edit "${port}"`, '                set vlan "_default"', ...(tagged.length > 0 ? ['                unset allowed-vlans'] : []), ...(bpdu ? ['                set stp-bpdu-guard disabled'] : []), '            next']),
           '        end',
           '    next',
           'end',

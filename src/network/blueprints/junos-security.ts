@@ -70,7 +70,14 @@ export const JUNOS_SECURITY: readonly ChangeBlueprint[] = [
           ...(list.length === 0 && services.length === 0 && protocols.length === 0 ? [`${z} description ${zone}`] : []),
         ],
         verify: [`show security zones ${zone} detail`, 'show interfaces terse | match "' + (list[0] ?? 'ge') + '"', ...(protocols.length > 0 ? ['show ospf neighbor', 'show bgp summary'] : [])],
-        backout: [`delete security zones security-zone ${zone}`, 'commit  (fails while a policy or NAT rule still names the zone)'],
+        backout: [
+          ...list.map((i) => `delete security zones security-zone ${zone} interfaces ${i}`),
+          ...services.map((s) => `delete security zones security-zone ${zone} host-inbound-traffic system-services ${s}`),
+          ...protocols.map((p) => `delete security zones security-zone ${zone} host-inbound-traffic protocols ${p}`),
+          ...(list.length === 0 && services.length === 0 && protocols.length === 0 ? [`delete security zones security-zone ${zone} description`] : []),
+          `# delete security zones security-zone ${zone}   (only if the zone was new; fails while a policy or NAT rule still names it)`,
+          'commit',
+        ],
       };
     },
   }),

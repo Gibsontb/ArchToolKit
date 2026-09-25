@@ -8,7 +8,8 @@
  * Compact form, read by src/terraform/schema-blueprints.ts:
  *   a: [name, type, flags, description, allowedValues?]
  *        type  s string, n number, b bool, ls/ss list/set of string,
- *              ln/sn list/set of number, m map, x anything else (raw HCL)
+ *              ln/sn list/set of number, m map, x anything else (raw HCL),
+ *              h a nested block past the form's depth, written as HCL
  *        flags r required, o optional, c optional (provider computes a
  *              default), then s when sensitive
  *   b: [name, mode, minItems, maxItems, block]

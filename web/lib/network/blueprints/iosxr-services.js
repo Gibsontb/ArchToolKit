@@ -38,6 +38,12 @@ const MPLS                             = [
           : igp === 'ospf'
             ? [`router ospf ${process}`, ' mpls ldp sync', '!']
             : [];
+      const unsync =
+        igp === 'isis'
+          ? [`router isis ${process}`, ' address-family ipv4 unicast', '  no mpls ldp auto-config', '!']
+          : igp === 'ospf'
+            ? [`router ospf ${process}`, ' no mpls ldp sync', '!']
+            : [];
       return {
         platform: PLATFORM,
         title: `MPLS LDP on ${links.length} link(s)`,
@@ -50,7 +56,7 @@ const MPLS                             = [
         before: ['show running-config mpls ldp', 'show mpls ldp neighbor brief', 'show mpls interfaces'],
         config: ['mpls ldp', ...(rid ? [` router-id ${rid}`] : []), ' log', '  neighbor', ' !', ...links.flatMap((i) => [` interface ${i}`, ' !']), '!', ...sync],
         verify: ['show mpls ldp neighbor brief', 'show mpls ldp interface brief', 'show mpls forwarding', 'show mpls ldp igp sync'],
-        backout: ['mpls ldp', ...links.map((i) => ` no interface ${i}`), '!', '! if this change created LDP: no mpls ldp', 'commit'],
+        backout: [...unsync, 'mpls ldp', ...links.map((i) => ` no interface ${i}`), '!', '! if this change created LDP: no mpls ldp', 'commit'],
         findings,
       };
     },
@@ -100,14 +106,14 @@ const MPLS                             = [
         before: ['show running-config segment-routing', `show running-config router ${igp} ${process}`, 'show mpls label table summary'],
         config: [...(custom ? ['segment-routing', ` global-block ${start} ${end}`, '!'] : []), ...igpBlock],
         verify: [
-          igp === 'ospf' ? `show ospf ${process} sid-database` : `show isis ${process} segment-routing label table`,
+          igp === 'ospf' ? `show ospf ${process} sid-database` : `show isis instance ${process} segment-routing label table`,
           `show mpls forwarding labels ${start + index}`,
           'show segment-routing mpls state',
         ],
         backout:
           igp === 'ospf'
-            ? [`router ospf ${process}`, ` area ${area}`, `  interface ${loopback}`, `   no prefix-sid index ${index}`, '!', ` no segment-routing mpls`, '!', 'commit']
-            : [`router isis ${process}`, ` interface ${loopback}`, '  address-family ipv4 unicast', `   no prefix-sid index ${index}`, '!', ' address-family ipv4 unicast', '  no segment-routing mpls', '!', 'commit'],
+            ? [`router ospf ${process}`, ' no segment-routing mpls', ` area ${area}`, `  interface ${loopback}`, `   no prefix-sid index ${index}`, '!', 'commit']
+            : [`router isis ${process}`, ' address-family ipv4 unicast', '  no segment-routing mpls', ' !', ` interface ${loopback}`, '  address-family ipv4 unicast', `   no prefix-sid index ${index}`, '!', 'commit'],
         findings,
       };
     },

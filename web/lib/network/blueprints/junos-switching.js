@@ -54,7 +54,7 @@ export const JUNOS_SWITCHING                             = [
           `delete protocols ${other}`,
           `${p} bridge-priority ${bridgePriority(priority)}`,
           ...(protocol === 'mstp'
-            ? [`${p} configuration-name ${ident(str(values, 'region', 'CAMPUS'), 'CAMPUS')}`, `${p} revision-level ${num(values, 'revision', 1)}`, `${p} msti 1 vlan ${vlanRange(msti)}`, `${p} msti 1 bridge-priority ${bridgePriority(priority)}`]
+            ? [`${p} configuration-name ${ident(str(values, 'region', 'CAMPUS'), 'CAMPUS')}`, `${p} revision-level ${num(values, 'revision', 1)}`, ...vlanRange(msti).split(',').filter(Boolean).map((r) => `${p} msti 1 vlan ${r}`),`${p} msti 1 bridge-priority ${bridgePriority(priority)}`]
             : []),
           ...edges.map((e) => `${p} interface ${e} edge`),
           ...(block ? ['set protocols layer2-control bpdu-block-on-edge'] : []),

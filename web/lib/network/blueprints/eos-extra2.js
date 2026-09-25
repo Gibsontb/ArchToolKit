@@ -24,7 +24,13 @@ const PLATFORM = 'arista_eos'         ;
 const SECRET = '<REQUIRED>';
 
 /** Every EOS change opens a session, so a lost connection rolls back by itself. */
-const session = (name        )           => [`configure session ${name}`, '  commit timer 00:05:00'];
+/**
+ * Open a named configure session. `commit timer` commits the session there
+ * and then, so it is the last line of a change (COMMIT_TIMER), never the first;
+ * a back-out ends with a plain `commit`.
+ */
+const session = (name        )           => [`configure session ${name}`];
+const COMMIT_TIMER = '  commit timer 00:05:00';
 
 export const EOS_EXTRA_2                             = [
   deviceBlueprint({
@@ -109,9 +115,10 @@ export const EOS_EXTRA_2                             = [
             '    no shutdown',
             '  !',
           ]),
+          COMMIT_TIMER,
         ],
         verify: [
-          '  show session-config diffs',
+          'show session-config named port-change diffs',
           'configure session port-change commit',
           'show interfaces status',
           ...ifaces.map((i) => `show running-config interfaces ${i}`),
@@ -199,8 +206,9 @@ export const EOS_EXTRA_2                             = [
             '    no shutdown',
             '  !',
           ]),
+          COMMIT_TIMER,
         ],
-        verify: ['  show session-config diffs', 'configure session port-channel commit', 'show port-channel summary', `show port-channel ${id} detailed`, 'show lacp neighbor', 'show interfaces status'],
+        verify: ['show session-config named port-channel diffs', 'configure session port-channel commit', 'show port-channel summary', `show port-channel ${id} detailed`, 'show lacp neighbor', 'show interfaces status'],
         backout: [...session('pc-rollback'), `  no interface Port-Channel${id}`, ...members.flatMap((m) => [`  default interface ${m}`, '  !']), '  commit'],
         findings,
       };
@@ -275,9 +283,10 @@ export const EOS_EXTRA_2                             = [
           ...(hops.v4 || hops.v6
             ? [...(hops.v4 ? [`  ip route vrf ${name} 0.0.0.0/0 ${hops.v4}`] : []), ...(hops.v6 ? [`  ipv6 route vrf ${name} ::/0 ${hops.v6}`] : []), '  !']
             : []),
+          COMMIT_TIMER,
         ],
         verify: [
-          '  show session-config diffs',
+          `show session-config named vrf-${name.toLowerCase()} diffs`,
           `configure session vrf-${name.toLowerCase()} commit`,
           'show vrf',
           `show ip route vrf ${name}`,
@@ -366,9 +375,10 @@ export const EOS_EXTRA_2                             = [
               ]),
           '    no shutdown',
           '  !',
+          COMMIT_TIMER,
         ],
         verify: [
-          '  show session-config diffs',
+          `show session-config named gateway-vlan${vlan} diffs`,
           `configure session gateway-vlan${vlan} commit`,
           ...(varp ? ['show ip virtual-router', 'show ip virtual-router mac-address'] : [`show vrrp group ${group}`, 'show vrrp brief']),
           ...(gw.v4 || !gw.v6 ? [`ping ${gw.v4 ?? virtual}`] : []),
@@ -434,8 +444,9 @@ export const EOS_EXTRA_2                             = [
             ...v6.map((server) => `    ipv6 dhcp relay destination ${server}${vrf}`),
             '  !',
           ]),
+          COMMIT_TIMER,
         ],
-        verify: ['  show session-config diffs', 'configure session dhcp-relay commit', 'show dhcp relay', 'show dhcp relay counters', `${'!'} From a client: release and renew, and confirm the address and gateway`],
+        verify: ['show session-config named dhcp-relay diffs', 'configure session dhcp-relay commit', 'show dhcp relay', 'show dhcp relay counters', `${'!'} From a client: release and renew, and confirm the address and gateway`],
         backout: [
           ...session('dhcp-rollback'),
           ...ifaces.flatMap((i) => [`  interface ${i}`, ...v4.map((s) => `    no ip helper-address ${s}`), ...v6.map((s) => `    no ipv6 dhcp relay destination ${s}${vrf}`), '  !']),
@@ -519,9 +530,10 @@ export const EOS_EXTRA_2                             = [
           ...(num(values, 'delay', 0) > 0 ? [`    delay ${num(values, 'delay', 0)}`] : []),
           ...(bool(values, 'asynchronous', true) ? ['    asynchronous'] : []),
           '  !',
+          COMMIT_TIMER,
         ],
         verify: [
-          '  show session-config diffs',
+          `show session-config named handler-${name.toLowerCase()} diffs`,
           `configure session handler-${name.toLowerCase()} commit`,
           'show event-handler',
           `show event-handler ${name}`,
@@ -599,9 +611,10 @@ export const EOS_EXTRA_2                             = [
           `    bandwidth percent ${bandwidth}`,
           ...(bool(values, 'ecn', true) ? [`    random-detect ecn minimum-threshold ${ecnMin} kbytes maximum-threshold ${ecnMax} kbytes max-mark-probability 100`] : []),
           '  !',
+          COMMIT_TIMER,
         ],
         verify: [
-          '  show session-config diffs',
+          'show session-config named lossless diffs',
           'configure session lossless commit',
           'show priority-flow-control',
           'show priority-flow-control counters',
@@ -664,8 +677,9 @@ export const EOS_EXTRA_2                             = [
           ...(protocol === 'bgp'
             ? [`  router bgp ${num(values, 'local_as', 65101)}`, `    neighbor ${str(values, 'peer_group', 'UNDERLAY')} bfd`, '  !']
             : [...ifaces.flatMap((i) => [`  interface ${i}`, '    ospf bfd', '  !'])]),
+          COMMIT_TIMER,
         ],
-        verify: ['  show session-config diffs', 'configure session bfd commit', 'show bfd peers detail', `show ip ${protocol === 'bgp' ? 'bgp summary' : 'ospf neighbor'}`, `${'!'} Fail one link and time the reconvergence`],
+        verify: ['show session-config named bfd diffs', 'configure session bfd commit', 'show bfd peers detail', `show ip ${protocol === 'bgp' ? 'bgp summary' : 'ospf neighbor'}`, `${'!'} Fail one link and time the reconvergence`],
         backout: [...session('bfd-rollback'), ...(protocol === 'bgp' ? [`  router bgp ${num(values, 'local_as', 65101)}`, `    no neighbor ${str(values, 'peer_group', 'UNDERLAY')} bfd`, '  !'] : ifaces.flatMap((i) => [`  interface ${i}`, '    no ospf bfd', '  !'])), '  commit'],
         findings,
       };
@@ -727,8 +741,9 @@ export const EOS_EXTRA_2                             = [
           '  snmp-server enable traps bgp',
           '  !',
           ...(bool(values, 'remove_v2c', true) ? [`  ${'!'} Remove every v2c string the device still has. The capture above lists them.`, `  ${'!'} no snmp-server community <name>`] : []),
+          COMMIT_TIMER,
         ],
-        verify: ['  show session-config diffs', 'configure session snmpv3 commit', 'show snmp user', 'show snmp host', `${'!'} From the manager: snmpwalk -v3 -l authPriv -u ${user} <device> sysName`],
+        verify: ['show session-config named snmpv3 diffs', 'configure session snmpv3 commit', 'show snmp user', 'show snmp host', `${'!'} From the manager: snmpwalk -v3 -l authPriv -u ${user} <device> sysName`],
         backout: [...session('snmp-rollback'), `  no snmp-server user ${user} ${group} v3`, `  no snmp-server group ${group} v3 ${privacy === 'none' ? 'auth' : 'priv'}`, '  commit'],
         findings,
       };
@@ -795,8 +810,9 @@ export const EOS_EXTRA_2                             = [
           ...(str(values, 'destination', 'cvp') === 'grpc'
             ? ['  management api gnmi', `    transport grpc default`, ...(vrf ? [`      vrf ${vrf}`] : []), '  !']
             : []),
+          COMMIT_TIMER,
         ],
-        verify: ['  show session-config diffs', 'configure session telemetry commit', 'show daemon TerminAttr', 'show agent TerminAttr logs | tail 30', `${'!'} On the collector: confirm this switch appears and its state is current`],
+        verify: ['show session-config named telemetry diffs', 'configure session telemetry commit', 'show daemon TerminAttr', 'show agent TerminAttr logs | tail 30', `${'!'} On the collector: confirm this switch appears and its state is current`],
         backout: [...session('telemetry-rollback'), '  daemon TerminAttr', '    shutdown', '  !', '  commit'],
         findings,
       };
@@ -880,9 +896,10 @@ export const EOS_EXTRA_2                             = [
           ...(v6.length > 0 ? [`  route-map ${map} permit 15`, `    match ipv6 address prefix-list ${list6}`, ...sets, '  !'] : []),
           `  route-map ${map} ${deny ? 'deny' : 'permit'} 20`,
           '  !',
+          COMMIT_TIMER,
         ],
         verify: [
-          '  show session-config diffs',
+          'show session-config named routing-policy diffs',
           'configure session routing-policy commit',
           ...(with4 ? [`show ip prefix-list ${list}`] : []),
           ...(v6.length > 0 ? [`show ipv6 prefix-list ${list6}`] : []),
@@ -953,8 +970,9 @@ export const EOS_EXTRA_2                             = [
             : [`    ipv6 nd ra interval ${num(values, 'ra_interval', 200)}`, ...(ra === 'stateful' ? ['    ipv6 nd managed-config-flag', '    ipv6 nd other-config-flag'] : [])]),
           '    no shutdown',
           '  !',
+          COMMIT_TIMER,
         ],
-        verify: ['  show session-config diffs', 'configure session ipv6 commit', `show ipv6 interface ${iface}`, 'show ipv6 route', 'show ipv6 neighbors', ...(virtual ? ['show ipv6 virtual-router'] : [])],
+        verify: ['show session-config named ipv6 diffs', 'configure session ipv6 commit', `show ipv6 interface ${iface}`, 'show ipv6 route', 'show ipv6 neighbors', ...(virtual ? ['show ipv6 virtual-router'] : [])],
         backout: [...session('ipv6-rollback'), `  interface ${iface}`, ...(address ? [`    no ipv6 address ${address}`] : []), '    no ipv6 enable', '  !', '  commit'],
         findings,
       };

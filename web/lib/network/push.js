@@ -169,7 +169,8 @@ export function playFor(change              , name        , configFile         )
       operations.map((op, i) => ({
         name: `${change.title} (${i + 1}/${operations.length}): ${String(op.operation)}`,
         [push.module]: op             ,
-        register: 'change_result',
+        // A lookup changes nothing; what changed is the last write.
+        ...(/^get/.test(String(op.operation)) ? {} : { register: 'change_result' }),
       }))
     : [
         {

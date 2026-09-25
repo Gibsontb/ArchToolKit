@@ -289,7 +289,7 @@ export const ASA_EXTRA                             = [
         ],
         before: ['show mode', 'show context', 'show running-config context', 'dir disk0:'],
         config: [
-          ...(convert ? ['mode noconfirm multiple', '!'] : []),
+          ...(convert ? ['mode multiple noconfirm', '! The ASA reloads into multiple-context mode here. When it is back, enter the rest from the system context.'] : []),
           `context ${name}`,
           ` description ${str(values, 'context_description', name)}`,
           ...ifaces.map((i) => ` allocate-interface ${i}`),
@@ -299,7 +299,7 @@ export const ASA_EXTRA                             = [
           '!',
         ],
         verify: ['show context', `show context ${name} detail`, `changeto context ${name}`, 'show interface ip brief', 'changeto system', ...(cls ? ['show resource allocation'] : [])],
-        backout: [`no context ${name}`, ...(convert ? ['mode noconfirm single'] : [])],
+        backout: [`no context ${name}`, ...(convert ? ['mode single noconfirm'] : [])],
         findings,
       };
     },

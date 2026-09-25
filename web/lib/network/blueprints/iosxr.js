@@ -357,7 +357,7 @@ const ROUTING                             = [
           ...links.flatMap((i) => [` interface ${i}`, '  point-to-point', ...afs.flatMap((af) => [`  address-family ${af} unicast`, `   metric ${metric}`, '  !']), ' !']),
           '!',
         ],
-        verify: [`show isis ${instance} adjacency`, `show isis ${instance} interface brief`, 'show route isis', `show isis ${instance} database`],
+        verify: [`show isis instance ${instance} adjacency`, `show isis instance ${instance} interface brief`, 'show route isis', `show isis instance ${instance} database`],
         backout: [`router isis ${instance}`, ...[...links, ...passive].map((i) => ` no interface ${i}`), '!', `! if this change created the instance: no router isis ${instance}`, 'commit'],
         findings,
       };
@@ -614,7 +614,7 @@ const ROUTING                             = [
       } else {
         config = [`router isis ${process}`, ` interface ${intf}`, '  bfd fast-detect ipv4', `  bfd minimum-interval ${interval}`, `  bfd multiplier ${mult}`, ' !', '!'];
         backout = [`router isis ${process}`, ` interface ${intf}`, '  no bfd fast-detect ipv4', '  no bfd minimum-interval', '  no bfd multiplier', '!', 'commit'];
-        verify = [...verify, `show isis ${process} interface ${intf}`];
+        verify = [...verify, `show isis instance ${process} interface ${intf}`];
       }
       return {
         platform: PLATFORM,
