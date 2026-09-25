@@ -3,13 +3,18 @@ setlocal EnableDelayedExpansion
 title ArchToolKit - update catalogs
 cd /d "%~dp0"
 
-rem Refreshes both catalogs the toolkit consults:
-rem   Terraform resources and data sources, from registry.terraform.io
-rem   Ansible modules, from galaxy.ansible.com
+rem Refreshes every catalog the toolkit consults:
+rem   1. Terraform resources and data sources, from registry.terraform.io
+rem   2. Ansible modules, from galaxy.ansible.com
+rem   3. Terraform registry modules' inputs, cloned from each module's GitHub repo
+rem   4. Machine sizes - AWS from the EC2 API model in botocore (GitHub);
+rem      Azure, GCP and OCI from the ladders in tools\fetch-compute-catalog.mjs
+rem   5. F5 AS3 and Declarative Onboarding answer sets, from F5's GitHub schemas
 rem
-rem Both are committed to the repository so the toolkit still works offline.
+rem All are committed to the repository so the toolkit still works offline.
 rem This is the only part of ArchToolKit that touches the network, and it
-rem sends nothing - it only reads the public provider and collection indexes.
+rem sends nothing - it only reads public registries and repositories.
+rem Steps 3-5 need git on PATH; without it they are skipped, not failed.
 
 rem ---- Node present? -------------------------------------------------------
 where node >nul 2>&1
@@ -34,37 +39,99 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem ---- git present? --------------------------------------------------------
+set "HASGIT=1"
+where git >nul 2>&1
+if errorlevel 1 set "HASGIT="
+
 set "NODE_NO_WARNINGS=1"
 set "FAILED="
+set "SKIPPED="
+set "UPDATED="
 
 echo.
-echo   [1/2] Terraform resources, from the Terraform Registry...
+echo   [1/5] Terraform resources, from the Terraform Registry...
 echo.
 node tools\fetch-provider-catalog.mjs
-if errorlevel 1 set "FAILED=!FAILED! Terraform"
+if errorlevel 1 ( set "FAILED=!FAILED! Terraform-resources" ) else ( set "UPDATED=!UPDATED! src\terraform\catalog-data.ts" )
 
 echo.
-echo   [2/2] Ansible modules, from Ansible Galaxy...
+echo   [2/5] Ansible modules, from Ansible Galaxy...
 echo.
 node tools\fetch-ansible-catalog.mjs
-if errorlevel 1 set "FAILED=!FAILED! Ansible"
+if errorlevel 1 ( set "FAILED=!FAILED! Ansible" ) else ( set "UPDATED=!UPDATED! src\ansible\catalog-data.ts" )
 
 echo.
+echo   [3/5] Terraform registry modules, from their GitHub repositories...
+echo.
+if not defined HASGIT (
+  echo   Skipped: git was not found on PATH.
+  set "SKIPPED=!SKIPPED! Terraform-modules"
+) else (
+  node tools\fetch-module-catalog.mjs
+  if errorlevel 1 ( set "FAILED=!FAILED! Terraform-modules" ) else ( set "UPDATED=!UPDATED! src\terraform\module-catalog-data.ts" )
+)
+
+echo.
+echo   [4/5] Machine sizes: AWS from botocore, Azure/GCP/OCI from the ladders...
+echo.
+set "BOTO=%TEMP%\archtoolkit-botocore-%RANDOM%%RANDOM%"
+set "BOTOARG="
+if not defined HASGIT (
+  echo   git was not found on PATH - keeping the AWS list already committed.
+  set "SKIPPED=!SKIPPED! AWS-sizes"
+) else (
+  git clone -q --depth 1 --filter=blob:none --no-checkout https://github.com/boto/botocore.git "!BOTO!"
+  if errorlevel 1 (
+    echo   Could not clone botocore - keeping the AWS list already committed.
+    set "FAILED=!FAILED! AWS-sizes"
+  ) else (
+    git -C "!BOTO!" sparse-checkout set botocore/data/ec2 && git -C "!BOTO!" checkout -q
+    if errorlevel 1 (
+      echo   Could not check out botocore's EC2 model - keeping the AWS list already committed.
+      set "FAILED=!FAILED! AWS-sizes"
+    ) else (
+      set "BOTOARG=--botocore "!BOTO!""
+    )
+  )
+)
+node tools\fetch-compute-catalog.mjs !BOTOARG!
+if errorlevel 1 ( set "FAILED=!FAILED! Machine-sizes" ) else ( set "UPDATED=!UPDATED! src\kit\sizes-data.ts" )
+if exist "!BOTO!" rmdir /s /q "!BOTO!"
+
+echo.
+echo   [5/5] F5 AS3 and DO answer sets, from F5's schemas...
+echo.
+if not defined HASGIT (
+  echo   Skipped: git was not found on PATH.
+  set "SKIPPED=!SKIPPED! F5-schemas"
+) else (
+  node tools\fetch-editor-schemas.mjs
+  if errorlevel 1 ( set "FAILED=!FAILED! F5-schemas" ) else ( set "UPDATED=!UPDATED! src\editor\f5-schema-data.ts" )
+)
+
+echo.
+if defined UPDATED (
+  echo   Rewritten:
+  for %%f in (!UPDATED!) do echo     %%f
+  echo.
+)
+if defined SKIPPED (
+  echo   Skipped, no git on PATH:!SKIPPED!
+  echo   Install git from https://git-scm.com/ to refresh these too.
+  echo.
+)
 if defined FAILED (
   echo   Could not update:!FAILED!
   echo.
-  echo   The most likely cause is no route to registry.terraform.io or
-  echo   galaxy.ansible.com - a proxy, a firewall, or simply being offline.
-  echo   Whatever could not be fetched has been left exactly as it was.
+  echo   The most likely cause is no route to registry.terraform.io,
+  echo   galaxy.ansible.com or github.com - a proxy, a firewall, or simply
+  echo   being offline. Whatever could not be fetched was left as it was.
   echo.
-  goto :done
 )
+if not defined UPDATED goto :done
 
-echo   Done. Both catalogs have been rewritten:
-echo     src\terraform\catalog-data.ts
-echo     src\ansible\catalog-data.ts
-echo.
-choice /c YN /n /m "   Also check the generated Terraform against the provider schemas? [Y/N] "
+choice /c YN /n /m "   Check the generated Terraform against the provider schemas? [Y/N] "
 if errorlevel 2 goto :afterverify
 echo.
 node tools\verify-foundation-schemas.mjs
