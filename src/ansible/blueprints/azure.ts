@@ -19,6 +19,19 @@ import type { PlaybookFiles } from '../from-plays.ts';
 import { dualStackInput, ipv4Range, ipv6Range, isOn, nthSlash64 } from './ipv6.ts';
 
 /**
+ * azure_rm_webapp has no linux_fx_version; a Linux runtime is given as a
+ * `frameworks` entry. The input keeps the portal's "STACK|version" form
+ * (e.g. DOTNETCORE|6.0, NODE|18-lts) and is split into that entry here.
+ */
+function linuxFramework(stack: string): { name: string; version: string } {
+  const [rawName = '', ...rest] = stack.split('|');
+  const known = ['java', 'php', 'python', 'ruby', 'dotnetcore', 'node'];
+  const lower = rawName.trim().toLowerCase();
+  const name = known.includes(lower) ? lower : 'dotnetcore';
+  return { name, version: rest.join('|').trim() || '6.0' };
+}
+
+/**
  * The VM playbooks build their own VNet and subnet, whose ranges were fixed
  * literals; they are inputs now, and IPv4 (a VNet cannot be IPv6-only). A
  * dual-stack NIC is not generated here — see the note — so these stay IPv4.
@@ -120,8 +133,14 @@ const BLUEPRINTS: readonly Blueprint[] = [
                       resource_group: "{{ resource_group }}",
                       name: "{{ vm_name }}-nic",
                       virtual_network: "{{ resource_group }}-vnet",
-                      subnet: "{{ resource_group }}-subnet",
-                      public_ip_name: "{{ vm_name }}-pip"
+                      subnet_name: "{{ resource_group }}-subnet",
+                      ip_configurations: [
+                        {
+                          name: "ipconfig1",
+                          primary: true,
+                          public_ip_address_name: "{{ vm_name }}-pip"
+                        }
+                      ]
                     }
                   },
                   {
@@ -228,8 +247,14 @@ const BLUEPRINTS: readonly Blueprint[] = [
                       resource_group: "{{ resource_group }}",
                       name: "{{ vm_name }}-nic",
                       virtual_network: "{{ resource_group }}-vnet",
-                      subnet: "{{ resource_group }}-subnet",
-                      public_ip_name: "{{ vm_name }}-pip"
+                      subnet_name: "{{ resource_group }}-subnet",
+                      ip_configurations: [
+                        {
+                          name: "ipconfig1",
+                          primary: true,
+                          public_ip_address_name: "{{ vm_name }}-pip"
+                        }
+                      ]
                     }
                   },
                   {
@@ -462,7 +487,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                       resource_group: "{{ resource_group }}",
                       storage_account_name: "{{ account_name }}",
                       container: "{{ container_name }}",
-                      type: "container"
+                      state: "present"
                     }
                   }
                 ]
@@ -536,8 +561,10 @@ const BLUEPRINTS: readonly Blueprint[] = [
                       resource_group: "{{ resource_group }}",
                       server_name: "{{ sql_server_name }}",
                       name: "{{ db_name }}",
-                      edition: "Standard",
-                      requested_service_objective_name: "S0"
+                      sku: {
+                        name: "S0",
+                        tier: "Standard"
+                      }
                     }
                   }
                 ]
@@ -612,7 +639,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                       name: "{{ webapp_name }}",
                       plan: "{{ plan_name }}",
                       location: "{{ azure_location }}",
-                      linux_fx_version: "{{ runtime_stack }}"
+                      frameworks: [linuxFramework(str(vals, 'runtime_stack', 'DOTNETCORE|6.0'))]
                     }
                   }
                 ]
@@ -806,14 +833,19 @@ const BLUEPRINTS: readonly Blueprint[] = [
                     name: "Create Key Vault",
                     "azure.azcollection.azure_rm_keyvault": {
                       resource_group: "{{ resource_group }}",
-                      name: "{{ vault_name }}",
-                      location: "{{ azure_location }}"
+                      vault_name: "{{ vault_name }}",
+                      location: "{{ azure_location }}",
+                      vault_tenant: "{{ lookup('env', 'AZURE_TENANT') }}",
+                      sku: {
+                        name: "standard",
+                        family: "A"
+                      }
                     }
                   },
                   {
                     name: "Create secret",
                     "azure.azcollection.azure_rm_keyvaultsecret": {
-                      vault_uri: "https://{{ vault_name }}.vault.azure.net",
+                      keyvault_uri: "https://{{ vault_name }}.vault.azure.net",
                       secret_name: "{{ secret_name }}",
                       secret_value: "{{ secret_value }}"
                     }

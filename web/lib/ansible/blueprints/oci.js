@@ -363,7 +363,7 @@ const BLUEPRINTS                       = [
                     name: "Register backends",
                     "oracle.oci.oci_loadbalancer_backend": {
                       load_balancer_id: "{{ lb.data.id }}",
-                      backendset_name: "backendset1",
+                      backend_set_name: "backendset1",
                       ip_address: "{{ item }}",
                       port: "{{ port }}"
                     },
@@ -376,7 +376,7 @@ const BLUEPRINTS                       = [
                       name: "http-listener",
                       protocol: "HTTP",
                       port: "{{ port }}",
-                      default_backendset_name: "backendset1"
+                      default_backend_set_name: "backendset1"
                     }
                   }
                 ]
@@ -528,11 +528,24 @@ const BLUEPRINTS                       = [
                 },
                 tasks: [
                   {
+                    // Keys are created against the vault's management
+                    // endpoint, not its OCID, so the vault is looked up first.
+                    name: "Look up the vault's management endpoint",
+                    "oracle.oci.oci_key_management_vault_facts": {
+                      vault_id: "{{ vault_ocid }}"
+                    },
+                    register: "kms_vault"
+                  },
+                  {
                     name: "Create KMS key",
                     "oracle.oci.oci_key_management_key": {
                       compartment_id: "{{ compartment_ocid }}",
-                      vault_id: "{{ vault_ocid }}",
-                      display_name: "{{ key_display_name }}"
+                      service_endpoint: "{{ kms_vault.vaults[0].management_endpoint }}",
+                      display_name: "{{ key_display_name }}",
+                      key_shape: {
+                        algorithm: "AES",
+                        length: 32
+                      }
                     }
                   }
                 ]

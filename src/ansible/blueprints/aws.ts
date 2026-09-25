@@ -177,7 +177,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                   "amazon.aws.s3_bucket": {
                     name: "{{ bucket_name }}",
                     region: "{{ aws_region }}",
-                    versioning: { Status: "{{ 'Enabled' if enable_versioning else 'Suspended' }}" }
+                    versioning: "{{ enable_versioning }}"
                   }
                 },
                 {
@@ -185,15 +185,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                   "amazon.aws.s3_bucket": {
                     name: "{{ bucket_name }}",
                     region: "{{ aws_region }}",
-                    encryption_configuration: {
-                      Rules: [
-                        {
-                          ApplyServerSideEncryptionByDefault: {
-                            SSEAlgorithm: "{{ sse_algorithm }}"
-                          }
-                        }
-                      ]
-                    }
+                    encryption: "{{ sse_algorithm }}"
                   }
                 }
               ]
@@ -483,7 +475,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
                     name: "{{ table_name }}",
                     region: "{{ aws_region }}",
                     hash_key_name: "{{ hash_key_name }}",
-                    hash_key_type: "S",
+                    hash_key_type: "STRING",
                     billing_mode: "{{ billing_mode }}"
                   }
                 }
@@ -705,10 +697,10 @@ const BLUEPRINTS: readonly Blueprint[] = [
                     name: "{{ alarm_name }}",
                     region: "{{ aws_region }}",
                     state: "present",
-                    metric: "CPUUtilization",
+                    metric_name: "CPUUtilization",
                     namespace: "AWS/EC2",
                     statistic: "Average",
-                    comparison: ">=",
+                    comparison: "GreaterThanOrEqualToThreshold",
                     threshold: "{{ threshold }}",
                     period: 300,
                     evaluation_periods: "{{ evaluation_periods }}",

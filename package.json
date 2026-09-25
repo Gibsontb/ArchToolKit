@@ -28,6 +28,9 @@
     "schemas:update": "node tools/fetch-provider-schemas.mjs",
     "terraform:validate": "node tools/validate-terraform-blueprints.mjs",
     "rules:discover": "node tools/discover-resource-rules.mjs",
+    "ansible:schemas": "node tools/fetch-ansible-schemas.mjs",
+    "ansible:validate": "node tools/validate-ansible-blueprints.mjs",
+    "ansible:rules": "node tools/discover-module-rules.mjs",
     "verify:schemas": "node tools/verify-foundation-schemas.mjs"
   },
   "comments": {

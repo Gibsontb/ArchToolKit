@@ -11,6 +11,7 @@ import { CATALOG_DATA } from '../terraform/catalog-data.ts';
 import { VMWARE_SCHEMA_DATA } from '../terraform/vmware-schema-data.ts';
 import { CLOUD_SCHEMA_INDEX } from '../terraform/cloud-schema-index.ts';
 import { collectModules } from '../ansible/from-plays.ts';
+import { NEW_PLATFORMS } from '../ansible/module-blueprints.ts';
 
 const ALL = [...TERRAFORM_BLUEPRINTS, ...ANSIBLE_BLUEPRINTS];
 
@@ -168,7 +169,10 @@ describe('kit/blueprint: every blueprint is well formed', () => {
     // The matrix hands over 'google' and 'vsphere'; groups labelled 'gcp' or
     // 'vmware' would silently never be selected.
     const shared = ['aws', 'azure', 'google', 'oci', 'vsphere', 'vcf', 'linux', 'windows'];
-    for (const group of ALL) expect(shared).toContain(group.target);
+    // Ansible's module-only platforms (network devices, containers, …) have no
+    // counterpart in the matrix, so nothing hands off to them.
+    const ansibleOnly = Object.keys(NEW_PLATFORMS);
+    for (const group of ALL) expect([...shared, ...ansibleOnly]).toContain(group.target);
   });
 
   it('builds from its own defaults without throwing', () => {

@@ -14,6 +14,26 @@ import { playbookFiles } from '../from-plays.js';
 import { AWS_REGIONS, AZURE_LOCATIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from './regions.js';
 import { HOSTS_INPUT } from './common.js';
 
+/**
+ * The cron module's timing options for a schedule string. A five-field cron
+ * string is split into minute/hour/day/month/weekday; a nickname such as
+ * @daily or @reboot maps to special_time, which the module accepts instead.
+ */
+const CRON_SPECIAL_TIMES = ['annually', 'daily', 'hourly', 'monthly', 'reboot', 'weekly', 'yearly'];
+function cronTiming(schedule        )                         {
+  const nickname = schedule.trim().replace(/^@/, '');
+  if (schedule.trim().startsWith('@') && CRON_SPECIAL_TIMES.includes(nickname)) {
+    return { special_time: nickname };
+  }
+  return {
+    minute: "{{ schedule.split()[0] }}",
+    hour: "{{ schedule.split()[1] }}",
+    day: "{{ schedule.split()[2] }}",
+    month: "{{ schedule.split()[3] }}",
+    weekday: "{{ schedule.split()[4] }}"
+  };
+}
+
 const BLUEPRINTS                       = [
   {
     id: 'nginx_server',
@@ -243,12 +263,8 @@ const BLUEPRINTS                       = [
                       user: "{{ cron_user }}",
                       name: "{{ job_name }}",
                       job: "{{ command }}",
-                      special_time: "absent",
-                      minute: "{{ schedule.split(' ')[0] }}",
-                      hour: "{{ schedule.split(' ')[1] }}",
-                      day: "{{ schedule.split(' ')[2] }}",
-                      month: "{{ schedule.split(' ')[3] }}",
-                      weekday: "{{ schedule.split(' ')[4] }}"
+                      state: "present",
+                      ...cronTiming(str(values, 'schedule', '0 2 * * *'))
                     }
                   }
                 ]

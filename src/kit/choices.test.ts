@@ -151,8 +151,12 @@ describe('credentials', () => {
       for (const blueprint of group.blueprints) {
         for (const input of blueprint.inputs) {
           if (!secretIds.test(input.id)) continue;
-          // A block's tick box ("include key_vault_password") is a switch too.
+          // A block's tick box ("include key_vault_password") is a switch too, and
+          // so is a closed set of choices (update_password: always / on_create).
           if (input.control === 'toggle') continue;
+          // A textarea is a structure (a list, a map), which no single secret fills.
+          if (input.control === 'textarea') continue;
+          if (input.control === 'select' && (input.options ?? []).length > 0 && !(input.options ?? []).some((o) => o.value.includes('{{') || o.value.startsWith('var.'))) continue;
           const values = (input.options ?? []).map((o) => o.value);
           // `manage_master_user_password` is a switch, not a password.
           if (values.length === 2 && values.includes('true') && values.includes('false')) continue;

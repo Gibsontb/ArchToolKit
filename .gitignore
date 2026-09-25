@@ -20,3 +20,6 @@ tools/archpad-build/node_modules/
 desktop/ArchPad/bin/
 desktop/ArchPad/obj/
 desktop/ArchPad/publish/
+
+# Python bytecode from the tools run in WSL
+__pycache__/

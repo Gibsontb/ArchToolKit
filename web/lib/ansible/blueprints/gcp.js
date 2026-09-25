@@ -8,13 +8,49 @@
  * against the committed Galaxy catalog.
  */
 
-                                                                                                         
+                                                                                                                         
 import { str } from '../../kit/blueprint.js';
 import { playbookFiles } from '../from-plays.js';
 import { AWS_REGIONS, AZURE_LOCATIONS, GCP_REGIONS, GCP_ZONES, BOOL_OPTIONS } from './regions.js';
 import { HOSTS_INPUT } from './common.js';
 import { info,              } from '../../core/findings.js';
 import { ipv4Range, sources } from './ipv6.js';
+
+/**
+ * Every google.cloud module requires auth_kind. A service account file is the
+ * usual way to run these from a control node; application default credentials
+ * and the machine account (on a GCE runner) need no file.
+ */
+const GCP_AUTH_INPUTS                            = [
+  {
+    id: "auth_kind",
+    label: "GCP auth kind",
+    control: 'select',
+    options: [
+      { value: "serviceaccount", label: "Service account file" },
+      { value: "application", label: "Application default credentials" },
+      { value: "machineaccount", label: "Machine account (GCE metadata)" }
+    ],
+    default: "serviceaccount",
+    hint: "How the modules authenticate"
+  },
+  {
+    id: "service_account_file",
+    label: "Service account file",
+    control: 'text',
+    default: "~/.gcp/ansible-sa.json",
+    hint: "JSON key path on the control node",
+    showWhen: { input: "auth_kind", equals: ["serviceaccount"] }
+  }
+];
+
+/** The auth options every google.cloud task carries, from the inputs above. */
+function gcpAuth(values                 )                         {
+  const kind = str(values, 'auth_kind', 'serviceaccount');
+  return kind === 'serviceaccount'
+    ? { auth_kind: kind, service_account_file: str(values, 'service_account_file', '~/.gcp/ansible-sa.json') }
+    : { auth_kind: kind };
+}
 
 const BLUEPRINTS                       = [
   {
@@ -25,6 +61,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             {
               id: "zone",
               label: "Zone",
@@ -60,6 +97,7 @@ const BLUEPRINTS                       = [
                   {
                     name: "Create GCE instance",
                     "google.cloud.gcp_compute_instance": {
+                      ...gcpAuth(values),
                       name: "{{ instance_name }}",
                       project: "{{ gcp_project }}",
                       zone: "{{ gcp_zone }}",
@@ -75,7 +113,9 @@ const BLUEPRINTS                       = [
                       ],
                       network_interfaces: [
                         {
-                          network: "default",
+                          network: {
+                            selfLink: "global/networks/default"
+                          },
                           access_configs: [{ name: "External NAT", type: "ONE_TO_ONE_NAT" }]
                         }
                       ]
@@ -97,6 +137,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             { id: "network_name", label: "VPC network name", control: 'text', default: "app-vpc", hint: "Custom VPC" },
             { id: "subnet_name", label: "Subnet name", control: 'text', default: "app-subnet", hint: "Subnet" },
             { id: "subnet_cidr", label: "Subnet CIDR", control: 'text', default: "10.40.0.0/24", hint: "CIDR block" },
@@ -120,10 +161,11 @@ const BLUEPRINTS                       = [
       const firewall = (label        , port        , suffix        , ranges          ) => ranges.length === 0 ? [] : [{
         name: `Allow ${label} ingress${suffix ? ' over IPv6' : ''}`,
         "google.cloud.gcp_compute_firewall": {
+          ...gcpAuth(values),
           project: "{{ gcp_project }}",
           name: `{{ network_name }}-allow-${label.toLowerCase()}${suffix}`,
-          network: "{{ network_name }}",
-          allowed: [{ IPProtocol: "tcp", ports: [port] }],
+          network: "{{ vpc_network }}",
+          allowed: [{ ip_protocol: "tcp", ports: [port] }],
           source_ranges: ranges
         }
       }];
@@ -146,18 +188,21 @@ const BLUEPRINTS                       = [
                   {
                     name: "Create custom VPC network",
                     "google.cloud.gcp_compute_network": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
                       name: "{{ network_name }}",
                       auto_create_subnetworks: false
-                    }
+                    },
+                    register: "vpc_network"
                   },
                   {
                     name: "Create subnet",
                     "google.cloud.gcp_compute_subnetwork": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
                       name: "{{ subnet_name }}",
                       region: "{{ region }}",
-                      network: "{{ network_name }}",
+                      network: "{{ vpc_network }}",
                       ip_cidr_range: "{{ subnet_cidr }}"
                     }
                   },
@@ -183,6 +228,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             { id: "bucket_name", label: "Bucket name", control: 'text', default: "app-archive-gcs", hint: "Globally unique" },
             { id: "location", label: "Location", control: 'select', options: [{ value: 'US', label: 'US (multi-region)' }, { value: 'EU', label: 'EU (multi-region)' }, { value: 'ASIA', label: 'ASIA (multi-region)' }, ...GCP_REGIONS.map((r        ) => ({ value: r, label: r }))], default: "US", hint: "US, EU, regional code, etc." }
           ],
@@ -205,6 +251,7 @@ const BLUEPRINTS                       = [
                   {
                     name: "Create bucket",
                     "google.cloud.gcp_storage_bucket": {
+                      ...gcpAuth(values),
                       name: "{{ bucket_name }}",
                       project: "{{ gcp_project }}",
                       location: "{{ bucket_location }}"
@@ -226,6 +273,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             { id: "topic_name", label: "Topic name", control: 'text', default: "app-events", hint: "Topic ID" },
             { id: "subscription_name", label: "Subscription name", control: 'text', default: "app-events-sub", hint: "Subscription ID" }
           ],
@@ -248,6 +296,7 @@ const BLUEPRINTS                       = [
                   {
                     name: "Ensure topic exists",
                     "google.cloud.gcp_pubsub_topic": {
+                      ...gcpAuth(values),
                       name: "{{ topic_name }}",
                       project: "{{ gcp_project }}"
                     },
@@ -256,8 +305,9 @@ const BLUEPRINTS                       = [
                   {
                     name: "Ensure pull subscription exists",
                     "google.cloud.gcp_pubsub_subscription": {
+                      ...gcpAuth(values),
                       name: "{{ subscription_name }}",
-                      topic: "{{ topic_name }}",
+                      topic: "{{ topic }}",
                       project: "{{ gcp_project }}"
                     }
                   }
@@ -277,6 +327,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             {
               id: "db_tier",
               label: "Tier",
@@ -324,19 +375,36 @@ const BLUEPRINTS                       = [
                   {
                     name: "Create Cloud SQL instance",
                     "google.cloud.gcp_sql_instance": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
                       name: "{{ sql_instance_name }}",
                       region: "{{ region }}",
                       database_version: "{{ db_version }}",
                       settings: {
                         tier: "{{ db_tier }}"
-                      },
-                      root_password: "{{ root_password }}"
+                      }
                     }
+                  },
+                  {
+                    // gcp_sql_instance takes no root password; the built-in
+                    // admin user's password is set through gcp_sql_user.
+                    name: "Set the built-in admin user's password",
+                    "google.cloud.gcp_sql_user": {
+                      ...gcpAuth(values),
+                      project: "{{ gcp_project }}",
+                      instance: {
+                        name: "{{ sql_instance_name }}"
+                      },
+                      name: str(values, 'db_version', 'POSTGRES_15').startsWith('MYSQL') ? "root" : "postgres",
+                      host: "%",
+                      password: "{{ root_password }}"
+                    },
+                    no_log: true
                   },
                   {
                     name: "Create database",
                     "google.cloud.gcp_sql_database": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
                       instance: "{{ sql_instance_name }}",
                       name: "{{ db_name }}"
@@ -358,6 +426,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             { id: "cluster_name", label: "Cluster name", control: 'text', default: "app-gke", hint: "Cluster ID" },
             { id: "location", label: "Location (zone or region)", control: 'select', options: GCP_ZONES.map((z        ) => ({ value: z, label: z })), default: "us-central1-a", hint: "e.g. us-central1-a or us-central1" },
             { id: "node_count", label: "Node count", control: 'number', default: 3, hint: "Number of nodes" },
@@ -384,6 +453,7 @@ const BLUEPRINTS                       = [
                   {
                     name: "Create GKE cluster",
                     "google.cloud.gcp_container_cluster": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
                       name: "{{ cluster_name }}",
                       location: "{{ location }}",
@@ -409,6 +479,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             { id: "sa_name", label: "Service account name (ID)", control: 'text', default: "app-automation", hint: "Service account ID" },
             { id: "sa_display_name", label: "Display name", control: 'text', default: "App Automation SA", hint: "Friendly name" }
           ],
@@ -431,17 +502,20 @@ const BLUEPRINTS                       = [
                   {
                     name: "Create service account",
                     "google.cloud.gcp_iam_service_account": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
-                      name: "projects/{{ gcp_project }}/serviceAccounts/{{ sa_name }}@{{ gcp_project }}.iam.gserviceaccount.com",
-                      account_id: "{{ sa_name }}",
+                      name: "{{ sa_name }}@{{ gcp_project }}.iam.gserviceaccount.com",
                       display_name: "{{ sa_display_name }}"
                     }
                   },
                   {
                     name: "Create service account key",
                     "google.cloud.gcp_iam_service_account_key": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
-                      service_account: "{{ sa_name }}@{{ gcp_project }}.iam.gserviceaccount.com",
+                      service_account: {
+                        name: "{{ sa_name }}@{{ gcp_project }}.iam.gserviceaccount.com"
+                      },
                       private_key_type: "TYPE_GOOGLE_CREDENTIALS_FILE"
                     },
                     register: "sa_key"
@@ -468,6 +542,7 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "project_id", label: "Project ID", control: 'text', default: "my-gcp-project", hint: "GCP project ID" },
+            ...GCP_AUTH_INPUTS,
             { id: "location", label: "Location", control: 'select', options: GCP_REGIONS.map((r        ) => ({ value: r, label: r })), default: "us-central1", hint: "Function region" },
             { id: "function_name", label: "Function name", control: 'text', default: "app-function", hint: "Function ID" },
             { id: "entry_point", label: "Entry point", control: 'text', default: "hello_http", hint: "Handler name" },
@@ -498,14 +573,14 @@ const BLUEPRINTS                       = [
                   {
                     name: "Deploy HTTP Cloud Function",
                     "google.cloud.gcp_cloudfunctions_cloud_function": {
+                      ...gcpAuth(values),
                       project: "{{ gcp_project }}",
                       name: "{{ function_name }}",
                       location: "{{ location }}",
                       entry_point: "{{ entry_point }}",
                       runtime: "{{ runtime }}",
                       https_trigger: {},
-                      source_archive_bucket: "{{ source_archive_bucket }}",
-                      source_archive_object: "{{ source_archive_object }}"
+                      source_archive_url: "gs://{{ source_archive_bucket }}/{{ source_archive_object }}"
                     }
                   }
                 ]

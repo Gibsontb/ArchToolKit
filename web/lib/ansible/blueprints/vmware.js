@@ -344,7 +344,7 @@ const BLUEPRINTS                       = [
                     state: "present",
                     snapshot_name: "{{ snapshot_name }}",
                     description: "{{ snapshot_description }}",
-                    memory: false,
+                    memory_dump: false,
                     quiesce: true
                   }
                 },
@@ -358,7 +358,7 @@ const BLUEPRINTS                       = [
                     validate_certs: "{{ validate_certs }}",
                     datacenter: "{{ datacenter_name | default(omit) }}",
                     name: "{{ vm_name }}",
-                    state: "reverted",
+                    state: "revert",
                     snapshot_name: "{{ snapshot_name }}",
                     remove_children: "{{ remove_children }}"
                   }
@@ -546,7 +546,7 @@ const BLUEPRINTS                       = [
               label: "Destination folder path",
               control: 'text',
               default: "/Prod/Restricted",
-              hint: "Full folder path, e.g. /Prod/Restricted"
+              hint: "Folder under the datacenter's VM folder, e.g. /Prod/Restricted"
             },
             {
               id: "annotation",
@@ -585,7 +585,8 @@ const BLUEPRINTS                       = [
                       validate_certs: "{{ validate_certs }}",
                       datacenter: "{{ datacenter_name }}",
                       name: "{{ vm_name }}",
-                      folder: "{{ folder_path }}"
+                      // dest_folder is absolute and includes the datacenter's VM folder.
+                      dest_folder: "/{{ datacenter_name }}/vm/{{ folder_path | regex_replace('^/+', '') }}"
                     }
                   },
                   {
@@ -753,11 +754,10 @@ const BLUEPRINTS                       = [
                     validate_certs: "{{ validate_certs }}",
                     datacenter: "{{ datacenter_name | default(omit) }}",
                     name: "{{ vm_name }}",
-                    networks: [
-                      {
-                        name: "{{ vm_network }}"
-                      }
-                    ]
+                    // Reconnects the first adapter; with no label or MAC the module adds a NIC.
+                    label: "Network adapter 1",
+                    network_name: "{{ vm_network }}",
+                    state: "present"
                   }
                 }
               ]

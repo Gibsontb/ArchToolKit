@@ -4,3 +4,7 @@
 # Batch files must keep CRLF. cmd.exe is unreliable with LF-only line endings,
 # particularly around goto and multi-line blocks.
 *.bat text eol=crlf
+
+# Run by bash and Python inside WSL, which do not accept CRLF line endings.
+*.sh text eol=lf
+*.py text eol=lf

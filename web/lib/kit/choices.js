@@ -669,6 +669,10 @@ export function applyChoices(
      */
     if (input.control === 'select') {
       const existing = input.options ?? [];
+      // A closed set named like a credential (update_password: always /
+      // on_create; admin_ssh_password: enable / disable) is a setting: offering
+      // vault lookups beside its values would offer answers the module rejects.
+      if ((rule.options === TERRAFORM_SECRETS || rule.options === ANSIBLE_SECRETS) && existing.length > 0) return input;
       if (rule.control === 'select' || existing.length === 0) return input;
       return { ...input, control: 'combo', options: merge(existing, rule.options) };
     }

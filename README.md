@@ -129,7 +129,7 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
 | Multi-cloud decision matrix | Working — explainable routing across VCF, AWS, Azure, Google Cloud and OCI |
 | Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up, every resource of AWS, Azure, GCP, OCI and the six VMware providers, Linux and Windows OS builds |
-| Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks |
+| Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks, every module of the Ansible package (~10,900) across 13 platforms |
 | Application migration and modernization | Working — single-application evaluation and portfolio wave planning |
 | Data editor | Working — JSON and YAML for VCF, Ansible, Terraform, AWS, Google, Azure, Oracle, F5 and Kubernetes |
 
@@ -258,6 +258,37 @@ record produces no HA task, because writing `enable: false` for a field nobody
 collected would turn a gap in the data into a change to the estate.
 
 Details in `docs/ansible-kit.md`.
+
+### Every module, every option
+
+After each platform's playbooks, the Ansible page lists every module of the
+Ansible package (~90 collections) and `oracle.oci` — ~10,900 modules — each a
+blueprint with every option its documentation gives: required options up top,
+optional ones in a collapsible section, suboptions in their own, documented
+choices as a closed dropdown. A `no_log` option is a vault variable, never a
+value, and a required option left empty becomes a variable in
+`group_vars/all.yml` to fill in. Six platforms are new, made of modules only:
+network devices, containers and Kubernetes, databases, storage and server
+hardware, private clouds, and everything else.
+
+Each download is a runnable project — the playbook shaped for where the module
+runs (API modules from localhost, network modules over `network_cli` or
+`httpapi` with their network OS set, the rest against inventory hosts),
+`requirements.yml` pinned to the collection version read, `ansible.cfg`, an
+inventory and a README.
+
+The options come from `ansible-doc -j` against a real Ansible install, and
+are fetched by the page a collection at a time from `web/data/ansible/` like
+the cloud Terraform schemas. Ansible does not run on Windows, so the tools use
+their own environment inside WSL, set up by `tools/setup-ansible-wsl.sh`:
+
+    npm run ansible:schemas     every option of every module (ansible-doc)
+    npm run ansible:rules       rules modules check in code (ansible-lint)
+    npm run ansible:validate    ansible-lint's argument check and --syntax-check
+                                over every blueprint as generated
+
+`update-ansible.bat` runs the whole refresh — update Ansible, catalog,
+schemas, rules, validation, rebuild, tests — and asks before it commits.
 
 ## Multi-cloud decision matrix
 

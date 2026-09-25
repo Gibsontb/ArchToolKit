@@ -22,6 +22,7 @@
  */
 
 import type { Blueprint, BlueprintGroup, BuildResult } from '../kit/blueprint.ts';
+import { derive } from '../kit/blueprint.ts';
 
 /** Collections whose modules call an API from the control node rather than managing a host. */
 export const API_COLLECTIONS = /^(amazon\.aws|community\.aws|azure\.azcollection|google\.cloud|oracle\.oci|community\.vmware|vmware\.vmware|vmware\.vmware_rest)$/;
@@ -219,10 +220,13 @@ export function asAnsibleProject(result: BuildResult, target: string): BuildResu
  * guides use, and it runs with no inventory at all.
  */
 export function withAnsibleProject(blueprint: Blueprint, target: string): Blueprint {
-  const inputs = API_TARGETS.has(target)
-    ? blueprint.inputs.map((input) => (input.id === 'hosts' && input.default === 'all' ? { ...input, default: 'localhost' } : input))
-    : blueprint.inputs;
-  return { ...blueprint, inputs, build: (values, name) => asAnsibleProject(blueprint.build(values, name), target) };
+  // derive(), not a spread: a per-module blueprint's inputs arrive when it loads.
+  return derive(blueprint, {
+    ...(API_TARGETS.has(target)
+      ? { mapInputs: (inputs) => inputs.map((input) => (input.id === 'hosts' && input.default === 'all' ? { ...input, default: 'localhost' } : input)) }
+      : {}),
+    build: (values, name) => asAnsibleProject(blueprint.build(values, name), target),
+  });
 }
 
 export function withAnsibleProjectAll(groups: readonly BlueprintGroup[]): readonly BlueprintGroup[] {
