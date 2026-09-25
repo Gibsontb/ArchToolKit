@@ -17,6 +17,7 @@
  */
 
 import type { Blueprint, BlueprintGroup } from '../../kit/blueprint.ts';
+import { derive } from '../../kit/blueprint.ts';
 import { withChoicesAll } from '../../kit/choices.ts';
 import { withSecretLiftingAll } from '../secrets.ts';
 import { withRootModuleLayoutAll } from '../layout.ts';
@@ -33,6 +34,7 @@ import { AZURE_TERRAFORM_MODULES } from './modules-azure.ts';
 import { GOOGLE_TERRAFORM_MODULES } from './modules-google.ts';
 import { OCI_TERRAFORM_MODULES } from './modules-oci.ts';
 import { ESTATE_GROUP, rehostBlueprint, VSPHERE_LANDING } from './estate.ts';
+import { providerBlueprints } from '../schema-blueprints.ts';
 
 export { ESTATE_GROUP };
 
@@ -41,7 +43,7 @@ const MODULES = 'Terraform Registry modules';
 
 /** Put each blueprint under a heading, unless it already names its own. */
 function labelled(blueprints: readonly Blueprint[], group: string): readonly Blueprint[] {
-  return blueprints.map((blueprint) => ({ ...blueprint, group: blueprint.group ?? group }));
+  return blueprints.map((blueprint) => (blueprint.group ? blueprint : derive(blueprint, { group })));
 }
 
 /**
@@ -55,6 +57,7 @@ function combine(
   resources: BlueprintGroup,
   modules: BlueprintGroup | undefined,
   estate: readonly Blueprint[] = [],
+  everything: readonly Blueprint[] = [],
 ): BlueprintGroup {
   // The estate blueprints come last in the list, and the page opens on them
   // when an estate is loaded: with one, they answer "what does Terraform do to
@@ -65,6 +68,8 @@ function combine(
       ...labelled(resources.blueprints, RESOURCES),
       ...(modules ? labelled(modules.blueprints, MODULES) : []),
       ...labelled(estate, ESTATE_GROUP),
+      // Then every resource the provider has, each under its service's heading.
+      ...everything,
     ],
   };
 }
@@ -81,10 +86,10 @@ function combine(
 export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withRootModuleLayoutAll(withSecretLiftingAll(
   withChoicesAll(
     [
-      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')]),
-      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')]),
-      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')]),
-      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')]),
+      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')], providerBlueprints('aws', 'res')),
+      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')], providerBlueprints('azurerm', 'res')),
+      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')], providerBlueprints('google', 'res')),
+      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')], providerBlueprints('oci', 'res')),
       combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING]),
       combine(VCF_TERRAFORM, undefined),
       combine(LINUX_TERRAFORM, undefined),

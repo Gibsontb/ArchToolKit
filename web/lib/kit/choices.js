@@ -28,6 +28,7 @@
  */
 
                                                                                               
+import { derive } from './blueprint.js';
 import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, GCP_ZONES, OCI_REGIONS } from './regions.js';
 import {
   AWS_DB_INSTANCE_CLASS_GROUPS,
@@ -639,6 +640,9 @@ export function applyChoices(
   target        ,
   kind               ,
 )                 {
+  // A tick box is a tick box, whatever it is called: "include the
+  // key_vault_password block" is a switch, not a password.
+  if (input.control === 'toggle') return input;
   if (looksBoolean(input)) {
     return { ...input, control: 'select', options: YES_NO };
   }
@@ -682,10 +686,10 @@ export function applyChoices(
 
 /** Every input in a group, with its answer set attached. */
 export function withChoices(group                , kind               )                 {
-  const blueprints              = group.blueprints.map((blueprint) => ({
-    ...blueprint,
-    inputs: blueprint.inputs.map((input) => applyChoices(input, group.target, kind)),
-  }));
+  // derive(), not a spread: a lazy blueprint's inputs arrive after this runs.
+  const blueprints              = group.blueprints.map((blueprint) =>
+    derive(blueprint, { mapInputs: (inputs) => inputs.map((input) => applyChoices(input, group.target, kind)) }),
+  );
   return { ...group, blueprints };
 }
 

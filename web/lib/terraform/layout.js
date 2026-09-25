@@ -29,6 +29,7 @@
  */
 
                                                                                   
+import { derive } from '../kit/blueprint.js';
 import { topLevelBlocks,                  } from './stack.js';
 
 /** Which file each top-level block kind belongs in. */
@@ -214,7 +215,7 @@ export function asRootModule(result             )              {
 }
 
 export function withRootModuleLayout(blueprint           )            {
-  return { ...blueprint, build: (values, name) => asRootModule(blueprint.build(values, name)) };
+  return derive(blueprint, { build: (values, name) => asRootModule(blueprint.build(values, name)) });
 }
 
 export function withRootModuleLayoutAll(groups                           )                            {

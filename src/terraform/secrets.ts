@@ -20,6 +20,7 @@
  */
 
 import type { Blueprint, BlueprintGroup, BuildResult } from '../kit/blueprint.ts';
+import { derive } from '../kit/blueprint.ts';
 
 /** `attr = "var.x"` — the whole value, nothing either side of the reference. */
 const QUOTED_REFERENCE =
@@ -124,7 +125,7 @@ function liftResult(result: BuildResult): BuildResult {
 
 /** Wraps a blueprint's build so everything it emits goes through the lift. */
 export function withSecretLifting(blueprint: Blueprint): Blueprint {
-  return { ...blueprint, build: (values, name) => liftResult(blueprint.build(values, name)) };
+  return derive(blueprint, { build: (values, name) => liftResult(blueprint.build(values, name)) });
 }
 
 export function withSecretLiftingAll(

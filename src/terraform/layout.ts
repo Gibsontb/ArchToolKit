@@ -29,6 +29,7 @@
  */
 
 import type { Blueprint, BlueprintGroup, BuildResult } from '../kit/blueprint.ts';
+import { derive } from '../kit/blueprint.ts';
 import { topLevelBlocks, type HclTopBlock } from './stack.ts';
 
 /** Which file each top-level block kind belongs in. */
@@ -214,7 +215,7 @@ export function asRootModule(result: BuildResult): BuildResult {
 }
 
 export function withRootModuleLayout(blueprint: Blueprint): Blueprint {
-  return { ...blueprint, build: (values, name) => asRootModule(blueprint.build(values, name)) };
+  return derive(blueprint, { build: (values, name) => asRootModule(blueprint.build(values, name)) });
 }
 
 export function withRootModuleLayoutAll(groups: readonly BlueprintGroup[]): readonly BlueprintGroup[] {

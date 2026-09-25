@@ -17,6 +17,7 @@
  *   npm run terraform:validate                   # every VMware, Linux and Windows blueprint
  *   npm run terraform:validate -- --only nsx_      # ids containing "nsx_"
  *   npm run terraform:validate -- --scenarios      # only the hand-written ones
+ *   npm run terraform:validate -- --platform aws   # one platform (repeatable)
  *
  * A hand-written scenario is built once with its defaults and then once more
  * for every other choice of each dropdown and yes/no — Windows as well as
@@ -29,28 +30,44 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TERRAFORM_BLUEPRINTS } from '../src/terraform/blueprints/index.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 
 const argv = process.argv.slice(2);
-const onlyAt = argv.indexOf('--only');
-const only = onlyAt === -1 ? null : argv[onlyAt + 1];
+/** --only <text>, repeatable: ids containing any of them. */
+const only = argv.flatMap((a, i) => (a === '--only' && argv[i + 1] ? [argv[i + 1]] : []));
 const scenariosOnly = argv.includes('--scenarios');
+/** --platform <target>, repeatable: only these platforms (aws, azure, google, oci, vsphere, vcf, linux, windows). */
+const platforms = argv.flatMap((a, i) => (a === '--platform' && argv[i + 1] ? [argv[i + 1]] : []));
+const perResourceOnly = argv.includes('--per-resource');
+/** --ids <file>: exactly these blueprint ids, one per line. */
+const idsAt = argv.indexOf('--ids');
+const ids = idsAt === -1 ? null : new Set(readFileSync(argv[idsAt + 1], 'utf8').split(/\r?\n/).filter(Boolean));
 const keep = argv.includes('--keep');
+/** --report <file>: every error as JSON, by blueprint id, for tools/discover-resource-rules.mjs. */
+const reportAt = argv.indexOf('--report');
+const reportFile = reportAt === -1 ? null : argv[reportAt + 1];
 
 /** The platforms whose blueprints are built from provider schemas and hand-written scenarios. */
-const PLATFORMS = ['vsphere', 'vcf', 'linux', 'windows'];
+const PLATFORMS = ['vsphere', 'vcf', 'linux', 'windows', 'aws', 'azure', 'google', 'oci'];
+/**
+ * The clouds' own hand-written and registry-module blueprints are older and
+ * checked by the test suite; here only their per-resource ones are.
+ */
+const CLOUDS = ['aws', 'azure', 'google', 'oci'];
 /** Per-resource blueprint ids: one template each, so their defaults are enough. */
-const PER_RESOURCE = /^(vmw|lnx|win)_/;
+const PER_RESOURCE = /^(vmw|lnx|win|res)_/;
 
-const blueprints = TERRAFORM_BLUEPRINTS.filter((g) => PLATFORMS.includes(g.target))
-  .flatMap((g) => g.blueprints)
+const blueprints = TERRAFORM_BLUEPRINTS.filter((g) => PLATFORMS.includes(g.target) && (platforms.length === 0 || platforms.includes(g.target)))
+  .flatMap((g) => g.blueprints.filter((b) => !CLOUDS.includes(g.target) || PER_RESOURCE.test(b.id)))
   .filter((b) => !b.id.includes('estate'))
-  .filter((b) => (only ? b.id.includes(only) : true))
-  .filter((b) => (scenariosOnly ? !PER_RESOURCE.test(b.id) : true));
+  .filter((b) => (only.length > 0 ? only.some((o) => b.id.includes(o)) : true))
+  .filter((b) => (ids ? ids.has(b.id) : true))
+  .filter((b) => (scenariosOnly ? !PER_RESOURCE.test(b.id) : true))
+  .filter((b) => (perResourceOnly ? PER_RESOURCE.test(b.id) : true));
 
 if (blueprints.length === 0) {
   console.error('No blueprints matched.');
@@ -129,6 +146,7 @@ const result = JSON.parse(run.stdout.toString() || '{}');
 
 const byDir = new Map(modules.map((m) => [m.dir, m]));
 const problems = new Map();
+const raw = new Map();
 let warnings = 0;
 for (const d of result.diagnostics ?? []) {
   if (d.severity !== 'error') {
@@ -142,9 +160,12 @@ for (const d of result.diagnostics ?? []) {
   const line = `${d.summary}${d.detail ? ` — ${d.detail.split('\n')[0]}` : ''}${where ? ` (${where})` : ''}`;
   if (!problems.has(id)) problems.set(id, []);
   problems.get(id).push(line);
+  if (!raw.has(id)) raw.set(id, []);
+  raw.get(id).push({ summary: d.summary ?? '', detail: d.detail ?? '' });
 }
 for (const m of modules) if (m.buildError) problems.set(m.id, [`build threw: ${m.buildError}`]);
 
+if (reportFile) writeFileSync(reportFile, JSON.stringify(Object.fromEntries(raw), null, 1));
 for (const [id, lines] of problems) {
   console.log(`\n✗ ${id}`);
   for (const l of lines.slice(0, 12)) console.log(`    ${l}`);

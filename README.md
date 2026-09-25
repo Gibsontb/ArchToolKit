@@ -128,7 +128,7 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | VCF 9.1 `SddcSpec` builder | Working — all 8 documented deployment scenarios |
 | VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
 | Multi-cloud decision matrix | Working — explainable routing across VCF, AWS, Azure, Google Cloud and OCI |
-| Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up, every resource of the six VMware providers, Linux and Windows OS builds |
+| Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up, every resource of AWS, Azure, GCP, OCI and the six VMware providers, Linux and Windows OS builds |
 | Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks |
 | Application migration and modernization | Working — single-application evaluation and portfolio wave planning |
 | Data editor | Working — JSON and YAML for VCF, Ansible, Terraform, AWS, Google, Azure, Oracle, F5 and Kubernetes |
@@ -187,6 +187,32 @@ registry documentation. Nothing about an argument is transcribed by hand.
 runs real `terraform validate`, with the real providers, over what every VMware,
 Linux and Windows blueprint generates — each scenario once per choice of every dropdown and yes/no,
 so a branch the defaults never take is checked too. It needs the terraform CLI.
+
+### AWS, Azure, Google Cloud (GCP) and OCI: every resource
+
+Each cloud's platform lists, after its hand-written and registry-module
+blueprints, every resource its provider has — ~5,200 across `hashicorp/aws`,
+`hashicorp/azurerm`, `hashicorp/google` and `oracle/oci` — under the
+registry's own service headings, each with every argument as a field, exactly
+as for VMware.
+
+That is ~170,000 arguments, far too much to load before the page can open. So
+the page carries only an index (`src/terraform/cloud-schema-index.ts`) and
+fetches a resource's schema from `web/data/terraform/<provider>/` when it is
+picked — a file of ~40 resources, rarely more than 200 KB. It is all committed,
+so it works air-gapped like everything else. Nested blocks deeper than five
+levels (AWS WAF's rule statements go fourteen deep) are one box of HCL rather
+than a form.
+
+The rules a provider checks in code rather than in its schema — "one of
+`a` or `b` must be set", "at least two `host` blocks" — are found by
+
+    npm run rules:discover                  (-- res_aws_ for one cloud)
+
+which runs `terraform validate` over every per-resource blueprint with nothing
+filled in, reads the errors, and records each rule in
+`src/terraform/resource-rules-data.ts` until a round finds nothing new. Re-run it
+after refreshing the schemas.
 
 ### Linux and Windows
 

@@ -578,10 +578,12 @@ export function mountGeneratorPage(root             , options                  )
         if (!next) throw new Error(`there is no ${options.noun} called ${String(file.blueprint)} for ${group.label}.`);
         selectBlueprint(next);
         const loaded = isRecord(file.values) ? file.values : {};
+        // A form still loading cannot say which fields it has; keep them all.
+        const waiting = !!next.load && next.inputs.length === 0;
         const known = new Set(['__name', ...next.inputs.map((i) => i.id)]);
-        const ignored = Object.keys(loaded).filter((k) => !known.has(k));
+        const ignored = waiting ? [] : Object.keys(loaded).filter((k) => !known.has(k));
         const kept                  = {};
-        for (const [k, v] of Object.entries(loaded)) if (known.has(k)) (kept                           )[k] = v;
+        for (const [k, v] of Object.entries(loaded)) if (waiting || known.has(k)) (kept                           )[k] = v;
         values = { ...values, ...kept };
         if (options.stack) {
           const saved = Array.isArray(file.stack) ? file.stack : [];
@@ -632,16 +634,47 @@ export function mountGeneratorPage(root             , options                  )
     return (preferred ? available().find((b) => b.group === preferred) : undefined) ?? available()[0];
   }
 
+  /**
+   * A blueprint whose form is fetched when it is picked (the per-resource cloud
+   * ones) has no inputs until then. This starts whatever is missing and runs
+   * `then` once it has arrived; true means everything was already there.
+   */
+  function ensureLoaded(list                                    , then            )          {
+    const pending = list.filter((b)                 => !!b?.load && b.inputs.length === 0);
+    if (pending.length === 0) return true;
+    void Promise.all(pending.map((b) => (b.load                       )())).then(then, (err         ) => {
+      findings = [
+        {
+          code: 'generator.load-failed',
+          severity: 'error',
+          message: `The ${options.noun}'s schema could not be loaded: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ];
+      renderThree();
+    });
+    return false;
+  }
+
   function selectBlueprint(next                       )       {
     blueprint = next;
     values = next ? withCurrentTags(next, defaultValues(next)) : {};
     generated = null;
     builds = undefined;
     findings = [];
+    if (next) {
+      ensureLoaded([next], () => {
+        if (blueprint !== next) return;
+        // Defaults under whatever is already set — a loaded settings file, the name.
+        values = { ...withCurrentTags(next, defaultValues(next)), ...values };
+        renderOne();
+        renderTwo();
+      });
+    }
   }
 
   function generate()       {
     if (!blueprint) return;
+    if (!ensureLoaded([blueprint], generate)) return;
     const name = String(values.__name ?? '').trim();
     try {
       const out = blueprint.build(values, name);
@@ -673,6 +706,15 @@ export function mountGeneratorPage(root             , options                  )
       stackRefs = [];
       return;
     }
+    const redo = ()       => {
+      refreshStack();
+      renderBuildList();
+      renderTwo();
+    };
+    if (!ensureLoaded(stackItems.map((i) => blueprintById(i.blueprintId)), redo)) {
+      stackRefs = [];
+      return;
+    }
     stackRefs = options.stack.build(stackItems, blueprintById, { target }).references;
   }
 
@@ -691,6 +733,7 @@ export function mountGeneratorPage(root             , options                  )
 
   function generateStack()       {
     if (!options.stack) return;
+    if (!ensureLoaded(stackItems.map((i) => blueprintById(i.blueprintId)), generateStack)) return;
     const result = options.stack.build(stackItems, blueprintById, { target, stackName: stackName.value.trim() || undefined });
     generated = result.files;
     builds = undefined;
@@ -906,6 +949,10 @@ export function mountGeneratorPage(root             , options                  )
     grid.classList.toggle('generator-grid-wide', !!blueprint?.inputs.some((i) => i.control === 'tag-standard'));
     if (!blueprint) {
       replace(stepTwo, card('Step 2 — Parameters', el('p', { text: 'Choose something to build.' })));
+      return;
+    }
+    if (blueprint.load && blueprint.inputs.length === 0) {
+      replace(stepTwo, card('Step 2 — Parameters', el('p', { text: 'Loading every argument this resource takes…' })));
       return;
     }
 

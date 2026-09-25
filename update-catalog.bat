@@ -10,8 +10,8 @@ rem   3. Terraform registry modules' inputs, cloned from each module's GitHub re
 rem   4. Machine sizes - AWS from the EC2 API model in botocore (GitHub);
 rem      Azure, GCP and OCI from the ladders in tools\fetch-compute-catalog.mjs
 rem   5. F5 AS3 and Declarative Onboarding answer sets, from F5's GitHub schemas
-rem   6. Provider schemas - every argument of every resource in the six
-rem      VMware providers and the Linux/Windows ones (AD, DNS, TLS, cloud-init,
+rem   6. Provider schemas - every argument of every resource in AWS, Azure,
+rem      Google Cloud, OCI, the six VMware providers and the Linux/Windows ones (AD, DNS, TLS, cloud-init,
 rem      Ansible, ...), from the providers themselves (terraform providers
 rem      schema) and their registry docs
 rem
@@ -121,14 +121,14 @@ if not defined HASGIT (
 )
 
 echo.
-echo   [6/6] Provider schemas: VMware, Active Directory, DNS, TLS, cloud-init, Ansible...
+echo   [6/6] Provider schemas: AWS, Azure, GCP, OCI, VMware, AD, DNS, TLS, cloud-init, Ansible...
 echo.
 if not defined HASTF (
   echo   Skipped: terraform was not found on PATH.
   set "SKIPPED=!SKIPPED! Provider-schemas"
 ) else (
   node tools\fetch-provider-schemas.mjs
-  if errorlevel 1 ( set "FAILED=!FAILED! Provider-schemas" ) else ( set "UPDATED=!UPDATED! src\terraform\vmware-schema-data.ts src\terraform\os-schema-data.ts" )
+  if errorlevel 1 ( set "FAILED=!FAILED! Provider-schemas" ) else ( set "UPDATED=!UPDATED! src\terraform\vmware-schema-data.ts src\terraform\os-schema-data.ts src\terraform\cloud-schema-index.ts web\data\terraform" )
 )
 
 echo.
@@ -161,7 +161,8 @@ echo.
 :afterverify
 echo   Two things worth doing now:
 echo     1. Rebuild so the pages pick it up:   npm run build
-echo     2. Commit the change, so the catalogs travel with the repo.
+echo     2. If the provider schemas changed: npm run rules:discover  (slow)
+echo     3. Commit the change, so the catalogs travel with the repo.
 echo.
 choice /c YN /n /m "   Rebuild now? [Y/N] "
 if errorlevel 2 goto :done

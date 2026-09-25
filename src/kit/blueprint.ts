@@ -169,6 +169,50 @@ export interface Blueprint {
    */
   readonly emits: readonly string[];
   readonly build: (values: BlueprintValues, name: string) => BuildResult;
+  /**
+   * For a blueprint whose form is not in memory until it is picked — the
+   * ~5,000 per-resource cloud blueprints fetch their schema then. Until it
+   * resolves, `inputs` is empty and `build` throws; the page awaits it before
+   * showing the form or building. In Node it is already loaded (read from
+   * disk on first use), so tests and tools need not await anything.
+   */
+  readonly load?: () => Promise<void>;
+}
+
+/**
+ * A copy of a blueprint with some of it changed, that keeps a lazy blueprint
+ * lazy. `{ ...blueprint }` would read `inputs` once, at copy time — before the
+ * schema has loaded — and freeze an empty form; this reads it on each access.
+ */
+export function derive(
+  blueprint: Blueprint,
+  change: {
+    readonly group?: string;
+    readonly mapInputs?: (inputs: readonly BlueprintInput[]) => readonly BlueprintInput[];
+    readonly build?: Blueprint['build'];
+  },
+): Blueprint {
+  const descriptors = Object.getOwnPropertyDescriptors(blueprint);
+  const out = Object.defineProperties({}, descriptors) as Record<string, unknown>;
+  if (change.group !== undefined) Object.defineProperty(out, 'group', { value: change.group, enumerable: true });
+  if (change.build) Object.defineProperty(out, 'build', { value: change.build, enumerable: true });
+  if (change.mapInputs) {
+    const map = change.mapInputs;
+    let from: readonly BlueprintInput[] | undefined;
+    let mapped: readonly BlueprintInput[] = [];
+    Object.defineProperty(out, 'inputs', {
+      enumerable: true,
+      get: () => {
+        const current = blueprint.inputs;
+        if (current !== from) {
+          from = current;
+          mapped = map(current);
+        }
+        return mapped;
+      },
+    });
+  }
+  return out as unknown as Blueprint;
 }
 
 export interface BlueprintGroup {

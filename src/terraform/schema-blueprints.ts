@@ -32,10 +32,13 @@ import { warning, type Finding } from '../core/findings.ts';
 import { quote } from './hcl.ts';
 import { VMWARE_SCHEMA_DATA } from './vmware-schema-data.ts';
 import { OS_SCHEMA_DATA } from './os-schema-data.ts';
+import { CLOUD_SCHEMA_INDEX } from './cloud-schema-index.ts';
+import { DISCOVERED_RULES } from './resource-rules-data.ts';
 
 // ------------------------------------------------------------------ data ---
 
-type TypeCode = 's' | 'n' | 'b' | 'ls' | 'ss' | 'ln' | 'sn' | 'm' | 'x';
+/** h: a nested block past the depth a form can show, written as HCL. */
+type TypeCode = 's' | 'n' | 'b' | 'ls' | 'ss' | 'ln' | 'sn' | 'm' | 'x' | 'h';
 /** [name, type, flags, description, allowedValues?] */
 type AttrRow = [string, TypeCode, string, string, string[]?];
 /** [name, mode, minItems, maxItems, block] */
@@ -58,22 +61,111 @@ interface ProviderSchema {
 export type VmwareProvider = 'vsphere' | 'vcf' | 'nsxt' | 'avi' | 'vra' | 'vcd';
 /** The providers the Linux and Windows platforms build with. */
 export type OsProvider = 'ad' | 'dns' | 'tls' | 'cloudinit' | 'ansible' | 'local' | 'random' | 'null';
-export type SchemaProvider = VmwareProvider | OsProvider;
+/** The four clouds, whose schemas are fetched a service at a time (see below). */
+export type CloudProvider = 'aws' | 'azurerm' | 'google' | 'oci';
+export type SchemaProvider = VmwareProvider | OsProvider | CloudProvider;
 
-const DATA = { ...VMWARE_SCHEMA_DATA, ...OS_SCHEMA_DATA } as Readonly<Record<SchemaProvider, ProviderSchema>>;
+/** Schemas small enough to ship with the page. */
+const EMBEDDED = { ...VMWARE_SCHEMA_DATA, ...OS_SCHEMA_DATA } as Readonly<Record<VmwareProvider | OsProvider, ProviderSchema>>;
 
-export function providerSchema(provider: SchemaProvider): ProviderSchema {
-  return DATA[provider];
+interface CloudIndex {
+  readonly source: string;
+  readonly version: string;
+  readonly provider: SchemaBlock;
+  /** Resource type → [schema file, section]. */
+  readonly resources: Readonly<Record<string, readonly [string, string]>>;
+}
+/**
+ * The clouds' ~5,200 resources are listed from this index; each one's schema
+ * is in web/data/terraform/<provider>/<file>.json, ~40 resources to a file.
+ */
+const CLOUD = CLOUD_SCHEMA_INDEX as Readonly<Record<CloudProvider, CloudIndex>>;
+
+export function isCloud(provider: string): provider is CloudProvider {
+  return provider in CLOUD;
+}
+
+function info(provider: SchemaProvider): { readonly source: string; readonly version: string; readonly provider: SchemaBlock } {
+  return isCloud(provider) ? CLOUD[provider] : EMBEDDED[provider];
+}
+
+export function providerSchema(provider: VmwareProvider | OsProvider): ProviderSchema {
+  return EMBEDDED[provider];
+}
+
+export function providerOf(type: string): SchemaProvider {
+  return type.slice(0, type.indexOf('_')) as SchemaProvider;
+}
+
+/** Every resource type a provider has, whether or not its schema is loaded. */
+export function resourceTypes(provider: SchemaProvider): string[] {
+  return Object.keys(isCloud(provider) ? CLOUD[provider].resources : EMBEDDED[provider].resources);
+}
+
+/** The registry documentation's section for a resource, where it has one. */
+function documentedSection(provider: SchemaProvider, type: string): string | undefined {
+  return isCloud(provider) ? CLOUD[provider].resources[type]?.[1] : EMBEDDED[provider].resources[type]?.g;
+}
+
+// --- the clouds' schemas, a file at a time ----------------------------------
+
+const LOADED = new Map<string, ResourceSchema>();
+const FETCHING = new Map<string, Promise<void>>();
+
+/** Node's fs, when there is one: tests and tools read schema files straight from disk. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const nodeFs: any = (globalThis as any).process?.getBuiltinModule?.('node:fs');
+
+function schemaUrl(provider: CloudProvider, file: string): URL {
+  // Built, this module is web/lib/terraform/ and the data web/data/terraform/;
+  // run from source (tests, tools), it is src/terraform/.
+  const base = import.meta.url.includes('/src/terraform/') ? '../../web/data/terraform/' : '../../data/terraform/';
+  return new URL(`${base}${provider}/${file}.json`, import.meta.url);
+}
+
+function store(file: Record<string, ResourceSchema>): void {
+  for (const [type, schema] of Object.entries(file)) LOADED.set(type, schema);
+}
+
+/** Fetch the file a cloud resource's schema is in; resolves at once for any other. */
+export function loadResource(type: string): Promise<void> {
+  const provider = providerOf(type);
+  if (!isCloud(provider) || LOADED.has(type)) return Promise.resolve();
+  const file = CLOUD[provider].resources[type]?.[0];
+  if (!file) return Promise.reject(new Error(`${type}: not in the ${provider} schema index`));
+  const key = `${provider}/${file}`;
+  let pending = FETCHING.get(key);
+  if (!pending) {
+    pending = fetch(schemaUrl(provider, file))
+      .then((r) => {
+        if (!r.ok) throw new Error(`${key}.json: HTTP ${r.status}`);
+        return r.json() as Promise<Record<string, ResourceSchema>>;
+      })
+      .then(store)
+      .catch((err: unknown) => {
+        FETCHING.delete(key);
+        throw err;
+      });
+    FETCHING.set(key, pending);
+  }
+  return pending;
 }
 
 export function resourceSchema(type: string): ResourceSchema | undefined {
-  const provider = type.slice(0, type.indexOf('_')) as SchemaProvider;
-  return DATA[provider]?.resources[type];
+  const provider = providerOf(type);
+  if (!isCloud(provider)) return EMBEDDED[provider]?.resources[type];
+  const loaded = LOADED.get(type);
+  if (loaded || !nodeFs) return loaded;
+  // In Node, read it now: tests and tools then need not await anything.
+  const file = CLOUD[provider].resources[type]?.[0];
+  if (!file) return undefined;
+  store(JSON.parse(nodeFs.readFileSync(schemaUrl(provider, file), 'utf8')));
+  return LOADED.get(type);
 }
 
 /** `~> 2.17` for 2.17.1: the minor line, which is what the providers keep compatible. */
 export function versionConstraint(provider: SchemaProvider): string {
-  const [major, minor] = DATA[provider].version.split('.');
+  const [major, minor] = info(provider).version.split('.');
   return `~> ${major}.${minor ?? '0'}`;
 }
 
@@ -103,7 +195,11 @@ interface ProviderMeta {
     readonly inputs: readonly BlueprintInput[];
     readonly render: (values: BlueprintValues, out: Emitted) => string;
   };
+  /** Provider arguments not worth a field: Google's 150 per-service endpoint overrides. */
+  readonly hide?: RegExp;
 }
+
+const AZURE_REGISTRATIONS = ['core', 'extended', 'all', 'none', 'legacy'].map((v) => ({ value: v, label: v }));
 
 const DNS_MODES = [
   { value: 'gssapi', label: 'Kerberos (GSS-TSIG) — Windows DNS / AD-integrated' },
@@ -226,12 +322,37 @@ export const PROVIDER_META: Readonly<Record<SchemaProvider, ProviderMeta>> = {
   local: { product: 'Files on the Terraform runner', defaults: {}, credentials: [] },
   random: { product: 'Random values (passwords, IDs)', defaults: {}, credentials: [] },
   null: { product: 'Remote execution (null_resource)', defaults: {}, credentials: [] },
+  // The clouds: credentials come from the environment, a profile or a CLI
+  // login — the providers' own chains — so none is written into a file.
+  aws: { product: 'Every resource', defaults: { region: 'us-east-1' }, credentials: [] },
+  azurerm: {
+    product: 'Every resource',
+    defaults: {},
+    credentials: [],
+    custom: {
+      inputs: [
+        { id: 'p.subscription_id', label: 'subscription_id', control: 'text', default: '', section: 'Provider connection', hint: 'blank = ARM_SUBSCRIPTION_ID' },
+        { id: 'p.tenant_id', label: 'tenant_id', control: 'text', default: '', section: 'Provider connection', hint: 'blank = ARM_TENANT_ID' },
+        { id: 'p.resource_provider_registrations', label: 'resource_provider_registrations', control: 'select', options: AZURE_REGISTRATIONS, blankLabel: '(provider default)', section: 'Provider connection' },
+      ],
+      render: (values) => {
+        const lines = ['  features {}'];
+        for (const name of ['subscription_id', 'tenant_id', 'resource_provider_registrations']) {
+          const value = String(values[`p.${name}`] ?? '').trim();
+          if (value) lines.push(`  ${name} = ${isExpression(value) ? value : quote(value)}`);
+        }
+        return `provider "azurerm" {\n${lines.join('\n')}\n}`;
+      },
+    },
+  },
+  google: { product: 'Every resource', defaults: { project: 'my-project-id', region: 'us-central1', zone: 'us-central1-a' }, credentials: [], hide: /_custom_endpoint$/ },
+  oci: { product: 'Every resource', defaults: { region: 'us-ashburn-1', config_file_profile: 'DEFAULT' }, credentials: [] },
 };
 
 /** The heading a resource sits under in the picker. */
 export function sectionOf(provider: SchemaProvider, type: string): string {
   const meta = PROVIDER_META[provider];
-  const documented = DATA[provider].resources[type]?.g;
+  const documented = documentedSection(provider, type);
   if (!documented && !meta.sections) return meta.product;
   let section = documented ?? meta.sections?.find(([re]) => re.test(type))?.[1] ?? 'Other';
   if (section === 'Beta') section = 'Beta (subject to change)';
@@ -318,6 +439,7 @@ const TYPE_HINT: Readonly<Record<TypeCode, string>> = {
   sn: 'comma-separated numbers',
   m: 'one key=value per line',
   x: 'HCL expression',
+  h: 'nested block, written as HCL',
 };
 
 const VAR_TYPE: Readonly<Record<TypeCode, string>> = {
@@ -330,6 +452,7 @@ const VAR_TYPE: Readonly<Record<TypeCode, string>> = {
   sn: 'set(number)',
   m: 'map(string)',
   x: 'any',
+  h: 'any',
 };
 
 const TRUE_FALSE: readonly SelectOption[] = [
@@ -377,6 +500,9 @@ function attrInput(
       : { ...base, control: 'select', options: TRUE_FALSE, blankLabel: '(provider default)' };
   }
   if (type === 'n') return { ...base, control: 'number', default: '' };
+  if (type === 'h') {
+    return { ...base, control: 'textarea', default: '', placeholder: `${name} {\n  ...\n}` };
+  }
   if (type === 'm' || type === 'x') {
     return { ...base, control: 'textarea', default: '', placeholder: type === 'm' ? 'key = value' : '[{ ... }]' };
   }
@@ -438,7 +564,7 @@ export function providerInputs(provider: SchemaProvider): BlueprintInput[] {
   if (meta.custom) return [...meta.custom.inputs];
   const credentialAttrs = new Set(meta.credentials.map((c) => c.attr));
   const inputs: BlueprintInput[] = [];
-  const rows = [...DATA[provider].provider.a].sort((x, y) => {
+  const rows = [...info(provider).provider.a].sort((x, y) => {
     const dx = x[0] in meta.defaults ? 0 : 1;
     const dy = y[0] in meta.defaults ? 0 : 1;
     return dx - dy;
@@ -447,6 +573,7 @@ export function providerInputs(provider: SchemaProvider): BlueprintInput[] {
     const [name, , flags] = row;
     // Credentials and anything else sensitive stay out of the form entirely.
     if (credentialAttrs.has(name) || flags.includes('s') || /password|token|secret|_key$|client_auth_key/.test(name)) continue;
+    if (meta.hide?.test(name)) continue;
     const { blankLabel, ...input } = attrInput(row, [], PROVIDER_SECTION, undefined);
     const preset = meta.defaults[name];
     inputs.push(
@@ -497,6 +624,12 @@ function renderAttr(row: AttrRow, raw: unknown, path: readonly string[], indent:
   const [name, type, flags, description] = row;
   const required = flags.startsWith('r');
   let value = raw === undefined || raw === null ? '' : String(raw).trim();
+  if (type === 'h') {
+    // A nested block too deep for the form: whatever HCL was written, as written.
+    if (value !== '') return indentRaw(`${indent}${value}`, indent).replace(/^\s*/, indent);
+    if (required) out.findings.push(warning('terraform.schema.block-needed', `${[...path, name].join('.')} is a required block; write it in its HCL box.`, { path: [...path, name].join('.') }));
+    return required ? `${indent}# ${name} { ... } is required: write it in its HCL box.` : null;
+  }
   if (value === '') {
     if (!required) return null;
     // Required and not given: a variable, so the file plans once tfvars has it.
@@ -607,7 +740,7 @@ function providerBlock(provider: SchemaProvider, values: BlueprintValues, out: E
   if (meta.custom) return meta.custom.render(values, out);
   const lines: string[] = [];
   const credentialAttrs = new Set(meta.credentials.map((c) => c.attr));
-  for (const row of DATA[provider].provider.a) {
+  for (const row of info(provider).provider.a) {
     const [name, , flags] = row;
     if (credentialAttrs.has(name) || flags.includes('s') || /password|token|secret|_key$|client_auth_key/.test(name)) continue;
     const line = renderAttr(row, values[`p.${name}`], [], '  ', out);
@@ -651,7 +784,7 @@ export function wrapConfiguration(
   const required = list
     .map(
       (p) => `    ${p} = {
-      source  = "${DATA[p].source}"
+      source  = "${info(p).source}"
       version = "${versionConstraint(p)}"
     }`,
     )
@@ -688,10 +821,95 @@ function localName(name: string): string {
 interface ResourceRules {
   /** Groups of arguments of which exactly (or at least) one has to be set; the first stands in when none is. */
   readonly oneOf?: readonly (readonly string[])[];
+  /** Groups set together: once one member is set, the others are needed too. */
+  readonly allOf?: readonly (readonly string[])[];
   /** Nested blocks that need more copies than the schema's min_items says. */
   readonly minBlocks?: Readonly<Record<string, number>>;
   /** Fields that start other than empty, keyed by input id. */
   readonly defaults?: Readonly<Record<string, string | boolean>>;
+}
+
+/** The rules for a resource: the hand-found ones, then those tools/discover-resource-rules.mjs found. */
+function rulesFor(type: string): ResourceRules {
+  const hand = RESOURCE_RULES[type];
+  const found = (DISCOVERED_RULES as Readonly<Record<string, ResourceRules>>)[type];
+  if (!hand || !found) return hand ?? found ?? {};
+  return {
+    oneOf: [...(hand.oneOf ?? []), ...(found.oneOf ?? [])],
+    allOf: [...(hand.allOf ?? []), ...(found.allOf ?? [])],
+    minBlocks: { ...(found.minBlocks ?? {}), ...(hand.minBlocks ?? {}) },
+    defaults: { ...(found.defaults ?? {}), ...(hand.defaults ?? {}) },
+  };
+}
+
+/** Every argument and block path in a schema, dotted. */
+function allPaths(block: SchemaBlock, prefix: readonly string[] = [], out: string[] = []): string[] {
+  for (const row of block.a) out.push([...prefix, row[0]].join('.'));
+  for (const row of block.b ?? []) {
+    out.push([...prefix, row[0]].join('.'));
+    allPaths(row[4], [...prefix, row[0]], out);
+  }
+  return out;
+}
+
+/**
+ * A rule's path as this schema has it. Providers' messages sometimes name an
+ * argument without its block ("min_execution_environments", which lives in
+ * function_scaling_config); the shortest path ending in the same names is it.
+ */
+function resolvePath(schema: SchemaBlock, path: string, paths: readonly string[]): string | undefined {
+  if (paths.includes(path)) return path;
+  const tail = `.${path}`;
+  return paths.filter((p) => p.endsWith(tail)).sort((a, b) => a.split('.').length - b.split('.').length)[0];
+}
+
+/** The rules, with every path checked against the schema and the stand-ins put first. */
+function resolveRules(schema: SchemaBlock, rules: ResourceRules): ResourceRules {
+  const paths = allPaths(schema);
+  const depth = (p: string): number => p.split('.').length;
+  const groups = (list?: readonly (readonly string[])[]): string[][] => {
+    const seen = new Set<string>();
+    const out: string[][] = [];
+    for (const g of list ?? []) {
+      const resolved = [...new Set(g.map((p) => resolvePath(schema, p, paths)).filter((p): p is string => !!p))];
+      // Stable: the first-listed member at the shallowest depth stands in.
+      resolved.sort((a, b) => depth(a) - depth(b));
+      const key = [...resolved].sort().join(',');
+      if (resolved.length > 0 && !seen.has(key)) {
+        seen.add(key);
+        out.push(resolved);
+      }
+    }
+    return out;
+  };
+  const minBlocks: Record<string, number> = {};
+  for (const [p, n] of Object.entries(rules.minBlocks ?? {})) {
+    const resolved = resolvePath(schema, p, paths);
+    if (resolved && isBlockPath(schema, resolved)) minBlocks[resolved] = Math.max(minBlocks[resolved] ?? 0, n);
+  }
+  return { oneOf: groups(rules.oneOf), allOf: groups(rules.allOf), minBlocks, ...(rules.defaults ? { defaults: rules.defaults } : {}) };
+}
+
+/** Tick every block around a path, so a field the rules set is not inside a block left out. */
+function includeAncestors(schema: SchemaBlock, filled: Record<string, BlueprintValues[string]>, path: string): void {
+  const parts = path.split('.');
+  for (let i = 1; i < parts.length; i++) {
+    const ancestor = parts.slice(0, i).join('.');
+    if (isBlockPath(schema, ancestor)) filled[`b.${ancestor}`] = true;
+  }
+}
+
+/** Whether a dotted path names a nested block (rather than an argument) in a schema. */
+function isBlockPath(schema: SchemaBlock, path: string): boolean {
+  let block: SchemaBlock | undefined = schema;
+  const parts = path.split('.');
+  for (const [i, part] of parts.entries()) {
+    const row: BlockRow | undefined = block?.b?.find((b) => b[0] === part);
+    if (!row) return false;
+    if (i === parts.length - 1) return true;
+    block = row[4];
+  }
+  return false;
 }
 
 const RESOURCE_RULES: Readonly<Record<string, ResourceRules>> = {
@@ -726,27 +944,41 @@ const RESOURCE_RULES: Readonly<Record<string, ResourceRules>> = {
   local_file: { oneOf: [['content', 'sensitive_content', 'content_base64', 'source']] },
   local_sensitive_file: { oneOf: [['content', 'content_base64', 'source']] },
   cloudinit_config: { minBlocks: { part: 1 } },
+  // Cloud rules whose messages no pattern in tools/discover-resource-rules.mjs reads.
+  aws_securityhub_standards_control_association: { defaults: { 'r.association_status': 'ENABLED' } },
+  aws_cloudwatch_log_delivery_destination: { defaults: { 'b.delivery_destination_configuration': true } },
+  aws_odb_cloud_vm_cluster: { oneOf: [['odb_network_id', 'odb_network_arn'], ['cloud_exadata_infrastructure_id', 'cloud_exadata_infrastructure_arn']] },
+  aws_odb_cloud_autonomous_vm_cluster: { oneOf: [['odb_network_id', 'odb_network_arn'], ['cloud_exadata_infrastructure_id', 'cloud_exadata_infrastructure_arn']] },
 };
 
 // ------------------------------------------------------------- blueprint ---
 
-/**
- * The blueprint for one resource: every argument it takes, as a field.
- * `prefix` keeps ids unique where two platforms offer the same resource —
- * tls_private_key is on Linux (lnx_) and Windows (win_) alike.
- */
-export function resourceBlueprint(type: string, prefix = 'vmw'): Blueprint {
-  const provider = type.slice(0, type.indexOf('_')) as SchemaProvider;
-  const schema = DATA[provider].resources[type];
-  if (!schema) throw new Error(`${type}: not in the provider schema data`);
-  const rules = RESOURCE_RULES[type] ?? {};
+interface Materialized {
+  readonly inputs: readonly BlueprintInput[];
+  readonly description: string;
+  readonly build: Blueprint['build'];
+}
+
+/** The form and the build for one resource, once its schema is in memory. */
+function materialize(type: string, schema: ResourceSchema): Materialized {
+  const provider = providerOf(type);
+  const rules = resolveRules(schema, rulesFor(type));
   const collected: BlueprintInput[] = [];
   blockInputs(schema, [], undefined, undefined, collected);
+  // Blocks the provider always needs, and every block around them, start
+  // ticked — a ticked block inside an unticked one would not be written.
+  const needed = new Set<string>();
+  for (const path of [...Object.keys(rules.minBlocks ?? {}), ...(rules.oneOf ?? []).map((g) => g[0] as string)]) {
+    const parts = path.split('.');
+    for (let i = 1; i <= parts.length; i++) {
+      const p = parts.slice(0, i).join('.');
+      if (isBlockPath(schema, p)) needed.add(p);
+    }
+  }
   const inputs: BlueprintInput[] = collected.map((input) => {
     const path = input.id.slice(2);
     const group = rules.oneOf?.find((g) => g.includes(path));
-    // A block the provider always needs starts ticked, so its fields show.
-    const forced = input.id.startsWith('b.') && (rules.minBlocks?.[path] !== undefined || rules.oneOf?.some((g) => g[0] === path));
+    const forced = input.id.startsWith('b.') && needed.has(path);
     const preset = rules.defaults?.[input.id] ?? (forced ? true : undefined);
     return {
       ...input,
@@ -755,46 +987,98 @@ export function resourceBlueprint(type: string, prefix = 'vmw'): Blueprint {
     };
   });
   inputs.push(...providerInputs(provider));
-  const bare = type.slice(provider.length + 1);
-  // NSX's policy API is the current one; "Policy" on 170 labels says nothing.
-  const human = humanize(provider === 'avi' ? aviWords(bare) : provider === 'nsxt' ? bare.replace(/^policy_/, '') : bare);
   const required = schema.a.filter((a) => a[2].startsWith('r')).length;
   const optional = schema.a.length - required;
   const blocks = (schema.b ?? []).length;
+  const { source, version } = info(provider);
   return {
-    id: `${prefix}_${type}`,
-    label: `${human} (${type})`,
-    group: sectionOf(provider, type),
+    inputs,
     description:
-      `One ${type} resource, with every argument the ${DATA[provider].source} ${DATA[provider].version} provider takes: ` +
+      `One ${type} resource, with every argument the ${source} ${version} provider takes: ` +
       `${required} required up top, ${optional} optional${blocks > 0 ? `, and ${blocks} nested block${blocks === 1 ? '' : 's'}` : ''} in the sections below. ` +
       'Any field takes a reference — data.x.y.id, var.x — as well as a value.',
-    inputs,
-    emits: [type],
     build: (values: BlueprintValues, name: string) => {
       const out: Emitted = { variables: new Map(), findings: [] };
       const filled: Record<string, BlueprintValues[string]> = { ...values };
       // A "one of these" group with none set: the first becomes a variable, so
       // the file validates and the variable's name says what to supply.
       for (const group of rules.oneOf ?? []) {
-        const isBlock = (path: string): boolean => (schema.b ?? []).some((b) => b[0] === path);
+        const isBlock = (path: string): boolean => isBlockPath(schema, path);
         const set = (path: string): boolean =>
           isBlock(path) ? values[`b.${path}`] === true || values[`b.${path}`] === 'true' : String(values[`r.${path}`] ?? '').trim() !== '';
         if (group.some(set)) continue;
         const first = group[0] as string;
+        includeAncestors(schema, filled, first);
         if (isBlock(first)) filled[`b.${first}`] = true;
         else filled[`r.${first}`] = `var.${variableName(first.split('.'))}`;
       }
+      // A "set together" group with one member set: the rest are needed too.
+      for (const group of rules.allOf ?? []) {
+        const given = (path: string): boolean =>
+          isBlockPath(schema, path) ? filled[`b.${path}`] === true || filled[`b.${path}`] === 'true' : String(filled[`r.${path}`] ?? '').trim() !== '';
+        if (!group.some(given)) continue;
+        for (const path of group) {
+          if (given(path)) continue;
+          includeAncestors(schema, filled, path);
+          if (isBlockPath(schema, path)) filled[`b.${path}`] = true;
+          else filled[`r.${path}`] = `var.${variableName(path.split('.'))}`;
+        }
+      }
       const body = renderBlockBody(schema, filled, [], '  ', out, rules);
-      const resource = `resource "${type}" "${localName(name)}" {\n${body.join('\n')}\n}`;
+      const resource = body.length > 0 ? `resource "${type}" "${localName(name)}" {\n${body.join('\n')}\n}` : `resource "${type}" "${localName(name)}" {}`;
       return { files: { 'main.tf': wrapConfiguration(provider, values, [resource], out) }, findings: out.findings };
     },
   };
 }
 
+/**
+ * The blueprint for one resource: every argument it takes, as a field.
+ * `prefix` keeps ids unique where two platforms offer the same resource —
+ * tls_private_key is on Linux (lnx_) and Windows (win_) alike.
+ *
+ * A cloud resource's schema is not in memory until it is picked, so its
+ * blueprint is lazy: `load()` fetches the schema file, and until then the
+ * form is empty and the description says what is coming.
+ */
+export function resourceBlueprint(type: string, prefix = 'vmw'): Blueprint {
+  const provider = providerOf(type);
+  if (!resourceTypes(provider).includes(type)) throw new Error(`${type}: not in the provider schema data`);
+  const bare = type.slice(provider.length + 1);
+  // NSX's policy API is the current one; "Policy" on 170 labels says nothing.
+  const human = humanize(provider === 'avi' ? aviWords(bare) : provider === 'nsxt' ? bare.replace(/^policy_/, '') : bare);
+  let made: Materialized | undefined;
+  const ready = (): Materialized | undefined => {
+    if (made) return made;
+    const schema = resourceSchema(type);
+    if (schema) made = materialize(type, schema);
+    return made;
+  };
+  const blueprint = {
+    id: `${prefix}_${type}`,
+    label: `${human} (${type})`,
+    group: sectionOf(provider, type),
+    emits: [type],
+    get inputs(): readonly BlueprintInput[] {
+      return ready()?.inputs ?? [];
+    },
+    get description(): string {
+      return ready()?.description ?? `One ${type} resource, with every argument the ${info(provider).source} provider takes. Loading its schema…`;
+    },
+    build: (values: BlueprintValues, name: string) => {
+      const m = ready();
+      if (!m) throw new Error(`${type}: its schema has not loaded yet`);
+      return m.build(values, name);
+    },
+  };
+  // Added, not spread in: a spread would read the getters once, while empty.
+  if (isCloud(provider)) Object.defineProperty(blueprint, 'load', { enumerable: true, value: () => loadResource(type) });
+  else ready();
+  return blueprint as Blueprint;
+}
+
 /** Every resource of a provider, as blueprints, in section then name order. */
 export function providerBlueprints(provider: SchemaProvider, prefix = 'vmw'): Blueprint[] {
-  const types = Object.keys(DATA[provider].resources);
+  const types = resourceTypes(provider);
   const rank = (type: string): number => {
     const section = sectionOf(provider, type);
     // Beta and deprecated resources last, so the supported ones are found first.

@@ -32,7 +32,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +68,39 @@ const SETS = {
       null: 'hashicorp/null',
     },
   },
+  /*
+   * The four clouds are ~5,200 resources and ~170,000 arguments — far too much
+   * to put in front of the Terraform page before it can open. So this set is
+   * written differently: a small index the picker lists (every resource, its
+   * section and the file it lives in), and the schemas themselves as JSON
+   * files of ~40 resources each under web/data/terraform/<provider>/, fetched
+   * only when a resource is picked. Still committed, so still air-gapped.
+   */
+  cloud: {
+    file: 'cloud-schema-index.ts',
+    constant: 'CLOUD_SCHEMA',
+    title: 'AWS, Azure, Google Cloud and OCI Terraform provider schemas',
+    chunked: true,
+    /** Nested blocks deeper than this are one HCL box rather than a form. */
+    maxDepth: 5,
+    providers: {
+      aws: 'hashicorp/aws',
+      azurerm: 'hashicorp/azurerm',
+      google: 'hashicorp/google',
+      oci: 'oracle/oci',
+    },
+  },
 };
+
+/** Where the chunked sets' schema files go; served beside web/lib. */
+const DATA_DIR = join(HERE, '..', 'web', 'data', 'terraform');
+/** Resources per schema file: small enough to fetch in a blink, few enough files to commit. */
+const CHUNK_SIZE = 40;
+
+/** `EC2 (Elastic Compute Cloud)` → `ec2-elastic-compute-cloud`. */
+function slug(text) {
+  return String(text || 'other').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'other';
+}
 
 const wanted = process.argv.slice(2).filter((a) => !a.startsWith('-'));
 for (const name of wanted) {
@@ -86,8 +118,11 @@ async function json(url) {
   for (let attempt = 1; ; attempt++) {
     try {
       const response = await fetch(url);
-      if (response.status === 429 && attempt < 6) {
-        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      // The registry rate-limits a few thousand documentation reads; wait as
+      // long as it asks (or back off), for up to about four minutes in all.
+      if (response.status === 429 && attempt < 10) {
+        const asked = Number(response.headers.get('retry-after'));
+        await new Promise((r) => setTimeout(r, Number.isFinite(asked) && asked > 0 ? asked * 1000 : 3000 * attempt));
         continue;
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -124,9 +159,29 @@ async function resourceDocs(id) {
   return docs;
 }
 
+/**
+ * A doc id names one page of one provider version, so its content never
+ * changes: kept under the temp directory, a re-run reads it from disk instead
+ * of spending thousands of requests of the registry's rate limit on it.
+ */
+const DOC_CACHE = join(tmpdir(), 'archtoolkit-registry-docs');
+
 async function docContent(id) {
+  const cached = join(DOC_CACHE, `${id}.md`);
+  try {
+    return readFileSync(cached, 'utf8');
+  } catch {
+    // Not fetched before.
+  }
   const body = await json(`https://registry.terraform.io/v2/provider-docs/${id}`);
-  return body.data?.attributes?.content ?? '';
+  const content = body.data?.attributes?.content ?? '';
+  try {
+    mkdirSync(DOC_CACHE, { recursive: true });
+    writeFileSync(cached, content);
+  } catch {
+    // A cache that cannot be written is only slower.
+  }
+  return content;
 }
 
 /** Run `fn` over `items`, `width` at a time. */
@@ -260,12 +315,13 @@ function shortText(text) {
  * Computed-only attributes and `id` are dropped — nothing to set — and so are
  * deprecated ones, which the provider accepts only while it warns about them.
  */
-function compact(block, docs) {
+function compact(block, docs, depth = 0, maxDepth = Infinity) {
   const a = [];
   for (const [name, attr] of Object.entries(block.attributes ?? {})) {
     if (name === 'id' && !attr.required) continue;
     if (!attr.required && !attr.optional) continue;
-    if (attr.deprecated) continue;
+    // Deprecated arguments are left out, unless the provider still requires them.
+    if (attr.deprecated && !attr.required) continue;
     const doc = docs.get(name);
     const type = attr.nested_type ? 'x' : typeCode(attr.type);
     const flags =
@@ -280,7 +336,15 @@ function compact(block, docs) {
   for (const [name, bt] of Object.entries(block.block_types ?? {})) {
     if (bt.block?.deprecated) continue;
     const mode = bt.nesting_mode === 'single' || bt.nesting_mode === 'group' ? 1 : bt.nesting_mode === 'set' ? 's' : 'l';
-    b.push([name, mode, bt.min_items ?? 0, bt.max_items ?? 0, compact(bt.block, docs)]);
+    if (depth + 1 > maxDepth) {
+      // Past the depth a form can usefully show — AWS WAF's rule statements
+      // nest fourteen deep — the block is one box of HCL: still settable,
+      // without a form of ten thousand fields. Type h: nested block(s) as HCL.
+      const what = bt.block?.description ? shortText(bt.block.description) : '';
+      a.push([name, 'h', (bt.min_items ?? 0) > 0 ? 'r' : 'o', `The ${name} block${bt.max_items === 1 ? '' : '(s)'}, written as HCL.${what ? ` ${what}` : ''}`]);
+      continue;
+    }
+    b.push([name, mode, bt.min_items ?? 0, bt.max_items ?? 0, compact(bt.block, docs, depth + 1, maxDepth)]);
   }
   b.sort((x, y) => (y[2] > 0 ? 1 : 0) - (x[2] > 0 ? 1 : 0) || x[0].localeCompare(y[0]));
   const out = { a };
@@ -335,7 +399,7 @@ async function generate(set) {
             console.warn(`\n  ${type}: documentation not read (${err.message})`);
           }
         }
-        resources[type] = compact(ps.resource_schemas[type].block, docs);
+        resources[type] = compact(ps.resource_schemas[type].block, docs, 0, set.maxDepth ?? Infinity);
         // The registry's own section for it, where the provider files one.
         if (doc?.subcategory) resources[type].g = doc.subcategory;
       });
@@ -350,7 +414,61 @@ async function generate(set) {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const body = `/**
+    if (set.chunked) {
+      // The schemas go to JSON files of CHUNK_SIZE resources, grouped by the
+      // registry's section so one service's resources travel together; the
+      // index keeps only what the picker needs to list them.
+      for (const [local, entry] of Object.entries(out)) {
+        const dir = join(DATA_DIR, local);
+        rmSync(dir, { recursive: true, force: true });
+        mkdirSync(dir, { recursive: true });
+        const bySection = new Map();
+        for (const [type, schema] of Object.entries(entry.resources)) {
+          const section = schema.g ?? 'Other';
+          if (!bySection.has(section)) bySection.set(section, []);
+          bySection.get(section).push(type);
+        }
+        const index = {};
+        let files = 0;
+        for (const [section, types] of bySection) {
+          for (let i = 0; i < types.length; i += CHUNK_SIZE) {
+            const part = types.slice(i, i + CHUNK_SIZE);
+            const chunk = types.length > CHUNK_SIZE ? `${slug(section)}-${i / CHUNK_SIZE + 1}` : slug(section);
+            const body = {};
+            for (const type of part) {
+              const { g, ...schema } = entry.resources[type];
+              body[type] = schema;
+              index[type] = [chunk, section];
+            }
+            writeFileSync(join(dir, `${chunk}.json`), JSON.stringify(body));
+            files++;
+          }
+        }
+        entry.resources = Object.fromEntries(Object.keys(index).sort().map((t) => [t, index[t]]));
+        console.log(`  ${local}: ${files} schema files in web/data/terraform/${local}/`);
+      }
+    }
+    const body = set.chunked
+      ? `/**
+ * ${set.title}: the index — GENERATED, do not edit by hand.
+ *
+ * Written by tools/fetch-provider-schemas.mjs from \`terraform providers schema
+ * -json\` and the Terraform Registry documentation for the same versions.
+ * Refresh with: npm run schemas:update -- cloud
+ *
+ * Per provider: its source, version and configuration block (compact form, as
+ * in vmware-schema-data.ts), and for each resource [schema file, section]. The
+ * resource schemas themselves are web/data/terraform/<provider>/<file>.json,
+ * read by src/terraform/schema-blueprints.ts when a resource is picked.
+ */
+
+/** When this file was generated, ISO date. */
+export const ${set.constant}_FETCHED_AT = ${JSON.stringify(today)};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const ${set.constant}_INDEX: any = JSON.parse(${JSON.stringify(JSON.stringify(out))});
+`
+      : `/**
  * ${set.title} — GENERATED, do not edit by hand.
  *
  * Written by tools/fetch-provider-schemas.mjs from \`terraform providers schema
@@ -360,7 +478,8 @@ async function generate(set) {
  * Compact form, read by src/terraform/schema-blueprints.ts:
  *   a: [name, type, flags, description, allowedValues?]
  *        type  s string, n number, b bool, ls/ss list/set of string,
- *              ln/sn list/set of number, m map, x anything else (raw HCL)
+ *              ln/sn list/set of number, m map, x anything else (raw HCL),
+ *              h a nested block past the form's depth, written as HCL
  *        flags r required, o optional, c optional (provider computes a
  *              default), then s when sensitive
  *   b: [name, mode, minItems, maxItems, block]

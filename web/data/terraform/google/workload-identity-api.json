@@ -1,0 +1,1 @@
+{"google_workload_identity_service_agent":{"a":[["parent","s","r","The parent resource path."]],"b":[["timeouts",1,0,0,{"a":[["create","s","o","Default is 20 minutes."],["delete","s","o","Default is 20 minutes."]]}]]}}

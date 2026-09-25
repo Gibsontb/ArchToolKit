@@ -111,6 +111,41 @@ describe('terraform/schema-blueprints: the HCL it writes', () => {
   });
 });
 
+describe('terraform/schema-blueprints: the four clouds, a schema file at a time', () => {
+  it('lists every resource of AWS, Azure, Google Cloud and OCI from the index', () => {
+    for (const [target, provider] of [['aws', 'aws'], ['azure', 'azurerm'], ['google', 'google'], ['oci', 'oci']] as const) {
+      const group = TERRAFORM_BLUEPRINTS.find((g) => g.target === target)!;
+      const perResource = group.blueprints.filter((b) => b.id.startsWith(`res_${provider}_`));
+      expect([target, perResource.length > 900]).toEqual([target, true]);
+      expect([target, perResource.every((b) => typeof b.load === 'function')]).toEqual([target, true]);
+    }
+  });
+
+  it('keeps a lazy blueprint lazy through the passes that copy it', () => {
+    // withChoices, the secret lifting and the layout all copy blueprints; a
+    // spread would have frozen the form at its unloaded, empty state.
+    const ec2 = TERRAFORM_BLUEPRINTS.find((g) => g.target === 'aws')!.blueprints.find((b) => b.id === 'res_aws_instance')!;
+    expect(ec2.inputs.some((i) => i.id === 'r.ami')).toBe(true);
+    expect(ec2.description).toContain('aws_instance');
+    const files = ec2.build({ ...defaultValues(ec2), 'r.ami': 'ami-0123', 'r.instance_type': 't3.small' }, 'web').files;
+    expect(files['main.tf']).toContain('resource "aws_instance" "web"');
+    expect(files['providers.tf']).toContain('region = "us-east-1"');
+  });
+
+  it('writes the azurerm provider with its required features block', () => {
+    const rg = resourceBlueprint('azurerm_resource_group', 'res');
+    expect(rg.build(defaultValues(rg), 'rg').files['main.tf']).toContain('provider "azurerm" {\n  features {}');
+  });
+
+  it('applies a discovered rule, ticking the blocks around a nested stand-in', () => {
+    // Exactly one of resource_data's nested blocks is required; the first
+    // stands in, and resource_data around it has to be written too.
+    const hcl = build('aws_lakeformation_opt_in');
+    expect(hcl).toContain('resource_data {');
+    expect(hcl).toContain('catalog {');
+  });
+});
+
 describe('terraform/schema-blueprints: helpers', () => {
   it('tells a reference from a value', () => {
     for (const ref of ['var.x', 'data.vsphere_datacenter.dc.id', 'vsphere_folder.apps.path', 'local.name', 'file("a.pem")', 'null']) {

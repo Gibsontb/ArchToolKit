@@ -151,6 +151,8 @@ describe('credentials', () => {
       for (const blueprint of group.blueprints) {
         for (const input of blueprint.inputs) {
           if (!secretIds.test(input.id)) continue;
+          // A block's tick box ("include key_vault_password") is a switch too.
+          if (input.control === 'toggle') continue;
           const values = (input.options ?? []).map((o) => o.value);
           // `manage_master_user_password` is a switch, not a password.
           if (values.length === 2 && values.includes('true') && values.includes('false')) continue;

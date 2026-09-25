@@ -9,6 +9,7 @@ import { SCRIPT_BLUEPRINTS } from '../scripts/blueprints/index.ts';
 import { SPLUNK_BLUEPRINTS } from '../splunk/blueprints/index.ts';
 import { CATALOG_DATA } from '../terraform/catalog-data.ts';
 import { VMWARE_SCHEMA_DATA } from '../terraform/vmware-schema-data.ts';
+import { CLOUD_SCHEMA_INDEX } from '../terraform/cloud-schema-index.ts';
 import { collectModules } from '../ansible/from-plays.ts';
 
 const ALL = [...TERRAFORM_BLUEPRINTS, ...ANSIBLE_BLUEPRINTS];
@@ -219,7 +220,7 @@ describe('kit/blueprint: the catalogs check the blueprints', () => {
     // The providers' own schemas list a few resources their documentation
     // does not (vsphere_distributed_virtual_switch_pvlan_mapping), and the
     // schema is what `terraform validate` checks against.
-    for (const provider of Object.values(VMWARE_SCHEMA_DATA as Record<string, { resources: Record<string, unknown> }>)) {
+    for (const provider of Object.values({ ...VMWARE_SCHEMA_DATA, ...CLOUD_SCHEMA_INDEX } as Record<string, { resources: Record<string, unknown> }>)) {
       for (const type of Object.keys(provider.resources)) known.add(type);
     }
     const unknown: string[] = [];
