@@ -842,6 +842,63 @@ function rulesFor(type        )                {
   };
 }
 
+/** Every argument and block path in a schema, dotted. */
+function allPaths(block             , prefix                    = [], out           = [])           {
+  for (const row of block.a) out.push([...prefix, row[0]].join('.'));
+  for (const row of block.b ?? []) {
+    out.push([...prefix, row[0]].join('.'));
+    allPaths(row[4], [...prefix, row[0]], out);
+  }
+  return out;
+}
+
+/**
+ * A rule's path as this schema has it. Providers' messages sometimes name an
+ * argument without its block ("min_execution_environments", which lives in
+ * function_scaling_config); the shortest path ending in the same names is it.
+ */
+function resolvePath(schema             , path        , paths                   )                     {
+  if (paths.includes(path)) return path;
+  const tail = `.${path}`;
+  return paths.filter((p) => p.endsWith(tail)).sort((a, b) => a.split('.').length - b.split('.').length)[0];
+}
+
+/** The rules, with every path checked against the schema and the stand-ins put first. */
+function resolveRules(schema             , rules               )                {
+  const paths = allPaths(schema);
+  const depth = (p        )         => p.split('.').length;
+  const groups = (list                                 )             => {
+    const seen = new Set        ();
+    const out             = [];
+    for (const g of list ?? []) {
+      const resolved = [...new Set(g.map((p) => resolvePath(schema, p, paths)).filter((p)              => !!p))];
+      // Stable: the first-listed member at the shallowest depth stands in.
+      resolved.sort((a, b) => depth(a) - depth(b));
+      const key = [...resolved].sort().join(',');
+      if (resolved.length > 0 && !seen.has(key)) {
+        seen.add(key);
+        out.push(resolved);
+      }
+    }
+    return out;
+  };
+  const minBlocks                         = {};
+  for (const [p, n] of Object.entries(rules.minBlocks ?? {})) {
+    const resolved = resolvePath(schema, p, paths);
+    if (resolved && isBlockPath(schema, resolved)) minBlocks[resolved] = Math.max(minBlocks[resolved] ?? 0, n);
+  }
+  return { oneOf: groups(rules.oneOf), allOf: groups(rules.allOf), minBlocks, ...(rules.defaults ? { defaults: rules.defaults } : {}) };
+}
+
+/** Tick every block around a path, so a field the rules set is not inside a block left out. */
+function includeAncestors(schema             , filled                                         , path        )       {
+  const parts = path.split('.');
+  for (let i = 1; i < parts.length; i++) {
+    const ancestor = parts.slice(0, i).join('.');
+    if (isBlockPath(schema, ancestor)) filled[`b.${ancestor}`] = true;
+  }
+}
+
 /** Whether a dotted path names a nested block (rather than an argument) in a schema. */
 function isBlockPath(schema             , path        )          {
   let block                          = schema;
@@ -891,6 +948,7 @@ const RESOURCE_RULES                                          = {
   aws_securityhub_standards_control_association: { defaults: { 'r.association_status': 'ENABLED' } },
   aws_cloudwatch_log_delivery_destination: { defaults: { 'b.delivery_destination_configuration': true } },
   aws_odb_cloud_vm_cluster: { oneOf: [['odb_network_id', 'odb_network_arn'], ['cloud_exadata_infrastructure_id', 'cloud_exadata_infrastructure_arn']] },
+  aws_odb_cloud_autonomous_vm_cluster: { oneOf: [['odb_network_id', 'odb_network_arn'], ['cloud_exadata_infrastructure_id', 'cloud_exadata_infrastructure_arn']] },
 };
 
 // ------------------------------------------------------------- blueprint ---
@@ -904,14 +962,23 @@ const RESOURCE_RULES                                          = {
 /** The form and the build for one resource, once its schema is in memory. */
 function materialize(type        , schema                )               {
   const provider = providerOf(type);
-  const rules = rulesFor(type);
+  const rules = resolveRules(schema, rulesFor(type));
   const collected                   = [];
   blockInputs(schema, [], undefined, undefined, collected);
+  // Blocks the provider always needs, and every block around them, start
+  // ticked — a ticked block inside an unticked one would not be written.
+  const needed = new Set        ();
+  for (const path of [...Object.keys(rules.minBlocks ?? {}), ...(rules.oneOf ?? []).map((g) => g[0]          )]) {
+    const parts = path.split('.');
+    for (let i = 1; i <= parts.length; i++) {
+      const p = parts.slice(0, i).join('.');
+      if (isBlockPath(schema, p)) needed.add(p);
+    }
+  }
   const inputs                   = collected.map((input) => {
     const path = input.id.slice(2);
     const group = rules.oneOf?.find((g) => g.includes(path));
-    // A block the provider always needs starts ticked, so its fields show.
-    const forced = input.id.startsWith('b.') && (rules.minBlocks?.[path] !== undefined || rules.oneOf?.some((g) => g[0] === path));
+    const forced = input.id.startsWith('b.') && needed.has(path);
     const preset = rules.defaults?.[input.id] ?? (forced ? true : undefined);
     return {
       ...input,
@@ -941,14 +1008,21 @@ function materialize(type        , schema                )               {
           isBlock(path) ? values[`b.${path}`] === true || values[`b.${path}`] === 'true' : String(values[`r.${path}`] ?? '').trim() !== '';
         if (group.some(set)) continue;
         const first = group[0]          ;
+        includeAncestors(schema, filled, first);
         if (isBlock(first)) filled[`b.${first}`] = true;
         else filled[`r.${first}`] = `var.${variableName(first.split('.'))}`;
       }
-      // A "set together" group with one member set: the rest become variables.
+      // A "set together" group with one member set: the rest are needed too.
       for (const group of rules.allOf ?? []) {
-        const given = (path        )          => String(filled[`r.${path}`] ?? '').trim() !== '';
+        const given = (path        )          =>
+          isBlockPath(schema, path) ? filled[`b.${path}`] === true || filled[`b.${path}`] === 'true' : String(filled[`r.${path}`] ?? '').trim() !== '';
         if (!group.some(given)) continue;
-        for (const path of group) if (!given(path) && !isBlockPath(schema, path)) filled[`r.${path}`] = `var.${variableName(path.split('.'))}`;
+        for (const path of group) {
+          if (given(path)) continue;
+          includeAncestors(schema, filled, path);
+          if (isBlockPath(schema, path)) filled[`b.${path}`] = true;
+          else filled[`r.${path}`] = `var.${variableName(path.split('.'))}`;
+        }
       }
       const body = renderBlockBody(schema, filled, [], '  ', out, rules);
       const resource = body.length > 0 ? `resource "${type}" "${localName(name)}" {\n${body.join('\n')}\n}` : `resource "${type}" "${localName(name)}" {}`;

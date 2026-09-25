@@ -5,6 +5,8 @@
  * Per resource type:
  *   oneOf      groups of arguments of which one has to be set; the first
  *              stands in (as a variable, or its block included) when none is
+ *   allOf      groups that are set together: once one is, the rest become
+ *              variables too
  *   minBlocks  nested blocks, by path, that need more copies than the schema says
  */
 
@@ -16,17 +18,25 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "identity_source.identity_center"
    ]
   ]
  },
  "aws_accountaccess_entitlement": {
   "minBlocks": {
-   "entitlement": 1
+   "entitlement": 1,
+   "entitlement.principal_role.principal": 1
   },
   "oneOf": [
    [
-    "0"
+    "entitlement.principal_role"
+   ],
+   [
+    "entitlement.principal_role.principal.identity_center"
+   ],
+   [
+    "entitlement.principal_role.principal.identity_center.group_id",
+    "entitlement.principal_role.principal.identity_center.user_id"
    ]
   ]
  },
@@ -65,11 +75,13 @@ export const DISCOVERED_RULES      = {
  "aws_apigatewayv2_routing_rule": {
   "minBlocks": {
    "action": 1,
-   "condition": 1
+   "condition": 1,
+   "action.invoke_api": 1
   },
   "oneOf": [
    [
-    "0"
+    "condition.match_base_paths",
+    "condition.match_headers"
    ]
   ]
  },
@@ -90,8 +102,17 @@ export const DISCOVERED_RULES      = {
  "aws_appfabric_ingestion_destination": {
   "minBlocks": {
    "destination_configuration": 1,
-   "processing_configuration": 1
-  }
+   "processing_configuration": 1,
+   "destination_configuration.audit_log": 1,
+   "processing_configuration.audit_log": 1,
+   "destination_configuration.audit_log.destination": 1
+  },
+  "oneOf": [
+   [
+    "destination_configuration.audit_log.destination.firehose_stream",
+    "destination_configuration.audit_log.destination.s3_bucket"
+   ]
+  ]
  },
  "aws_appmesh_gateway_route": {
   "oneOf": [
@@ -128,16 +149,26 @@ export const DISCOVERED_RULES      = {
  },
  "aws_appsync_api": {
   "minBlocks": {
-   "event_config": 1
+   "event_config": 1,
+   "event_config.connection_auth_mode": 1,
+   "event_config.default_publish_auth_mode": 1,
+   "event_config.default_subscribe_auth_mode": 1,
+   "event_config.auth_provider": 1
   }
  },
  "aws_appsync_source_api_association": {
   "oneOf": [
    [
-    "source_api_id.<.source_api_arn"
+    "source_api_arn"
    ],
    [
-    "merged_api_id.<.merged_api_arn"
+    "merged_api_arn"
+   ],
+   [
+    "source_api_arn"
+   ],
+   [
+    "merged_api_arn"
    ]
   ]
  },
@@ -168,6 +199,14 @@ export const DISCOVERED_RULES      = {
    "recovery_point_selection": 1
   }
  },
+ "aws_backup_restore_testing_selection": {
+  "oneOf": [
+   [
+    "protected_resource_arns",
+    "protected_resource_conditions"
+   ]
+  ]
+ },
  "aws_bedrock_custom_model": {
   "minBlocks": {
    "output_data_config": 1,
@@ -178,18 +217,31 @@ export const DISCOVERED_RULES      = {
   "minBlocks": {
    "evaluation_config": 1,
    "inference_config": 1,
-   "output_data_config": 1
+   "output_data_config": 1,
+   "evaluation_config.automated.dataset_metric_config": 1,
+   "evaluation_config.automated.dataset_metric_config.dataset": 1
   },
   "oneOf": [
    [
-    "0"
+    "evaluation_config.automated",
+    "evaluation_config.human"
+   ],
+   [
+    "inference_config.model",
+    "inference_config.rag_config"
+   ],
+   [
+    "inference_config.model.bedrock_model",
+    "inference_config.model.precomputed_inference_source"
    ]
   ]
  },
  "aws_bedrock_model_invocation_job": {
   "minBlocks": {
    "input_data_config": 1,
-   "output_data_config": 1
+   "output_data_config": 1,
+   "output_data_config.s3_output_data_config": 1,
+   "input_data_config.s3_input_data_config": 1
   }
  },
  "aws_bedrock_model_invocation_logging_configuration": {
@@ -213,7 +265,10 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "knowledge_base_configuration.kendra_knowledge_base_configuration",
+    "knowledge_base_configuration.managed_knowledge_base_configuration",
+    "knowledge_base_configuration.sql_knowledge_base_configuration",
+    "knowledge_base_configuration.vector_knowledge_base_configuration"
    ]
   ]
  },
@@ -224,7 +279,8 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "agent_runtime_artifact.code_configuration",
+    "agent_runtime_artifact.container_configuration"
    ]
   ]
  },
@@ -249,11 +305,21 @@ export const DISCOVERED_RULES      = {
  },
  "aws_bedrockagentcore_evaluator": {
   "minBlocks": {
-   "evaluator_config": 1
+   "evaluator_config": 1,
+   "evaluator_config.llm_as_a_judge.model_config": 1,
+   "evaluator_config.llm_as_a_judge.rating_scale": 1
   },
   "oneOf": [
    [
-    "0"
+    "evaluator_config.llm_as_a_judge",
+    "evaluator_config.code_based"
+   ],
+   [
+    "evaluator_config.llm_as_a_judge.model_config.bedrock_evaluator_model_config"
+   ],
+   [
+    "evaluator_config.llm_as_a_judge.rating_scale.numerical",
+    "evaluator_config.llm_as_a_judge.rating_scale.categorical"
    ]
   ]
  },
@@ -263,7 +329,13 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "target_configuration.http",
+    "target_configuration.inference",
+    "target_configuration.mcp"
+   ],
+   [
+    "target_configuration.http.agentcore_runtime",
+    "target_configuration.http.passthrough"
    ]
   ]
  },
@@ -274,7 +346,13 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "system_prompt.text"
+   ],
+   [
+    "model.bedrock_model_config",
+    "model.gemini_model_config",
+    "model.litellm_model_config",
+    "model.openai_model_config"
    ]
   ]
  },
@@ -284,7 +362,15 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "oauth2_provider_config.atlassian_oauth2_provider_config",
+    "oauth2_provider_config.custom_oauth2_provider_config",
+    "oauth2_provider_config.github_oauth2_provider_config",
+    "oauth2_provider_config.google_oauth2_provider_config",
+    "oauth2_provider_config.included_oauth2_provider_config",
+    "oauth2_provider_config.linkedin_oauth2_provider_config",
+    "oauth2_provider_config.microsoft_oauth2_provider_config",
+    "oauth2_provider_config.salesforce_oauth2_provider_config",
+    "oauth2_provider_config.slack_oauth2_provider_config"
    ]
   ]
  },
@@ -292,12 +378,14 @@ export const DISCOVERED_RULES      = {
   "minBlocks": {
    "rule": 1,
    "data_source_config": 1,
-   "evaluator": 1
+   "evaluator": 1,
+   "rule.sampling_config": 1
   }
  },
  "aws_bedrockagentcore_policy": {
   "minBlocks": {
-   "definition": 1
+   "definition": 1,
+   "definition.cedar": 1
   }
  },
  "aws_bedrockagentcore_token_vault_cmk": {
@@ -319,7 +407,8 @@ export const DISCOVERED_RULES      = {
   "minBlocks": {
    "tenant_config": 1,
    "default_cache_behavior": 1,
-   "viewer_certificate": 1
+   "viewer_certificate": 1,
+   "default_cache_behavior.allowed_methods": 1
   }
  },
  "aws_cloudfront_response_headers_policy": {
@@ -335,12 +424,14 @@ export const DISCOVERED_RULES      = {
  },
  "aws_cloudfront_trust_store": {
   "minBlocks": {
-   "ca_certificates_bundle_source": 1
+   "ca_certificates_bundle_source": 1,
+   "ca_certificates_bundle_source.ca_certificates_bundle_s3_location": 1
   }
  },
  "aws_cloudfront_vpc_origin": {
   "minBlocks": {
-   "vpc_origin_endpoint_config": 1
+   "vpc_origin_endpoint_config": 1,
+   "vpc_origin_endpoint_config.origin_ssl_protocols": 1
   }
  },
  "aws_cloudhsm_v2_hsm": {
@@ -426,8 +517,12 @@ export const DISCOVERED_RULES      = {
  "aws_cognito_managed_user_pool_client": {
   "oneOf": [
    [
-    "name_pattern.<.name_prefix",
-    "name_pattern.<.name_pattern"
+    "name_prefix",
+    "name_pattern"
+   ],
+   [
+    "name_prefix",
+    "name_pattern"
    ]
   ]
  },
@@ -459,7 +554,18 @@ export const DISCOVERED_RULES      = {
  "aws_computeoptimizer_recommendation_preferences": {
   "minBlocks": {
    "scope": 1
-  }
+  },
+  "oneOf": [
+   [
+    "enhanced_infrastructure_metrics",
+    "external_metrics_preference",
+    "inferred_workload_types",
+    "look_back_period",
+    "preferred_resource",
+    "savings_estimation_mode",
+    "utilization_preference"
+   ]
+  ]
  },
  "aws_config_aggregate_authorization": {
   "oneOf": [
@@ -488,7 +594,10 @@ export const DISCOVERED_RULES      = {
  "aws_dataexchange_event_action": {
   "minBlocks": {
    "action": 1,
-   "event": 1
+   "event": 1,
+   "action.export_revision_to_s3": 1,
+   "event.revision_published": 1,
+   "action.export_revision_to_s3.revision_destination": 1
   }
  },
  "aws_datasync_location_fsx_ontap_file_system": {
@@ -511,7 +620,26 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "detail.add_to_project_member_pool",
+    "detail.create_asset_type",
+    "detail.create_domain_unit",
+    "detail.create_environment",
+    "detail.create_environment_from_blueprint",
+    "detail.create_environment_profile",
+    "detail.create_form_type",
+    "detail.create_glossary",
+    "detail.create_project",
+    "detail.create_project_from_project_profile",
+    "detail.delegate_create_environment_profile",
+    "detail.override_domain_unit_owners",
+    "detail.override_project_owners",
+    "detail.use_asset_type"
+   ],
+   [
+    "principal.domain_unit",
+    "principal.group",
+    "principal.project",
+    "principal.user"
    ]
   ]
  },
@@ -525,7 +653,8 @@ export const DISCOVERED_RULES      = {
  },
  "aws_devopsguru_event_sources_config": {
   "minBlocks": {
-   "event_sources": 1
+   "event_sources": 1,
+   "event_sources.amazon_code_guru_profiler": 1
   }
  },
  "aws_devopsguru_notification_channel": {
@@ -554,7 +683,17 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "settings.doc_db_settings",
+    "settings.ibm_db2_luw_settings",
+    "settings.ibm_db2_zos_settings",
+    "settings.maria_db_settings",
+    "settings.microsoft_sql_server_settings",
+    "settings.mongo_db_settings",
+    "settings.mysql_settings",
+    "settings.oracle_settings",
+    "settings.postgresql_settings",
+    "settings.redshift_settings",
+    "settings.sybase_ase_settings"
    ]
   ]
  },
@@ -678,6 +817,16 @@ export const DISCOVERED_RULES      = {
    ]
   ]
  },
+ "aws_ec2_instance_metadata_defaults": {
+  "oneOf": [
+   [
+    "http_endpoint",
+    "http_put_response_hop_limit",
+    "http_tokens",
+    "instance_metadata_tags"
+   ]
+  ]
+ },
  "aws_ec2_traffic_mirror_target": {
   "oneOf": [
    [
@@ -759,7 +908,8 @@ export const DISCOVERED_RULES      = {
  },
  "aws_fsx_s3_access_point_attachment": {
   "minBlocks": {
-   "openzfs_configuration": 1
+   "openzfs_configuration": 1,
+   "openzfs_configuration.file_system_identity": 1
   }
  },
  "aws_gamelift_fleet": {
@@ -780,6 +930,15 @@ export const DISCOVERED_RULES      = {
    [
     "storage_location",
     "zip_file"
+   ]
+  ]
+ },
+ "aws_glue_catalog": {
+  "oneOf": [
+   [
+    "federated_catalog",
+    "target_redshift_catalog",
+    "catalog_properties.data_lake_access_properties"
    ]
   ]
  },
@@ -804,7 +963,8 @@ export const DISCOVERED_RULES      = {
  },
  "aws_guardduty_malware_protection_plan": {
   "minBlocks": {
-   "protected_resource": 1
+   "protected_resource": 1,
+   "protected_resource.s3_bucket": 1
   }
  },
  "aws_iam_policy_attachment": {
@@ -851,7 +1011,9 @@ export const DISCOVERED_RULES      = {
  "aws_imagebuilder_lifecycle_policy": {
   "minBlocks": {
    "policy_detail": 1,
-   "resource_selection": 1
+   "resource_selection": 1,
+   "policy_detail.filter": 1,
+   "policy_detail.action": 1
   }
  },
  "aws_imagebuilder_workflow": {
@@ -910,8 +1072,19 @@ export const DISCOVERED_RULES      = {
  },
  "aws_lakeformation_data_cells_filter": {
   "minBlocks": {
-   "table_data": 1
-  }
+   "table_data": 1,
+   "table_data.row_filter": 1
+  },
+  "oneOf": [
+   [
+    "table_data.column_names",
+    "table_data.column_wildcard"
+   ],
+   [
+    "table_data.row_filter.filter_expression",
+    "table_data.row_filter.all_rows_wildcard"
+   ]
+  ]
  },
  "aws_lakeformation_lf_tag_expression": {
   "minBlocks": {
@@ -921,7 +1094,20 @@ export const DISCOVERED_RULES      = {
  "aws_lakeformation_opt_in": {
   "minBlocks": {
    "principal": 1
-  }
+  },
+  "oneOf": [
+   [
+    "resource_data.catalog",
+    "resource_data.data_cells_filter",
+    "resource_data.data_location",
+    "resource_data.database",
+    "resource_data.lf_tag",
+    "resource_data.lf_tag_expression",
+    "resource_data.lf_tag_policy",
+    "resource_data.table",
+    "resource_data.table_with_columns"
+   ]
+  ]
  },
  "aws_lakeformation_permissions": {
   "oneOf": [
@@ -940,7 +1126,14 @@ export const DISCOVERED_RULES      = {
  "aws_lakeformation_resource_lf_tag": {
   "minBlocks": {
    "lf_tag": 1
-  }
+  },
+  "oneOf": [
+   [
+    "database",
+    "table",
+    "table_with_columns"
+   ]
+  ]
  },
  "aws_lakeformation_resource_lf_tags": {
   "oneOf": [
@@ -977,7 +1170,13 @@ export const DISCOVERED_RULES      = {
  "aws_lambda_function_scaling_config": {
   "minBlocks": {
    "function_scaling_config": 1
-  }
+  },
+  "oneOf": [
+   [
+    "min_execution_environments",
+    "max_execution_environments"
+   ]
+  ]
  },
  "aws_lambdacore_network_connector": {
   "minBlocks": {
@@ -985,7 +1184,7 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "configuration.vpc_egress_configuration"
    ]
   ]
  },
@@ -1018,14 +1217,26 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "definition.content",
+    "definition.s3_location"
    ]
   ]
  },
  "aws_msk_channel": {
   "minBlocks": {
-   "topic_configuration": 1
-  }
+   "topic_configuration": 1,
+   "topic_configuration.record_converter": 1,
+   "iceberg_destination.destination_table": 1,
+   "iceberg_destination.schema_evolution": 1,
+   "iceberg_destination.table_creation": 1,
+   "iceberg_destination.dead_letter_queue_s3": 1
+  },
+  "oneOf": [
+   [
+    "iceberg_destination",
+    "s3_destination"
+   ]
+  ]
  },
  "aws_msk_replicator": {
   "minBlocks": {
@@ -1071,8 +1282,17 @@ export const DISCOVERED_RULES      = {
  },
  "aws_networkfirewall_tls_inspection_configuration": {
   "minBlocks": {
-   "tls_inspection_configuration": 1
-  }
+   "tls_inspection_configuration": 1,
+   "tls_inspection_configuration.server_certificate_configuration": 1,
+   "tls_inspection_configuration.server_certificate_configuration.scope": 1,
+   "tls_inspection_configuration.server_certificate_configuration.scope.destination": 1
+  },
+  "oneOf": [
+   [
+    "tls_inspection_configuration.server_certificate_configuration.certificate_authority_arn",
+    "tls_inspection_configuration.server_certificate_configuration.server_certificate"
+   ]
+  ]
  },
  "aws_networkfirewall_vpc_endpoint_association": {
   "minBlocks": {
@@ -1086,12 +1306,16 @@ export const DISCOVERED_RULES      = {
  },
  "aws_networkflowmonitor_scope": {
   "minBlocks": {
-   "target": 1
+   "target": 1,
+   "target.target_identifier": 1,
+   "target.target_identifier.target_id": 1
   }
  },
  "aws_observabilityadmin_centralization_rule_for_organization": {
   "minBlocks": {
-   "rule": 1
+   "rule": 1,
+   "rule.destination": 1,
+   "rule.source": 1
   }
  },
  "aws_observabilityadmin_s3_table_integration": {
@@ -1129,12 +1353,24 @@ export const DISCOVERED_RULES      = {
    "data_collection_options": 1
   }
  },
+ "aws_odb_network_peering_connection": {
+  "oneOf": [
+   [
+    "odb_network_id",
+    "odb_network_arn"
+   ]
+  ]
+ },
  "aws_opensearchserverless_security_config": {
   "oneOf": [
    [
     "iam_federation_options",
     "iam_identity_center_options",
     "saml_options"
+   ],
+   [
+    "iam_federation_options.group_attribute",
+    "iam_federation_options.user_attribute"
    ]
   ]
  },
@@ -1146,20 +1382,35 @@ export const DISCOVERED_RULES      = {
    ]
   ]
  },
+ "aws_pinpointsmsvoicev2_event_destination": {
+  "oneOf": [
+   [
+    "cloudwatch_logs_destination",
+    "kinesis_firehose_destination",
+    "sns_destination"
+   ]
+  ]
+ },
  "aws_prometheus_anomaly_detector": {
   "minBlocks": {
    "configuration": 1,
-   "missing_data_action": 1
+   "missing_data_action": 1,
+   "configuration.random_cut_forest": 1
   },
   "oneOf": [
    [
-    "0"
+    "missing_data_action.skip"
+   ],
+   [
+    "missing_data_action.mark_as_anomaly"
    ]
   ]
  },
  "aws_prometheus_query_logging_configuration": {
   "minBlocks": {
-   "destination": 1
+   "destination": 1,
+   "destination.cloudwatch_logs": 1,
+   "destination.filters": 1
   }
  },
  "aws_prometheus_scraper": {
@@ -1168,13 +1419,15 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "destination.amp",
+    "destination.cloudwatch"
    ]
   ]
  },
  "aws_prometheus_scraper_logging_configuration": {
   "minBlocks": {
-   "logging_destination": 1
+   "logging_destination": 1,
+   "logging_destination.cloudwatch_logs": 1
   }
  },
  "aws_qbusiness_application": {
@@ -1237,7 +1490,8 @@ export const DISCOVERED_RULES      = {
  },
  "aws_quicksight_refresh_schedule": {
   "minBlocks": {
-   "schedule": 1
+   "schedule": 1,
+   "schedule.schedule_frequency": 1
   }
  },
  "aws_quicksight_template": {
@@ -1245,6 +1499,15 @@ export const DISCOVERED_RULES      = {
    [
     "definition",
     "source_entity"
+   ]
+  ]
+ },
+ "aws_redshift_data_share_consumer_association": {
+  "oneOf": [
+   [
+    "associate_entire_account",
+    "consumer_arn",
+    "consumer_region"
    ]
   ]
  },
@@ -1261,7 +1524,8 @@ export const DISCOVERED_RULES      = {
   "minBlocks": {
    "input": 1,
    "output": 1,
-   "settings": 1
+   "settings": 1,
+   "input.kinesis_video_stream": 1
   }
  },
  "aws_resiliencehubv2_input_source": {
@@ -1270,7 +1534,21 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "resource_configuration.cfn_stack_arn",
+    "resource_configuration.design_file_s3_url",
+    "resource_configuration.eks",
+    "resource_configuration.resource_tag",
+    "resource_configuration.tf_state_file_url"
+   ]
+  ]
+ },
+ "aws_resiliencehubv2_policy": {
+  "oneOf": [
+   [
+    "availability_slo",
+    "data_recovery",
+    "multi_az",
+    "multi_region"
    ]
   ]
  },
@@ -1360,7 +1638,10 @@ export const DISCOVERED_RULES      = {
  },
  "aws_s3_bucket_metadata_configuration": {
   "minBlocks": {
-   "metadata_configuration": 1
+   "metadata_configuration": 1,
+   "metadata_configuration.inventory_table_configuration": 1,
+   "metadata_configuration.journal_table_configuration": 1,
+   "metadata_configuration.journal_table_configuration.record_expiration": 1
   }
  },
  "aws_s3_directory_bucket": {
@@ -1385,7 +1666,8 @@ export const DISCOVERED_RULES      = {
  },
  "aws_sagemaker_algorithm": {
   "minBlocks": {
-   "training_specification": 1
+   "training_specification": 1,
+   "training_specification.training_channels": 1
   }
  },
  "aws_sagemaker_app": {
@@ -1406,14 +1688,17 @@ export const DISCOVERED_RULES      = {
  },
  "aws_sagemaker_hyper_parameter_tuning_job": {
   "minBlocks": {
-   "config": 1
+   "config": 1,
+   "config.resource_limits": 1
   }
  },
  "aws_sagemaker_labeling_job": {
   "minBlocks": {
    "input_config": 1,
    "output_config": 1,
-   "human_task_config": 1
+   "human_task_config": 1,
+   "human_task_config.ui_config": 1,
+   "input_config.data_source": 1
   }
  },
  "aws_sagemaker_model_card_export_job": {
@@ -1466,7 +1751,8 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "connector_provider.jira_cloud",
+    "connector_provider.service_now"
    ]
   ]
  },
@@ -1477,7 +1763,9 @@ export const DISCOVERED_RULES      = {
  },
  "aws_securitylake_custom_log_source": {
   "minBlocks": {
-   "configuration": 1
+   "configuration": 1,
+   "configuration.crawler_configuration": 1,
+   "configuration.provider_identity": 1
   }
  },
  "aws_securitylake_data_lake": {
@@ -1521,6 +1809,14 @@ export const DISCOVERED_RULES      = {
    [
     "template_physical_id",
     "template_url"
+   ]
+  ]
+ },
+ "aws_servicequotas_template": {
+  "oneOf": [
+   [
+    "aws_region",
+    "region"
    ]
   ]
  },
@@ -1587,7 +1883,8 @@ export const DISCOVERED_RULES      = {
  },
  "aws_ssoadmin_trusted_token_issuer": {
   "minBlocks": {
-   "trusted_token_issuer_configuration": 1
+   "trusted_token_issuer_configuration": 1,
+   "trusted_token_issuer_configuration.oidc_jwt_configuration": 1
   }
  },
  "aws_storagegateway_gateway": {
@@ -1611,8 +1908,19 @@ export const DISCOVERED_RULES      = {
    "notification_configuration": 1,
    "schedule_configuration": 1,
    "target_configuration": 1,
-   "error_report_configuration": 1
-  }
+   "error_report_configuration": 1,
+   "notification_configuration.sns_configuration": 1,
+   "target_configuration.timestream_configuration": 1,
+   "error_report_configuration.s3_configuration": 1,
+   "target_configuration.timestream_configuration.dimension_mapping": 1
+  },
+  "oneOf": [
+   [
+    "target_configuration.timestream_configuration.mixed_measure_mapping",
+    "target_configuration.timestream_configuration.multi_measure_mappings",
+    "target_configuration.timestream_configuration"
+   ]
+  ]
  },
  "aws_transcribe_vocabulary": {
   "oneOf": [
@@ -1654,7 +1962,8 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "definition.template_linked",
+    "definition.static"
    ]
   ]
  },
@@ -1667,6 +1976,14 @@ export const DISCOVERED_RULES      = {
   "minBlocks": {
    "definition": 1
   }
+ },
+ "aws_vpc_block_public_access_exclusion": {
+  "oneOf": [
+   [
+    "subnet_id",
+    "vpc_id"
+   ]
+  ]
  },
  "aws_vpc_dhcp_options": {
   "oneOf": [
@@ -1693,6 +2010,26 @@ export const DISCOVERED_RULES      = {
    "bgp_options": 1
   }
  },
+ "aws_vpc_security_group_egress_rule": {
+  "oneOf": [
+   [
+    "cidr_ipv4",
+    "cidr_ipv6",
+    "prefix_list_id",
+    "referenced_security_group_id"
+   ]
+  ]
+ },
+ "aws_vpc_security_group_ingress_rule": {
+  "oneOf": [
+   [
+    "cidr_ipv4",
+    "cidr_ipv6",
+    "prefix_list_id",
+    "referenced_security_group_id"
+   ]
+  ]
+ },
  "aws_vpclattice_listener": {
   "oneOf": [
    [
@@ -1717,17 +2054,23 @@ export const DISCOVERED_RULES      = {
  "aws_vpclattice_resource_configuration": {
   "oneOf": [
    [
-    "resource_configuration_group_id.<.resource_gateway_identifier"
+    "resource_gateway_identifier"
+   ],
+   [
+    "resource_gateway_identifier"
+   ],
+   [
+    "protocol",
+    "resource_configuration_group_id",
+    "resource_configuration_definition.arn_resource"
    ]
   ]
  },
  "aws_wafv2_web_acl_rule_group_association": {
   "oneOf": [
    [
-    "rule_group_reference.<.managed_rule_group"
-   ],
-   [
-    "managed_rule_group.<.rule_group_reference"
+    "rule_group_reference",
+    "managed_rule_group"
    ]
   ]
  },
@@ -1743,7 +2086,8 @@ export const DISCOVERED_RULES      = {
   },
   "oneOf": [
    [
-    "0"
+    "event_filter.all",
+    "event_filter.include"
    ]
   ]
  },
@@ -1895,6 +2239,12 @@ export const DISCOVERED_RULES      = {
     "certificate_blob_base64",
     "certificate_key_vault"
    ]
+  ],
+  "allOf": [
+   [
+    "certificate_blob_base64",
+    "certificate_password"
+   ]
   ]
  },
  "azurerm_container_app_job": {
@@ -1997,6 +2347,13 @@ export const DISCOVERED_RULES      = {
     "tenant",
     "use_managed_identity"
    ]
+  ],
+  "allOf": [
+   [
+    "service_principal_id",
+    "service_principal_key",
+    "tenant"
+   ]
   ]
  },
  "azurerm_data_factory_linked_service_kusto": {
@@ -2004,6 +2361,12 @@ export const DISCOVERED_RULES      = {
    [
     "service_principal_id",
     "use_managed_identity"
+   ]
+  ],
+  "allOf": [
+   [
+    "service_principal_id",
+    "service_principal_key"
    ]
   ]
  },
@@ -2251,6 +2614,12 @@ export const DISCOVERED_RULES      = {
    [
     "storage_account_name",
     "storage_key_vault_secret_id"
+   ]
+  ],
+  "allOf": [
+   [
+    "storage_account_access_key",
+    "storage_account_name"
    ]
   ]
  },
@@ -2517,6 +2886,12 @@ export const DISCOVERED_RULES      = {
     "identity",
     "service_principal"
    ]
+  ],
+  "allOf": [
+   [
+    "identity",
+    "platform_workload_identity_profile"
+   ]
   ]
  },
  "azurerm_resource_deployment_script_azure_cli": {
@@ -2573,6 +2948,12 @@ export const DISCOVERED_RULES      = {
     "blob_uri",
     "managed_image_id",
     "os_disk_snapshot_id"
+   ]
+  ],
+  "allOf": [
+   [
+    "blob_uri",
+    "storage_account_id"
    ]
   ]
  },
@@ -2749,6 +3130,12 @@ export const DISCOVERED_RULES      = {
    [
     "admin_username",
     "os_managed_disk_id"
+   ]
+  ],
+  "allOf": [
+   [
+    "admin_password",
+    "admin_username"
    ]
   ]
  },
