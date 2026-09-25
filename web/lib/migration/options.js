@@ -27,7 +27,7 @@ export const CLOUDS = ['aws', 'azure', 'gcp', 'oci']         ;
 export const CLOUD_LABELS                                  = {
   aws: 'AWS',
   azure: 'Azure',
-  gcp: 'Google Cloud',
+  gcp: 'Google Cloud (GCP)',
   oci: 'Oracle Cloud',
 };
 

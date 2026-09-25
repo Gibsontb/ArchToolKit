@@ -606,6 +606,6 @@ const BLUEPRINTS: readonly Blueprint[] = [
 
 export const GCP_ANSIBLE: BlueprintGroup = {
   target: 'google',
-  label: 'Google Cloud Platform',
+  label: 'Google Cloud Platform (GCP)',
   blueprints: BLUEPRINTS,
 };

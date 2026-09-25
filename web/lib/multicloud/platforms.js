@@ -63,7 +63,7 @@ export const PLATFORM_INFO                                           = {
   },
   google: {
     platform: 'google',
-    label: 'Google Cloud',
+    label: 'Google Cloud Platform (GCP)',
     shortLabel: 'Google Cloud',
     terraform: 'google',
     ansible: 'google',

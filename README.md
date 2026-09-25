@@ -128,7 +128,7 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | VCF 9.1 `SddcSpec` builder | Working — all 8 documented deployment scenarios |
 | VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
 | Multi-cloud decision matrix | Working — explainable routing across VCF, AWS, Azure, Google Cloud and OCI |
-| Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up |
+| Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up, every resource of the six VMware providers, Linux and Windows OS builds |
 | Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks |
 | Application migration and modernization | Working — single-application evaluation and portfolio wave planning |
 | Data editor | Working — JSON and YAML for VCF, Ansible, Terraform, AWS, Google, Azure, Oracle, F5 and Kubernetes |
@@ -152,6 +152,59 @@ for the components 9.1 added, and each of those is named in the findings.
 Credentials are never written into generated files. Each provider's own
 authentication method is described in a comment, and the VCF emitter turns every
 password into a `sensitive` variable.
+
+### VMware: every resource, every argument
+
+The two VMware platforms on the Terraform page cover the whole VMware stack:
+
+| Platform | Providers |
+| --- | --- |
+| VMware vSphere / vCenter | `vmware/vsphere` |
+| VMware Cloud Foundation | `vmware/vcf` (SDDC Manager), `vmware/nsxt` (NSX), `vmware/avi` (Avi Load Balancer), `vmware/vra` (VCF Automation), `vmware/vcd` (Cloud Director) |
+
+Each product offers two kinds of blueprint, under its own headings in the picker:
+
+- **Scenarios** — hand-written builds of several resources together: a VM cloned
+  and customised from a template, a cluster with HA, DRS and its hosts, a
+  distributed switch and its port groups, a Tier-1 gateway with segments and a
+  three-tier distributed firewall, an Avi virtual service with its pool and
+  health monitor, a workload domain, a tenant organization and VDC.
+- **One blueprint per resource** — all ~600 resources the six providers have,
+  each with every argument it takes as a field: required ones up top, optional
+  ones in a collapsible section, nested blocks behind a tick box. Arguments the
+  documentation gives a closed set for are dropdowns. A sensitive argument is
+  never a text box, and a required argument left empty becomes a variable.
+  Any field takes a reference (`data.vsphere_datacenter.dc.id`, `var.x`) as
+  well as a value.
+
+The per-resource forms are generated from `src/terraform/vmware-schema-data.ts`,
+which `npm run schemas:update` (step 6 of `update-catalog.bat`) rewrites from
+`terraform providers schema -json` — the providers' own schema — and their
+registry documentation. Nothing about an argument is transcribed by hand.
+
+    npm run terraform:validate              (-- --scenarios, -- --only nsx_)
+
+runs real `terraform validate`, with the real providers, over what every VMware,
+Linux and Windows blueprint generates — each scenario once per choice of every dropdown and yes/no,
+so a branch the defaults never take is checked too. It needs the terraform CLI.
+
+### Linux and Windows
+
+Terraform does not configure an operating system the way Ansible does, but it
+owns the pieces around one, and the two OS platforms offer those the same way —
+scenarios first, then every resource of every provider involved, generated from
+`src/terraform/os-schema-data.ts`:
+
+| Platform | Providers |
+| --- | --- |
+| Linux | `hashicorp/cloudinit`, `hashicorp/tls`, `hashicorp/dns` (TSIG, for BIND), `ansible/ansible`, `hashicorp/local`, `hashicorp/random`, `hashicorp/null` |
+| Windows | `hashicorp/ad` (Active Directory over WinRM), `hashicorp/dns` (GSS-TSIG, for AD-integrated zones), `hashicorp/tls`, `ansible/ansible`, `hashicorp/local`, `hashicorp/random`, `hashicorp/null` |
+
+The scenarios cover cloud-init for a new VM, SSH keys, an internal CA, DNS
+records, Ansible runs, bootstrap and hardening over SSH, domain joins, Active
+Directory OUs, groups, users and GPOs, and roles and features over WinRM.
+Passwords are generated with `random_password` or read from sensitive variables;
+none is ever a default.
 
 ## Ansible authoring
 
@@ -196,8 +249,8 @@ Details in `docs/multicloud-matrix.md`.
 ## Catalogs
 
 Both kits hand-write the parts worth getting exactly right and consult a catalog
-for the rest — roughly 5,000 Terraform resources and 4,000 data sources across
-six providers, and 3,929 Ansible modules across eleven collections. Far too many
+for the rest — roughly 5,600 Terraform resources and 4,500 data sources across
+ten providers, and 3,929 Ansible modules across eleven collections. Far too many
 to maintain by hand, and changing with every release.
 
     update-catalog.bat        (or: npm run catalog:update, npm run ansible:update)

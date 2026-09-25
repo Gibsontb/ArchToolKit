@@ -133,7 +133,7 @@ export const COLLECTIONS                            = [
   {
     name: 'google.cloud',
     target: 'google',
-    label: 'Google Cloud',
+    label: 'Google Cloud (GCP)',
     version: '>=1.14.0,<2.0.0',
     observedVersion: '1.14.0',
     credentials:

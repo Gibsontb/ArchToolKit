@@ -111,7 +111,9 @@ function matchBrace(text: string, open: number): number {
   let i = open;
   while (i < text.length) {
     const c = text[i] as string;
-    if (c === '"' || c === "'") {
+    // HCL strings are double-quoted only: an apostrophe is just a character,
+    // and treating it as a quote swallowed everything up to the next one.
+    if (c === '"') {
       i = skipString(text, i);
       continue;
     }
@@ -152,9 +154,13 @@ function skipHeredoc(text: string, start: number): number {
   const m = /^<<[-~]?([A-Za-z_][A-Za-z0-9_]*)\n/.exec(text.slice(start));
   if (!m) return start + 2;
   const marker = m[1] as string;
-  const body = text.indexOf(`\n${marker}`, start + m[0].length - 1);
-  if (body === -1) return text.length;
-  return body + marker.length + 1;
+  // `<<-EOT` lets the closing marker be indented, so it is found with its
+  // leading whitespace, alone on its line.
+  const close = new RegExp(`\\n[ \\t]*${marker}[ \\t]*(?=\\r?\\n|$)`, 'g');
+  close.lastIndex = start + m[0].length - 1;
+  const found = close.exec(text);
+  if (!found) return text.length;
+  return found.index + found[0].length;
 }
 
 // ---------------------------------------------------------------------------

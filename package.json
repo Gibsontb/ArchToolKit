@@ -25,6 +25,8 @@
     "sizes:update": "node tools/fetch-compute-catalog.mjs",
     "modules:update": "node tools/fetch-module-catalog.mjs",
     "editor:update": "node tools/fetch-editor-schemas.mjs",
+    "schemas:update": "node tools/fetch-provider-schemas.mjs",
+    "terraform:validate": "node tools/validate-terraform-blueprints.mjs",
     "verify:schemas": "node tools/verify-foundation-schemas.mjs"
   },
   "comments": {

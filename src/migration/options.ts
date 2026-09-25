@@ -27,7 +27,7 @@ export type Cloud = (typeof CLOUDS)[number];
 export const CLOUD_LABELS: Readonly<Record<Cloud, string>> = {
   aws: 'AWS',
   azure: 'Azure',
-  gcp: 'Google Cloud',
+  gcp: 'Google Cloud (GCP)',
   oci: 'Oracle Cloud',
 };
 

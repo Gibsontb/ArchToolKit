@@ -35,10 +35,19 @@ const SOURCES = {
   oci: 'oracle/oci',
   vsphere: 'vmware/vsphere',
   vcf: 'vmware/vcf',
+  // The rest of the VMware stack. Not platforms of their own: their
+  // blueprints sit under VCF, and these entries let the catalog check them.
+  nsxt: 'vmware/nsxt',
+  avi: 'vmware/avi',
+  vra: 'vmware/vra',
+  vcd: 'vmware/vcd',
 };
 
 /** The prefix every resource of a provider carries. */
-const PREFIX = { aws: 'aws_', azure: 'azurerm_', google: 'google_', oci: 'oci_', vsphere: 'vsphere_', vcf: 'vcf_' };
+const PREFIX = {
+  aws: 'aws_', azure: 'azurerm_', google: 'google_', oci: 'oci_', vsphere: 'vsphere_', vcf: 'vcf_',
+  nsxt: 'nsxt_', avi: 'avi_', vra: 'vra_', vcd: 'vcd_',
+};
 
 /**
  * Registry slugs are inconsistent: usually the name without the provider

@@ -92,7 +92,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     source: 'hashicorp/google',
     version: '~> 8.3',
     observedVersion: '8.3.0',
-    label: 'Google Cloud',
+    label: 'Google Cloud Platform (GCP)',
     configuration: [
       { name: 'project', description: 'Target project id.' },
       { name: 'region', description: 'Default region, e.g. us-central1.' },

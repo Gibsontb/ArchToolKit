@@ -1,70 +1,30 @@
 /**
  * Windows OS configuration Terraform blueprints.
  *
- * Ported from the previous toolkit's TERRA_DEFS — the inputs and the HCL
- * templates are the originals, unchanged. What is new around them: the inputs
- * are typed, so a one-of choice is a dropdown rather than a text box, and every
- * resource type a blueprint emits is checked against the committed provider
- * catalog by the test suite.
+ * Terraform does not configure an operating system the way Ansible or DSC
+ * does, but it owns the pieces around one, and those are what is offered here:
+ *
+ *  - Scenarios, written out by hand (windows-scenarios.ts): Active Directory
+ *    OUs, groups, users, computers and GPOs; Windows DNS records over
+ *    Kerberos; roles and features, domain join and IIS over WinRM; an Ansible
+ *    playbook run against Windows hosts.
+ *  - One blueprint per resource in each provider a Windows build uses —
+ *    Active Directory, DNS (GSS-TSIG, for AD-integrated zones), TLS, Ansible,
+ *    local files, random, null — with every argument it takes
+ *    (schema-blueprints.ts).
+ *
+ * Every scenario is run through `terraform validate` with the real providers
+ * by tools/validate-terraform-blueprints.mjs.
  */
 
-import type { Blueprint, BlueprintGroup, BlueprintValues, TemplateValues } from '../../kit/blueprint.ts';
-import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, GCP_ZONES, OCI_REGIONS } from './regions.ts';
+import type { BlueprintGroup } from '../../kit/blueprint.ts';
+import { providerBlueprints, type OsProvider } from '../schema-blueprints.ts';
+import { WINDOWS_SCENARIOS } from './windows-scenarios.ts';
 
-const BLUEPRINTS: readonly Blueprint[] = [
-  {
-    id: 'windows_null_winrm_exec',
-    label: 'Remote-exec on Windows host (WinRM)',
-    description: 'Terraform null_resource using WinRM to run a bootstrap PowerShell script on Windows.',
-    inputs: [
-            { id: "host", label: "Target host (IP / DNS)", control: 'text', default: "10.0.0.20", hint: "Windows host address" },
-            { id: "user", label: "WinRM username", control: 'text', default: "CORP\\administrator", hint: "Domain or local user" },
-            { id: "password", label: "WinRM password", control: 'text', default: "CHANGEME", hint: "Secure with env vars / cloud secrets" },
-            { id: "inline_command", label: "PowerShell command", control: 'text', default: "Install-WindowsFeature -Name Web-Server", hint: "Bootstrap command" }
-          ],
-    emits: [],
-    build: (values: BlueprintValues, name: string) => ({
-      files: {
-        'main.tf': ((vals: TemplateValues, moduleName: string): string => {
-            const m = moduleName || "windows_null_winrm_exec";
-            return `terraform {
-  required_providers {
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.0"
-    }
-  }
-}
-
-resource "null_resource" "windows_bootstrap" {
-  provisioner "remote-exec" {
-    inline = [
-      "powershell -Command \\"${vals.inline_command}\\""
-    ]
-
-    connection {
-      type     = "winrm"
-      host     = "${vals.host}"
-      user     = "${vals.user}"
-      password = "${vals.password}"
-      https    = false
-      insecure = true
-    }
-  }
-
-  triggers = {
-    system = "${m}"
-  }
-}
-`;
-          })(values, name),
-      },
-    }),
-  },
-];
+const PROVIDERS: readonly OsProvider[] = ['ad', 'dns', 'tls', 'ansible', 'local', 'random', 'null'];
 
 export const WINDOWS_TERRAFORM: BlueprintGroup = {
   target: 'windows',
   label: 'Windows OS configuration',
-  blueprints: BLUEPRINTS,
+  blueprints: [...WINDOWS_SCENARIOS, ...PROVIDERS.flatMap((p) => providerBlueprints(p, 'win'))],
 };

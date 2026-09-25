@@ -143,6 +143,6 @@ resource "google_storage_bucket" "this" {
 
 export const GCP_TERRAFORM: BlueprintGroup = {
   target: 'google',
-  label: 'Google Cloud Platform',
+  label: 'Google Cloud Platform (GCP)',
   blueprints: BLUEPRINTS,
 };

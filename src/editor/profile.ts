@@ -23,7 +23,7 @@ export const FAMILY_LABELS: Readonly<Record<Family, string>> = {
   ansible: 'Ansible',
   terraform: 'Terraform',
   aws: 'AWS',
-  google: 'Google Cloud',
+  google: 'Google Cloud (GCP)',
   azure: 'Azure',
   oracle: 'Oracle Cloud',
   f5: 'F5 BIG-IP',

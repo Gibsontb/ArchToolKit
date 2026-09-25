@@ -8,6 +8,7 @@ import { NETWORK_BLUEPRINTS } from '../network/blueprints/index.ts';
 import { SCRIPT_BLUEPRINTS } from '../scripts/blueprints/index.ts';
 import { SPLUNK_BLUEPRINTS } from '../splunk/blueprints/index.ts';
 import { CATALOG_DATA } from '../terraform/catalog-data.ts';
+import { VMWARE_SCHEMA_DATA } from '../terraform/vmware-schema-data.ts';
 import { collectModules } from '../ansible/from-plays.ts';
 
 const ALL = [...TERRAFORM_BLUEPRINTS, ...ANSIBLE_BLUEPRINTS];
@@ -208,10 +209,18 @@ describe('kit/blueprint: the catalogs check the blueprints', () => {
    * renames something fails here rather than at plan time or on the first task.
    */
   it('emits only Terraform resource types the provider catalog holds', () => {
-    const have: Record<string, Set<string>> = {};
+    // Every catalogued resource, whichever provider has it: the VCF platform
+    // builds with five providers (vcf, nsxt, avi, vra, vcd), not one.
+    const known = new Set<string>();
     for (const [target, entry] of Object.entries(CATALOG_DATA)) {
       const prefix = target === 'azure' ? 'azurerm_' : `${target}_`;
-      have[target] = new Set(entry.resources.split(',').map((n) => prefix + n));
+      for (const n of entry.resources.split(',')) known.add(prefix + n);
+    }
+    // The providers' own schemas list a few resources their documentation
+    // does not (vsphere_distributed_virtual_switch_pvlan_mapping), and the
+    // schema is what `terraform validate` checks against.
+    for (const provider of Object.values(VMWARE_SCHEMA_DATA as Record<string, { resources: Record<string, unknown> }>)) {
+      for (const type of Object.keys(provider.resources)) known.add(type);
     }
     const unknown: string[] = [];
     for (const group of TERRAFORM_BLUEPRINTS) {
@@ -222,7 +231,7 @@ describe('kit/blueprint: the catalogs check the blueprints', () => {
         const hcl = Object.values(blueprint.build(defaultValues(blueprint), 'check').files).join('\n');
         for (const match of hcl.matchAll(/^resource\s+"([a-z0-9_]+)"/gm)) {
           const type = match[1] as string;
-          if (!have[group.target]?.has(type)) unknown.push(`${blueprint.id}: ${type}`);
+          if (!known.has(type)) unknown.push(`${blueprint.id}: ${type}`);
         }
       }
     }

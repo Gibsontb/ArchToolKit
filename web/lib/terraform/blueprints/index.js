@@ -25,6 +25,7 @@ import { AZURE_TERRAFORM } from './azure.js';
 import { GCP_TERRAFORM } from './gcp.js';
 import { OCI_TERRAFORM } from './oci.js';
 import { VMWARE_TERRAFORM } from './vmware.js';
+import { VCF_TERRAFORM } from './vmware-vcf.js';
 import { LINUX_TERRAFORM } from './linux.js';
 import { WINDOWS_TERRAFORM } from './windows.js';
 import { AWS_TERRAFORM_MODULES } from './modules-aws.js';
@@ -38,8 +39,9 @@ export { ESTATE_GROUP };
 const RESOURCES = 'Plain Terraform resources';
 const MODULES = 'Terraform Registry modules';
 
+/** Put each blueprint under a heading, unless it already names its own. */
 function labelled(blueprints                      , group        )                       {
-  return blueprints.map((blueprint) => ({ ...blueprint, group }));
+  return blueprints.map((blueprint) => ({ ...blueprint, group: blueprint.group ?? group }));
 }
 
 /**
@@ -84,6 +86,7 @@ export const TERRAFORM_BLUEPRINTS                            = withRootModuleLay
       combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')]),
       combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')]),
       combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING]),
+      combine(VCF_TERRAFORM, undefined),
       combine(LINUX_TERRAFORM, undefined),
       combine(WINDOWS_TERRAFORM, undefined),
     ],

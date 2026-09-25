@@ -606,6 +606,6 @@ const BLUEPRINTS                       = [
 
 export const GCP_ANSIBLE                 = {
   target: 'google',
-  label: 'Google Cloud Platform',
+  label: 'Google Cloud Platform (GCP)',
   blueprints: BLUEPRINTS,
 };
