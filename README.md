@@ -214,6 +214,11 @@ filled in, reads the errors, and records each rule in
 `src/terraform/resource-rules-data.ts` until a round finds nothing new. Re-run it
 after refreshing the schemas.
 
+`update-terraform.bat` does the whole refresh in one go — resource catalog,
+provider schemas, rule discovery, `terraform validate` over every blueprint on
+every platform, the rebuild and the tests — stops at the first failure, and
+asks before it commits and pushes. About two hours; needs Node, terraform and git.
+
 ### Linux and Windows
 
 Terraform does not configure an operating system the way Ansible does, but it
