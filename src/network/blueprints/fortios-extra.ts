@@ -436,6 +436,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
       { id: 'domain', label: 'Domain', control: 'text', default: 'corp.local' },
       { id: 'lease_seconds', label: 'Lease (seconds)', control: 'number', default: 86400, min: 300 },
       { id: 'vdom', label: 'VDOM', control: 'text', default: 'root' },
+      { id: 'server_id', label: 'DHCP server entry', control: 'number', default: 1, min: 1, hint: 'The entry number under config system dhcp server (IPv4): show system dhcp server lists the ones in use' },
     ],
     change: (values: BlueprintValues): DeviceChange => {
       const iface = str(values, 'interface', 'port2');
@@ -525,7 +526,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
         before: ['show system dhcp server', 'execute dhcp lease-list', `show system interface ${iface}`],
         config: [
           'config system dhcp server',
-          '    edit 0',
+          `    edit ${num(values, 'server_id', 1)}`,
           '        set status enable',
           `        set interface "${iface}"`,
           `        set netmask ${str(values, 'netmask', '255.255.255.0')}`,
@@ -936,6 +937,7 @@ const dhcp4Push = (values: BlueprintValues) => ({
     vdom: VDOM,
     state: 'present',
     system_dhcp_server: {
+      id: num(values, 'server_id', 1),
       status: 'enable',
       interface: str(values, 'interface', 'port2'),
       netmask: str(values, 'netmask', '255.255.255.0'),

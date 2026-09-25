@@ -23,7 +23,19 @@ import { isIp, parseCidrAny } from '../core/ip.ts';
 import type { Finding } from '../core/findings.ts';
 import { info, warning } from '../core/findings.ts';
 
-export type Platform = 'cisco_ios' | 'cisco_nxos' | 'cisco_wlc' | 'cisco_asa' | 'arista_eos' | 'panos' | 'fortios' | 'f5';
+export type Platform =
+  | 'cisco_ios'
+  | 'cisco_nxos'
+  | 'cisco_iosxr'
+  | 'cisco_wlc'
+  | 'cisco_asa'
+  | 'cisco_fmc'
+  | 'arista_eos'
+  | 'juniper_junos'
+  | 'aruba_aoscx'
+  | 'panos'
+  | 'fortios'
+  | 'f5';
 
 export interface PlatformInfo {
   readonly id: Platform;
@@ -108,6 +120,52 @@ export const PLATFORMS: Readonly<Record<Platform, PlatformInfo>> = {
     extension: '.cfg',
     commentsAccepted: true,
   },
+  cisco_iosxr: {
+    id: 'cisco_iosxr',
+    label: 'Cisco IOS-XR',
+    device: 'router',
+    comment: '!',
+    collection: 'cisco.iosxr',
+    networkOs: 'cisco.iosxr.iosxr',
+    // IOS-XR stages configuration and applies it at commit; iosxr_config commits for you.
+    save: 'commit (and commit confirmed <minutes> for a change that could cut you off)',
+    extension: '.cfg',
+    commentsAccepted: true,
+  },
+  cisco_fmc: {
+    id: 'cisco_fmc',
+    label: 'Cisco Secure Firewall (FTD via FMC)',
+    device: 'Firewall Management Center',
+    comment: '//',
+    collection: 'cisco.fmcansible',
+    networkOs: 'cisco.fmcansible.fmc',
+    save: 'nothing reaches a firewall until the pending changes are deployed from FMC (Deploy, or the deployment API)',
+    extension: '.json',
+    commentsAccepted: false,
+  },
+  juniper_junos: {
+    id: 'juniper_junos',
+    label: 'Juniper Junos (EX, QFX, SRX, MX)',
+    device: 'switch, firewall or router',
+    comment: '#',
+    collection: 'junipernetworks.junos',
+    networkOs: 'junipernetworks.junos.junos',
+    save: 'commit check, then commit confirmed 5, then commit within five minutes to keep it',
+    extension: '.set',
+    // "load set terminal" and "load set <file>" skip lines starting with #.
+    commentsAccepted: true,
+  },
+  aruba_aoscx: {
+    id: 'aruba_aoscx',
+    label: 'Aruba AOS-CX',
+    device: 'switch',
+    comment: '!',
+    collection: 'arubanetworks.aoscx',
+    networkOs: 'arubanetworks.aoscx.aoscx',
+    save: 'write memory',
+    extension: '.cfg',
+    commentsAccepted: true,
+  },
   panos: {
     id: 'panos',
     label: 'Palo Alto PAN-OS',
@@ -164,6 +222,12 @@ export interface Push {
   readonly after?: readonly { readonly name: string; readonly module: string; readonly args: Readonly<Record<string, unknown>> }[];
   /** Where the play runs: the inventory group the device is in. */
   readonly hosts?: string;
+  /**
+   * Run the task once per item of this expression — the Jinja the play's
+   * `loop:` takes, e.g. `{{ lookup('file', 'fmc-change.json') | from_json }}`
+   * for an FMC change that is a list of API operations.
+   */
+  readonly loop?: string;
 }
 
 export interface DeviceChange {
@@ -344,6 +408,26 @@ export function applySteps(change: DeviceChange, file: string): string[] {
       return [
         `Paste \`${file}\` after \`configure terminal\` (or \`configure session\` to review with \`show session-config diffs\` before \`commit\`), then \`write memory\`.`,
         `Or load it: \`copy flash:${file} running-config\` after copying it to flash.`,
+      ];
+    case 'cisco_iosxr':
+      return [
+        `Paste \`${file}\` after \`configure\`, check it with \`show commit changes diff\`, then \`commit confirmed 5\`, and \`commit\` once the checks pass; the \`!\` lines are comments.`,
+        `Or load it: copy the file to disk0: and run \`load disk0:${file}\` in configuration mode, then commit the same way.`,
+      ];
+    case 'aruba_aoscx':
+      return [
+        `For a change that could cut you off, run \`checkpoint auto 5\` first. Paste \`${file}\` after \`configure terminal\`, then \`checkpoint auto confirm\` once the checks pass, and \`write memory\`.`,
+        `Or load it: \`copy sftp://<user>@<server>/${file} running-config\`.`,
+      ];
+    case 'juniper_junos':
+      return [
+        `Copy \`${file}\` to /var/tmp, then in configuration mode \`load set /var/tmp/${file}\` (or paste after \`load set terminal\`), review with \`show | compare\`, \`commit check\`, \`commit confirmed 5\`, and \`commit\` once the checks pass.`,
+        'Lines starting with # are comments; load set skips them.',
+      ];
+    case 'cisco_fmc':
+      return [
+        `\`${file}\` is a list of FMC REST API operations: run the playbook against FMC (cisco.fmcansible.fmc_configuration), or make the same changes in the FMC GUI.`,
+        'Nothing reaches a firewall until the change is deployed from FMC: Deploy, select the devices, Deploy.',
       ];
     case 'panos':
       return [

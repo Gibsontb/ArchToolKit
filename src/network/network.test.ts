@@ -81,7 +81,10 @@ describe('every blueprint', () => {
     const credential = /\b(password|secret|community|pre-shared|psk)\b/i;
     // `security wpa akm psk` selects the key-management method and names no
     // key; the key itself is a separate line and is checked like any other.
-    const safe = /send-community|password-encryption|password 7 <REQUIRED>|akm psk|akm dot1x|no security wpa/i;
+    // `private-vlan community`, a Junos `authentication-order` and an IKE
+    // `authentication-method pre-shared-keys` name a kind of thing, not a value.
+    const safe =
+      /send-community|password-encryption|password 7 <REQUIRED>|akm psk|akm dot1x|no security wpa|private-vlan community|authentication-order|authentication-method pre-shared-keys/i;
     for (const { id, change } of everyChange()) {
       for (const line of change.config) {
         if (!credential.test(line)) continue;
@@ -253,7 +256,7 @@ describe('pushing a change with Ansible', () => {
   });
 
   it('names a module in a collection the kit knows how to install', () => {
-    const known = ['cisco.ios', 'cisco.nxos', 'arista.eos', 'paloaltonetworks.panos', 'fortinet.fortios', 'f5networks.f5_modules', 'f5networks.f5_bigip', 'ansible.builtin'];
+    const known = ['cisco.ios', 'cisco.nxos', 'cisco.iosxr', 'cisco.asa', 'cisco.fmcansible', 'arista.eos', 'junipernetworks.junos', 'arubanetworks.aoscx', 'paloaltonetworks.panos', 'fortinet.fortios', 'f5networks.f5_modules', 'f5networks.f5_bigip', 'ansible.builtin'];
     for (const blueprint of NETWORK_CHANGES) {
       const change = blueprint.change(defaultValues(blueprint), blueprint.id);
       const modules = [change.push?.module, ...(change.push?.after ?? []).map((t) => t.module)].filter((m): m is string => typeof m === 'string');
@@ -434,6 +437,50 @@ describe('the complete configuration', () => {
     ]);
     const whole = fullConfig('cisco_ios', steps, 'build');
     expect(whole.text.split('switchport access vlan 10').length - 1).toBe(1);
+  });
+
+  it('keeps a nested line that repeats under a different parent', () => {
+    // Two BGP neighbors each with their own address-family: the second
+    // neighbor's lines are not repeats of the first's.
+    const step = (label: string, neighbor: string): { label: string; change: DeviceChange } => ({
+      label,
+      change: {
+        platform: 'cisco_iosxr',
+        title: label,
+        impact: 'low',
+        before: ['show bgp summary'],
+        config: ['router bgp 65000', ` neighbor ${neighbor}`, '  remote-as 65001', '  address-family ipv4 unicast', '   route-policy PASS in', '!'],
+        verify: ['show bgp summary'],
+        backout: ['router bgp 65000', ` no neighbor ${neighbor}`],
+      },
+    });
+    const text = fullConfig('cisco_iosxr', [step('first', '192.0.2.1'), step('second', '192.0.2.2')], 'pe').text;
+    expect(text.split('\n').filter((line) => line.trim() === 'router bgp 65000').length).toBe(1);
+    expect(text.split('address-family ipv4 unicast').length - 1).toBe(2);
+    expect(text.split('route-policy PASS in').length - 1).toBe(2);
+    expect(text.includes('  address-family ipv4 unicast')).toBe(true);
+  });
+
+  it('merges FortiOS entries by name, and keeps a nested table whole', () => {
+    const step = (label: string, config: string[]): { label: string; change: DeviceChange } => ({
+      label,
+      change: { platform: 'fortios', title: label, impact: 'low', before: ['get system status'], config, verify: ['show'], backout: ['x'] },
+    });
+    const text = fullConfig(
+      'fortios',
+      [
+        step('a', ['config firewall address', '    edit "A"', '        set subnet 10.0.0.0 255.255.255.0', '        set comment "x"', '    next', 'end']),
+        step('b', ['config firewall address', '    edit "B"', '        set subnet 10.0.1.0 255.255.255.0', '        set comment "x"', '    next', '    edit "A"', '        set color 3', '    next', 'end']),
+        step('c', ['config switch-controller managed-switch', '    edit "S1"', '        config ports', '            edit "port1"', '                set vlan "v10"', '            next', '        end', '        set fsw-wan1-admin enable', '    next', 'end']),
+      ],
+      'fw',
+    ).text;
+    // B's comment is its own, not a repeat of A's
+    expect(text.split('set comment "x"').length - 1).toBe(2);
+    expect(text.split('edit "A"').length - 1).toBe(1);
+    expect(text.includes('set color 3')).toBe(true);
+    // the nested `end` did not close the section early
+    expect(text.includes('set fsw-wan1-admin enable')).toBe(true);
   });
 
   it('writes the sections in running-configuration order', () => {

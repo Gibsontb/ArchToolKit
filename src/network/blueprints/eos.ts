@@ -13,6 +13,7 @@ import { error, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { EOS_EXTRA } from './eos-extra.ts';
 import { EOS_EXTRA_2 } from './eos-extra2.ts';
+import { EOS_EXTRA_3 } from './eos-extra3.ts';
 import { description, listOf, parseCidrDual, vlanIds, vlanRange, type DeviceChange } from '../device.ts';
 import { addressList, dualAddresses, dualCidrs, dualFindings, routerIdFindings, unverifiedIpv6 } from './nxos-eos-dual.ts';
 
@@ -272,7 +273,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest — the domain-level and operational changes — live in eos-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...EOS_EXTRA, ...EOS_EXTRA_2];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...EOS_EXTRA, ...EOS_EXTRA_2, ...EOS_EXTRA_3];
 
 export const EOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Arista EOS', blueprints: ALL };
 export const EOS_CHANGES: readonly ChangeBlueprint[] = ALL;

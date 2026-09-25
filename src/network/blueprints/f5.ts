@@ -21,6 +21,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { F5_EXTRA } from './f5-extra.ts';
 import { F5_EXTRA_2 } from './f5-extra2.ts';
+import { F5_EXTRA_3 } from './f5-extra3.ts';
 import { type DeviceChange } from '../device.ts';
 import { formatHostPort, urlHost } from '../../core/ip.ts';
 import { as3Members, parseMembers, virtualFindings } from './f5-common.ts';
@@ -380,7 +381,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest of the platform's changes live in f5-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...F5_EXTRA, ...F5_EXTRA_2];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...F5_EXTRA, ...F5_EXTRA_2, ...F5_EXTRA_3];
 
 export const F5_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'F5 BIG-IP (AS3)', blueprints: ALL };
 export const F5_CHANGES: readonly ChangeBlueprint[] = ALL;

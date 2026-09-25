@@ -567,9 +567,10 @@
           <!-- ================================================================ -->
           <h2 id="network">13. Network devices</h2>
           <p>
-            Configuration for the things between the servers: Cisco IOS and IOS-XE, Cisco NX-OS,
-            Cisco Catalyst 9800 wireless controllers, Cisco ASA firewalls, Arista EOS, Palo Alto PAN-OS,
-            Fortinet FortiOS, and F5 BIG-IP as AS3 declarations. It works
+            Configuration for the things between the servers: Cisco IOS and IOS-XE, Cisco NX-OS, Cisco
+            IOS-XR, Cisco Catalyst 9800 wireless controllers, Cisco ASA firewalls, Cisco Secure Firewall
+            (FTD through FMC), Arista EOS, Juniper Junos, Aruba AOS-CX, Palo Alto PAN-OS, Fortinet
+            FortiOS, and F5 BIG-IP. It works
             like the Terraform and Ansible pages — pick the platform, pick the change, fill in the
             parameters, generate — with one difference: the platform here is a device operating system,
             not a cloud, so this page keeps its own selection and does not change what the other pages
@@ -599,65 +600,148 @@
           </p>
 
           <h3>What it can configure</h3>
-          <p>181 changes across eight platforms. Each one is grouped in the picker by what it touches.</p>
+          <p>339 changes across 12 platforms. Each one is grouped in the picker by what it touches.</p>
           <table>
             <tr><th>Platform</th><th>Changes</th></tr>
-            <tr><td>Cisco IOS / IOS-XE <em>(46)</em></td><td>
-              <strong>Switching:</strong> VLAN and SVI (HSRP, DHCP helper), access ports, trunk, LACP port-channel, spanning-tree hardening, VTP mode and domain, switch stack membership and priority.<br/>
-              <strong>Interfaces:</strong> routed port, loopback.<br/>
-              <strong>Routing:</strong> static route, OSPF, EIGRP (named mode), BGP neighbour with prefix lists and a maximum-prefix limit, VRF, HSRP/VRRP on an existing interface, IP SLA and a tracked object, redistribution through a route map, policy-based routing, prefix list and route-map on their own, BFD.<br/>
-              <strong>Multicast:</strong> PIM sparse mode with a static, anycast or BSR rendezvous point; IGMP snooping and querier.<br/>
-              <strong>IPv6:</strong> addressing and router advertisements on an interface, OSPFv3 / static / BGP address family.<br/>
-              <strong>Services:</strong> NAT (PAT and static), DHCP pool, DHCP relay with snooping.<br/>
-              <strong>Security:</strong> named access list, DHCP snooping with ARP inspection and source guard, 802.1X and MAB, zone-based firewall.<br/>
-              <strong>Hardening:</strong> control plane policing, UDLD and errdisable recovery, device hardening.<br/>
-              <strong>Operations:</strong> SPAN and RSPAN, Flexible NetFlow, QoS priority queue for voice.<br/>
-              <strong>WAN and VPN:</strong> GRE tunnel, IKEv2 site-to-site VPN, DMVPN hub or spoke.<br/>
-              <strong>Baseline:</strong> management baseline (NTP, syslog, SNMPv3, SSH), SNMPv3 on its own, AAA with TACACS+, NETCONF and RESTCONF, config archive with an EEM rollback timer, smart licensing using policy.
+            <tr><td>Cisco IOS / IOS-XE <em>(52)</em></td><td>
+              <strong>Switching:</strong> VLAN and SVI; Access ports; Trunk port; Port-channel (LACP); VTP mode and domain; Switch stack membership and priority; Private VLANs; Power over Ethernet (power inline).<br/>
+              <strong>Routing:</strong> Static route; OSPF process; BGP neighbour; VRF; EIGRP (named mode); First-hop redundancy (HSRP or VRRP); IP SLA and tracked object; Redistribution with a route map; Policy-based routing; Prefix list and route-map; BFD for fast failure detection; IS-IS; MPLS LDP; BGP route reflector.<br/>
+              <strong>Security:</strong> Named access list; DHCP snooping, ARP inspection, source guard; 802.1X and MAB port authentication; Zone-based firewall.<br/>
+              <strong>Baseline:</strong> Management baseline; Spanning-tree hardening; AAA with TACACS+; NETCONF and RESTCONF (IOS-XE); Config archive and an EEM rollback timer; Device hardening.<br/>
+              <strong>Interfaces:</strong> Routed port (no switchport); Loopback interface.<br/>
+              <strong>Services:</strong> NAT: overload and static entries; DHCP pool; DHCP relay.<br/>
+              <strong>Operations:</strong> SPAN / RSPAN session; Flexible NetFlow export; QoS: priority queue for voice.<br/>
+              <strong>WAN and VPN:</strong> GRE tunnel; Site-to-site VPN (IKEv2).<br/>
+              <strong>Multicast:</strong> Multicast routing (PIM sparse mode); IGMP snooping and querier.<br/>
+              <strong>IPv6:</strong> IPv6 on an interface; IPv6 routing (OSPFv3, static or BGP).<br/>
+              <strong>Hardening:</strong> Control plane policing; UDLD and errdisable recovery.<br/>
+              <strong>Management:</strong> SNMPv3; Smart licensing using policy.<br/>
+              <strong>VPN:</strong> DMVPN hub or spoke.<br/>
+              <strong>Overlay:</strong> EVPN VXLAN layer 2 VNI (Catalyst 9000).
             </td></tr>
-            <tr><td>Cisco NX-OS <em>(27)</em></td><td>
-              <strong>Platform:</strong> feature baseline by role, fabric extender, interface breakout.<br/>
-              <strong>Switching:</strong> VLAN and SVI in a VRF, vPC domain with its peer-link, vPC member, plain port-channel, routed interface, jumbo MTU network-qos policy.<br/>
-              <strong>Routing:</strong> VRF, OSPF underlay with BFD, BGP neighbour (underlay, EVPN or in a VRF), static route, HSRP or anycast gateway, BFD, route leaking between VRFs.<br/>
-              <strong>Overlay:</strong> VXLAN EVPN VNI with an anycast gateway.<br/>
-              <strong>Multicast and IPv6:</strong> PIM with a static or anycast RP, IPv6 on an SVI or routed port.<br/>
-              <strong>Services and operations:</strong> DHCP relay, precision time (PTP), IP access list, SPAN.<br/>
-              <strong>Baseline:</strong> management baseline, AAA with TACACS+, SNMPv3, control plane policing profile.
+            <tr><td>Cisco NX-OS <em>(36)</em></td><td>
+              <strong>Switching:</strong> VLAN and SVI; vPC member port-channel; vPC domain and peer-link; Port-channel (LACP); Private VLANs; Spanning-tree defaults.<br/>
+              <strong>Routing:</strong> VRF; OSPF underlay; BGP neighbour; Static route; HSRP or anycast gateway; BFD; Route leaking between VRFs; IS-IS; MPLS LDP.<br/>
+              <strong>Baseline:</strong> Management baseline; AAA with TACACS+; Login banner; AAA with RADIUS.<br/>
+              <strong>Interfaces:</strong> Routed interface.<br/>
+              <strong>Overlay:</strong> VXLAN EVPN: a VNI; EVPN spine (BGP route reflector).<br/>
+              <strong>Security:</strong> IP access list; Port security; Storm control.<br/>
+              <strong>Operations:</strong> SPAN session; Jumbo MTU and a QoS policy.<br/>
+              <strong>Platform:</strong> Feature baseline; Fabric extender; Interface breakout.<br/>
+              <strong>Hardening:</strong> Control plane policing profile.<br/>
+              <strong>Services:</strong> Precision time (PTP); DHCP relay.<br/>
+              <strong>Multicast:</strong> Multicast (PIM).<br/>
+              <strong>Management:</strong> SNMPv3.<br/>
+              <strong>IPv6:</strong> IPv6 on an SVI or routed port.
             </td></tr>
-            <tr><td>Cisco Catalyst 9800 <em>(10)</em></td><td>Enterprise (802.1X) WLAN, pre-shared key WLAN, guest WLAN with web authentication, policy and site tags, RF profile, AP join profile, RADIUS servers and method lists, FlexConnect for a branch, management baseline, mobility group and guest anchor. Written as IOS-XE configuration and pushed with <code>cisco.ios.ios_config</code>.</td></tr>
-            <tr><td>Cisco ASA <em>(12)</em></td><td>Interface with a security level, network and service objects, access rule, NAT (dynamic PAT, static and twice), static route, site-to-site IPsec VPN, remote access VPN, failover pair, management access, inspection policy, packet capture, threat detection.</td></tr>
-            <tr><td>Arista EOS <em>(26)</em></td><td>
-              <strong>Interfaces:</strong> access or trunk port with edge protections, LACP port-channel, routed port, loopback.<br/>
-              <strong>Switching:</strong> VLAN and SVI with VARP, MLAG domain and peer-link, MLAG member.<br/>
-              <strong>Routing:</strong> static route, BGP underlay with ECMP and BFD, BGP EVPN leaf, VRF, VARP or VRRP gateway, BFD, prefix list and route-map.<br/>
-              <strong>Overlay:</strong> VXLAN VTEP and VNI.<br/>
-              <strong>Services and QoS:</strong> DHCP relay, IPv6 on an interface, lossless queuing with PFC and ECN.<br/>
-              <strong>Operations:</strong> event handlers, streaming telemetry with TerminAttr, sFlow, monitor session, IP access list.<br/>
-              <strong>Baseline:</strong> management baseline with eAPI, AAA with TACACS+, SNMPv3. Every change is written to be applied in a configure session with a commit timer.
+            <tr><td>Cisco IOS-XR <em>(24)</em></td><td>
+              <strong>Interfaces:</strong> Routed interface; Dot1q sub-interface; Bundle-Ether with LACP; Loopback.<br/>
+              <strong>Routing:</strong> Static route; OSPF process and area; IS-IS process; BGP neighbor; Route-policy and prefix-set; L3VPN VRF; BFD on a routing protocol.<br/>
+              <strong>MPLS and L2VPN:</strong> MPLS LDP; Segment routing (SR-MPLS); L2VPN point-to-point pseudowire; L2VPN bridge-domain with BVI.<br/>
+              <strong>Security:</strong> IPv4 access list; QoS: priority class on egress; AAA with TACACS+; Local user.<br/>
+              <strong>Management:</strong> Management baseline: NTP, logging, SSH; SNMP; LLDP.<br/>
+              <strong>Redundancy:</strong> HSRP gateway; VRRP gateway.<br/>
+              Committed by <code>iosxr_config</code>; the changes that could cut you off say to use <code>commit confirmed</code>.
             </td></tr>
-            <tr><td>Palo Alto PAN-OS <em>(22)</em></td><td>
-              <strong>Objects:</strong> address objects and groups, tag-based dynamic address groups, service objects.<br/>
-              <strong>Policies:</strong> security rule (App-ID), source and destination NAT, application override, QoS profile and policy.<br/>
-              <strong>Network:</strong> layer 3 interface and zone, static route with path monitoring, virtual router with OSPF or BGP.<br/>
-              <strong>Profiles:</strong> security profile group, URL filtering with a custom category and an external dynamic list, zone protection, decryption policy.<br/>
-              <strong>Identity:</strong> User-ID and group mapping, authentication profile and sequence, administrator roles.<br/>
-              <strong>VPN:</strong> site-to-site IPsec tunnel, GlobalProtect portal and gateway.<br/>
-              <strong>Platform:</strong> log forwarding and syslog, management access and update schedule, HA pair. Emitted as <code>set</code> commands with the commit.
+            <tr><td>Cisco Catalyst 9800 (wireless) <em>(13)</em></td><td>
+              <strong>WLANs:</strong> WLAN — WPA2/WPA3 Enterprise (802.1X); WLAN — WPA2/WPA3 Personal (pre-shared key); Guest WLAN with web authentication.<br/>
+              <strong>Tags and profiles:</strong> Tags: policy, site and RF; RF profile; AP join profile; FlexConnect for a branch.<br/>
+              <strong>Baseline:</strong> RADIUS servers and CoA; Controller baseline; Mobility group and guest anchor.<br/>
+              <strong>Security:</strong> Rogue detection and classification.<br/>
+              <strong>Services:</strong> mDNS gateway and service policy; Application visibility and control (AVC).<br/>
+              Written as IOS-XE configuration and pushed with <code>cisco.ios.ios_config</code>.
             </td></tr>
-            <tr><td>Fortinet FortiOS <em>(21)</em></td><td>
-              <strong>Network:</strong> interfaces and VLAN sub-interfaces, zones, IP pool, static route, dynamic routing with BGP or OSPF, VDOMs with an inter-VDOM link.<br/>
-              <strong>Objects and policy:</strong> address objects and groups, service objects, firewall policy with inspection profiles, VIP, traffic shaping.<br/>
-              <strong>Profiles:</strong> antivirus, web filtering, application control, IPS and DNS filtering as one consistent set.<br/>
-              <strong>Identity:</strong> LDAP or RADIUS servers, local users, and the groups a policy names.<br/>
-              <strong>VPN:</strong> site-to-site IPsec, SSL VPN in tunnel mode.<br/>
-              <strong>Platform:</strong> DHCP server, SD-WAN with health checks, administrative access and trusted hosts, local-in policy, logging and SNMP, HA cluster.
+            <tr><td>Cisco ASA (firewall) <em>(18)</em></td><td>
+              <strong>Network:</strong> Interface: nameif, security level, address; Static route with tracking; OSPF; BGP; EIGRP; EtherChannel interface.<br/>
+              <strong>Objects:</strong> Network and service objects.<br/>
+              <strong>Policy:</strong> Access rule; NAT: publish a server or hide a network; Inspection policy; Threat detection and connection limits.<br/>
+              <strong>VPN:</strong> Site-to-site VPN (IKEv2); Remote access VPN (AnyConnect).<br/>
+              <strong>Baseline:</strong> Active/standby failover; Management access and AAA; Security context (multiple-context mode); Clustering (spanned EtherChannel).<br/>
+              <strong>Operations:</strong> Packet capture and packet-tracer.
             </td></tr>
-            <tr><td>F5 BIG-IP <em>(17)</em></td><td>
-              <strong>Applications:</strong> HTTP/HTTPS virtual server with pool and monitor, TCP virtual server, UDP virtual server (DNS, RADIUS, syslog), HTTPS with an Advanced WAF policy, HTTP-to-HTTPS redirect listener.<br/>
-              <strong>Profiles:</strong> custom health monitors, SNAT pool, client SSL with SNI, HTTP profile with compression and caching, connection reuse (OneConnect) with compression and caching, persistence.<br/>
-              <strong>Behaviour:</strong> iRules from a set of patterns, LTM policies for the same jobs in a faster path.<br/>
-              <strong>TLS and DNS:</strong> certificate replacement with the chain and cipher decisions, GSLB wide IP.<br/>
-              <strong>Operations:</strong> take a pool member out of service, remove a tenant. All AS3 declarations, which the <a href="data-editor.html">Data Editor</a> validates against the AS3 schema.
+            <tr><td>Cisco Secure Firewall (FTD via FMC) <em>(15)</em></td><td>
+              <strong>Objects:</strong> Network objects and group; Port objects and group; Security zones.<br/>
+              <strong>Access control:</strong> Access control policy; Access rule.<br/>
+              <strong>NAT:</strong> Manual (twice) NAT rule; Auto (object) NAT rule.<br/>
+              <strong>Device:</strong> Interface: physical or sub-interface; Static route; BGP neighbor; Platform settings: NTP, syslog, SNMP.<br/>
+              <strong>VPN:</strong> Site-to-site VPN (IKEv2, pre-shared key).<br/>
+              <strong>Lifecycle:</strong> High availability pair; Device registration; Deploy pending changes.<br/>
+              FMC REST API operations, pushed one task per operation with <code>cisco.fmcansible.fmc_configuration</code>. Nothing reaches a firewall until it is deployed from FMC.
+            </td></tr>
+            <tr><td>Arista EOS <em>(36)</em></td><td>
+              <strong>Switching:</strong> VLAN and SVI; MLAG member port-channel; MLAG domain and peer-link; Spanning-tree defaults.<br/>
+              <strong>Routing:</strong> BGP EVPN leaf; BGP underlay peering; Static route; VRF; VARP or VRRP gateway; BFD; Prefix list and route-map; OSPF (v2 or v3); IS-IS; MPLS LDP.<br/>
+              <strong>Baseline:</strong> Management baseline; AAA with TACACS+; AAA with RADIUS; Login banner.<br/>
+              <strong>Overlay:</strong> VXLAN VTEP and a VNI; EVPN spine (route server or reflector).<br/>
+              <strong>Interfaces:</strong> Routed port; Loopback interface; Access or trunk port; Port-channel (LACP).<br/>
+              <strong>Security:</strong> IP access list; Port security; Storm control.<br/>
+              <strong>Operations:</strong> sFlow export; Monitor session (SPAN); Event handler; Streaming telemetry (TerminAttr); LLDP.<br/>
+              <strong>Services:</strong> DHCP relay.<br/>
+              <strong>QoS:</strong> Lossless queuing (PFC and ETS).<br/>
+              <strong>Management:</strong> SNMPv3.<br/>
+              <strong>IPv6:</strong> IPv6 on an interface.<br/>
+              Most changes are written to be applied in a configure session with a commit timer.
+            </td></tr>
+            <tr><td>Juniper Junos (EX, QFX, SRX, MX) <em>(40)</em></td><td>
+              <strong>System:</strong> Management baseline; Local user and login class; RADIUS or TACACS+ authentication; Root password, commit and rescue configuration.<br/>
+              <strong>Interfaces:</strong> Routed interface (IPv4 / IPv6); Access port (EX / QFX); Trunk port with native VLAN; VLAN with IRB interface; Aggregated Ethernet (ae) with LACP; Port description, MTU, speed or shutdown.<br/>
+              <strong>Switching:</strong> RSTP or MSTP with BPDU protection; Storm control; LLDP and LLDP-MED; 802.1X port authentication; Port security: MAC limit, DHCP snooping, ARP inspection; Virtual Chassis (preprovisioned).<br/>
+              <strong>Routing:</strong> Static routes (IPv4 / IPv6); OSPF; OSPFv3 (IPv6); BGP group (eBGP / iBGP); IS-IS; MPLS with LDP or RSVP; Routing instance (virtual router or VRF); Prefix list and routing policy; BFD for a static route, OSPF or BGP; VRRP gateway; ECMP load balancing.<br/>
+              <strong>Security (SRX):</strong> Security zone and host-inbound traffic; Address book entries and set; Security policy; Source NAT (interface or pool); Destination NAT (port forward); Static NAT (one-to-one); Route-based IPsec VPN (site to site); Screens (IDS options) on a zone.<br/>
+              <strong>Filters &amp; QoS:</strong> Protect the routing engine (lo0 filter); Stateless firewall filter; Class of service: DSCP trust and schedulers.<br/>
+              <strong>Data center:</strong> EVPN-VXLAN leaf (QFX); EVPN multihoming (ESI-LAG).<br/>
+              <code>set</code> commands, loaded with <code>load set</code> and applied with <code>commit confirmed</code>; pushed with <code>junos_config</code> over NETCONF.
+            </td></tr>
+            <tr><td>Aruba AOS-CX <em>(30)</em></td><td>
+              <strong>System:</strong> Management baseline; SNMPv3 monitoring; TACACS+ device administration; QoS trust and voice priority.<br/>
+              <strong>Interfaces:</strong> Access port; Trunk port; LACP link aggregation (LAG); Routed port; Loopback interface; Power over Ethernet.<br/>
+              <strong>Switching:</strong> VLANs; VLAN interface (SVI); Spanning tree; Loop protection and LLDP; DHCP relay.<br/>
+              <strong>High availability (VSX/VSF):</strong> VSX pair; Multi-chassis LAG (VSX); VSX active gateway; VSF stack; VRRP gateway.<br/>
+              <strong>Routing:</strong> VRF; OSPF; BGP peer; Static routes.<br/>
+              <strong>Security:</strong> IPv4 access list; 802.1X and MAC authentication; DHCP snooping, ARP inspection and source lockout.<br/>
+              <strong>Data center (EVPN):</strong> VXLAN tunnel endpoint and L2 VNIs; BGP EVPN overlay peering; EVPN L3 VNI (symmetric IRB).<br/>
+              Pushed with <code>aoscx_config</code>; changes that could cut you off start with <code>checkpoint auto</code>.
+            </td></tr>
+            <tr><td>Palo Alto PAN-OS <em>(25)</em></td><td>
+              <strong>Objects:</strong> Address objects and a group; Service objects and a group; Tag-based dynamic address group.<br/>
+              <strong>Policy:</strong> Security rule; NAT rule; Security profile group; Zone protection profile; Decryption policy.<br/>
+              <strong>Network:</strong> Layer 3 interface and zone; Static route; Site-to-site IPsec tunnel.<br/>
+              <strong>Operations:</strong> Log forwarding and syslog.<br/>
+              <strong>Baseline:</strong> Management access and services; High availability pair.<br/>
+              <strong>Profiles:</strong> URL filtering with a custom category.<br/>
+              <strong>Identity:</strong> User-ID and group mapping; Authentication profile and sequence.<br/>
+              <strong>Management:</strong> Administrator roles and authentication.<br/>
+              <strong>VPN:</strong> GlobalProtect portal and gateway.<br/>
+              <strong>Policies:</strong> Application override; QoS profile and policy.<br/>
+              <strong>Routing:</strong> Virtual router with OSPF or BGP.<br/>
+              <strong>Panorama:</strong> Panorama device group; Panorama template and template stack; Connect a firewall to Panorama.<br/>
+              Emitted as <code>set</code> commands with the commit.
+            </td></tr>
+            <tr><td>Fortinet FortiOS <em>(25)</em></td><td>
+              <strong>Objects:</strong> Address objects and a group; Service objects and a group.<br/>
+              <strong>Policy:</strong> Firewall policy; Virtual IP (publish a server); IP pool for NAT.<br/>
+              <strong>Network:</strong> Static route; Interface or VLAN sub-interface; Site-to-site IPsec VPN; SD-WAN zone and health checks; Zones.<br/>
+              <strong>Services:</strong> DHCP server on an interface.<br/>
+              <strong>Baseline:</strong> Administrative access and trusted hosts; High availability cluster.<br/>
+              <strong>Operations:</strong> Logging: syslog, FortiAnalyzer and SNMP.<br/>
+              <strong>Profiles:</strong> Security profiles.<br/>
+              <strong>VPN:</strong> SSL VPN; ZTNA access proxy.<br/>
+              <strong>Identity:</strong> Users, LDAP and groups.<br/>
+              <strong>Policies:</strong> Traffic shaping.<br/>
+              <strong>Hardening:</strong> Local-in policy.<br/>
+              <strong>Routing:</strong> BGP or OSPF.<br/>
+              <strong>Platform:</strong> VDOM.<br/>
+              <strong>Switching and wireless:</strong> FortiLink and FortiSwitch VLANs; Managed FortiSwitch and its ports; FortiAP: SSID, profile and authorised APs.
+            </td></tr>
+            <tr><td>F5 BIG-IP (AS3) <em>(25)</em></td><td>
+              <strong>Applications:</strong> HTTP or HTTPS virtual server; TCP virtual server; HTTPS virtual server with a WAF policy; UDP virtual server (DNS, RADIUS, syslog); HTTP to HTTPS redirect listener; APM access profile on a virtual server.<br/>
+              <strong>Profiles:</strong> Custom health monitors; SNAT pool; Client SSL profile with SNI; HTTP profile with compression and caching; Persistence; Connection reuse, compression and caching.<br/>
+              <strong>Operations:</strong> Take a pool member out of service; Remove an application (tenant).<br/>
+              <strong>Behaviour:</strong> iRule; LTM policy.<br/>
+              <strong>TLS:</strong> Certificate replacement.<br/>
+              <strong>DNS:</strong> GSLB wide IP; GSLB data centres, servers and DNS listener.<br/>
+              <strong>Onboarding:</strong> System baseline: hostname, DNS, NTP, syslog; Module provisioning and licence; VLAN and self IPs with port lockdown; Default and static routes; Route domain; HA pair: device trust, sync-failover group.<br/>
+              Applications are AS3 declarations, which the <a href="data-editor.html">Data Editor</a> validates against the AS3 schema; onboarding (system, network, HA, provisioning) is tmsh, which AS3 cannot do.
             </td></tr>
           </table>
 
@@ -667,8 +751,9 @@
             session or hand to whoever has the console. The <strong>playbook</strong> applies the same
             change to many devices, and it is generated for a dry run first —
             <code>--check --diff</code> is the closest a network device has to a plan. The two come from
-            one structure, so they cannot say different things. Cisco and Arista changes push through the
-            platform's <code>*_config</code> module; PAN-OS, FortiOS and F5 use their own object modules
+            one structure, so they cannot say different things. Cisco, Arista, Juniper and Aruba changes push
+            through the platform's <code>*_config</code> module (Junos and IOS-XR commit with a comment);
+            FMC changes run one <code>fmc_configuration</code> task per API operation; PAN-OS, FortiOS and F5 use their own object modules
             (<code>panos_security_rule</code>, <code>fortios_firewall_policy</code>,
             <code>bigip_as3_deploy</code>), and PAN-OS changes include the commit.
           </p>

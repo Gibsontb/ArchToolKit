@@ -25,6 +25,14 @@ export function defaultHosts(platform          )         {
       return 'ios';
     case 'cisco_nxos':
       return 'nxos';
+    case 'cisco_iosxr':
+      return 'iosxr';
+    case 'cisco_fmc':
+      return 'fmc';
+    case 'juniper_junos':
+      return 'junos';
+    case 'aruba_aoscx':
+      return 'aoscx';
     case 'cisco_wlc':
       return 'wlc';
     case 'cisco_asa':
@@ -56,12 +64,19 @@ export function configPush(change              )                                
       ? 'cisco.ios.ios_config'
       : change.platform === 'cisco_nxos'
         ? 'cisco.nxos.nxos_config'
+        : change.platform === 'cisco_iosxr'
+          ? 'cisco.iosxr.iosxr_config'
+          : change.platform === 'aruba_aoscx'
+            ? 'arubanetworks.aoscx.aoscx_config'
+            : change.platform === 'juniper_junos'
+              ? 'junipernetworks.junos.junos_config'
         : change.platform === 'cisco_asa'
           ? 'cisco.asa.asa_config'
           : change.platform === 'arista_eos'
             ? 'arista.eos.eos_config'
             : null;
   if (!module) return null;
+  const comment = PLATFORMS[change.platform].comment;
   return {
     module,
     args: {
@@ -69,9 +84,9 @@ export function configPush(change              )                                
       // reach the device as a single "command" with newlines in it.
       lines: change.config
         .flatMap((entry) => entry.split('\n'))
-        .filter((line) => line.trim() !== '' && !line.trim().startsWith('!'))
+        .filter((line) => line.trim() !== '' && !line.trim().startsWith('!') && !line.trim().startsWith(comment))
         .map(asciiOnly),
-      save_when: 'changed',
+      ...saveArgs(change.platform, change.title),
     },
   };
 }
@@ -103,10 +118,40 @@ function pushFor(change              , configFile                    )          
   }
   const generic = configPush(change);
   if (!generic || !configFile) return generic;
-  return { module: generic.module, args: { src: configFile, save_when: 'changed' } };
+  return {
+    module: generic.module,
+    args: {
+      src: configFile,
+      // A Junos file is `set` commands, which junos_config has to be told.
+      ...(change.platform === 'juniper_junos' ? { src_format: 'set' } : {}),
+      ...saveArgs(change.platform, change.title),
+    },
+  };
+}
+
+/**
+ * How each config module saves. IOS, NX-OS, EOS, ASA and AOS-CX save the
+ * running configuration when it changed; IOS-XR and Junos commit as part of
+ * applying, and take a comment for the commit history instead.
+ */
+function saveArgs(platform          , title        )                          {
+  if (platform === 'cisco_iosxr' || platform === 'juniper_junos') return { comment: asciiOnly(title).slice(0, 60) };
+  return { save_when: 'changed' };
 }
 
 /** The play for one change, as the YAML structure the writer renders. */
+/** An FMC change's operations, read from its JSON, or null when they do not parse. */
+function fmcOperations(change              )                                   {
+  try {
+    const parsed          = JSON.parse(change.config.join('\n'));
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    const ops = list.filter((op)                                => typeof op === 'object' && op !== null && typeof (op                           ).operation === 'string');
+    return ops.length > 0 ? ops : null;
+  } catch {
+    return null;
+  }
+}
+
 export function playFor(change              , name        , configFile         )                   {
   const push = pushFor(change, configFile);
   if (!push) return null;
@@ -114,13 +159,26 @@ export function playFor(change              , name        , configFile         )
   const platform = PLATFORMS[change.platform];
   const hosts = ('hosts' in push && typeof push.hosts === 'string' ? push.hosts : undefined) ?? defaultHosts(change.platform);
 
-  const tasks                              = [
-    {
-      name: change.title,
-      [push.module]: push.args             ,
-      register: 'change_result',
-    },
-  ];
+  const loop = 'loop' in push && typeof push.loop === 'string' ? push.loop : undefined;
+  const operations = change.platform === 'cisco_fmc' ? fmcOperations(change) : null;
+  const tasks                              = operations
+    ? // One task per FMC operation, written into the playbook: a string read
+      // from a file at run time is untrusted and its {{ }} are never filled in,
+      // so `{{ domain[0].uuid }}` and the objects earlier operations register
+      // only resolve from here. The JSON file stays the record of the change.
+      operations.map((op, i) => ({
+        name: `${change.title} (${i + 1}/${operations.length}): ${String(op.operation)}`,
+        [push.module]: op             ,
+        register: 'change_result',
+      }))
+    : [
+        {
+          name: change.title,
+          [push.module]: push.args             ,
+          ...(loop ? { loop } : {}),
+          register: 'change_result',
+        },
+      ];
 
   for (const extra of 'after' in push && Array.isArray(push.after) ? push.after : []) {
     tasks.push({
@@ -198,6 +256,33 @@ export function inventoryVars(platform          )                            {
         ansible_become: true,
         ansible_become_method: 'enable',
         ansible_become_password: '{{ vault_enable_secret }}',
+      };
+    case 'cisco_iosxr':
+    case 'aruba_aoscx':
+      // No enable step on either: the login lands in exec with its task role.
+      return {
+        ansible_connection: 'ansible.netcommon.network_cli',
+        ansible_network_os: info.networkOs ?? '',
+        ansible_user: '{{ vault_network_user }}',
+        ansible_password: '{{ vault_network_password }}',
+      };
+    case 'juniper_junos':
+      // junos_config works over NETCONF (set system services netconf ssh).
+      return {
+        ansible_connection: 'ansible.netcommon.netconf',
+        ansible_network_os: info.networkOs ?? '',
+        ansible_user: '{{ vault_network_user }}',
+        ansible_password: '{{ vault_network_password }}',
+      };
+    case 'cisco_fmc':
+      return {
+        ansible_connection: 'httpapi',
+        ansible_network_os: info.networkOs ?? '',
+        ansible_httpapi_use_ssl: true,
+        ansible_httpapi_validate_certs: true,
+        ansible_httpapi_port: 443,
+        ansible_user: '{{ vault_fmc_user }}',
+        ansible_password: '{{ vault_fmc_password }}',
       };
     case 'panos':
       return {

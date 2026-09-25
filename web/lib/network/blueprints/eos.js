@@ -13,6 +13,7 @@ import { error,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { EOS_EXTRA } from './eos-extra.js';
 import { EOS_EXTRA_2 } from './eos-extra2.js';
+import { EOS_EXTRA_3 } from './eos-extra3.js';
 import { description, listOf, parseCidrDual, vlanIds, vlanRange,                   } from '../device.js';
 import { addressList, dualAddresses, dualCidrs, dualFindings, routerIdFindings, unverifiedIpv6 } from './nxos-eos-dual.js';
 
@@ -272,7 +273,7 @@ const BLUEPRINTS                             = [
 ];
 
 /** The rest — the domain-level and operational changes — live in eos-extra.ts. */
-const ALL                             = [...BLUEPRINTS, ...EOS_EXTRA, ...EOS_EXTRA_2];
+const ALL                             = [...BLUEPRINTS, ...EOS_EXTRA, ...EOS_EXTRA_2, ...EOS_EXTRA_3];
 
 export const EOS_NETWORK                 = { target: PLATFORM, label: 'Arista EOS', blueprints: ALL };
 export const EOS_CHANGES                             = ALL;

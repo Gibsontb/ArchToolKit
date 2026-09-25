@@ -23,6 +23,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { familyOf, isIp } from '../../core/ip.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { listOf, parseCidrDual, netmask, type DeviceChange } from '../device.ts';
+import { WLC_EXTRA } from './wlc-extra.ts';
 
 const PLATFORM = 'cisco_wlc' as const;
 const SECRET = '<REQUIRED>';
@@ -817,5 +818,8 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
   }),
 ];
 
-export const WLC_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Cisco Catalyst 9800 (wireless)', blueprints: BLUEPRINTS };
-export const WLC_CHANGES: readonly ChangeBlueprint[] = BLUEPRINTS;
+/** Rogue policy, the mDNS gateway and AVC live in wlc-extra.ts. */
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...WLC_EXTRA];
+
+export const WLC_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Cisco Catalyst 9800 (wireless)', blueprints: ALL };
+export const WLC_CHANGES: readonly ChangeBlueprint[] = ALL;

@@ -12,6 +12,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { NXOS_EXTRA } from './nxos-extra.ts';
 import { NXOS_EXTRA_2 } from './nxos-extra2.ts';
+import { NXOS_EXTRA_3 } from './nxos-extra3.ts';
 import { description, listOf, parseCidrDual, vlanIds, vlanRange, type DeviceChange } from '../device.ts';
 import { dualAddresses, dualCidrs, dualFindings, routerIdFindings } from './nxos-eos-dual.ts';
 
@@ -326,7 +327,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest — the domain-level and operational changes — live in nxos-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...NXOS_EXTRA, ...NXOS_EXTRA_2];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...NXOS_EXTRA, ...NXOS_EXTRA_2, ...NXOS_EXTRA_3];
 
 export const NXOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Cisco NX-OS', blueprints: ALL };
 export const NXOS_CHANGES: readonly ChangeBlueprint[] = ALL;

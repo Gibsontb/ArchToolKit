@@ -22,6 +22,7 @@ import { error, warning,              } from '../../core/findings.js';
 import { containsAny, familyOf, isAnyNetwork, isIp, parseCidrAny,             } from '../../core/ip.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { description, listOf, netmask, parseCidrDual,                   } from '../device.js';
+import { ASA_EXTRA } from './asa-extra.js';
 
 const PLATFORM = 'cisco_asa'         ;
 const SECRET = '<REQUIRED>';
@@ -1137,5 +1138,8 @@ const BLUEPRINTS                             = [
   }),
 ];
 
-export const ASA_NETWORK                 = { target: PLATFORM, label: 'Cisco ASA (firewall)', blueprints: BLUEPRINTS };
-export const ASA_CHANGES                             = BLUEPRINTS;
+/** Dynamic routing, contexts, clustering and EtherChannel live in asa-extra.ts. */
+const ALL                             = [...BLUEPRINTS, ...ASA_EXTRA];
+
+export const ASA_NETWORK                 = { target: PLATFORM, label: 'Cisco ASA (firewall)', blueprints: ALL };
+export const ASA_CHANGES                             = ALL;

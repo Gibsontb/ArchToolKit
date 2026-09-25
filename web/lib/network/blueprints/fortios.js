@@ -16,6 +16,7 @@ import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { FORTIOS_EXTRA } from './fortios-extra.js';
 import { FORTIOS_EXTRA_2 } from './fortios-extra2.js';
+import { FORTIOS_EXTRA_3 } from './fortios-extra3.js';
 import { listOf, netmask, parseCidr,                   } from '../device.js';
 import { familyOf } from '../../core/ip.js';
 import { addressBody, addressTable, addrgrpTable, fgtCidr, fgtHost, fgtSubnet, looksLikeAddress, v6Name } from './fortios-ip.js';
@@ -499,7 +500,7 @@ const BLUEPRINTS                             = [
 ];
 
 /** The rest of the platform's changes live in fortios-extra.ts. */
-const ALL                             = [...BLUEPRINTS, ...FORTIOS_EXTRA, ...FORTIOS_EXTRA_2];
+const ALL                             = [...BLUEPRINTS, ...FORTIOS_EXTRA, ...FORTIOS_EXTRA_2, ...FORTIOS_EXTRA_3];
 
 export const FORTIOS_NETWORK                 = { target: PLATFORM, label: 'Fortinet FortiOS', blueprints: ALL };
 export const FORTIOS_CHANGES                             = ALL;

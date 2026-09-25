@@ -17,6 +17,7 @@ import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { PANOS_EXTRA } from './panos-extra.js';
 import { PANOS_EXTRA_2 } from './panos-extra2.js';
+import { PANOS_EXTRA_3 } from './panos-extra3.js';
 import { listOf, parseCidrDual,                   } from '../device.js';
 import { badAddresses, badAddressFinding, familiesOf, ipv6Unsupported, PANOS_VERSION, testAddresses } from './panos-ip.js';
 
@@ -443,7 +444,7 @@ const BLUEPRINTS                             = [
 ];
 
 /** The rest of the platform's changes live in panos-extra.ts. */
-const ALL                             = [...BLUEPRINTS, ...PANOS_EXTRA, ...PANOS_EXTRA_2];
+const ALL                             = [...BLUEPRINTS, ...PANOS_EXTRA, ...PANOS_EXTRA_2, ...PANOS_EXTRA_3];
 
 export const PANOS_NETWORK                 = { target: PLATFORM, label: 'Palo Alto PAN-OS', blueprints: ALL };
 export const PANOS_CHANGES                             = ALL;

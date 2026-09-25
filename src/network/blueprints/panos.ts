@@ -17,6 +17,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { PANOS_EXTRA } from './panos-extra.ts';
 import { PANOS_EXTRA_2 } from './panos-extra2.ts';
+import { PANOS_EXTRA_3 } from './panos-extra3.ts';
 import { listOf, parseCidrDual, type DeviceChange } from '../device.ts';
 import { badAddresses, badAddressFinding, familiesOf, ipv6Unsupported, PANOS_VERSION, testAddresses } from './panos-ip.ts';
 
@@ -443,7 +444,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest of the platform's changes live in panos-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...PANOS_EXTRA, ...PANOS_EXTRA_2];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...PANOS_EXTRA, ...PANOS_EXTRA_2, ...PANOS_EXTRA_3];
 
 export const PANOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Palo Alto PAN-OS', blueprints: ALL };
 export const PANOS_CHANGES: readonly ChangeBlueprint[] = ALL;

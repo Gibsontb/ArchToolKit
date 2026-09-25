@@ -22,6 +22,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { containsAny, familyOf, isAnyNetwork, isIp, parseCidrAny, type Family } from '../../core/ip.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { description, listOf, netmask, parseCidrDual, type DeviceChange } from '../device.ts';
+import { ASA_EXTRA } from './asa-extra.ts';
 
 const PLATFORM = 'cisco_asa' as const;
 const SECRET = '<REQUIRED>';
@@ -1137,5 +1138,8 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
   }),
 ];
 
-export const ASA_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Cisco ASA (firewall)', blueprints: BLUEPRINTS };
-export const ASA_CHANGES: readonly ChangeBlueprint[] = BLUEPRINTS;
+/** Dynamic routing, contexts, clustering and EtherChannel live in asa-extra.ts. */
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...ASA_EXTRA];
+
+export const ASA_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Cisco ASA (firewall)', blueprints: ALL };
+export const ASA_CHANGES: readonly ChangeBlueprint[] = ALL;

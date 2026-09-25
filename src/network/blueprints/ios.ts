@@ -19,6 +19,7 @@ import { containsAny, familyOf, parseCidrAny } from '../../core/ip.ts';
 import { V6, aclOperand, addressList, cidrList, interfaceAddressLines, invalidEntries, isLinkLocal, routerIdFindings, v6AclTail } from './ios-v6.ts';
 import { IOS_EXTRA } from './ios-extra.ts';
 import { IOS_EXTRA_2 } from './ios-extra2.ts';
+import { IOS_EXTRA_3 } from './ios-extra3.ts';
 
 const PLATFORM = 'cisco_ios' as const;
 
@@ -1004,7 +1005,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
  * archive — are in ios-extra.ts, because one file of thirty changes is a file
  * nobody can find anything in.
  */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...IOS_EXTRA, ...IOS_EXTRA_2];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...IOS_EXTRA, ...IOS_EXTRA_2, ...IOS_EXTRA_3];
 
 export const IOS_NETWORK: BlueprintGroup = {
   target: PLATFORM,

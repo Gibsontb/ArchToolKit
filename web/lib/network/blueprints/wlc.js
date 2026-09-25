@@ -23,6 +23,7 @@ import { error, warning,              } from '../../core/findings.js';
 import { familyOf, isIp } from '../../core/ip.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { listOf, parseCidrDual, netmask,                   } from '../device.js';
+import { WLC_EXTRA } from './wlc-extra.js';
 
 const PLATFORM = 'cisco_wlc'         ;
 const SECRET = '<REQUIRED>';
@@ -817,5 +818,8 @@ const BLUEPRINTS                             = [
   }),
 ];
 
-export const WLC_NETWORK                 = { target: PLATFORM, label: 'Cisco Catalyst 9800 (wireless)', blueprints: BLUEPRINTS };
-export const WLC_CHANGES                             = BLUEPRINTS;
+/** Rogue policy, the mDNS gateway and AVC live in wlc-extra.ts. */
+const ALL                             = [...BLUEPRINTS, ...WLC_EXTRA];
+
+export const WLC_NETWORK                 = { target: PLATFORM, label: 'Cisco Catalyst 9800 (wireless)', blueprints: ALL };
+export const WLC_CHANGES                             = ALL;

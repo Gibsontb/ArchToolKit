@@ -16,6 +16,7 @@ import { error, warning, type Finding } from '../../core/findings.ts';
 import { deviceBlueprint, type ChangeBlueprint } from '../from-change.ts';
 import { FORTIOS_EXTRA } from './fortios-extra.ts';
 import { FORTIOS_EXTRA_2 } from './fortios-extra2.ts';
+import { FORTIOS_EXTRA_3 } from './fortios-extra3.ts';
 import { listOf, netmask, parseCidr, type DeviceChange } from '../device.ts';
 import { familyOf } from '../../core/ip.ts';
 import { addressBody, addressTable, addrgrpTable, fgtCidr, fgtHost, fgtSubnet, looksLikeAddress, v6Name } from './fortios-ip.ts';
@@ -499,7 +500,7 @@ const BLUEPRINTS: readonly ChangeBlueprint[] = [
 ];
 
 /** The rest of the platform's changes live in fortios-extra.ts. */
-const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...FORTIOS_EXTRA, ...FORTIOS_EXTRA_2];
+const ALL: readonly ChangeBlueprint[] = [...BLUEPRINTS, ...FORTIOS_EXTRA, ...FORTIOS_EXTRA_2, ...FORTIOS_EXTRA_3];
 
 export const FORTIOS_NETWORK: BlueprintGroup = { target: PLATFORM, label: 'Fortinet FortiOS', blueprints: ALL };
 export const FORTIOS_CHANGES: readonly ChangeBlueprint[] = ALL;

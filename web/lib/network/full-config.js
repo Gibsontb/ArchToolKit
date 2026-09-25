@@ -26,7 +26,7 @@
  *     other's application.
  */
 
-import { info, warning,              } from '../core/findings.js';
+import { error, info, warning,              } from '../core/findings.js';
 import { deviceFile, PLATFORMS,                                  } from './device.js';
 
                                  
@@ -77,7 +77,9 @@ export function blocksOf(lines                   )          {
       continue;
     }
     if (/^\s/.test(line)) {
-      if (current) current.body.push(` ${line.trim()}`);
+      // Keep the indent: under router bgp, a neighbor's address-family is
+      // nested one level further than the neighbor.
+      if (current) current.body.push(line.replace(/^	/, ' '));
       else blocks.push({ header: line.trim(), body: [] });
       continue;
     }
@@ -94,17 +96,30 @@ export function blocksOf(lines                   )          {
 /** The section a block belongs in, and the order sections are written. */
 const CLI_SECTIONS                                                                                     = [
   { id: 'system', title: 'System and features', match: /^(hostname|ip domain|feature |no feature|service |no service |clock |boot |version |username |aaa |enable |crypto )/ },
-  { id: 'management', title: 'Management: time, logging, SNMP, access', match: /^(ntp |logging |snmp-server|line |banner|management |ip ssh|ip http|no ip http|telnet)/ },
+  { id: 'management', title: 'Management: time, logging, SNMP, access', match: /^(ntp$|ntp |logging |snmp-server|line |banner|management |ip ssh|ip http|no ip http|telnet|ssh |tacacs|radius|lldp|ip dns|domain |clock timezone)/ },
   { id: 'vlans', title: 'VLANs', match: /^vlan /i },
   { id: 'vrf', title: 'VRFs', match: /^(vrf |ip vrf )/ },
-  { id: 'portchannels', title: 'Port-channels and bundles', match: /^interface (Port-channel|port-channel|Port-Channel)/i },
-  { id: 'svis', title: 'Routed interfaces (SVIs and loopbacks)', match: /^interface (Vlan|loopback|Loopback)/i },
+  { id: 'portchannels', title: 'Port-channels and bundles', match: /^interface (Port-channel|port-channel|Port-Channel|lag|Bundle-Ether)/i },
+  { id: 'svis', title: 'Virtual interfaces (SVIs, loopbacks, VXLAN)', match: /^interface (Vlan|loopback|Loopback|nve|vxlan|Vxlan)/i },
   { id: 'interfaces', title: 'Physical interfaces', match: /^interface /i },
+  { id: 'ha', title: 'High availability: VSX, VSF, failover, clusters', match: /^(vsx|vsf |failover|cluster |redundancy)/ },
   { id: 'stp', title: 'Spanning tree', match: /^(spanning-tree|no spanning-tree)/ },
-  { id: 'policy', title: 'Access lists and prefix lists', match: /^(ip access-list|ipv6 access-list|access-list|ip prefix-list|route-map|class-map|policy-map)/ },
-  { id: 'routing', title: 'Routing', match: /^(router |ip route|ipv6 route|ip routing|service routing)/ },
+  { id: 'policy', title: 'Access lists and prefix lists', match: /^(ip access-list|ipv6 access-list|ipv4 access-list|access-list|ip prefix-list|route-map|class-map|policy-map|prefix-set|route-policy|community-set|as-path-set|object-group|object )/ },
+  { id: 'routing', title: 'Routing', match: /^(router |ip route|ipv6 route|ip routing|service routing|mpls |segment-routing|l2vpn|evpn|bfd)/ },
   { id: 'other', title: 'Everything else', match: /.*/ },
 ];
+
+/** Each body line with the lines it is nested under, so a repeat is judged in context. */
+function pathKeys(body                   )           {
+  const stack                                     = [];
+  return body.map((line) => {
+    const indent = line.length - line.trimStart().length;
+    while (stack.length > 0 && stack[stack.length - 1] .indent >= indent) stack.pop();
+    const key = [...stack.map((p) => p.text), line.trim()].join(' > ');
+    stack.push({ indent, text: line.trim() });
+    return key;
+  });
+}
 
 function sectionOf(header        )         {
   return (CLI_SECTIONS.find((section) => section.match.test(header)) ?? CLI_SECTIONS[CLI_SECTIONS.length - 1] ).id;
@@ -126,12 +141,30 @@ function mergeCli(platform          , steps                           )         
       }
       // The same interface, VLAN or process configured by two steps: one block,
       // with the lines the second adds appended and the repeats dropped.
-      const seen = new Set(existing.body.map((line) => line.trim()));
-      for (const line of block.body) {
-        if (seen.has(line.trim())) continue;
-        seen.add(line.trim());
-        existing.body.push(line);
-      }
+      // A line is a repeat only under the same parents: two neighbors can each
+      // have their own `address-family ipv4 unicast`.
+      // A new line goes at the end of its parent's lines, not the end of the
+      // block: IS-IS, LDP and SR steps each adding to `router isis CORE`
+      // stay under the interface or address-family they belong to.
+      const incoming = pathKeys(block.body);
+      block.body.forEach((line, i) => {
+        const key = incoming[i] ;
+        const have = pathKeys(existing.body);
+        if (have.includes(key)) return;
+        const cut = key.lastIndexOf(' > ');
+        const parent = cut < 0 ? '' : key.slice(0, cut);
+        let at = existing.body.length;
+        if (parent) {
+          const last = have.reduce((found, k, j) => (k === parent || k.startsWith(`${parent} > `) ? j : found), -1);
+          if (last >= 0) at = last + 1;
+        } else {
+          // A setting of the block itself goes before its first sub-block, the
+          // way the running configuration lists them.
+          const firstNested = have.findIndex((k, j) => !k.includes(' > ') && (have[j + 1] ?? '').startsWith(`${k} > `));
+          if (firstNested >= 0) at = firstNested;
+        }
+        existing.body.splice(at, 0, line);
+      });
       if (!existing.from.includes(step.label)) existing.from.push(step.label);
     }
   }
@@ -197,14 +230,94 @@ export function fortiSections(lines                   )                 {
       depth = 1;
       continue;
     }
-    if (trimmed === 'end' && depth === 1) {
-      depth = 0;
-      current = null;
-      continue;
+    // A table inside an entry (`config ports`, `config radio-1`) has its own
+    // `end`, which closes it, not the section.
+    if (/^config /.test(trimmed)) depth++;
+    if (trimmed === 'end') {
+      depth--;
+      if (depth === 0) {
+        current = null;
+        continue;
+      }
     }
     if (current) current.entries.push(line);
   }
   return out;
+}
+
+/** A section's entries as its top-level items: an `edit … next` entry whole, or a single line. */
+function fortiItems(entries                   )                                             {
+  const items                                             = [];
+  let open                                                  = null;
+  let depth = 0;
+  for (const line of entries) {
+    const trimmed = line.trim();
+    if (!open) {
+      if (/^edit /.test(trimmed)) {
+        open = { edit: trimmed, lines: [line] };
+        items.push(open);
+        depth = 0;
+      } else {
+        items.push({ edit: null, lines: [line] });
+      }
+      continue;
+    }
+    open.lines.push(line);
+    if (/^(config|edit) /.test(trimmed)) depth++;
+    else if (trimmed === 'end' || trimmed === 'next') {
+      if (depth === 0) open = null;
+      else depth--;
+    }
+  }
+  return items;
+}
+
+/**
+ * Each line with the `config`/`edit` it sits in, so a line is judged a repeat
+ * only within the same entry and table.
+ */
+function fortiKeys(lines                   )           {
+  const stack           = [];
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    const key = [...stack, trimmed].join(' > ');
+    if (/^(config|edit) /.test(trimmed)) stack.push(trimmed);
+    else if (trimmed === 'end' || trimmed === 'next') stack.pop();
+    return key;
+  });
+}
+
+/**
+ * Merge one section's entries from another step. The same entry edited twice
+ * becomes one entry with both steps' settings when it is flat; with a nested
+ * table it is written twice, which FortiOS applies in order just the same.
+ */
+function mergeFortiEntries(existing          , incoming                   )           {
+  const items = fortiItems(existing);
+  for (const item of fortiItems(incoming)) {
+    if (item.edit === null) {
+      if (!items.some((other) => other.edit === null && other.lines[0] .trim() === item.lines[0] .trim())) items.push(item);
+      continue;
+    }
+    const same = items.find((other) => other.edit === item.edit);
+    if (!same) {
+      items.push(item);
+      continue;
+    }
+    const have = new Set(fortiKeys(same.lines));
+    const keys = fortiKeys(item.lines);
+    const missing = item.lines.filter((_, i) => !have.has(keys[i] ));
+    if (missing.length === 0) continue;
+    const nested = (lines                   ) => lines.some((l) => /^config /.test(l.trim()));
+    if (!nested(same.lines) && !nested(item.lines)) {
+      // Flat on both sides: the new settings go in before the entry's `next`.
+      const close = same.lines.length - 1;
+      same.lines.splice(close, 0, ...missing.filter((l) => l.trim() !== 'next'));
+    } else {
+      items.push(item);
+    }
+  }
+  return items.flatMap((item) => item.lines);
 }
 
 const FORTI_ORDER = ['system', 'router', 'firewall address', 'firewall addrgrp', 'firewall service', 'firewall vip', 'firewall policy'];
@@ -376,13 +489,7 @@ export function fullConfig(platform          , steps                           ,
     const sections = new Map                  ();
     for (const step of mine) {
       for (const section of fortiSections(step.change.config)) {
-        const existing = sections.get(section.path) ?? [];
-        const seen = new Set(existing.map((line) => line.trim()));
-        for (const entry of section.entries) {
-          if (entry.trim() !== 'next' && seen.has(entry.trim())) continue;
-          existing.push(entry);
-        }
-        sections.set(section.path, existing);
+        sections.set(section.path, mergeFortiEntries(sections.get(section.path) ?? [], section.entries));
       }
     }
     const ordered = [...sections.entries()].sort((a, b) => fortiRank(a[0]) - fortiRank(b[0]) || a[0].localeCompare(b[0]));
@@ -393,7 +500,59 @@ export function fullConfig(platform          , steps                           ,
     return { text: deviceFile(platform, `${[...header, ...body].join('\n').trimEnd()}\n`), findings };
   }
 
-  // IOS, NX-OS and EOS.
+  if (platform === 'juniper_junos') {
+    // Flat `set` lines, like PAN-OS: deduplicated and laid out by hierarchy,
+    // in the order `show configuration | display set` prints them.
+    const seen = new Set        ();
+    const grouped = JUNOS_GROUPS.map((group) => ({ title: group.title, lines: []             }));
+    for (const step of mine) {
+      for (const line of step.change.config) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.startsWith('#')) continue;
+        if (seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        const index = JUNOS_GROUPS.findIndex((group) => group.match.test(trimmed));
+        grouped[index < 0 ? JUNOS_GROUPS.length - 1 : index] .lines.push(trimmed);
+      }
+    }
+    const body = grouped.flatMap((group) => (group.lines.length === 0 ? [] : [`${comment} --- ${group.title} ---`, ...group.lines, '']));
+    findings.push(
+      info('network.full.junos-order', 'Load it with `load set` (or `load merge set`), then `commit check` and `commit confirmed 5`: nothing takes effect until the commit.', {
+        source: 'ArchToolKit',
+      }),
+    );
+    return { text: deviceFile(platform, `${[...header, ...body].join('\n').trimEnd()}\n`), findings };
+  }
+
+  if (platform === 'cisco_fmc') {
+    // Each step is a list of FMC API operations; the build is all of them, in
+    // order, once each — objects before the rules that name them, as added.
+    const operations            = [];
+    const seen = new Set        ();
+    for (const step of mine) {
+      let parsed         ;
+      try {
+        parsed = JSON.parse(step.change.config.join('\n'));
+      } catch {
+        findings.push(error('network.full.fmc-json', `${step.label}: its operations are not valid JSON, so they were left out.`, { source: 'ArchToolKit' }));
+        continue;
+      }
+      for (const operation of Array.isArray(parsed) ? parsed : [parsed]) {
+        const key = JSON.stringify(operation);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        operations.push(operation);
+      }
+    }
+    findings.push(
+      info('network.full.fmc-deploy', 'These operations change FMC’s configuration only. Nothing reaches a firewall until the pending changes are deployed from FMC.', {
+        source: 'ArchToolKit',
+      }),
+    );
+    return { text: deviceFile(platform, `${JSON.stringify(operations, null, 2)}\n`), findings };
+  }
+
+  // IOS, NX-OS, EOS, ASA, the 9800, IOS-XR and AOS-CX: indented CLI blocks.
   const { blocks, findings: mergeFindings } = mergeCli(platform, mine);
   findings.push(...mergeFindings, ...completeness(platform, mine));
 
@@ -416,5 +575,23 @@ export function fullConfig(platform          , steps                           ,
     body.push('');
   }
 
+  // IOS-XR stages what is entered and applies it at commit.
+  if (platform === 'cisco_iosxr') body.push(`${comment} ==== Apply ====`, 'commit');
+
   return { text: deviceFile(platform, `${[...header, ...body].join('\n').trimEnd()}\n`), findings };
 }
+
+/** Junos hierarchies, in the order a `display set` configuration lists them. */
+const JUNOS_GROUPS                                                                = [
+  { title: 'System and management', match: /^(set|delete) (system|chassis|snmp|services) / },
+  { title: 'Interfaces', match: /^(set|delete) interfaces / },
+  { title: 'VLANs and switching', match: /^(set|delete) (vlans|switch-options|virtual-chassis|forwarding-options) / },
+  { title: 'Access: 802.1X, RADIUS, address pools', match: /^(set|delete) access / },
+  { title: 'Routing options', match: /^(set|delete) routing-options / },
+  { title: 'Protocols', match: /^(set|delete) protocols / },
+  { title: 'Policy options', match: /^(set|delete) policy-options / },
+  { title: 'Firewall filters and class of service', match: /^(set|delete) (firewall|class-of-service) / },
+  { title: 'Security: zones, policies, NAT, IPsec', match: /^(set|delete) (security|applications) / },
+  { title: 'Routing instances', match: /^(set|delete) routing-instances / },
+  { title: 'Everything else', match: /.*/ },
+];

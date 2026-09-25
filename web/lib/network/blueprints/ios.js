@@ -19,6 +19,7 @@ import { containsAny, familyOf, parseCidrAny } from '../../core/ip.js';
 import { V6, aclOperand, addressList, cidrList, interfaceAddressLines, invalidEntries, isLinkLocal, routerIdFindings, v6AclTail } from './ios-v6.js';
 import { IOS_EXTRA } from './ios-extra.js';
 import { IOS_EXTRA_2 } from './ios-extra2.js';
+import { IOS_EXTRA_3 } from './ios-extra3.js';
 
 const PLATFORM = 'cisco_ios'         ;
 
@@ -1004,7 +1005,7 @@ const BLUEPRINTS                             = [
  * archive — are in ios-extra.ts, because one file of thirty changes is a file
  * nobody can find anything in.
  */
-const ALL                             = [...BLUEPRINTS, ...IOS_EXTRA, ...IOS_EXTRA_2];
+const ALL                             = [...BLUEPRINTS, ...IOS_EXTRA, ...IOS_EXTRA_2, ...IOS_EXTRA_3];
 
 export const IOS_NETWORK                 = {
   target: PLATFORM,

@@ -21,6 +21,7 @@ import { error, warning,              } from '../../core/findings.js';
 import { deviceBlueprint,                      } from '../from-change.js';
 import { F5_EXTRA } from './f5-extra.js';
 import { F5_EXTRA_2 } from './f5-extra2.js';
+import { F5_EXTRA_3 } from './f5-extra3.js';
 import {                   } from '../device.js';
 import { formatHostPort, urlHost } from '../../core/ip.js';
 import { as3Members, parseMembers, virtualFindings } from './f5-common.js';
@@ -380,7 +381,7 @@ const BLUEPRINTS                             = [
 ];
 
 /** The rest of the platform's changes live in f5-extra.ts. */
-const ALL                             = [...BLUEPRINTS, ...F5_EXTRA, ...F5_EXTRA_2];
+const ALL                             = [...BLUEPRINTS, ...F5_EXTRA, ...F5_EXTRA_2, ...F5_EXTRA_3];
 
 export const F5_NETWORK                 = { target: PLATFORM, label: 'F5 BIG-IP (AS3)', blueprints: ALL };
 export const F5_CHANGES                             = ALL;
