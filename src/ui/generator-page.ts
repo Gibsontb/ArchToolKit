@@ -1177,21 +1177,42 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
                 on: { click: (event: Event) => void archive(event.currentTarget as HTMLButtonElement, pkg.extension, pkg.include) },
               }),
             ),
-            el('button', {
-              class: 'btn',
-              text: 'Download all as one text file',
-              attrs: { title: 'For reading or attaching to a change record. Not an import format.' },
-              on: {
-                click: () =>
-                  downloadFile(
-                    `${base}${options.downloadExtension}`,
-                    Object.entries(all)
-                      .map(([n, b]) => `# ===== ${n} =====\n${b}`)
-                      .join('\n'),
-                    'text/plain',
-                  ),
-              },
-            }),
+            // Terraform: one .tf of every .tf file is still a configuration
+            // Terraform runs as it stands (versions, providers, resources and
+            // variables may share a file), so it is offered as HCL. The README
+            // and the tfvars example are left out; they are not HCL it reads.
+            options.downloadExtension === '.tf'
+              ? el('button', {
+                  class: 'btn',
+                  text: 'Download as one .tf file (HCL)',
+                  attrs: { title: 'versions.tf, providers.tf, main.tf, variables.tf and outputs.tf in one main.tf — terraform init && terraform plan work on it as it stands' },
+                  on: {
+                    click: () =>
+                      downloadFile(
+                        `${base}.tf`,
+                        Object.entries(all)
+                          .filter(([n]) => n.endsWith('.tf'))
+                          .map(([n, b]) => `# ===== ${n} =====\n\n${b.trimEnd()}\n`)
+                          .join('\n'),
+                        'text/plain',
+                      ),
+                  },
+                })
+              : el('button', {
+                  class: 'btn',
+                  text: 'Download all as one text file',
+                  attrs: { title: 'For reading or attaching to a change record. Not an import format.' },
+                  on: {
+                    click: () =>
+                      downloadFile(
+                        `${base}${options.downloadExtension}`,
+                        Object.entries(all)
+                          .map(([n, b]) => `# ===== ${n} =====\n${b}`)
+                          .join('\n'),
+                        'text/plain',
+                      ),
+                  },
+                }),
             archPadButton('Open all in ArchPad', () => Object.entries(all).map(([name, text]) => ({ name, text }))),
           ),
         );

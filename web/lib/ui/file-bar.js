@@ -102,14 +102,14 @@ export function fileBar(options                )              {
     { class: 'file-bar' },
     el('button', {
       class: 'btn',
-      text: 'Load…',
+      text: 'Load settings…',
       attrs: { type: 'button', title: `Load ${options.noun} from a JSON, YAML or TXT file`, 'data-control': 'settings-load' },
       on: { click: () => picker.click() },
     }),
     el('button', {
       class: 'btn btn-primary',
-      text: 'Save',
-      attrs: { type: 'button', title: `Save ${options.noun} to a file`, 'data-control': 'settings-save' },
+      text: 'Save settings',
+      attrs: { type: 'button', title: `Save ${options.noun} to a file, to load again later — the form's values, not the generated output`, 'data-control': 'settings-save' },
       on: {
         click: () => {
           const f = format.value                  ;
