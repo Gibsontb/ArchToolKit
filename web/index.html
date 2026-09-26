@@ -17,8 +17,8 @@
         <a href="app/inventory.html">VMware Inventory</a>
         <a href="app/vcf-sizing.html">VCF Sizing</a>
         <a href="app/vcf-spec.html">VCF Spec Builder</a>
-        <a href="app/multicloud.html">Multi-Cloud</a>
-        <a href="app/migration.html">Migration</a>
+        <a href="app/migration.html">Application Migration</a>
+        <a href="app/multicloud.html">Migration &amp; Utilities</a>
         <a href="app/terraform.html">Terraform</a>
         <a href="app/ansible.html">Ansible</a>
         <a href="app/network.html">Network</a>
@@ -44,7 +44,7 @@
       </div>
 
       <h2 class="tool-group">Start with what you have</h2>
-      <p class="tool-group-note">Import the estate as it is, before deciding anything about it.</p>
+      <p class="tool-group-note">Import the estate as it is, then size and specify the VCF it lands on.</p>
       <div class="tool-grid">
         <a class="tool-card" href="app/inventory.html">
           <h3>VMware Inventory</h3>
@@ -54,11 +54,6 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-      </div>
-
-      <h2 class="tool-group">Decide and size</h2>
-      <p class="tool-group-note">What the target looks like, and what it costs to get there.</p>
-      <div class="tool-grid">
         <a class="tool-card" href="app/vcf-sizing.html">
           <h3>VCF 9.1 Sizing</h3>
           <p>
@@ -76,22 +71,30 @@
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
-        <a class="tool-card" href="app/multicloud.html">
-          <h3>Multi-Cloud Decision &amp; Onboarding Wizard</h3>
-          <p>
-            Pick the cloud once, answer four steps, and get a full recommendation — compute pattern,
-            data and storage, integration, resilience, security controls, DR by cloud, sizing
-            footprint and an onboarding playbook. Full view, Print, or Save as Word.
-          </p>
-          <span class="tag tag-ready">Ready</span>
-        </a>
+      </div>
+
+      <h2 class="tool-group">Migrate</h2>
+      <p class="tool-group-note">Plan every application, then move the estate and keep changing it.</p>
+      <div class="tool-grid">
         <a class="tool-card" href="app/migration.html">
           <h3>Application Migration</h3>
           <p>
-            Evaluate an application, route it across the seven Rs, and get the readiness score, the
-            risk band, the target cloud, the services that cover it and a step-by-step plan. Every
-            application evaluated is kept in the Portfolio tab, where the waves are planned and the
-            whole backlog exports as CSV or JSON.
+            Every application, from any source (VMware, Hyper-V, physical servers, Nutanix AHV, KVM or
+            another cloud), with its servers, databases and dependencies, and a developed target on the
+            cloud you choose: AWS, Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation. Compare the
+            clouds side by side, size every server, database and cluster from its utilisation, then
+            generate Terraform and Ansible for one application or a stack of them.
+          </p>
+          <span class="tag tag-ready">Ready</span>
+        </a>
+        <a class="tool-card" href="app/multicloud.html">
+          <h3>Multi-Cloud Migration &amp; Utilities</h3>
+          <p>
+            Take the application plans and move them: landing zones, waves, an execution kit per move
+            path (HCX, AWS Transform MGN, Azure Migrate, Migrate to Virtual Machines, Oracle Cloud
+            Migrations and the database paths), cutover, rollback and DNS, validation, decommission,
+            a tracking board and the data-centre exit. Then use the Utilities for day-2 changes and to
+            deploy a new service, each a small Terraform and Ansible bundle.
           </p>
           <span class="tag tag-ready">Ready</span>
         </a>
