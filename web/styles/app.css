@@ -668,6 +668,10 @@ tbody tr:hover {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--space-4);
 }
+/* A row meant to sit on one line on a desktop screen. */
+.tool-grid-row {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
 
 .tool-card {
   display: flex;
