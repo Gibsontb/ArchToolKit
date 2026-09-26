@@ -507,7 +507,12 @@ atk_run() {
     return 0
   fi
   atk_log "run: $shown"
-  "$@" 2> >(_atk_redact_stream | tee -a "$\{ATK_LOG:-/dev/null}" >&2)
+  local rc=0
+  "$@" 2> >(_atk_redact_stream | tee -a "$\{ATK_LOG:-/dev/null}" >&2) || rc=$?
+  # A tool's own 2-5 (psql, aws) would read as the kit's usage / missing /
+  # gate / precheck codes and stop the whole run; a failed command is 1.
+  if (( rc >= 2 && rc <= 5 )); then rc=1; fi
+  return "$rc"
 }
 
 # atk_retry ATTEMPTS DELAY_SECONDS CMD...: atk_run with retries (the delay grows each time).

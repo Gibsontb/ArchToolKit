@@ -29,7 +29,17 @@ import type { ExecPath } from './contract.ts';
 import { shScript } from './lib-sh.ts';
 import type { Manifest, ManifestItem } from './manifest.ts';
 import type { PathResolution } from './paths.ts';
+import { GENERATORS as AWS_MGN } from './paths/aws-mgn.ts';
+import { GENERATORS as AZURE_MIGRATE } from './paths/azure-migrate.ts';
+import { GENERATORS as GCP_M2VM } from './paths/gcp-m2vm.ts';
 import { GENERATORS as HCX } from './paths/hcx.ts';
+import { GENERATORS as OCI_OCM } from './paths/oci-ocm.ts';
+import { GENERATORS as WP17_PATTERN_PATHS } from './paths/patterns.ts';
+import { GENERATORS as WP17_DB_PATHS } from './db/beyond.ts';
+import { GENERATORS as DB_CLOUD_DMS } from './db/cloud-dms.ts';
+import { GENERATORS as DB_OPEN_SOURCE } from './db/open-source.ts';
+import { GENERATORS as DB_ORACLE } from './db/oracle.ts';
+import { GENERATORS as DB_SQLSERVER } from './db/sqlserver.ts';
 import { GENERATORS as REBUILD } from './paths/rebuild.ts';
 import { GENERATORS as VCF_CONVERTER } from './paths/vcf-converter.ts';
 import { GENERATORS as VCF_IMPORT } from './paths/vcf-import.ts';
@@ -237,7 +247,7 @@ ${cases}
 // ---------------------------------------------------------------------------
 
 /** The generators built into the kit. WP-11b/c/d and WP-17 modules are added here as they land. */
-const BUILT_IN: readonly PathGenerator[] = [...HCX, ...XVC, ...VCF_IMPORT, ...VCF_CONVERTER, ...REBUILD];
+const BUILT_IN: readonly PathGenerator[] = [...HCX, ...XVC, ...VCF_IMPORT, ...VCF_CONVERTER, ...REBUILD, ...AWS_MGN, ...AZURE_MIGRATE, ...GCP_M2VM, ...OCI_OCM, ...DB_ORACLE, ...DB_SQLSERVER, ...DB_OPEN_SOURCE, ...DB_CLOUD_DMS, ...WP17_PATTERN_PATHS, ...WP17_DB_PATHS];
 
 /** The registry `executionKit` uses by default. */
 export const PATH_REGISTRY: PathRegistry = createRegistry(BUILT_IN);

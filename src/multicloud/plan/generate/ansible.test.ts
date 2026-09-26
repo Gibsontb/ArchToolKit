@@ -439,7 +439,10 @@ describe('generate/ansible: items and hosts', () => {
   });
 
   it('adds the source-tools play when the kit has it', () => {
-    expect(SITE.items.some((i) => i.blueprintId === 'mig_source_tools')).toBe(false);
+    // The kit has it now (WP-7): it runs on the replicated servers.
+    const real = SITE.items.find((i) => i.blueprintId === 'mig_source_tools')!;
+    expect(real.id).toBe('mig:14:source-tools');
+    expect(real.values.hosts).toBe('method_replicate');
     const stub = { ...findAnsibleBlueprint('mig_vmware_tools_removal')!, id: 'mig_source_tools' } as Blueprint;
     const lookup = (id: string): Blueprint | undefined => (id === 'mig_source_tools' ? stub : findAnsibleBlueprint(id));
     const site = planToSite(MIXED.plan, MIXED.decision, MIXED.design, { lookup });

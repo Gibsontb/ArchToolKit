@@ -35,6 +35,7 @@ const CLOUDS = ['aws', 'azure', 'google', 'oci'] as const;
 
 /** The ids the design (2.7.2, 2.7.3) names, which the planner composes. */
 const EXPECTED_IDS = [
+  'aws_mig_replication', 'google_mig_replication', 'oci_mig_replication',
   ...CLOUDS.flatMap((c) => ['landing_zone', 'connectivity', 'compute', 'databases', 'backup', 'monitoring'].map((s) => `${c}_mig_${s}`)),
   ...['aws', 'azure', 'google'].flatMap((c) => [`${c}_mig_identity`, `${c}_mig_oracle_database`]),
   'vsphere_mig_vms',

@@ -25,6 +25,7 @@ import { STORAGE_PLAYBOOKS } from './storage.ts';
 import { PRIVATE_CLOUDS_PLAYBOOKS } from './private-clouds.ts';
 import { OPERATIONS_PLAYBOOKS } from './operations.ts';
 import { MIGRATION_LINUX, MIGRATION_WINDOWS } from './migration/index.ts';
+import { PATTERN_ANSIBLE_LINUX, PATTERN_ANSIBLE_WINDOWS } from './patterns/index.ts';
 
 /** The estate blueprints follow; the page opens on them when an estate is loaded. */
 function withEstate(group: BlueprintGroup, estate: readonly Blueprint[]): BlueprintGroup {
@@ -57,8 +58,8 @@ export const ANSIBLE_BLUEPRINTS: readonly BlueprintGroup[] = withAnsibleProjectA
   GCP_ANSIBLE,
   OCI_ANSIBLE,
   withEstate(VMWARE_ANSIBLE, [inventoryBlueprint('all'), PREMIGRATION, POSTMIGRATION]),
-  withEstate({ ...LINUX_ANSIBLE, blueprints: [...LINUX_ANSIBLE.blueprints, ...MIGRATION_LINUX] }, [inventoryBlueprint('linux')]),
-  withEstate({ ...WINDOWS_ANSIBLE, blueprints: [...WINDOWS_ANSIBLE.blueprints, ...MIGRATION_WINDOWS] }, [inventoryBlueprint('windows')]),
+  withEstate({ ...LINUX_ANSIBLE, blueprints: [...LINUX_ANSIBLE.blueprints, ...MIGRATION_LINUX, ...PATTERN_ANSIBLE_LINUX] }, [inventoryBlueprint('linux')]),
+  withEstate({ ...WINDOWS_ANSIBLE, blueprints: [...WINDOWS_ANSIBLE.blueprints, ...MIGRATION_WINDOWS, ...PATTERN_ANSIBLE_WINDOWS] }, [inventoryBlueprint('windows')]),
 ].map(withModules).concat(newPlatformGroups(MODULES, {
   network: NETWORK_PLAYBOOKS,
   containers: CONTAINERS_PLAYBOOKS,

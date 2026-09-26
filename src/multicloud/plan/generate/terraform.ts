@@ -919,13 +919,16 @@ function relocateItem(ctx: Ctx): StackItem | null {
 
 function replicationItem(ctx: Ctx, rows: string): StackItem | null {
   const replicated = ctx.compute.filter((t) => methodOf(ctx, t) === 'replicate');
-  const managed = ctx.databases.filter((t) => !isIaasService(t.service) && ctx.decision.items[t.database]?.method === 'managed-db');
+  // A new service's database has no data to carry over, so no DMS.
+  const managed = ctx.databases.filter((t) => !isIaasService(t.service) && ctx.decision.items[t.database]?.method === 'managed-db'
+    && ctx.decision.items[t.database]?.disposition !== 'new');
   if (replicated.length === 0 && managed.length === 0) return null;
   return optional(ctx, 'replication', `${ctx.bp}_mig_replication`, 'Replication', {
     vms: computeRows(ctx, replicated),
     databases: rows,
     region: ctx.pd.region,
     dr_region: ctx.pd.drRegion ?? '',
+    plan_id: planTag(ctx.plan),
     landing_zone_source: lzSource(ctx),
   });
 }
@@ -968,6 +971,9 @@ function defaultPatternBlueprint(bp: string): (c: AppComponentLike) => string | 
   return (c) => c.settings?.blueprint?.trim() || (c.tierPattern ? `${bp}_app_${c.tierPattern.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}` : undefined);
 }
 
+/** Tier patterns with no pattern item of their own. */
+const GRID_CARRIED: ReadonlySet<string> = new Set(['vm', 'managed-db', 'vmware-service', 'retire', 'retain', 'saas', 'specialist']);
+
 function appItems(ctx: Ctx, options: PlanToStacksOptions): { head: StackItem[]; monitoring: StackItem[] } {
   const head: StackItem[] = [];
   const monitoring: StackItem[] = [];
@@ -978,13 +984,15 @@ function appItems(ctx: Ctx, options: PlanToStacksOptions): { head: StackItem[]; 
     const context = optional(ctx, `app:${slug}:context`, `${ctx.bp}_app_context`, `${app.name} context`, common);
     if (context) head.push(context);
     for (const c of components.filter((x) => x.kind === 'pattern')) {
+      // The compute and databases grids carry VMs and managed databases; retire / retain / SaaS / specialist build nothing here.
+      if (!c.settings?.blueprint?.trim() && (!c.tierPattern || GRID_CARRIED.has(c.tierPattern))) continue;
       const id = patternId(c);
       const bp = id ? ctx.lookup(id) : undefined;
       if (!id || !bp) {
         ctx.findings.push(info('plan.tf.pattern-not-generated', `${app.name}: the ${c.name} component (${c.tierPattern ?? 'pattern'}) has no Terraform blueprint on ${PLATFORM_LABELS[ctx.platform]} yet, so it is not in the stack.`));
         continue;
       }
-      head.push({ id: c.id, blueprintId: id, label: `${app.name} ${c.name}`, values: declared(bp, { ...(c.settings ?? {}), ...common }) });
+      head.push({ id: c.id, blueprintId: id, label: `${app.name} ${c.name}`, values: declared(bp, { ...(c.settings ?? {}), ...common, component: c.id }) });
     }
     for (const c of components.filter((x) => x.kind === 'resource')) {
       if (!c.blueprintId || !ctx.lookup(c.blueprintId)) {
@@ -994,7 +1002,9 @@ function appItems(ctx: Ctx, options: PlanToStacksOptions): { head: StackItem[]; 
       // In a shared stack the landing zone is var.landing_zone: a reference to the contract follows it.
       head.push({ id: c.id, blueprintId: c.blueprintId, label: `${app.name} ${c.name}`, values: ctx.shared ? toSharedReference(c.values ?? {}) : { ...(c.values ?? {}) } });
     }
-    const mon = optional(ctx, `app:${slug}:monitoring`, `${ctx.bp}_app_monitoring`, `${app.name} monitoring`, common);
+    // The app's VMs are the compute item's rows in this stack; an app with none (PaaS, containers) watches no VMs.
+    const hasVms = ctx.platform !== 'vmware' && ctx.compute.some((t) => ctx.workloadById.get(t.workload)?.app === app.name);
+    const mon = optional(ctx, `app:${slug}:monitoring`, `${ctx.bp}_app_monitoring`, `${app.name} monitoring`, { ...common, vms_from: hasVms ? 'stack' : 'none' });
     if (mon) monitoring.push(mon);
   }
   return { head, monitoring };

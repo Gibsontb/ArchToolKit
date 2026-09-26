@@ -143,15 +143,15 @@ describe('generate/terraform: the file tree', () => {
   it('stacks the items in the design order', () => {
     const order = (p: Platform) => STACKS.perPlatform[p]!.items.map((i) => i.blueprintId);
     expect(order('aws')).toEqual([
-      'aws_mig_landing_zone', 'aws_mig_identity', 'aws_mig_connectivity', 'aws_mig_compute', 'aws_mig_databases', 'aws_mig_oracle_database', 'aws_mig_backup', 'aws_mig_monitoring',
+      'aws_mig_landing_zone', 'aws_mig_identity', 'aws_mig_connectivity', 'aws_mig_governance', 'aws_mig_compute', 'aws_mig_databases', 'aws_mig_oracle_database', 'aws_mig_backup', 'aws_mig_monitoring', 'aws_mig_replication',
     ]);
     expect(order('azure')).toEqual([
-      'azure_mig_landing_zone', 'azure_mig_identity', 'azure_mig_connectivity', 'azure_mig_compute', 'azure_mig_databases', 'azure_mig_backup', 'azure_mig_monitoring', 'azure_mig_avs',
+      'azure_mig_landing_zone', 'azure_mig_identity', 'azure_mig_connectivity', 'azure_mig_governance', 'azure_mig_compute', 'azure_mig_databases', 'azure_mig_backup', 'azure_mig_monitoring', 'azure_mig_avs',
     ]);
     expect(order('google')).toEqual([
-      'google_mig_landing_zone', 'google_mig_identity', 'google_mig_connectivity', 'google_mig_compute', 'google_mig_databases', 'google_mig_oracle_database', 'google_mig_backup', 'google_mig_monitoring',
+      'google_mig_landing_zone', 'google_mig_identity', 'google_mig_connectivity', 'google_mig_governance', 'google_mig_compute', 'google_mig_databases', 'google_mig_oracle_database', 'google_mig_backup', 'google_mig_monitoring', 'google_mig_replication',
     ]);
-    expect(order('oci')).toEqual(['oci_mig_landing_zone', 'oci_mig_connectivity', 'oci_mig_compute', 'oci_mig_databases', 'oci_mig_backup', 'oci_mig_monitoring']);
+    expect(order('oci')).toEqual(['oci_mig_landing_zone', 'oci_mig_connectivity', 'oci_mig_governance', 'oci_mig_compute', 'oci_mig_databases', 'oci_mig_backup', 'oci_mig_monitoring', 'oci_mig_replication']);
     expect(order('vmware')).toEqual(['vsphere_mig_vms']);
   });
 
@@ -414,10 +414,13 @@ const FUTURE: Readonly<Record<string, Blueprint>> = Object.fromEntries(
 const withFuture = (id: string): Blueprint | undefined => FUTURE[id] ?? findTerraformBlueprint(id);
 
 describe('generate/terraform: replication, governance and app items', () => {
-  it('leaves them out while their blueprints do not exist', () => {
+  it('adds governance where its blueprint exists (not on VCF), and replication where servers replicate', () => {
     for (const stack of Object.values(STACKS.perPlatform)) {
-      expect(stack.items.some((i) => /_mig_(replication|governance)$|_app_/.test(i.blueprintId))).toBe(false);
+      expect(stack.items.some((i) => /_mig_governance$/.test(i.blueprintId))).toBe(stack.platform !== 'vmware');
+      // The estate stack has no saved app plans, so no app items.
+      expect(stack.items.some((i) => /_app_/.test(i.blueprintId))).toBe(false);
     }
+    expect(STACKS.perPlatform.aws!.items.at(-1)?.blueprintId).toBe('aws_mig_replication');
   });
 
   it('adds them once the lookup has them, with only the inputs they declare', () => {
@@ -457,17 +460,19 @@ describe('generate/terraform: replication, governance and app items', () => {
     expect(ids).not.toContain('c:shop:sap');
     expect(s.findings.some((x) => x.code === 'plan.tf.pattern-not-generated')).toBe(true);
     expect(s.perPlatform.aws!.items.find((i) => i.id === 'c:shop:web')!.values).toEqual({ app: 'shop', size: 'm' });
-    // Without the future blueprints only the resource component (a real blueprint) goes in.
+    // With the real blueprints: the app context and monitoring, and the resource component; neither pattern has an item.
     const now = planToStacks(f.plan, f.decision, f.design);
-    expect(now.perPlatform.aws!.items.map((i) => i.id).filter((i) => i.startsWith('c:') || i.includes(':app:'))).toEqual(['c:shop:bucket']);
+    expect(now.perPlatform.aws!.items.map((i) => i.id).filter((i) => i.startsWith('c:') || i.includes(':app:'))).toEqual(['aws:app:shop:context', 'c:shop:bucket', 'aws:app:shop:monitoring']);
+    const mon = now.perPlatform.aws!.items.find((i) => i.id === 'aws:app:shop:monitoring')!;
+    expect(mon.values.vms_from).toBe('stack');
   });
 });
 
 describe('generate/terraform: scopes', () => {
   it('landing-zone: the landing zone, identity and connectivity, no workloads', () => {
     const s = planToStacks(MIXED.plan, MIXED.decision, MIXED.design, { scope: 'landing-zone' });
-    expect(s.perPlatform.aws!.items.map((i) => i.blueprintId)).toEqual(['aws_mig_landing_zone', 'aws_mig_identity', 'aws_mig_connectivity', 'aws_mig_backup']);
-    expect(s.perPlatform.azure!.items.map((i) => i.blueprintId)).toEqual(['azure_mig_landing_zone', 'azure_mig_identity', 'azure_mig_connectivity', 'azure_mig_avs']);
+    expect(s.perPlatform.aws!.items.map((i) => i.blueprintId)).toEqual(['aws_mig_landing_zone', 'aws_mig_identity', 'aws_mig_connectivity', 'aws_mig_governance', 'aws_mig_backup']);
+    expect(s.perPlatform.azure!.items.map((i) => i.blueprintId)).toEqual(['azure_mig_landing_zone', 'azure_mig_identity', 'azure_mig_connectivity', 'azure_mig_governance', 'azure_mig_avs']);
     expect(s.perPlatform.vmware).toBeUndefined();
   });
 
@@ -502,22 +507,30 @@ describe('generate/terraform: scopes', () => {
 describe('generate/terraform: the apps scope with a shared landing zone (WP-19 delta)', () => {
   const bucket = { id: 'c:tools:assets', name: 'assets', kind: 'resource', blueprintId: 'res_aws_s3_bucket', values: { 'r.bucket': 'tools-assets', 'r.tags': '{ subnet = local.landing_zone.subnet_ids["prod/app/a"] }' } };
 
-  it('starts a stack with no other consumer with the landing-zone contract item, and rewrites local.landing_zone to var', () => {
+  it('declares var.landing_zone through the app context, or the contract item without one, and rewrites local.landing_zone to var', () => {
     // tools' only workload is dev01; leave it out by environment, so only the resource component is in the stack.
     const appPlans = [{ app: itemId('app', 'tools'), status: 'planned', platform: 'aws', variants: { aws: [bucket] } }];
     const f = fixture({}, { appPlans } as unknown as Partial<Plan>);
-    const s = planToStacks(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'shared', apps: ['tools'], environment: 'prod' });
+    const opts = { scope: 'apps', landingZone: 'shared', apps: ['tools'], environment: 'prod' } as const;
+    const s = planToStacks(f.plan, f.decision, f.design, opts);
     const aws = s.perPlatform.aws!;
-    expect(aws.items.map((i) => i.blueprintId)).toEqual(['aws_mig_landing_zone_variable', 'res_aws_s3_bucket']);
+    expect(aws.items.map((i) => i.blueprintId)).toEqual(['aws_app_context', 'res_aws_s3_bucket', 'aws_app_monitoring']);
+    expect(aws.items[0]!.values.landing_zone_source).toBe('variables');
+    expect(aws.items[2]!.values.vms_from).toBe('none');
     expect(aws.items[1]!.values['r.tags']).toBe('{ subnet = var.landing_zone.subnet_ids["prod/app/a"] }');
-    const out = terraformFiles(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'shared', apps: ['tools'], environment: 'prod' });
-    const text = Object.entries(out.files).filter(([k]) => k.startsWith('terraform/aws/') && k.endsWith('.tf')).map(([, t]) => t).join('\n');
-    expect(text).toContain('variable "landing_zone"');
-    expect(text).toContain('var.landing_zone.subnet_ids');
-    expect(/local\.landing_zone/.test(text)).toBe(false);
-    expect(out.findings.filter((x) => x.severity === 'error')).toEqual([]);
+    for (const lookup of [undefined, (id: string) => (/_app_(context|monitoring)$/.test(id) ? undefined : findTerraformBlueprint(id))]) {
+      const out = terraformFiles(f.plan, f.decision, f.design, { ...opts, ...(lookup ? { lookup } : {}) });
+      const text = Object.entries(out.files).filter(([k]) => k.startsWith('terraform/aws/') && k.endsWith('.tf')).map(([, t]) => t).join('\n');
+      expect(text).toContain('variable "landing_zone"');
+      expect(text).toContain('var.landing_zone.subnet_ids');
+      expect(/local\.landing_zone/.test(text)).toBe(false);
+      expect(out.findings.filter((x) => x.severity === 'error')).toEqual([]);
+    }
+    // Without an app context, nothing else declares the variable: the contract item does.
+    const bare = planToStacks(f.plan, f.decision, f.design, { ...opts, lookup: (id) => (/_app_(context|monitoring)$/.test(id) ? undefined : findTerraformBlueprint(id)) });
+    expect(bare.perPlatform.aws!.items.map((i) => i.blueprintId)).toEqual(['aws_mig_landing_zone_variable', 'res_aws_s3_bucket']);
     // With the landing zone included, the reference stays local and no contract item is added.
-    const inc = planToStacks(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'included', apps: ['tools'], environment: 'prod' });
+    const inc = planToStacks(f.plan, f.decision, f.design, { ...opts, landingZone: 'included' });
     expect(inc.perPlatform.aws!.items.some((i) => i.blueprintId === 'aws_mig_landing_zone_variable')).toBe(false);
   });
 

@@ -302,7 +302,7 @@ describe('apps/generate', () => {
     const two = generateAppStack(plan, ['shop', 'crm'], { landingZone: 'shared', record: false, engine: ENGINE });
     const a = ownFiles(one.files, 'shop/terraform/aws', 'shop');
     const b = ownFiles(two.files, 'apps-move-apps/terraform/aws', 'shop');
-    expect(Object.keys(a)).toEqual(['shop-assets.tf']);
+    expect(Object.keys(a).sort()).toEqual(['shop-assets.tf', 'shop-context.tf', 'shop-monitoring.tf']);
     expect(b).toEqual(a);
     const c1 = Object.entries(one.files).find(([f]) => /terraform\/aws\/\d\d-compute\.tf$/.test(f))![1];
     const c2 = Object.entries(two.files).find(([f]) => /terraform\/aws\/\d\d-compute\.tf$/.test(f))![1];

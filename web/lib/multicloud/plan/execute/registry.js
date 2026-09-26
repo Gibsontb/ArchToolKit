@@ -29,7 +29,17 @@ import { DB_MOVE_PATH_VALUES, MOVE_PATH_VALUES } from '../options.js';
 import { shScript } from './lib-sh.js';
                                                             
                                                  
+import { GENERATORS as AWS_MGN } from './paths/aws-mgn.js';
+import { GENERATORS as AZURE_MIGRATE } from './paths/azure-migrate.js';
+import { GENERATORS as GCP_M2VM } from './paths/gcp-m2vm.js';
 import { GENERATORS as HCX } from './paths/hcx.js';
+import { GENERATORS as OCI_OCM } from './paths/oci-ocm.js';
+import { GENERATORS as WP17_PATTERN_PATHS } from './paths/patterns.js';
+import { GENERATORS as WP17_DB_PATHS } from './db/beyond.js';
+import { GENERATORS as DB_CLOUD_DMS } from './db/cloud-dms.js';
+import { GENERATORS as DB_OPEN_SOURCE } from './db/open-source.js';
+import { GENERATORS as DB_ORACLE } from './db/oracle.js';
+import { GENERATORS as DB_SQLSERVER } from './db/sqlserver.js';
 import { GENERATORS as REBUILD } from './paths/rebuild.js';
 import { GENERATORS as VCF_CONVERTER } from './paths/vcf-converter.js';
 import { GENERATORS as VCF_IMPORT } from './paths/vcf-import.js';
@@ -237,7 +247,7 @@ ${cases}
 // ---------------------------------------------------------------------------
 
 /** The generators built into the kit. WP-11b/c/d and WP-17 modules are added here as they land. */
-const BUILT_IN                           = [...HCX, ...XVC, ...VCF_IMPORT, ...VCF_CONVERTER, ...REBUILD];
+const BUILT_IN                           = [...HCX, ...XVC, ...VCF_IMPORT, ...VCF_CONVERTER, ...REBUILD, ...AWS_MGN, ...AZURE_MIGRATE, ...GCP_M2VM, ...OCI_OCM, ...DB_ORACLE, ...DB_SQLSERVER, ...DB_OPEN_SOURCE, ...DB_CLOUD_DMS, ...WP17_PATTERN_PATHS, ...WP17_DB_PATHS];
 
 /** The registry `executionKit` uses by default. */
 export const PATH_REGISTRY               = createRegistry(BUILT_IN);

@@ -42,6 +42,11 @@ import { MIGRATION_TERRAFORM_GOOGLE } from './migration/google.ts';
 import { MIGRATION_TERRAFORM_OCI } from './migration/oci.ts';
 import { MIGRATION_TERRAFORM_VSPHERE } from './migration/vsphere.ts';
 import { RELOCATE_AZURE, RELOCATE_GOOGLE, RELOCATE_OCI } from './migration/relocate.ts';
+import { MIGRATION_REPLICATION_BLUEPRINTS } from './migration/replication.ts';
+import { patternBlueprintsFor } from './patterns/index.ts';
+
+/** The replication blueprints of one target platform. */
+const replicationFor = (p: string) => MIGRATION_REPLICATION_BLUEPRINTS.filter((b) => b.id.startsWith(`${p}_`));
 
 export { ESTATE_GROUP };
 
@@ -96,11 +101,11 @@ function combine(
 export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withRootModuleLayoutAll(withSecretLiftingAll(
   withChoicesAll(
     [
-      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')], providerBlueprints('aws', 'res'), MIGRATION_TERRAFORM_AWS),
-      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')], providerBlueprints('azurerm', 'res'), [...MIGRATION_TERRAFORM_AZURE, ...RELOCATE_AZURE]),
-      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')], providerBlueprints('google', 'res'), [...MIGRATION_TERRAFORM_GOOGLE, ...RELOCATE_GOOGLE]),
-      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')], providerBlueprints('oci', 'res'), [...MIGRATION_TERRAFORM_OCI, ...RELOCATE_OCI]),
-      combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING], [], MIGRATION_TERRAFORM_VSPHERE),
+      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')], providerBlueprints('aws', 'res'), [...MIGRATION_TERRAFORM_AWS, ...replicationFor('aws'), ...patternBlueprintsFor('aws')]),
+      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')], providerBlueprints('azurerm', 'res'), [...MIGRATION_TERRAFORM_AZURE, ...RELOCATE_AZURE, ...patternBlueprintsFor('azure')]),
+      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')], providerBlueprints('google', 'res'), [...MIGRATION_TERRAFORM_GOOGLE, ...RELOCATE_GOOGLE, ...replicationFor('google'), ...patternBlueprintsFor('google')]),
+      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')], providerBlueprints('oci', 'res'), [...MIGRATION_TERRAFORM_OCI, ...RELOCATE_OCI, ...replicationFor('oci'), ...patternBlueprintsFor('oci')]),
+      combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING], [], [...MIGRATION_TERRAFORM_VSPHERE, ...patternBlueprintsFor('vsphere')]),
       combine(VCF_TERRAFORM, undefined),
       combine(LINUX_TERRAFORM, undefined),
       combine(WINDOWS_TERRAFORM, undefined),
