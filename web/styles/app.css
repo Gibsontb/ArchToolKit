@@ -668,9 +668,37 @@ tbody tr:hover {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--space-4);
 }
-/* A row meant to sit on one line on a desktop screen. */
+/* A row meant to sit on one line on a desktop screen: square tiles, five
+   across, with the full description in the tile's tooltip. */
 .tool-grid-row {
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+}
+.tool-grid-row .tool-card {
+  aspect-ratio: 1 / 1;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-4);
+}
+.tool-grid-row .tool-card h3 {
+  font-size: 1.05rem;
+}
+.tool-grid-row .tool-card p {
+  font-size: 0.82rem;
+  max-width: 22ch;
+}
+.tool-grid-row .tool-card .tag {
+  align-self: center;
+  margin-top: var(--space-2);
+}
+@media (max-width: 420px) {
+  .tool-grid-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+  .tool-grid-row .tool-card {
+    padding: var(--space-3);
+  }
 }
 
 .tool-card {
