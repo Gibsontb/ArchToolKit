@@ -39,8 +39,8 @@
         <a href="inventory.html">VMware Inventory</a>
         <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
-        <a href="multicloud.html">Multi-Cloud</a>
-        <a href="migration.html">Migration</a>
+        <a href="migration.html">Application Migration</a>
+        <a href="multicloud.html">Migration &amp; Utilities</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
         <a href="network.html">Network</a>
@@ -78,8 +78,8 @@
             <li><a href="#terraform">Terraform generator</a></li>
             <li><a href="#ansible">Ansible generator</a></li>
             <li><a href="#tfmap">Terraform &rsaquo; the Map tab</a></li>
-            <li><a href="#multicloud">Multi-Cloud wizard</a></li>
-            <li><a href="#migration">Application Migration and Portfolio</a></li>
+            <li><a href="#application-migration">Application Migration</a></li>
+            <li><a href="#migration-and-utilities">Multi-Cloud Migration &amp; Utilities</a></li>
             <li><a href="#network">Network devices</a></li>
             <li><a href="#scripts">Scripts</a></li>
             <li><a href="#splunk">Splunk</a></li>
@@ -135,9 +135,9 @@
             <tr><td><a href="terraform.html">Terraform</a></td><td>Generate Terraform for AWS, Azure, Google Cloud, OCI and vSphere, including rehosting an imported cluster.</td></tr>
             <tr><td><a href="ansible.html">Ansible</a></td><td>Generate Ansible playbooks plus their <code>requirements.yml</code>, including inventories built from the estate.</td></tr>
             <tr><td><a href="terraform.html#map">Terraform &rsaquo; Map</a></td><td>A tab on the Terraform page. A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
-            <tr><td><a href="multicloud.html">Multi-Cloud</a></td><td>A four-step wizard that produces a cloud recommendation and onboarding playbook, ready for Word.</td></tr>
+            <tr><td><a href="migration.html">Application Migration</a></td><td>Every application, from any source, with its servers, databases and dependencies, and a target architecture on the cloud chosen for it; Terraform and Ansible per application or for a stack of them.</td></tr>
+            <tr><td><a href="multicloud.html">Migration &amp; Utilities</a></td><td>Takes the application plans and moves them (landing zones, waves, execution, tracking), then keeps changing the estate with small Terraform and Ansible utilities.</td></tr>
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
-            <tr><td><a href="migration.html">Migration</a></td><td>Evaluate an application — route, readiness, risk, target cloud, services, plan — and keep the portfolio, with its waves, on the same page.</td></tr>
             <tr><td><a href="vcf-ops-content.html">VCF Ops content</a></td><td>Read a vROps 8.x or VCF Operations 9.x content export and find out what is wrong with the monitoring.</td></tr>
             <tr><td><a href="automation.html">Automation and Operations</a></td><td>Set up and automate VCF Operations, for Networks, for Logs, VCF Automation and the fleet, plus the pipelines that drive them &mdash; each one saying what starts it, what it may touch and how to undo it.</td></tr>
             <tr><td><a href="archpad.html">ArchPad</a></td><td>A text and code editor with everything Notepad++ does, plus the toolkit's tools; every generator can open its files in it. Also runs as ArchPad.exe on Windows.</td></tr>
@@ -149,7 +149,8 @@
           <table>
             <tr><th>What</th><th>Where</th><th>How long</th></tr>
             <tr><td>The imported estate (the inventory)</td><td>Browser IndexedDB</td><td>Until you press <strong>Forget</strong> or <strong>Clear all</strong>. It survives closing the browser.</td></tr>
-            <tr><td>The migration portfolio (every application evaluated)</td><td>Browser IndexedDB</td><td>Until you empty it on the Portfolio tab, or press <strong>Clear all</strong>. It survives closing the browser.</td></tr>
+            <tr><td>The migration plan (and its tracker, utility log, rate card and audit trail)</td><td>Browser IndexedDB</td><td>Until you press <strong>Clear</strong> on the plan's file bar, or <strong>Clear all</strong>. It survives closing the browser.</td></tr>
+            <tr><td>The old migration portfolio (from the retired rating page)</td><td>Browser IndexedDB</td><td>Kept, so it can still be imported; only <strong>Clear all</strong> removes it.</td></tr>
             <tr><td>Work passed between pages (sizing → spec builder, spec → editor), the chosen cloud, the Data Editor's open file</td><td>Browser session storage</td><td>Until the tab is closed.</td></tr>
             <tr><td>Settings files you <strong>Save</strong></td><td>Your Downloads folder</td><td>Yours to keep. Passwords and keys are never written into them.</td></tr>
           </table>
@@ -234,7 +235,7 @@
           </p>
 
           <h3>The cloud is chosen once</h3>
-          <p>The platform picked on the Multi-Cloud wizard, Terraform (either tab) or Ansible is shared by all three for the rest of the tab. Change it on any of them and the others follow.</p>
+          <p>The platform picked on Terraform (either tab) or Ansible is shared by both for the rest of the tab. Change it on either and the other follows.</p>
 
           <h3>Findings</h3>
           <p>Checks are reported as findings: <strong>error</strong> (it will fail or be refused), <strong>warning</strong> (it will work but probably is not what you want) and <strong>info</strong>. Most carry what to do about it and where the rule comes from. Figures marked <span class="badge badge-verified">Verified</span> come from Broadcom's API reference, TechDocs or a real deployment spec; <span class="badge badge-community">Community</span> ones from community sources.</p>
@@ -465,107 +466,90 @@
           </p>
 
           <!-- ================================================================ -->
-          <h2 id="multicloud">11. Multi-Cloud wizard</h2>
-          <p>Choose the cloud once in <strong>Designing for</strong> (Azure, AWS, Google Cloud, OCI), then four steps:</p>
-          <ol>
-            <li><strong>Initiative &amp; basics</strong>: type (new service, change, maintenance, migration), name, architecture, traffic, latency, team strengths.</li>
-            <li><strong>Path details &amp; data</strong>: data pattern and sensitivity, geography, integration, source environment, 7R approach, tooling, compliance; plus questions for the initiative type chosen.</li>
-            <li><strong>Non-functional, security &amp; migration tooling</strong>: criticality, uptime, RTO, RPO, ops maturity, security baseline, identity, secrets, data protection, perimeter, F5 usage, security operations.</li>
-            <li><strong>Sizing &amp; environments</strong>: users, requests per second, data volume, ingest, retention, environments, non-prod scale, regions.</li>
-          </ol>
-          <p>Missing answers are pointed out but never stop you. <strong>Generate recommendation</strong> (or <strong>Finish</strong>) produces eleven sections: compute, data and storage, integration, operations and governance, security and network, controls and cyber checklist, migration focus, DR, assumptions and gaps, sizing footprint, and an implementation playbook. <strong>Full view</strong>, <strong>Print</strong> (or save as PDF) and <strong>Save as Word</strong>.</p>
-          <p>With an estate imported, <strong>Answer from the estate</strong> fills in what the inventory can answer (the migration approach, data volume, environments, regions and a description of the estate) for the whole estate or one cluster. Criticality, uptime, sensitivity and deadlines stay yours.</p>
+          <h2 id="application-migration">11. Application Migration</h2>
+          <p>
+            <a href="migration.html">Application Migration</a> plans every application: its servers,
+            databases and dependencies from any source (VMware, physical, Hyper-V, Nutanix AHV, KVM, Xen or
+            another cloud), its non-functionals and pattern, and a target architecture on the one cloud
+            chosen for it &mdash; AWS, Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation &mdash;
+            recommended by the engine, switchable, and comparable side by side. It generates Terraform and
+            Ansible for one application or a stack of them, and saves the application plans that
+            <a href="#migration-and-utilities">Migration &amp; Utilities</a> moves.
+          </p>
+          <h3>The steps</h3>
+          <table>
+            <tr><th>Step</th><th>Address</th><th>What it holds</th></tr>
+            <tr><td>Sources</td><td><code>#sources</code></td><td>Bring in servers and applications: the imported estate, collector files, CSV, the old portfolio (<strong>Import the old portfolio</strong> comes first), or manual entry.</td></tr>
+            <tr><td>Servers</td><td><code>#servers</code></td><td>Every server from every source in one grid.</td></tr>
+            <tr><td>Databases</td><td><code>#databases</code></td><td>Every database, its engine, edition and host.</td></tr>
+            <tr><td>Applications</td><td><code>#applications</code></td><td>The application catalogue and the dependency map. One application's workspace is <code>#app:&lt;name&gt;</code>, with the tabs Overview, Components, Configuration, Dependencies, Coupling, Assessment, Target, Sizing, Compare and Generate.</td></tr>
+            <tr><td>Constraints</td><td><code>#constraints</code></td><td>Platforms, compliance and sovereignty, commercial and licensing, operating model and exit, resilience.</td></tr>
+            <tr><td>Sizing</td><td><code>#sizing</code></td><td>The sizing policy and every application's sizing in one grid.</td></tr>
+            <tr><td>Stack</td><td><code>#stack</code></td><td>Pick applications and generate one stacked project.</td></tr>
+          </table>
+          <p>
+            With no address the page opens on Applications when the plan has any, else on Sources. The
+            rating page this replaces is retired: its six ratings are gone, and its old addresses
+            (<code>#intake</code>, <code>#ratings</code>, <code>#results</code>, <code>#portfolio</code>,
+            <code>#help</code>) open Applications. Its portfolio is never deleted: <strong>Import the old
+            portfolio</strong> on Sources reads it from this browser, and a portfolio file it exported
+            (JSON or CSV) still imports.
+          </p>
+          <h3>Plan mode</h3>
+          <p>
+            The dropdown in the page header, on both pages: <strong>Data-centre exit</strong>,
+            <strong>Migrate applications</strong> (the default), <strong>One application or service</strong>,
+            or <strong>New services only</strong>. The mode decides which steps are listed, and a step with
+            data in it is always listed, so changing the mode never hides or deletes work. In
+            <em>New services only</em> the Sources, Servers and Databases steps are hidden until something
+            that migrates is added; in <em>One application</em> the page opens on that application.
+          </p>
+          <h3>One plan, two pages</h3>
+          <p>
+            The plan is kept in this browser and shared with Migration &amp; Utilities. The strip in the
+            header loads it from a file, saves it to one (JSON, YAML or TXT; never with credentials) and
+            clears it. When the other page saves while this one has unsaved changes, a banner asks:
+            <strong>Reload</strong> takes the other page's plan and drops the change here;
+            <strong>Keep mine</strong> overwrites it. With nothing unsaved, the page simply reloads the plan.
+          </p>
 
           <!-- ================================================================ -->
-          <h2 id="migration">12. Application Migration and Portfolio</h2>
+          <h2 id="migration-and-utilities">12. Multi-Cloud Migration &amp; Utilities</h2>
           <p>
-            One page for both halves of the job: evaluating an application, and holding the portfolio
-            of everything evaluated so far. They used to be two pages that only met through an
-            exported file, so the dashboard was always out of date. Evaluating an application now
-            adds or replaces its row straight away, and the old portfolio address redirects to the
-            Portfolio tab.
+            <a href="multicloud.html">Multi-Cloud Migration &amp; Utilities</a> takes the application plans
+            and moves them, then keeps changing the estate. It has two areas.
           </p>
-
-          <h3>The tabs</h3>
-          <ul>
-            <li><strong>Intake</strong>: name, owner, criticality, RTO, RPO, workload type, enterprise standard cloud, stack, OS, database, hosting, integration types, architecture pattern, vendor, identity, integration count, data size, notes; the compliance scopes (FedRAMP, CJIS, HIPAA, PCI DSS, SOX, GDPR, ITAR, CMMC and the rest); and the hard constraints — obsolete, a SaaS replacement exists, must stay on-premises, hardware-bound, mainframe-bound, data sovereignty required.</li>
-            <li><strong>Ratings</strong>: the six factors, 1 to 5. Every one reads the same way — <strong>1 is the worst case for a move and 5 the best</strong> — so raising any rating always raises readiness. The score updates as you move the sliders, and each factor says what 1 and 5 mean and how much of the score it carries.</li>
-            <li><strong>Results</strong>: readiness, course of action, target cloud, risk band and wave, each with the sentence that explains it; the plan; and the services that cover each capability on that cloud. <em>Next application →</em> clears the form for the next one, and <em>Update the portfolio</em>, <em>Download record (JSON)</em> and <em>Copy the plan</em> are here too.</li>
-            <li><strong>Portfolio</strong>: the compiled list of every application you have been through, the wave planning mode, the filters, the counts, and the files in and out.</li>
-            <li><strong>How it works</strong>: the framework itself — the order the verdict is reached in, the seven routes and what each wave means.</li>
-          </ul>
-
-          <h3>Working through a list of applications</h3>
-          <p>
-            <strong>Evaluate &amp; add to portfolio</strong> is one action, on both the Intake and the
-            Ratings tab: it scores the application, routes it, and puts it in the portfolio in the same
-            press. An application needs a name first — that is what its row is called, and evaluating
-            the same name again replaces that row rather than adding a second. From the Results tab,
-            <strong>Next application →</strong> empties the form for the next one; the portfolio keeps
-            everything you have already been through, and says how many that is.
-          </p>
-          <p>
-            In the Portfolio table, the application's name is a toggle: it opens the row out into the
-            whole record — the intake exactly as it was answered, the six ratings, the verdict with its
-            reasons, the wave, the services for that cloud, your notes, and when it was evaluated.
-            That is what makes the portfolio a compiled list of the work rather than eight columns.
-          </p>
-
-          <h3>How the route is decided</h3>
+          <h3>Migrate</h3>
           <table>
-            <tr><th>Rule, in order</th><th>Route</th></tr>
-            <tr><td>Marked obsolete</td><td>Retire</td></tr>
-            <tr><td>A SaaS replacement exists, and nothing requires it to stay on-premises</td><td>Repurchase</td></tr>
-            <tr><td>Must stay on-premises, hardware-bound or mainframe-bound</td><td>Retain</td></tr>
-            <tr><td>Readiness 80–100 / 60–79 / 40–59 / 20–39 / 0–19</td><td>Refactor / Replatform / Rehost / Retain / Retire</td></tr>
+            <tr><th>Step</th><th>Address</th><th>What it holds</th></tr>
+            <tr><td>Overview</td><td><code>#overview</code></td><td>The saved application plans and the estate placement check.</td></tr>
+            <tr><td>Landing zones</td><td><code>#landing-zones</code></td><td>One card per platform: networks, connectivity, identity, backup and DR, monitoring, governance; generates the landing-zone projects.</td></tr>
+            <tr><td>Estate capacity</td><td><code>#capacity</code></td><td>Totals per platform and region, quotas, licences and costs from your own rate card.</td></tr>
+            <tr><td>Data centre</td><td><code>#datacentre</code></td><td>Data-centre exit only: everything that is not a server, the exit sequence and lights-out.</td></tr>
+            <tr><td>Waves</td><td><code>#waves</code></td><td>Move groups, waves and runbooks; <code>#waves:governance</code> holds RACI, communications, change requests and sign-offs.</td></tr>
+            <tr><td>Execute</td><td><code>#execute</code></td><td>The execution settings per path, and the wave console: replicate, test, cutover, validate, decommission.</td></tr>
+            <tr><td>Board, Timeline, RAID, Reports</td><td><code>#board</code> &hellip; <code>#reports</code></td><td>Tracking, from the status files the generated scripts write.</td></tr>
+            <tr><td>Generate</td><td><code>#generate</code></td><td>The migration project as one zip.</td></tr>
           </table>
           <p>
-            The six factors are weighted: cloud compatibility 20, technical debt 20, refactor effort 20,
-            compliance 15, modularity 15, vendor lock-in 10. The target cloud is the enterprise standard
-            when one is set; otherwise regulated or sovereign data goes to Azure on a Microsoft-heavy
-            stack and AWS otherwise, an Oracle estate to OCI, a Microsoft estate to Azure, analytics and
-            AI to Google Cloud, and AWS when nothing else speaks up. The risk band comes from criticality,
-            RTO, RPO, integration count and compliance scope; it changes the wave, never the route.
+            With no address the page opens on the Board once anything tracked is past <em>planned</em>, else on
+            Overview. The old Multi-Cloud planner's intake addresses (<code>#sources</code>,
+            <code>#workloads</code>, <code>#databases</code>, <code>#apps</code>, <code>#requirements</code>,
+            <code>#decision</code>, <code>#design</code>) now open the matching step of Application Migration;
+            <code>#waves</code> and <code>#generate</code> stay here. The four-step Multi-Cloud wizard is retired.
+          </p>
+          <h3>Utilities</h3>
+          <p>
+            <code>#utilities</code>: day-2 changes without a migration &mdash; add or resize a server, add or
+            extend a disk, open a port, add a DNS record, a patch run and more &mdash; each a small Terraform
+            and Ansible bundle that applies by default (<code>--dry-run</code> to check first), with its
+            rollback. <strong>Deploy a new service</strong> is here too. A utility's form is
+            <code>#utilities:&lt;utility&gt;</code>.
           </p>
           <div class="tip">
-            <strong>A correction from the page this was ported from.</strong> The old scoring inverted four
-            of the six factors, so rating technical debt, vendor lock-in, compliance complexity or refactor
-            effort at 5 — the best case, by the label beside it — lowered readiness. The labels were right and
-            the arithmetic was wrong, so the inversions are gone. A portfolio carried over from the old page
-            will score differently, and more sensibly, for those four.
+            Several steps on both pages are still being built; each one says so, and says what it will do.
+            The plan, its mode, its file and the sync between the two pages already work.
           </div>
-
-          <h3>The waves</h3>
-          <p>
-            Wave 0 is the landing zone — identity, network, logging, guardrails, tooling — and comes before
-            any application moves, so nothing is placed in it. Retain is <strong>Blocked</strong>. Retire and
-            Repurchase go in wave 1, because they remove footprint immediately. Otherwise low risk with
-            readiness 55 or more is wave 1, low or medium risk with readiness 40 or more is wave 2, and the
-            rest is wave 3. <em>Fast exit</em> also puts low- and medium-risk rehosts and replatforms in wave 1;
-            <em>Modernise first</em> does the same for refactors at readiness 70 or more. The mode changes the
-            table in place — nothing is recalculated on disk — and never rescues a high-risk application from
-            its own discovery.
-          </p>
-
-          <h3>Files in and out</h3>
-          <table>
-            <tr><th>Action</th><th>What it does</th></tr>
-            <tr><td>Import CSV</td><td>An inventory spreadsheet becomes draft rows, evaluated with default ratings. Columns: <code>name, owner, criticality, rtoHours, rpoHours, workloadType, enterpriseStandardCloud, primaryStack, osRuntime, database, vendor, integrationCount, dataSizeGb, identity, compliance, dataSovereigntyRequired, notes</code>, with compliance scopes separated by <code>;</code>. Only <code>name</code> is required; a row without one is skipped and said so.</td></tr>
-            <tr><td>Import JSON</td><td>A portfolio exported here, a single record, or a bare list of applications — including the files the old pages wrote. Every record is evaluated again on the way in, so an import reflects today's rules rather than a stored verdict.</td></tr>
-            <tr><td>Export CSV</td><td>The intake and the verdict together, including the wave under the mode currently selected. Always the whole portfolio, whatever the filters show.</td></tr>
-            <tr><td>Export JSON</td><td>The whole portfolio, to carry to another browser or keep with the design.</td></tr>
-            <tr><td>Re-evaluate all</td><td>Runs every held application through the rules again — after ratings have been revised, or after a toolkit update.</td></tr>
-            <tr><td>Empty the portfolio</td><td>Removes every row. The header's <em>Clear all</em> does this along with everything else in the toolkit.</td></tr>
-            <tr><td>Remove (on a row)</td><td>Takes one application out of the portfolio. It does not touch the form.</td></tr>
-          </table>
-          <p>
-            A row's <strong>Open</strong> button loads that application back into the Intake tab, which is how
-            a draft imported from a spreadsheet gets its ratings answered. An application's name is its
-            identity: evaluating the same name again replaces the row rather than adding a second one.
-            The portfolio is kept in this browser (IndexedDB) and survives a reload; the <em>Load</em>,
-            <em>Save</em> and <em>Clear</em> strip at the top of the page is for one application's intake, not the
-            portfolio.
-          </p>
           <!-- ================================================================ -->
           <h2 id="network">13. Network devices</h2>
           <p>
@@ -1137,7 +1121,7 @@
               reclamation including orphaned disks, capacity policy, VKS cost.
             </td></tr>
             <tr><td>VCF Operations for Logs <em>(13)</em></td><td>Log management inside VCF Operations 9.1 &mdash; masking, filtering, forwarding, partitions, agent configuration, alert queries with extracted fields, and the move from standalone Logs &mdash; plus the standalone Logs API for 8.x.</td></tr>
-            <tr><td>VCF Operations for Networks <em>(9)</em></td><td>Data sources, applications, VPC planning, migration waves that feed the Migration page, assessment, health, and the reachability, flow and change checks.</td></tr>
+            <tr><td>VCF Operations for Networks <em>(9)</em></td><td>Data sources, applications, VPC planning, migration waves that feed Migration &amp; Utilities, assessment, health, and the reachability, flow and change checks.</td></tr>
             <tr><td>VCF Automation <em>(33)</em></td><td>
               <strong>9.1:</strong> provider and organization API tokens, organizations, regions and zones, VPC
               subnets, content libraries, VM Service, Data Services, tag-based placement from the fleet tag
@@ -1288,7 +1272,7 @@
           <h3>Rehost a cluster to a cloud</h3>
           <ol>
             <li>Import the estate; on the inventory page, fix or note the blocked VMs.</li>
-            <li>Multi-Cloud: <strong>Answer from the estate</strong> for the cluster, complete the rest, and save the recommendation as Word.</li>
+            <li>Application Migration: <strong>Plan the applications</strong> on the inventory page brings the estate in on Sources; choose each application's target cloud.</li>
             <li>Terraform: <em>Rehost a cluster's VMs</em> for the chosen cloud; Ansible: the inventory and before/after playbooks.</li>
           </ol>
           <h3>Build a landing zone or a migration as one project</h3>
@@ -1301,10 +1285,10 @@
 
           <h3>Plan a portfolio of applications</h3>
           <ol>
-            <li>Migration → Portfolio: import the inventory CSV, which creates a draft row per application.</li>
-            <li>Open each row, answer its ratings and hard constraints on the Intake and Ratings tabs, and evaluate. The row updates in place.</li>
-            <li>Back on Portfolio, choose the wave planning mode and read the counts and the table.</li>
-            <li>Export the portfolio as CSV for the programme, or as JSON to carry it to another browser.</li>
+            <li>Application Migration &rarr; Sources: bring the servers in, or <strong>Import the old portfolio</strong> if you used the retired rating page.</li>
+            <li>Applications: open each application's workspace and settle its target.</li>
+            <li>Migration &amp; Utilities: check the placement on Overview, then waves, the project and the tracking board.</li>
+            <li><strong>Save</strong> the plan to a file to carry it to another browser.</li>
           </ol>
 
           <!-- ================================================================ -->
@@ -1314,7 +1298,7 @@
             <tr><td>A blank page, or nothing happens on click, after double-clicking an <code>.html</code> file</td><td>The page was opened from disk. Use <code>start.bat</code>, <code>npm run serve</code> or <code>python -m http.server</code> (<a href="#start">section 1</a>).</td></tr>
             <tr><td><code>node</code> is not recognised</td><td>Node is not installed or not on PATH. Open a new terminal after installing; see the work-laptop tip in section 1.</td></tr>
             <tr><td>A page fills itself in with an old estate</td><td>The estate stays until forgotten. Press <strong>Forget</strong> on the estate strip, or <strong>Clear all</strong>.</td></tr>
-            <tr><td>Full view or Print does nothing on the Multi-Cloud page</td><td>A pop-up blocker stopped the new window. Allow pop-ups for the toolkit's address.</td></tr>
+            <tr><td>"The plan was changed on the other page"</td><td>Application Migration and Migration &amp; Utilities share one plan, and the other page (or another tab) saved it while this one had unsaved changes. <strong>Reload</strong> or <strong>Keep mine</strong>.</td></tr>
             <tr><td>"That file was saved from … page, not this one"</td><td>Settings files belong to the page that saved them. Open it on that page.</td></tr>
             <tr><td>A finding says a catalog is more than 90 days old</td><td>Run the update in <a href="#updates">section 20</a>, or carry on; the names are just less certain.</td></tr>
             <tr><td>A build list item says its blueprint is gone</td><td>The list was saved on another platform. Switch the platform back, or remove that item.</td></tr>
@@ -1331,9 +1315,7 @@
             <li>The spec builder's checks follow the documented 9.1 schema; the live VCF Installer's validation is the authority.</li>
             <li>A deployment spec cannot yet be loaded into the spec builder's form; edit it in the Data Editor instead.</li>
             <li>RVTools has no NVMe or NIC-speed data; those readiness columns show <em>?</em> unless the collector's JSON is imported too.</li>
-            <li>A CSV import cannot answer the six ratings or the hard constraints, so its rows are drafts scored at the defaults until you open each one.</li>
-            <li>The portfolio lives in one browser on one machine. Export the JSON to move it anywhere else.</li>
-            <li>Multi-Cloud's <em>Save as Word</em> writes a Word-readable <code>.doc</code> (HTML), not a native <code>.docx</code>.</li>
+            <li>The migration plan lives in one browser on one machine. Save it to a file to move it anywhere else.</li>
             <li>Editing YAML in the Data Editor's form drops comments; the Text view keeps them.</li>
             <li>In a Terraform stack, a resource offers only its <code>.id</code> to other items, because that is the one attribute every resource has. Module items offer their real outputs. Anything else you write yourself.</li>
             <li>An Ansible site playbook shares an answer only when two playbooks give it identically; anything named like a password is left out of <code>group_vars/all.yml</code> on purpose.</li>

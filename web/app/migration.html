@@ -17,8 +17,8 @@
         <a href="inventory.html">VMware Inventory</a>
         <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
-        <a href="multicloud.html">Multi-Cloud</a>
-        <a href="migration.html" aria-current="page">Migration</a>
+        <a href="migration.html" aria-current="page">Application Migration</a>
+        <a href="multicloud.html">Migration &amp; Utilities</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
         <a href="network.html">Network</a>
@@ -34,19 +34,21 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>Application migration</h1>
+        <h1>Application Migration</h1>
         <p>
-          Evaluate an application, route it to one of the seven courses of action, and get the
-          readiness score, the risk band, the target cloud, the services that cover it and a
-          step-by-step plan. Everything evaluated is kept in the Portfolio tab, where the waves are
-          planned across all of it.
+          Every application, from any source (VMware, physical, Hyper-V, Nutanix AHV, KVM, Xen or
+          another cloud), with its servers, databases and dependencies, and a target architecture on
+          the cloud you choose: AWS, Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation. Compare
+          the clouds side by side, then generate Terraform and Ansible for one application or a stack
+          of them. The plan is shared with Multi-Cloud Migration &amp; Utilities.
         </p>
+        <div id="plan-header"></div>
       </div>
 
       <div id="migration-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/migration-page.js"></script>
+    <script type="module" src="../lib/ui/application-migration-page.js"></script>
     <script type="module" src="../lib/ui/clear-all.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>

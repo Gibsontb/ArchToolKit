@@ -16,7 +16,9 @@ import { countBySeverity, type Finding } from '../core/findings.ts';
 import {
   computeTotals,
   rollupByCluster,
+  scopedKey,
   type Inventory,
+  type InventoryVm,
   type ClusterRollup,
 } from '../vmware/inventory.ts';
 import { assessMoves, type MoveSeverity } from '../vmware/vm-readiness.ts';
@@ -333,13 +335,13 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
       'div',
       { class: 'btn-row' },
       el('a', { class: 'btn btn-primary', text: 'Size VCF from this estate', attrs: { href: 'vcf-sizing.html' } }),
-      el('a', { class: 'btn', text: 'Decide where it goes', attrs: { href: 'multicloud.html' } }),
+      el('a', { class: 'btn', text: 'Plan the applications', attrs: { href: 'migration.html#sources' } }),
       el('a', { class: 'btn', text: 'Terraform from the estate', attrs: { href: 'terraform.html' } }),
       el('a', { class: 'btn', text: 'Ansible from the estate', attrs: { href: 'ansible.html' } }),
     ),
     el('div', {
       class: 'section-note',
-      text: 'Every page reads this estate: sizing fills itself in per cluster, the spec builder takes the management cluster\'s hosts, DNS, NTP and networks, the generators offer its names and build from its VMs, and the decision matrix starts from its workloads.',
+      text: 'Every page reads this estate: sizing fills itself in per cluster, the spec builder takes the management cluster\'s hosts, DNS, NTP and networks, the generators offer its names and build from its VMs, and Application Migration starts from its servers.',
     }),
   );
 
@@ -471,6 +473,10 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
     }),
   );
 
+  // Filled in when a migration tracker exists (and the module that reads it is there).
+  const migrationSlot = el('div', { attrs: { 'data-control': 'inventory-migration' } });
+  void fillMigrationColumn(migrationSlot, inventory);
+
   return [
     overview,
     nextCard,
@@ -478,6 +484,7 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
     consolidation,
     clustersCard,
     ...(movesCard ? [movesCard] : []),
+    migrationSlot,
     ...(healthCard ? [healthCard] : []),
     readinessCard,
     licensingCard,
@@ -485,6 +492,68 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
     findingsCard,
     exportCard,
   ];
+}
+
+// --- the Migration column -----------------------------------------------------
+
+/** What `src/kit/tracker-index.ts` (WP-13) returns: each tracked item's state and wave. */
+export type TrackerIndex = ReadonlyMap<string, { readonly state: string; readonly wave: number }>;
+
+/**
+ * The tracker index, or null when there is no tracker (or the module is not
+ * there). The specifier is a variable on purpose: the module reads the raw
+ * IndexedDB record and imports nothing of the planner, and loading it lazily
+ * keeps the Inventory page as light as it was when there is no migration.
+ */
+async function loadIndex(): Promise<TrackerIndex | null> {
+  try {
+    const specifier = '../kit/tracker-index.js';
+    const mod = (await import(specifier)) as { loadTrackerIndex?: () => Promise<TrackerIndex> };
+    if (typeof mod.loadTrackerIndex !== 'function') return null;
+    const index = await mod.loadTrackerIndex();
+    return index && index.size > 0 ? index : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A VM's tracker entry: by `scopedKey(vcenter, name)`, else by the lower-cased name. */
+export function migrationOf(index: TrackerIndex, vm: Pick<InventoryVm, 'vcenter' | 'name'>): { state: string; wave: number } | undefined {
+  return index.get(scopedKey(vm.vcenter, vm.name)) ?? index.get(vm.name.toLowerCase());
+}
+
+/** The column's text: `<state> · wave <n>`. */
+export function migrationLabel(entry: { state: string; wave: number }): string {
+  return `${entry.state} · wave ${entry.wave}`;
+}
+
+async function fillMigrationColumn(slot: HTMLElement, inventory: Inventory): Promise<void> {
+  const index = await loadIndex();
+  if (!index) return;
+  const rows = inventory.vms
+    .map((vm) => ({ vm, entry: migrationOf(index, vm) }))
+    .filter((r): r is { vm: InventoryVm; entry: { state: string; wave: number } } => r.entry !== undefined);
+  if (rows.length === 0) return;
+  replace(
+    slot,
+    card(
+      'Migration',
+      table(
+        [
+          { header: 'VM', render: (r) => r.vm.name },
+          { header: 'Cluster', render: (r) => r.vm.cluster ?? '—' },
+          { header: 'Power', render: (r) => r.vm.powerState },
+          { header: 'Migration', render: (r) => el('span', { class: 'badge', text: migrationLabel(r.entry) }) },
+        ],
+        rows,
+      ),
+      el('div', {
+        class: 'section-note',
+        text: `${formatCount(rows.length)} of ${formatCount(inventory.vms.length)} VMs are in the migration tracker. Read-only: the states change on Multi-Cloud Migration & Utilities, from the imported status files.`,
+      }),
+      el('div', { class: 'btn-row' }, el('a', { class: 'btn', text: 'Open the board', attrs: { href: 'multicloud.html#board' } })),
+    ),
+  );
 }
 
 /** One row per licence and key: every vCenter in a linked group lists the same ones. */

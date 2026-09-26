@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Multi-Cloud Wizard · ArchToolKit</title>
+    <title>Multi-Cloud Migration &amp; Utilities · ArchToolKit</title>
     <link rel="stylesheet" href="../styles/app.css" />
   </head>
   <body>
@@ -17,8 +17,8 @@
         <a href="inventory.html">VMware Inventory</a>
         <a href="vcf-sizing.html">VCF Sizing</a>
         <a href="vcf-spec.html">VCF Spec Builder</a>
-        <a href="multicloud.html" aria-current="page">Multi-Cloud</a>
-        <a href="migration.html">Migration</a>
+        <a href="migration.html">Application Migration</a>
+        <a href="multicloud.html" aria-current="page">Migration &amp; Utilities</a>
         <a href="terraform.html">Terraform</a>
         <a href="ansible.html">Ansible</a>
         <a href="network.html">Network</a>
@@ -34,18 +34,20 @@
 
     <main class="page">
       <div class="page-header">
-        <h1>Multi-Cloud Decision &amp; Onboarding Wizard</h1>
+        <h1>Multi-Cloud Migration &amp; Utilities</h1>
         <p>
-          Pick the cloud once, answer four steps, and get a recommendation you can hand over:
-          suggested services, migration path, security and cyber controls, DR pattern, sizing
-          footprint and an onboarding playbook. Full view, Print, or Save as Word.
+          Take the application plans and move them: landing zones, waves, replication, test, cutover,
+          rollback, DNS, validation, decommission and a tracking board. Then keep changing the estate
+          with utilities (a server, a disk, a port, a DNS record, a patch run), each a small Terraform
+          and Ansible bundle. The plan is shared with Application Migration.
         </p>
+        <div id="plan-header"></div>
       </div>
 
       <div id="multicloud-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/multicloud-page.js"></script>
+    <script type="module" src="../lib/ui/migration-utilities-page.js"></script>
     <script type="module" src="../lib/ui/clear-all.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>
