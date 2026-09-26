@@ -19,7 +19,8 @@
  */
 
 import { info, warning,              } from '../../../core/findings.js';
-import { rightsizeFor, AZURE_CONSTRAINED_LADDER,                                     } from '../../../kit/rightsize.js';
+import { rightsizeFor,                                     } from '../../../kit/rightsize.js';
+import { inCatalog } from '../../../kit/instance-specs.js';
 import {
   AWS_INSTANCE_TYPE_GROUPS, AZURE_VM_SIZE_GROUPS, GCP_MACHINE_TYPE_GROUPS, OCI_SHAPE_GROUPS,                    
 } from '../../../kit/sizes-data.js';
@@ -77,12 +78,7 @@ const CATALOG                                                                   
  */
 export function sizeInCatalog(platform          , size        )          {
   if (platform === 'vmware') return size.trim() !== '';
-  if (CATALOG[platform].has(size)) return true;
-  if (platform === 'azure') {
-    const c = AZURE_CONSTRAINED_LADDER.find((x) => x.name === size);
-    return !!c && CATALOG.azure.has(c.parent);
-  }
-  return false;
+  return CATALOG[platform].has(size) || inCatalog(platform, size);
 }
 
 /** vSphere sizes are free-form: written as `<vCPU>x<GiB>GiB`. */

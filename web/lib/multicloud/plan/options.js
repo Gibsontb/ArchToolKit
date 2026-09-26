@@ -21,16 +21,16 @@
                                                                                                         
                                                                                                                      
                                                                                                             
-                                                                                                                
+                                                                                                                               
                                                                                                                      
                                                                                                                
                                                                                                                  
                                                                                                                 
                                                                                                               
-                                                                                                                  
+                                                                                                                                    
                                                                                                                   
                                                                                                         
-                                                                                                             
+                                                                                                                         
                                                                                                           
                                                                                                                  
                    
@@ -1297,6 +1297,21 @@ export const SIZING_POLICY_BASIS_OPTIONS = table(SIZING_POLICY_BASIS_VALUES, {
 });
 export const HEADROOM_PCT_VALUES = all                  ()(['0', '10', '20', '30', '50']);
 export const HEADROOM_PCT_OPTIONS = table(HEADROOM_PCT_VALUES, { '0': '0%', '10': '10%', '20': '20%', '30': '30%', '50': '50%' });
+export const SIZING_MODE_VALUES = all            ()(['as-is', 'performance']);
+export const SIZING_MODE_OPTIONS = table(SIZING_MODE_VALUES, {
+  'as-is': 'As-is (allocated vCPU and memory)',
+  performance: 'Performance-based (measured utilisation)',
+});
+export const RESOURCE_STRATEGY_VALUES = all                  ()(['p50', 'p90', 'p95', 'p99', 'max', 'as-is', 'average']);
+export const RESOURCE_STRATEGY_OPTIONS = table(RESOURCE_STRATEGY_VALUES, {
+  p50: '50th percentile', p90: '90th percentile', p95: '95th percentile', p99: '99th percentile', max: 'Maximum',
+  'as-is': 'As-is (allocation)', average: 'Average (OCI; taken as the 50th percentile)',
+});
+export const HEADROOM_STYLE_VALUES = all               ()(['comfort-factor', 'target-utilisation']);
+export const HEADROOM_STYLE_OPTIONS = table(HEADROOM_STYLE_VALUES, {
+  'comfort-factor': 'Comfort factor (add the headroom %)',
+  'target-utilisation': 'Target utilisation (size so peak lands at the target %)',
+});
 export const DISK_BASIS_VALUES = all           ()(['provisioned', 'used-plus-headroom']);
 export const DISK_BASIS_OPTIONS = table(DISK_BASIS_VALUES, { provisioned: 'Provisioned', 'used-plus-headroom': 'Used + headroom' });
 export const GROWTH_PCT_YEAR_VALUES = all                    ()(['0', '10', '20', '30']);
@@ -2081,6 +2096,9 @@ export const OPTION_TABLES                         = Object.freeze([
   { name: 'Percentile', values: PERCENTILE_VALUES, options: PERCENTILE_OPTIONS },
   { name: 'SizingPolicyBasis', values: SIZING_POLICY_BASIS_VALUES, options: SIZING_POLICY_BASIS_OPTIONS },
   { name: 'HeadroomPct', values: HEADROOM_PCT_VALUES, options: HEADROOM_PCT_OPTIONS },
+  { name: 'SizingMode', values: SIZING_MODE_VALUES, options: SIZING_MODE_OPTIONS },
+  { name: 'ResourceStrategy', values: RESOURCE_STRATEGY_VALUES, options: RESOURCE_STRATEGY_OPTIONS },
+  { name: 'HeadroomStyle', values: HEADROOM_STYLE_VALUES, options: HEADROOM_STYLE_OPTIONS },
   { name: 'DiskBasis', values: DISK_BASIS_VALUES, options: DISK_BASIS_OPTIONS },
   { name: 'GrowthPctYear', values: GROWTH_PCT_YEAR_VALUES, options: GROWTH_PCT_YEAR_OPTIONS },
   { name: 'InstanceFamily', values: INSTANCE_FAMILY_VALUES, options: INSTANCE_FAMILY_OPTIONS },

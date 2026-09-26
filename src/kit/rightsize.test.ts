@@ -4,6 +4,7 @@ import {
   AZURE_CONSTRAINED_LADDER, AZURE_EDSV5, LADDERS, OCI_FLEX, rightsize, rightsizeFor, type RehostCloud,
 } from './rightsize.ts';
 import { AWS_INSTANCE_TYPE_GROUPS, AZURE_VM_SIZE_GROUPS, GCP_MACHINE_TYPE_GROUPS, OCI_SHAPE_GROUPS, type GroupedValues } from './sizes-data.ts';
+import { inCatalog } from './instance-specs.ts';
 
 const values = (groups: GroupedValues): Set<string> => new Set(Object.values(groups).flatMap((v) => v.split(',')));
 const AWS = values(AWS_INSTANCE_TYPE_GROUPS);
@@ -43,11 +44,10 @@ describe('kit/rightsize: every ladder size is in the machine catalog', () => {
     }
   });
 
-  // sizes-data.ts is generated from Microsoft's series ladders, which list only
-  // the parents; the generator (tools/fetch-compute-catalog.mjs) needs the
-  // constrained-vCPU page added before this can pass.
-  it('the constrained ids are in AZURE_VM_SIZE_GROUPS', { todo: 'regenerate sizes-data.ts with the constrained-vCPU sizes' }, () => {
-    for (const c of AZURE_CONSTRAINED_LADDER) expect(AZURE.has(c.name)).toBe(true);
+  // sizes-data.ts lists only the parents; the constrained-vCPU sizes come
+  // from Microsoft's own page, carried in instance-specs.ts.
+  it('the constrained ids are in the catalogue', () => {
+    for (const c of AZURE_CONSTRAINED_LADDER) expect(inCatalog('azure', c.name)).toBe(true);
   });
 });
 

@@ -33,7 +33,7 @@ import { VM_SERVICE } from '../db-catalog.js';
 import { isIaasService, isPerCoreByol, vsphereSize } from '../design/compute.js';
 import { osKind } from '../os.js';
              
-                                                                                                                                
+                                                                                                                                                                             
                                             
                      
                                                
@@ -58,30 +58,10 @@ export const DEFAULT_SIZING_POLICY               = Object.freeze({
   assumptions: Object.freeze({}),
 });
 
-                                                 
-/** Per resource: a percentile, the allocation, or OCI's AVERAGE (taken as P50). */
-                                                                
-                                                                    
-
-/**
- * The methodology settings beyond A.11's `SizingPolicy`. Optional; read
- * structurally from `plan.sizing.policy` so they can be added to types.ts
- * without a change here (reported to WP-0).
- */
-                                    
-                                                                                  
-                             
-                                          
-                                             
-                                                
-                                         
-                                                                                       
-                                 
-                                    
-                                                                                      
-                                        
- 
-                                                               
+                                                            
+/** The methodology settings now live on `SizingPolicy` itself. */
+                                                                                                                                                                             
+                                           
 
 export const MIN_COVERAGE = 0.6;
 export const MIN_DAYS = 3;

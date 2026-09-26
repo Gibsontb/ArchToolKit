@@ -19,7 +19,8 @@
  */
 
 import { info, warning, type Finding } from '../../../core/findings.ts';
-import { rightsizeFor, AZURE_CONSTRAINED_LADDER, type RehostCloud, type RightsizeFit } from '../../../kit/rightsize.ts';
+import { rightsizeFor, type RehostCloud, type RightsizeFit } from '../../../kit/rightsize.ts';
+import { inCatalog } from '../../../kit/instance-specs.ts';
 import {
   AWS_INSTANCE_TYPE_GROUPS, AZURE_VM_SIZE_GROUPS, GCP_MACHINE_TYPE_GROUPS, OCI_SHAPE_GROUPS, type GroupedValues,
 } from '../../../kit/sizes-data.ts';
@@ -77,12 +78,7 @@ const CATALOG: Readonly<Record<Exclude<Platform, 'vmware'>, ReadonlySet<string>>
  */
 export function sizeInCatalog(platform: Platform, size: string): boolean {
   if (platform === 'vmware') return size.trim() !== '';
-  if (CATALOG[platform].has(size)) return true;
-  if (platform === 'azure') {
-    const c = AZURE_CONSTRAINED_LADDER.find((x) => x.name === size);
-    return !!c && CATALOG.azure.has(c.parent);
-  }
-  return false;
+  return CATALOG[platform].has(size) || inCatalog(platform, size);
 }
 
 /** vSphere sizes are free-form: written as `<vCPU>x<GiB>GiB`. */

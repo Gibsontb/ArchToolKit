@@ -842,6 +842,11 @@ export type HeadroomPct = 0 | 10 | 20 | 30 | 50;
 export type DiskBasis = 'provisioned' | 'used-plus-headroom';
 export type GrowthPctYear = 0 | 10 | 20 | 30;
 export type InstanceFamily = 'general' | 'compute' | 'memory' | 'burstable' | 'storage' | 'gpu';
+/** 'as-is' = allocation; 'performance' = utilisation (Azure Migrate, Google Migration Center). */
+export type SizingMode = 'as-is' | 'performance';
+/** Per resource: a percentile, the allocation, or OCI's AVERAGE (taken as P50). */
+export type ResourceStrategy = Percentile | 'as-is' | 'average';
+export type HeadroomStyle = 'comfort-factor' | 'target-utilisation';
 export interface SizingPolicy {
   readonly basis: SizingPolicyBasis;
   readonly percentile: Percentile;
@@ -854,6 +859,18 @@ export interface SizingPolicy {
   readonly allowArm: boolean;
   readonly latestGeneration: boolean;
   readonly licenceOptimised: boolean;
+  /** Default: from `basis`. */
+  readonly mode?: SizingMode;
+  /** Default: `percentile`. */
+  readonly cpuStrategy?: ResourceStrategy;
+  readonly memoryStrategy?: ResourceStrategy;
+  /** Default 'comfort-factor' (headroomPct). */
+  readonly headroomStyle?: HeadroomStyle;
+  /** Target utilisation for 'target-utilisation', percent. Google moderate 70 / 85, aggressive 90 / 100. */
+  readonly cpuTargetPct?: number;
+  readonly memoryTargetPct?: number;
+  /** Source CPU score ÷ target CPU score (OCI's adjustment multiplier). Default 1. */
+  readonly benchmarkMultiplier?: number;
   /** The load engine's planning assumptions, editable. */
   readonly assumptions: Readonly<Record<string, number>>;
 }

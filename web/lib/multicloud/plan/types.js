@@ -842,6 +842,11 @@
                                                              
                                              
                                                                                                 
+/** 'as-is' = allocation; 'performance' = utilisation (Azure Migrate, Google Migration Center). */
+                                                 
+/** Per resource: a percentile, the allocation, or OCI's AVERAGE (taken as P50). */
+                                                                
+                                                                    
                                
                                     
                                   
@@ -854,6 +859,18 @@
                              
                                      
                                      
+                               
+                             
+                               
+                                          
+                                             
+                                                
+                                         
+                                                                                                            
+                                 
+                                    
+                                                                                      
+                                        
                                                           
                                                          
  

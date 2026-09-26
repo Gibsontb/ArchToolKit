@@ -33,7 +33,7 @@ import { VM_SERVICE } from '../db-catalog.ts';
 import { isIaasService, isPerCoreByol, vsphereSize } from '../design/compute.ts';
 import { osKind } from '../os.ts';
 import type {
-  AppComponent, Database, DbServiceId, InstanceFamily, PatternComponent, Percentile, Plan, Platform, SizingPolicy, SizingReason,
+  AppComponent, Database, DbServiceId, InstanceFamily, PatternComponent, HeadroomStyle, Percentile, Plan, ResourceStrategy, SizingMode, Platform, SizingPolicy, SizingReason,
   SizingRecommendation, SizingRow, Workload,
 } from '../types.ts';
 import type { SizingEngine } from './index.ts';
@@ -58,30 +58,10 @@ export const DEFAULT_SIZING_POLICY: SizingPolicy = Object.freeze({
   assumptions: Object.freeze({}),
 });
 
-export type SizingMode = 'as-is' | 'performance';
-/** Per resource: a percentile, the allocation, or OCI's AVERAGE (taken as P50). */
-export type ResourceStrategy = Percentile | 'as-is' | 'average';
-export type HeadroomStyle = 'comfort-factor' | 'target-utilisation';
-
-/**
- * The methodology settings beyond A.11's `SizingPolicy`. Optional; read
- * structurally from `plan.sizing.policy` so they can be added to types.ts
- * without a change here (reported to WP-0).
- */
-export interface SizingMethodology {
-  /** 'as-is' = allocation; 'performance' = utilisation. Default: from `basis`. */
-  readonly mode?: SizingMode;
-  readonly cpuStrategy?: ResourceStrategy;
-  readonly memoryStrategy?: ResourceStrategy;
-  /** Default 'comfort-factor' (headroomPct). */
-  readonly headroomStyle?: HeadroomStyle;
-  /** Target utilisation for 'target-utilisation', percent. Google moderate 70 / 85. */
-  readonly cpuTargetPct?: number;
-  readonly memoryTargetPct?: number;
-  /** Source CPU score ÷ target CPU score (OCI's adjustment multiplier). Default 1. */
-  readonly benchmarkMultiplier?: number;
-}
-export type SizingPolicyExt = SizingPolicy & SizingMethodology;
+export type { SizingMode, ResourceStrategy, HeadroomStyle };
+/** The methodology settings now live on `SizingPolicy` itself. */
+export type SizingMethodology = Pick<SizingPolicy, 'mode' | 'cpuStrategy' | 'memoryStrategy' | 'headroomStyle' | 'cpuTargetPct' | 'memoryTargetPct' | 'benchmarkMultiplier'>;
+export type SizingPolicyExt = SizingPolicy;
 
 export const MIN_COVERAGE = 0.6;
 export const MIN_DAYS = 3;
