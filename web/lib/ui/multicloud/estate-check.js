@@ -33,6 +33,7 @@ import { DISPOSITION_OPTIONS, METHOD_OPTIONS, PLATFORM_LABELS, PLATFORM_VALUES, 
                                                       
                                                                      
 import { planModel } from './plan-model.js';
+import { chosenCloudOf } from './cloud-choice.js';
 import { fill, note, rowsTable, subhead } from './pane-kit.js';
 
 /** Rows of the decision table shown before "Show all". */
@@ -94,8 +95,8 @@ export function mountEstateCheck(root             , ctx             )       {
       'Estate placement check',
       note(`${used.length} platform${used.length === 1 ? '' : 's'} in use (${check.chosenPlatforms.length} by the apps' choice), against a maximum of ${plan.requirements.maxPlatforms}.`, 'placement-summary'),
       rowsTable(['Application', 'Lands on', 'How'], plan.apps.filter((a) => check.placement[a.name]).map((a) => {
-        const chosen = (plan.appPlans ?? []).find((x) => x.app === a.id)?.platform;
-        return [el('a', { text: a.name, attrs: { href: `migration.html#app:${appSlug(a.id)}` } }), PLATFORM_LABELS[check.placement[a.name]            ], chosen ? 'Chosen' : 'Decided'];
+        const chosen = chosenCloudOf(plan, a.id);
+        return [el('a', { text: a.name, attrs: { href: `migration.html#app:${appSlug(a.id)}` } }), PLATFORM_LABELS[check.placement[a.name]            ], chosen ? 'Chosen' : 'Recommended, not chosen'];
       }), { control: 'placement' }),
       subhead('Landing zones'),
       rowsTable(['Platform', 'State'], used.map((p) => [PLATFORM_LABELS[p], lzState(p)]), { control: 'landing-zone-state' }),

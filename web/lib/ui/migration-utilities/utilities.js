@@ -3,10 +3,13 @@
  * & Utilities (addendum A.9, with the lead's naming: the day-2 area is
  * Utilities).
  *
- * - The catalogue, by category, filtered by platform; Deploy a new service
+ * - One cloud at a time: the cloud dropdown first (multicloud/cloud-choice.ts,
+ *   shared with Landing zones, Estate capacity and the Execute settings);
+ *   nothing shows until a cloud is chosen, and nothing defaults to one.
+ * - The catalogue, by category, for the chosen cloud; Deploy a new service
  *   (A.9.3) is one of the utilities.
- * - A utility's form, drawn from its inputs with `renderBlueprintForm`: the
- *   platform first, dropdowns wherever the set is closed, and the inputs fed
+ * - A utility's form, drawn from its inputs with `renderBlueprintForm`, on
+ *   the chosen cloud (its platform input is the dropdown above), dropdowns wherever the set is closed, and the inputs fed
  *   from the plan (its servers and the tracker's cut-over targets, apps, new
  *   apps, components, clusters, databases, DNS zones and load balancers).
  * - Generate: the change bundle (`change-<yyyymmdd>-<utility>-<target>/`), its
@@ -24,7 +27,7 @@ import { renderBlueprintForm } from '../blueprint-form.js';
                                                     
                                                               
 import { zip } from '../../kit/archive.js';
-import { PLATFORM_LABELS, PLATFORM_VALUES } from '../../multicloud/plan/options.js';
+import { PLATFORM_LABELS } from '../../multicloud/plan/options.js';
                                                                                             
 import {
   CHANGE_LOG_COLUMNS, buildChangeBundle, changeState, defaultUtilityValues, describePlanOp, findUtility, importUtilityEvents,
@@ -33,6 +36,7 @@ import {
 } from '../../multicloud/change/index.js';
 import { planModel } from '../multicloud/plan-model.js';
 import { fill, note, rowsTable, subhead } from '../multicloud/pane-kit.js';
+import { CLOUD_NAMES, cloudPicker, cloudUsage, isCloud, onCloudChange, rememberCloud, resolveCloud, viewerCloud } from '../multicloud/cloud-choice.js';
 import { filePicker, todayIso, trackerRecord } from './track-kit.js';
 
 // ---------------------------------------------------------------------------
@@ -84,7 +88,6 @@ const RISK_TEXT = { low: 'Low risk', medium: 'Medium risk', high: 'High risk' } 
 
 export function mount(root             , ctx             )       {
   const valuesById = new Map                                ();
-  let platformFilter                = '';
   let bundle                          ;
   let bundleFor = '';
   let tracker                 = null;
@@ -93,6 +96,16 @@ export function mount(root             , ctx             )       {
   const main = el('div', { class: 'stack', style: { minWidth: '0', overflowWrap: 'anywhere' } });
   const logBox = el('div', { class: 'stack', attrs: { 'data-control': 'utility-log' } });
   append(root, el('div', { class: 'stack', style: { minWidth: '0' } }, main, card('Utility log', logBox)));
+
+  /** The chosen cloud (never a default). */
+  const cloudNow = ()                       => {
+    const plan = ctx.session.plan();
+    return resolveCloud('', viewerCloud(), cloudUsage(plan, planModel(plan).decision));
+  };
+  const picker = (prompt        ) => {
+    const plan = ctx.session.plan();
+    return cloudPicker({ cloud: cloudNow(), usage: cloudUsage(plan, planModel(plan).decision), control: 'utilities-platform', onChange: () => undefined, prompt });
+  };
 
   const route = () => {
     const id = ctx.arg().split('/')[0] ?? '';
@@ -103,22 +116,15 @@ export function mount(root             , ctx             )       {
 
   // ---- catalogue -----------------------------------------------------------------
   function drawCatalogue(unknown        )       {
-    const filter = el('select', { attrs: { 'aria-label': 'Platform', 'data-control': 'utilities-platform' } })                     ;
-    append(filter, el('option', { text: 'Every platform', attrs: { value: '' } }));
-    for (const p of PLATFORM_VALUES) append(filter, el('option', { text: platformName(p), attrs: { value: p } }));
-    filter.value = platformFilter;
-    filter.addEventListener('change', () => {
-      platformFilter = filter.value                 ;
-      drawCatalogue('');
-    });
-    const groups = catalogue(platformFilter);
+    const cloud = cloudNow();
+    const groups = cloud ? catalogue(cloud) : [];
     const deploy = findUtility('deploy-service');
     fill(main,
-      card('Utilities',
+      card(cloud ? `Utilities: ${CLOUD_NAMES[cloud]}` : 'Utilities',
         note('Small day-2 changes without a migration: each is a form that produces a change bundle of Terraform and / or Ansible against the landing zone, with apply.sh (applies by default; --dry-run to preview), rollback.sh and a status event.'),
         unknown ? el('div', { class: 'tip warn', text: `There is no utility “${unknown}”.` }) : null,
-        el('div', { class: 'field' }, el('label', { text: 'Platform' }), filter),
-        deploy && (!platformFilter || deploy.platforms.includes(platformFilter))
+        picker('Choose the cloud to change. One cloud at a time.'),
+        cloud && deploy && deploy.platforms.includes(cloud)
           ? el('div', { class: 'tip' }, el('strong', { text: `${deploy.label}. ` }), deploy.description, ' ', el('a', { class: 'btn btn-small', text: 'Open →', attrs: { href: `#utilities:${deploy.id}`, 'data-control': 'utility-open-deploy' } }))
           : null),
       ...groups.map((g) => card(g.label, el('div', {
@@ -130,7 +136,7 @@ export function mount(root             , ctx             )       {
       },
       el('strong', { text: u.label }),
       el('div', { class: 'small', text: u.description }),
-      el('div', { class: 'small muted', text: `${u.platforms.map(platformName).join(', ')} · ${RISK_TEXT[u.risk]} · ${u.reversible ? 'reversible' : 'compensating rollback'}` }))))))
+      el('div', { class: 'small muted', text: `${RISK_TEXT[u.risk]} · ${u.reversible ? 'reversible' : 'compensating rollback'}` }))))))
     );
   }
 
@@ -140,20 +146,33 @@ export function mount(root             , ctx             )       {
       bundle = undefined;
       bundleFor = u.id;
     }
-    const values = valuesById.get(u.id) ?? defaultUtilityValues(u);
     // `#utilities:<id>/<k=v&…>` presets (the decision wizard's "Change a running service" opens a utility for its app, server and cloud).
+    // A preset cloud becomes the page's cloud.
     const presets = new URLSearchParams(ctx.arg().split('/').slice(1).join('/'));
+    const presetCloud = presets.get('platform');
+    if (!valuesById.has(u.id) && isCloud(presetCloud) && presetCloud !== viewerCloud()) rememberCloud(presetCloud, false);
+    const cloud = cloudNow();
+    const back = el('div', { class: 'btn-row' }, el('a', { class: 'btn btn-small', text: '← All utilities', attrs: { href: '#utilities', 'data-control': 'utilities-back' } }));
+    if (!cloud || !u.platforms.includes(cloud)) {
+      fill(main, back, card(u.label,
+        el('p', { text: u.description }),
+        picker(`Choose the cloud to change. ${u.label} runs on ${u.platforms.map(platformName).join(', ')}.`),
+        cloud ? el('div', { class: 'tip warn', attrs: { 'data-control': 'utility-not-on-cloud' }, text: `${u.label} is not available on ${CLOUD_NAMES[cloud]}. It runs on ${u.platforms.map(platformName).join(', ')}.` }) : null));
+      return;
+    }
+    const values = valuesById.get(u.id) ?? defaultUtilityValues(u, cloud);
     if (!valuesById.has(u.id)) {
       for (const [k, v] of presets) {
-        if (k === 'platform' && (u.platforms                     ).includes(v)) values.platform = v;
-        else if (u.inputs.some((i) => i.id === k)) values[k] = v;
+        if (k !== 'platform' && u.inputs.some((i) => i.id === k)) values[k] = v;
       }
     }
+    if (values.platform !== cloud) values.platform = cloud;
     valuesById.set(u.id, values);
     const uctx = () => utilityContext(ctx.session.plan(), tracker, date);
     const form = el('div', { class: 'stack', attrs: { 'data-control': 'utility-form', 'data-utility': u.id } });
     const renderForm = () => {
-      fill(form, ...renderBlueprintForm({ inputs: formInputs(u, values, uctx()) }, {
+      // The platform is the cloud chosen above: the form does not ask again.
+      fill(form, ...renderBlueprintForm({ inputs: formInputs(u, values, uctx()).filter((i) => i.id !== 'platform') }, {
         values: () => values,
         set: (id, value) => {
           values[id] = value;
@@ -187,10 +206,11 @@ export function mount(root             , ctx             )       {
       drawResult(result);
     };
     fill(main,
-      el('div', { class: 'btn-row' }, el('a', { class: 'btn btn-small', text: '← All utilities', attrs: { href: '#utilities', 'data-control': 'utilities-back' } })),
+      back,
       card(u.label,
         el('p', { text: u.description }),
-        note(`${RISK_TEXT[u.risk]}. Rollback: ${u.rollback}${u.reversible ? '' : ' (compensating: the README says how)'}. Platforms: ${u.platforms.map(platformName).join(', ')}.`),
+        picker(''),
+        note(`${RISK_TEXT[u.risk]}. Rollback: ${u.rollback}${u.reversible ? '' : ' (compensating: the README says how)'}.`),
         form,
         el('div', { class: 'field' }, el('label', { text: 'Change date (names the bundle; nothing else is dated)' }), dateBox),
         el('div', { class: 'btn-row' }, el('button', { class: 'btn btn-primary', text: 'Generate the change bundle', attrs: { type: 'button', 'data-control': 'utility-generate' }, on: { click: generate } }))),
@@ -292,6 +312,10 @@ export function mount(root             , ctx             )       {
   }
 
   ctx.onArg(route);
+  onCloudChange(() => {
+    bundle = undefined;
+    route();
+  });
   void trackerRecord().then((t) => {
     tracker = t;
   });

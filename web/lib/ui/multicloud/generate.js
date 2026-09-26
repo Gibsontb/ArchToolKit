@@ -9,6 +9,11 @@
  * findings, and Download writes the zip (or tar.gz), dated from the plan so
  * the same plan gives the same bytes.
  *
+ * The project is estate-wide (every cloud the apps land on, one folder per
+ * cloud); the scope line names those clouds with their app counts and says
+ * which apps have no cloud chosen. One cloud's landing zone alone is on
+ * Landing zones.
+ *
  * The gluing is `assembleMigrationProject` (project.ts), the one function
  * WP-9's `generateProject` replaces.
  */
@@ -24,6 +29,7 @@ import {
                                                                                                          
 import { migrationApps, planModel } from './plan-model.js';
 import { fill, note, rowsTable } from './pane-kit.js';
+import { cloudUsage, usageText } from './cloud-choice.js';
 import { PROJECT_PARTS, archiveProject, assembleMigrationProject,                                         } from './project.js';
 import { wavePlanFor } from './wave-model.js';
 
@@ -89,7 +95,16 @@ export function mount(root             , ctx             )       {
   const drawScope = ()       => {
     const plan = ctx.session.plan();
     const m = migrationApps(plan);
+    const usage = cloudUsage(plan, planModel(plan).decision);
+    const guessed = usage.filter((u) => u.recommended.length > 0);
     fill(scope, note(
+      usage.length === 0
+        ? 'No application is placed on a cloud yet, so the project has no landing zone or app stack. One cloud’s landing zone alone: Landing zones.'
+        : `Clouds in the project: ${usage.map(usageText).join(' · ')}. One cloud's landing zone alone: Landing zones.`,
+      'generate-clouds',
+    ), guessed.length ? el('div', { class: 'tip warn', attrs: { 'data-control': 'generate-unchosen' } },
+      `${guessed.reduce((n, u) => n + u.recommended.length, 0)} application(s) have no cloud chosen; the project follows the recommendation for them. Choose their cloud on `,
+      el('a', { text: 'Application Migration', attrs: { href: 'migration.html#applications' } }), '.') : null, note(
       plan.apps.length === 0
         ? 'The plan has no applications yet.'
         : m.planned

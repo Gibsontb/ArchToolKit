@@ -2,9 +2,13 @@
  * Estate capacity (`#capacity`) on Multi-Cloud Migration & Utilities (addendum
  * A.5.4, A.10.7, A.10.10).
  *
- * - Per wave: what each wave lands on each platform (servers, databases,
+ * One cloud at a time: the pane opens on the cloud dropdown
+ * (multicloud/cloud-choice.ts, shared with Landing zones, the Execute settings
+ * and Utilities), and every table below shows only the chosen cloud.
+ *
+ * - Per wave: what each wave lands on the cloud (servers, databases,
  *   vCPU, RAM, storage) and how many items replicate at once.
- * - Totals per platform, landing zone and region.
+ * - Totals for the cloud, its landing zone and region.
  * - Quotas: the needs against the published defaults (every default marked
  *   for verification) or the actual quotas imported from `quotas.json`, which
  *   the generated `fetch-quotas.sh` writes; the migration tools' own
@@ -28,6 +32,7 @@ import { licenceTotals } from '../../multicloud/plan/decide/index.js';
 import { loadRateCard } from '../../multicloud/plan/store.js';
                                                       
 import { fill, note, rowsTable, subhead } from '../multicloud/pane-kit.js';
+import { CLOUD_NAMES, cloudPicker, cloudUsage, onCloudChange, resolveCloud, viewerCloud } from '../multicloud/cloud-choice.js';
 import { filePicker, otherPlanNode, watchTrack,                } from './track-kit.js';
 
                                   
@@ -88,6 +93,8 @@ export function mount(root             , ctx             )       {
   let site = '';
   let share = '50';
   const banner = el('div');
+  const cloudBox = el('div', { attrs: { 'data-control': 'capacity-cloud' } });
+  const cloudCards = el('div', { class: 'stack' });
   const wavesBox = el('div', { attrs: { 'data-control': 'capacity-waves' } });
   const totalsBox = el('div', { attrs: { 'data-control': 'capacity-totals-box' } });
   const quotasBox = el('div', { attrs: { 'data-control': 'capacity-quotas' } });
@@ -95,26 +102,35 @@ export function mount(root             , ctx             )       {
   const costBox = el('div', { attrs: { 'data-control': 'capacity-estimate' } });
   append(root, el('div', { class: 'stack', style: { minWidth: '0', overflowWrap: 'anywhere' } },
     banner,
-    card('Capacity per wave', wavesBox),
-    card('Totals per platform', totalsBox),
-    card('Quotas', quotasBox),
+    card('Estate capacity', cloudBox),
+    cloudCards,
     card('Data transfer', transferBox),
-    card('Licences and estimate', costBox),
   ));
+  append(cloudCards, card('Capacity per wave', wavesBox), card('Totals', totalsBox), card('Quotas', quotasBox), card('Licences and estimate', costBox));
 
   const draw = (v           )       => {
     current = v;
     fill(banner, otherPlanNode(v, ctx));
+    const usage = cloudUsage(v.plan, v.decision);
+    const cloud = resolveCloud('', viewerCloud(), usage);
+    fill(cloudBox, cloudPicker({
+      cloud, usage, control: 'capacity-cloud-choice', onChange: () => undefined,
+      prompt: 'Choose the cloud to see what lands on it: capacity per wave, totals, quotas, licences and the estimate.',
+    }));
+    cloudCards.style.display = cloud ? '' : 'none';
+    const on =                                    (rows              )      => rows.filter((r) => r.platform === cloud);
     if (v.failure) {
       fill(wavesBox, el('div', { class: 'tip warn', text: `The plan could not be decided: ${v.failure}` }));
       return;
     }
-    const byWave = capacityByWave(v);
-    fill(wavesBox, byWave.length === 0 ? note('Nothing moves yet.') : rowsTable(
-      ['Wave', 'Platform', 'Servers', 'Databases', 'vCPU', 'RAM (GiB)', 'Storage (GiB)', 'Replicating at once'],
+    const allWaves = capacityByWave(v);
+    const byWave = on(allWaves);
+    const unplaced = allWaves.filter((r) => !r.platform).reduce((n, r) => n + r.servers + r.databases, 0);
+    fill(wavesBox, byWave.length === 0 ? note(`Nothing moves to ${cloud ? CLOUD_NAMES[cloud] : 'this cloud'} yet.`) : rowsTable(
+      ['Wave', 'Cloud', 'Servers', 'Databases', 'vCPU', 'RAM (GiB)', 'Storage (GiB)', 'Replicating at once'],
       byWave.map((r) => [r.wave === 0 ? 'No wave' : String(r.wave), r.platform ? PLATFORM_LABELS[r.platform] : 'Not placed', String(r.servers), String(r.databases), String(r.vcpu), String(Math.round(r.ramGib)), String(Math.round(r.storageGib)), String(r.replicating)]),
       { numeric: [2, 3, 4, 5, 6, 7], control: 'capacity-per-wave' },
-    ));
+    ), unplaced ? note(`${unplaced} item${unplaced === 1 ? ' is' : 's are'} not placed on a cloud yet.`) : null);
 
     let capacity;
     try {
@@ -123,21 +139,23 @@ export function mount(root             , ctx             )       {
       fill(totalsBox, el('div', { class: 'tip warn', text: `Capacity could not be worked out: ${e instanceof Error ? e.message : String(e)}` }));
       return;
     }
+    const totals = capacity.platforms.filter((c) => c.platform === cloud);
     fill(totalsBox,
-      capacity.platforms.length === 0 ? note('No platform in use yet.') : rowsTable(
-        ['Platform', 'Landing zone', 'Region', 'Instances', 'vCPU', 'RAM (GiB)', 'Storage (GiB)', 'Databases', 'Kubernetes nodes', 'Public IPs', 'Load balancers', 'VMware hosts', 'Backup (GiB)'],
-        capacity.platforms.map((c) => [
+      totals.length === 0 ? note(`Nothing is placed on ${cloud ? CLOUD_NAMES[cloud] : 'this cloud'} yet.`) : rowsTable(
+        ['Cloud', 'Landing zone', 'Region', 'Instances', 'vCPU', 'RAM (GiB)', 'Storage (GiB)', 'Databases', 'Kubernetes nodes', 'Public IPs', 'Load balancers', 'VMware hosts', 'Backup (GiB)'],
+        totals.map((c) => [
           PLATFORM_LABELS[c.platform], c.landingZone, c.region, String(c.instances), String(c.vcpu), String(Math.round(c.ramGib)),
           String(Math.round(c.storage.reduce((s, x) => s + x.gib, 0))), String(c.databases.reduce((s, x) => s + x.count, 0)), String(c.k8s.nodes),
           String(c.publicIps), String(c.loadBalancers), String(c.vmwareHosts), String(Math.round(c.backupGib)),
         ]),
         { numeric: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12], control: 'capacity-platforms' },
       ),
-      capacity.platforms.some((c) => c.replicationPerWave.length) ? el('div', {}, subhead('Replicating per wave'), rowsTable(['Platform', 'Wave', 'Replicating'],
-        capacity.platforms.flatMap((c) => c.replicationPerWave.map((w) => [PLATFORM_LABELS[c.platform], w.wave, String(w.replicating)])), { numeric: [2] })) : null,
+      totals.some((c) => c.replicationPerWave.length) ? el('div', {}, subhead('Replicating per wave'), rowsTable(['Cloud', 'Wave', 'Replicating'],
+        totals.flatMap((c) => c.replicationPerWave.map((w) => [PLATFORM_LABELS[c.platform], w.wave, String(w.replicating)])), { numeric: [2] })) : null,
     );
 
-    const quotas = checkQuotas(capacity, actuals);
+    const allQuotas = checkQuotas(capacity, actuals);
+    const quotas = { ...allQuotas, rows: on(allQuotas.rows) };
     fill(quotasBox,
       note('The defaults differ by account age and are raised on request. Run the fetch-quotas script with your own credentials, then import the quotas.json it writes.'),
       el('div', { class: 'btn-row' },
@@ -154,8 +172,8 @@ export function mount(root             , ctx             )       {
           });
         })),
       actuals.length ? note(`${actuals.length} actual quota${actuals.length === 1 ? '' : 's'} imported.`) : null,
-      quotas.rows.length === 0 ? note('No quota applies to the platforms in use.') : rowsTable(
-        ['Platform', 'Region', 'Quota', 'Needed', 'Default', 'Actual', 'Headroom', 'Status', 'Lead time', 'Source'],
+      quotas.rows.length === 0 ? note('No quota applies on this cloud yet.') : rowsTable(
+        ['Cloud', 'Region', 'Quota', 'Needed', 'Default', 'Actual', 'Headroom', 'Status', 'Lead time', 'Source'],
         quotas.rows.map((r) => [
           PLATFORM_LABELS[r.platform], r.region, `${r.quota}${r.wave ? ` (wave ${r.wave})` : ''}`, `${r.needed} ${r.unit}`,
           r.default === undefined ? '—' : String(r.default), r.actual === undefined ? '—' : String(r.actual), r.headroom === undefined ? '—' : String(r.headroom),
@@ -177,7 +195,7 @@ export function mount(root             , ctx             )       {
       tp.groups.length === 0 ? note('Nothing moves over the network.') : rowsTable(
         ['Group', 'Volume (GiB)', 'Daily change (GiB)', 'For migration (Mbit/s)', 'Seed days', 'Keeps up', 'Offline seeding'],
         tp.groups.map((g) => [g.key, String(Math.round(g.volumeGib)), String(Math.round(g.dailyChangeGib)), String(Math.round(g.effectiveMbps)), String(Math.round(g.seedDays * 10) / 10), g.keepsUp ? 'Yes' : 'No',
-          Object.entries(g.offline).flatMap(([p, list]) => (list ?? []).map((d) => `${PLATFORM_LABELS[p            ]}: ${d.name} (${deviceStatus(d)})`)).join('; ') || '—']),
+          Object.entries(g.offline).filter(([p]) => !cloud || p === cloud).flatMap(([p, list]) => (list ?? []).map((d) => `${PLATFORM_LABELS[p            ]}: ${d.name} (${deviceStatus(d)})`)).join('; ') || '—']),
         { numeric: [1, 2, 3, 4], control: 'capacity-transfer-table' },
       ),
       el('p', { class: 'small muted' }, 'Method: ', el('a', { text: 'source', attrs: { href: tp.source, target: '_blank', rel: 'noopener' } })),
@@ -185,15 +203,15 @@ export function mount(root             , ctx             )       {
     );
 
     const lic = licenceTotals(v.decision);
-    const licRows = (Object.keys(lic)              ).flatMap((p) => Object.entries(lic[p] ?? {}).map(([k, n]) => [PLATFORM_LABELS[p], labelOf(LICENCE_KIND_OPTIONS, k), String(n)]));
+    const licRows = (Object.keys(lic)              ).filter((p) => p === cloud).flatMap((p) => Object.entries(lic[p] ?? {}).map(([k, n]) => [PLATFORM_LABELS[p], labelOf(LICENCE_KIND_OPTIONS, k), String(n)]));
     const est = estimateDesign({ ...v.plan, decision: v.decision }, v.decision, v.design, ratecard ?? undefined);
     const money = (t                                                             ) => (t ?? []).map((x) => `${x.amount.toLocaleString()} ${x.currency}`).join(' + ') || '—';
     fill(costBox,
       subhead('Licences needed'),
-      licRows.length ? rowsTable(['Platform', 'Licence', 'Count'], licRows, { numeric: [2] }) : note('Nothing placed needs a counted licence.'),
+      licRows.length ? rowsTable(['Cloud', 'Licence', 'Count'], licRows, { numeric: [2] }) : note('Nothing placed needs a counted licence.'),
       subhead('Estimate'),
       el('p', { class: 'small', text: est.label, attrs: { 'data-control': 'capacity-estimate-label' } }),
-      est.available ? rowsTable(['Platform', 'Monthly (run)', 'One-time (migration)'], (Object.keys({ ...est.monthly, ...est.oneTime })              ).map((p) => [PLATFORM_LABELS[p], money(est.monthly[p]), money(est.oneTime[p])]), { control: 'capacity-estimate-table' }) : null,
+      est.available ? rowsTable(['Cloud', 'Monthly (run)', 'One-time (migration)'], (Object.keys({ ...est.monthly, ...est.oneTime })              ).filter((p) => p === cloud).map((p) => [PLATFORM_LABELS[p], money(est.monthly[p]), money(est.oneTime[p])]), { control: 'capacity-estimate-table' }) : null,
       est.available && est.noRate.length ? note(`No rate for ${est.noRate.length} count${est.noRate.length === 1 ? '' : 's'} (for example ${est.noRate.slice(0, 3).map((c) => `${c.category} ${c.key}`).join(', ')}).`) : null,
       el('div', { class: 'btn-row' }, el('a', { class: 'btn btn-small', text: 'Rate card (Waves › Governance) →', attrs: { href: '#waves:governance/ratecard' } })),
     );
@@ -201,6 +219,9 @@ export function mount(root             , ctx             )       {
 
   void loadRateCard().catch(() => null).then((c) => {
     ratecard = c;
+    if (current) draw(current);
+  });
+  onCloudChange(() => {
     if (current) draw(current);
   });
   watchTrack(ctx, draw);

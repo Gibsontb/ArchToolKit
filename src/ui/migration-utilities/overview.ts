@@ -18,7 +18,7 @@ import { card, findingsList, stat, statGrid } from '../components.ts';
 import type { PaneContext } from '../plan-shell.ts';
 import { appSlug } from '../page-modes.ts';
 import {
-  APP_PATTERN_OPTIONS, APP_PLAN_STATUS_OPTIONS, MIGRATION_PHASE_OPTIONS, MIGRATION_STRATEGY_OPTIONS, PLATFORM_LABELS, labelOf,
+  APP_PATTERN_OPTIONS, APP_PLAN_STATUS_OPTIONS, MIGRATION_PHASE_OPTIONS, MIGRATION_STRATEGY_OPTIONS, labelOf,
 } from '../../multicloud/plan/options.ts';
 import type { GateId } from '../../multicloud/plan/types.ts';
 import { gateStates } from '../../multicloud/plan/track/derive.ts';
@@ -29,6 +29,7 @@ import { pathLabel } from '../../multicloud/plan/execute/paths.ts';
 import { addDays } from '../../multicloud/plan/execute/waves/timeline.ts';
 import { appScope, downtimeFromDecision } from '../../multicloud/plan/governance/complexity.ts';
 import { mountEstateCheck } from '../multicloud/estate-check.ts';
+import { CLOUD_NAMES, chosenCloudOf } from '../multicloud/cloud-choice.ts';
 import { fill, note, rowsTable } from '../multicloud/pane-kit.ts';
 import { gateCriteria, otherPlanNode, todayIso, watchTrack, type TrackView } from './track-kit.ts';
 
@@ -74,12 +75,14 @@ export function appPlanRows(view: Pick<TrackView, 'plan' | 'decision' | 'tracker
     const scope = appScope(plan, a.name);
     const ids = [...scope.workloads, ...scope.databases].map((i) => i.id);
     const tracked = ids.map((id) => tracker.items[id]).filter((s): s is NonNullable<typeof s> => !!s && !s.removed);
-    const platform = ap?.platform ?? ap?.recommendation?.platform ?? scope.workloads.map((w) => view.decision.items[w.id]?.chosen?.platform).find(Boolean);
+    // The app's own cloud; a recommendation is said as one, never shown as the design.
+    const chosen = chosenCloudOf(plan, a.id);
+    const platform = chosen ?? ap?.recommendation?.platform ?? scope.workloads.map((w) => view.decision.items[w.id]?.chosen?.platform).find(Boolean);
     return {
       app: a.name,
       id: a.id,
       pattern: a.pattern ? labelOf(APP_PATTERN_OPTIONS, a.pattern) : '—',
-      platform: platform ? PLATFORM_LABELS[platform] : '—',
+      platform: platform ? (chosen ? CLOUD_NAMES[platform] : `${CLOUD_NAMES[platform]} (recommended, not chosen)`) : 'Not chosen',
       status: ap ? labelOf(APP_PLAN_STATUS_OPTIONS, ap.status) : 'No plan',
       items: ids.length,
       waves: [...new Set(tracked.map((s) => s.wave))].sort((x, y) => x - y).join(', ') || '—',
@@ -153,7 +156,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     const drafts = rows.filter((r) => r.draft);
     fill(appsBox,
       planned.length === 0 ? note('No application is planned yet: plan them on Application Migration.') : rowsTable(
-        ['App', 'Pattern', 'Platform', 'Status', 'Items', 'Wave(s)', 'Paths', 'Downtime class', 'Blockers', 'Open'],
+        ['App', 'Pattern', 'Cloud', 'Status', 'Items', 'Wave(s)', 'Paths', 'Downtime class', 'Blockers', 'Open'],
         planned.map((r) => [r.app, r.pattern, r.platform, r.status, String(r.items), r.waves, r.paths, r.downtime, String(r.blockers),
           el('a', { class: 'btn btn-small', text: 'Open', attrs: { href: `migration.html#app:${appSlug(r.id)}` } })]),
         { numeric: [4, 8], control: 'overview-app-plans' },

@@ -1,25 +1,29 @@
 /**
- * Landing zones (`#landing-zones`) on Multi-Cloud Migration & Utilities
- * (addendum A.5.2, A.10.15).
+ * Landing zones (`#landing-zones`, `#landing-zones:<cloud>`) on Multi-Cloud
+ * Migration & Utilities (addendum A.5.2, A.10.15).
  *
- * One card per platform the plan lands on, each with:
- * - the landing-zone design (the base Screen 7 card): region, name prefix,
- *   the account / subscription / project / compartment, the networks, subnet
- *   size, zones, bastion and log retention, and the carved subnets
- *   (`designPlan` → `foundationPlansFor`);
- * - the landing-zone mode: **shared** (this page's landing zone, which app
- *   stacks read through `var.landing_zone`) or **included** (each app stack
- *   builds its own); kept in `plan.execution.landingZones`;
- * - connectivity and identity as the design places them per platform;
- * - backup and DR, and the relocate target where one is used;
+ * One cloud at a time. The pane opens on the cloud dropdown (cloud-choice.ts),
+ * with the clouds the plan's applications already use and their app counts
+ * next to it; with no cloud chosen and none in use it shows only that. For the
+ * chosen cloud it shows its landing zone under the provider's own name:
+ * - the build state: the first application on the cloud builds it, the later
+ *   ones reuse it (shared), or it is designed here (shared from the start);
+ * - the mode: **shared** (this page's landing zone, which app stacks read
+ *   through `var.landing_zone`) or **included**; kept in
+ *   `plan.execution.landingZones`;
+ * - the settings (region, name prefix, account / subscription / project /
+ *   compartment, networks, subnet size, zones, bastion, log retention) and
+ *   the carved subnets (`designPlan`, or `designPlatform` for a cloud no
+ *   application uses yet);
+ * - connectivity back to the data centre in the provider's terms (Direct
+ *   Connect, ExpressRoute, Cloud Interconnect, FastConnect, HCX + NSX), the
+ *   cross-cloud connectors, identity, backup and DR;
  * - governance: tag enforcement and the required tags, the security baseline
- *   policies, and budgets;
- * - Generate landing zone (<platform>), which downloads `terraform/<p>/` in
+ *   policies, and budgets; the findings;
+ * - Generate landing zone (<cloud>), which downloads `terraform/<p>/` in
  *   landing-zone scope and marks the landing zone generated.
- *
- * Above the cards: the estate-wide Connectivity and Identity cards (WP-UI-A's
- * `mountConnectivity` / `mountIdentity` from requirements.ts when present)
- * and the estate-wide governance settings (frameworks, baseline, keys).
+ * Below: the Connectivity (sites) and Identity cards and the compliance
+ * settings, which every cloud shares.
  */
 
 import { el, append, clear, downloadFile } from '../dom.ts';
@@ -37,7 +41,14 @@ import {
   AD_STRATEGY_OPTIONS, CLOUD_SIGN_IN_OPTIONS, DNS_STRATEGY_OPTIONS, defaultExecution, overrideKey, slugName,
 } from '../../multicloud/plan/options.ts';
 import type { Framework, KeyManagement, Plan, Platform, PlatformDesign, SecurityBaseline } from '../../multicloud/plan/types.ts';
-import { planModel } from './plan-model.ts';
+import { planModel, platformDesignFor } from './plan-model.ts';
+import { appConnectors, placedOn } from '../../multicloud/plan/apps/connectors.ts';
+import { appPlanOf } from '../../multicloud/plan/apps/components.ts';
+import { designAnswers } from '../../multicloud/plan/apps/design.ts';
+import {
+  CLOUD_NAMES, DC_LINK_NAMES, LANDING_ZONE_NAMES, cloudPicker, cloudUsage, isCloud, landingZoneBuild, landingZoneBuildText, onCloudChange,
+  rememberCloud, resolveCloud, viewerCloud, type CloudUse,
+} from './cloud-choice.ts';
 import { fill, note, rowsTable, subhead, twoColumns, watchPlan } from './pane-kit.ts';
 import { projectDate } from './project.ts';
 
@@ -198,10 +209,16 @@ export function withLandingZoneValue(plan: Plan, id: string, value: string, defa
 export function mount(root: HTMLElement, ctx: PaneContext): void {
   const top = el('div', { class: 'stack' });
   const cards = el('div', { class: 'stack', attrs: { 'data-control': 'landing-zones' } });
-  append(root, el('div', { class: 'stack' }, top, cards));
-  /** Per platform, the parts that follow the plan without redrawing the form. */
+  append(root, el('div', { class: 'stack', style: { minWidth: '0' } }, top, cards));
+  /** The parts of the cloud's card that follow the plan without redrawing the form. */
   let refreshers: (() => void)[] = [];
-  let drawnPlatforms = '';
+  let drawn = '';
+
+  const chosen = (): Platform | undefined => {
+    const plan = ctx.session.plan();
+    return resolveCloud(ctx.arg(), viewerCloud(), cloudUsage(plan, planModel(plan).decision));
+  };
+  const shape = (plan: Plan, cloud: Platform | undefined): string => `${cloud ?? ''}|${cloud ? platformDesignFor(plan, cloud)?.inPlan ?? 'x' : ''}`;
 
   const draw = (): void => {
     refreshers = [];
@@ -209,40 +226,77 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     clear(cards);
     const plan = ctx.session.plan();
     const model = planModel(plan);
-    drawnPlatforms = model.design.platforms.map((d) => d.platform).join(',');
-    append(top, intro(plan, model.design.platforms.length, model.failure));
-    append(top, estateFoundations(ctx));
-    append(top, estateGovernance(ctx));
-    for (const pd of model.design.platforms) append(cards, platformCard(ctx, pd, (r) => refreshers.push(r)));
-    const other = model.design.findings.filter((f) => !model.design.platforms.some((d) => belongsTo(f, d.platform)));
-    if (other.length > 0) append(cards, card('Design findings', findingsList(other)));
+    const usage = cloudUsage(plan, model.decision);
+    const cloud = chosen();
+    drawn = shape(plan, cloud);
+    append(top, intro(plan, cloud, usage, model.failure, (next) => {
+      // Keep the address in step (`#landing-zones:<cloud>`) without re-routing the page.
+      if (globalThis.location && globalThis.history) {
+        const url = new URL(globalThis.location.href);
+        url.hash = next ? `landing-zones:${next}` : 'landing-zones';
+        globalThis.history.replaceState(null, '', url.toString());
+      }
+      draw();
+    }));
+    if (!cloud) return;
+    const pd = platformDesignFor(plan, cloud);
+    if (!pd) {
+      append(cards, card(LANDING_ZONE_NAMES[cloud], el('div', { class: 'tip warn', text: `The ${CLOUD_NAMES[cloud]} landing zone could not be designed${model.failure ? `: ${model.failure}` : '.'}` })));
+      return;
+    }
+    append(cards, platformCard(ctx, pd.design, (r) => refreshers.push(r)));
+    append(cards, estateFoundations(ctx, cloud));
+    append(cards, estateGovernance(ctx));
   };
   const refresh = (): boolean => {
-    const model = planModel(ctx.session.plan());
-    if (model.design.platforms.map((d) => d.platform).join(',') !== drawnPlatforms) return true;
+    const plan = ctx.session.plan();
+    if (shape(plan, chosen()) !== drawn) return true;
     for (const r of refreshers) r();
     return false;
   };
   draw();
   watchPlan(ctx, draw, refresh);
+  ctx.onArg(() => {
+    const a = ctx.arg().split('/')[0] ?? '';
+    if (isCloud(a) && a !== viewerCloud()) rememberCloud(a);
+    else draw();
+  });
+  onCloudChange(() => {
+    if (shape(ctx.session.plan(), chosen()) !== drawn) draw();
+  });
 }
 
-function intro(plan: Plan, count: number, failure?: string): HTMLElement {
+function intro(plan: Plan, cloud: Platform | undefined, usage: readonly CloudUse[], failure: string | undefined, onChange: (cloud: Platform | undefined) => void): HTMLElement {
   return card(
-    'Landing zones',
-    el('p', { text: 'One landing zone per platform the plan lands on: its networks, connectivity, identity, backup and governance. A shared landing zone is built once here; the application stacks read it through var.landing_zone.' }),
+    cloud ? `Landing zone: ${CLOUD_NAMES[cloud]}` : 'Landing zones',
+    cloudPicker({
+      cloud, usage, onChange, control: 'lz-cloud',
+      prompt: 'Choose the cloud to design its landing zone. One cloud at a time.',
+    }),
     failure ? el('div', { class: 'tip warn' }, el('strong', { text: 'The plan could not be decided: ' }), el('span', { text: failure })) : null,
-    count === 0 && !failure
-      ? el('div', { class: 'empty', attrs: { 'data-control': 'no-platforms' } }, 'No platform is in use yet. Place the applications on Application Migration first.', ' ', el('a', { text: 'Open Application Migration →', attrs: { href: 'migration.html#applications' } }))
-      : note(`${count} platform${count === 1 ? '' : 's'} in use for ${plan.name}.`),
+    cloud
+      ? note(`${LANDING_ZONE_NAMES[cloud]}: its networks, connectivity back to the data centre (${DC_LINK_NAMES[cloud]}), identity, backup and governance. The first application on ${CLOUD_NAMES[cloud]} builds it; the later ones reuse it (shared).`)
+      : null,
+    cloud && plan.apps.length === 0
+      ? el('div', { class: 'small muted', attrs: { 'data-control': 'no-apps' } }, 'No applications yet: the landing zone can be designed on its own. ', el('a', { text: 'Open Application Migration →', attrs: { href: 'migration.html#applications' } }))
+      : null,
   );
 }
 
 const belongsTo = (f: Finding, p: Platform): boolean => (f.path ?? '').startsWith(`${p}:`) || f.message.startsWith(`${p} `) || f.message.startsWith(`${p}:`) || f.message.startsWith(PLATFORM_LABELS[p]);
 
-/** The estate-wide Connectivity and Identity cards: WP-UI-A's when requirements.ts exports them, else a summary. */
-function estateFoundations(ctx: PaneContext): HTMLElement {
+/** How a site connects to the cloud, in the provider's own terms. */
+export function connectionText(p: Platform, method: string): string {
+  if (method === 'vpn') return p === 'vmware' ? 'NSX IPsec VPN (IPsec + BGP)' : 'Site-to-site VPN (IPsec + BGP)';
+  if (method === 'circuit') return DC_LINK_NAMES[p];
+  if (method === 'circuit-with-vpn-backup') return `${DC_LINK_NAMES[p]}, with a VPN backup`;
+  return CONNECTION_OPTIONS.find((o) => o.value === method)?.label ?? method;
+}
+
+/** The Connectivity and Identity cards (the sites and the directory every landing zone uses), under the chosen cloud's link. */
+function estateFoundations(ctx: PaneContext, cloud: Platform): HTMLElement {
   const holder = el('div', { class: 'stack', attrs: { 'data-control': 'estate-foundations' } });
+  const head = note(`Connectivity back to the data centre on ${CLOUD_NAMES[cloud]}: ${DC_LINK_NAMES[cloud]}. The sites and the directory below are the same for every cloud.`, 'lz-dc-link');
   void import('./requirements.ts').then((mod) => {
     const m = mod as unknown as Record<string, unknown>;
     const connectivity = m['mountConnectivity'];
@@ -251,28 +305,27 @@ function estateFoundations(ctx: PaneContext): HTMLElement {
       clear(holder);
       const c = el('div', { attrs: { 'data-control': 'connectivity-card' } });
       const i = el('div', { attrs: { 'data-control': 'identity-card' } });
-      append(holder, c, i);
+      append(holder, head, c, i);
       (connectivity as (root: HTMLElement, ctx: PaneContext) => void)(c, ctx);
       (identity as (root: HTMLElement, ctx: PaneContext) => void)(i, ctx);
       return;
     }
-    fill(holder, foundationsSummary(ctx.session.plan()));
-  }, () => fill(holder, foundationsSummary(ctx.session.plan())));
+    fill(holder, head, foundationsSummary(ctx.session.plan(), cloud));
+  }, () => fill(holder, head, foundationsSummary(ctx.session.plan(), cloud)));
   return holder;
 }
 
-/** Read-only Connectivity and Identity, until the editable cards are in. */
-function foundationsSummary(plan: Plan): HTMLElement {
+/** Read-only Connectivity and Identity, when the editable cards cannot load. */
+function foundationsSummary(plan: Plan, cloud: Platform): HTMLElement {
   const req = plan.requirements;
   const label = (list: readonly { value: string; label: string }[], v: string) => list.find((o) => o.value === v)?.label ?? v;
   return card(
     'Connectivity and identity',
-    el('p', { class: 'section-note', attrs: { 'data-control': 'foundations-placeholder' }, text: 'The editable Connectivity and Identity cards are being built (WP-UI-A). Until then they are shown here as the plan holds them.' }),
     subhead('Sites'),
     req.sites.length === 0
-      ? note('No sites: the landing zones have no hybrid connectivity.')
+      ? note('No sites: the landing zone has no connection back to the data centre.')
       : rowsTable(['Site', 'VPN peer', 'BGP ASN', 'CIDRs', 'Bandwidth', 'Circuit'], req.sites.map((s) => [s.name, s.vpnPeer ?? '', s.bgpAsn ?? '', s.cidrs.join(' '), s.bandwidth, s.circuit])),
-    note(`Connection: ${label(CONNECTION_OPTIONS, req.connection)}.`),
+    note(`Connection: ${connectionText(cloud, req.connection)}.`),
     subhead('Identity'),
     rowsTable(['Setting', 'Value'], [
       ['Active Directory', label(AD_STRATEGY_OPTIONS, req.identity.adStrategy)],
@@ -299,10 +352,27 @@ function estateGovernance(ctx: PaneContext): HTMLElement {
     });
   };
   return card(
-    'Governance: every platform',
-    note('The frameworks select the policy sets each landing zone assigns; the baseline and key management apply everywhere.'),
+    'Compliance: the same on every cloud',
+    note('The frameworks select the policy sets the landing zone assigns; the baseline and key management apply everywhere.'),
     ...renderBlueprintForm({ inputs: ESTATE_GOVERNANCE }, { values, set }),
   );
+}
+
+/**
+ * The cross-cloud connectors the application designs (Application Migration's
+ * decision wizard) put on this platform.
+ */
+function crossCloudRows(plan: Plan, p: Platform): HTMLElement {
+  const rows: string[][] = [];
+  for (const app of plan.apps) {
+    if (placedOn(appPlanOf(plan, app.id)) !== p) continue;
+    for (const c of appConnectors(plan, app.id, p, designAnswers(plan, app.id).answers)) {
+      if (c.purpose !== 'dependency') continue;
+      rows.push([app.name, `${c.peer ?? ''} (${CLOUD_NAMES[c.there as Platform] ?? c.there})`, c.option.name, c.build.generated ? `${app.name}'s stack (${p === 'vmware' ? 'vsphere' : p}_app_connector)` : `Not generated: ${c.build.reason ?? ''}`]);
+    }
+  }
+  return el('div', { attrs: { 'data-control': `lz-connectors-${p}` } },
+    rows.length === 0 ? note('No application on this cloud depends on one on another cloud.') : rowsTable(['Application', 'Peer (cloud)', 'Connector', 'Built by'], rows));
 }
 
 function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () => void) => void): HTMLElement {
@@ -322,11 +392,11 @@ function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () =>
   };
   const binding = { values, set: (id: string, v: string) => ctx.session.update((cur) => withLandingZoneValue(cur, id, v, defaults)) };
   const modeInput: BlueprintInput = {
-    id: `${p}:lz-mode`, label: 'Landing-zone mode for the app stacks', control: 'select', options: opts(LANDING_ZONE_MODE_OPTIONS),
-    help: 'Shared: this landing zone is built once, and every app stack on the platform reads it (var.landing_zone). Included: each app stack builds its own.',
+    id: `${p}:lz-mode`, label: 'Landing-zone mode', control: 'select', options: opts(LANDING_ZONE_MODE_OPTIONS),
+    help: 'Shared: this landing zone is built once, and every app stack on the cloud reads it (var.landing_zone). Included: the first application on the cloud builds it in its own project, and the later ones reuse it.',
   };
 
-  const state = el('p', { class: 'small', attrs: { 'data-control': `lz-state-${p}` } });
+  const state = el('p', { class: 'small', attrs: { 'data-control': `lz-state-${p}` }, style: { overflowWrap: 'anywhere' } });
   const subnets = el('div', { attrs: { 'data-control': `subnets-${p}` } });
   const foundation = el('div');
   const placement = el('div');
@@ -336,49 +406,55 @@ function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () =>
   const refresh = (): void => {
     const cur = ctx.session.plan();
     const model = planModel(cur);
-    const d = model.design.platforms.find((x) => x.platform === p) ?? pd;
-    const lzState = cur.execution?.landingZones?.[p];
-    state.textContent = lzState
-      ? `Shared landing zone: ${lzState === 'generated' ? 'generated' : 'designed, not generated yet'}.`
-      : 'Included: each app stack on this platform builds its own landing zone.';
+    const one = platformDesignFor(cur, p);
+    const d = one?.design ?? pd;
+    state.textContent = landingZoneBuildText(landingZoneBuild(cur, p, model.decision), p);
     const rows = d.networks.flatMap((n) => n.subnets.map((s) => [n.name, s.tier, s.zone || '—', s.cidr, s.ipv6Cidr ?? (n.ipv6 ? 'allocated by the platform' : '')]));
-    fill(subnets, rows.length === 0 ? note('No networks are carved for this platform (see the findings).') : rowsTable(['Network', 'Tier', 'Zone', 'IPv4', 'IPv6'], rows));
+    fill(subnets, rows.length === 0 ? note('No networks are carved for this cloud (see the findings).') : rowsTable(['Network', 'Tier', 'Zone', 'IPv4', 'IPv6'], rows));
     const fps = foundationPlansFor(d, p, cur);
     fill(foundation, fps.length === 0 ? null : note(`Foundation: ${fps.map((f) => `${f.name} (${f.cidr}${f.ipv6 ? ', dual stack' : ''}, ${f.subnets.length} subnets)`).join('; ')}. Region ${d.region}${d.drRegion ? `, DR ${d.drRegion}` : ''}.`));
     fill(
       placement,
-      subhead('Connectivity'),
+      subhead(`Connectivity back to the data centre (${DC_LINK_NAMES[p]})`),
       d.connectivity.length === 0
-        ? note('No site connects to this platform.')
-        : rowsTable(['Site', 'Method', 'BGP ASN (cloud side)'], d.connectivity.map((c) => [c.site, CONNECTION_OPTIONS.find((o) => o.value === c.method)?.label ?? c.method, String(c.cloudAsn)])),
+        ? note('No site connects to this cloud yet: add the sites under Hybrid connectivity below.')
+        : rowsTable(['Site', 'Connection', 'BGP ASN (cloud side)'], d.connectivity.map((c) => [c.site, connectionText(p, c.method), String(c.cloudAsn)])),
+      subhead('Cross-cloud connectors (from the application designs)'),
+      crossCloudRows(cur, p),
       subhead('Identity'),
       note(`${AD_STRATEGY_OPTIONS.find((o) => o.value === d.identity.strategy)?.label ?? d.identity.strategy}${d.identity.dcNames.length ? `: ${d.identity.dcNames.join(', ')}` : ''}.`),
       subhead('Backup and DR'),
       rowsTable(['Tier', 'Frequency', 'Retention (days)', 'Copy to DR', 'Immutable'], d.backup.tiers.map((t) => [t.tier, t.frequency, String(t.retentionDays), t.copyToDr ? 'Yes' : 'No', t.immutable ? 'Yes' : 'No'])),
       d.relocate ? el('div', {}, subhead('Relocate target'), note(`${d.relocate.service}: ${d.relocate.nodes} hosts (a naive sum; size it in VCF Sizing).`), el('a', { class: 'btn btn-small', text: 'Open VCF Sizing →', attrs: { href: 'vcf-sizing.html' } })) : null,
     );
-    const mine = [...landingZoneSettings(cur, p).findings, ...model.design.findings.filter((f) => belongsTo(f, p))];
-    fill(findings, mine.length === 0 ? null : findingsList(mine));
+    const mine = [...landingZoneSettings(cur, p).findings, ...(one?.findings ?? []), ...model.design.findings.filter((f) => belongsTo(f, p))];
+    const seen = new Set<string>();
+    fill(findings, mine.length === 0 ? null : el('div', {}, subhead('Findings'), findingsList(mine.filter((f) => {
+      const k = `${f.code}|${f.message}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }))));
   };
   refresh();
   onRefresh(refresh);
 
   const generate = el('button', {
     class: 'btn btn-primary',
-    text: `Generate landing zone (${PLATFORM_LABELS[p]})`,
+    text: `Generate landing zone (${CLOUD_NAMES[p]})`,
     attrs: { type: 'button', 'data-control': `generate-lz-${p}` },
     on: {
       click: () => {
         void (async () => {
           const cur = ctx.session.plan();
           const model = planModel(cur);
-          const d = model.design.platforms.find((x) => x.platform === p);
+          const d = platformDesignFor(cur, p)?.design;
           if (!d) return;
           const tf = terraformFiles({ ...cur, decision: model.decision }, model.decision, { platforms: [d], findings: [] }, { scope: 'landing-zone' });
           const folder = `${slugName(cur.name) || 'plan'}-landing-zone-${p}`;
           const files = Object.fromEntries(Object.entries(tf.files).map(([k, v]) => [`${folder}/${k}`, v]));
           if (Object.keys(files).length === 0) {
-            fill(generated, findingsList([...tf.findings, { code: 'lz.nothing', severity: 'warning', message: 'Nothing to generate for this platform.' }]));
+            fill(generated, findingsList([...tf.findings, { code: 'lz.nothing', severity: 'warning', message: 'Nothing to generate for this cloud.' }]));
             return;
           }
           downloadFile(`${folder}.zip`, await zip(files, projectDate(cur)), 'application/zip');
@@ -395,13 +471,14 @@ function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () =>
 
   return el(
     'section',
-    { class: 'card', attrs: { 'data-platform': p } },
-    el('div', { class: 'card-title' }, el('h2', { text: PLATFORM_LABELS[p] })),
-    ...renderBlueprintForm({ inputs: [modeInput] }, binding),
+    { class: 'card', attrs: { 'data-platform': p }, style: { minWidth: '0' } },
+    el('div', { class: 'card-title' }, el('h2', { text: LANDING_ZONE_NAMES[p] })),
     state,
-    subhead('Landing zone'),
+    ...renderBlueprintForm({ inputs: [modeInput] }, binding),
+    subhead('Settings'),
     twoColumns(renderBlueprintForm({ inputs: lz.inputs }, binding)),
     foundation,
+    subhead('Networks and subnets'),
     subnets,
     placement,
     subhead('Governance'),

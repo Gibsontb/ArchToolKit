@@ -5,7 +5,10 @@
  * - `#execute:settings`: every §A.6.1 setting kept in `plan.execution`, as one
  *   form (every closed set a dropdown, the lists " | " grids); the path of
  *   every item with its override dropdown, where a refused override says why;
- *   and the execution kit (`migration/execute/`) to download.
+ *   and the execution kit (`migration/execute/`) to download. One cloud at a
+ *   time: the landing-zone state and the migration-tool settings are the
+ *   chosen cloud's (the cloud dropdown of multicloud/cloud-choice.ts); the
+ *   rest applies to every cloud.
  * - `#execute:<wave>/<stage>`: one wave at a time. A wave dropdown and the
  *   stage tabs (pre-check, replicate, test, cutover, validate, commit,
  *   rollback, decommission). Per stage: the exact commands from the kit, with
@@ -51,6 +54,7 @@ import { accountable, defaultRaci, raciRoleLabel, type RaciActivityId } from '..
 import { recordSignOff, whoCanSign } from '../../multicloud/plan/governance/signoffs.ts';
 import { COMMS_TEMPLATES, renderNotice, waveViews, type CommsTemplateId } from '../../multicloud/plan/governance/comms.ts';
 import { fill, note, rowsTable, subhead } from '../multicloud/pane-kit.ts';
+import { CLOUD_NAMES, cloudPicker, cloudUsage, onCloudChange, resolveCloud, viewerCloud } from '../multicloud/cloud-choice.ts';
 import {
   commitTracker, decideGate, gateCriteria, gateDownloadName, importStatusControl, nowIso, otherPlanNode, todayIso, watchTrack,
   waveEvent, withEvent, type TrackView,
@@ -229,8 +233,22 @@ const NO_COLUMN = opt('', '', '__none__');
 const crit = (c: Criticality): string => labelOf(CRITICALITY_OPTIONS, c);
 const SECTION_TOOLS = 'Migration tools';
 
-/** The settings form's inputs (the plan's apps and workloads feed the grids' dropdowns). */
-export function executionInputs(plan: Pick<Plan, 'apps' | 'workloads' | 'decision'>, platforms: readonly Platform[]): BlueprintInput[] {
+/** The cloud each migration tool's settings belong to (by input id prefix). */
+export function toolCloud(id: string): Platform | undefined {
+  if (/^(mgn|dms)\./.test(id)) return 'aws';
+  if (id.startsWith('azure.')) return 'azure';
+  if (id.startsWith('m2vm.')) return 'google';
+  if (id.startsWith('ocm.')) return 'oci';
+  if (id.startsWith('hcx.') || id === 'vcfImportClusters') return 'vmware';
+  return undefined;
+}
+
+/**
+ * The settings form's inputs (the plan's apps and workloads feed the grids'
+ * dropdowns). `tools`, when given, keeps only those clouds' migration-tool
+ * settings (one cloud at a time on the pane); without it every tool shows.
+ */
+export function executionInputs(plan: Pick<Plan, 'apps' | 'workloads' | 'decision'>, platforms: readonly Platform[], tools?: readonly Platform[]): BlueprintInput[] {
   const apps = plan.apps.map((a) => opt(a.name, a.name, 'App'));
   const servers = plan.workloads.map((w) => opt(w.name, w.name, 'Workload'));
   const inputs: BlueprintInput[] = [];
@@ -274,7 +292,11 @@ export function executionInputs(plan: Pick<Plan, 'apps' | 'workloads' | 'decisio
     { id: 'hcx.datastore', label: 'HCX: target datastore', control: 'text', section: SECTION_TOOLS },
     { id: 'hcx.folder', label: 'HCX: target folder', control: 'text', section: SECTION_TOOLS },
   );
-  return inputs;
+  if (!tools) return inputs;
+  return inputs.filter((i) => {
+    const c = toolCloud(i.id);
+    return !c || tools.includes(c);
+  });
 }
 
 const cells = (line: string, n: number): string[] => {
@@ -524,9 +546,11 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       waves.length ? el('a', { class: 'btn btn-small', text: `Wave console (wave ${waves.find((w) => w > 0) ?? waves[0]}) →`, attrs: { href: `#${consoleHash(waves.find((w) => w > 0) ?? waves[0] as number, 'precheck')}` } }) : null));
     clear(body);
     const plan = v.plan;
-    const exec = plan.execution ?? defaultExecution();
-    const platforms = [...new Set([...v.decision.platforms, ...Object.keys(exec.landingZones) as Platform[]])];
-    const inputs = executionInputs(plan, platforms);
+    // One cloud at a time: the landing-zone state and the migration tools of the chosen cloud only.
+    const usage = cloudUsage(plan, v.decision);
+    const cloud = resolveCloud('', viewerCloud(), usage);
+    const platforms = cloud ? [cloud] : [];
+    const inputs = executionInputs(plan, platforms, platforms);
     const values = () => executionValues(ctx.session.plan().execution ?? defaultExecution());
     const form = el('div', { class: 'stack', attrs: { 'data-control': 'execution-settings' } });
     const renderForm = () => {
@@ -537,7 +561,14 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       }));
     };
     renderForm();
-    append(body, card('Execution settings', note('Kept in the plan and used by the execution kit. Everything the kit generates applies by default; each script takes --dry-run to preview.'), form));
+    append(body, card('Execution settings',
+      note('Kept in the plan and used by the execution kit. Everything the kit generates applies by default; each script takes --dry-run to preview.'),
+      cloudPicker({
+        cloud, usage, control: 'execute-cloud-choice', onChange: () => undefined,
+        prompt: 'Choose a cloud for its landing-zone state and its migration tool settings. The settings below apply to every cloud.',
+      }),
+      cloud ? note(`${CLOUD_NAMES[cloud]}: its landing-zone state and migration tools are listed with the settings every cloud shares.`) : null,
+      form));
 
     // Paths and overrides.
     append(body, pathsCard(v));
@@ -870,6 +901,9 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     return card('Notices', note('Nothing is sent from here: copy or download the notice, send it yourself, then mark it as sent (G1 checks the T−14 and T−2 notices).'), el('div', { class: 'field' }, el('label', { text: 'Notice' }), pick), preview);
   }
 
+  onCloudChange(() => {
+    if (current && route.settings) draw(current);
+  });
   watchTrack(ctx, draw);
 }
 

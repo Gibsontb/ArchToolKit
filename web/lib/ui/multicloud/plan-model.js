@@ -11,10 +11,10 @@
 import { decideApps } from '../../multicloud/plan/apps/recommend.js';
 import { withoutServiceSynthetics } from '../../multicloud/plan/apps/components.js';
 import { plannedApps } from '../../multicloud/plan/apps/generate.js';
-import { designPlan } from '../../multicloud/plan/design/index.js';
+import { designPlan, designPlatform } from '../../multicloud/plan/design/index.js';
 import { withPatternMappers } from '../../multicloud/plan/patterns/index.js';
                                                       
-                                                                                       
+                                                                                                                 
 
                             
                                   
@@ -41,6 +41,32 @@ export function planModel(plan      )            {
   }
   cache.set(plan, model);
   return model;
+}
+
+const single = new WeakMap                                                                             ();
+
+/**
+ * One platform's design, whether or not the decision places anything there:
+ * the plan's own design when the platform is in it, else the landing zone
+ * alone (no workloads), so a landing zone can be designed for a cloud before
+ * any application lands on it. Null when the engines threw.
+ */
+export function platformDesignFor(plan      , platform          )                                                                          {
+  const model = planModel(plan);
+  const inPlan = model.design.platforms.find((d) => d.platform === platform);
+  if (inPlan) return { design: inPlan, findings: [], inPlan: true };
+  if (model.failure) return null;
+  const perPlan = single.get(plan) ?? new Map();
+  single.set(plan, perPlan);
+  if (!perPlan.has(platform)) {
+    try {
+      perPlan.set(platform, designPlatform(plan, model.decision, platform, withPatternMappers()));
+    } catch {
+      perPlan.set(platform, null);
+    }
+  }
+  const hit = perPlan.get(platform);
+  return hit ? { ...hit, inPlan: false } : null;
 }
 
 /** Every finding the decision and design raised, errors first. */
