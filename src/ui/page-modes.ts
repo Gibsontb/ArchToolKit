@@ -122,7 +122,8 @@ export function planFacts(plan: Plan, tracker?: TrackerLike | null): PlanFacts {
   const only = appIds.size === 1 ? [...appIds][0] : undefined;
   return {
     mode: plan.mode ?? 'migrate',
-    workloads: plan.workloads.length,
+    // A new service's sized placeholders are not servers anyone moves.
+    workloads: plan.workloads.filter((w) => !w.synthetic).length,
     databases: plan.databases.length,
     apps: appIds.size,
     migratingApps: appIds.size - newApps,

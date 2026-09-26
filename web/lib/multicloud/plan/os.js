@@ -155,6 +155,7 @@ export function osFamily(id      )           {
  */
 export function supportStatus(id      , on        )                {
   const info = OS_CATALOG[id];
+  if (!info) return 'unknown';
   if (!info.endOfStandardSupport && !info.endOfExtendedSupport) return 'unknown';
   if (info.endOfStandardSupport && on <= info.endOfStandardSupport) return 'supported';
   if (!info.endOfStandardSupport && info.endOfExtendedSupport && on <= info.endOfExtendedSupport) return 'supported';

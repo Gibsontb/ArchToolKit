@@ -225,7 +225,8 @@ export function assembleMigrationProject(input              , options           
     const ci            = { planId: plan.id, stacks: deploy, images: packer.images, files: { ...out, ...packer.files, ...boot.files } };
     const made = flavour === 'gitlab-ci' ? gitlabCiFiles(ci) : flavour === 'azure-devops' ? azureDevOpsFiles(ci) : githubActionsFiles(ci);
     return {
-      files: { ...packer.files, ...boot.files, ...prefix('ci', made.files) },
+      // The pipeline's files are already keyed from the project root (ci/, .github/, .gitlab-ci.yml).
+      files: { ...packer.files, ...boot.files, ...made.files },
       findings: [...packer.findings, ...boot.findings, ...made.findings],
     };
   });

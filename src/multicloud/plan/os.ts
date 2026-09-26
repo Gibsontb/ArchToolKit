@@ -155,6 +155,7 @@ export type SupportStatus = 'supported' | 'extended' | 'end-of-life' | 'unknown'
  */
 export function supportStatus(id: OsId, on: string): SupportStatus {
   const info = OS_CATALOG[id];
+  if (!info) return 'unknown';
   if (!info.endOfStandardSupport && !info.endOfExtendedSupport) return 'unknown';
   if (info.endOfStandardSupport && on <= info.endOfStandardSupport) return 'supported';
   if (!info.endOfStandardSupport && info.endOfExtendedSupport && on <= info.endOfExtendedSupport) return 'supported';
