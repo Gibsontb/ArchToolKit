@@ -1,0 +1,32 @@
+- name: Web servers
+  hosts: all
+  become: true
+  vars:
+    port: 8080
+  tasks:
+    - name: Packages
+      ansible.builtin.package:
+        name: [nginx, git]
+        state: present
+    - name: Configure
+      block:
+        - name: Template the site
+          ansible.builtin.template:
+            src: site.conf.j2
+            dest: /etc/nginx/conf.d/site.conf
+            mode: "0644"
+          notify: Reload nginx
+        - name: Open the port
+          ansible.posix.firewalld:
+            port: "{{ port }}/tcp"
+            permanent: true
+            state: enabled
+      rescue:
+        - name: Say so
+          ansible.builtin.debug:
+            msg: configuration failed
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

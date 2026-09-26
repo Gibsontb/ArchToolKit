@@ -1,0 +1,1 @@
+{"AWS::IoTThingsGraph::FlowTemplate":{"p":{"Id":"s","CompatibleNamespaceVersion":"n","Definition":"o:DefinitionDocument"},"r":["Definition"],"d":{"DefinitionDocument":{"p":{"Language":"s","Text":"s"},"r":["Language","Text"]}},"ro":["Id"]}}

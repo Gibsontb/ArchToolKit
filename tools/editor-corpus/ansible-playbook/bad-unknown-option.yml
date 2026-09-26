@@ -1,0 +1,7 @@
+- name: Accounts
+  hosts: all
+  tasks:
+    - name: Service account
+      ansible.builtin.user:
+        name: svc-app
+        shel: /usr/sbin/nologin

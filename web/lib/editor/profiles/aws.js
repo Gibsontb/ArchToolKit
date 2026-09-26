@@ -5,7 +5,11 @@
  * CloudFormation checks are the ones the service applies before it creates
  * anything: the sections and resource attributes it knows, a resource type
  * in the AWS::Service::Resource shape, and every Ref, GetAtt, Sub, DependsOn
- * and Condition pointing at something the template declares. IAM checks are
+ * and Condition pointing at something the template declares. Each resource's
+ * Properties are checked against the CloudFormation registry's schema for its
+ * type (./cloudformation-schema.ts): unknown and read-only properties, missing
+ * required ones, primitive types and enumerations, into nested definitions
+ * and lists. A value that is an intrinsic function is never judged. IAM checks are
  * the policy grammar: Version, Effect, Action/NotAction, Resource/NotResource,
  * and the condition operators. Policies inside a template are checked too.
  */
@@ -13,6 +17,7 @@
 import { error, info, warning,              } from '../../core/findings.js';
 import { pathString,                      } from '../doc.js';
 import { asList, didYouMean, isObj, keysOf, last, str,              } from '../profile.js';
+import { cfnServiceTypes, cfnTypes, cfnTypeSchema, isKnownCfnType, loadCfnType, CFN_SCHEMA_SOURCE,                                                 } from '../cloudformation-schema.js';
 
 const CFN_SOURCE = 'AWS CloudFormation template reference (docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-anatomy.html)';
 const IAM_SOURCE = 'IAM JSON policy element reference (docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements.html)';
@@ -174,6 +179,154 @@ export function subReferences(text        )           {
   return out;
 }
 
+// --- resource properties against the registry schemas ----------------------
+
+/** `{Ref: x}`, `{Condition: x}` or `{"Fn::…": …}`: a value decided at deploy time. */
+export function isIntrinsic(value                  )          {
+  if (!isObj(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 1 && (keys[0] === 'Ref' || keys[0] === 'Condition' || (keys[0]          ).startsWith('Fn::'));
+}
+
+/** A dynamic reference (`{{resolve:ssm:…}}`) or an interpolation: not a literal to judge. */
+function isDynamicString(value                  )          {
+  return typeof value === 'string' && (value.includes('{{resolve:') || value.includes('${'));
+}
+
+const specCode = (spec         )         => (typeof spec === 'string' ? spec : spec[0]);
+const specEnum = (spec         )                                => (typeof spec === 'string' ? undefined : spec[1]);
+
+const TYPE_NAMES                                   = { s: 'a string', n: 'a number', i: 'an integer', b: 'a boolean (true or false)' };
+
+function describeCode(code        )         {
+  if (code.startsWith('a:')) return 'a list';
+  if (code.startsWith('o:')) return 'an object';
+  return TYPE_NAMES[code] ?? 'a value';
+}
+
+                    
+                        
+                                 
+                          
+ 
+
+/** Findings for an object `value` shaped by `block`, at `at`. */
+function checkCfnBlock(c          , block          , value      , at                     , top         )       {
+  if (value === null || isIntrinsic(value)) return;
+  if (!isObj(value)) {
+    c.out.push(error('cfn.property.type', `${top ? 'Properties' : String(last(at))} must be an object for ${c.type}.`, { path: pathString(at), source: CFN_SCHEMA_SOURCE }));
+    return;
+  }
+  const names = Object.keys(block.p);
+  const readOnly = top ? new Set(c.schema.ro ?? []) : new Set        ();
+  for (const [key, v] of Object.entries(value)) {
+    const here = [...at, key];
+    const spec = block.p[key];
+    if (spec === undefined) {
+      const guess = didYouMean(key, names);
+      const where = top ? c.type : `${String(last(at))} (${c.type})`;
+      const message = `${key} is not a property of ${where}.${guess ? ` Did you mean ${guess}?` : ''}`;
+      const opts = { path: pathString(here), source: CFN_SCHEMA_SOURCE };
+      c.out.push(block.o ? warning('cfn.property.unknown', message, opts) : error('cfn.property.unknown', message, opts));
+      continue;
+    }
+    if (readOnly.has(key)) {
+      c.out.push(error('cfn.property.read-only', `${key} is read-only on ${c.type}: CloudFormation returns it (Fn::GetAtt), a template cannot set it.`, { path: pathString(here), source: CFN_SCHEMA_SOURCE }));
+      continue;
+    }
+    checkCfnValue(c, spec, v, here);
+  }
+  for (const r of block.r ?? []) {
+    if (!(r in value)) {
+      c.out.push(error('cfn.property.required', `${c.type}${top ? '' : ` ${String(last(at))}`} needs ${r}.`, { path: pathString(at), source: CFN_SCHEMA_SOURCE }));
+    }
+  }
+}
+
+/** Findings for one property value against its spec. */
+function checkCfnValue(c          , spec         , value      , at                     )       {
+  if (value === null || isIntrinsic(value) || isDynamicString(value)) return;
+  const code = specCode(spec);
+  const name = String(keysOf(at).slice(-1)[0] ?? '');
+  const wrong = () =>
+    c.out.push(error('cfn.property.type', `${name} on ${c.type} takes ${describeCode(code)}, not ${Array.isArray(value) ? 'a list' : isObj(value) ? 'an object' : JSON.stringify(value)}.`, { path: pathString(at), source: CFN_SCHEMA_SOURCE }));
+  if (code === 'j') return;
+  if (code.startsWith('a:')) {
+    if (!Array.isArray(value)) return wrong();
+    const item          = specEnum(spec) ? [code.slice(2), specEnum(spec)                     ] : code.slice(2);
+    value.forEach((v, i) => checkCfnValue(c, item, v, [...at, i]));
+    return;
+  }
+  if (code.startsWith('o:')) {
+    const def = c.schema.d?.[code.slice(2)];
+    if (!isObj(value)) return wrong();
+    if (def) checkCfnBlock(c, def, value, at, false);
+    return;
+  }
+  if (Array.isArray(value) || isObj(value)) return wrong();
+  if (code === 'b' && !(typeof value === 'boolean' || (typeof value === 'string' && /^(true|false)$/i.test(value)))) return wrong();
+  if ((code === 'n' || code === 'i') && typeof value !== 'number' && !(typeof value === 'string' && /^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$/.test(value))) return wrong();
+  if (code === 'i' && !Number.isInteger(Number(value))) return wrong();
+  const allowed = specEnum(spec);
+  if (allowed && !allowed.includes(String(value))) {
+    const guess = didYouMean(String(value), allowed);
+    const list = allowed.length <= 12 ? `: ${allowed.join(', ')}` : '';
+    c.out.push(error('cfn.property.enum', `${String(value)} is not an allowed value of ${name} on ${c.type}${list}.${guess ? ` Did you mean ${guess}?` : ''}`, { path: pathString(at), source: CFN_SCHEMA_SOURCE }));
+  }
+}
+
+/** Findings for one resource's type and Properties against the registry schema. */
+function checkCfnResource(res                      , type        , at                     , out           )       {
+  if (type.startsWith('Custom::')) {
+    out.push(info('cfn.resource.custom', `${type} is a custom resource; its properties go to your provider and are not checked here.`, { path: pathString([...at, 'Type']) }));
+    return;
+  }
+  if (type.startsWith('AWS::Serverless::')) {
+    out.push(info('cfn.resource.sam', `${type} is a SAM resource, expanded by the AWS::Serverless transform; its properties are not checked here.`, { path: pathString([...at, 'Type']) }));
+    return;
+  }
+  if (!/^(AWS|Alexa)::/.test(type)) return; // a private registry type or module: its schema is the publisher's
+  if (!isKnownCfnType(type)) {
+    const guess = didYouMean(type, cfnTypes());
+    out.push(error('cfn.resource.type-unknown', `${type} is not a CloudFormation resource type.${guess ? ` Did you mean ${guess}?` : ''}`, { path: pathString([...at, 'Type']), source: CFN_SCHEMA_SOURCE }));
+    return;
+  }
+  const schema = cfnTypeSchema(type);
+  if (!schema) return; // not fetched yet: prepare() brings it, and the page checks again
+  const props = res.Properties;
+  if (props === undefined) {
+    if (schema.r?.length) out.push(error('cfn.property.required', `${type} needs ${schema.r.join(', ')}.`, { path: pathString(at), source: CFN_SCHEMA_SOURCE }));
+    return;
+  }
+  checkCfnBlock({ type, schema, out }, schema, props, [...at, 'Properties'], true);
+}
+
+/** The enum for the property at `rest` (the path under Properties), when it has one. */
+function cfnChoices(schema               , rest      )                                {
+  let block                       = schema;
+  let spec                     ;
+  for (const step of rest) {
+    if (typeof step === 'number') {
+      if (!spec || !specCode(spec).startsWith('a:')) return undefined;
+      const e = specEnum(spec);
+      spec = e ? [specCode(spec).slice(2), e] : specCode(spec).slice(2);
+    } else {
+      if (spec !== undefined) {
+        const code = specCode(spec);
+        block = code.startsWith('o:') ? schema.d?.[code.slice(2)] : undefined;
+      }
+      spec = block?.p[step];
+      if (!spec) return undefined;
+    }
+  }
+  return spec && !specCode(spec).startsWith('a:') ? specEnum(spec) : undefined;
+}
+
+function templateTypes(doc      )           {
+  if (!isObj(doc) || !isObj(doc.Resources)) return [];
+  return [...new Set(Object.values(doc.Resources).flatMap((r) => (isObj(r) && typeof r.Type === 'string' ? [r.Type] : [])))];
+}
+
 export const awsCloudFormation          = {
   id: 'aws-cloudformation',
   family: 'aws',
@@ -181,6 +334,7 @@ export const awsCloudFormation          = {
   format: 'yaml',
   source: CFN_SOURCE,
   detect: (doc) => (isTemplate(doc) ? 0.95 : 0),
+  prepare: (doc) => Promise.all(templateTypes(doc).map(loadCfnType)).then(() => undefined),
   choices(path      , doc      ) {
     const keys = keysOf(path);
     const key = last(path);
@@ -192,6 +346,21 @@ export const awsCloudFormation          = {
     }
     if (keys[0] === 'Resources' && keys.length === 3 && key === 'DeletionPolicy') return ['Delete', 'Retain', 'RetainExceptOnCreate', 'Snapshot'];
     if (keys[0] === 'Resources' && keys.length === 3 && key === 'UpdateReplacePolicy') return ['Delete', 'Retain', 'Snapshot'];
+    // Resource types: the ones in the same service as the current type (the full list is ~1,800).
+    if (path[0] === 'Resources' && path.length === 3 && key === 'Type' && isObj(doc) && isObj(doc.Resources)) {
+      const res = doc.Resources[path[1]          ];
+      const type = isObj(res) ? str(res.Type) : undefined;
+      const same = type ? cfnServiceTypes(type) : undefined;
+      if (same) return same;
+    }
+    // A resource property's enumeration, from the registry schema.
+    if (path[0] === 'Resources' && path[2] === 'Properties' && path.length > 3 && isObj(doc) && isObj(doc.Resources)) {
+      const res = doc.Resources[path[1]          ];
+      const type = isObj(res) ? str(res.Type) : undefined;
+      const schema = type && isKnownCfnType(type) ? cfnTypeSchema(type) : undefined;
+      const found = schema ? cfnChoices(schema, path.slice(3)) : undefined;
+      if (found) return found;
+    }
     if (key === 'Effect') return ['Allow', 'Deny'];
     if (key === 'Version' && keys.includes('PolicyDocument')) return ['2012-10-17', '2008-10-17'];
     return undefined;
@@ -261,6 +430,7 @@ export const awsCloudFormation          = {
       });
       const cond = str(res.Condition);
       if (cond && !(cond in conditions)) out.push(error('cfn.condition', `Condition ${cond} is not declared under Conditions.`, { path: pathString([...at, 'Condition']), source: CFN_SOURCE }));
+      if (type && /^[A-Za-z0-9]+::[A-Za-z0-9_@-]+(::[A-Za-z0-9]+){0,2}$/.test(type)) checkCfnResource(res, type, at, out);
     }
 
     // Every intrinsic function reference in the template.

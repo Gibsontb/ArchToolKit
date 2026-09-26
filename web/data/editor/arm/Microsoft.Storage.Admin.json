@@ -1,0 +1,1 @@
+{"t":{"Microsoft.Storage.Admin/locations/quotas":{"v":"2019-08-08-preview","s":{"t":"o","p":{"properties":{"d":0}},"r":["properties"]}},"Microsoft.Storage.Admin/storageServices":{"v":"2019-08-08-preview","s":{"t":"o","p":{}}}},"d":[{"t":"o","p":{"capacityInGb":{"t":"i"},"numberOfStorageAccounts":{"t":"i"}}}]}

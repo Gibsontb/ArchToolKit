@@ -1,0 +1,1 @@
+{"t":{"Microsoft.ProgramEnrollment/eduEnrollments":{"v":"2026-03-01-preview","s":{"t":"o","p":{"location":{"t":"s"},"properties":{"d":0},"tags":{"t":"o","m":{"t":"s"}}},"r":["location","properties"]}}},"d":[{"t":"o","p":{"domains":{"t":"a","i":{"d":1}}},"r":["domains"]},{"t":"o","p":{"domainNames":{"t":"a","i":{"t":"s"}},"tenantId":{"t":"s"}},"r":["domainNames"]}]}

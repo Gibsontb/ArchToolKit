@@ -1,0 +1,1 @@
+{"AWS::AWSExternalAnthropic::Workspace":{"p":{"Arn":"s","Id":"s","Name":"s","CreatedAt":"s","DataResidency":"o:DataResidency","Tags":"a:o:Tag"},"r":["Name"],"d":{"DataResidency":{"p":{"WorkspaceGeo":"s","DefaultInferenceGeo":"s","AllowedInferenceGeos":"a:s"}},"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]}},"ro":["Arn","CreatedAt","Id"],"co":["DataResidency"]}}

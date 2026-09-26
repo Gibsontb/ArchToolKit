@@ -48,6 +48,13 @@ export const FAMILY_LABELS                                   = {
                                                                  
                                                                                 
                                   
+     
+                                                                            
+                                                                               
+                                                                              
+                                                 
+     
+                                     
                                                                
                                                      
                                                             
@@ -76,6 +83,7 @@ export function perDocument(profile         , multi         )          {
           return profile.choices?.(rest, docs(doc)[index] ?? null);
         }
       : undefined,
+    prepare: profile.prepare ? (doc) => Promise.all(docs(doc).map((d) => profile.prepare?.(d))).then(() => undefined) : undefined,
     validate: profile.validate
       ? (doc) =>
           docs(doc).flatMap((d, i) =>

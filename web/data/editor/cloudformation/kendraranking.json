@@ -1,0 +1,1 @@
+{"AWS::KendraRanking::ExecutionPlan":{"p":{"Id":"s","Arn":"s","Description":"s","Tags":"a:o:Tag","Name":"s","CapacityUnits":"o:CapacityUnitsConfiguration"},"r":["Name"],"d":{"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]},"CapacityUnitsConfiguration":{"p":{"RescoreCapacityUnits":"i"},"r":["RescoreCapacityUnits"]}},"ro":["Id","Arn"]}}

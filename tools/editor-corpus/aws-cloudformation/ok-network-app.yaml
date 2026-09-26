@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  Cidr: {Type: String, Default: 10.20.0.0/16}
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: {Ref: Cidr}
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: app}]
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: {"Fn::Select": [0, {"Fn::Cidr": [{Ref: Cidr}, 4, 8]}]}
+      AvailabilityZone: {"Fn::Select": [0, {"Fn::GetAZs": ""}]}
+  WebSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: web
+      VpcId: {Ref: Vpc}
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: pk, AttributeType: S}]
+      KeySchema: [{AttributeName: pk, KeyType: HASH}]
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+  Fn:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Role: {"Fn::GetAtt": [Role, Arn]}
+      Timeout: 30
+      Code:
+        ZipFile: "def handler(event, context):\n    return 'ok'\n"
+      Environment:
+        Variables:
+          TABLE: {Ref: Table}

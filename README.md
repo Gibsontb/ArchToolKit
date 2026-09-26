@@ -308,6 +308,27 @@ change list, which also writes the whole device's configuration merged.
 `update-network.bat` updates the vendor collections, revalidates everything,
 rebuilds, runs the tests, and asks before it commits.
 
+## Data Editor
+
+Open a JSON or YAML file, edit it as a form or as text, and have it checked
+against its vendor's own schema as you go: Terraform JSON against the provider
+schemas the Terraform page uses, Ansible playbooks against every module's
+options, CloudFormation against AWS's registry schemas, ARM templates against
+Microsoft's published schemas, Kubernetes manifests against the release's
+OpenAPI spec, F5 AS3/DO against F5's schemas, and the VCF spec against the
+spec builder's validator. Schema chunks load only for what the file names.
+
+    npm run editor:update           F5 AS3 / DO schemas
+    npm run editor:cloudformation   CloudFormation registry schemas
+    npm run editor:kubernetes       the latest Kubernetes release's schema
+    npm run editor:arm              Azure ARM schemas (GITHUB_TOKEN if rate limited)
+    npm run editor:validate         the editor against terraform validate,
+                                    ansible-lint, cfn-lint and kubeconform over
+                                    tools/editor-corpus
+
+`update-data-editor.bat` refreshes every schema, revalidates, rebuilds, runs
+the tests, and asks before it commits.
+
 ## Multi-cloud decision matrix
 
 Not "which cloud is best" — nobody can answer that. Given a set of constraints,

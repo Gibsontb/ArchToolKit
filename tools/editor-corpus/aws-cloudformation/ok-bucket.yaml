@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [dev, prod]
+Resources:
+  Logs:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: {"Fn::Sub": "logs-${Env}-${AWS::AccountId}"}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+Outputs:
+  Arn:
+    Value: {"Fn::GetAtt": [Logs, Arn]}

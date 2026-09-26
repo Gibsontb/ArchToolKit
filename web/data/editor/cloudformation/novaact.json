@@ -1,0 +1,1 @@
+{"AWS::NovaAct::WorkflowDefinition":{"p":{"Arn":"s","CreatedAt":"s","Description":"s","ExportConfig":"o:WorkflowExportConfig","Name":"s","Status":["s",["ACTIVE","DELETING"]]},"r":["Name"],"d":{"WorkflowExportConfig":{"p":{"S3BucketName":"s","S3KeyPrefix":"s"},"r":["S3BucketName"]}},"ro":["Arn","CreatedAt","Status"],"co":["Name","Description","ExportConfig"]}}

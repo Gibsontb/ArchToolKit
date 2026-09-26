@@ -31,5 +31,14 @@ fi
   junipernetworks.junos arubanetworks.aoscx cisco.fmcansible \
   cisco.asa paloaltonetworks.panos f5networks.f5_modules f5networks.f5_bigip
 
+# The Data Editor's checks are compared with the real tools too
+# (npm run editor:validate): cfn-lint for CloudFormation, kubeconform for
+# Kubernetes manifests.
+"$VENV/bin/pip" install -q --upgrade cfn-lint
+if [ ! -x "$VENV/bin/kubeconform" ]; then
+  KC=$(curl -fsSL https://api.github.com/repos/yannh/kubeconform/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)
+  curl -fsSL "https://github.com/yannh/kubeconform/releases/download/$KC/kubeconform-linux-amd64.tar.gz" | tar -xz -C "$VENV/bin" kubeconform
+fi
+
 "$VENV/bin/ansible" --version | head -1
 echo "Ansible is in $VENV"

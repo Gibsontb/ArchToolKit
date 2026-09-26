@@ -24,6 +24,19 @@ import { moduleSchema, omittedOptions } from './module-blueprints.js';
                            
  
 
+/**
+ * One problem in one task's options, with what an editor needs besides the
+ * message: its kind, the path as parts, and for an unknown option the names
+ * the module does take (for "did you mean").
+ */
+                                                    
+                                                                      
+                                                                      
+                                            
+                                                                               
+                                     
+ 
+
                                                                 
                                                                                           
                  
@@ -70,7 +83,7 @@ function typeProblem(type          , value         )                {
   }
 }
 
-function checkBlock(module        , block       , args                          , path        , out              )       {
+function checkBlock(module        , block       , args                          , path        , out                  , parts                               = [])       {
   const options = new Map(block.a.map((row) => [row[0], row]));
   const groups = new Map((block.b ?? []).map((g) => [g[0], g]));
   const given = new Set        ();
@@ -78,10 +91,12 @@ function checkBlock(module        , block       , args                          
     const key = block.al?.[rawKey] ?? rawKey;
     given.add(key);
     const at = path ? `${path}.${rawKey}` : rawKey;
+    const atParts = [...parts, rawKey];
     const option = options.get(key);
     const group = groups.get(key);
     if (!option && !group) {
-      out.push({ module, path: at, message: `${module} has no option "${rawKey}"` });
+      const known = [...options.keys(), ...groups.keys(), ...Object.keys(block.al ?? {})];
+      out.push({ module, path: at, message: `${module} has no option "${rawKey}"`, kind: 'unknown', at: atParts, known });
       continue;
     }
     if (group) {
@@ -93,37 +108,83 @@ function checkBlock(module        , block       , args                          
         // Some suboption lists take plain names as well as dictionaries (F5 profiles).
         if (templated(entry) || typeof entry === 'string') return;
         if (!isMap(entry)) {
-          out.push({ module, path: mode === 'l' ? `${at}[${i}]` : at, message: `${at} should be a dictionary of suboptions` });
+          const inList = mode === 'l' && Array.isArray(value);
+          out.push({ module, path: mode === 'l' ? `${at}[${i}]` : at, message: `${at} should be a dictionary of suboptions`, kind: 'shape', at: inList ? [...atParts, i] : atParts });
           return;
         }
-        checkBlock(module, child, entry, mode === 'l' ? `${at}[${i}]` : at, out);
+        checkBlock(module, child, entry, mode === 'l' ? `${at}[${i}]` : at, out, Array.isArray(value) ? [...atParts, i] : atParts);
       });
       continue;
     }
     const [, type, , , choices] = option             ;
     const wrong = typeProblem(type, value);
-    if (wrong) out.push({ module, path: at, message: `${at} ${wrong}` });
+    if (wrong) out.push({ module, path: at, message: `${at} ${wrong}`, kind: 'type', at: atParts });
     if (choices && choices.length > 0 && !templated(value) && value !== null) {
       const values = Array.isArray(value) ? value : [value];
-      for (const v of values) {
-        if (templated(v)) continue;
+      values.forEach((v, i) => {
+        if (templated(v)) return;
         const text = typeof v === 'boolean' ? String(v) : String(v);
         // Choices of true/false match YAML's yes/no; numbers match as text.
         const ok = choices.some((c) => c === text || (BOOLEAN.test(c) && BOOLEAN.test(text) && /^(true|yes|on|y|1)$/i.test(c) === /^(true|yes|on|y|1)$/i.test(text)));
-        if (!ok) out.push({ module, path: at, message: `${at} is "${text}", not one of ${choices.join(', ')}` });
-      }
+        if (!ok) out.push({ module, path: at, message: `${at} is "${text}", not one of ${choices.join(', ')}`, kind: 'choice', at: Array.isArray(value) ? [...atParts, i] : atParts });
+      });
     }
   }
-  for (const [name, , flags] of block.a) {
-    if (flags.startsWith('r') && !given.has(name)) out.push({ module, path: path ? `${path}.${name}` : name, message: `${module} needs ${path ? `${path}.` : ''}${name}` });
-  }
-  for (const [name, , required] of block.b ?? []) {
-    if (required && !given.has(name)) out.push({ module, path: path ? `${path}.${name}` : name, message: `${module} needs ${path ? `${path}.` : ''}${name}` });
-  }
+  const need = (name        ) =>
+    out.push({ module, path: path ? `${path}.${name}` : name, message: `${module} needs ${path ? `${path}.` : ''}${name}`, kind: 'required', at: [...parts, name] });
+  for (const [name, , flags] of block.a) if (flags.startsWith('r') && !given.has(name)) need(name);
+  for (const [name, , required] of block.b ?? []) if (required && !given.has(name)) need(name);
 }
 
 /** Keywords under which a play or block keeps its tasks. */
 const TASK_LISTS = ['tasks', 'pre_tasks', 'post_tasks', 'handlers', 'block', 'rescue', 'always'];
+
+/** The module's documented options, less any it documents but rejects; undefined when it is not documented. */
+function schemaOf(module        )                    {
+  if (!FQCN.test(module) || FREE_FORM.has(module)) return undefined;
+  const documented = moduleSchema(module)                     ;
+  if (!documented) return undefined;
+  const omit = new Set(omittedOptions(module));
+  return omit.size > 0 ? { ...documented, a: documented.a.filter((row) => !omit.has(row[0])) } : documented;
+}
+
+/**
+ * The problems in one task's call of `module` (a fully-qualified name) with
+ * `args`, the value under the module's key: a dictionary of options, or null
+ * for none. Free-form arguments (`command: ls`), templated ones and modules
+ * the toolkit has no documentation for give [].
+ */
+export function checkTaskArgs(module        , args                      )                   {
+  const schema = schemaOf(module);
+  if (!schema) return [];
+  const out                   = [];
+  // Free-form (command: ls) and templated arguments are not option maps.
+  if (args === null || args === undefined) checkBlock(module, schema, {}, '', out);
+  else if (isMap(args)) checkBlock(module, schema, args, '', out);
+  return out;
+}
+
+/**
+ * The documented choices of the option at `path` (keys and list indices from
+ * the module's arguments, through suboptions and aliases); undefined when it
+ * has none. A boolean's true/false is not given: it has its own control.
+ */
+export function optionChoices(module        , path                              )                                {
+  let block = schemaOf(module);
+  const keys = path.filter((p)              => typeof p === 'string');
+  for (let i = 0; block && i < keys.length; i += 1) {
+    const key = block.al?.[keys[i]          ] ?? (keys[i]          );
+    if (i === keys.length - 1) {
+      const row = block.a.find((r) => r[0] === key);
+      if (!row || row[1] === 'b' || !row[4] || row[4].length === 0) return undefined;
+      // A trailing index is an entry of a list option; the option itself needs no index.
+      if (typeof path[path.length - 1] === 'number' && row[1] !== 'ls' && row[1] !== 'ln') return undefined;
+      return row[4];
+    }
+    block = block.b?.find((g) => g[0] === key)?.[4];
+  }
+  return undefined;
+}
 
 function checkTasks(tasks                      , out              )       {
   if (!Array.isArray(tasks)) return;
@@ -131,14 +192,7 @@ function checkTasks(tasks                      , out              )       {
     if (!isMap(task)) continue;
     for (const list of TASK_LISTS) if (list in task) checkTasks(task[list], out);
     for (const [key, value] of Object.entries(task)) {
-      if (!FQCN.test(key) || FREE_FORM.has(key)) continue;
-      const documented = moduleSchema(key)                     ;
-      if (!documented) continue;
-      const omit = new Set(omittedOptions(key));
-      const schema        = omit.size > 0 ? { ...documented, a: documented.a.filter((row) => !omit.has(row[0])) } : documented;
-      // Free-form (command: ls) and templated arguments are not option maps.
-      if (value === null) checkBlock(key, schema, {}, '', out);
-      else if (isMap(value)) checkBlock(key, schema, value, '', out);
+      for (const p of checkTaskArgs(key, value)) out.push({ module: p.module, path: p.path, message: p.message });
     }
   }
 }

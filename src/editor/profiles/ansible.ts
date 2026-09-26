@@ -7,12 +7,21 @@
  * by its fully-qualified name, and that module exists in the collection
  * (checked against the module catalog fetched from Galaxy). Keywords with a
  * fixed set of answers are dropdowns.
+ *
+ * Each task's options are checked against its module's documentation, the
+ * same check the Ansible kit runs on its own playbooks (ansible/args-check.ts):
+ * unknown options, missing required ones, wrong types and values outside the
+ * documented choices, through suboptions. A module's documented choices are
+ * the dropdown for its option. The documentation is fetched a collection file
+ * at a time; `prepare` fetches what a playbook's modules need.
  */
 
 import { classifyModule, catalogueFor } from '../../ansible/catalog.ts';
 import { collectionOfModule } from '../../ansible/collections.ts';
+import { checkTaskArgs, optionChoices, type TaskArgProblem } from '../../ansible/args-check.ts';
+import { loadModule, moduleSchema } from '../../ansible/module-blueprints.ts';
 import { error, info, warning, type Finding } from '../../core/findings.ts';
-import { pathString, type Json, type Path } from '../doc.ts';
+import { getAt, pathString, type Json, type Path } from '../doc.ts';
 import { didYouMean, isObj, keysOf, last, str, type Profile } from '../profile.ts';
 
 const SOURCE = 'Ansible playbook keywords (docs.ansible.com/ansible/latest/reference_appendices/playbooks_keywords.html)';
@@ -158,6 +167,98 @@ function checkModule(name: string, path: string, out: Finding[]): void {
   }
 }
 
+const ARGS_SOURCE = 'The module’s documentation (ansible-doc), as the toolkit’s Ansible kit reads it';
+
+/**
+ * The fully-qualified name a module key is checked as: ansible.builtin for an
+ * ansible-core short name (`copy`) or ansible.legacy; undefined for a short
+ * name the toolkit cannot place.
+ */
+export function resolveModule(name: string): string | undefined {
+  if (BUILTIN_MODULES.has(name)) return `ansible.builtin.${name}`;
+  const legacy = /^ansible.legacy.(w+)$/.exec(name);
+  if (legacy) return `ansible.builtin.${legacy[1]}`;
+  return /^[a-z0-9_]+.[a-z0-9_]+.[a-z0-9_]+$/.test(name) ? name : undefined;
+}
+
+function argFinding(p: TaskArgProblem, path: string): Finding {
+  const extra = { path, source: ARGS_SOURCE };
+  switch (p.kind) {
+    case 'unknown': {
+      const name = String(p.at[p.at.length - 1]);
+      const guess = didYouMean(name, p.known ?? []);
+      return error('ansible.option.unknown', `${p.message}.${guess ? ` Did you mean ${guess}?` : ''}`, extra);
+    }
+    case 'required':
+      return error('ansible.option.required', `${p.message}, which is required.`, extra);
+    case 'choice':
+      return error('ansible.option.choice', `${p.message}.`, extra);
+    case 'type':
+      return error('ansible.option.type', `${p.message}.`, extra);
+    default:
+      return error('ansible.option.shape', `${p.message}.`, extra);
+  }
+}
+
+/**
+ * The options of one task's module call. `args:` holds options too, merged
+ * over the module's own; a finding points at the option where it is written.
+ */
+function checkArgs(task: Record<string, Json>, module: string, at: (string | number)[], out: Finding[]): void {
+  const fqcn = resolveModule(module);
+  if (!fqcn) return;
+  const value = task[module];
+  const extra = isObj(task.args) ? task.args : undefined;
+  if (!(value === null || value === undefined || isObj(value))) return;
+  const merged: Record<string, Json> = { ...(isObj(value) ? value : {}), ...(extra ?? {}) };
+  const where = (key: string | number | undefined) => (extra && typeof key === 'string' && key in extra ? 'args' : module);
+  for (const p of checkTaskArgs(fqcn, merged)) {
+    const first = p.at[0];
+    // A missing option is pointed at the module, where it would be written.
+    const path = p.kind === 'required' && p.at.length === 1 ? [...at, module] : [...at, where(first), ...p.at];
+    out.push(argFinding(p, pathString(path)));
+  }
+}
+
+/** Every module key of every task in a playbook or task list, for prepare. */
+function modulesIn(doc: Json): Set<string> {
+  const found = new Set<string>();
+  const tasks = (list: Json | undefined): void => {
+    if (!Array.isArray(list)) return;
+    for (const task of list) {
+      if (!isObj(task)) continue;
+      for (const key of ['block', 'rescue', 'always'] as const) tasks(task[key]);
+      if ('block' in task) continue;
+      for (const m of moduleKeys(task)) {
+        const fqcn = resolveModule(m);
+        if (fqcn) found.add(fqcn);
+      }
+    }
+  };
+  if (isTaskList(doc)) tasks(doc);
+  else if (Array.isArray(doc)) for (const play of doc) if (isObj(play)) for (const list of TASK_LISTS) tasks(play[list]);
+  return found;
+}
+
+/**
+ * For a path inside a task's module arguments, the module and the path from
+ * its arguments; undefined anywhere else.
+ */
+function optionAt(path: Path, doc: Json): { module: string; rest: Path } | undefined {
+  // The shallowest match is the task: a suboption may share a module's short name.
+  for (let i = 1; i < path.length - 1; i += 1) {
+    const key = path[i];
+    if (typeof key !== 'string' || typeof path[i - 1] !== 'number') continue;
+    const task = getAt(doc, path.slice(0, i));
+    if (!isObj(task) || 'hosts' in task || 'block' in task) continue;
+    const modules = moduleKeys(task);
+    const module = key === 'args' ? modules[0] : modules.includes(key) ? key : undefined;
+    const fqcn = module ? resolveModule(module) : undefined;
+    if (fqcn) return { module: fqcn, rest: path.slice(i + 1) };
+  }
+  return undefined;
+}
+
 function checkTasks(list: Json, path: (string | number)[], out: Finding[]): void {
   if (list === null || list === undefined) return;
   if (!Array.isArray(list)) {
@@ -187,6 +288,7 @@ function checkTasks(list: Json, path: (string | number)[], out: Finding[]): void
       );
     }
     for (const m of modules) checkModule(m, pathString([...at, m]), out);
+    for (const m of modules) checkArgs(task, m, at, out);
     if (!str(task.name) && !modules.some((m) => /(^|\.)(import|include)_(tasks|role)$/.test(m))) {
       out.push(info('ansible.task.unnamed', 'An unnamed task shows in the run output only as its module.', { path: pathString(at) }));
     }
@@ -200,7 +302,14 @@ export const ansiblePlaybook: Profile = {
   format: 'yaml',
   source: SOURCE,
   detect: (doc) => (isPlaybook(doc) ? 0.9 : isTaskList(doc) ? 0.7 : 0),
-  choices(path: Path) {
+  choices(path: Path, doc: Json) {
+    const option = optionAt(path, doc);
+    if (option) {
+      const documented = optionChoices(option.module, option.rest);
+      if (documented) return documented;
+      // Documented, and no choices: none from the fallbacks below either.
+      if (moduleSchema(option.module)) return undefined;
+    }
     const key = last(path);
     if (typeof key !== 'string') return undefined;
     if (KEYWORD_CHOICES[key]) return KEYWORD_CHOICES[key];
@@ -210,6 +319,10 @@ export const ansiblePlaybook: Profile = {
       return bare ? STATE_CHOICES[bare] : undefined;
     }
     return undefined;
+  },
+  prepare(doc) {
+    // A module the index does not list is reported by validate; nothing to fetch.
+    return Promise.allSettled([...modulesIn(doc)].map((m) => loadModule(m))).then(() => undefined);
   },
   validate(doc) {
     const out: Finding[] = [];

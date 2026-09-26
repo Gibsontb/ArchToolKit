@@ -1,0 +1,10 @@
+- name: Switch
+  hosts: ios
+  gather_facts: false
+  tasks:
+    - name: VLAN 10
+      cisco.ios.ios_config:
+        lines:
+          - name USERS
+        parents: vlan 10
+        save_when: changed

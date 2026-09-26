@@ -1,0 +1,1 @@
+{"AWS::BackupGateway::Hypervisor":{"p":{"Host":"s","HypervisorArn":"s","KmsKeyArn":"s","LogGroupArn":"s","Name":"s","Password":"s","Tags":"a:o:Tag","Username":"s"},"d":{"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]}},"ro":["HypervisorArn"],"co":["KmsKeyArn","Tags"]}}

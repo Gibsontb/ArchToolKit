@@ -87,7 +87,7 @@ function isDeploymentManager(doc: Json): doc is Record<string, Json> {
 export const googleDeploymentManager: Profile = {
   id: 'google-deployment-manager',
   family: 'google',
-  label: 'Google Deployment Manager configuration',
+  label: 'Google Deployment Manager configuration (retired)',
   format: 'yaml',
   source: DM_SOURCE,
   detect: (doc) => (isDeploymentManager(doc) ? 0.85 : 0),

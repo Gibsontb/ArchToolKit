@@ -1,0 +1,9 @@
+# tool-blind: ansible-lint cannot check a module run through an action plugin (copy,
+# template, the network *_config modules); the editor's option check can.
+- name: Files
+  hosts: all
+  tasks:
+    - name: Copy the config
+      ansible.builtin.copy:
+        src: app.conf
+        destination: /etc/app/app.conf

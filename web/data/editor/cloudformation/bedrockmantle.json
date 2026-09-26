@@ -1,0 +1,1 @@
+{"AWS::BedrockMantle::Project":{"p":{"Arn":"s","CreatedAt":"s","Id":"s","Name":"s","Tags":"a:o:Tag"},"r":["Name"],"d":{"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]}},"ro":["Arn","CreatedAt","Id"]}}

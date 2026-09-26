@@ -6,14 +6,22 @@
  * every `parameters('…')` and `variables('…')` naming something declared.
  * Policy checks are the rule grammar and the effects.
  *
+ * Beyond those, each resource is checked against Microsoft's published ARM
+ * schemas (../arm-schema.ts): its type must exist (with a did-you-mean), its
+ * apiVersion must be one the type has, an older one is noted, and at the
+ * apiVersion the schema data is for — the newest stable one — its enums,
+ * required fields and the fields under `properties` are checked too.
+ *
  * Bicep compiles to an ARM template, so a `bicep build` output opens here.
  */
 
-import { error, warning, type Finding } from '../../core/findings.ts';
+import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { isSecretPath, pathString, type Json, type Path } from '../doc.ts';
-import { didYouMean, isObj, keysOf, last, str, type Profile } from '../profile.ts';
+import { didYouMean, isExpression, isObj, keysOf, last, str, type Profile } from '../profile.ts';
+import { ARM_SCHEMA_COMMIT, ARM_SCHEMA_FETCHED, armNamespace, armType, armTypes, armTypeSchema, loadArmType, shapeOf, type ArmNode, type ArmTypeSchema } from '../arm-schema.ts';
 
 const ARM_SOURCE = 'ARM template structure and syntax (learn.microsoft.com/azure/azure-resource-manager/templates/syntax)';
+const SCHEMA_SOURCE = `Microsoft's published ARM schemas (github.com/Azure/azure-resource-manager-schemas at ${ARM_SCHEMA_COMMIT.slice(0, 7)}, fetched ${ARM_SCHEMA_FETCHED})`;
 const POLICY_SOURCE = 'Azure Policy definition structure (learn.microsoft.com/azure/governance/policy/concepts/definition-structure-basics)';
 
 export const TEMPLATE_SCHEMAS = [
@@ -47,23 +55,231 @@ function resourceEntries(value: Json | undefined): [string | number, Json][] {
   return [];
 }
 
-function checkResources(list: Json | undefined, at: (string | number)[], out: Finding[]): void {
+/**
+ * The full type of a resource: a child nested in its parent's `resources`
+ * may be written short, as `subnets` under `Microsoft.Network/virtualNetworks`.
+ */
+function fullType(type: string, parent: string | undefined): string {
+  if (!parent || type.includes('/')) return type;
+  return `${parent}/${type}`;
+}
+
+/** Every resource, nested ones included, with its full type (undefined when it is an expression). */
+function eachResource(list: Json | undefined, at: (string | number)[], parent: string | undefined, fn: (r: Record<string, Json>, path: (string | number)[], type: string | undefined) => void): void {
   for (const [key, r] of resourceEntries(list)) {
-    const path = [...at, key];
     if (!isObj(r)) continue;
-    if ('existing' in r && r.existing === true) continue;
+    const path = [...at, key];
+    const raw = str(r.type);
+    const type = raw && !isExpression(raw) ? fullType(raw, parent) : undefined;
+    fn(r, path, type);
+    if ('resources' in r) eachResource(r.resources as Json, [...path, 'resources'], type, fn);
+  }
+}
+
+function checkResources(list: Json | undefined, at: (string | number)[], out: Finding[]): void {
+  eachResource(list, at, undefined, (r, path, full) => {
+    const existing = 'existing' in r && r.existing === true;
     const type = str(r.type);
-    if (!type) out.push(error('arm.resource.type', 'A resource needs a type.', { path: pathString(path), source: ARM_SOURCE }));
-    else if (!TYPE_RE.test(type) && !type.startsWith('[')) {
+    const nested = path.length > 2;
+    if (!type) {
+      if (!existing) out.push(error('arm.resource.type', 'A resource needs a type.', { path: pathString(path), source: ARM_SOURCE }));
+    } else if (!type.startsWith('[') && !TYPE_RE.test(type) && !(nested && CHILD_RE.test(type))) {
       out.push(error('arm.resource.type-format', `${type} is not a resource type; types are written Namespace/type, as Microsoft.Storage/storageAccounts.`, { path: pathString([...path, 'type']), source: ARM_SOURCE }));
     }
     const api = str(r.apiVersion);
-    if (!api) out.push(error('arm.resource.apiVersion', `${type ?? 'This resource'} has no apiVersion.`, { path: pathString(path), source: ARM_SOURCE }));
-    else if (!API_VERSION_RE.test(api)) out.push(error('arm.resource.apiVersion-format', `${api} is not an API version; they are dates, as 2023-05-01.`, { path: pathString([...path, 'apiVersion']), source: ARM_SOURCE }));
-    else if (/-preview$/.test(api)) out.push(warning('arm.resource.preview', `${type} uses a preview API version, which can change or be withdrawn.`, { path: pathString([...path, 'apiVersion']) }));
-    if (!('name' in r)) out.push(error('arm.resource.name', `${type ?? 'This resource'} has no name.`, { path: pathString(path), source: ARM_SOURCE }));
-    if ('resources' in r) checkResources(r.resources as Json, [...path, 'resources'], out);
+    let apiOk = false;
+    if (!api) {
+      if (!existing) out.push(error('arm.resource.apiVersion', `${type ?? 'This resource'} has no apiVersion.`, { path: pathString(path), source: ARM_SOURCE }));
+    } else if (isExpression(api)) {
+      // Decided at deployment.
+    } else if (!API_VERSION_RE.test(api)) {
+      out.push(error('arm.resource.apiVersion-format', `${api} is not an API version; they are dates, as 2023-05-01.`, { path: pathString([...path, 'apiVersion']), source: ARM_SOURCE }));
+    } else {
+      apiOk = true;
+      if (/-preview$/.test(api)) out.push(warning('arm.resource.preview', `${type} uses a preview API version, which can change or be withdrawn.`, { path: pathString([...path, 'apiVersion']) }));
+    }
+    if (!existing && !('name' in r)) out.push(error('arm.resource.name', `${type ?? 'This resource'} has no name.`, { path: pathString(path), source: ARM_SOURCE }));
+    if (full && TYPE_RE.test(full)) checkAgainstSchema(r, full, apiOk ? api : undefined, path, existing, out);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Resource types, apiVersions and properties, from Microsoft's ARM schemas
+// ---------------------------------------------------------------------------
+
+/** A child type written short, inside its parent: `subnets`, `blobServices/containers`. */
+const CHILD_RE = /^[A-Za-z0-9]+(\/[A-Za-z0-9]+)*$/;
+const isStableVersion = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+function checkAgainstSchema(r: Record<string, Json>, type: string, api: string | undefined, path: (string | number)[], existing: boolean, out: Finding[]): void {
+  const typePath = pathString([...path, 'type']);
+  const known = armType(type);
+  if (!known) {
+    const ns = type.split('/')[0] as string;
+    const inNs = armNamespace(ns);
+    const guess = didYouMean(type, inNs ? armTypes(inNs) : armTypes());
+    const what = inNs ? `${inNs} has no resource type ${type.slice(ns.length + 1)}` : `${ns} is not a namespace in Microsoft's ARM schemas`;
+    const message = `${what}.${guess ? ` Did you mean ${guess}?` : ''}`;
+    // A near miss is a typo; anything else may be a type the schemas do not publish.
+    out.push((guess ? error : warning)('arm.resource.type-unknown', message, { path: typePath, source: SCHEMA_SOURCE }));
+    return;
   }
+  if (!api) return;
+  const apiPath = pathString([...path, 'apiVersion']);
+  const versions = known.versions;
+  if (!versions.some((v) => v.toLowerCase() === api.toLowerCase())) {
+    out.push(error('arm.resource.apiVersion-unknown', `${known.type} has no apiVersion ${api}. The newest are ${versions.slice(0, 5).join(', ')}.`, {
+      path: apiPath,
+      source: SCHEMA_SOURCE,
+      remediation: `Use one of the ${versions.length} apiVersions ${known.type} has.`,
+    }));
+    return;
+  }
+  const date = api.slice(0, 10);
+  const newer = versions.filter((v) => v.slice(0, 10) > date && (isStableVersion(v) || !isStableVersion(api)));
+  if (newer.length) {
+    out.push(info('arm.resource.apiVersion-old', `A newer apiVersion of ${known.type} exists: ${newer[0]}${newer.length > 1 ? ` (${newer.length} newer in all)` : ''}.`, { path: apiPath, source: SCHEMA_SOURCE }));
+  }
+  const schema = armTypeSchema(known.type);
+  if (!schema || existing || schema.apiVersion.toLowerCase() !== api.toLowerCase()) return;
+  checkBody(r, schema, path, out);
+}
+
+/**
+ * Fields whose published list is known to lag the service (new VM sizes ship
+ * every month, and the provider takes any): their enums are offered, not enforced.
+ */
+const OPEN_ENUMS = /^vmSize$/i;
+
+/** Keys the template language owns, not the resource provider. */
+const TEMPLATE_KEYS = new Set(['type', 'apiVersion', 'name', 'resources', 'dependsOn', 'comments', 'condition', 'copy', 'scope', 'existing', 'metadata', 'import']);
+
+function field(fields: Readonly<Record<string, ArmNode>>, key: string): ArmNode | undefined {
+  if (key in fields) return fields[key];
+  const lower = key.toLowerCase();
+  for (const [k, v] of Object.entries(fields)) if (k.toLowerCase() === lower) return v;
+  return undefined;
+}
+
+function checkBody(r: Record<string, Json>, schema: ArmTypeSchema, path: (string | number)[], out: Finding[]): void {
+  const top = shapeOf(schema.body, schema.defs);
+  const where = `${schema.type} ${schema.apiVersion}`;
+  const present = new Set(Object.keys(r).map((k) => k.toLowerCase()));
+  for (const req of top.required) {
+    if (!TEMPLATE_KEYS.has(req) && !present.has(req.toLowerCase())) out.push(error('arm.resource.required', `${where} needs ${req}.`, { path: pathString(path), source: SCHEMA_SOURCE }));
+  }
+  if (!top.fields) return;
+  for (const [key, value] of Object.entries(r)) {
+    if (TEMPLATE_KEYS.has(key)) continue;
+    const node = field(top.fields, key);
+    if (node) checkValue(value, node, [...path, key], key.toLowerCase() === 'properties', schema, where, out);
+  }
+}
+
+/**
+ * A value against its schema node: its enum, the required fields of an
+ * object, and — under `properties`, where `strict` is set — fields the schema
+ * does not have. Expressions are skipped: their value comes at deployment.
+ */
+function checkValue(value: Json, node: ArmNode, path: (string | number)[], strict: boolean, schema: ArmTypeSchema, where: string, out: Finding[]): void {
+  if (typeof value === 'string' && isExpression(value)) return;
+  const shape = shapeOf(node, schema.defs);
+  const at = pathString(path);
+  // A flags enum takes several of its values, comma-separated: "Logging, Metrics".
+  const listed = (v: string) => shape.enum?.some((e) => e.toLowerCase() === v.trim().toLowerCase()) ?? true;
+  if (typeof value === 'string' && shape.enum?.length && !OPEN_ENUMS.test(String(last(path))) && !listed(value) && !value.split(',').every(listed)) {
+    const guess = didYouMean(value, shape.enum);
+    const list = `${shape.enum.slice(0, 12).join(', ')}${shape.enum.length > 12 ? ', …' : ''}`;
+    out.push(warning('arm.property.enum', `${value} is not one of the values ${where} lists for ${String(last(path))}: ${list}.${guess ? ` Did you mean ${guess}?` : ''}`, { path: at, source: SCHEMA_SOURCE }));
+    return;
+  }
+  if (Array.isArray(value)) {
+    const items = shape.items;
+    if (items) value.forEach((v, i) => checkValue(v, items, [...path, i], strict, schema, where, out));
+    return;
+  }
+  if (!isObj(value)) return;
+  if (shape.fields) {
+    // Property iteration: `"copy": [{"name": "dataDisks", "count": …, "input": …}]` makes the field.
+    const copied = new Set<string>();
+    if (strict && Array.isArray(value.copy)) for (const c of value.copy) if (isObj(c) && typeof c.name === 'string') copied.add(c.name.toLowerCase());
+    const present = new Set(Object.keys(value).map((k) => k.toLowerCase()));
+    for (const req of shape.required) {
+      if (!present.has(req.toLowerCase()) && !copied.has(req.toLowerCase())) out.push(error('arm.property.required', `${where} needs ${req} here.`, { path: at, source: SCHEMA_SOURCE }));
+    }
+    for (const [key, v] of Object.entries(value)) {
+      if (key === 'copy' && copied.size) continue;
+      const f = field(shape.fields, key);
+      if (f) checkValue(v, f, [...path, key], strict, schema, where, out);
+      else if (strict && !shape.open) {
+        const guess = didYouMean(key, Object.keys(shape.fields));
+        out.push(warning('arm.property.unknown', `${where} has no field ${key} here.${guess ? ` Did you mean ${guess}?` : ''}`, {
+          path: pathString([...path, key]),
+          source: SCHEMA_SOURCE,
+          remediation: 'Fields differ between apiVersions; check the one this resource uses.',
+        }));
+      }
+    }
+  } else if (shape.map) {
+    const map = shape.map;
+    for (const [key, v] of Object.entries(value)) checkValue(v, map, [...path, key], strict, schema, where, out);
+  }
+}
+
+/** The resource a path is in, with its full type, and the rest of the path inside it. */
+function resourceAt(doc: Json, path: Path): { r: Record<string, Json>; type: string | undefined; rest: Path } | undefined {
+  if (!isObj(doc) || path[0] !== 'resources') return undefined;
+  let list: Json | undefined = doc.resources;
+  let parent: string | undefined;
+  let i = 1;
+  for (;;) {
+    const key = path[i];
+    if (key === undefined) return undefined;
+    const r: Json | undefined = Array.isArray(list) && typeof key === 'number' ? list[key] : isObj(list) && typeof key === 'string' ? list[key] : undefined;
+    if (!isObj(r)) return undefined;
+    const raw = str(r.type);
+    const type = raw && !isExpression(raw) ? fullType(raw, parent) : undefined;
+    i += 1;
+    if (path[i] === 'resources' && path.length > i + 1) {
+      list = r.resources;
+      parent = type;
+      i += 1;
+      continue;
+    }
+    return { r, type, rest: path.slice(i) };
+  }
+}
+
+/** A resource's apiVersions, and the enum of a field, for the apiVersion the schema is for. */
+function schemaChoices(doc: Json, path: Path): readonly string[] | undefined {
+  const at = resourceAt(doc, path);
+  if (!at?.type || !at.rest.length) return undefined;
+  const known = armType(at.type);
+  if (!known) return undefined;
+  if (at.rest.length === 1 && at.rest[0] === 'apiVersion') return known.versions;
+  const api = str(at.r.apiVersion);
+  const schema = armTypeSchema(known.type);
+  if (!schema || !api || schema.apiVersion.toLowerCase() !== api.toLowerCase()) return undefined;
+  let node: ArmNode | undefined = schema.body;
+  for (const step of at.rest) {
+    if (!node) return undefined;
+    const shape = shapeOf(node, schema.defs);
+    if (typeof step === 'number') node = shape.items;
+    else node = shape.fields ? field(shape.fields, step) : shape.map;
+  }
+  if (!node) return undefined;
+  const e = shapeOf(node, schema.defs).enum;
+  return e?.length ? e : undefined;
+}
+
+/** Fetch the schema chunks for the template's resource types, nested ones included. */
+function prepareTemplate(doc: Json): Promise<void> {
+  if (!isTemplate(doc)) return Promise.resolve();
+  const loads: Promise<void>[] = [];
+  eachResource(doc.resources as Json, ['resources'], undefined, (_r, _path, type) => {
+    if (type) loads.push(loadArmType(type));
+  });
+  return Promise.allSettled(loads).then(() => undefined);
 }
 
 /** `[parameters('x')]` and `[variables('y')]` inside every expression string. */
@@ -109,8 +325,9 @@ export const azureArm: Profile = {
       if (isObj(p) && Array.isArray(p.allowedValues) && p.allowedValues.every((v) => typeof v === 'string')) return p.allowedValues as string[];
     }
     if (keys.length === 1 && key === 'languageVersion') return ['2.0'];
-    return undefined;
+    return schemaChoices(doc, path);
   },
+  prepare: prepareTemplate,
   validate(doc) {
     const out: Finding[] = [];
     if (!isTemplate(doc)) return out;

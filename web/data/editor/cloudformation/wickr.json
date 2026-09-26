@@ -1,0 +1,1 @@
+{"AWS::Wickr::Network":{"p":{"NetworkArn":"s","NetworkId":"s","NetworkName":"s","AccessLevel":["s",["STANDARD","PREMIUM"]],"AwsAccountId":"s","Standing":"i","MigrationState":"i"},"r":["NetworkName","AccessLevel"],"ro":["NetworkArn","NetworkId","AwsAccountId","Standing","MigrationState"],"co":["AccessLevel"]}}

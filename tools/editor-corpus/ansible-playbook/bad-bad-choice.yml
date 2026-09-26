@@ -1,0 +1,7 @@
+- name: Files
+  hosts: all
+  tasks:
+    - name: Make the directory
+      ansible.builtin.file:
+        path: /var/lib/app
+        state: folder

@@ -1,0 +1,1 @@
+{"AWS::LookoutVision::Project":{"p":{"Arn":"s","ProjectName":"s"},"r":["ProjectName"],"ro":["Arn"],"co":["ProjectName"]}}

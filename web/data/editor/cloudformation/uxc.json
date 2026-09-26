@@ -1,0 +1,1 @@
+{"AWS::UXC::AccountCustomization":{"p":{"AccountId":"s","AccountColor":["s",["none","pink","purple","darkBlue","lightBlue","teal","green","yellow","orange","red"]],"VisibleServices":"a:s","VisibleRegions":"a:s"},"ro":["AccountId"]}}

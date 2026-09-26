@@ -1,0 +1,9 @@
+{
+  "terraform": { "required_providers": { "google": { "source": "hashicorp/google", "version": "~> 8.0" } } },
+  "variable": { "project": { "type": "string" } },
+  "resource": {
+    "google_compute_network": { "vpc": { "project": "${var.project}", "name": "app", "auto_create_subnetworks": false } },
+    "google_compute_subnetwork": { "a": { "project": "${var.project}", "name": "app-a", "region": "europe-west1", "network": "${google_compute_network.vpc.id}", "ip_cidr_range": "10.30.0.0/24", "private_ip_google_access": true } },
+    "google_compute_firewall": { "https": { "project": "${var.project}", "name": "allow-https", "network": "${google_compute_network.vpc.name}", "direction": "INGRESS", "source_ranges": ["0.0.0.0/0"], "allow": [ { "protocol": "tcp", "ports": ["443"] } ] } }
+  }
+}

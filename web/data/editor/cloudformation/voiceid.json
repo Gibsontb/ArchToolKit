@@ -1,0 +1,1 @@
+{"AWS::VoiceID::Domain":{"p":{"Description":"s","DomainId":"s","Name":"s","ServerSideEncryptionConfiguration":"o:ServerSideEncryptionConfiguration","Tags":"a:o:Tag"},"r":["Name","ServerSideEncryptionConfiguration"],"d":{"ServerSideEncryptionConfiguration":{"p":{"KmsKeyId":"s"},"r":["KmsKeyId"]},"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]}},"ro":["DomainId"]}}

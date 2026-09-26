@@ -660,9 +660,31 @@ export function mountDataEditorPage(root: HTMLElement): void {
     setTimeout(() => target?.classList.remove('je-flash'), 1600);
   }
 
+  /** The document whose schema data was last asked for, and why it failed, if it did. */
+  let prepared: Json | undefined;
+  let prepareError: string | undefined;
+
   function findingsNow(): Finding[] {
     if (!state) return [];
-    const out = [...(lifted().validate?.(state.current) ?? [])];
+    const p = lifted();
+    if (p.prepare && prepared !== state.current) {
+      // Fetch the schema chunks this document names, then check it again.
+      const doc = state.current;
+      prepared = doc;
+      prepareError = undefined;
+      p.prepare(doc)
+        .then(() => {
+          if (state?.current === doc) renderAll();
+        })
+        .catch((err: unknown) => {
+          prepareError = err instanceof Error ? err.message : String(err);
+          if (state?.current === doc) renderSide();
+        });
+    }
+    const out = [...(p.validate?.(state.current) ?? [])];
+    if (prepareError) {
+      out.push(warning('editor.schema-unavailable', `Part of the schema for this file could not be loaded, so some fields were not checked: ${prepareError}`, { source: 'ArchToolKit' }));
+    }
     return out;
   }
 

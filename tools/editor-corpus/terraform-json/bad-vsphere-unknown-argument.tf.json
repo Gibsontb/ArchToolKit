@@ -1,0 +1,5 @@
+{
+  "terraform": { "required_providers": { "vsphere": { "source": "vmware/vsphere", "version": "~> 2.17" } } },
+  "variable": { "datacenter_id": { "type": "string" } },
+  "resource": { "vsphere_folder": { "apps": { "path": "apps", "type": "vm", "datacenter": "${var.datacenter_id}" } } }
+}

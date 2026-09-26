@@ -1,0 +1,1 @@
+{"AWS::HealthImaging::Datastore":{"p":{"DatastoreArn":"s","DatastoreName":"s","DatastoreId":"s","DatastoreStatus":["s",["CREATING","CREATE_FAILED","ACTIVE","DELETING","DELETED"]],"KmsKeyArn":"s","CreatedAt":"s","UpdatedAt":"s","Tags":"j"},"ro":["DatastoreArn","CreatedAt","UpdatedAt","DatastoreId","DatastoreStatus"],"co":["DatastoreName","Tags","KmsKeyArn"]}}

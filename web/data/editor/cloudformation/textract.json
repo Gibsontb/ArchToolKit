@@ -1,0 +1,1 @@
+{"AWS::Textract::Adapter":{"p":{"Arn":"s","AdapterId":"s","AdapterName":"s","Description":"s","FeatureTypes":["a:s",["QUERIES"]],"AutoUpdate":["s",["ENABLED","DISABLED"]],"Tags":"a:o:Tag","CreationTime":"s"},"r":["AdapterName","FeatureTypes"],"d":{"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]}},"ro":["Arn","AdapterId","CreationTime"],"co":["FeatureTypes"]}}

@@ -48,6 +48,13 @@ export interface Profile {
   choices?(path: Path, doc: Json): readonly string[] | undefined;
   /** What is wrong with the document. Paths are as `pathString` writes them. */
   validate?(doc: Json): Finding[];
+  /**
+   * Fetch the schema data `validate` and `choices` need for this document —
+   * the chunks for the resource types, modules or kinds it names — so the page
+   * can check again once it has them. In Node the data is read as it is asked
+   * for, so tests and tools need not await this.
+   */
+  prepare?(doc: Json): Promise<void>;
   /** Labels for keys that the generic rule would get wrong. */
   readonly labels?: Readonly<Record<string, string>>;
   /** Keys cleared on a copied list entry (see newEntry). */
@@ -76,6 +83,7 @@ export function perDocument(profile: Profile, multi: boolean): Profile {
           return profile.choices?.(rest, docs(doc)[index] ?? null);
         }
       : undefined,
+    prepare: profile.prepare ? (doc) => Promise.all(docs(doc).map((d) => profile.prepare?.(d))).then(() => undefined) : undefined,
     validate: profile.validate
       ? (doc) =>
           docs(doc).flatMap((d, i) =>

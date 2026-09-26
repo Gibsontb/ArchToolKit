@@ -1,0 +1,1 @@
+{"AWS::NetworkMonitor::Monitor":{"p":{"MonitorArn":"s","MonitorName":"s","AggregationPeriod":"i","State":["s",["PENDING","ACTIVE","INACTIVE","ERROR","DELETING"]],"CreatedAt":"s","ModifiedAt":"s","Tags":"a:o:Tag"},"r":["MonitorName"],"d":{"Tag":{"p":{"Key":"s","Value":"s"},"r":["Key","Value"]}},"ro":["MonitorArn","State","CreatedAt","ModifiedAt"],"co":["MonitorName"]}}
