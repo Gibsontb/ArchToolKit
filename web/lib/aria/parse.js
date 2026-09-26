@@ -752,6 +752,42 @@ async function collectDashboardJson(where        , bytes            , depth     
   if (isRecord(json) && Array.isArray(json['dashboards'])) out.push({ file: where, json });
 }
 
+async function collectViewDefs(bytes            , depth        , out                     )                {
+  if (looksLikeZip(bytes)) {
+    if (depth >= MAX_NESTING) return;
+    let zip            ;
+    try {
+      zip = openZip(bytes);
+    } catch {
+      return;
+    }
+    for (const entry of zip.names) {
+      const lower = entry.toLowerCase();
+      if (entry.endsWith('/') || !(lower.endsWith('.xml') || lower.endsWith('.zip'))) continue;
+      try {
+        await collectViewDefs(await zip.bytes(entry), depth + 1, out);
+      } catch {
+        // One unreadable entry should not lose the rest.
+      }
+    }
+    return;
+  }
+  const text = stripBom(new TextDecoder().decode(bytes));
+  if (!text.includes('<ViewDef')) return;
+  for (const match of text.matchAll(/<ViewDef\s[^>]*\bid="([^"]+)"[\s\S]*?<\/ViewDef>/g)) if (!out.has(match[1] )) out.set(match[1] , match[0]);
+}
+
+/**
+ * Every view definition inside a dropped file, by its id, as the XML it was
+ * exported as (<ViewDef id="…">…</ViewDef>): a content export's views.zip, a
+ * view's own content.xml, or the bundle the dashboard builder downloads.
+ */
+export async function readViewDefs(data                          )                               {
+  const out = new Map                ();
+  await collectViewDefs(data instanceof Uint8Array ? data : new Uint8Array(data), 0, out);
+  return out;
+}
+
 /**
  * Every dashboard export inside a dropped file, whole: a dashboard .json (one
  * dashboard or several), a dashboard zip (dashboard/dashboard.json), a content

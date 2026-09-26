@@ -24,11 +24,16 @@ import type { RawDashboardExport } from '../../aria/parse.ts';
 import { stableId } from '../vcfops-import.ts';
 import {
   ALERT_SUBTYPES,
+  COLUMN_PROPORTIONS,
   CRITICALITY,
+  DASHBOARD_KEYS,
   DASHBOARD_TIME_RANGES,
   Entries,
+  METRIC_UNITS,
   SCOREBOARD_THEMES,
   Settings,
+  TOPN_ORDERS,
+  filterText,
   WORLDS,
   kindAlias,
   widgetType,
@@ -105,6 +110,11 @@ export interface ImportStore {
   readonly kept: Readonly<Record<string, readonly string[]>>;
   /** Dashboard-level things kept as they were, in words. */
   readonly notes: readonly string[];
+  /**
+   * The views its View widgets show that the loaded file also held (a content
+   * export's views.zip), by id, as the <ViewDef> XML they were exported as.
+   */
+  readonly views?: Readonly<Record<string, string>>;
 }
 
 export function readStore(text: unknown): ImportStore | undefined {
@@ -186,6 +196,8 @@ export function dashboardChoices(exports: readonly RawDashboardExport[]): Dashbo
 /** Row text cannot hold " | " (it separates cells), a newline, or ";" inside a value. */
 const cell = (text: string): string => text.replace(/[\r\n\t]+/g, ' ').replace(/\s+\|\s+/g, '|').trim();
 const value = (text: string): string => cell(text).replace(/;/g, ',');
+/** A single value that may not hold a comma (it would read as a list). */
+const cellValue = (text: string): string => value(text).replace(/,/g, ' ');
 
 interface Reader {
   readonly entries: Entries;
@@ -247,6 +259,41 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
     if (m.labels.some(Boolean)) set('labels', m.labels.map(value).join(','));
     if (m.bounds) set('thresholds', m.bounds.join(','));
   };
+  /** objectmetrics= from resourceMetrics[] {metricKey, resourceId}. */
+  const objectMetrics = (): string | undefined => {
+    const out: string[] = [];
+    for (const m of arr(c['resourceMetrics'])) {
+      const found = reader.entries.resourceOf(str(inner(m, 'resourceId')));
+      const key = str(inner(m, 'metricKey'));
+      if (!found || !key || /[,;=:]/.test(found.name) || /[,;=]/.test(key)) return undefined;
+      out.push(`${kindAlias(found.ref)}:${found.name}=${key}`);
+    }
+    return out.join(',') || undefined;
+  };
+  /** unit= and link= when every metric row of the block shares one. */
+  const metricUnitAndLink = (): void => {
+    const rows = arr(inner(c['metric'], 'resourceKindMetrics')).filter(isObj);
+    if (rows.length === 0) return;
+    const units = [...new Set(rows.map((m) => str(m['metricUnitId'])))];
+    if (units.length === 1 && METRIC_UNITS[units[0]!]) set('unit', units[0]);
+    const links = [...new Set(rows.map((m) => str(m['link'])))];
+    if (links.length === 1 && links[0] && !/[;,\s]/.test(links[0])) set('link', links[0]);
+  };
+  const columns = (): void => {
+    const cols = arr(c['additionalColumns']).filter(isObj);
+    set('columns', cols.map((col) => str(col['metricKey'])).filter(Boolean).join(','));
+    const labels = cols.map((col) => str(col['boxLabel']));
+    if (cols.some((col) => str(col['boxLabel']) !== str(col['metricKey'])) && labels.every((l) => l && !/[,;]/.test(l))) set('columnlabels', labels.map(value).join(','));
+  };
+  const groupOf = (): void => {
+    const paths = arr(inner(c['tagFilter'], 'path'));
+    const group = /^\/source\/kind_([^/]+)\/tag:(.+)$/.exec(str(paths[0]));
+    const res = group ? reader.entries.resourceOf(group[2]!) : undefined;
+    if (res && paths.length === 1) {
+      set('group', value(res.name));
+      if (res.ref.resourceKind !== 'Environment') set('grouptype', value(res.ref.resourceKind));
+    }
+  };
   const depth = (fallback: number): void => {
     const d = numOf(c['depth']);
     if (d !== undefined && d !== fallback) set('depth', d);
@@ -260,7 +307,7 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
         set('group', value(res.name));
         if (res.ref.resourceKind !== 'Environment') set('grouptype', value(res.ref.resourceKind));
       } else set('kinds', kindsOfFilter(reader, c['tagFilter']).join(','));
-      set('columns', arr(c['additionalColumns']).map((col) => str(inner(col, 'metricKey'))).filter(Boolean).join(','));
+      columns();
       if (inner(c['selectFirstRow'], 'selectFirstRow') === false) set('first', 'no');
       depth(1);
       break;
@@ -288,6 +335,7 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       if (inner(c['showResourceName'], 'showResourceName') === true) set('names', 'yes');
       const max = numOf(arr(inner(c['metric'], 'resourceKindMetrics')).map((m) => inner(m, 'maxValue'))[0]);
       if (max !== undefined) set('max', max);
+      metricUnitAndLink();
       break;
     }
     case 'ScoreboardHealth':
@@ -312,6 +360,17 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
         if (min !== undefined && min !== 0) set('min', min);
         if (max !== undefined && max !== 100) set('max', max);
         if (conf['solidColoring'] === true) set('solid', 'yes');
+        const t = conf['thenBy'];
+        if (str(inner(t, 'adapterKind')) && str(inner(t, 'resourceKind'))) set('thenby', kindAlias({ adapterKind: str(inner(t, 'adapterKind')), resourceKind: str(inner(t, 'resourceKind')) }));
+        if (conf['relationalGrouping'] === true) set('relational', 'yes');
+        if (inner(conf['mode'], 'mode') === true) set('heatmode', 'instance');
+        if (conf['focusOnGroups'] === false) set('focus', 'no');
+        if (str(conf['name']) && str(conf['name']) !== str(c['title'])) set('configname', cellValue(str(conf['name'])));
+        const f = filterText(conf['customFilter']);
+        if (f?.filter) {
+          set('filter', f.filter);
+          if (f.kind) set('filterkind', kindAlias(f.kind));
+        }
       }
       depth(10);
       break;
@@ -329,19 +388,20 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       if (height !== undefined && height !== 135) set('height', height);
       if (['self', 'resource'].includes(str(c['mode']))) set('mode', str(c['mode']));
       if (typeof c['periodLength'] === 'string') set('period', c['periodLength']);
+      set('kinds', kindsOfFilter(reader, c['tagFilter']).join(','));
+      pinned();
       depth(1);
       break;
     }
     case 'MetricChart': {
       metricBlock();
-      const rel = inner(c['relationshipMode'], 'relationshipMode');
-      if (rel === -1) set('relationship', 'children');
-      if (rel === 1) set('relationship', 'parents');
+      metricUnitAndLink();
+      set('objectmetrics', objectMetrics());
       break;
     }
     case 'SparklineChart':
       metricBlock();
-      if (str(inner(c['columnSequence'], 'columnSequence')) === 'tableFirst') set('order', 'tableFirst');
+      if (str(inner(c['columnSequence'], 'columnSequence')) === 'labelFirst') set('order', 'labelFirst');
       if (inner(c['showResourceName'], 'showObjectName') === true) set('names', 'yes');
       break;
     case 'RollingViewChart': {
@@ -349,10 +409,12 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       const interval = numOf(c['autoTransitionInterval']);
       if (interval !== undefined && interval !== 30) set('interval', interval);
       if (inner(c['showChartToolbar'], 'showChartToolbar') === false) set('toolbar', 'no');
+      metricUnitAndLink();
       break;
     }
     case 'PropertyList': {
       metricBlock(true);
+      metricUnitAndLink();
       const theme = numOf(c['visualTheme']);
       if (theme !== undefined && theme !== 0) set('theme', theme);
       if (inner(c['showMetricFullName'], 'metricFullName') === false) set('fullnames', 'no');
@@ -364,10 +426,13 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       set('metric', metric);
       const top = numOf(c['barsCount']);
       if (top !== undefined && top !== 10) set('top', top);
-      if (str(c['topOption']) === 'metricsLowestUtilization') set('order', 'lowest');
+      const option = str(c['topOption']);
+      const order = Object.entries(TOPN_ORDERS).find(([, v]) => v === option)?.[0];
+      if (order && order !== 'highest') set('order', order);
       const label = str(inner(c['metric'], 'name')) || str(c['metricName']);
       if (label && label !== metric) set('label', value(label));
-      set('columns', arr(c['additionalColumns']).map((col) => str(inner(col, 'metricKey'))).filter(Boolean).join(','));
+      columns();
+      groupOf();
       const b = [numOf(c['yellowBound']), numOf(c['orangeBound']), numOf(c['redBound'])];
       if (b.every((x) => x !== undefined)) set('thresholds', b.join(','));
       const dec = numOf(c['roundDecimals']);
@@ -380,6 +445,7 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
     case 'TextDisplay': {
       const url = str(c['locationUrl']);
       if (url) set('url', value(url));
+      else if (str(c['locationFile'])) set('file', value(str(c['locationFile'])));
       else {
         const html = str(c['editorData']);
         const plain = /^<div style="font-size: 14px;">([\s\S]*)<\/div>$/.exec(html);
@@ -390,11 +456,11 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       break;
     }
     case 'Section':
-      if (widget['collapsed'] === true) set('collapsed', 'yes');
       set('description', value(str(c['description'])));
       break;
     case 'AlertList': {
       set('kinds', kindsOfFilter(reader, c['tagFilter']).join(','));
+      groupOf();
       const crit = arr(c['criticalityLevel'])
         .map((n) => Object.entries(CRITICALITY).find(([, v]) => v === numOf(n))?.[0])
         .filter((x): x is string => !!x);
@@ -404,7 +470,7 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       set('types', subs.join(','));
       set('impact', arr(c['alertImpact']).map(str).filter((x) => ['health', 'risk', 'efficiency'].includes(x)).join(','));
       set('definitions', arr(c['alertDefinitions']).map((d) => str(inner(d, 'id'))).filter(Boolean).join(','));
-      if (arr(c['resource']).length > 0 && inner(c['selfProvider'], 'selfProvider') !== true) set('world', 'yes');
+      if (arr(c['resource']).some((r) => isObj(r) && 'resourceId' in r) && inner(c['selfProvider'], 'selfProvider') !== true) set('world', 'yes');
       depth(1);
       break;
     }
@@ -446,10 +512,16 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       if (d !== undefined && d !== 2) set('depth', d);
       const layout = str(inner(arr(c['custom'])[0], 'selectedLayoutType'));
       if (layout === 'hierarchical') set('layout', layout);
+      const file = str(inner(arr(c['custom'])[0], 'selectedConfigFile'));
+      if (file && file !== 'defaultTopologyGraphConfig.xml') set('configfile', value(file));
       break;
     }
     case 'Geo':
+    case 'ParetoChart':
       set('kinds', kindsOfFilter(reader, c['tagFilter']).join(','));
+      break;
+    case 'WorkloadBalance':
+      set('kinds', arr(c['resourceKindId']).map((id) => reader.kind(id)).filter(Boolean).join(','));
       break;
     case 'LogAnalysis': {
       const chart = str(c['chartType']);
@@ -477,6 +549,13 @@ export function settingsFromConfig(type: WidgetType, config: Json, reader: Reade
       }
       break;
   }
+  // The settings that read themselves back (the newer options, the filter, the objects, the 9.x keys).
+  const source = { config: c, widget, entries: reader.entries, kind: (id: unknown) => reader.kind(id) };
+  for (const setting of type.settings) {
+    if (s[setting.key] !== undefined || !setting.read) continue;
+    set(setting.key, setting.read(source));
+  }
+  if (widget['collapsed'] === true) set('collapsed', 'yes');
   // Only keys this type takes, so a row never reads as a mistake of the loader's.
   const known = new Set(type.settings.map((x) => x.key));
   return Object.fromEntries(Object.entries(s).filter(([key]) => known.has(key)));
@@ -523,7 +602,7 @@ export interface LoadedDashboard {
  * understands (and verbatim rows for the ones it does not), the dashboard
  * options, and the export itself, kept whole.
  */
-export function loadDashboard(exp: RawDashboardExport, dashboardIndex: number, others: readonly RawDashboardExport[] = []): LoadedDashboard {
+export function loadDashboard(exp: RawDashboardExport, dashboardIndex: number, others: readonly RawDashboardExport[] = [], viewDefs: ReadonlyMap<string, string> = new Map()): LoadedDashboard {
   const dashboard = arr(exp.json['dashboards'])[dashboardIndex];
   if (!isObj(dashboard)) throw new Error('That dashboard is not in the file.');
   const entries = Entries.seeded(exp.json['entries']);
@@ -660,7 +739,7 @@ export function loadDashboard(exp: RawDashboardExport, dashboardIndex: number, o
   const timeRange = Object.entries(DASHBOARD_TIME_RANGES).find(([, v]) => v === str(timeState?.['value']))?.[0] ?? 'none';
   if (timeState && timeRange === 'none') notes.push('The dashboard time range is one the form does not offer; it is kept as exported.');
   const delay = numOf(dashboard['autoswitchDelay']);
-  const extraKeys = Object.keys(dashboard).filter((k) => !['id', 'name', 'namePath', 'description', 'shared', 'temporary', 'hidden', 'homeTab', 'disabled', 'locked', 'autoswitchEnabled', 'autoswitchDelay', 'columnCount', 'columnProportion', 'gridsterMaxColumns', 'rank', 'creationTime', 'lastUpdateTime', 'importAttempts', 'importComplete', 'userId', 'lastUpdateUserId', 'states', 'dashboardNavigations', 'widgetInteractions', 'widgets'].includes(k));
+  const extraKeys = Object.keys(dashboard).filter((k) => !DASHBOARD_KEYS[k]?.field && !['temporary', 'columnCount', 'gridsterMaxColumns', 'rank', 'creationTime', 'lastUpdateTime', 'importAttempts', 'importComplete', 'userId', 'lastUpdateUserId'].includes(k));
   if (extraKeys.length > 0) notes.push(`Dashboard keys kept as exported: ${extraKeys.join(', ')}.`);
   notes.push('The owner, creation time and every other dashboard key are kept as exported.');
 
@@ -676,6 +755,9 @@ export function loadDashboard(exp: RawDashboardExport, dashboardIndex: number, o
     time_range: timeRange,
     home_tab: dashboard['homeTab'] === true,
     locked: dashboard['locked'] === true,
+    hidden: dashboard['hidden'] === true,
+    disabled: dashboard['disabled'] === true,
+    column_proportion: COLUMN_PROPORTIONS.some((c) => c.value === str(dashboard['columnProportion'])) ? str(dashboard['columnProportion']) : '1',
     autoswitch: dashboard['autoswitchEnabled'] === true,
     autoswitch_delay: delay !== undefined && delay >= 5 && delay <= 3600 ? delay : 300,
     navigations: navLines.join('\n'),
@@ -683,7 +765,14 @@ export function loadDashboard(exp: RawDashboardExport, dashboardIndex: number, o
   };
   const top: Obj = {};
   for (const [key, v] of Object.entries(exp.json)) if (key !== 'entries' && key !== 'dashboards') top[key] = v;
-  const store: ImportStore = { version: 1, file: exp.file, top, entries: exp.json['entries'] ?? { resourceKind: [], resource: [] }, dashboard, values, rows, kept, notes };
+  // The views the file holds that this dashboard's View widgets show: kept, and written back beside it.
+  const views: Record<string, string> = {};
+  for (const w of widgets) {
+    const id = str(inner(w['config'], 'viewDefinitionId'));
+    if (str(w['type']) === 'View' && viewDefs.has(id)) views[id] = viewDefs.get(id)!;
+  }
+  if (Object.keys(views).length > 0) notes.push(`${Object.keys(views).length} view${Object.keys(views).length === 1 ? '' : 's'} its View widgets show ${Object.keys(views).length === 1 ? 'was' : 'were'} in the file too, and ${Object.keys(views).length === 1 ? 'is' : 'are'} written back in import/views.zip.`);
+  const store: ImportStore = { version: 1, file: exp.file, top, entries: exp.json['entries'] ?? { resourceKind: [], resource: [] }, dashboard, values, rows, kept, notes, ...(Object.keys(views).length > 0 ? { views } : {}) };
   const keptWidgets = Object.keys(kept).length;
   const summary = `Loaded "${name}" from ${exp.file}: ${widgets.length} widget${widgets.length === 1 ? '' : 's'}${keptWidgets > 0 ? `, ${keptWidgets} with parts kept exactly as exported` : ''}.`;
   return { values: { ...values, imported: JSON.stringify(store) }, store, summary };

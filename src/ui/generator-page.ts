@@ -35,7 +35,7 @@ import {
 import { tableShape } from './multi-editors.ts';
 import { blueprintField, fillOptions, labelledField, remember, renderBlueprintForm, withCurrentTags } from './blueprint-form.ts';
 import type { Finding } from '../core/findings.ts';
-import { fileBar } from './file-bar.ts';
+import { fileBar, refreshFileBar, type PrimaryFile } from './file-bar.ts';
 import { envelope, openEnvelope, SETTINGS_KINDS, stripSecrets } from '../kit/settings-file.ts';
 import { isRecord, type Json } from '../editor/doc.ts';
 import type { StackBuild, StackItem, StackReference } from '../terraform/stack.ts';
@@ -137,6 +137,8 @@ export interface GeneratorWorkspace {
   /** The inputs the workspace edits; Step 2 leaves them out. */
   readonly owns: (inputId: string) => boolean;
   readonly mount: (context: WorkspaceContext) => HTMLElement;
+  /** The file the workspace opens as the page's main action (the dashboard builder: a dashboard). */
+  readonly primaryFile?: PrimaryFile;
 }
 
 export interface WorkspaceContext {
@@ -274,9 +276,8 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
   const grid = el('div', { class: 'generator-grid' }, el('div', {}, stepOne), el('div', {}, stepTwo), workspaceHolder, stepThreeHolder);
 
   append(root, buildList);
-  append(
-    root,
-    fileBar({
+  const settingsBar = fileBar({
+      primaryFile: () => (blueprint ? options.workspace?.(blueprint)?.primaryFile : undefined),
       noun: `the ${options.noun} and its parameters`,
       fileName: () => `${String(values.__name ?? '').trim() || blueprint?.id || options.noun}-settings`,
       header: () => [
@@ -346,9 +347,8 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
         renderTwo();
         renderThree();
       },
-    }),
-    grid,
-  );
+    });
+  append(root, settingsBar, grid);
 
   // If the tab has no target yet, record the one being shown so the other pages
   // agree with this one rather than each defaulting on their own.
@@ -719,6 +719,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     const space = blueprint && !(blueprint.load && blueprint.inputs.length === 0) ? options.workspace?.(blueprint) : undefined;
     grid.classList.toggle('generator-grid-wide', !space && !!blueprint?.inputs.some((i) => i.control === 'tag-standard' || (isVisible(i, values) && (tableShape(i)?.columns.length ?? 0) >= 3)));
     renderWorkspace(space);
+    refreshFileBar(settingsBar);
     if (!blueprint) {
       replace(stepTwo, card('Step 2 — Parameters', el('p', { text: 'Choose something to build.' })));
       return;

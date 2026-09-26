@@ -12,7 +12,7 @@ import { defaultValues, type BlueprintValues } from '../kit/blueprint.ts';
 import type { Finding } from '../core/findings.ts';
 import { zip } from '../kit/archive.ts';
 import { openZip } from '../core/zip.ts';
-import { readAriaFile, readDashboardExports } from '../aria/parse.ts';
+import { readAriaFile, readDashboardExports, readViewDefs } from '../aria/parse.ts';
 import { dashboardChoices, loadDashboard } from './blueprints/vcf-ops-dashboard-import.ts';
 import { __test as builderRows } from '../ui/dashboard-builder.ts';
 import { tableShape } from '../ui/multi-editors.ts';
@@ -398,7 +398,7 @@ describe('the grid editor reads a declared grid', () => {
  * zip per dashboard under dashboards/<owner>, an entries table with an
  * adapterKind table beside resourceKind and resource, per-widget states,
  * widget x/y/height beside gridsterCoords, a widget type the catalogue lacks
- * (ParetoChart), a Tag Picker wired by tagId, a receiver with two senders,
+ * (FutureWidget), a Tag Picker wired by tagId, a receiver with two senders,
  * repeated titles, a title holding " | ", a stale navigation, a collapsed
  * widget overlapping another, and dashboard keys the builder never writes
  * (docCenterKey, entryKeys, adapterName).
@@ -490,7 +490,7 @@ function realShapedDashboard(id: string, name: string): Record<string, unknown> 
           chartType: 'area',
         },
       },
-      { collapsed: false, id: w('pareto'), gridsterCoords: { w: 6, x: 7, h: 6, y: 9 }, type: 'ParetoChart', title: '', config: { barsCount: 10, metricKey: 'mem|usage_average', whatever: { nested: [1, 2, 3] } } },
+      { collapsed: false, id: w('pareto'), gridsterCoords: { w: 6, x: 7, h: 6, y: 9 }, type: 'FutureWidget', title: '', config: { barsCount: 10, metricKey: 'mem|usage_average', whatever: { nested: [1, 2, 3] } } },
       { collapsed: true, id: w('folded'), gridsterCoords: { w: 6, x: 7, h: 1, y: 9 }, type: 'View', title: 'Folded view', config: { viewDefinitionId: '0f8b2b9c-3a1e-4b7a-9c2d-1e2f3a4b5c6d', refreshInterval: 300, selfProvider: { selfProvider: false }, title: 'Folded view', traversalSpecId: 'vSphere Hosts and Clusters-VMWARE-vSphere World' } },
     ],
   };
@@ -536,9 +536,9 @@ describe('vcfops_dashboard: loading an export to edit', () => {
     // What the builder shows: a row for every widget, titles made unique and single-line.
     const rows = String(loaded.values['widgets_custom']).split('\n');
     expect(rows.length).toBe(6);
-    expect(rows[1]!.startsWith('ResourceList | VMs|by tag | kinds=vm; columns=cpu|usage_average | 4,1,5,8 | no | Tags | ')).toBe(true);
+    expect(rows[1]!.startsWith('ResourceList | VMs|by tag | kinds=vm; columns=cpu|usage_average; columnlabels=CPU | 4,1,5,8 | no | Tags | ')).toBe(true);
     expect(rows[3]!.split(' | ').slice(0, 2)).toEqual(['MetricChart', 'Hosts (2)']);
-    expect(rows[4]!.split(' | ')[0]).toBe('ParetoChart');
+    expect(rows[4]!.split(' | ')[0]).toBe('FutureWidget');
     expect(loaded.values['dashboard_name']).toBe('Host tags');
     expect(loaded.values['folder']).toBe('Operations');
     expect(loaded.values['time_range']).toBe('last24Hour');
@@ -623,12 +623,60 @@ describe('vcfops_dashboard: loading an export to edit', () => {
 
 describe('the dashboard builder rows', () => {
   it('splits and joins rows without changing them, the loaded widget id included', () => {
-    const text = ['# a comment', 'ResourceList | VMs | kinds=vm; columns=cpu|usage_average | 1,1,4,6 | yes | ', 'ParetoChart | Odd |  | 5,1,4,6 | no | VMs | 1234-abcd'].join('\n');
+    const text = ['# a comment', 'ResourceList | VMs | kinds=vm; columns=cpu|usage_average | 1,1,4,6 | yes | ', 'FutureWidget | Odd |  | 5,1,4,6 | no | VMs | 1234-abcd'].join('\n');
     const { rows, comments } = builderRows.splitRows(text);
     expect(rows.length).toBe(2);
     expect(rows[1]!.source).toBe('1234-abcd');
     expect(builderRows.joinRows(rows, comments)).toBe(text);
     const settings = builderRows.readSettings('kind=vm; text=a; b=c');
     expect(builderRows.writeSettings(settings.pairs, settings.malformed)).toBe('kind=vm; text=a; b=c');
+  });
+});
+
+describe('vcfops_dashboard: what goes beside the dashboard', () => {
+  it('lays the dashboard zip out as a dashboard export does, with the resources files', () => {
+    const { files } = build(undefined, { template: 'capacity' });
+    expect(Object.keys(files).filter((f) => f.startsWith('import/dashboard.zip/')).sort()).toEqual(
+      ['dashboard/dashboard.json', ...['', '_de', '_es', '_fr', '_ja', '_ko', '_zh_cn', '_zh_tw'].map((l) => `dashboard/resources/resources${l}.properties`)].map((f) => `import/dashboard.zip/${f}`).sort(),
+    );
+    expect(files['IMPORT-ORDER.md']!.indexOf('## 1. Views')).toBeLessThan(files['IMPORT-ORDER.md']!.indexOf('## 3. The dashboard'));
+  });
+
+  it('bundles the template views it shows, and names any other view to import separately', () => {
+    const own = build(undefined, { template: 'capacity' });
+    const xml = own.files['import/views.zip/content.xml']!;
+    expect(xml.includes(`<ViewDef id="${stableId('view:Cluster capacity overview')}">`)).toBe(true);
+    expect(own.findings.some((f) => f.code === 'vcfops.dashboard.view-separate')).toBe(false);
+    const other = build(['View | Someone’s view | view=0f8b2b9c-3a1e-4b7a-9c2d-1e2f3a4b5c6d | auto | yes | ', 'MetricChart | SM | kind=vm; metrics=Super Metric|sm_0f8b2b9c-3a1e-4b7a-9c2d-1e2f3a4b5c6d | auto | no | Someone’s view']);
+    expect(other.findings.filter((f) => f.code === 'vcfops.dashboard.view-separate').length).toBe(1);
+    expect(other.findings.some((f) => f.code === 'vcfops.dashboard.super-metrics')).toBe(true);
+    expect(other.files['import/views.zip/content.xml']).toBeUndefined();
+    expect(other.files['IMPORT-ORDER.md']!.includes('view id 0f8b2b9c-3a1e-4b7a-9c2d-1e2f3a4b5c6d')).toBe(true);
+    expect(build(undefined, { template: 'capacity', include_views: false }).files['import/views.zip/content.xml']).toBeUndefined();
+  });
+
+  it('keeps the views a loaded content export held and writes them back', async () => {
+    const viewId = '0f8b2b9c-3a1e-4b7a-9c2d-1e2f3a4b5c6d';
+    const viewXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Content>\n    <Views>\n        <ViewDef id="${viewId}">\n            <Title>Folded</Title>\n        </ViewDef>\n        <ViewDef id="11111111-0000-4000-8000-000000000000">\n            <Title>Unused</Title>\n        </ViewDef>\n    </Views>\n</Content>\n`;
+    const one = await zip({ 'dashboard/dashboard.json': realShapedExport(ID_A, 'Operations/VM tags') });
+    const content = await zip({ 'dashboards/a1b2c3d4-0000-4000-8000-000000000001': one, 'views.zip': await zip({ 'content.xml': viewXml }) });
+    const exports = await readDashboardExports('content.zip', content);
+    const loaded = loadDashboard(exports[0]!, 0, exports, await readViewDefs(content));
+    expect(Object.keys(loaded.store.views ?? {})).toEqual([viewId]);
+    const out = DASHBOARD.build({ ...BASE, ...loaded.values }, 'test');
+    const written = out.files['import/views.zip/content.xml']!;
+    expect(written.includes(`<ViewDef id="${viewId}">`)).toBe(true);
+    expect(written.includes('Unused')).toBe(false);
+  });
+
+  it('writes and reads back the dashboard-level options: hidden, disabled, column split, every time range', async () => {
+    for (const time_range of ['lastHour', 'last30Days', 'last90Days', 'lastYear']) {
+      const first = DASHBOARD.build({ ...BASE, template: 'capacity', hidden: true, disabled: true, column_proportion: '1-1', time_range }, 'test');
+      const dash = (JSON.parse(first.files['import/dashboard.json']!) as { dashboards: Record<string, unknown>[] }).dashboards[0]!;
+      expect([dash['hidden'], dash['disabled'], dash['columnProportion']]).toEqual([true, true, '1-1']);
+      const exports = await readDashboardExports('bundle.zip', await zip({ ...first.files }));
+      const loaded = loadDashboard(exports[0]!, 0, exports);
+      expect([loaded.values['hidden'], loaded.values['disabled'], loaded.values['column_proportion'], loaded.values['time_range']]).toEqual([true, true, '1-1', time_range]);
+    }
   });
 });

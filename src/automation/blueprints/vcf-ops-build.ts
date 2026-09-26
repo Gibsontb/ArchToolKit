@@ -20,7 +20,7 @@
  * migration-wave generator, the assessment report and the admin health view.
  */
 
-import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
+import { bool, defaultValues, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
@@ -30,7 +30,7 @@ import { authFileVar, workDirLines } from './vcf-operations-content.ts';
 import { CSV_COLUMNS } from '../../migration/portfolio.ts';
 import { familyOf, formatHostPort, isIp, isIpv6, overlapsAny, splitHostPort } from '../../core/ip.ts';
 import { mergeDashboard, passthroughType, readStore, referencedEntries, sameRow, storeWidget, type ImportStore } from './vcf-ops-dashboard-import.ts';
-import { DASHBOARD_TIME_RANGES, Entries, Settings, WIDGET_TYPES, metricKeyProblem, parseKind, settingProblems, widgetType, type KindRef, type WidgetContext, type WidgetType } from './vcf-ops-widgets.ts';
+import { COLUMN_PROPORTIONS, DASHBOARD_TIME_RANGES, Entries, Settings, WIDGET_TYPES, metricKeyProblem, parseKind, settingProblems, widgetType, type KindRef, type WidgetContext, type WidgetType } from './vcf-ops-widgets.ts';
 import {
   CONTENT_ZIP,
   DASHBOARD_OWNER_PLACEHOLDER,
@@ -1438,6 +1438,100 @@ function viewXml(view: ViewTemplate, opts: ViewOptions): string {
   ].join('\n');
 }
 
+/** The <ViewDef> elements of a view content.xml. */
+function viewDefsOf(xmlText: string): string[] {
+  return [...xmlText.matchAll(/<ViewDef\s[^>]*\bid="[^"]+"[\s\S]*?<\/ViewDef>/g)].map((m) => m[0]);
+}
+
+/**
+ * What goes beside the dashboard: the views its View widgets show (a
+ * dashboard export does not carry them, so they are imported first), a note
+ * of the super metrics it charts, and IMPORT-ORDER.md.
+ *
+ * A view is bundled when it is one the view blueprint generates under the same
+ * name (a template's view), or when the loaded file held it (a content
+ * export's views.zip). Any other view id — a view built by hand, or one that
+ * ships with VCF Operations — is not in the bundle: no list of the built-in
+ * view ids has been verified, so each is named as one to import separately.
+ */
+function dashboardBundle(values: BlueprintValues, file: Record<string, unknown>, viewNames: ReadonlySet<string>, store: ImportStore | undefined): { files: Record<string, string>; findings: Finding[]; names: string[] } {
+  const include = bool(values, 'include_views', true);
+  const dash = ((file['dashboards'] as Record<string, unknown>[] | undefined) ?? [])[0] ?? {};
+  const widgets = (Array.isArray(dash['widgets']) ? dash['widgets'] : []) as { type?: string; title?: string; config?: Record<string, unknown> }[];
+  const refs = new Map<string, string[]>();
+  for (const w of widgets) {
+    if (w.type !== 'View') continue;
+    const id = String(w.config?.['viewDefinitionId'] ?? '');
+    if (id) refs.set(id, [...(refs.get(id) ?? []), String(w.title ?? '')]);
+  }
+  const bundled = new Map<string, { name: string; xml: string }>();
+  // A template view is known by its id too, so a loaded dashboard that shows one still gets it bundled.
+  const byId = new Map([...TEMPLATES.map((t) => t.label), ...viewNames].map((name) => [viewIdOf(name), name]));
+  const viewBlueprint = VCF_OPS_BUILD.find((b) => b.id === 'vcfops_view');
+  for (const [id] of refs) {
+    const name = byId.get(id);
+    const template = name ? TEMPLATES.find((t) => t.label === name) : undefined;
+    if (include && template && viewBlueprint) {
+      const xml = viewBlueprint.build({ ...defaultValues(viewBlueprint), template: template.value }, 'bundle').files['import/view.zip/content.xml'] ?? '';
+      const def = viewDefsOf(xml).find((d) => d.includes(`id="${id}"`));
+      if (def) bundled.set(id, { name: name!, xml: def });
+    } else if (include && store?.views?.[id]) {
+      bundled.set(id, { name: /<Title>([^<]*)<\/Title>/.exec(store.views[id]!)?.[1] ?? id, xml: store.views[id]! });
+    }
+  }
+  const findings: Finding[] = [];
+  const separate = [...refs.keys()].filter((id) => !bundled.has(id));
+  for (const id of separate) {
+    const name = byId.get(id);
+    const titles = refs.get(id)!.map((t) => `"${t}"`).join(', ');
+    findings.push(
+      warning('vcfops.dashboard.view-separate', `Import the view ${name ? `"${name}"` : id} separately, before the dashboard: ${titles} ${refs.get(id)!.length === 1 ? 'shows' : 'show'} it, and a dashboard export does not carry its views.`, {
+        remediation: name
+          ? `Generate "A view for dashboards and reports" named "${name}" (id ${id}) and import it first (Views › Manage › Import).`
+          : 'Export the view from the source instance (Views › Manage › Export, or a Content Management export) and import it on the target first. A view that ships with VCF Operations is already there; no list of the built-in view ids has been verified, so the id is named here either way.',
+        source: SRC,
+      }),
+    );
+  }
+  const text = JSON.stringify(dash);
+  const superMetrics = [...new Set(text.match(/Super Metric\|sm_[0-9a-f-]{36}/g) ?? [])];
+  if (superMetrics.length > 0) {
+    findings.push(
+      warning('vcfops.dashboard.super-metrics', `The dashboard charts ${superMetrics.length} super metric${superMetrics.length === 1 ? '' : 's'} (${superMetrics.slice(0, 5).join(', ')}${superMetrics.length > 5 ? ', …' : ''}).`, {
+        remediation: 'Import those super metrics before the dashboard (Super Metrics › Import, or a Content Management export), and enable them in the policy; a widget whose super metric is missing opens empty.',
+        source: SRC,
+      }),
+    );
+  }
+  const files: Record<string, string> = {};
+  if (bundled.size > 0) {
+    files['import/views.zip/content.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Content>\n    <Views>\n${[...bundled.values()].map((v) => `        ${v.xml.trim()}`).join('\n')}\n    </Views>\n</Content>\n`;
+  }
+  const code = (t: string): string => `\`${t}\``;
+  files['IMPORT-ORDER.md'] = [
+    '# Import order',
+    '',
+    'A dashboard export does not carry the views its View widgets show, or the super metrics its widgets chart. Import them first, then the dashboard.',
+    '',
+    '## 1. Views (Views › Manage › Import)',
+    '',
+    bundled.size > 0 ? `Import ${code('import/views.zip')}: it holds ${[...bundled.values()].map((v) => `"${v.name}"`).join(', ')}, as a content export's views.zip has them (content.xml).` : 'No view is in this download.',
+    ...(separate.length > 0 ? ['', 'Import these separately, from where they were built (they are not in this download):', ...separate.map((id) => `- ${byId.get(id) ? `"${byId.get(id)}" (generate it with "A view for dashboards and reports")` : `view id ${id}`}: shown by ${refs.get(id)!.map((t) => `"${t}"`).join(', ')}`)] : []),
+    '',
+    '## 2. Super metrics (Super Metrics › Import)',
+    '',
+    superMetrics.length > 0 ? `The dashboard charts ${superMetrics.map(code).join(', ')}. Import them, and enable them in the policy the objects use.` : 'None: the dashboard charts no super metric.',
+    '',
+    '## 3. The dashboard (Dashboards › Manage › Import)',
+    '',
+    `Import ${code('import/dashboard.zip')} (${code('dashboard/dashboard.json')} with its ${code('resources/*.properties')}, as a dashboard export has them). The dialog also takes ${code('import/dashboard.json')}. When a dashboard of the same name is there, choose Overwrite to replace it or Rename to keep both.`,
+    '',
+    `Or run ${code('import-dashboard.sh')}, which builds the Content Management package (${code('dashboards/<owner id>')}, as a content export files it) and imports it; it backs up the existing dashboards first.`,
+    '',
+  ].join('\n');
+  return { files, findings, names: [...bundled.values()].map((v) => v.name) };
+}
+
 /** Everything the dashboard blueprint derives from its values, before the files are written. */
 interface ComposedDashboard {
   readonly baseName: string;
@@ -1479,6 +1573,9 @@ function composeDashboard(values: BlueprintValues, entries: Entries, store: Impo
   const locked = bool(values, 'locked', false);
   const autoswitch = bool(values, 'autoswitch', false);
   const autoswitchDelay = num(values, 'autoswitch_delay', 300);
+  const hidden = bool(values, 'hidden', false);
+  const disabled = bool(values, 'disabled', false);
+  const columnProportion = str(values, 'column_proportion', '1');
   const maxWidgets = num(values, 'max_widgets', 10);
   const rowsText = str(values, `widgets_${template.value}`, template.rows.map((row) => row.join(' | ')).join('\n'));
 
@@ -1552,7 +1649,7 @@ function composeDashboard(values: BlueprintValues, entries: Entries, store: Impo
       id: ctx.id,
       type: widget.type.type,
       title: widget.title,
-      collapsed: widget.type.type === 'Section' ? widget.settings.yes('collapsed', false) : false,
+      collapsed: widget.settings.yes('collapsed', false),
       gridsterCoords: { x: widget.x, y: widget.y, w: widget.w, h: widget.h },
       config,
     };
@@ -1616,14 +1713,14 @@ function composeDashboard(values: BlueprintValues, entries: Entries, store: Impo
     description,
     shared,
     temporary: false,
-    hidden: false,
+    hidden,
     homeTab,
-    disabled: false,
+    disabled,
     locked,
     autoswitchEnabled: autoswitch,
     ...(autoswitch ? { autoswitchDelay } : {}),
     columnCount: 1,
-    columnProportion: '1',
+    columnProportion,
     gridsterMaxColumns: 12,
     rank: 0,
     creationTime: 0,
@@ -1702,24 +1799,40 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         control: 'select',
         options: [
           { value: 'none', label: 'Each widget’s own' },
+          { value: 'lastHour', label: 'Last hour' },
           { value: 'last6Hour', label: 'Last 6 hours' },
           { value: 'last24Hour', label: 'Last 24 hours' },
           { value: 'last7Days', label: 'Last 7 days' },
+          { value: 'last30Days', label: 'Last 30 days' },
+          { value: 'last90Days', label: 'Last 90 days' },
+          { value: 'lastYear', label: 'Last year' },
         ],
         default: 'none',
+        hint: 'The dashboard time the widgets set to "Dashboard Time" follow',
       },
       { id: 'home_tab', label: 'Open it as the home tab', control: 'toggle', default: false },
       { id: 'locked', label: 'Lock it against editing', control: 'toggle', default: false },
+      { id: 'hidden', label: 'Hide it from the dashboard list', control: 'toggle', default: false, hint: 'hidden in the export: the dashboard is kept but not listed in the menu' },
+      { id: 'disabled', label: 'Disabled', control: 'toggle', default: false, hint: 'disabled in the export, as Manage Dashboards → Disable writes it' },
+      {
+        id: 'column_proportion',
+        label: 'Column split (8.x layout)',
+        control: 'select',
+        options: COLUMN_PROPORTIONS.map((c) => ({ value: c.value, label: c.label })),
+        default: '1',
+        hint: 'columnProportion: the split the 8.x column editor kept; the 12-column grid places the widgets',
+      },
       { id: 'autoswitch', label: 'Switch to the next dashboard automatically', control: 'toggle', default: false },
       { id: 'autoswitch_delay', label: 'Switch after (seconds)', control: 'number', default: 300, min: 5, max: 3600, showWhen: { input: 'autoswitch', equals: ['true'] } },
       { id: 'navigations', label: 'Open another dashboard from a widget', control: 'textarea', default: '', placeholder: 'Clusters -> ESX host health', hint: 'One per line: widget title -> dashboard name' },
+      { id: 'include_views', label: 'Put the views it shows in the download', control: 'toggle', default: true, hint: 'import/views.zip: the template views this toolkit generates, and the views a loaded content export held. Import it before the dashboard (IMPORT-ORDER.md).' },
       { id: 'max_widgets', label: 'Warn above (widgets)', control: 'number', default: 10, min: 1, max: 40, hint: 'Every widget is a query on every refresh' },
       {
         id: 'imported',
         label: 'Loaded dashboard, kept as exported',
         control: 'textarea',
         default: '',
-        hint: 'Set by Load from export; written back with only your edits applied',
+        hint: 'Set by Load dashboard; written back with only your edits applied',
         showWhen: { input: 'template', equals: ['custom'] },
       },
     ],
@@ -1763,6 +1876,8 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
       }
 
       const viewList = [...viewNames];
+      const bundle = dashboardBundle(values, dashboard, viewNames, store);
+      findings.push(...bundle.findings);
       const orderedTypes = [...new Set(placed.map((widget) => widget.type.label))];
       return {
         platform: PLATFORM,
@@ -1802,7 +1917,8 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         ],
         files: {
           'import/dashboard.zip/dashboard/dashboard.json': dashboardJson,
-          'import/dashboard.zip/dashboard/resources/resources.properties': '',
+          ...Object.fromEntries(['', '_de', '_es', '_fr', '_ja', '_ko', '_zh_cn', '_zh_tw'].map((lang) => [`import/dashboard.zip/dashboard/resources/resources${lang}.properties`, '#Dashboard Localization\n'])),
+          ...bundle.files,
           'import/dashboard.json': dashboardJson,
           ...contentPackage({}, {}),
           'import-dashboard.sh': script,
@@ -1810,7 +1926,16 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
           'IMPORT.md': importMd({
             title: `the dashboard "${dashName}"`,
             steps: [
-              ...viewList.map((view) => ({
+              ...(bundle.names.length > 0
+                ? [
+                    {
+                      heading: 'First, the views',
+                      files: ['import/views.zip'],
+                      how: [`Views → Manage → Import, and choose import/views.zip: it holds ${bundle.names.map((n) => `"${n}"`).join(', ')} (content.xml, as a content export's views.zip has it). A dashboard export does not carry its views, so they go in first.`, 'IMPORT-ORDER.md lists what else to import, in order.'],
+                    },
+                  ]
+                : []),
+              ...viewList.filter((view) => !bundle.names.includes(view)).map((view) => ({
                 heading: `First, the view "${view}"`,
                 files: [],
                 how: [

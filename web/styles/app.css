@@ -2792,3 +2792,7 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .dbb-settings-grid .field { margin: 0; min-width: 0; }
 .dbb-settings-grid input, .dbb-settings-grid select, .dbb-settings-grid textarea { width: 100%; min-width: 0; }
 .dbb-textarea { width: 100%; min-height: 14rem; font-size: 0.8rem; white-space: pre; overflow-x: auto; }
+.dbb-canvas-wrap.is-file-over { outline: 2px dashed var(--accent, #2f6fd6); outline-offset: -4px; }
+.dbb-setting-key { font-size: 0.7rem; color: var(--text-muted); font-weight: 400; }
+.dbb-doc { font-size: 0.72rem; }
+.file-bar-label { align-self: center; }

@@ -25,7 +25,7 @@
  *          dashboard.json (Broadcom's templates as shipped on the appliance).
  *   BP     github.com/brockpeterson/operations_dashboards (8.x and 9.x
  *          exports: Cluster CPU Details, Troubleshooting VMs v4, Legacy MSSQL,
- *          Alert and Troubleshoot, ESXi Host Details, VM Details v4 …).
+ *          Alert and Troubleshoot, ESX Host Details, VM Details v4 …).
  *   NB     github.com/notoriousbdg/vrops-dashboard-* (VMware's own 8.x
  *          dashboards: cluster_capacity, custom_vm_summary, roi,
  *          cost_by_application, rightsizing_details …).
@@ -222,17 +222,54 @@ export class Entries {
 // Settings: "kind=cluster; metrics=cpu|usage_average,mem|usage_average; top=10"
 // ---------------------------------------------------------------------------
 
-export type SettingType = 'kind' | 'kinds' | 'metric' | 'metrics' | 'number' | 'numbers' | 'choice' | 'choices' | 'yesno' | 'text' | 'colors' | 'rest';
+/**
+ * How a setting is edited: kind(s) are object types, metric(s) metric keys,
+ * choice(s) closed sets (a dropdown, or ticks for several), yesno a switch,
+ * text free text (with suggestions when it has options), rest text that takes
+ * the rest of the cell, colors #rrggbb lists, filter Output Filter rules,
+ * objects "type:Name" pairs.
+ */
+export type SettingType = 'kind' | 'kinds' | 'metric' | 'metrics' | 'number' | 'numbers' | 'choice' | 'choices' | 'yesno' | 'text' | 'colors' | 'rest' | 'filter' | 'objects';
+
+/** What a setting's reader gets: the loaded config, the widget, and the entries to name object types by. */
+export interface SettingSource {
+  readonly config: Record<string, unknown>;
+  readonly widget: Record<string, unknown>;
+  readonly entries: Entries;
+  /** An entries id as the alias a row writes ("cluster"), or undefined. */
+  kind(id: unknown): string | undefined;
+}
 
 export interface WidgetSetting {
   readonly key: string;
   readonly type: SettingType;
   readonly help: string;
   readonly required?: boolean;
-  /** For choice and choices: the values it takes. */
+  /** For choice and choices: the values it takes; for text, suggestions. */
   readonly options?: readonly string[];
   readonly min?: number;
   readonly max?: number;
+  /** The option's name in the widget's configuration dialog, as Broadcom's documentation gives it. */
+  readonly label?: string;
+  /** The documentation page that describes the option. */
+  readonly doc?: string;
+  /** The value VCF Operations uses when the option is left alone. */
+  readonly default?: string;
+  /** The config keys it writes. */
+  readonly writes?: readonly string[];
+  /**
+   * The config key it writes has not been seen in any export: the option is in
+   * the documentation, and its key is inferred.
+   */
+  readonly unverified?: boolean;
+  /**
+   * The key is in the reference export, but only ever with the value an unset
+   * option leaves (null, or the key missing); the value this option writes is
+   * the shape the same key has on other widgets or in the export named here.
+   */
+  readonly seenElsewhere?: string;
+  /** Reads the setting back from a loaded widget; undefined when the widget holds the default. */
+  readonly read?: (source: SettingSource) => string | undefined;
 }
 
 /** Settings that take the rest of the cell, so their text may hold ; and =. */
@@ -371,6 +408,175 @@ function pinOf(ctx: WidgetContext, kind: KindRef | undefined): { readonly ref: K
   return { ref, name: world && world.kind === ref.resourceKind ? world.name : ref.resourceKind };
 }
 
+// ---------------------------------------------------------------------------
+// Pieces of config many widgets share: the Output Filter, chosen objects,
+// relationship mode, metric units
+// ---------------------------------------------------------------------------
+
+/** The object type a kindId ("002006VMWAREVirtualMachine") stands for. */
+export function kindFromId(id: string): KindRef | undefined {
+  const m = /^0020(\d\d)(.+)$/.exec(id);
+  if (!m) return undefined;
+  const len = Number(m[1]);
+  if (m[2]!.length <= len) return undefined;
+  return { adapterKind: m[2]!.slice(0, len), resourceKind: m[2]!.slice(len) };
+}
+
+/** Conditions an Output Filter rule takes, as exports write them (EXISTS carries a value of 0). */
+export const FILTER_CONDITIONS = ['EQUALS', 'NOT_EQUALS', 'GREATER_THAN', 'LESS_THAN', 'CONTAINS', 'NOT_CONTAINS', 'EXISTS'] as const;
+/** Relationship rules of an Output Filter: how the named object is related. */
+export const FILTER_RELATIONS = ['CHILD', 'DESCENDANT'] as const;
+
+export interface FilterRule {
+  readonly kind: 'metric' | 'property' | 'name' | 'relationship';
+  /** The metric or property key; the relation (CHILD, DESCENDANT) for a relationship rule. */
+  readonly key: string;
+  readonly condition: string;
+  readonly value: string;
+}
+
+/**
+ * filter= rules, joined by " & ":
+ *   metric cpu|usage_average GREATER_THAN 80
+ *   property summary|tag CONTAINS Production
+ *   name NOT_EQUALS vc-01
+ *   relationship DESCENDANT EQUALS SDDC Health
+ */
+export function parseFilter(text: string): { rules: FilterRule[]; problems: string[] } {
+  const rules: FilterRule[] = [];
+  const problems: string[] = [];
+  const conditions = new Set<string>(FILTER_CONDITIONS);
+  for (const raw of text.split(/\s+&\s+/).map((part) => part.trim()).filter(Boolean)) {
+    const words = raw.split(/\s+/);
+    const kind = words[0]?.toLowerCase();
+    if (kind === 'metric' || kind === 'property') {
+      const [, key = '', condition = '', ...rest] = words;
+      if (!key || !conditions.has(condition.toUpperCase())) problems.push(`"${raw}" is not ${kind} <key> <condition> <value>`);
+      else rules.push({ kind, key, condition: condition.toUpperCase(), value: rest.join(' ') });
+    } else if (kind === 'name') {
+      const [, condition = '', ...rest] = words;
+      if (!conditions.has(condition.toUpperCase())) problems.push(`"${raw}" is not name <condition> <value>`);
+      else rules.push({ kind, key: '', condition: condition.toUpperCase(), value: rest.join(' ') });
+    } else if (kind === 'relationship') {
+      const [, relation = '', condition = '', ...rest] = words;
+      if (!(FILTER_RELATIONS as readonly string[]).includes(relation.toUpperCase()) || !conditions.has(condition.toUpperCase())) problems.push(`"${raw}" is not relationship <${FILTER_RELATIONS.join('|')}> <condition> <object name>`);
+      else rules.push({ kind, key: relation.toUpperCase(), condition: condition.toUpperCase(), value: rest.join(' ') });
+    } else problems.push(`"${raw}" does not start with metric, property, name or relationship`);
+  }
+  return { rules, problems };
+}
+
+/** The customFilter block (the widget's Output Filter, Advanced), as exports write it. */
+function customFilterOf(ctx: WidgetContext, fallbackKind?: KindRef): Config {
+  const { rules } = parseFilter(ctx.s.get('filter'));
+  if (rules.length === 0) return EMPTY_FILTER;
+  const kind = ctx.s.kind('filterkind') ?? fallbackKind;
+  const filterTypes = rules.map((rule): Config => {
+    if (rule.kind === 'name') return { condition: rule.condition, resourceName: rule.value, filterType: 'resourceName' };
+    if (rule.kind === 'relationship') return { condition: rule.condition, traversalSpec: null, relValue: rule.value, relType: rule.key, filterType: 'relationship' };
+    const isString = rule.kind === 'property';
+    const numeric = Number(rule.value === '' ? 0 : rule.value);
+    return { condition: rule.condition, metricKey: rule.key, metricValue: { isStringMetric: isString, value: isString || !Number.isFinite(numeric) ? rule.value : numeric }, filterType: isString ? 'properties' : 'metrics' };
+  });
+  return { filter: [{ resourceKind: kind ? kindId(kind) : null, filterTypes }], excludedResources: null, includedResources: null };
+}
+
+/** filterMode as exports write it: the Advanced (customFilter) tab when filter= is set, the tag tree otherwise. */
+function filterModeOf(ctx: WidgetContext): string {
+  return ctx.s.has('filter') ? 'customFilter' : 'tagPicker';
+}
+
+/** filter= back from a customFilter block; undefined when it holds more than one group or a rule the text cannot say. */
+export function filterText(block: unknown): { filter: string; kind?: KindRef } | undefined {
+  const rec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (!rec(block) || !Array.isArray(block['filter'])) return undefined;
+  if (block['filter'].length === 0) return { filter: '' };
+  if (block['filter'].length > 1) return undefined;
+  const group = block['filter'][0];
+  if (!rec(group) || !Array.isArray(group['filterTypes']) || Object.keys(group).some((k) => k !== 'resourceKind' && k !== 'filterTypes')) return undefined;
+  const parts: string[] = [];
+  const text = (v: unknown): string | undefined => {
+    const out = String(v ?? '');
+    return /[;,\n]|\s&\s|^\s|\s$/.test(out) ? undefined : out;
+  };
+  for (const t of group['filterTypes']) {
+    if (!rec(t)) return undefined;
+    const cond = String(t['condition'] ?? '');
+    if (!(FILTER_CONDITIONS as readonly string[]).includes(cond)) return undefined;
+    if (t['filterType'] === 'resourceName' && Object.keys(t).length === 3) {
+      const v = text(t['resourceName']);
+      if (v === undefined) return undefined;
+      parts.push(`name ${cond} ${v}`.trim());
+    } else if (t['filterType'] === 'relationship' && t['traversalSpec'] === null && Object.keys(t).length === 5 && (FILTER_RELATIONS as readonly string[]).includes(String(t['relType']))) {
+      const v = text(t['relValue']);
+      if (v === undefined) return undefined;
+      parts.push(`relationship ${String(t['relType'])} ${cond} ${v}`.trim());
+    } else if ((t['filterType'] === 'metrics' || t['filterType'] === 'properties') && rec(t['metricValue']) && Object.keys(t).length === 4) {
+      const v = text(t['metricValue']['value']);
+      if (v === undefined || typeof t['metricKey'] !== 'string' || /\s/.test(t['metricKey'])) return undefined;
+      parts.push(`${t['filterType'] === 'metrics' ? 'metric' : 'property'} ${t['metricKey']} ${cond} ${v}`.trim());
+    } else return undefined;
+  }
+  const kind = typeof group['resourceKind'] === 'string' ? kindFromId(group['resourceKind']) : undefined;
+  return { filter: parts.join(' & '), ...(kind ? { kind } : {}) };
+}
+
+/** objects= "alias:Name" or "Adapter/Kind:Name" items, for a widget whose Input Data is objects picked by name. */
+function objectsOf(ctx: WidgetContext): { id: string; name: string }[] {
+  return ctx.s.list('objects').flatMap((item) => {
+    const colon = item.indexOf(':');
+    const ref = colon > 0 ? parseKind(item.slice(0, colon)) : undefined;
+    const name = colon > 0 ? item.slice(colon + 1).trim() : '';
+    return ref && name ? [{ id: ctx.entries.resource(ref, name), name }] : [];
+  });
+}
+
+/** The relationship modes a widget's Mode row offers: the object itself, its children, its parents. */
+export const RELATIONSHIPS: Readonly<Record<string, number>> = { self: 0, children: -1, parents: 1 };
+
+/** relationship= as the widget writes it: one value as a number, several as a list; a type that writes a list always does. */
+function relationshipOf(ctx: WidgetContext, fallback: number | readonly number[]): number | number[] {
+  const chosen = ctx.s.list('relationship').map((r) => RELATIONSHIPS[r.toLowerCase()]).filter((n): n is number => n !== undefined);
+  if (chosen.length === 0) return Array.isArray(fallback) ? [...fallback] : (fallback as number);
+  return Array.isArray(fallback) || chosen.length > 1 ? chosen : chosen[0]!;
+}
+
+/** relationship= back from relationshipMode: a number or a list of them. */
+export function relationshipText(mode: unknown): string | undefined {
+  const names = Object.fromEntries(Object.entries(RELATIONSHIPS).map(([k, v]) => [v, k]));
+  const list = Array.isArray(mode) ? mode : [mode];
+  const out = list.map((n) => (typeof n === 'number' ? names[n] : undefined));
+  return out.length > 0 && out.every(Boolean) ? out.join(',') : undefined;
+}
+
+/**
+ * Metric units as metricUnit {metricUnitId, metricUnitName} and a metric
+ * row's metricUnitId/unit carry them (every pair here is one a dashboard
+ * export holds). No unit is the -1 the Top-N ("Auto") and the Health Chart
+ * ("Default Unit") write.
+ */
+export const METRIC_UNITS: Readonly<Record<string, string>> = {
+  percent: '%',
+  msec: 'ms',
+  kb: 'KB',
+  gb: 'GB',
+  tb: 'TB',
+  kbps: 'KBps',
+  mbps: 'MBps',
+  gbitsps: 'Gbps',
+  ghz: 'GHz',
+  kwh: 'KWh',
+  day: 'Day(s)',
+  currency: 'US$',
+  currencymonth: 'US$/Month',
+};
+
+/** metricUnit for unit=, or the type's own "no unit" entry. */
+function unitOf(ctx: WidgetContext, none: string): Config {
+  const unit = ctx.s.get('unit');
+  return METRIC_UNITS[unit] ? { metricUnitId: unit, metricUnitName: METRIC_UNITS[unit] } : { metricUnitId: -1, metricUnitName: none };
+}
+
 const THRESHOLD_HELP = 'three numbers: yellow,orange,red';
 
 /**
@@ -380,6 +586,7 @@ const THRESHOLD_HELP = 'three numbers: yellow,orange,red';
  */
 function metricEntry(ctx: WidgetContext, kind: KindRef, key: string, label: string, seq: number, bounds: readonly number[], isString = false): Config {
   const thresholds = bounds.length === 3;
+  const unit = ctx.s.get('unit');
   return {
     metricKey: key,
     metricName: key,
@@ -390,10 +597,10 @@ function metricEntry(ctx: WidgetContext, kind: KindRef, key: string, label: stri
     handleOldColoring: false,
     id: `extModel${parseInt(ctx.id.replace(/-/g, '').slice(0, 7), 16) % 100000}-${seq}`,
     label,
-    link: '',
+    link: ctx.s.get('link'),
     maxValue: ctx.s.has('max') ? String(ctx.s.num('max', 100)) : '',
-    metricUnitId: null,
-    unit: null,
+    metricUnitId: METRIC_UNITS[unit] ? unit : null,
+    unit: METRIC_UNITS[unit] ?? null,
     yellowBound: thresholds ? bounds[0] : null,
     orangeBound: thresholds ? bounds[1] : null,
     redBound: thresholds ? bounds[2] : null,
@@ -413,18 +620,45 @@ function metricBlock(ctx: WidgetContext, kind: KindRef, keys: readonly string[],
   };
 }
 
-/** additionalColumns on an Object List or Top-N: extra metric columns beside the name. */
+/** additionalColumns on an Object List or Top-N: extra metric columns beside the name, labelled by columnlabels=. */
 function extraColumns(ctx: WidgetContext, kind: KindRef, keys: readonly string[]): Config[] {
-  return keys.map((key) => ({ boxLabel: key, metricKey: key, metricName: key, resourceKindId: ctx.entries.kind(kind) }));
+  const labels = ctx.s.list('columnlabels');
+  return keys.map((key, index) => ({ boxLabel: labels[index] || key, metricKey: key, metricName: key, resourceKindId: ctx.entries.kind(kind) }));
 }
 
-export const PERIODS = ['dashboardTime', 'lastHour', 'last6Hour', 'last24Hour', 'last7Days', 'last30Days'] as const;
+/** objectmetrics= "type:Object name=metric|key" items: metrics of objects picked by name (a Metric Chart's resourceMetrics). */
+function objectMetricsOf(ctx: WidgetContext): Config[] {
+  return ctx.s.list('objectmetrics').flatMap((item) => {
+    const eq = item.lastIndexOf('=');
+    const colon = item.indexOf(':');
+    if (eq < 0 || colon < 0 || colon > eq) return [];
+    const ref = parseKind(item.slice(0, colon));
+    const name = item.slice(colon + 1, eq).trim();
+    const key = item.slice(eq + 1).trim();
+    return ref && name && key ? [{ metricKey: key, metricName: key, resourceId: ctx.entries.resource(ref, name), resourceName: name }] : [];
+  });
+}
+
+/** Time ranges a widget's periodLength takes (Scoreboard, Health Chart, Forensics, Weather Map), as exports write them. */
+export const PERIODS = ['dashboardTime', 'lastHour', 'last6Hour', 'last12Hour', 'last24Hour', 'last7Days', 'last30Days', 'last90Days', 'lastYear'] as const;
+
+/** A Top-N's periodLength is an object: the range and the text the picker showed (every pair here is from an export). */
+export const TOPN_PERIODS: Readonly<Record<string, string>> = { currentValue: 'Current Value', last24Hour: 'Last 24 hours', last30Days: 'Last 30 days' };
 
 /** Alert subtypes as the Alert List's type codes carry them, `<type>_<subtype>`, types 15 to 20 (BP and QA92 exports). */
 export const ALERT_SUBTYPES: Readonly<Record<string, number>> = { availability: 18, performance: 19, capacity: 20, compliance: 21, configuration: 22 };
 export const CRITICALITY: Readonly<Record<string, number>> = { info: 1, warning: 2, immediate: 3, critical: 4 };
 
 export const SCOREBOARD_THEMES = ['original', 'solid', 'default', 'simple', 'pastel', 'shadow', 'outline', 'gradient', 'gauge'] as const;
+
+/** Top-N analyses: the row's order= and the topOption each writes (all in exports: topOption, or tagOption for the health ones). */
+export const TOPN_ORDERS: Readonly<Record<string, string>> = {
+  highest: 'metricsHighestUtilization',
+  lowest: 'metricsLowestUtilization',
+  'least-healthy': 'leastHealthyApplications',
+  'most-healthy': 'mostHealthyApplications',
+  'most-alarming': 'mostAlarmingResources',
+};
 
 // ---------------------------------------------------------------------------
 // The catalogue
@@ -444,8 +678,12 @@ export interface WidgetType {
   readonly source: string;
   /** What is not confirmed, or a quirk worth knowing. */
   readonly note?: string;
-  /** In VCF 9.0's list of deprecated widgets. */
+  /** In VCF 9's list of deprecated widgets. */
   readonly deprecated?: boolean;
+  /** Broadcom's page for the widget and its configuration options. */
+  readonly doc?: string;
+  /** Other names a row may use for it: an older type name, or the name it had in an earlier widget list. */
+  readonly aliases?: readonly string[];
   /** Can drive other widgets: selecting in it sends an object (or a metric). */
   readonly provides: boolean;
   /** Shows nothing unless it provides for itself or is sent an object. */
@@ -453,43 +691,208 @@ export interface WidgetType {
   /** Size when the row says "auto". */
   readonly size: { readonly w: number; readonly h: number };
   readonly settings: readonly WidgetSetting[];
+  /**
+   * Config keys an export holds that no setting writes, each with why: they
+   * are written back exactly as they were loaded, never dropped.
+   */
+  readonly passthrough?: Readonly<Record<string, string>>;
+  /** Keys it writes that the reference export did not hold, with where they were seen. */
+  readonly alsoWrites?: Readonly<Record<string, string>>;
   readonly build: (ctx: WidgetContext) => Config;
 }
 
-const S = {
-  kind: (required = true, help = 'the object type: cluster, host, vm, datastore … or Adapter/Kind'): WidgetSetting => ({ key: 'kind', type: 'kind', required, help }),
-  kinds: (required = true): WidgetSetting => ({ key: 'kinds', type: 'kinds', required, help: 'object types, comma separated: cluster,host or Adapter/Kind' }),
-  metrics: (required = true): WidgetSetting => ({ key: 'metrics', type: 'metrics', required, help: 'metric keys, comma separated: cpu|usage_average,mem|usage_average' }),
-  metric: (required = true, help = 'one metric key: cpu|usage_average'): WidgetSetting => ({ key: 'metric', type: 'metric', required, help }),
-  labels: { key: 'labels', type: 'text', help: 'labels for the metrics, comma separated, in the same order' } as WidgetSetting,
-  thresholds: { key: 'thresholds', type: 'numbers', help: THRESHOLD_HELP } as WidgetSetting,
-  pin: { key: 'pin', type: 'text', help: 'what a self-providing widget starts from: world (default) or Adapter/Kind:Object name' } as WidgetSetting,
-  depth: (max = 10): WidgetSetting => ({ key: 'depth', type: 'number', min: 1, max, help: 'how many levels below the object to look' }),
-  period: { key: 'period', type: 'choice', options: PERIODS, help: 'time range' } as WidgetSetting,
-  refresh: { key: 'refresh', type: 'text', help: 'seconds between refreshes, or off' } as WidgetSetting,
+/** Config keys the row itself writes, not a setting: its title, Provider, and the refresh. */
+export const ROW_KEYS: Readonly<Record<string, string>> = {
+  title: 'the row’s Title',
+  titleLocalized: 'the row’s Title (the text the editor localizes)',
+  refreshInterval: 'refresh= on the row, or the dashboard’s refresh',
+  refreshContent: 'refresh=off on the row, or the dashboard’s "refresh their data"',
+  selfProvider: 'the row’s Provider',
 };
+
+const DOCS91 = 'https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-1/infrastructure-operations/dashboards-and-widgets/using-widgets/widget-definitions-list/';
+const DOCS90 = 'https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-0/infrastructure-operations/dashboards-and-widgets/using-widgets/widget-definitions-list/';
+/** The Broadcom page of a widget in the 9.1 widget definitions list. */
+const doc = (page: string): string => `${DOCS91}${page}.html`;
+/** The Configuration Files page: Metric Configuration XML files. */
+const METRIC_CONFIG_DOC = 'https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-1/infrastructure-operations/dashboards-and-widgets/using-widgets/configuration-files.html';
+
+// Readers: a setting back from the loaded config, or undefined when it holds the default.
+type Read = (source: SettingSource) => string | undefined;
+const rec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const at = (config: Record<string, unknown>, key: string, inner?: string): unknown => (inner === undefined ? config[key] : rec(config[key]) ? (config[key] as Record<string, unknown>)[inner] : undefined);
+/** A yes/no kept as {key: {inner: bool}} or {key: bool}. */
+const readFlag = (key: string, inner: string | undefined, fallback: boolean): Read => (src) => {
+  const v = at(src.config, key, inner);
+  return typeof v === 'boolean' && v !== fallback ? (v ? 'yes' : 'no') : undefined;
+};
+const readNum = (key: string, fallback: number | null, inner?: string): Read => (src) => {
+  const v = at(src.config, key, inner);
+  return typeof v === 'number' && Number.isFinite(v) && v !== fallback ? String(v) : undefined;
+};
+const cellText = (text: string): string | undefined => (/[;\n\r\t]|\s\|\s/.test(text) ? undefined : text.trim() || undefined);
+const readText = (key: string, fallback = '', inner?: string): Read => (src) => {
+  const v = at(src.config, key, inner);
+  return typeof v === 'string' && v !== fallback ? cellText(v) : undefined;
+};
+const readChoice = (key: string, options: readonly string[], fallback: string, inner?: string): Read => (src) => {
+  const v = at(src.config, key, inner);
+  return typeof v === 'string' && v !== fallback && options.includes(v) ? v : undefined;
+};
+const readRelationship = (fallback: string): Read => (src) => {
+  const text = relationshipText(at(src.config, 'relationshipMode', 'relationshipMode'));
+  return text && text !== fallback ? text : undefined;
+};
+const readFilter: Read = (src) => {
+  const f = filterText(src.config['customFilter']);
+  return f?.filter || undefined;
+};
+const readFilterKind: Read = (src) => {
+  const f = filterText(src.config['customFilter']);
+  return f?.filter && f.kind ? kindAlias(f.kind) : undefined;
+};
+const readObjects: Read = (src) => {
+  const list = src.config['resource'];
+  if (!Array.isArray(list) || list.length === 0) return undefined;
+  const out: string[] = [];
+  for (const item of list) {
+    const id = rec(item) && 'name' in item ? String(item['id'] ?? '') : '';
+    const found = src.entries.resourceOf(id);
+    if (!found || /[,;:|]/.test(found.name) || !found.name.trim()) return undefined;
+    out.push(`${kindAlias(found.ref)}:${found.name}`);
+  }
+  return out.join(',');
+};
+const readUnit = (key = 'metricUnit'): Read => (src) => {
+  const id = at(src.config, key, 'metricUnitId');
+  return typeof id === 'string' && METRIC_UNITS[id] ? id : undefined;
+};
+
+/** Settings many widgets take, built the same way wherever they appear. */
+const S = {
+  kind: (required = true, help = 'the object type: cluster, host, vm, datastore … or Adapter/Kind'): WidgetSetting => ({ key: 'kind', type: 'kind', required, help, label: 'Object type (Output Data)' }),
+  kinds: (required = true, writes: readonly string[] = ['tagFilter']): WidgetSetting => ({ key: 'kinds', type: 'kinds', required, help: 'object types, comma separated: cluster,host or Adapter/Kind', label: 'Output Filter › Basic (object type)', writes }),
+  metrics: (required = true): WidgetSetting => ({ key: 'metrics', type: 'metrics', required, help: 'metric keys, comma separated: cpu|usage_average,mem|usage_average', label: 'Output Data (metrics)', writes: ['metric'] }),
+  metric: (required = true, help = 'one metric key: cpu|usage_average'): WidgetSetting => ({ key: 'metric', type: 'metric', required, help, label: 'Metric' }),
+  labels: { key: 'labels', type: 'text', help: 'box labels for the metrics, comma separated, in the same order', label: 'Box Label', writes: ['metric'] } as WidgetSetting,
+  thresholds: (writes: readonly string[] = ['metric']): WidgetSetting => ({ key: 'thresholds', type: 'numbers', help: `${THRESHOLD_HELP} (Color Method › Custom)`, label: 'Color Method › Custom', writes }),
+  pin: (writes: readonly string[] = ['resource']): WidgetSetting => ({ key: 'pin', type: 'text', help: 'what a self-providing widget starts from: world (default) or alias:Object name (vm:web-01)', label: 'Input Data › Object', default: 'world', writes }),
+  depth: (max = 10, fallback = 1): WidgetSetting => ({ key: 'depth', type: 'number', min: 1, max, help: `how many levels below the object to look (default ${fallback})`, label: 'Input Transformation › Relationship (depth)', default: String(fallback), writes: ['depth'] }),
+  period: (help = 'time range the values are taken over'): WidgetSetting => ({ key: 'period', type: 'choice', options: PERIODS, help, label: 'Period Length', writes: ['periodLength'] }),
+  refresh: { key: 'refresh', type: 'text', help: 'seconds between refreshes, or off (default: the dashboard’s)', label: 'Refresh Interval / Refresh Content', writes: ['refreshInterval', 'refreshContent'] } as WidgetSetting,
+  relationship: (fallback: string, docPage: string, multi = false): WidgetSetting => ({
+    key: 'relationship',
+    type: multi ? 'choices' : 'choice',
+    options: Object.keys(RELATIONSHIPS),
+    help: `the objects the input is turned into: the object itself, its children, its parents (default ${fallback})`,
+    label: 'Input Transformation › Relationship',
+    doc: doc(docPage),
+    default: fallback,
+    writes: ['relationshipMode'],
+    read: readRelationship(fallback),
+  }),
+  filter: (docPage: string, writes: readonly string[] = ['customFilter', 'filterMode']): WidgetSetting => ({
+    key: 'filter',
+    type: 'filter',
+    help: 'rules joined by " & ": metric cpu|usage_average GREATER_THAN 80, property summary|tag CONTAINS prod, name CONTAINS web, relationship DESCENDANT EQUALS <object>',
+    label: 'Output Filter › Advanced',
+    doc: doc(docPage),
+    writes,
+    read: readFilter,
+  }),
+  filterkind: (docPage: string, writes: readonly string[] = ['customFilter']): WidgetSetting => ({ key: 'filterkind', type: 'kind', help: 'the object type the Advanced filter applies to (default: the widget’s own)', label: 'Output Filter › Advanced (object type)', doc: doc(docPage), writes, read: readFilterKind }),
+  objects: (docPage: string, writes: readonly string[] = ['resource', 'mode']): WidgetSetting => ({
+    key: 'objects',
+    type: 'objects',
+    help: 'Input Data › Objects: objects picked by name, alias:Name comma separated (vm:web-01,host:esx-01); blank means All',
+    label: 'Input Data › Objects',
+    doc: doc(docPage),
+    writes,
+    read: readObjects,
+  }),
+  metricconfig: (_docPage: string): WidgetSetting => ({
+    key: 'metricconfig',
+    type: 'text',
+    help: 'the Metric Configuration XML the widget uses when it does not provide for itself (Administration › Configurations)',
+    label: 'Metric Configuration',
+    doc: METRIC_CONFIG_DOC,
+    writes: ['resInteractionMode'],
+    read: readText('resInteractionMode'),
+    seenElsewhere: 'the Metric Chart, Scoreboard, Sparkline and Property List of the same export (an XML file name)',
+  }),
+  unit: (key = 'metricUnit', none = 'Auto'): WidgetSetting => ({
+    key: 'unit',
+    type: 'choice',
+    options: Object.keys(METRIC_UNITS),
+    help: `the unit the value is shown in (default: ${none}, the metric’s own)`,
+    label: 'Unit',
+    writes: [key],
+    read: readUnit(key),
+  }),
+  group: [
+    { key: 'group', type: 'text', help: 'only the members of this custom group', label: 'Output Filter › Basic (custom group)', writes: ['tagFilter'] },
+    { key: 'grouptype', type: 'text', help: 'the custom group’s type (default Environment)', label: 'Output Filter › Basic (group type)', default: 'Environment', writes: ['tagFilter'] },
+  ] as WidgetSetting[],
+};
+
+/** Settings every widget takes, after its own: the widget's place in a section's fold, and the 9.x description and details link. */
+const COMMON_TAIL: readonly WidgetSetting[] = [
+  { key: 'collapsed', type: 'yesno', help: 'the widget starts collapsed (default no)', label: 'Collapse (title bar)', default: 'no' },
+  {
+    key: 'description',
+    type: 'text',
+    help: 'a tooltip beside the widget name on the dashboard (VCF Operations 9.1)',
+    label: 'Widget Description',
+    doc: doc('scoreboard-widget'),
+    writes: ['description'],
+    read: readText('description'),
+  },
+  {
+    key: 'detailsurl',
+    type: 'text',
+    help: 'where the View Details button at the bottom of the widget goes: /vcf-operations/ui/inventory or a web address (VCF Operations 9.1)',
+    label: 'Details URL',
+    doc: doc('scoreboard-widget'),
+    writes: ['viewDetails'],
+    read: readText('viewDetails'),
+  },
+];
+
+/** The 9.x description and View Details keys, written when set (a 9.2 export writes both on every widget but the summary badges). */
+function tail(ctx: WidgetContext, config: Config): Config {
+  if (ctx.s.has('description')) config['description'] = ctx.s.get('description');
+  if (ctx.s.has('detailsurl')) config['viewDetails'] = ctx.s.get('detailsurl');
+  return config;
+}
 
 const BLANK_ONLY: readonly WidgetSetting[] = [S.refresh];
 
 /** Summary badge widgets share one shape (CF survey "IntSummary* family"; BP, NB and QA92 exports). */
-function summaryBadge(type: string, label: string, opts: { verified: boolean; source: string; note?: string; deprecated?: boolean; badgeMode?: boolean }): WidgetType {
+function summaryBadge(type: string, label: string, opts: { verified: boolean; source: string; page: string; note?: string; deprecated?: boolean; badgeMode?: boolean; aliases?: readonly string[]; resource?: boolean; doc?: string }): WidgetType {
+  const withResource = opts.resource !== false;
   return {
     type,
     label,
     family: 'badge',
     verified: opts.verified,
     source: opts.source,
+    doc: opts.doc ?? doc(opts.page),
+    ...(opts.aliases ? { aliases: opts.aliases } : {}),
     ...(opts.note ? { note: opts.note } : {}),
     ...(opts.deprecated ? { deprecated: true } : {}),
     provides: false,
     needsSubject: true,
     size: { w: 3, h: 4 },
-    settings: [S.pin, ...(opts.badgeMode ? [{ key: 'badge', type: 'yesno', help: 'show as a badge rather than a chart (badgeMode)' } as WidgetSetting] : []), S.refresh],
+    settings: [
+      { ...S.pin(), seenElsewhere: 'the Alert Volume and Health widgets ({resourceId, resourceName})' },
+      ...(opts.badgeMode ? [{ key: 'badge', type: 'yesno', help: 'the badge only (yes), or the badge with its trend chart (no, the default)', label: 'Badge Mode', doc: opts.doc ?? doc(opts.page), default: 'no', writes: ['badgeMode'] } as WidgetSetting] : []),
+      S.refresh,
+    ],
     build: (ctx) => {
       const pin = pinOf(ctx, undefined);
       return {
         refreshInterval: ctx.refreshInterval,
-        resource: ctx.selfProvider ? { resourceId: ctx.entries.resource(pin.ref, pin.name), resourceName: pin.name } : null,
+        ...(withResource || ctx.selfProvider ? { resource: ctx.selfProvider ? { resourceId: ctx.entries.resource(pin.ref, pin.name), resourceName: pin.name } : null } : {}),
         refreshContent: { refreshContent: ctx.refreshContent },
         selfProvider: { selfProvider: ctx.selfProvider },
         ...(opts.badgeMode ? { badgeMode: { badgeMode: ctx.s.yes('badge', false) } } : {}),
@@ -504,40 +907,52 @@ const SURVEY = 'sentania-labs/vcf-content-factory knowledge/context/api-surface/
 const QA92 = 'sentania-labs/vcf-content-factory reference/docs/extracted/dashboard-widgets (9.2 export and Broadcom appliance templates)';
 const BP = 'brockpeterson/operations_dashboards';
 const NB = 'notoriousbdg/vrops-dashboard-*';
-const DOCS = 'Broadcom TechDocs VCF 9.0 "Widget Definitions List" (no export seen)';
+/** A customer content export (306 dashboards, read for keys and value shapes only). */
+const REAL = 'a customer content export read for its shapes (306 dashboards)';
+const DOCS = 'Broadcom TechDocs VCF 9.1 "Widget Definitions List" (no export seen)';
 
-export const WIDGET_TYPES: readonly WidgetType[] = [
+const LEGACY_MODE = 'the 8.x editor’s mode ({mode: n} or a number); 9.x writes relationshipMode and a mode string instead';
+const UNDEFINED_KEY = 'a key literally named "undefined" that an older editor wrote; it means nothing and is kept as exported';
+
+const RAW_TYPES: readonly WidgetType[] = [
   {
     type: 'ResourceList',
     label: 'Object List',
     family: 'list',
     verified: true,
-    source: `${CF} _resource_list_widget; ${NB} (cost_by_application), GaryFlynn/vrops-dashboards-vm-uptime (custom-group filter)`,
+    source: `${CF} _resource_list_widget; ${NB} (cost_by_application), GaryFlynn/vrops-dashboards-vm-uptime (custom-group filter); ${REAL}`,
+    doc: doc('object-list-widget'),
     provides: true,
     needsSubject: false,
     size: { w: 4, h: 6 },
     settings: [
       S.kinds(false),
-      { key: 'group', type: 'text', help: 'only the members of this custom group' },
-      { key: 'grouptype', type: 'text', help: 'the custom group’s type (default Environment)' },
-      { key: 'columns', type: 'metrics', help: 'extra metric columns, comma separated' },
-      { key: 'first', type: 'yesno', help: 'select the first row on open (default yes)' },
+      ...S.group,
+      S.objects('object-list-widget'),
+      { key: 'columns', type: 'metrics', help: 'extra metric columns, comma separated', label: 'Additional Columns', doc: doc('object-list-widget'), writes: ['additionalColumns'] },
+      { key: 'columnlabels', type: 'text', help: 'labels for the extra columns, comma separated, in the same order (default: the metric key)', label: 'Additional Columns (label)', doc: doc('object-list-widget'), writes: ['additionalColumns'] },
+      { key: 'first', type: 'yesno', help: 'select the first row on open (default yes)', label: 'Auto Select First Row', doc: doc('object-list-widget'), default: 'yes', writes: ['selectFirstRow'] },
+      S.relationship('self', 'object-list-widget', true),
       S.depth(),
+      S.filter('object-list-widget'),
+      S.filterkind('object-list-widget'),
       S.refresh,
     ],
+    passthrough: {},
     build: (ctx) => {
       const kinds = ctx.s.kinds('kinds');
       const group = ctx.s.get('group');
+      const objects = objectsOf(ctx);
       return {
         ...common(ctx),
-        resource: [],
-        relationshipMode: { relationshipMode: 0 },
+        resource: objects,
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
         additionalColumns: extraColumns(ctx, kinds[0] ?? KIND_ALIASES['vm']!, ctx.s.list('columns')),
-        mode: 'all',
-        filterMode: 'tagPicker',
+        mode: objects.length > 0 ? 'resource' : 'all',
+        filterMode: filterModeOf(ctx),
         tagFilter: group ? groupFilter(ctx, group, ctx.s.get('grouptype', 'Environment')) : kindFilter(ctx, kinds),
         depth: ctx.s.num('depth', 1),
-        customFilter: EMPTY_FILTER,
+        customFilter: customFilterOf(ctx, kinds[0]),
         selectFirstRow: { selectFirstRow: ctx.s.yes('first', true) },
       };
     },
@@ -547,32 +962,47 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'View',
     family: 'list',
     verified: true,
-    source: `${CF} _view_widget; ${NB} (cluster_capacity) and 680 View widgets in the exports read`,
-    note: 'The view must exist before the dashboard is imported: generate it with "A view for dashboards and reports" (same name, so the same id) or give a built-in view’s UUID.',
+    source: `${CF} _view_widget; ${NB} (cluster_capacity); ${REAL} (1,000 View widgets)`,
+    doc: doc('view-widget'),
+    note: 'The view is not in the dashboard export: import it first (Views › Manage › Import), or generate it with "A view for dashboards and reports" (same name, so the same id), or give a built-in view’s UUID.',
     provides: true,
     needsSubject: true,
     size: { w: 12, h: 6 },
     settings: [
-      { key: 'view', type: 'text', required: true, help: 'the view’s name (generated by the view blueprint) or its UUID' },
-      { key: 'first', type: 'yesno', help: 'select the first row on open' },
-      { key: 'legend', type: 'choices', options: ['legend', 'labels', 'title'], help: 'for a chart view: what to show (chartViewItems)' },
-      S.pin,
+      { key: 'view', type: 'text', required: true, help: 'the view’s name (generated by the view blueprint) or its UUID', label: 'Output Data (the view)', doc: doc('view-widget'), writes: ['viewDefinitionId'] },
+      { key: 'first', type: 'yesno', help: 'select the first row on open, for a list view (default no)', label: 'Auto Select First Row', doc: doc('view-widget'), default: 'no', writes: ['selectFirstRow'] },
+      { key: 'legend', type: 'choices', options: ['legend', 'labels', 'title'], help: 'for a chart view: what to show (chartViewItems)', label: 'Show', doc: doc('view-widget'), writes: ['chartViewItems'] },
+      S.pin(),
+      {
+        key: 'traversal',
+        type: 'text',
+        options: ['vSphere Hosts and Clusters-VMWARE-vSphere World', 'vSphere Storage-VMWARE-vSphere World', 'Custom Groups-?-?'],
+        help: 'the inventory tree the object is picked from (traversalSpecId; blank by default)',
+        label: 'Input Data › Inventory trees',
+        doc: doc('view-widget'),
+        writes: ['traversalSpecId'],
+        read: (src) => (typeof src.config['traversalSpecId'] === 'string' ? cellText(src.config['traversalSpecId']) : undefined),
+      },
+      { key: 'viewtype', type: 'choice', options: ['LIST', 'SUMMARY', 'TREND'], help: 'the view’s presentation, as some exports record it (viewType)', label: 'View type', writes: ['viewType'], read: readChoice('viewType', ['LIST', 'SUMMARY', 'TREND'], '') },
       S.refresh,
     ],
+    passthrough: { custom: 'always [] in exports: an internal list the editor keeps', isUpdatedView: 'always true: marks a view widget saved by the 8.x+ editor' },
     build: (ctx) => {
       const pin = pinOf(ctx, undefined);
       const resId = ctx.selfProvider ? ctx.entries.resource(pin.ref, pin.name) : '';
+      const traversal = ctx.s.get('traversal');
       return {
         refreshInterval: ctx.refreshInterval,
-        resource: ctx.selfProvider ? { resourceId: resId, traversalSpecId: '', resourceName: pin.name, resourceKindId: kindId(pin.ref), id: `Ext.vcops.chrome.model.Resource-${Number(resId.replace(/\D/g, '')) + 1}` } : null,
-        traversalSpecId: null,
-        refreshContent: { refreshContent: false },
+        resource: ctx.selfProvider ? { resourceId: resId, traversalSpecId: traversal, resourceName: pin.name, resourceKindId: kindId(pin.ref), id: `Ext.vcops.chrome.model.Resource-${Number(resId.replace(/\D/g, '')) + 1}` } : null,
+        traversalSpecId: traversal || null,
+        refreshContent: { refreshContent: ctx.refreshContent },
         isUpdatedView: true,
         chartViewItems: ctx.s.list('legend'),
         selectFirstRow: { selectFirstRow: ctx.s.yes('first', false) },
         selfProvider: { selfProvider: ctx.selfProvider },
         title: ctx.title,
         viewDefinitionId: ctx.viewId(ctx.s.get('view')),
+        ...(ctx.s.has('viewtype') ? { viewType: ctx.s.get('viewtype') } : {}),
       };
     },
   },
@@ -581,7 +1011,8 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Scoreboard',
     family: 'chart',
     verified: true,
-    source: `${CF} _scoreboard_widget; ${NB} (custom_vm_summary, roi), aakib011/vROPS-Dashboards, lhuckaba/vROpsESGDash`,
+    source: `${CF} _scoreboard_widget; ${NB} (custom_vm_summary, roi), aakib011/vROPS-Dashboards, lhuckaba/vROpsESGDash; ${QA92} (gauge keys); ${REAL}`,
+    doc: doc('scoreboard-widget'),
     provides: false,
     needsSubject: true,
     size: { w: 4, h: 4 },
@@ -589,45 +1020,67 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
       S.kind(),
       S.metrics(),
       S.labels,
-      S.thresholds,
-      { key: 'theme', type: 'choice', options: SCOREBOARD_THEMES, help: 'tile style; gauge draws dials (default gradient)' },
-      { key: 'columns', type: 'number', min: 1, max: 12, help: 'tiles per row (default 4)' },
-      { key: 'layout', type: 'choice', options: ['fixedView', 'fixedSize', 'floatingView'], help: 'tile layout (default fixedView)' },
-      { key: 'sparkline', type: 'yesno', help: 'a sparkline under each value' },
-      S.period,
-      { key: 'decimals', type: 'number', min: 0, max: 5, help: 'decimal places (default 1)' },
-      { key: 'max', type: 'number', help: 'full scale of a gauge' },
-      { key: 'cells', type: 'number', min: 1, max: 1000, help: 'most tiles shown (default 100)' },
-      { key: 'names', type: 'yesno', help: 'show object names (default no)' },
+      S.thresholds(),
+      { key: 'unit', type: 'choice', options: Object.keys(METRIC_UNITS), help: 'the unit every box shows its value in (default Auto)', label: 'Unit', doc: doc('scoreboard-widget'), writes: ['metric'] },
+      { key: 'max', type: 'number', help: 'full scale of a gauge (Max Value)', label: 'Max Value', doc: doc('scoreboard-widget'), writes: ['metric'] },
+      { key: 'link', type: 'text', help: 'a page each box opens: an internal path or a web address', label: 'Link to', doc: doc('scoreboard-widget'), writes: ['metric'] },
+      { key: 'theme', type: 'choice', options: SCOREBOARD_THEMES, help: 'tile style; gauge draws dials, the View Mode Gauge (default gradient)', label: 'Visual Theme / View Mode', doc: doc('scoreboard-widget'), default: 'gradient', writes: ['visualTheme'] },
+      { key: 'columns', type: 'number', min: 1, max: 12, help: 'boxes per row (default 4)', label: 'Box Columns', doc: doc('scoreboard-widget'), default: '4', writes: ['boxColumns'] },
+      { key: 'layout', type: 'choice', options: ['fixedView', 'fixedSize'], help: 'Fixed View fits the boxes to the widget; Fixed Size keeps their size (default fixedView)', label: 'Layout Mode', doc: doc('scoreboard-widget'), default: 'fixedView', writes: ['mode'] },
+      { key: 'boxheight', type: 'number', min: 1, max: 1000, help: 'box height in pixels for Fixed Size (blank: automatic)', label: 'Fixed Size (box height)', doc: doc('scoreboard-widget'), writes: ['boxHeight'], read: readNum('boxHeight', null) },
+      { key: 'valuesize', type: 'number', min: 6, max: 96, help: 'value font size in pixels (default 24)', label: 'Fixed View (value size)', doc: doc('scoreboard-widget'), default: '24', writes: ['valueSize'], read: readNum('valueSize', 24) },
+      { key: 'labelsize', type: 'number', min: 6, max: 96, help: 'label font size in pixels (default 12)', label: 'Fixed View (label size)', doc: doc('scoreboard-widget'), default: '12', writes: ['labelSize'], read: readNum('labelSize', 12) },
+      { key: 'decimals', type: 'number', min: 0, max: 5, help: 'decimal places (default 1)', label: 'Round Decimals', doc: doc('scoreboard-widget'), default: '1', writes: ['roundDecimals'] },
+      { key: 'cells', type: 'number', min: 1, max: 1000, help: 'most boxes shown (default 100)', label: 'Max Scores Count', doc: doc('scoreboard-widget'), default: '100', writes: ['maxCellCount'] },
+      { key: 'oldvalues', type: 'yesno', help: 'show the last value when there is no current one (default yes)', label: 'Old metric values', doc: doc('scoreboard-widget'), default: 'yes', writes: ['oldMetricValues'], read: readFlag('oldMetricValues', undefined, true) },
+      { key: 'names', type: 'yesno', help: 'show object names (default no)', label: 'Show › Object Name', doc: doc('scoreboard-widget'), default: 'no', writes: ['showResourceName'] },
+      { key: 'metricnames', type: 'yesno', help: 'show metric names (default yes)', label: 'Show › Metric Name', doc: doc('scoreboard-widget'), default: 'yes', writes: ['showMetricName'], read: readFlag('showMetricName', 'showMetricName', true) },
+      { key: 'units', type: 'yesno', help: 'show metric units (default yes)', label: 'Show › Metric Unit', doc: doc('scoreboard-widget'), default: 'yes', writes: ['showMetricUnit'], read: readFlag('showMetricUnit', 'showMetricUnit', true) },
+      { key: 'sparkline', type: 'yesno', help: 'a sparkline under each value (default no)', label: 'Show › Sparkline', doc: doc('scoreboard-widget'), default: 'no', writes: ['showSparkline'] },
+      S.period('the time span of the sparkline statistics'),
+      { key: 'showdt', type: 'yesno', help: 'show the dynamic threshold on the sparkline (default yes)', label: 'Show DT', doc: doc('scoreboard-widget'), default: 'yes', writes: ['showDT'], read: readFlag('showDT', 'showDT', true) },
+      { key: 'remaining', type: 'yesno', help: 'gauge: show what remains to the maximum (default no)', label: 'Gauge (show remaining)', writes: ['showRemaining'], read: readFlag('showRemaining', undefined, false) },
+      { key: 'percenttext', type: 'yesno', help: 'gauge: show the value as a percentage (default no)', label: 'Gauge (percent text)', writes: ['showPercentText'], read: readFlag('showPercentText', undefined, false) },
+      { key: 'focuspercent', type: 'yesno', help: 'gauge: make the percentage the main figure (default no)', label: 'Gauge (focus on percent)', writes: ['focusOnPercent'], read: readFlag('focusOnPercent', undefined, false) },
+      S.objects('scoreboard-widget', ['resource']),
+      S.relationship('self', 'scoreboard-widget'),
+      { ...S.depth(), read: readNum('depth', 1) },
+      S.filter('scoreboard-widget', ['customFilter']),
+      S.filterkind('scoreboard-widget'),
+      S.metricconfig('scoreboard-widget'),
       S.refresh,
     ],
+    passthrough: { undefined: UNDEFINED_KEY },
+    alsoWrites: { showRemaining: QA92, showPercentText: QA92, focusOnPercent: QA92 },
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
       const theme = SCOREBOARD_THEMES.indexOf(ctx.s.get('theme', 'gradient') as (typeof SCOREBOARD_THEMES)[number]) + 1 || 8;
       return {
         ...common(ctx),
         metric: metricBlock(ctx, kind, ctx.s.list('metrics')),
-        resource: [],
-        relationshipMode: { relationshipMode: 0 },
-        customFilter: EMPTY_FILTER,
-        depth: 1,
-        resInteractionMode: null,
+        resource: objectsOf(ctx),
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
+        customFilter: customFilterOf(ctx, kind),
+        depth: ctx.s.num('depth', 1),
+        resInteractionMode: ctx.s.get('metricconfig') || null,
         visualTheme: theme,
         mode: { layoutMode: ctx.s.get('layout', 'fixedView') },
         showResourceName: { showResourceName: ctx.s.yes('names', false) },
-        showMetricName: { showMetricName: true },
-        showMetricUnit: { showMetricUnit: true },
-        showDT: { showDT: true },
+        showMetricName: { showMetricName: ctx.s.yes('metricnames', true) },
+        showMetricUnit: { showMetricUnit: ctx.s.yes('units', true) },
+        showDT: { showDT: ctx.s.yes('showdt', true) },
         showSparkline: { showSparkline: ctx.s.yes('sparkline', false) },
         periodLength: ctx.s.has('period') ? ctx.s.get('period') : null,
         maxCellCount: ctx.s.num('cells', 100),
-        oldMetricValues: true,
+        oldMetricValues: ctx.s.yes('oldvalues', true),
         roundDecimals: ctx.s.num('decimals', 1),
-        valueSize: 24,
-        labelSize: 12,
-        boxHeight: null,
+        valueSize: ctx.s.num('valuesize', 24),
+        labelSize: ctx.s.num('labelsize', 12),
+        boxHeight: ctx.s.has('boxheight') ? ctx.s.num('boxheight', 0) : null,
         boxColumns: ctx.s.num('columns', 4),
-        ...(theme === 9 ? { showRemaining: false, showPercentText: false, focusOnPercent: false } : {}),
+        ...(theme === 9 || ctx.s.has('remaining') || ctx.s.has('percenttext') || ctx.s.has('focuspercent')
+          ? { showRemaining: ctx.s.yes('remaining', false), showPercentText: ctx.s.yes('percenttext', false), focusOnPercent: ctx.s.yes('focuspercent', false) }
+          : {}),
       };
     },
   },
@@ -636,81 +1089,103 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Scoreboard Health',
     family: 'badge',
     verified: true,
-    source: SURVEY,
+    source: `${SURVEY}; ${REAL}`,
+    doc: doc('scoreboard-health-widget'),
     provides: false,
     needsSubject: true,
     size: { w: 3, h: 4 },
-    settings: [{ key: 'badge', type: 'choice', options: ['health', 'risk', 'efficiency'], help: 'which score (default health)' }, { key: 'image', type: 'choice', options: ['circle', 'square'], help: 'badge shape (default circle)' }, S.refresh],
-    build: (ctx) => ({ ...common(ctx), metricType: { metricType: ctx.s.get('badge', 'health') }, metricValue: '', resources: [], imageType: ctx.s.get('image', 'circle') }),
+    settings: [
+      { key: 'badge', type: 'choice', options: ['health', 'risk', 'efficiency', 'custom'], help: 'which score, or custom for a metric of your own (default health)', label: 'Metric', doc: doc('scoreboard-health-widget'), default: 'health', writes: ['metricType'] },
+      { key: 'metric', type: 'metric', help: 'the custom metric, when Metric is custom', label: 'Pick Metric', doc: doc('scoreboard-health-widget'), writes: ['metricValue'], read: readText('metricValue') },
+      { key: 'image', type: 'choice', options: ['circle', 'square'], help: 'icon shape (default circle; square is not seen in an export)', label: 'Image Type', doc: doc('scoreboard-health-widget'), default: 'circle', writes: ['imageType'] },
+      S.refresh,
+    ],
+    passthrough: { resources: 'the Input Data objects; only [] has been seen, so the item shape is not known' },
+    build: (ctx) => ({ ...common(ctx), metricType: { metricType: ctx.s.get('badge', 'health') }, metricValue: ctx.s.get('metric'), resources: [], imageType: ctx.s.get('image', 'circle') }),
   },
   {
     type: 'Heatmap',
     label: 'Heat Map',
     family: 'chart',
     verified: true,
-    source: `${CF} _heatmap_widget; ${BP} (Cluster CPU Details: sizeBy num_Cpu, colorBy cpu|usage_average, groupBy HostSystem)`,
+    source: `${CF} _heatmap_widget; ${BP} (Cluster CPU Details: sizeBy num_Cpu, colorBy cpu|usage_average, groupBy HostSystem); ${REAL}`,
+    doc: doc('heat-map-widget'),
+    note: 'The builder writes one configuration (the first); any more a loaded heat map holds are kept as exported.',
     provides: true,
     needsSubject: false,
     size: { w: 6, h: 6 },
     settings: [
-      S.kind(true, 'the objects drawn as tiles'),
-      { key: 'colorby', type: 'metric', required: true, help: 'the metric that colours a tile' },
-      { key: 'sizeby', type: 'metric', help: 'the metric that sizes a tile (default: all the same size)' },
-      { key: 'groupby', type: 'kind', help: 'group tiles under this object type (default: the tile type itself)' },
-      { key: 'values', type: 'numbers', help: 'colour stops, ascending: 0,50,100' },
-      { key: 'colors', type: 'colors', help: 'one colour per stop, #rrggbb: #8ABF5B,#EACC58,#E4695E' },
-      { key: 'min', type: 'number', help: 'lowest value on the colour scale (default 0)' },
-      { key: 'max', type: 'number', help: 'highest value on the colour scale (default 100)' },
-      { key: 'solid', type: 'yesno', help: 'solid colours rather than a gradient' },
-      S.depth(),
+      { ...S.kind(true, 'the objects drawn as tiles'), label: 'Object Type', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'colorby', type: 'metric', required: true, help: 'the metric that colours a tile', label: 'Color by', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'sizeby', type: 'metric', help: 'the metric that sizes a tile (default: all the same size)', label: 'Size by', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'groupby', type: 'kind', help: 'group tiles under this object type (default: the tile type itself)', label: 'Group by', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'thenby', type: 'kind', help: 'a second level of grouping under Group by', label: 'Then by', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'relational', type: 'yesno', help: 'relate the Group by and Then by objects to each other (default no)', label: 'Relational Grouping', doc: doc('heat-map-widget'), default: 'no', writes: ['configs'] },
+      { key: 'heatmode', type: 'choice', options: ['general', 'instance'], help: 'General sizes by one metric and colours by another; Instance draws one equal tile per metric instance (default general)', label: 'Mode', doc: doc('heat-map-widget'), default: 'general', writes: ['configs'] },
+      { key: 'focus', type: 'yesno', help: 'zoom to the group of the object selected (focusOnGroups; default yes)', label: 'Group Zoom', doc: doc('heat-map-widget'), default: 'yes', writes: ['configs'] },
+      { key: 'configname', type: 'text', help: 'the configuration’s name (default: the widget title)', label: 'Name', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'values', type: 'numbers', help: 'colour stops, ascending: 0,50,100', label: 'Color (thresholds)', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'colors', type: 'colors', help: 'one colour per stop, #rrggbb: #8ABF5B,#EACC58,#E4695E', label: 'Color', doc: doc('heat-map-widget'), writes: ['configs'] },
+      { key: 'min', type: 'number', help: 'lowest value on the colour scale (default 0)', label: 'Min Value', doc: doc('heat-map-widget'), default: '0', writes: ['configs'] },
+      { key: 'max', type: 'number', help: 'highest value on the colour scale (default 100)', label: 'Max Value', doc: doc('heat-map-widget'), default: '100', writes: ['configs'] },
+      { key: 'solid', type: 'yesno', help: 'solid colours rather than a gradient (default no)', label: 'Solid Coloring', doc: doc('heat-map-widget'), default: 'no', writes: ['configs'] },
+      S.objects('heat-map-widget'),
+      { ...S.relationship('self,children,parents', 'heat-map-widget', true), read: (src) => { const t = relationshipText(at(src.config, 'relationshipMode', 'relationshipMode')); return t && t !== 'parents,children,self' ? t : undefined; } },
+      { ...S.depth(10, 10), writes: ['depth'] },
+      S.filter('heat-map-widget', ['configs']),
+      S.filterkind('heat-map-widget', ['configs']),
       S.refresh,
     ],
+    passthrough: { value: 'the index of the configuration the widget opens on; the builder writes one configuration, index 0' },
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
       const group = ctx.s.kind('groupby') ?? kind;
+      const then = ctx.s.kind('thenby');
       const values = ctx.s.nums('values');
       const colors = ctx.s.list('colors');
       const sizeBy = ctx.s.get('sizeby');
+      const grouping = (ref: KindRef): Config => ({
+        resourceKind: ref.resourceKind,
+        adapterKind: ref.adapterKind,
+        typeId: ctx.entries.kind(ref),
+        type: 'resourceKind',
+        text: ref.resourceKind,
+        originalText: ref.resourceKind,
+        id: `004null${kindId(ref)}`,
+        parentText: ref.adapterKind,
+        parentId: ref.adapterKind,
+      });
+      const objects = objectsOf(ctx);
       return {
-        mode: 'all',
+        mode: objects.length > 0 ? 'resource' : 'all',
         depth: ctx.s.num('depth', 10),
         selfProvider: { selfProvider: ctx.selfProvider },
         refreshInterval: ctx.refreshInterval,
         refreshContent: { refreshContent: ctx.refreshContent },
-        resource: [],
-        relationshipMode: { relationshipMode: [1, -1, 0] },
+        resource: objects,
+        relationshipMode: { relationshipMode: relationshipOf(ctx, [1, -1, 0]) },
         title: ctx.title,
         configs: [
           {
-            name: ctx.title,
+            name: ctx.s.get('configname', ctx.title),
             resourceKind: ctx.entries.kind(kind),
             colorBy: { metricKey: ctx.s.get('colorby'), value: ctx.s.get('colorby') },
             sizeBy: { metricKey: sizeBy || null, value: sizeBy },
-            groupBy: {
-              resourceKind: group.resourceKind,
-              adapterKind: group.adapterKind,
-              typeId: ctx.entries.kind(group),
-              type: 'resourceKind',
-              text: group.resourceKind,
-              originalText: group.resourceKind,
-              id: `004null${kindId(group)}`,
-              parentText: group.adapterKind,
-              parentId: group.adapterKind,
-            },
-            thenBy: null,
+            groupBy: grouping(group),
+            thenBy: then ? grouping(then) : null,
             color: {
               minValue: ctx.s.num('min', 0),
               maxValue: ctx.s.num('max', 100),
               thresholds: { values: values.length > 0 ? values : [0, 50, 100], colors: colors.length > 0 ? colors : ['#8ABF5B', '#EACC58', '#E4695E'] },
             },
-            focusOnGroups: true,
-            relationalGrouping: false,
+            focusOnGroups: ctx.s.yes('focus', true),
+            relationalGrouping: ctx.s.yes('relational', false),
             solidColoring: ctx.s.yes('solid', false),
-            mode: { mode: false },
+            mode: { mode: ctx.s.get('heatmode', 'general') === 'instance' },
             attributeKind: { value: '' },
-            filterMode: 'tagPicker',
+            filterMode: filterModeOf(ctx),
             tagFilter: null,
-            customFilter: EMPTY_FILTER,
+            customFilter: customFilterOf(ctx, kind),
           },
         ],
         value: 0,
@@ -722,55 +1197,70 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Health Chart',
     family: 'chart',
     verified: true,
-    source: `${CF} _health_chart_widget; ${QA92} (vendor-template-Home); ${BP} (ESXi Host Details v2)`,
+    source: `${CF} _health_chart_widget; ${QA92} (vendor-template-Home); ${BP} (ESX Host Details v2); ${REAL}`,
+    doc: doc('health-chart-widget'),
     note: 'metric=badge|health, badge|risk or badge|efficiency charts the score (metricType health/risk/efficiency); any other key is a custom metric.',
     provides: true,
     needsSubject: true,
     size: { w: 6, h: 4 },
     settings: [
-      S.kind(),
-      S.metric(true, 'the metric charted: cpu|usage_average, or badge|health'),
-      S.thresholds,
-      { key: 'order', type: 'choice', options: ['asc', 'desc'], help: 'sort order (default asc)' },
-      { key: 'rows', type: 'number', min: 1, max: 100, help: 'objects per page (default 15)' },
-      { key: 'height', type: 'number', min: 60, max: 400, help: 'bar height in pixels (default 135)' },
-      { key: 'mode', type: 'choice', options: ['all', 'self', 'resource'], help: 'all the objects below the one sent (default), just that one, or a pinned one' },
-      S.period,
+      { ...S.kind(), writes: ['resourceKindId'] },
+      { ...S.metric(true, 'the metric charted: cpu|usage_average, or badge|health'), doc: doc('health-chart-widget'), writes: ['metricKey', 'metricType'] },
+      { key: 'metricname', type: 'text', help: 'the metric’s display name, Group|Name (default: the key)', label: 'Metric (name)', doc: doc('health-chart-widget'), writes: ['metricName', 'metricFullName'], read: (src) => { const n = src.config['metricName']; return typeof n === 'string' && n !== src.config['metricKey'] ? cellText(n) : undefined; } },
+      S.unit('metricUnit', 'Default Unit'),
+      S.thresholds(['yellowBound', 'orangeBound', 'redBound']),
+      { key: 'sortby', type: 'choice', options: ['metricValue', 'name'], help: 'sort the charts by value or by object name (default metricValue)', label: 'Order By', doc: doc('health-chart-widget'), default: 'metricValue', writes: ['sortBy'], read: readChoice('sortBy', ['metricValue', 'name'], 'metricValue') },
+      { key: 'order', type: 'choice', options: ['asc', 'desc'], help: 'ascending or descending (default asc)', label: 'Order By (direction)', doc: doc('health-chart-widget'), default: 'asc', writes: ['sortByDir'] },
+      { key: 'rows', type: 'number', min: 1, max: 100, help: 'charts per page (default 15)', label: 'Pagination number', doc: doc('health-chart-widget'), default: '15', writes: ['paginationNumber'] },
+      { key: 'height', type: 'number', min: 60, max: 400, help: 'chart height in pixels: 115, 135 (the default) and 190 are the Small, Medium and Large exports hold', label: 'Chart Height', doc: doc('health-chart-widget'), default: '135', writes: ['chartHeight'] },
+      { key: 'names', type: 'yesno', help: 'show the object name (default yes)', label: 'Show › Object Name', doc: doc('health-chart-widget'), default: 'yes', writes: ['showResourceName'], read: readFlag('showResourceName', 'showResourceName', true) },
+      { key: 'metriclabel', type: 'text', help: 'show the metric name, with this label', label: 'Show › Metric Name', doc: doc('health-chart-widget'), writes: ['showMetricLabel', 'metricLabel'], read: readText('metricLabel') },
+      { key: 'first', type: 'yesno', help: 'select the first chart on open (default no)', label: 'Auto Select First Row', doc: doc('health-chart-widget'), default: 'no', writes: ['selectFirstRow'], read: readFlag('selectFirstRow', 'selectFirstRow', false) },
+      { key: 'mode', type: 'choice', options: ['all', 'self', 'resource'], help: 'all the objects below the one sent (default), just that one, or a pinned one', label: 'Input Data', doc: doc('health-chart-widget'), default: 'all', writes: ['mode'] },
+      S.pin(),
+      S.kinds(false),
+      S.relationship('self', 'health-chart-widget'),
+      S.period(),
       S.depth(),
+      S.filter('health-chart-widget'),
+      S.filterkind('health-chart-widget'),
       S.refresh,
     ],
+    passthrough: { undefined: UNDEFINED_KEY },
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
       const metric = ctx.s.get('metric');
       const badge = /^badge\|(health|risk|efficiency)$/.exec(metric)?.[1];
       const bounds = ctx.s.nums('thresholds');
       const pin = pinOf(ctx, kind);
+      const kinds = ctx.s.kinds('kinds');
+      const name = ctx.s.get('metricname', metric);
       return {
         ...common(ctx),
         resource: ctx.selfProvider ? [{ name: pin.name, id: ctx.entries.resource(pin.ref, pin.name) }] : [],
-        relationshipMode: { relationshipMode: 0 },
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
         mode: ctx.s.get('mode', 'all'),
-        filterMode: 'tagPicker',
-        tagFilter: null,
+        filterMode: filterModeOf(ctx),
+        tagFilter: kinds.length > 0 ? kindFilter(ctx, kinds) : null,
         depth: ctx.s.num('depth', 1),
-        customFilter: EMPTY_FILTER,
+        customFilter: customFilterOf(ctx, kind),
         metricKey: metric,
-        metricName: metric,
-        metricFullName: metric,
+        metricName: name,
+        metricFullName: name,
         resourceKindId: ctx.entries.kind(kind),
-        metricUnit: { metricUnitId: -1, metricUnitName: 'Default Unit' },
+        metricUnit: unitOf(ctx, 'Default Unit'),
         metricType: { metricType: badge ?? 'custom' },
         chartHeight: ctx.s.num('height', 135),
         yellowBound: bounds.length === 3 ? bounds[0] : null,
         orangeBound: bounds.length === 3 ? bounds[1] : null,
         redBound: bounds.length === 3 ? bounds[2] : null,
-        sortBy: 'metricValue',
+        sortBy: ctx.s.get('sortby', 'metricValue'),
         sortByDir: { orderByDir: ctx.s.get('order', 'asc') },
         paginationNumber: ctx.s.num('rows', 15),
-        showResourceName: { showResourceName: true },
-        showMetricLabel: { showMetricLabel: false },
-        metricLabel: '',
-        selectFirstRow: { selectFirstRow: false },
+        showResourceName: { showResourceName: ctx.s.yes('names', true) },
+        showMetricLabel: { showMetricLabel: ctx.s.has('metriclabel') },
+        metricLabel: ctx.s.get('metriclabel'),
+        selectFirstRow: { selectFirstRow: ctx.s.yes('first', false) },
         ...(ctx.s.has('period') ? { periodLength: ctx.s.get('period') } : {}),
       };
     },
@@ -780,23 +1270,37 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Metric Chart',
     family: 'chart',
     verified: true,
-    source: `${CF} _metric_chart_widget (relationshipMode is a scalar here: an array makes the widget fail); ${BP} (ESXi Host Performance Details v2); ${NB} (cluster_capacity)`,
-    note: 'Line, area or bar is a per-user preference kept in the widget’s states, not in config; it opens as a line chart.',
+    source: `${CF} _metric_chart_widget; ${BP} (ESX Host Performance Details v2); ${NB} (cluster_capacity); ${REAL}`,
+    doc: doc('metric-chart-widget'),
+    note: 'Line, area or bar, split and stacked charts are per-user preferences kept in the widget’s states, not in config; it opens as a line chart.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: [S.kind(), S.metrics(), S.labels, { key: 'relationship', type: 'choice', options: ['self', 'children', 'parents'], help: 'chart the object sent, one line per child, or per parent (default self)' }, S.refresh],
+    settings: [
+      S.kind(),
+      S.metrics(),
+      S.labels,
+      { key: 'unit', type: 'choice', options: Object.keys(METRIC_UNITS), help: 'the unit the metrics are charted in (default: each metric’s own)', label: 'Unit', doc: doc('metric-chart-widget'), writes: ['metric'] },
+      { key: 'objectmetrics', type: 'text', help: 'metrics of objects picked by name: alias:Object name=metric|key, comma separated (Input Data › Metrics)', label: 'Input Data › Metrics', doc: doc('metric-chart-widget'), writes: ['resourceMetrics'] },
+      S.objects('metric-chart-widget', ['resource']),
+      S.relationship('self', 'metric-chart-widget'),
+      { ...S.depth(), read: readNum('depth', 1) },
+      S.filter('metric-chart-widget', ['customFilter']),
+      S.filterkind('metric-chart-widget'),
+      S.metricconfig('metric-chart-widget'),
+      S.refresh,
+    ],
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
-      const relationship = { children: -1, parents: 1 }[ctx.s.get('relationship', 'self') as 'children' | 'parents'] ?? 0;
       return {
         ...common(ctx),
         metric: metricBlock(ctx, kind, ctx.s.list('metrics')),
-        resource: [],
-        relationshipMode: { relationshipMode: relationship },
-        customFilter: EMPTY_FILTER,
-        depth: 1,
-        resInteractionMode: null,
+        resourceMetrics: objectMetricsOf(ctx),
+        resource: objectsOf(ctx),
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
+        customFilter: customFilterOf(ctx, kind),
+        depth: ctx.s.num('depth', 1),
+        resInteractionMode: ctx.s.get('metricconfig') || null,
       };
     },
   },
@@ -805,24 +1309,39 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Sparkline Chart',
     family: 'chart',
     verified: true,
-    source: `${SURVEY} §SparklineChart; ${BP} (VM Details v4)`,
+    source: `${SURVEY} §SparklineChart; ${BP} (VM Details v4); ${REAL}`,
+    doc: doc('sparkline-chart-widget'),
     provides: false,
     needsSubject: true,
     size: { w: 4, h: 5 },
-    settings: [S.kind(), S.metrics(), S.labels, { key: 'order', type: 'choice', options: ['graphFirst', 'tableFirst'], help: 'graph or value first (default graphFirst)' }, { key: 'names', type: 'yesno', help: 'show the object name' }, S.refresh],
+    settings: [
+      S.kind(),
+      S.metrics(),
+      S.labels,
+      { key: 'order', type: 'choice', options: ['graphFirst', 'labelFirst'], help: 'graph or label first (default graphFirst)', label: 'Column Sequence', doc: doc('sparkline-chart-widget'), default: 'graphFirst', writes: ['columnSequence'] },
+      { key: 'names', type: 'yesno', help: 'show the object name (default no)', label: 'Show Object Name', doc: doc('sparkline-chart-widget'), default: 'no', writes: ['showResourceName'] },
+      { key: 'showdt', type: 'yesno', help: 'show the dynamic threshold (default yes)', label: 'Show DT', doc: doc('sparkline-chart-widget'), default: 'yes', writes: ['showDT'], read: readFlag('showDT', 'showDT', true) },
+      S.objects('sparkline-chart-widget', ['resource']),
+      S.relationship('self', 'sparkline-chart-widget'),
+      { ...S.depth(), read: readNum('depth', 1) },
+      S.filter('sparkline-chart-widget', ['customFilter']),
+      S.filterkind('sparkline-chart-widget'),
+      S.metricconfig('sparkline-chart-widget'),
+      S.refresh,
+    ],
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
       return {
         ...common(ctx),
-        resource: [],
-        showDT: { showDT: true },
-        relationshipMode: { relationshipMode: 0 },
+        resource: objectsOf(ctx),
+        showDT: { showDT: ctx.s.yes('showdt', true) },
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
         showResourceName: { showObjectName: ctx.s.yes('names', false) },
-        depth: 1,
+        depth: ctx.s.num('depth', 1),
         columnSequence: { columnSequence: ctx.s.get('order', 'graphFirst') },
         metric: metricBlock(ctx, kind, ctx.s.list('metrics')),
-        customFilter: EMPTY_FILTER,
-        resInteractionMode: null,
+        customFilter: customFilterOf(ctx, kind),
+        resInteractionMode: ctx.s.get('metricconfig') || null,
       };
     },
   },
@@ -831,48 +1350,79 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Top-N',
     family: 'chart',
     verified: true,
-    source: `${CF} _pareto_analysis_widget (mode all); ${NB} (reclaimable_hosts, storage_tier_cost_analysis), lhuckaba/vROpsESGDash`,
+    source: `${CF} _pareto_analysis_widget (mode all); ${NB} (reclaimable_hosts, storage_tier_cost_analysis), lhuckaba/vROpsESGDash; ${REAL}`,
+    doc: doc('top-n-widget'),
     provides: true,
     needsSubject: false,
     size: { w: 4, h: 6 },
     settings: [
-      S.kind(),
-      S.metric(),
-      { key: 'top', type: 'number', min: 1, max: 100, help: 'how many bars (default 10)' },
-      { key: 'order', type: 'choice', options: ['highest', 'lowest'], help: 'the highest or the lowest values (default highest)' },
-      { key: 'label', type: 'text', help: 'what the metric is called on the chart' },
-      { key: 'columns', type: 'metrics', help: 'extra metric columns, comma separated' },
-      S.thresholds,
-      { key: 'decimals', type: 'number', min: 0, max: 5, help: 'decimal places (default 1)' },
-      { key: 'every', type: 'number', min: 1, max: 1440, help: 'minutes between recalculations (default 15)' },
-      S.depth(),
+      { ...S.kind(), writes: ['resourceKind'] },
+      { ...S.metric(), label: 'Output Data › Metric', doc: doc('top-n-widget'), writes: ['metric'] },
+      { key: 'top', type: 'number', min: 1, max: 100, help: 'how many bars (default 10)', label: 'Bars Count', doc: doc('top-n-widget'), default: '10', writes: ['barsCount'] },
+      { key: 'order', type: 'choice', options: Object.keys(TOPN_ORDERS), help: 'the analysis: highest or lowest utilization (Metric Analysis), least or most healthy, most alarming (default highest)', label: 'Metric Analysis / Application Health', doc: doc('top-n-widget'), default: 'highest', writes: ['topOption'] },
+      { key: 'label', type: 'text', help: 'what the metric is called on the chart', label: 'Output Data › Label', doc: doc('top-n-widget'), writes: ['metricName', 'metric'] },
+      S.unit('metricUnit', 'Auto'),
+      { key: 'max', type: 'number', help: 'the value a full bar stands for (default: automatic)', label: 'Output Data › Maximum', doc: doc('top-n-widget'), writes: ['maxValue'], read: readNum('maxValue', null), unverified: true },
+      S.thresholds(['yellowBound', 'orangeBound', 'redBound']),
+      { key: 'percentile', type: 'number', min: 1, max: 100, help: 'the percentile for Metric Analysis › Percentile', label: 'Percentile', doc: doc('top-n-widget'), writes: ['percentileValue'], read: readNum('percentileValue', null) },
+      {
+        key: 'period',
+        type: 'choice',
+        options: Object.keys(TOPN_PERIODS),
+        help: 'the time the values are taken over (default: the widget’s date range)',
+        label: 'Select Date Range',
+        doc: doc('top-n-widget'),
+        writes: ['periodLength'],
+        read: (src) => { const r = at(src.config, 'periodLength', 'dateRange'); return typeof r === 'string' && TOPN_PERIODS[r] && at(src.config, 'periodLength', 'dateRangeText') === TOPN_PERIODS[r] ? r : undefined; },
+      },
+      { key: 'columns', type: 'metrics', help: 'extra metric columns, comma separated', label: 'Additional Columns', doc: doc('top-n-widget'), writes: ['additionalColumns'] },
+      { key: 'columnlabels', type: 'text', help: 'labels for the extra columns, comma separated (default: the metric key)', label: 'Additional Columns (label)', doc: doc('top-n-widget'), writes: ['additionalColumns'] },
+      { key: 'decimals', type: 'number', min: 0, max: 5, help: 'decimal places (default 1)', label: 'Round Decimals', doc: doc('top-n-widget'), default: '1', writes: ['roundDecimals'] },
+      { key: 'every', type: 'number', min: 1, max: 1440, help: 'minutes between recalculations (default 15)', label: 'Redraw Rate', doc: doc('top-n-widget'), default: '15', writes: ['regenerationTime'] },
+      { key: 'oldmetrics', type: 'yesno', help: 'leave out objects whose metric has stopped collecting (default no)', label: 'Filter old metrics', doc: doc('top-n-widget'), default: 'no', writes: ['filterOldMetrics'], read: readFlag('filterOldMetrics', 'filterOldMetrics', false) },
+      S.objects('top-n-widget'),
+      ...S.group,
+      { ...S.relationship('children,self', 'top-n-widget', true), read: (src) => { const t = relationshipText(at(src.config, 'relationshipMode', 'relationshipMode')); return t && t !== 'children,self' ? t : undefined; } },
+      S.depth(10, 10),
+      S.filter('top-n-widget'),
+      S.filterkind('top-n-widget'),
       S.refresh,
     ],
+    passthrough: {
+      metricOption: 'the 8.x "metric" mode’s metric tree selection; the 9.x Top-N writes metric and topOption instead',
+      tagOption: 'the 8.x "tagFilter" mode’s health analysis; the 9.x Top-N writes topOption instead',
+      additionalColumns_resource: 'always [] in exports: additional columns for picked objects',
+    },
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
       const metric = ctx.s.get('metric');
       const bounds = ctx.s.nums('thresholds');
+      const objects = objectsOf(ctx);
+      const group = ctx.s.get('group');
+      const period = ctx.s.get('period');
       return {
         ...common(ctx),
-        resource: [],
-        relationshipMode: { relationshipMode: [-1, 0] },
-        mode: 'all',
-        filterMode: 'tagPicker',
-        tagFilter: null,
+        resource: objects,
+        relationshipMode: { relationshipMode: relationshipOf(ctx, [-1, 0]) },
+        mode: objects.length > 0 ? 'resource' : 'all',
+        filterMode: filterModeOf(ctx),
+        tagFilter: group ? groupFilter(ctx, group, ctx.s.get('grouptype', 'Environment')) : null,
         depth: ctx.s.num('depth', 10),
-        customFilter: EMPTY_FILTER,
-        filterOldMetrics: { filterOldMetrics: false },
-        topOption: ctx.s.get('order', 'highest') === 'lowest' ? 'metricsLowestUtilization' : 'metricsHighestUtilization',
+        customFilter: customFilterOf(ctx, kind),
+        filterOldMetrics: { filterOldMetrics: ctx.s.yes('oldmetrics', false) },
+        topOption: TOPN_ORDERS[ctx.s.get('order', 'highest')] ?? TOPN_ORDERS['highest'],
         barsCount: ctx.s.num('top', 10),
         roundDecimals: ctx.s.num('decimals', 1),
         regenerationTime: ctx.s.num('every', 15),
-        percentileValue: null,
+        percentileValue: ctx.s.has('percentile') ? ctx.s.num('percentile', 90) : null,
         metricName: ctx.s.get('label', metric),
-        metricUnit: { metricUnitId: -1, metricUnitName: 'Auto' },
+        metricUnit: unitOf(ctx, 'Auto'),
         additionalColumns: extraColumns(ctx, kind, ctx.s.list('columns')),
         metric: { metricKey: metric, name: ctx.s.get('label', metric) },
         resourceKind: [{ id: ctx.entries.kind(kind) }],
         ...(bounds.length === 3 ? { yellowBound: bounds[0], orangeBound: bounds[1], redBound: bounds[2] } : {}),
+        ...(ctx.s.has('max') ? { maxValue: ctx.s.num('max', 100) } : {}),
+        ...(TOPN_PERIODS[period] ? { periodLength: { dateRange: period, dateRangeText: TOPN_PERIODS[period] } } : {}),
       };
     },
   },
@@ -881,21 +1431,39 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Rolling View Chart',
     family: 'chart',
     verified: true,
-    source: 'vmspot/vROps-Dashboards (TAM Contention Trends), craigeherring/vROPsDashboards (8.x exports)',
+    source: `vmspot/vROps-Dashboards (TAM Contention Trends), craigeherring/vROPsDashboards (8.x exports); ${REAL}`,
+    doc: doc('rolling-view-chart-widget'),
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: [S.kind(), S.metrics(), S.labels, { key: 'interval', type: 'number', min: 5, max: 3600, help: 'seconds each metric is shown (default 30)' }, { key: 'toolbar', type: 'yesno', help: 'show the chart toolbar (default yes)' }, S.refresh],
+    settings: [
+      S.kind(),
+      S.metrics(),
+      S.labels,
+      { key: 'unit', type: 'choice', options: Object.keys(METRIC_UNITS), help: 'the unit the metrics are charted in (default: each metric’s own)', label: 'Unit', doc: doc('rolling-view-chart-widget'), writes: ['metric'] },
+      { key: 'interval', type: 'number', min: 5, max: 3600, help: 'seconds each metric is shown (default 30)', label: 'Auto Transition Interval', doc: doc('rolling-view-chart-widget'), default: '30', writes: ['autoTransitionInterval'] },
+      { key: 'toolbar', type: 'yesno', help: 'show the chart toolbar (default yes; written only when set, as the 8.x exports have it)', label: 'Toolbar', default: 'yes', writes: ['showChartToolbar'] },
+      S.objects('rolling-view-chart-widget', ['resource']),
+      S.relationship('self', 'rolling-view-chart-widget'),
+      { ...S.depth(), read: readNum('depth', 1) },
+      S.filter('rolling-view-chart-widget', ['customFilter']),
+      S.filterkind('rolling-view-chart-widget'),
+      S.metricconfig('rolling-view-chart-widget'),
+      S.refresh,
+    ],
+    alsoWrites: { showChartToolbar: 'craigeherring/vROPsDashboards (8.x export), only when toolbar= is set' },
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
       return {
         ...common(ctx),
         autoTransitionInterval: ctx.s.num('interval', 30),
         metric: metricBlock(ctx, kind, ctx.s.list('metrics')),
-        relationshipMode: 0,
-        resInteractionMode: null,
-        resourceMetrics: [],
-        showChartToolbar: { showChartToolbar: ctx.s.yes('toolbar', true) },
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
+        resInteractionMode: ctx.s.get('metricconfig') || null,
+        resource: objectsOf(ctx),
+        customFilter: customFilterOf(ctx, kind),
+        depth: ctx.s.num('depth', 1),
+        ...(ctx.s.has('toolbar') ? { showChartToolbar: { showChartToolbar: ctx.s.yes('toolbar', true) } } : {}),
       };
     },
   },
@@ -904,11 +1472,14 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Mashup Chart',
     family: 'chart',
     verified: true,
-    source: `${SURVEY} §MashupChart (config is the four common keys; what it charts is kept in the widget’s states)`,
+    source: `${SURVEY} §MashupChart (config is the four common keys; what it charts is kept in the widget’s states); ${REAL}`,
+    doc: doc('mashup-chart-widget'),
+    note: 'Its filters (criticality, status, alert type, events) and date range are per-user states the toolbar keeps, not config.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 6 },
     settings: BLANK_ONLY,
+    passthrough: { resourceName: 'only "" seen: the object an 8.x mashup chart was opened on' },
     build: (ctx) => common(ctx),
   },
   {
@@ -916,17 +1487,26 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Property List',
     family: 'list',
     verified: true,
-    source: `${CF} _property_list_widget (showMetricFullName’s inner key is metricFullName); ${NB} (cluster_capacity, rightsizing_details)`,
+    source: `${CF} _property_list_widget (showMetricFullName’s inner key is metricFullName); ${NB} (cluster_capacity, rightsizing_details); ${REAL}`,
+    doc: doc('property-list-widget'),
     provides: false,
     needsSubject: true,
     size: { w: 4, h: 5 },
     settings: [
       S.kind(),
       S.metrics(false),
-      { key: 'props', type: 'metrics', help: 'text properties, comma separated: config|name,summary|parentHost' },
+      { key: 'props', type: 'metrics', help: 'text properties, comma separated: config|name,summary|parentHost', label: 'Output Data (properties)', doc: doc('property-list-widget'), writes: ['metric'] },
       S.labels,
-      { key: 'theme', type: 'number', min: 0, max: 5, help: 'style 0 to 5 (default 0)' },
-      { key: 'fullnames', type: 'yesno', help: 'show full metric names (default yes)' },
+      S.thresholds(),
+      { key: 'unit', type: 'choice', options: Object.keys(METRIC_UNITS), help: 'the unit the metric values are shown in (default: each metric’s own)', label: 'Unit', doc: doc('property-list-widget'), writes: ['metric'] },
+      { key: 'theme', type: 'number', min: 0, max: 5, help: 'style: the docs list Original and Compact; exports hold 0 (the default) and 2', label: 'Visual Theme', doc: doc('property-list-widget'), default: '0', writes: ['visualTheme'] },
+      { key: 'fullnames', type: 'yesno', help: 'show full metric names (default yes)', label: 'Show Metric Full Name', doc: doc('property-list-widget'), default: 'yes', writes: ['showMetricFullName'] },
+      S.objects('property-list-widget', ['resource']),
+      S.relationship('self', 'property-list-widget'),
+      { ...S.depth(), read: readNum('depth', 1) },
+      S.filter('property-list-widget', ['customFilter']),
+      S.filterkind('property-list-widget'),
+      S.metricconfig('property-list-widget'),
       S.refresh,
     ],
     build: (ctx) => {
@@ -934,13 +1514,13 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
       return {
         ...common(ctx),
         visualTheme: ctx.s.num('theme', 0),
-        depth: 1,
+        depth: ctx.s.num('depth', 1),
         metric: metricBlock(ctx, kind, ctx.s.list('metrics'), ctx.s.list('props')),
-        resource: [],
-        relationshipMode: { relationshipMode: 0 },
-        customFilter: EMPTY_FILTER,
+        resource: objectsOf(ctx),
+        relationshipMode: { relationshipMode: relationshipOf(ctx, 0) },
+        customFilter: customFilterOf(ctx, kind),
         showMetricFullName: { metricFullName: ctx.s.yes('fullnames', true) },
-        resInteractionMode: null,
+        resInteractionMode: ctx.s.get('metricconfig') || null,
       };
     },
   },
@@ -949,23 +1529,32 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Text Display',
     family: 'text',
     verified: true,
-    source: `${CF} _text_display_widget; ${NB} (cluster_capacity), lhuckaba/vROpsESGDash (HTML in editorData)`,
-    note: 'text= is shown as written (escaped); html= is custom HTML, as the editor’s HTML mode keeps it; url= loads a page (a ContentPack/… path or a web address). text= and html= take the rest of the cell.',
+    source: `${CF} _text_display_widget; ${NB} (cluster_capacity), lhuckaba/vROpsESGDash (HTML in editorData); ${REAL}`,
+    doc: doc('text-display-widget'),
+    note: 'text= is shown as written (escaped); html= is custom HTML, as the editor’s HTML mode keeps it; url= loads a page (a ContentPack/… path or a web address); file= a file from Text Widget Content. text= and html= take the rest of the cell.',
     provides: false,
     needsSubject: false,
     size: { w: 12, h: 2 },
-    settings: [{ key: 'url', type: 'text', help: 'a page to show instead of text' }, { key: 'text', type: 'rest', help: 'plain text (the rest of the cell)' }, { key: 'html', type: 'rest', help: 'custom HTML (the rest of the cell)' }, S.refresh],
+    settings: [
+      { key: 'url', type: 'text', help: 'a page to show instead of text', label: 'URL', doc: doc('text-display-widget'), writes: ['locationUrl', 'editorData'] },
+      { key: 'file', type: 'text', help: 'a file managed under Configurations › Text Widget Content, shown instead of text', label: 'File', doc: doc('text-display-widget'), writes: ['locationFile', 'editorData'], read: readText('locationFile') },
+      { key: 'viewmode', type: 'choice', options: ['html', 'text'], help: 'rich text (HTML) or plain text (default html; HTML only when URL and File are blank)', label: 'View mode', doc: doc('text-display-widget'), default: 'html', writes: ['viewModeHTML'], read: (src) => (src.config['viewModeHTML'] === false ? 'text' : undefined) },
+      { key: 'text', type: 'rest', help: 'plain text (the rest of the cell)', label: 'Text', doc: doc('text-display-widget'), writes: ['editorData'] },
+      { key: 'html', type: 'rest', help: 'custom HTML (the rest of the cell)', label: 'Text (HTML)', doc: doc('text-display-widget'), writes: ['editorData'] },
+      S.refresh,
+    ],
+    passthrough: { xtype: 'the class of a getting-started panel some shipped dashboards use (widget.gettingStarted), not a Text Display option' },
     build: (ctx) => {
       const html = ctx.s.has('html') ? ctx.s.get('html') : `<div style="font-size: 14px;">${escapeHtml(ctx.s.get('text'))}</div>`;
       return {
-        editorData: ctx.s.has('url') ? '' : html,
-        locationFile: '',
+        editorData: ctx.s.has('url') || ctx.s.has('file') ? '' : html,
+        locationFile: ctx.s.get('file'),
         locationUrl: ctx.s.get('url'),
         refreshInterval: ctx.refreshInterval,
         refreshContent: { refreshContent: false },
         title: ctx.title,
         titleLocalized: ctx.title,
-        viewModeHTML: true,
+        viewModeHTML: ctx.s.get('viewmode', 'html') !== 'text',
       };
     },
   },
@@ -975,11 +1564,16 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'text',
     verified: true,
     source: `${QA92} (qa-9.2.0 export, vendor ComputeOps template); ${CF} _section_widget; ${BP} (vCenter and ESX Host Versions)`,
-    note: 'A full-width collapsible heading. It is 12 wide and 1 high whatever the row says, and holds the widgets below it down to the next Section.',
+    doc: 'https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-1/infrastructure-operations/dashboards-and-widgets/using-dashboards/create-and-configure-dashboards/widget-or-view-list-details.html',
+    note: 'Add Section in the dashboard editor. A full-width collapsible heading: 12 wide and 1 high whatever the row says, holding the widgets below it down to the next Section (its config lists their ids). Widgets above the first section belong to none.',
     provides: false,
     needsSubject: false,
     size: { w: 12, h: 1 },
-    settings: [{ key: 'collapsed', type: 'yesno', help: 'start collapsed' }, { key: 'description', type: 'text', help: 'a line under the heading' }],
+    settings: [
+      { key: 'collapsed', type: 'yesno', help: 'start collapsed (default no)', label: 'Collapse', default: 'no' },
+      { key: 'description', type: 'text', help: 'a line under the heading', label: 'Description', writes: ['description'] },
+    ],
+    passthrough: { widgets: 'the ids of the widgets below it, down to the next section: worked out from the layout', widgetId: 'the section’s own id, as 9.2 writes it' },
     build: (ctx) => ({ title: ctx.title, titleLocalized: ctx.title, description: ctx.s.get('description'), widgets: [] }),
   },
   {
@@ -987,26 +1581,47 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Alert List',
     family: 'alert',
     verified: true,
-    source: `${CF} _alert_list_widget; ${QA92} (License Server Alerts); ${BP} (Alert and Troubleshoot, Cluster Capacity Details v7)`,
-    note: 'Type codes are <type>_<subtype> for types 15 to 20, as the exports have them (…_19 performance, …_20 capacity); availability, compliance and configuration use the subtype numbers the alert definitions API lists (18, 21, 22). impact= values are the badge names; exports only ever showed [].',
+    source: `${CF} _alert_list_widget; ${QA92} (License Server Alerts); ${BP} (Alert and Troubleshoot, Cluster Capacity Details v7); ${REAL}`,
+    doc: doc('alert-list-widget'),
+    note: 'Type codes are <type>_<subtype> for types 15 to 20, as the exports have them (…_19 performance, …_20 capacity); availability, compliance and configuration use the subtype numbers the alert definitions API lists (18, 21, 22).',
     provides: true,
     needsSubject: false,
     size: { w: 12, h: 5 },
     settings: [
       S.kinds(false),
-      { key: 'criticality', type: 'choices', options: Object.keys(CRITICALITY), help: 'which criticalities (default warning,immediate,critical)' },
-      { key: 'status', type: 'choice', options: ['active', 'all'], help: 'active alerts only (default) or all' },
-      { key: 'types', type: 'choices', options: Object.keys(ALERT_SUBTYPES), help: 'alert subtypes' },
-      { key: 'impact', type: 'choices', options: ['health', 'risk', 'efficiency'], help: 'badges the alerts affect' },
-      { key: 'definitions', type: 'text', help: 'alert definition ids, comma separated' },
-      { key: 'world', type: 'yesno', help: 'query the whole vSphere World rather than a sent object' },
+      ...S.group,
+      S.objects('alert-list-widget'),
+      { key: 'criticality', type: 'choices', options: Object.keys(CRITICALITY), help: 'which criticalities (default warning,immediate,critical)', label: 'Criticality', doc: doc('alert-list-widget'), default: 'warning,immediate,critical', writes: ['criticalityLevel'] },
+      { key: 'status', type: 'choice', options: ['active', 'all'], help: 'active alerts only (default) or all', label: 'Status', doc: doc('alert-list-widget'), default: 'active', writes: ['status'] },
+      { key: 'controlstate', type: 'choices', options: ['open'], help: 'control states to include (default all); open (0) is the only one an export holds', label: 'Control State', doc: doc('alert-list-widget'), writes: ['state'], read: (src) => (Array.isArray(src.config['state']) && src.config['state'].length === 1 && src.config['state'][0] === 0 ? 'open' : undefined) },
+      { key: 'types', type: 'choices', options: Object.keys(ALERT_SUBTYPES), help: 'alert subtypes', label: 'Alert Type', doc: doc('alert-list-widget'), writes: ['type'] },
+      { key: 'impact', type: 'choices', options: ['health', 'risk', 'efficiency'], help: 'badges the alerts affect', label: 'Impact', doc: doc('alert-list-widget'), writes: ['alertImpact'] },
+      {
+        key: 'actions',
+        type: 'choices',
+        options: ['yes', 'no'],
+        help: 'alerts with an action (yes), without (no), or either (default)',
+        label: 'Actions',
+        doc: doc('alert-list-widget'),
+        writes: ['alertAction'],
+        read: (src) => { const a = src.config['alertAction']; return Array.isArray(a) && a.length > 0 && a.every((x) => x === 'yes' || x === 'no') ? a.join(',') : undefined; },
+      },
+      { key: 'definitions', type: 'text', help: 'alert definition ids, comma separated', label: 'Alert Definition', doc: doc('alert-list-widget'), writes: ['alertDefinitions'] },
+      { key: 'world', type: 'yesno', help: 'query the whole vSphere World rather than a sent object', label: 'Input Data › Object (vSphere World)', writes: ['resource', 'selfProvider'] },
+      S.relationship('children,self', 'alert-list-widget', true),
       S.depth(),
+      S.filter('alert-list-widget'),
+      S.filterkind('alert-list-widget'),
       S.refresh,
     ],
+    alsoWrites: { alertDefinitions: `${CF} and ${QA92}` },
+    passthrough: { hierarchyMode: 'an 8.x key (-1 in the two exports that have it) with no option in the 9.x dialog', periodLength: 'only null seen: the alert date range is a per-user state (permDateFilter)' },
     build: (ctx) => {
       const kinds = ctx.s.kinds('kinds');
       const world = ctx.s.yes('world', false);
       const pin = worldOf(kinds[0]);
+      const objects = objectsOf(ctx);
+      const group = ctx.s.get('group');
       const types = ctx.s.list('types').flatMap((name) => {
         const sub = ALERT_SUBTYPES[name.toLowerCase()];
         return sub === undefined ? [] : [15, 16, 17, 18, 19, 20].map((type) => `${type}_${sub}`);
@@ -1014,22 +1629,22 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
       const crit = (ctx.s.has('criticality') ? ctx.s.list('criticality') : ['warning', 'immediate', 'critical']).map((c) => CRITICALITY[c.toLowerCase()]).filter((n): n is number => n !== undefined);
       return {
         refreshInterval: ctx.refreshInterval,
-        resource: world ? [{ resourceId: ctx.entries.resource(pin.ref, pin.name), resourceName: pin.name }] : [],
+        resource: world ? [{ resourceId: ctx.entries.resource(pin.ref, pin.name), resourceName: pin.name }] : objects,
         refreshContent: { refreshContent: ctx.refreshContent },
-        relationshipMode: { relationshipMode: [-1, 0] },
+        relationshipMode: { relationshipMode: relationshipOf(ctx, [-1, 0]) },
         selfProvider: { selfProvider: world ? false : ctx.selfProvider },
         title: ctx.title,
-        mode: 'all',
-        filterMode: 'tagPicker',
-        tagFilter: kinds.length > 0 ? kindFilter(ctx, kinds) : null,
+        mode: objects.length > 0 ? 'resource' : 'all',
+        filterMode: filterModeOf(ctx),
+        tagFilter: group ? groupFilter(ctx, group, ctx.s.get('grouptype', 'Environment')) : kinds.length > 0 ? kindFilter(ctx, kinds) : null,
         depth: ctx.s.num('depth', 1),
-        customFilter: EMPTY_FILTER,
+        customFilter: customFilterOf(ctx, kinds[0]),
         criticalityLevel: crit,
         type: types,
         status: ctx.s.get('status', 'active') === 'all' ? [] : [0],
-        state: [],
+        state: ctx.s.list('controlstate').includes('open') ? [0] : [],
         alertImpact: ctx.s.list('impact'),
-        alertAction: [],
+        alertAction: ctx.s.list('actions'),
         alertDefinitions: ctx.s.list('definitions').map((id) => ({ id })),
       };
     },
@@ -1039,15 +1654,17 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Top Alerts',
     family: 'alert',
     verified: true,
-    source: `${CF} _problem_alerts_list_widget; ${NB} (custom_vm_summary), sconyard/vrops-dashboard-Kubernetes_Namespace_Overview`,
+    source: `${CF} _problem_alerts_list_widget; ${NB} (custom_vm_summary), sconyard/vrops-dashboard-Kubernetes_Namespace_Overview; ${REAL}`,
+    doc: doc('top-alerts-widget'),
     provides: true,
     needsSubject: true,
     size: { w: 4, h: 5 },
     settings: [
-      { key: 'badge', type: 'choice', options: ['health', 'risk', 'efficiency', 'all'], help: 'alerts affecting which badge (default health)' },
-      { key: 'objects', type: 'choice', options: ['self', 'children', 'selfChildren'], help: 'alerts on the object, on its children, or both (default children)' },
-      { key: 'limit', type: 'number', min: 1, max: 50, help: 'how many alerts (default 5)' },
-      S.pin,
+      { key: 'badge', type: 'choice', options: ['health', 'risk', 'efficiency', 'all'], help: 'alerts affecting which badge (default health)', label: 'Impact Badge', doc: doc('top-alerts-widget'), default: 'health', writes: ['impactedBadge'] },
+      { key: 'objects', type: 'choice', options: ['self', 'children', 'selfChildren'], help: 'alerts on the object, on its children, or both (default children)', label: 'Input Transformation (triggered on)', doc: doc('top-alerts-widget'), default: 'children', writes: ['triggeredObject'] },
+      { key: 'limit', type: 'number', min: 1, max: 50, help: 'how many alerts (default 5)', label: 'Number of Alerts', doc: doc('top-alerts-widget'), default: '5', writes: ['topIssuesDisplayLimit'] },
+      { ...S.relationship('self', 'top-alerts-widget'), help: 'the objects the input is turned into (written only when set: most exports leave it out)' },
+      S.pin(),
       S.refresh,
     ],
     build: (ctx) => {
@@ -1062,6 +1679,7 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
         impactedBadge: badge === 'all' ? '' : badge,
         triggeredObject: { triggeredObject: ctx.s.get('objects', 'children') },
         topIssuesDisplayLimit: ctx.s.num('limit', 5),
+        ...(ctx.s.has('relationship') ? { relationshipMode: { relationshipMode: relationshipOf(ctx, 0) } } : {}),
       };
     },
   },
@@ -1070,11 +1688,12 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Alert Volume',
     family: 'alert',
     verified: true,
-    source: `${CF} _alert_volume_widget; ${QA92} (vendor-template-Home); ${BP} (Alert and Troubleshoot)`,
+    source: `${CF} _alert_volume_widget; ${QA92} (vendor-template-Home); ${BP} (Alert and Troubleshoot); ${REAL}`,
+    doc: doc('alert-volume-widget'),
     provides: false,
     needsSubject: true,
     size: { w: 4, h: 4 },
-    settings: [S.pin, S.refresh],
+    settings: [S.pin(), S.refresh],
     build: (ctx) => {
       const pin = pinOf(ctx, undefined);
       return {
@@ -1086,28 +1705,40 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
       };
     },
   },
-  summaryBadge('IntSummaryHealth', 'Health', { verified: true, source: `${QA92} (qa-9.2.0 export: Health State of the Environment)`, badgeMode: true }),
-  summaryBadge('IntSummaryRisk', 'Risk', { verified: true, source: `${SURVEY} (same shape as Health, with badgeMode)`, deprecated: true, badgeMode: true }),
-  summaryBadge('IntSummaryEfficiency', 'Efficiency', { verified: true, source: `${SURVEY} (same shape as Health, with badgeMode)`, deprecated: true, badgeMode: true }),
-  summaryBadge('IntSummaryCapacity', 'Capacity Remaining', { verified: true, source: `${BP} (Cluster Capacity Trends and Projections); ${NB} (custom_vm_summary)` }),
-  summaryBadge('IntSummaryTimeRemaining', 'Time Remaining', { verified: true, source: `${NB} (cluster_capacity); ${BP} (Environment Capacity v2)` }),
-  summaryBadge('IntSummaryWorkload', 'Workload', { verified: true, source: 'vmspot/vROps-Dashboards (TAM Contention Trends)' }),
-  summaryBadge('IntSummaryStress', 'Stress', { verified: true, source: `${NB} (custom_vm_summary: config {})`, note: 'Not in VCF 9.0’s widget list; it imports from 8.x content.' }),
-  summaryBadge('IntSummaryFaults', 'Faults', { verified: false, source: `${DOCS}; the type name is the one this toolkit’s own reader knows (src/aria/aria.ts)`, deprecated: true, note: 'Config assumed to be the IntSummary shape.' }),
-  summaryBadge('IntSummaryAnomalies', 'Anomalies', { verified: false, source: DOCS, deprecated: true, note: 'Type name and config assumed from the IntSummary family.' }),
-  summaryBadge('IntSummaryCurrentPolicy', 'Current Policy', { verified: false, source: DOCS, deprecated: true, note: 'Type name and config assumed from the IntSummary family.' }),
-  summaryBadge('IntSummaryEnvironment', 'Environment', { verified: false, source: DOCS, deprecated: true, note: 'Type name and config assumed from the IntSummary family.' }),
+  summaryBadge('IntSummaryHealth', 'Health', { verified: true, source: `${QA92} (qa-9.2.0 export: Health State of the Environment)`, page: 'health-widget', badgeMode: true }),
+  summaryBadge('IntSummaryRisk', 'Risk', { verified: true, source: `${SURVEY} (same shape as Health, with badgeMode)`, page: 'risk-widget', deprecated: true, badgeMode: true }),
+  summaryBadge('IntSummaryEfficiency', 'Efficiency', { verified: true, source: `${SURVEY} (same shape as Health, with badgeMode)`, page: 'efficiency-widget', deprecated: true, badgeMode: true }),
+  summaryBadge('IntSummaryCapacity', 'Capacity Remaining', { verified: true, source: `${BP} (Cluster Capacity Trends and Projections); ${NB} (custom_vm_summary); ${REAL}`, page: 'capacity-remaining-widget' }),
+  summaryBadge('IntSummaryTimeRemaining', 'Time Remaining', { verified: true, source: `${NB} (cluster_capacity); ${BP} (Environment Capacity v2); ${REAL}`, page: 'time-remaining-widget' }),
+  summaryBadge('IntSummaryWorkload', 'Workload', { verified: true, source: 'vmspot/vROps-Dashboards (TAM Contention Trends)', page: 'workload-widget' }),
+  summaryBadge('IntSummaryStress', 'Workload Pattern', {
+    verified: true,
+    source: `${NB} (custom_vm_summary: config {}); ${REAL} (99 widgets titled for the hourly workload of the last week)`,
+    page: 'workload-pattern',
+    aliases: ['WorkloadPattern', 'Stress'],
+    note: 'The export type is IntSummaryStress (the 8.x Stress widget). Its titles in a real export ("… working hard over the last week", "… workload pattern") match the 9.x Workload Pattern; that it is the same widget is inferred, not documented.',
+  }),
+  summaryBadge('IntSummaryFaults', 'Faults', { verified: true, source: `${REAL} (one widget: the four common keys, no resource)`, page: 'faults-widget', deprecated: true, resource: false }),
+  summaryBadge('IntSummaryAnomalies', 'Anomalies', { verified: false, source: DOCS, page: 'anomalies-widget', deprecated: true, note: 'Type name and config assumed from the IntSummary family.' }),
+  summaryBadge('IntSummaryCurrentPolicy', 'Current Policy', { verified: false, source: DOCS, page: 'current-policy-widget', deprecated: true, note: 'Type name and config assumed from the IntSummary family.' }),
+  summaryBadge('IntSummaryEnvironment', 'Environment', { verified: false, source: DOCS, page: 'environment-widget', deprecated: true, note: 'Type name and config assumed from the IntSummary family.' }),
   {
     type: 'Skittles',
     label: 'Environment Overview',
     family: 'badge',
     verified: true,
-    source: `${SURVEY} §Skittles (mode custom, badge[], custom[] of object types); ${NB} (cost_by_application: config {})`,
+    source: `${SURVEY} §Skittles (mode custom, badge[], custom[] of object types); ${NB} (cost_by_application: config {}); ${REAL}`,
+    doc: doc('environment-overview-widget'),
     note: 'The type is Skittles in the export: coloured badge dots per object type.',
     provides: true,
     needsSubject: true,
     size: { w: 6, h: 4 },
-    settings: [S.kinds(), { key: 'badges', type: 'choices', options: ['health', 'risk', 'efficiency'], help: 'which badges (default all three)' }, S.refresh],
+    settings: [
+      { ...S.kinds(true, ['custom']), label: 'Config › Advanced (object types)', doc: doc('environment-overview-widget') },
+      { key: 'badges', type: 'choices', options: ['health', 'risk', 'efficiency'], help: 'which badges (default all three; at least one)', label: 'Badge', doc: doc('environment-overview-widget'), default: 'health,risk,efficiency', writes: ['badge'] },
+      S.refresh,
+    ],
+    passthrough: { mode: 'always custom: the object types are listed in custom[]' },
     build: (ctx) => {
       const shown = ctx.s.has('badges') ? ctx.s.list('badges').map((b) => b.toLowerCase()) : ['health', 'risk', 'efficiency'];
       return {
@@ -1126,101 +1757,142 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Object Relationship (Advanced)',
     family: 'relationship',
     verified: true,
-    source: `${CF} _resource_relationship_advanced_widget; ${BP} (Cluster Details v2, Alert and Troubleshoot); ${QA92}`,
+    source: `${CF} _resource_relationship_advanced_widget; ${BP} (Cluster Details v2, Alert and Troubleshoot); ${QA92}; ${REAL}`,
+    doc: doc('object-relationship-advanced-widget'),
     provides: true,
     needsSubject: true,
     size: { w: 6, h: 6 },
     settings: [
       S.kinds(false),
-      { key: 'depth', type: 'text', help: 'levels up,down from the object (default 2,2)' },
-      { key: 'traversal', type: 'text', help: 'traversal spec (default vSphere Hosts and Clusters-VMWARE-vSphere World)' },
-      { key: 'rows', type: 'number', min: 1, max: 100, help: 'rows per page (default 5)' },
-      { key: 'first', type: 'yesno', help: 'select the first object on open' },
+      { key: 'depth', type: 'text', options: ['0,1', '0,2', '1,1', '2,2', '3,3'], help: 'parents depth,children depth (default 2,2)', label: 'Parents Depth / Children Depth', doc: doc('object-relationship-advanced-widget'), default: '2,2', writes: ['depth'] },
+      { key: 'traversal', type: 'text', options: ['vSphere Hosts and Clusters-VMWARE-vSphere World', 'vSphere Storage-VMWARE-vSphere World'], help: 'the inventory tree it starts from (default vSphere Hosts and Clusters-VMWARE-vSphere World)', label: 'Inventory trees', doc: doc('object-relationship-advanced-widget'), default: 'vSphere Hosts and Clusters-VMWARE-vSphere World', writes: ['traversalSpecId'] },
+      { key: 'rows', type: 'number', min: 1, max: 100, help: 'objects per page (default 5)', label: 'Page Size', doc: doc('object-relationship-advanced-widget'), default: '5', writes: ['paginationNumber'] },
+      { key: 'first', type: 'yesno', help: 'select the first object on open (default no)', label: 'Auto Select First Row', default: 'no', writes: ['selectFirstRow'] },
+      { ...S.pin(['resourceId', 'resourceName']), seenElsewhere: `${QA92} and the same export (resource:id, SDDC Health)`, read: (src) => { const f = src.entries.resourceOf(String(src.config['resourceId'] ?? '')); return f && !/[;,]/.test(f.name) && !(f.ref.adapterKind === 'VMWARE' && f.ref.resourceKind === 'vSphere World') ? `${kindAlias(f.ref)}:${f.name}` : undefined; } },
+      S.filter('object-relationship-advanced-widget'),
+      S.filterkind('object-relationship-advanced-widget'),
       S.refresh,
     ],
-    build: (ctx) => ({
-      resourceId: null,
-      refreshInterval: ctx.refreshInterval,
-      traversalSpecId: ctx.s.get('traversal', 'vSphere Hosts and Clusters-VMWARE-vSphere World'),
-      refreshContent: { refreshContent: ctx.refreshContent },
-      resourceName: null,
-      title: ctx.title,
-      filterMode: 'tagPicker',
-      tagFilter: ctx.s.kinds('kinds').length > 0 ? kindFilter(ctx, ctx.s.kinds('kinds')) : null,
-      paginationNumber: ctx.s.num('rows', 5),
-      depth: ctx.s.get('depth', '2,2'),
-      customFilter: EMPTY_FILTER,
-      selectFirstRow: { selectFirstRow: ctx.s.yes('first', false) },
-      selfProvider: { selfProvider: ctx.selfProvider },
-    }),
+    alsoWrites: { paginationNumber: `${CF} and ${QA92}`, selectFirstRow: `${CF} and ${QA92}` },
+    build: (ctx) => {
+      const pin = pinOf(ctx, undefined);
+      const pinned = ctx.selfProvider && ctx.s.has('pin');
+      return {
+        resourceId: pinned ? ctx.entries.resource(pin.ref, pin.name) : null,
+        refreshInterval: ctx.refreshInterval,
+        traversalSpecId: ctx.s.get('traversal', 'vSphere Hosts and Clusters-VMWARE-vSphere World'),
+        refreshContent: { refreshContent: ctx.refreshContent },
+        resourceName: pinned ? pin.name : null,
+        title: ctx.title,
+        filterMode: filterModeOf(ctx),
+        tagFilter: ctx.s.kinds('kinds').length > 0 ? kindFilter(ctx, ctx.s.kinds('kinds')) : null,
+        paginationNumber: ctx.s.num('rows', 5),
+        depth: ctx.s.get('depth', '2,2'),
+        customFilter: customFilterOf(ctx),
+        selectFirstRow: { selectFirstRow: ctx.s.yes('first', false) },
+        selfProvider: { selfProvider: ctx.selfProvider },
+      };
+    },
   },
   {
     type: 'ResourceRelationship',
     label: 'Object Relationship',
     family: 'relationship',
     verified: true,
-    source: `${BP} (ESXi Host Details, vCenter Server Health); vmwarecode/vROPs-8.0---6.7.x-Horizon-Adapter-Dashboard-Content-Pack`,
+    source: `${BP} (ESX Host Details, vCenter Server Health); vmwarecode/vROPs-8.0---6.7.x-Horizon-Adapter-Dashboard-Content-Pack; ${REAL}`,
+    doc: doc('object-relationship-widget'),
     provides: true,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: [S.kinds(false), { key: 'nodesize', type: 'number', min: 8, max: 64, help: 'node size (default 18)' }, { key: 'autozoom', type: 'yesno', help: 'fit to the widget' }, S.refresh],
-    build: (ctx) => ({
-      filterMode: 'tagPicker',
-      tagFilter: ctx.s.kinds('kinds').length > 0 ? kindFilter(ctx, ctx.s.kinds('kinds')) : null,
-      resourceId: null,
-      nodeSize: ctx.s.num('nodesize', 18),
-      refreshInterval: ctx.refreshInterval,
-      autoZoom: { autoSize: ctx.s.yes('autozoom', false) },
-      refreshContent: { refreshContent: ctx.refreshContent },
-      customFilter: EMPTY_FILTER,
-      resourceName: null,
-      selfProvider: { selfProvider: ctx.selfProvider },
-      title: ctx.title,
-    }),
+    settings: [
+      S.kinds(false),
+      { key: 'nodesize', type: 'number', min: 8, max: 64, help: 'icon size in pixels (default: automatic, null)', label: 'Node Size', doc: doc('object-relationship-widget'), writes: ['nodeSize'], seenElsewhere: `${BP} (nodeSize 18)` },
+      { key: 'autozoom', type: 'yesno', help: 'zoom once to a fixed node size (default no)', label: 'Auto Zoom to Fixed Node Size', doc: doc('object-relationship-widget'), default: 'no', writes: ['autoZoom'] },
+      { ...S.pin(['resourceId', 'resourceName']), seenElsewhere: 'the Object Relationship (Advanced) of the same export', read: (src) => { const f = src.entries.resourceOf(String(src.config['resourceId'] ?? '')); return f && !/[;,]/.test(f.name) ? `${kindAlias(f.ref)}:${f.name}` : undefined; } },
+      S.filter('object-relationship-widget'),
+      S.filterkind('object-relationship-widget'),
+      S.refresh,
+    ],
+    build: (ctx) => {
+      const pin = pinOf(ctx, undefined);
+      const pinned = ctx.selfProvider && ctx.s.has('pin');
+      return {
+        filterMode: filterModeOf(ctx),
+        tagFilter: ctx.s.kinds('kinds').length > 0 ? kindFilter(ctx, ctx.s.kinds('kinds')) : null,
+        resourceId: pinned ? ctx.entries.resource(pin.ref, pin.name) : null,
+        nodeSize: ctx.s.has('nodesize') ? ctx.s.num('nodesize', 18) : null,
+        refreshInterval: ctx.refreshInterval,
+        autoZoom: { autoSize: ctx.s.yes('autozoom', false) },
+        refreshContent: { refreshContent: ctx.refreshContent },
+        customFilter: customFilterOf(ctx),
+        resourceName: pinned ? pin.name : null,
+        selfProvider: { selfProvider: ctx.selfProvider },
+        title: ctx.title,
+      };
+    },
   },
   {
     type: 'TopologyGraph',
     label: 'Topology Graph',
     family: 'relationship',
     verified: true,
-    source: `${BP} (Legacy MSSQL Dashboards: MS-SQL-Database.json)`,
-    note: 'Writes the default topology configuration (defaultTopologyGraphConfig.xml, force layout, parent and child relationships) over the vSphere Hosts and Clusters traversal; pick another configuration in the editor.',
+    source: `${BP} (Legacy MSSQL Dashboards: MS-SQL-Database.json); ${REAL}`,
+    doc: doc('topology-widget'),
+    note: 'Writes the configuration file’s parent and child relationships over the vSphere Hosts and Clusters traversal; relationships a management pack adds are kept as exported when loaded.',
     provides: true,
     needsSubject: true,
     size: { w: 6, h: 6 },
-    settings: [{ key: 'depth', type: 'number', min: 1, max: 10, help: 'levels shown (default 2)' }, { key: 'layout', type: 'choice', options: ['force', 'hierarchical'], help: 'graph layout (default force)' }, S.refresh],
-    build: (ctx) => ({
-      custom: [
-        {
-          lightWeightRelationships: [
-            { id: 'extModel1-1', key: 'widget.topologyGraph.parent', lineStyle: 'solid', name: '', propKeyPrefix: '', relationship: '~child', subType: '', type: '~child' },
-            { id: 'extModel1-2', key: 'widget.topologyGraph.child', lineStyle: 'solid', name: '', propKeyPrefix: '', relationship: 'child', subType: '', type: 'child' },
-          ],
-          selectedConfigFile: 'defaultTopologyGraphConfig.xml',
-          selectedLayoutType: ctx.s.get('layout', 'force'),
-          travSpecs: [{ description: 'vSphere Hosts and Clusters', id: 'extModel2-1', key: 'vSphere Hosts and Clusters-VMWARE-vSphere World', name: 'vSphere Hosts and Clusters', relations: ['~child', 'child'] }],
-        },
-      ],
-      depth: ctx.s.num('depth', 2),
-      filterMode: { leafExpand: true },
-      mode: 'node',
-      refreshContent: { refreshContent: ctx.refreshContent },
-      refreshInterval: ctx.refreshInterval,
-      resInteractionMode: null,
-      resource: { resourceName: '' },
-      resources: [{ resourceName: '' }, { resourceName: '' }],
-      selfProvider: { selfProvider: ctx.selfProvider },
-      title: ctx.title,
-      treeType: { treeType: false },
-    }),
+    settings: [
+      { key: 'depth', type: 'number', min: 1, max: 10, help: 'levels shown (default 2)', label: 'Degree of separation', doc: doc('topology-widget'), default: '2', writes: ['depth'] },
+      { key: 'exploration', type: 'choice', options: ['node', 'path'], help: 'explore from one object (node, the default) or between two (path)', label: 'Exploration Mode', doc: doc('topology-widget'), default: 'node', writes: ['mode'], read: readChoice('mode', ['path'], 'node') },
+      { key: 'layout', type: 'choice', options: ['force', 'hierarchical'], help: 'Graph (force, the default) or Hierarchical', label: 'Layout', doc: doc('topology-widget'), default: 'force', writes: ['custom'] },
+      { key: 'treetype', type: 'yesno', help: 'a tree view for the hierarchical layout (default no)', label: 'Tree type', doc: doc('topology-widget'), default: 'no', writes: ['treeType'], read: readFlag('treeType', 'treeType', false) },
+      { key: 'configfile', type: 'text', options: ['defaultTopologyGraphConfig.xml'], help: 'the relationship definition file (default defaultTopologyGraphConfig.xml)', label: 'Configuration File', doc: doc('topology-widget'), default: 'defaultTopologyGraphConfig.xml', writes: ['custom'] },
+      { ...S.pin(), read: (src) => { const r = src.config['resource']; const f = rec(r) ? src.entries.resourceOf(String(r['resourceId'] ?? '')) : undefined; return f && !/[;,]/.test(f.name) ? `${kindAlias(f.ref)}:${f.name}` : undefined; } },
+      S.metricconfig('topology-widget'),
+      S.refresh,
+    ],
+    passthrough: {
+      resources: 'the two objects Path Exploration runs between ([{resourceName: ""}, …] until they are picked)',
+      filterMode: 'always {leafExpand: true}: leaf objects expand in the graph',
+    },
+    build: (ctx) => {
+      const pin = pinOf(ctx, undefined);
+      const pinned = ctx.selfProvider && ctx.s.has('pin');
+      return {
+        custom: [
+          {
+            lightWeightRelationships: [
+              { id: 'extModel1-1', key: 'widget.topologyGraph.parent', lineStyle: 'solid', name: '', propKeyPrefix: '', relationship: '~child', subType: '', type: '~child' },
+              { id: 'extModel1-2', key: 'widget.topologyGraph.child', lineStyle: 'solid', name: '', propKeyPrefix: '', relationship: 'child', subType: '', type: 'child' },
+            ],
+            selectedConfigFile: ctx.s.get('configfile', 'defaultTopologyGraphConfig.xml'),
+            selectedLayoutType: ctx.s.get('layout', 'force'),
+            travSpecs: [{ description: 'vSphere Hosts and Clusters', id: 'extModel2-1', key: 'vSphere Hosts and Clusters-VMWARE-vSphere World', name: 'vSphere Hosts and Clusters', relations: ['~child', 'child'] }],
+          },
+        ],
+        depth: ctx.s.num('depth', 2),
+        filterMode: { leafExpand: true },
+        mode: ctx.s.get('exploration', 'node'),
+        refreshContent: { refreshContent: ctx.refreshContent },
+        refreshInterval: ctx.refreshInterval,
+        resInteractionMode: ctx.s.get('metricconfig') || null,
+        resource: pinned ? { resourceId: ctx.entries.resource(pin.ref, pin.name), resourceName: pin.name } : { resourceName: '' },
+        resources: [{ resourceName: '' }, { resourceName: '' }],
+        selfProvider: { selfProvider: ctx.selfProvider },
+        title: ctx.title,
+        treeType: { treeType: ctx.s.yes('treetype', false) },
+      };
+    },
   },
   {
     type: 'MetricPicker',
     label: 'Metric Picker',
     family: 'picker',
     verified: true,
-    source: `${BP} (Alert and Troubleshoot, Troubleshooting VMs v3)`,
-    note: 'It sends a metric, not an object: a widget that receives from it is wired with interaction type metricId, as the exports have it.',
+    source: `${BP} (Alert and Troubleshoot, Troubleshooting VMs v3); ${REAL}`,
+    doc: doc('metric-picker-widget'),
+    note: 'It sends a metric, not an object: a widget that receives from it is wired with interaction type metricId, as the exports have it. Its "common", "collecting" and properties switches are per-user states.',
     provides: true,
     needsSubject: true,
     size: { w: 4, h: 6 },
@@ -1232,44 +1904,52 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     label: 'Tag Picker',
     family: 'picker',
     verified: true,
-    source: `${SURVEY} §TagPicker (config is refreshInterval and refreshContent)`,
+    source: `${SURVEY} §TagPicker (config is refreshInterval and refreshContent); ${REAL} (91 widgets, every one with config {})`,
+    doc: doc('tag-picker-widget'),
     provides: true,
     needsSubject: false,
     size: { w: 3, h: 6 },
     settings: BLANK_ONLY,
+    alsoWrites: { refreshInterval: SURVEY, refreshContent: SURVEY },
     build: (ctx) => ({ refreshInterval: ctx.refreshInterval, refreshContent: { refreshContent: ctx.refreshContent } }),
   },
   {
     type: 'Geo',
     label: 'Geo',
     family: 'other',
-    verified: false,
-    source: `${SURVEY} §Geo (config keys only: customFilter, filterMode, refreshContent, refreshInterval, selfProvider, tagFilter, title)`,
-    note: 'The keys are from a live export; their values were not shown. Objects appear only when their Geo Location tag is set.',
+    verified: true,
+    source: `${SURVEY} §Geo; ${REAL} (one widget: tag and Advanced filters)`,
+    doc: `${DOCS90}geo-widget.html`,
+    note: 'In VCF Operations 9.0’s widget list, not 9.1’s. Objects appear only when their Geo Location tag is set.',
     provides: true,
     needsSubject: false,
     size: { w: 6, h: 6 },
-    settings: [S.kinds(false), S.refresh],
-    build: (ctx) => ({ ...common(ctx), filterMode: 'tagPicker', tagFilter: ctx.s.kinds('kinds').length > 0 ? kindFilter(ctx, ctx.s.kinds('kinds')) : null, customFilter: EMPTY_FILTER }),
+    settings: [S.kinds(false), { ...S.filter('geo-widget'), doc: `${DOCS90}geo-widget.html` }, { ...S.filterkind('geo-widget'), doc: `${DOCS90}geo-widget.html` }, S.refresh],
+    build: (ctx) => {
+      const kinds = ctx.s.kinds('kinds');
+      return { ...common(ctx), filterMode: filterModeOf(ctx), tagFilter: kinds.length > 0 ? kindFilter(ctx, kinds) : null, customFilter: customFilterOf(ctx, kinds[0]) };
+    },
   },
   {
     type: 'LogAnalysis',
     label: 'Log Analysis',
     family: 'logs',
     verified: true,
-    source: `${BP} (Troubleshooting VMs v4: Log Analysis for selected VM and parent ESXi Host)`,
+    source: `${BP} (Troubleshooting VMs v4: Log Analysis for selected VM and parent ESX Host)`,
+    doc: doc('log-analysis-widget'),
     note: 'Needs VCF Operations for logs integrated. The export seen had an empty query; query= is written as its search text, which is not confirmed.',
     provides: false,
     needsSubject: true,
     size: { w: 12, h: 6 },
     settings: [
-      { key: 'chart', type: 'choice', options: ['column', 'bar', 'line', 'area', 'pie', 'scalar'], help: 'chart type (default column)' },
-      { key: 'show', type: 'choice', options: ['all', 'chart', 'events'], help: 'what the widget shows (default all)' },
-      { key: 'relationship', type: 'choice', options: ['self', 'children', 'parents'], help: 'logs of the object, its children, or its parents too (default parents)' },
-      { key: 'query', type: 'text', help: 'search text' },
-      { key: 'rows', type: 'number', min: 1, max: 1000, help: 'events returned (default 50)' },
+      { key: 'chart', type: 'choice', options: ['column', 'bar', 'line', 'area', 'pie', 'scalar'], help: 'chart type (default column)', label: 'Visualization Details › chart type', doc: doc('log-analysis-widget'), default: 'column', writes: ['chartType'] },
+      { key: 'show', type: 'choice', options: ['all', 'chart', 'events'], help: 'what the widget shows (default all)', label: 'Visualization Details › view mode', doc: doc('log-analysis-widget'), default: 'all', writes: ['liViewMode'] },
+      { key: 'relationship', type: 'choice', options: ['self', 'children', 'parents'], help: 'logs of the object, its children, or its parents too (default parents)', label: 'Input Transformation', default: 'parents', writes: ['relationshipMode'] },
+      { key: 'query', type: 'text', help: 'search text', label: 'Query Details › keyword search', doc: doc('log-analysis-widget'), writes: ['queryFilter_searchtext'] },
+      { key: 'rows', type: 'number', min: 1, max: 1000, help: 'events returned (default 50)', label: 'Query Details (events)', default: '50', writes: ['queryFilter'] },
       S.refresh,
     ],
+    passthrough: { liOverTime: 'the aggregation over time (Aggregation Details) the logs integration keeps', liAggregationFunction: 'the aggregation function (Aggregation Details): count', liQueryMode: 'the query mode the logs integration keeps (1)' },
     build: (ctx) => ({
       queryFilter_searchtext: ctx.s.has('query') ? [ctx.s.get('query')] : [],
       refreshInterval: ctx.refreshInterval,
@@ -1294,6 +1974,8 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'other',
     verified: true,
     source: `${QA92} (vendor-template-Home: config {})`,
+    doc: doc('recommended-actions-widget'),
+    note: 'Scope, object tabs and badge are chosen on the widget itself, not in its configuration.',
     provides: false,
     needsSubject: false,
     size: { w: 6, h: 8 },
@@ -1306,12 +1988,17 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'other',
     verified: true,
     source: 'vmwarecode/vROPs-8.0---6.7.x-Horizon-Adapter-Dashboard-Content-Pack (C4 dashboards)',
-    note: 'Which actions it offers depends on the object’s adapter; set them in the editor.',
+    doc: doc('data-collection-results-widget'),
+    note: 'Which actions it offers depends on the object’s adapter; the default action per object type is set in the editor.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: BLANK_ONLY,
-    build: (ctx) => ({ ...common(ctx), dataCollectionDefaultActions: [], dataCollectionOnInteraction: { dataCollectionOnInteraction: false }, dataCollectionSelectedResource: {} }),
+    settings: [
+      { key: 'oninteraction', type: 'yesno', help: 'start a new data collection when the sending widget’s selection changes (default no)', label: 'Start new data collection on interaction change', doc: doc('data-collection-results-widget'), default: 'no', writes: ['dataCollectionOnInteraction'], read: readFlag('dataCollectionOnInteraction', 'dataCollectionOnInteraction', false) },
+      S.refresh,
+    ],
+    passthrough: { dataCollectionDefaultActions: 'the default action per object type (Defaults), picked in the editor from the adapter’s actions', dataCollectionSelectedResource: 'the Selected Object, picked in the editor' },
+    build: (ctx) => ({ ...common(ctx), dataCollectionDefaultActions: [], dataCollectionOnInteraction: { dataCollectionOnInteraction: ctx.s.yes('oninteraction', false) }, dataCollectionSelectedResource: {} }),
   },
   {
     type: 'ContainerDetails',
@@ -1319,11 +2006,13 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'other',
     verified: true,
     source: 'sconyard/vrops-dashboard-Kubernetes_Namespace_Overview (config {})',
+    doc: doc('container-details-widget'),
+    note: 'The only export seen had config {}: Mode (Compact or Large) and the object are the docs’ options, their keys unverified.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: [],
-    build: () => ({}),
+    settings: [{ key: 'mode', type: 'choice', options: ['compact', 'large'], help: 'graph size (written only when set)', label: 'Mode', doc: doc('container-details-widget'), writes: ['mode'], unverified: true }],
+    build: (ctx) => (ctx.s.has('mode') ? { mode: ctx.s.get('mode') } : {}),
   },
   {
     type: 'ContainerOverview',
@@ -1331,27 +2020,36 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'other',
     verified: false,
     source: `${SURVEY} (type counted on a live instance, config not shown); ${DOCS}`,
+    doc: doc('container-overview-widget'),
+    note: 'Config keys follow the other widgets; Mode’s key and values are unverified.',
     deprecated: true,
     provides: true,
     needsSubject: false,
     size: { w: 6, h: 5 },
-    settings: BLANK_ONLY,
-    build: (ctx) => common(ctx),
+    settings: [{ key: 'mode', type: 'choice', options: ['object', 'objectType'], help: 'observe chosen objects or an object type', label: 'Mode', doc: doc('container-overview-widget'), writes: ['mode'], unverified: true }, S.refresh],
+    build: (ctx) => ({ ...common(ctx), ...(ctx.s.has('mode') ? { mode: ctx.s.get('mode') } : {}) }),
   },
   {
     type: 'Forensics',
     label: 'Forensics',
     family: 'chart',
     verified: false,
-    source: `${DOCS}; VCF 9.0 "Forensics Widget Configuration Options" (object, metric, time range)`,
+    source: `${DOCS}; VCF 9.1 "Forensics Widget" (percentile, metric, object)`,
+    doc: doc('forensics-widget'),
     note: 'Type name and config keys follow the other metric widgets; configure it in the editor if it opens empty.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: [S.kind(), S.metric(), S.period, S.refresh],
+    settings: [
+      { ...S.kind(), writes: ['resourceKindId'], unverified: true },
+      { ...S.metric(), writes: ['metricKey'], unverified: true },
+      { key: 'percentile', type: 'number', min: 1, max: 100, help: 'marks the share of data above or below a value, e.g. 90', label: 'Percentile', doc: doc('forensics-widget'), writes: ['percentileValue'], unverified: true },
+      { ...S.period(), unverified: true },
+      S.refresh,
+    ],
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
-      return { ...common(ctx), metricKey: ctx.s.get('metric'), resourceKindId: ctx.entries.kind(kind), periodLength: ctx.s.get('period', 'last7Days') };
+      return { ...common(ctx), metricKey: ctx.s.get('metric'), resourceKindId: ctx.entries.kind(kind), periodLength: ctx.s.get('period', 'last7Days'), ...(ctx.s.has('percentile') ? { percentileValue: ctx.s.num('percentile', 90) } : {}) };
     },
   },
   {
@@ -1360,29 +2058,54 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'chart',
     verified: false,
     source: DOCS,
+    doc: doc('weather-map-widget'),
     deprecated: true,
-    note: 'Deprecated in VCF 9.0. Type name and config keys follow the other metric widgets.',
+    note: 'Deprecated in VCF 9. Type name and config keys follow the other metric widgets; none of its options’ keys has been seen in an export.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: [S.kind(), S.metric(), S.period, S.refresh],
+    settings: [
+      { ...S.kind(), writes: ['resourceKindId'], unverified: true },
+      { ...S.metric(), writes: ['metricKey'], unverified: true },
+      { ...S.period('Metric History: the time window, from the last hour to the last 30 days'), unverified: true },
+      { key: 'every', type: 'number', min: 1, max: 1440, help: 'minutes between redraws of the cached data', label: 'Redraw Rate', doc: doc('weather-map-widget'), writes: ['regenerationTime'], unverified: true },
+      { key: 'sortby', type: 'choice', options: ['name', 'metricValue'], help: 'object name or metric value', label: 'Sort by', doc: doc('weather-map-widget'), writes: ['sortBy'], unverified: true },
+      { key: 'min', type: 'number', help: 'lowest value on the colour scale (blank: automatic)', label: 'Color › Min', doc: doc('weather-map-widget'), writes: ['minValue'], unverified: true },
+      { key: 'max', type: 'number', help: 'highest value on the colour scale (blank: automatic)', label: 'Color › Max', doc: doc('weather-map-widget'), writes: ['maxValue'], unverified: true },
+      S.refresh,
+    ],
     build: (ctx) => {
       const kind = ctx.s.kind('kind', KIND_ALIASES['vm'])!;
-      return { ...common(ctx), metricKey: ctx.s.get('metric'), resourceKindId: ctx.entries.kind(kind), periodLength: ctx.s.get('period', 'last24Hour') };
+      return {
+        ...common(ctx),
+        metricKey: ctx.s.get('metric'),
+        resourceKindId: ctx.entries.kind(kind),
+        periodLength: ctx.s.get('period', 'last24Hour'),
+        ...(ctx.s.has('every') ? { regenerationTime: ctx.s.num('every', 5) } : {}),
+        ...(ctx.s.has('sortby') ? { sortBy: ctx.s.get('sortby') } : {}),
+        ...(ctx.s.has('min') ? { minValue: ctx.s.num('min', 0) } : {}),
+        ...(ctx.s.has('max') ? { maxValue: ctx.s.num('max', 100) } : {}),
+      };
     },
   },
   {
     type: 'WorkloadBalance',
     label: 'DRS Cluster Settings',
     family: 'other',
-    verified: false,
-    source: `${DOCS}; the type name is the one this toolkit’s own reader knows (src/aria/aria.ts)`,
+    verified: true,
+    source: `${REAL} (one widget: badge.utilizationSource, resourceKindId[], a tree-node resource); the type name is the one this toolkit’s own reader knows (src/aria/aria.ts)`,
+    doc: doc('drs-cluster-settings-widget'),
     deprecated: true,
+    note: 'The one export instance was titled "Capacity Utilization"; that WorkloadBalance is the widget the 9.x list calls DRS Cluster Settings is this toolkit’s mapping, not documented.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: BLANK_ONLY,
-    build: (ctx) => common(ctx),
+    settings: [{ ...S.kinds(false, ['resourceKindId']), label: 'Object types' }, S.refresh],
+    passthrough: {
+      badge: 'always {utilizationSource: "workload"} in the export',
+      resource: 'an 8.x navigation-tree node for the object it was opened on',
+    },
+    build: (ctx) => ({ badge: { utilizationSource: 'workload' }, refreshInterval: ctx.refreshInterval, refreshContent: { refreshContent: ctx.refreshContent }, resourceKindId: ctx.s.kinds('kinds').map((k) => ctx.entries.kind(k)), selfProvider: { selfProvider: ctx.selfProvider }, title: ctx.title }),
   },
   {
     type: 'EnvironmentStatus',
@@ -1390,7 +2113,9 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     family: 'badge',
     verified: false,
     source: DOCS,
+    doc: doc('environment-status-widget'),
     deprecated: true,
+    note: 'Its Output Data sections (objects, metrics, applications, alerts, analytics, users) are picked in the editor; their keys are unknown.',
     provides: false,
     needsSubject: false,
     size: { w: 4, h: 4 },
@@ -1398,38 +2123,79 @@ export const WIDGET_TYPES: readonly WidgetType[] = [
     build: (ctx) => common(ctx),
   },
   {
-    type: 'AnomalyBreakdown',
+    type: 'ParetoChart',
     label: 'Anomaly Breakdown',
     family: 'chart',
-    verified: false,
-    source: DOCS,
+    verified: true,
+    source: `${REAL} (two widgets titled Anomaly Breakdown: mode {mode: single}, barsCount, tagFilter, resource)`,
+    doc: doc('anomaly-breakdown-widget'),
+    aliases: ['AnomalyBreakdown'],
+    note: 'The export type is ParetoChart. Mode multiple is the docs’ "multiple objects"; only single has been seen.',
     provides: false,
     needsSubject: true,
     size: { w: 6, h: 5 },
-    settings: BLANK_ONLY,
-    build: (ctx) => common(ctx),
+    settings: [
+      { key: 'mode', type: 'choice', options: ['single', 'multiple'], help: 'one object or several (default single)', label: 'Mode', doc: doc('anomaly-breakdown-widget'), default: 'single', writes: ['mode'], read: (src) => (at(src.config, 'mode', 'mode') === 'multiple' ? 'multiple' : undefined) },
+      { key: 'show', type: 'number', min: 1, max: 100, help: 'objects shown in multiple mode (default 10)', label: 'Show', doc: doc('anomaly-breakdown-widget'), default: '10', writes: ['barsCount'], read: readNum('barsCount', 10) },
+      { ...S.kinds(false), label: 'Output Filter › Basic', doc: doc('anomaly-breakdown-widget'), seenElsewhere: 'the Object List’s tagFilter in the same export' },
+      { ...S.pin(), seenElsewhere: 'the Top Alerts and Alert Volume widgets ({resourceId, resourceName})', read: (src) => { const r = src.config['resource']; const f = rec(r) ? src.entries.resourceOf(String(r['resourceId'] ?? '')) : undefined; return f && !/[;,]/.test(f.name) ? `${kindAlias(f.ref)}:${f.name}` : undefined; } },
+      S.refresh,
+    ],
+    build: (ctx) => {
+      const pin = pinOf(ctx, undefined);
+      const kinds = ctx.s.kinds('kinds');
+      return {
+        mode: { mode: ctx.s.get('mode', 'single') },
+        tagFilter: kinds.length > 0 ? kindFilter(ctx, kinds) : null,
+        barsCount: ctx.s.num('show', 10),
+        refreshInterval: ctx.refreshInterval,
+        resource: ctx.selfProvider ? { resourceId: ctx.entries.resource(pin.ref, pin.name), resourceName: pin.name } : null,
+        refreshContent: { refreshContent: ctx.refreshContent },
+        selfProvider: { selfProvider: ctx.selfProvider },
+        title: ctx.title,
+      };
+    },
   },
   {
-    type: 'WorkloadPattern',
-    label: 'Workload Pattern',
+    type: 'PromQLViewer',
+    label: 'PromQL Viewer',
     family: 'chart',
     verified: false,
-    source: DOCS,
+    source: `${DOCS} (new in 9.1)`,
+    doc: doc('promql-widget'),
+    note: 'New in VCF Operations 9.1 and in no export yet: the type name PromQLViewer and every config key are inferred from the documentation. Build it, then open it in the editor and save it once.',
     provides: false,
-    needsSubject: true,
+    needsSubject: false,
     size: { w: 6, h: 5 },
-    settings: BLANK_ONLY,
-    build: (ctx) => common(ctx),
+    settings: [
+      { key: 'source', type: 'choice', options: ['vcenter', 'nsx'], help: 'in Self Provider mode: vCenter/vSAN (the default) or NSX of the domain; otherwise the VCF instance', label: 'Output Data › Source', doc: doc('promql-widget'), default: 'vcenter', writes: ['source'], unverified: true },
+      { key: 'query', type: 'rest', help: 'the full PromQL expression (the rest of the cell)', label: 'Output Data › Query', doc: doc('promql-widget/promql-queries'), required: true, writes: ['query'], unverified: true },
+      S.refresh,
+    ],
+    build: (ctx) => ({ ...common(ctx), source: ctx.s.get('source', 'vcenter'), query: ctx.s.get('query') }),
   },
 ];
 
+/** The collapsed state is a widget key, and the 9.x description and details link are every widget’s (a Section has its own). */
+export const WIDGET_TYPES: readonly WidgetType[] = RAW_TYPES.map((type) =>
+  type.type === 'Section'
+    ? type
+    : {
+        ...type,
+        settings: [...type.settings, ...COMMON_TAIL],
+        alsoWrites: { ...(type.alsoWrites ?? {}), description: `${QA92} (9.2: Widget Description)`, viewDetails: `${QA92} (9.2: Details URL)` },
+        build: (ctx: WidgetContext) => tail(ctx, type.build(ctx)),
+      },
+);
+
 const BY_TYPE = new Map(WIDGET_TYPES.map((type) => [type.type.toLowerCase(), type]));
 const BY_LABEL = new Map(WIDGET_TYPES.map((type) => [type.label.toLowerCase(), type]));
+const BY_ALIAS = new Map(WIDGET_TYPES.flatMap((type) => (type.aliases ?? []).map((alias) => [alias.toLowerCase(), type] as const)));
 
-/** A widget type by its export name or its name in the widget list ("Top-N", "Object List"). */
+/** A widget type by its export name, its name in the widget list ("Top-N", "Object List"), or an older name. */
 export function widgetType(name: string): WidgetType | undefined {
   const key = name.trim().toLowerCase();
-  return BY_TYPE.get(key) ?? BY_LABEL.get(key);
+  return BY_TYPE.get(key) ?? BY_LABEL.get(key) ?? BY_ALIAS.get(key);
 }
 
 /** Problems with one row's settings for its type: what is missing, malformed, or not a value it takes. */
@@ -1488,6 +2254,15 @@ export function settingProblems(type: WidgetType, settings: Settings, selfProvid
       case 'colors':
         for (const part of settings.list(setting.key)) if (!/^#[0-9a-f]{6}$/i.test(part)) errors.push(`${setting.key}: ${part} is not a #rrggbb colour`);
         break;
+      case 'filter':
+        for (const problem of parseFilter(raw).problems) errors.push(`${setting.key}: ${problem}`);
+        break;
+      case 'objects':
+        for (const part of settings.list(setting.key)) {
+          const colon = part.indexOf(':');
+          if (colon <= 0 || !parseKind(part.slice(0, colon)) || !part.slice(colon + 1).trim()) errors.push(`${setting.key}: "${part}" is not type:Object name (vm:web-01)`);
+        }
+        break;
       default:
         break;
     }
@@ -1523,13 +2298,69 @@ export function catalogueHelp(): string {
 
 /** The dashboard time state the exports carry (permDashboardTime_dashboard_<id>), for the ranges seen in them. */
 export const DASHBOARD_TIME_RANGES: Readonly<Record<string, string>> = {
+  lastHour: 'o%3AdateRange%3Ds%253AlastHour%5EdateRangeText%3Ds%253A1H',
   last6Hour: 'o%3AdateRange%3Ds%253Alast6Hour%5EdateRangeText%3Ds%253A6H',
   last24Hour: 'o%3AdateRange%3Ds%253Alast24Hour%5EdateRangeText%3Ds%253A24H',
   last7Days: 'o%3AdateRange%3Ds%253Alast7Days%5EdateRangeText%3Ds%253A7D',
+  last30Days: 'o%3AdateRange%3Ds%253Alast30Days%5EdateRangeText%3Ds%253ALast%252030%2520days',
+  last90Days: 'o%3AdateRange%3Ds%253Alast90Days%5EdateRangeText%3Ds%253ALast%252090%2520days',
+  lastYear: 'o%3AdateRange%3Ds%253AlastYear%5EdateRangeText%3Ds%253ALast%2520year',
 };
+
+/**
+ * columnProportion values a dashboard export carries. It is the 8.x
+ * column editor's split, kept beside the 12-column grid; columnCount is 1 on
+ * every dashboard read (303 of 303), gridsterMaxColumns 12.
+ */
+export const COLUMN_PROPORTIONS: readonly { readonly value: string; readonly label: string }[] = [
+  { value: '1', label: 'One column (1)' },
+  { value: '1-1', label: 'Two equal columns (1-1)' },
+  { value: '0.5-0.5', label: 'Two halves (0.5-0.5)' },
+  { value: '0.5', label: 'Half width (0.5)' },
+  { value: '0.48-0.52', label: 'Two columns, 48/52 (0.48-0.52)' },
+];
 
 /** An object type as a row writes it: its alias where it has one ("cluster"), else the vSphere kind or Adapter/Kind. */
 export function kindAlias(kind: KindRef): string {
   for (const [alias, ref] of Object.entries(KIND_ALIASES)) if (ref.adapterKind === kind.adapterKind && ref.resourceKind === kind.resourceKind) return alias;
   return kind.adapterKind === 'VMWARE' ? kind.resourceKind : `${kind.adapterKind}/${kind.resourceKind}`;
 }
+
+/**
+ * Every dashboard-level key an export holds, and where the builder gets it:
+ * a field of the dashboard form, or kept exactly as the export had it.
+ */
+export const DASHBOARD_KEYS: Readonly<Record<string, { readonly field?: string; readonly kept?: string }>> = {
+  id: { field: 'the dashboard name (a new id derived from it), or the loaded export’s own id' },
+  name: { field: 'dashboard_name and folder' },
+  namePath: { field: 'folder' },
+  description: { field: 'description' },
+  shared: { field: 'sharing' },
+  hidden: { field: 'hidden' },
+  disabled: { field: 'disabled' },
+  homeTab: { field: 'home_tab' },
+  locked: { field: 'locked' },
+  autoswitchEnabled: { field: 'autoswitch' },
+  autoswitchDelay: { field: 'autoswitch_delay' },
+  columnProportion: { field: 'column_proportion' },
+  states: { field: 'time_range (permDashboardTime_dashboard_<id>)' },
+  dashboardNavigations: { field: 'navigations' },
+  widgetInteractions: { field: 'each row’s Receives from' },
+  widgets: { field: 'the widget rows' },
+  columnCount: { kept: 'always 1 (303 of 303 dashboards): the grid replaced the 8.x columns' },
+  gridsterMaxColumns: { kept: 'always 12: the grid’s width' },
+  temporary: { kept: 'always false in exports' },
+  rank: { kept: 'always 0 in exports: the order Manage Dashboards keeps' },
+  creationTime: { kept: 'set by the appliance on import' },
+  lastUpdateTime: { kept: 'set by the appliance on save' },
+  userId: { kept: 'the owner, set to the importing user' },
+  lastUpdateUserId: { kept: 'the last editor, set by the appliance' },
+  importAttempts: { kept: 'the appliance’s own import bookkeeping' },
+  importComplete: { kept: 'the appliance’s own import bookkeeping' },
+  editAllowed: { kept: 'whether the viewer may edit (a 9.2 export has it): Manage Dashboard Sharing › Editable' },
+  adapterName: { kept: 'the management pack that ships the dashboard' },
+  docCenterKey: { kept: 'the help topic of a dashboard Broadcom ships' },
+  videoKey: { kept: 'the tutorial video of a dashboard Broadcom ships' },
+  videoPlaylistKey: { kept: 'the tutorial playlist of a dashboard Broadcom ships' },
+  entryKeys: { kept: 'the entries a shipped dashboard refers to, kept with the dashboard' },
+};

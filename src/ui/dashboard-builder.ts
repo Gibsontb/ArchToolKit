@@ -27,10 +27,10 @@ import type { GeneratorWorkspace, WorkspaceContext } from './generator-page.ts';
 import type { Blueprint, BlueprintValues } from '../kit/blueprint.ts';
 import type { Finding } from '../core/findings.ts';
 import { findingItem } from './components.ts';
-import { readDashboardExports } from '../aria/parse.ts';
+import { readDashboardExports, readViewDefs } from '../aria/parse.ts';
 import { layoutWidgets, parseWidgetRows } from '../automation/blueprints/vcf-ops-build.ts';
 import { dashboardChoices, loadDashboard, readStore, type ImportStore } from '../automation/blueprints/vcf-ops-dashboard-import.ts';
-import { KIND_ALIASES, Settings, WIDGET_TYPES, metricKeyProblem, widgetType, type WidgetSetting, type WidgetType } from '../automation/blueprints/vcf-ops-widgets.ts';
+import { KIND_ALIASES, Settings, WIDGET_TYPES, metricKeyProblem, parseFilter, widgetType, type WidgetSetting, type WidgetType } from '../automation/blueprints/vcf-ops-widgets.ts';
 
 const COLUMNS = 12;
 const WIDE_KEY = 'archtoolkit.dashboard-builder.wide';
@@ -51,7 +51,7 @@ function writeWide(on: boolean): void {
 const ROW_PX = 30;
 
 /** Dashboard options shown in the settings card, in order. */
-const DASHBOARD_FIELDS = ['dashboard_name', 'folder', 'description', 'sharing', 'share_groups', 'refresh', 'refresh_content', 'time_range', 'home_tab', 'locked', 'autoswitch', 'autoswitch_delay', 'navigations', 'max_widgets'];
+const DASHBOARD_FIELDS = ['dashboard_name', 'folder', 'description', 'sharing', 'share_groups', 'refresh', 'refresh_content', 'time_range', 'home_tab', 'locked', 'hidden', 'disabled', 'column_proportion', 'autoswitch', 'autoswitch_delay', 'navigations', 'include_views', 'max_widgets'];
 
 const FAMILY_LABELS: Readonly<Record<string, string>> = {
   list: 'Lists and views',
@@ -222,11 +222,22 @@ function textBox(value: string, label: string, onChange: (value: string) => void
 // The workspace
 // ---------------------------------------------------------------------------
 
+/** The mounted builder's loader, for the page's "Load dashboard…" button. */
+let openDashboardFile: ((file: File) => Promise<string>) | undefined;
+
+const DASHBOARD_ACCEPT = '.zip,.json,application/zip,application/json,application/x-zip-compressed';
+
 export function dashboardWorkspace(blueprint: Blueprint): GeneratorWorkspace | undefined {
   if (blueprint.id !== 'vcfops_dashboard') return undefined;
   return {
     owns: (id) => id === 'template' || id === 'imported' || id.startsWith('widgets_') || DASHBOARD_FIELDS.includes(id),
     mount: (context) => mountBuilder(context),
+    primaryFile: {
+      label: 'Load dashboard…',
+      title: 'Open a dashboard in the builder: the .zip this builder downloads, a dashboard exported from Dashboards › Manage, a Content Management export, or a dashboard .json',
+      accept: DASHBOARD_ACCEPT,
+      open: (file) => (openDashboardFile ? openDashboardFile(file) : Promise.reject(new Error('the dashboard builder is not open'))),
+    },
   };
 }
 
@@ -393,14 +404,21 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
 
   // --- toolbar --------------------------------------------------------------------
   function renderToolbar(): void {
-    const fileInput = el('input', { class: 'dbb-file', attrs: { type: 'file', accept: '.zip,.json,application/zip,application/json', 'aria-label': 'Load a dashboard from an export file', 'data-control': 'dashboard-load-file' } }) as HTMLInputElement;
+    const fileInput = el('input', { class: 'dbb-file', attrs: { type: 'file', accept: DASHBOARD_ACCEPT, 'aria-label': 'Load a dashboard (.zip or .json)', 'data-control': 'dashboard-load-file' } }) as HTMLInputElement;
     fileInput.addEventListener('change', () => {
       const file = fileInput.files?.[0];
-      if (file) void loadFile(file);
+      if (file) void loadFile(file).catch(() => undefined);
       fileInput.value = '';
     });
     replace(
       toolbar,
+      el('button', {
+        class: 'btn btn-primary btn-small dbb-load',
+        text: 'Load dashboard (.zip / .json)…',
+        attrs: { type: 'button', title: 'Open a dashboard to edit: the .zip this builder downloads, a dashboard exported from Dashboards › Manage, a Content Management export (.zip), or a dashboard .json. You can also drop the file on the layout.', 'data-control': 'dashboard-load' },
+        on: { click: () => fileInput.click() },
+      }),
+      fileInput,
       el(
         'label',
         { class: 'dbb-start' },
@@ -429,8 +447,6 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
             },
           },
         }),
-        el('button', { class: 'btn btn-small', text: 'Load from export…', attrs: { type: 'button', title: 'A VCF Operations content export (.zip), a dashboard .json, or a file this builder generated', 'data-control': 'dashboard-load' }, on: { click: () => fileInput.click() } }),
-        fileInput,
         el('button', {
           class: `btn btn-small${asText ? ' is-active' : ''}`,
           text: asText ? 'Back to the builder' : 'Edit as text',
@@ -462,21 +478,23 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   }
 
   // --- loading an export -------------------------------------------------------------
-  async function loadFile(file: File): Promise<void> {
+  async function loadFile(file: File): Promise<string> {
     message = { text: `Reading ${file.name}…`, tone: '' };
     renderStatus();
     try {
-      const exports = await readDashboardExports(file.name, new Uint8Array(await file.arrayBuffer()));
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const exports = await readDashboardExports(file.name, bytes);
+      const viewDefs = await readViewDefs(bytes);
       const choices = dashboardChoices(exports);
       if (choices.length === 0) {
         message = { text: `${file.name} holds no dashboard. Export one from Dashboards → Manage, or the content from Content Management.`, tone: 'bad' };
         clear(picker);
         renderStatus();
-        return;
+        throw new Error(message.text);
       }
-      const apply = (index: number): void => {
+      const apply = (index: number): string => {
         const choice = choices[index]!;
-        const loaded = loadDashboard(exports[choice.exportIndex]!, choice.dashboardIndex, exports);
+        const loaded = loadDashboard(exports[choice.exportIndex]!, choice.dashboardIndex, exports, viewDefs);
         context.set(loaded.values as BlueprintValues);
         template = 'custom';
         selected = -1;
@@ -486,11 +504,9 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
         message = { text: loaded.summary, tone: 'ok' };
         renderAll();
         check();
+        return loaded.summary;
       };
-      if (choices.length === 1) {
-        apply(0);
-        return;
-      }
+      if (choices.length === 1) return apply(0);
       // Several dashboards: pick one.
       let chosen = 0;
       const filter = textBox('', 'Filter dashboards', (q) => {
@@ -517,11 +533,16 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
       );
       message = { text: '', tone: '' };
       renderStatus();
+      picker.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+      return `${file.name} holds ${choices.length} dashboards: pick one in the builder.`;
     } catch (error) {
-      message = { text: `${file.name} could not be read: ${error instanceof Error ? error.message : String(error)}`, tone: 'bad' };
+      const text = error instanceof Error ? error.message : String(error);
+      if (message.tone !== 'bad') message = { text: `${file.name} could not be read: ${text}`, tone: 'bad' };
       renderStatus();
+      throw error instanceof Error ? error : new Error(text);
     }
   }
+  openDashboardFile = loadFile;
 
   // --- palette -----------------------------------------------------------------------
   function renderPalette(): void {
@@ -568,6 +589,24 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   }
 
   // --- canvas ------------------------------------------------------------------------
+  // Drop a dashboard file (.zip or .json) anywhere on the layout to load it.
+  const isFileDrag = (event: Event): boolean => !!(event as DragEvent).dataTransfer?.types.includes('Files');
+  canvasWrap.addEventListener('dragover', (event) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    canvasWrap.classList.add('is-file-over');
+  });
+  canvasWrap.addEventListener('dragleave', (event) => {
+    if (event.target === canvasWrap) canvasWrap.classList.remove('is-file-over');
+  });
+  canvasWrap.addEventListener('drop', (event) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    canvasWrap.classList.remove('is-file-over');
+    const file = (event as DragEvent).dataTransfer?.files?.[0];
+    if (file) void loadFile(file).catch(() => undefined);
+  });
   canvas.addEventListener('dragover', (event) => {
     if ((event as DragEvent).dataTransfer?.types.includes('application/x-dashboard-widget')) event.preventDefault();
   });
@@ -870,6 +909,7 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
       type.note ? el('p', { class: 'small', text: type.note }) : null,
       type.deprecated ? el('p', { class: 'small', text: 'Deprecated in VCF Operations 9, and will be removed.' }) : null,
       !type.verified ? el('p', { class: 'small', text: 'No real export of this widget was found, so its config is what the product documentation implies. Open it after import and save it once.' }) : null,
+      type.doc ? el('p', { class: 'small' }, el('a', { text: `Broadcom: the ${type.label} widget and its configuration options`, attrs: { href: type.doc, target: '_blank', rel: 'noopener noreferrer' } })) : null,
       el('p', { class: 'muted small', text: `Config shape from: ${type.source}.` }),
     );
   }
@@ -912,16 +952,27 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   }
 
   function settingField(setting: WidgetSetting, value: string, onChange: (value: string) => void): HTMLElement {
-    const label = el('label', { text: setting.key }, setting.required ? el('span', { class: 'dbb-required', text: ' *', attrs: { title: 'Required', 'aria-label': 'required' } }) : null);
+    const label = el(
+      'label',
+      { text: setting.label ?? setting.key },
+      setting.required ? el('span', { class: 'dbb-required', text: ' *', attrs: { title: 'Required', 'aria-label': 'required' } }) : null,
+      setting.label ? el('code', { class: 'dbb-setting-key', text: ` ${setting.key}` }) : null,
+      setting.unverified ? el('span', { class: 'dbb-tag', text: 'unverified', attrs: { title: 'The option is in Broadcom’s documentation; the config key it writes has not been seen in an export' } }) : null,
+    );
     const problem = el('div', { class: 'dbb-problem' });
     const showProblem = (text: string): void => {
+      if (setting.type === 'filter') {
+        problem.textContent = parseFilter(text).problems[0] ?? '';
+        return;
+      }
       if (setting.type !== 'metric' && setting.type !== 'metrics') return;
       const keys = setting.type === 'metric' ? [text.trim()] : text.split(',').map((k) => k.trim());
       const bad = keys.filter(Boolean).map((k) => [k, metricKeyProblem(k)] as const).find(([, p]) => p);
       problem.textContent = bad ? `"${bad[0]}" ${bad[1]}` : '';
     };
     let control: HTMLElement;
-    const withDefault = (options: readonly string[]) => [{ value: '', label: '(default)' }, ...options.map((o) => ({ value: o, label: o }))];
+    const defaultLabel = setting.default ? `(default: ${setting.default})` : '(default)';
+    const withDefault = (options: readonly string[]) => [{ value: '', label: defaultLabel }, ...options.map((o) => ({ value: o, label: o }))];
     switch (setting.type) {
       case 'kind': {
         const options = [{ value: '', label: '(choose)' }, ...KIND_KEYS.map((k) => ({ value: k, label: KIND_LABELS[k] ?? k }))];
@@ -938,7 +989,7 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
         control = multiBox((setting.options ?? []).map((o) => ({ value: o, label: o })), value, setting.key, onChange);
         break;
       case 'yesno':
-        control = select([{ value: '', label: '(default)' }, { value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }], /^(yes|true|on|1)$/i.test(value) ? 'yes' : /^(no|false|off|0)$/i.test(value) ? 'no' : value, setting.key, onChange);
+        control = select([{ value: '', label: defaultLabel }, { value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }], /^(yes|true|on|1)$/i.test(value) ? 'yes' : /^(no|false|off|0)$/i.test(value) ? 'no' : value, setting.key, onChange);
         break;
       case 'number':
         control = numberBox(value, setting.key, onChange, setting.min, setting.max);
@@ -979,6 +1030,20 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
         }, '#8ABF5B,#EACC58,#E4695E'), swatches);
         break;
       }
+      case 'filter':
+        control = textBox(value, setting.key, (v) => {
+          showProblem(v);
+          onChange(v);
+        }, 'metric cpu|usage_average GREATER_THAN 80 & name CONTAINS web');
+        break;
+      case 'objects':
+        control = textBox(value, setting.key, onChange, 'vm:web-01, host:esx-01');
+        break;
+      case 'text':
+        control = setting.options?.length
+          ? comboBox([{ value: '', label: defaultLabel }, ...setting.options.map((o) => ({ value: o, label: o }))], value, setting.key, onChange, setting.help)
+          : textBox(value, setting.key, onChange, '', setting.key === 'view' ? `${uid}-views` : undefined);
+        break;
       case 'rest': {
         const area = el('textarea', { attrs: { rows: '3', spellcheck: 'false', 'aria-label': setting.key } }) as HTMLTextAreaElement;
         area.value = value;
@@ -990,7 +1055,9 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
         control = textBox(value, setting.key, onChange, '', setting.key === 'view' ? `${uid}-views` : undefined);
     }
     showProblem(value);
-    return el('div', { class: 'field dbb-setting' }, el('div', { class: 'field-head' }, label), control, el('div', { class: 'dbb-setting-help', text: setting.help }), problem);
+    const help = el('div', { class: 'dbb-setting-help', text: setting.help });
+    if (setting.doc) help.append(' ', el('a', { class: 'dbb-doc', text: 'Docs', attrs: { href: setting.doc, target: '_blank', rel: 'noopener noreferrer', title: 'Broadcom’s documentation of this option' } }));
+    return el('div', { class: 'field dbb-setting', dataset: { setting: setting.key } }, el('div', { class: 'field-head' }, label), control, help, problem);
   }
 
   /** A dropdown of the common answers, and a text box for any other. */
