@@ -6,9 +6,9 @@
  * pasting anything. Both come from one `DeviceChange`, so the file and the
  * playbook cannot say different things.
  *
- * Every play is generated in check mode first — `--check --diff` shows what
+ * Every play applies when run. A dry run is opt-in: adding `--check` shows what
  * would change without changing it, which is the closest a network device has
- * to a Terraform plan — and nothing saves the configuration unless the change
+ * to a Terraform plan. Nothing saves the configuration unless the change
  * actually applied.
  *
  * Credentials are never written here. The play reads them from the inventory
@@ -219,8 +219,8 @@ export function pushPlaybook(change              , name        )                
     header: [
       `${change.title}`,
       '',
-      `Dry run first:  ansible-playbook -i inventory ${name || 'change'}.yml --check --diff`,
-      `Then apply:     ansible-playbook -i inventory ${name || 'change'}.yml --diff --limit <device>`,
+      `Run with:  ansible-playbook -i inventory ${name || 'change'}.yml --diff --limit <device>`,
+      '(It applies. For a dry run first, add --check.)',
       '',
       `Connection variables belong in the inventory, and credentials in a vault:`,
       ...inventoryHint(platform.id).map((line) => `  ${line}`),

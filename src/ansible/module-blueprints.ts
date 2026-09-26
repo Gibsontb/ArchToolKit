@@ -12,7 +12,7 @@
  *  - a no_log option (a password, a token) is never a text box with a value:
  *    it is a vault variable, `{{ vault_x }}`;
  *  - a required option left empty becomes a variable, listed in
- *    group_vars/all.yml to fill in, rather than a guess.
+ *    group_vars/all/main.yml to fill in, rather than a guess.
  *
  * The output is the same project every Ansible blueprint downloads — the
  * playbook, requirements.yml pinned to the collection versions read, and
@@ -653,7 +653,7 @@ function optionValue(row: OptionRow, raw: unknown, path: readonly string[], out:
   let value = raw === undefined || raw === null ? '' : String(raw).trim();
   if (value === '') {
     if (!required) return undefined;
-    // Required and not given: a variable, listed in group_vars/all.yml to fill in.
+    // Required and not given: a variable, listed in group_vars/all/main.yml to fill in.
     const variable = flags.includes('s') ? `vault_${varName([...path, name])}` : varName([...path, name]);
     value = `{{ ${variable} }}`;
   }
@@ -943,8 +943,10 @@ function materialize(fqcn: string, schema: ModuleSchema): Materialized {
       const requirements = requirementsYml(collection);
       if (requirements) files['requirements.yml'] = requirements;
       if (out.vars.size > 0) {
-        files['group_vars/all.yml'] = varsYml(out.vars);
-        out.findings.push(info('ansible.module.vars', `${out.vars.size} value${out.vars.size === 1 ? '' : 's'} to supply: fill in group_vars/all.yml (secrets in an ansible-vault file).`));
+        // A folder, not group_vars/all.yml: Ansible reads group_vars/all/ or
+        // group_vars/all.yml, never both, and the vault goes in group_vars/all/vault.yml.
+        files['group_vars/all/main.yml'] = varsYml(out.vars);
+        out.findings.push(info('ansible.module.vars', `${out.vars.size} value${out.vars.size === 1 ? '' : 's'} to supply: fill in group_vars/all/main.yml (secrets in an ansible-vault file beside it, group_vars/all/vault.yml).`));
       }
       return { files, findings: out.findings };
     },

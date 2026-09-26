@@ -39,12 +39,12 @@ if (root) {
         kindLabel: 'Ansible (YAML)',
         noun: 'playbook',
         idleHint:
-          'Pick a platform and playbook, adjust the parameters, then Generate. Install the collections from requirements.yml, then run ansible-playbook -i inventory <file> --check --diff.',
+          'Pick a platform and playbook, adjust the parameters, then Generate. Install the collections from requirements.yml, then run ansible-playbook -i inventory <file>. It applies; add --check --diff first if you want a dry run.',
         preferGroup: () => (currentEstate() ? 'From your estate' : undefined),
         settingsKind: 'archtoolkit.ansible-generator',
         stack: {
           noun: 'site playbook',
-          // Two plays cannot hand values to each other; group_vars/all.yml can.
+          // Two plays cannot hand values to each other; group_vars/all/main.yml can.
           referenceLabel: 'a shared variable',
           wrap: (name) => `{{ ${name} }}`,
           build: (items, blueprintFor, opts) => buildSite(items, blueprintFor, { stackName: opts.stackName }),

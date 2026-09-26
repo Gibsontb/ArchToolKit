@@ -162,8 +162,8 @@ export const POWERSHELL_BASE                             = [
         ],
         undo: [
           'Every account created is listed in the results CSV beside the transcript.',
-          'To remove them: Import-Csv .\\results.csv | Where-Object Status -eq "Created" | ForEach-Object { Remove-ADUser -Identity $_.SamAccountName -WhatIf }',
-          'Drop the -WhatIf once the list is the one you expected.',
+          'To remove them: Import-Csv .\\results.csv | Where-Object Status -eq "Created" | ForEach-Object { Remove-ADUser -Identity $_.SamAccountName }',
+          'It removes when run. For a dry run first, add -WhatIf to Remove-ADUser and check the list is the one you expected.',
         ],
         body: [
           ...preamble(
@@ -361,7 +361,7 @@ export const POWERSHELL_BASE                             = [
             ? ['Nothing to undo — it reads and reports.']
             : [
                 'Every account changed is in the CSV report.',
-                'To re-enable them: Import-Csv .\\report.csv | Where-Object Action -eq "Disabled" | ForEach-Object { Enable-ADAccount -Identity $_.DistinguishedName -WhatIf }',
+                'To re-enable them: Import-Csv .\\report.csv | Where-Object Action -eq "Disabled" | ForEach-Object { Enable-ADAccount -Identity $_.DistinguishedName }   (add -WhatIf to Enable-ADAccount first if you want a dry run)',
                 ...(action === 'disable-move' ? ['The report records the original OU, so a move can be reversed with Move-ADObject and that value.'] : []),
               ],
         body: [

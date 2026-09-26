@@ -4,7 +4,7 @@
  * machine built together, as an engineer lays out a first environment.
  *
  * Every play talks to an API, so it runs on localhost; tokens and passwords
- * are vault_ variables the page lists in group_vars/all.yml.
+ * are vault_ variables the page lists in group_vars/all/main.yml.
  */
 
 import type { Blueprint } from '../../kit/blueprint.ts';

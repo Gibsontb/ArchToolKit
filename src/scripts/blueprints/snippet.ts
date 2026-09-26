@@ -507,27 +507,30 @@ const BODY: Readonly<Record<ScriptPlatform, (command: CommandEntry, values: Blue
 
 function usageFor(platform: ScriptPlatform, command: CommandEntry, perItem: boolean, dryRun: boolean, name: string): string[] {
   const changes = command.effect !== 'read';
+  // With the dry run on by default, the first line reports and the second
+  // acts. With it off, the first line acts and the dry run is an opt-in.
+  const guarded = changes && dryRun;
   switch (platform) {
-    case 'powershell':
-      return [
-        `pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''}${changes && dryRun ? '' : ' -WhatIf'}`,
-        ...(changes && dryRun ? [`pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''} -Execute   # once the dry run reads correctly`] : []),
-      ];
+    case 'powershell': {
+      const base = `pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''}`;
+      if (guarded) return [base, `${base} -Execute   # once the dry run reads correctly`];
+      return [base, ...(changes ? [`${base} -WhatIf   # a dry run first, if you want one`] : [])];
+    }
     case 'python':
       return [
         `python3 ${name}.py${perItem ? ' --input-list items.txt' : ''}`,
-        ...(changes ? [`python3 ${name}.py${perItem ? ' --input-list items.txt' : ''} ${dryRun ? '--execute' : '--dry-run'}`] : []),
+        ...(changes ? [`python3 ${name}.py${perItem ? ' --input-list items.txt' : ''} ${dryRun ? '--execute' : '--dry-run   # a dry run first, if you want one'}`] : []),
       ];
-    case 'bash':
-      return [
-        `./${name}.sh${perItem ? ' --list items.txt' : ''}`,
-        ...(changes ? [`./${name}.sh${perItem ? ' --list items.txt' : ''} --execute   # once the dry run reads correctly`] : []),
-      ];
-    default:
-      return [
-        `${name}.cmd${perItem ? ' /LIST items.txt' : ''}`,
-        ...(changes ? [`${name}.cmd${perItem ? ' /LIST items.txt' : ''} /EXECUTE   # once the /WHATIF run reads correctly`] : []),
-      ];
+    case 'bash': {
+      const base = `./${name}.sh${perItem ? ' --list items.txt' : ''}`;
+      if (guarded) return [base, `${base} --execute   # once the dry run reads correctly`];
+      return [base, ...(changes ? [`${base} --dry-run   # a dry run first, if you want one`] : [])];
+    }
+    default: {
+      const base = `${name}.cmd${perItem ? ' /LIST items.txt' : ''}`;
+      if (guarded) return [base, `${base} /EXECUTE   # once the /WHATIF run reads correctly`];
+      return [base, ...(changes ? [`${base} /WHATIF   # a dry run first, if you want one`] : [])];
+    }
   }
 }
 

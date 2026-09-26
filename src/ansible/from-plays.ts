@@ -170,7 +170,7 @@ export function playbookFiles(
   findings.push(
     info(
       'ansible.blueprint.arguments-not-validated',
-      'Module arguments are rendered as written. The catalog knows which modules exist, not what each one accepts, so run ansible-playbook --check --diff before relying on this.',
+      'Module arguments are rendered as written. The catalog knows which modules exist, not what each one accepts, so read the arguments against the documentation of each module before relying on this. A dry run with --check --diff is an optional extra look.',
       { source: 'ArchToolKit' },
     ),
   );

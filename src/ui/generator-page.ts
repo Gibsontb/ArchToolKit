@@ -1185,7 +1185,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
               ? el('button', {
                   class: 'btn',
                   text: 'Download as one .tf file (HCL)',
-                  attrs: { title: 'versions.tf, providers.tf, main.tf, variables.tf and outputs.tf in one main.tf — terraform init && terraform plan work on it as it stands' },
+                  attrs: { title: 'versions.tf, providers.tf, main.tf, variables.tf and outputs.tf in one main.tf — terraform init && terraform apply work on it as it stands' },
                   on: {
                     click: () =>
                       downloadFile(

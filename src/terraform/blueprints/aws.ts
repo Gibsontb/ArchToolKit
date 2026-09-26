@@ -86,7 +86,7 @@ const BLUEPRINTS: readonly Blueprint[] = [
       files: {
         'main.tf': ((vals: TemplateValues, moduleName: string): string => {
             const m = moduleName || "aws_ec2_instance";
-            return `# terraform init && terraform plan
+            return `# terraform init && terraform apply
 terraform {
   required_providers {
     aws = {

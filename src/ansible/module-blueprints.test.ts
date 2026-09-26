@@ -74,19 +74,21 @@ describe('ansible/module-blueprints: the project it writes', () => {
 
   it('makes a secret a vault variable and a missing required option a variable to fill in', () => {
     const files = build('ansible.mysql.mysql_user');
-    const vars = files['group_vars/all.yml'] ?? '';
+    const vars = files['group_vars/all/main.yml'] ?? '';
     expect(files['demo.yml']).toContain('{{ name }}');
     expect(vars).toContain("name: ''");
+    // Beside group_vars/all/vault.yml, never group_vars/all.yml: Ansible reads only the folder.
+    expect(files['group_vars/all.yml']).toBeUndefined();
     const withSecret = build('ansible.windows.win_user', { 'r.name': 'svc', 'r.password': '{{ vault_password }}' });
     expect(withSecret['demo.yml']).toContain('{{ vault_password }}');
-    expect(withSecret['group_vars/all.yml'] ?? '').toContain('# vault_password: set in vault.yml, not here');
+    expect(withSecret['group_vars/all/main.yml'] ?? '').toContain('# vault_password: set in vault.yml, not here');
   });
 
   it('applies a discovered rule: "one of the following is required"', () => {
     // ansible.builtin.pip needs name or requirements; with neither, name stands in.
     const files = build('ansible.builtin.pip');
     expect(files['demo.yml']).toContain('name:');
-    expect(files['group_vars/all.yml'] ?? '').toContain('name:');
+    expect(files['group_vars/all/main.yml'] ?? '').toContain('name:');
   });
 
   it('writes the file an import refers to, so the playbook runs as downloaded', () => {

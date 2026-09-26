@@ -139,6 +139,19 @@ describe('every Ansible blueprint, as a project', () => {
     }
   });
 
+  it('never writes group_vars/all.yml, which Ansible ignores once group_vars/all/ (the vault) exists', () => {
+    for (const { blueprint } of all) {
+      for (const values of variants(blueprint)) {
+        const files = blueprint.build(values, '').files;
+        expect([blueprint.id, files['group_vars/all.yml'] === undefined]).toEqual([blueprint.id, true]);
+        for (const [name, text] of Object.entries(files)) {
+          if (name === 'group_vars/all.yml') continue;
+          expect([blueprint.id, name, /group_vars\/all\.yml/.test(text)]).toEqual([blueprint.id, name, false]);
+        }
+      }
+    }
+  });
+
   it('runs an API play against localhost, which needs no inventory entry', () => {
     for (const { group, blueprint } of all) {
       if (!API_TARGETS.has(group.target)) continue;

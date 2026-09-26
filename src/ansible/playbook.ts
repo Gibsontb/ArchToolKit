@@ -290,7 +290,7 @@ export function emitPlaybook(
   findings.push(
     info(
       'ansible.playbook.arguments-not-validated',
-      'Module arguments are rendered as given. The catalog knows which modules exist, not what each one accepts, so run ansible-playbook --check --diff before relying on this.',
+      'Module arguments are rendered as given. The catalog knows which modules exist, not what each one accepts, so read the arguments against the documentation of each module before relying on this. A dry run with --check --diff is an optional extra look.',
       { source: 'ArchToolKit' },
     ),
   );

@@ -267,7 +267,8 @@ const BLUEPRINTS: readonly Blueprint[] = [
         files: {
           ...built.files,
           // What the playbook needs and this file must not hold: the vault variable, by name.
-          'group_vars/all.yml': [
+          // In group_vars/all/, beside vault.yml: Ansible ignores group_vars/all.yml once that folder exists.
+          'group_vars/all/main.yml': [
             '# Values the playbook needs and has no answer for yet.',
             '# A vault_ value is a secret: put it in an ansible-vault encrypted file',
             '# (ansible-vault create group_vars/all/vault.yml), never here.',

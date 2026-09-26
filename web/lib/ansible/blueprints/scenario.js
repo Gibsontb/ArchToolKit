@@ -5,7 +5,7 @@
  *
  * A playbook blueprint returns its plays as plain objects; this renders them,
  * writes requirements.yml for every collection they use, pinned to the version
- * the module index was read from, and group_vars/all.yml for any variables
+ * the module index was read from, and group_vars/all/main.yml for any variables
  * named in `vars` that the play needs supplied. withAnsibleProject adds
  * ansible.cfg, the inventory and the README around it, as for every playbook.
  */
@@ -27,7 +27,8 @@ import { collectionVersion } from '../module-blueprints.js';
                                                         
      
                                                                               
-                                                                
+                                                                            
+                                                                                   
      
                                                                                             
                                                                         
@@ -85,7 +86,7 @@ export function playbookScenario(definition                  )            {
       const req = requirements(collections);
       if (req) files['requirements.yml'] = req;
       const needs = definition.needs?.(v) ?? {};
-      if (Object.values(needs).some((d) => d !== undefined)) files['group_vars/all.yml'] = groupVars(needs);
+      if (Object.values(needs).some((d) => d !== undefined)) files['group_vars/all/main.yml'] = groupVars(needs);
       for (const [path, text] of Object.entries(definition.extraFiles?.(v) ?? {})) if (text !== undefined) files[path] = text;
       return { files, findings: definition.findings?.(v) ?? [] };
     },

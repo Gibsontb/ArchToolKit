@@ -205,10 +205,10 @@ describe('ansible/migration: every build, every dropdown choice', () => {
     expect(found).toEqual([]);
   });
 
-  it('lists every vault variable the play and roles read in group_vars/all.yml, by name only', () => {
+  it('lists every vault variable the play and roles read in group_vars/all/main.yml, by name only', () => {
     for (const { label, files } of BUILDS) {
       const used = new Set(Object.entries(files).filter(([n]) => isTaskFile(n) || n.endsWith('defaults/main.yml')).flatMap(([, t]) => [...t.matchAll(/\bvault_\w+/g)].map((m) => m[0])));
-      const listed = files['group_vars/all.yml'] ?? '';
+      const listed = files['group_vars/all/main.yml'] ?? '';
       for (const v of used) expect([label, v, listed.includes(`# ${v}: set in vault.yml, not here`)]).toEqual([label, v, true]);
     }
   });
@@ -300,7 +300,7 @@ describe('ansible/blueprints/windows: the credential fixes', () => {
     const user = tasksOf('check.yml', text).find((t) => 'ansible.windows.win_user' in t) as Record<string, YamlData>;
     expect((user['ansible.windows.win_user'] as Record<string, YamlData>).password).toBe('{{ vault_windows_local_user_password }}');
     expect(user.no_log).toBe(true);
-    expect(files['group_vars/all.yml']).toContain('# vault_windows_local_user_password: set in vault.yml, not here');
+    expect(files['group_vars/all/main.yml']).toContain('# vault_windows_local_user_password: set in vault.yml, not here');
   });
 
   it('windows_local_user will not write a password typed where the variable name goes', () => {

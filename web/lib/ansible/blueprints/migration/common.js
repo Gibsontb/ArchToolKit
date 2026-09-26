@@ -9,7 +9,7 @@
  *     pinned the same way, plus a `roles:` section for the ansible-lockdown
  *     CIS / STIG roles a hardened baseline includes;
  *   - the vault variables the play and roles read, listed in
- *     group_vars/all.yml as names to set in the vault (never values).
+ *     group_vars/all/main.yml as names to set in the vault (never values).
  *
  * The play's `vars` carry the blueprint's answers as `mig_<name>`; each role's
  * defaults turn those into the names it reads, so inventory (group_vars,

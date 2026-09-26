@@ -351,7 +351,10 @@ describe('a change list', () => {
 
   it('tells you how to run it, and that credentials are not in it', () => {
     const readme = change.files['README.md'] as string;
-    expect(readme.includes('--check --diff')).toBe(true);
+    expect(readme.includes('ansible-playbook -i inventory apply.yml --diff --limit <device>')).toBe(true);
+    expect(readme.includes('add `--check`')).toBe(true);
+    expect(/^ansible-playbook[^\n]*--check/m.test(readme)).toBe(false);
+    expect(/^# [^\n]*ansible-playbook[^\n]*--check/m.test(change.files['apply.yml'] as string)).toBe(false);
     expect(readme.includes('ansible-vault')).toBe(true);
     expect(readme.includes('write memory')).toBe(true);
   });
