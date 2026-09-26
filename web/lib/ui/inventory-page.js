@@ -501,16 +501,14 @@ function buildResults(inventory           , importFindings           )          
 
 /**
  * The tracker index, or null when there is no tracker (or the module is not
- * there). The specifier is a variable on purpose: the module reads the raw
- * IndexedDB record and imports nothing of the planner, and loading it lazily
- * keeps the Inventory page as light as it was when there is no migration.
+ * there). The module reads the raw IndexedDB record and imports nothing of
+ * the planner, and loading it lazily keeps the Inventory page as light as it
+ * was when there is no migration.
  */
 async function loadIndex()                               {
   try {
-    const specifier = '../kit/tracker-index.js';
-    const mod = (await import(specifier))                                                      ;
-    if (typeof mod.loadTrackerIndex !== 'function') return null;
-    const index = await mod.loadTrackerIndex();
+    const { loadTrackerIndex } = await import('../kit/tracker-index.js');
+    const index               = await loadTrackerIndex();
     return index && index.size > 0 ? index : null;
   } catch {
     return null;

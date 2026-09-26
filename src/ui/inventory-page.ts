@@ -501,16 +501,14 @@ export type TrackerIndex = ReadonlyMap<string, { readonly state: string; readonl
 
 /**
  * The tracker index, or null when there is no tracker (or the module is not
- * there). The specifier is a variable on purpose: the module reads the raw
- * IndexedDB record and imports nothing of the planner, and loading it lazily
- * keeps the Inventory page as light as it was when there is no migration.
+ * there). The module reads the raw IndexedDB record and imports nothing of
+ * the planner, and loading it lazily keeps the Inventory page as light as it
+ * was when there is no migration.
  */
 async function loadIndex(): Promise<TrackerIndex | null> {
   try {
-    const specifier = '../kit/tracker-index.js';
-    const mod = (await import(specifier)) as { loadTrackerIndex?: () => Promise<TrackerIndex> };
-    if (typeof mod.loadTrackerIndex !== 'function') return null;
-    const index = await mod.loadTrackerIndex();
+    const { loadTrackerIndex } = await import('../kit/tracker-index.ts');
+    const index: TrackerIndex = await loadTrackerIndex();
     return index && index.size > 0 ? index : null;
   } catch {
     return null;
