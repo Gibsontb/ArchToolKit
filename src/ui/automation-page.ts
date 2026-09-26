@@ -14,6 +14,7 @@
 
 import { mountGeneratorPage } from './generator-page.ts';
 import { AUTOMATION_BLUEPRINTS } from '../automation/blueprints/index.ts';
+import { dashboardWorkspace } from './dashboard-builder.ts';
 
 const root = document.getElementById('automation-root');
 if (root) {
@@ -31,5 +32,7 @@ if (root) {
     // change what the Terraform or Ansible pages think they are targeting.
     sharedPlatform: false,
     downloadExtension: '.txt',
+    // The dashboard is laid out on a canvas the width of the page, not typed as rows.
+    workspace: dashboardWorkspace,
   });
 }

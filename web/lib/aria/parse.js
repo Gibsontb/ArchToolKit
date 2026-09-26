@@ -698,6 +698,80 @@ export async function readAriaFile(name        , data                          )
   throw new AriaError(`${name} is not a VCF Operations export the toolkit recognises.`);
 }
 
+// ---------------------------------------------------------------------------
+// Dashboards whole, for editing
+// ---------------------------------------------------------------------------
+
+/**
+ * One dashboard export file, whole: the `{entries, dashboards, uuid}` object as
+ * the file holds it, with nothing read out of it or left behind. The summary
+ * readers above keep only what the content page shows; an editor has to write
+ * the dashboard back, so it needs every key the export carried.
+ */
+                                     
+                                                                        
+                        
+                                                                                
+                                                   
+ 
+
+const MAX_NESTING = 4;
+
+async function collectDashboardJson(where        , bytes            , depth        , out                      )                {
+  if (looksLikeZip(bytes)) {
+    if (depth >= MAX_NESTING) return;
+    let zip            ;
+    try {
+      zip = openZip(bytes);
+    } catch {
+      return;
+    }
+    for (const entry of zip.names) {
+      if (entry.endsWith('/')) continue;
+      // A content package keeps each dashboard as a zip with no extension
+      // (dashboards/<owner id>); a generated bundle nests import/dashboard.zip.
+      const lower = entry.toLowerCase();
+      const candidate = lower.endsWith('.json') || lower.endsWith('.zip') || lower.startsWith('dashboards/') || !/\.[a-z0-9]+$/.test(lower.split('/').pop() ?? '');
+      if (!candidate) continue;
+      try {
+        await collectDashboardJson(`${where}/${entry}`, await zip.bytes(entry), depth + 1, out);
+      } catch {
+        // One unreadable entry should not lose the rest of the archive.
+      }
+    }
+    return;
+  }
+  const text = stripBom(new TextDecoder().decode(bytes)).trim();
+  if (!text.startsWith('{')) return;
+  let json      ;
+  try {
+    json = JSON.parse(text)        ;
+  } catch {
+    return;
+  }
+  if (isRecord(json) && Array.isArray(json['dashboards'])) out.push({ file: where, json });
+}
+
+/**
+ * Every dashboard export inside a dropped file, whole: a dashboard .json (one
+ * dashboard or several), a dashboard zip (dashboard/dashboard.json), a content
+ * package (dashboards/<owner>, each a zip), or a zip that holds any of those —
+ * the bundle the dashboard builder downloads, with import/dashboard.zip in it.
+ */
+export async function readDashboardExports(name        , data                          )                                {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.length === 0) throw new AriaError(`${name} is empty.`);
+  const out                       = [];
+  if (!looksLikeZip(bytes)) {
+    // A bare JSON file must parse; say why when it does not.
+    const json = parseJson(new TextDecoder().decode(bytes), name);
+    if (isRecord(json) && Array.isArray(json['dashboards'])) out.push({ file: name, json });
+    return out;
+  }
+  await collectDashboardJson(name, bytes, 0, out);
+  return out;
+}
+
 /** Read several dropped files into one set of content. */
 export async function readAriaFiles(files                                                                               )                                                               {
   let content = EMPTY_CONTENT;

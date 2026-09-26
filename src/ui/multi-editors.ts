@@ -221,7 +221,7 @@ export function tableEditor(shape: TableShape, value: string, onChange: () => vo
             rows[r]![c] = select.value;
             commit();
           });
-          tr.appendChild(el('td', {}, select));
+          tr.appendChild(el('td', { attrs: { 'data-label': shape.columns[c] } }, select));
           return;
         }
         const inp = el('input', { attrs: { type: 'text', 'aria-label': label } }) as HTMLInputElement;
@@ -230,7 +230,7 @@ export function tableEditor(shape: TableShape, value: string, onChange: () => vo
           rows[r]![c] = inp.value;
           commit();
         });
-        tr.appendChild(el('td', {}, inp));
+        tr.appendChild(el('td', { attrs: { 'data-label': shape.columns[c] } }, inp));
       });
       tr.appendChild(
         el('td', { class: 'table-editor-x' }, el('button', {

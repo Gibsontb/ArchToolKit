@@ -752,8 +752,21 @@ tbody tr:hover {
 .generator-grid-wide {
   grid-template-columns: minmax(0, 1fr) minmax(0, 2.75fr);
 }
-.generator-grid-wide > :nth-child(3) {
+.generator-grid-wide > :nth-child(4) {
   grid-column: 1 / -1;
+}
+
+/* A blueprint with a workspace (the dashboard builder): steps 1 and 2 side by side,
+   the workspace the width of the page beneath them, the output below that. */
+.generator-grid-workspace {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+}
+.generator-grid-workspace > .generator-workspace,
+.generator-grid-workspace > :nth-child(4) {
+  grid-column: 1 / -1;
+}
+.generator-workspace[hidden] {
+  display: none;
 }
 
 @media (max-width: 1200px) {
@@ -805,8 +818,16 @@ tbody tr:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
   margin-top: var(--space-4);
+}
+.file-head > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.file-head .btn-row {
+  flex-wrap: wrap;
 }
 
 .btn-small {
@@ -2551,11 +2572,23 @@ textarea {
 /* Fields that hold several things: chips for lists, a grid for tables, boxes that grow. */
 .list-editor { display: flex; flex-direction: column; gap: 0.35rem; }
 .list-editor .tag-add-row input { flex: 1 1 auto; min-width: 0; }
-.table-editor { display: flex; flex-direction: column; gap: 0.35rem; }
+.table-editor { display: flex; flex-direction: column; gap: 0.35rem; container-type: inline-size; min-width: 0; }
 .table-editor-grid th { font-size: 0.72rem; white-space: nowrap; }
 .table-editor-grid td { padding: 0.15rem 0.2rem; }
-.table-editor-grid input { width: 100%; min-width: 5rem; font-size: 0.8rem; padding: 0.2rem 0.35rem; }
+.table-editor-grid input, .table-editor-grid select { width: 100%; min-width: 5rem; font-size: 0.8rem; padding: 0.2rem 0.35rem; }
 .table-editor-x { width: 1.5rem; }
+/* Too narrow for the columns side by side: each row becomes a small card, each cell
+   labelled with its column, so nothing is cut off and nothing scrolls sideways. */
+@container (max-width: 30rem) {
+  .table-editor-grid thead { display: none; }
+  .table-editor-grid, .table-editor-grid tbody, .table-editor-grid tr, .table-editor-grid td { display: block; width: 100%; }
+  .table-editor-grid tr { position: relative; padding: 0.35rem 1.9rem 0.45rem 0.2rem; border-bottom: 1px solid var(--border); }
+  .table-editor-grid tbody tr:last-child { border-bottom: none; }
+  .table-editor-grid td { border: none; padding: 0.1rem 0; }
+  .table-editor-grid td[data-label]::before { content: attr(data-label); display: block; font-size: 0.7rem; color: var(--text-faint); margin-bottom: 0.05rem; }
+  .table-editor-grid .table-editor-x { position: absolute; top: 0.35rem; right: 0.2rem; width: auto; }
+  .table-editor-grid input, .table-editor-grid select { min-width: 0; }
+}
 textarea.autogrow { resize: vertical; overflow-y: hidden; min-height: 4.5rem; }
 
 /* The network calculator: a header button and a dialog with four tabs. */
@@ -2593,3 +2626,109 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .netcalc-families { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; align-self: flex-start; margin-bottom: 0.4rem; }
 .netcalc-family { background: none; border: 0; color: var(--text-muted); padding: 0.25rem 0.9rem; cursor: pointer; font: inherit; font-size: 0.85rem; }
 .netcalc-family.is-active { background: var(--accent-dim); color: var(--text); }
+
+/* ---------- The dashboard builder (VCF Operations) ---------- */
+.dbb { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.dbb-card { margin: 0; min-width: 0; }
+.dbb .card + .card { margin-top: 0; }
+.dbb-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+.dbb-start { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 18rem; min-width: 0; font-size: 0.85rem; color: var(--text-muted); }
+.dbb-start select { flex: 1 1 auto; min-width: 0; max-width: 24rem; }
+.dbb-file { display: none; }
+.dbb-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); font-size: 0.82rem; }
+.dbb-status:empty { display: none; }
+.dbb-count { color: var(--text-muted); }
+.dbb-count.is-bad { color: var(--danger); }
+.dbb-message { flex: 1 1 100%; padding: 0.35rem 0.6rem; border-radius: var(--radius-sm); background: var(--info-dim); border: 1px solid var(--border); overflow-wrap: anywhere; }
+.dbb-message.is-bad { background: var(--danger-dim); color: var(--danger); }
+.dbb-message.is-ok { background: var(--ok-dim); }
+.dbb-pick { display: flex; flex-direction: column; gap: var(--space-2); }
+.dbb-choice-list { max-height: 16rem; overflow: auto; display: flex; flex-direction: column; gap: 0.15rem; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.3rem; }
+.dbb-choice { display: flex; align-items: baseline; gap: var(--space-2); padding: 0.2rem 0.3rem; border-radius: var(--radius-sm); cursor: pointer; }
+.dbb-choice:hover { background: var(--surface-hover); }
+.dbb-choice[hidden] { display: none; }
+.dbb-choice-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+.dbb-main { display: grid; grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) minmax(16rem, 22rem); gap: var(--space-3); align-items: start; }
+.dbb-main[hidden] { display: none; }
+@media (max-width: 1100px) {
+  .dbb-main { grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr); }
+  .dbb-main > :nth-child(3) { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .dbb-main { grid-template-columns: minmax(0, 1fr); }
+}
+
+.dbb-palette { display: flex; flex-direction: column; gap: var(--space-2); }
+.dbb-palette input[type="search"] { width: 100%; }
+.dbb-palette-list { display: flex; flex-direction: column; gap: 2px; max-height: 34rem; overflow-y: auto; }
+@media (max-width: 700px) { .dbb-palette-list { max-height: 14rem; } }
+.dbb-family { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); margin: 0.5rem 0 0.15rem; }
+.dbb-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; width: 100%; text-align: left; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.3rem 0.5rem; font: inherit; font-size: 0.82rem; cursor: grab; }
+.dbb-item:hover, .dbb-item:focus-visible { border-color: var(--accent); background: var(--surface-hover); }
+.dbb-item-name { flex: 1 1 6rem; min-width: 0; overflow-wrap: anywhere; }
+.dbb-tag { font-size: 0.65rem; color: var(--text-faint); border: 1px solid var(--border); border-radius: 999px; padding: 0 0.35rem; white-space: nowrap; }
+.dbb-tag.is-warn { color: var(--warn); border-color: var(--warn); }
+
+.dbb-canvas-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken); }
+.dbb-canvas { position: relative; min-width: 34rem; touch-action: none; }
+.dbb-col { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--border); opacity: 0.6; pointer-events: none; }
+.dbb-col:first-child { border-left: none; }
+.dbb-widget { position: absolute; box-sizing: border-box; padding: 0.25rem 0.4rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); overflow: hidden; cursor: move; user-select: none; box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); }
+.dbb-widget:hover { border-color: var(--accent); }
+.dbb-widget:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dbb-widget.is-selected { border-color: var(--accent); background: var(--accent-dim); z-index: 2; }
+.dbb-widget.is-dragging { opacity: 0.85; z-index: 3; box-shadow: var(--shadow); }
+.dbb-widget.is-overlap { border-color: var(--danger); background-image: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--danger) 14%, transparent) 6px 12px); }
+.dbb-widget.has-error { border-left: 4px solid var(--danger); }
+.dbb-widget.has-warning { border-left: 4px solid var(--warn); }
+.dbb-widget-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 0.5rem; }
+.dbb-widget-type { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbb-widget-badges { position: absolute; right: 0.9rem; bottom: 0.2rem; display: flex; gap: 0.2rem; }
+.dbb-badge { font-size: 0.62rem; padding: 0 0.3rem; border-radius: 999px; background: var(--bg-raised); border: 1px solid var(--border-strong); color: var(--text-muted); }
+.dbb-badge.is-bad { color: var(--danger); border-color: var(--danger); }
+.dbb-badge.is-warn { color: var(--warn); border-color: var(--warn); }
+.dbb-resize { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%); }
+.dbb-empty { position: absolute; inset: 2rem 1rem auto; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
+.dbb-offgrid { display: flex; flex-direction: column; gap: 0.2rem; margin-top: var(--space-2); }
+.dbb-offgrid:empty { display: none; }
+.dbb-off { text-align: left; background: var(--danger-dim); border: 1px solid var(--danger); border-radius: var(--radius-sm); color: var(--text); padding: 0.3rem 0.5rem; font: inherit; font-size: 0.8rem; cursor: pointer; }
+.dbb-off.is-selected { outline: 2px solid var(--accent); }
+.dbb-dash-findings:not(:empty) { margin-top: var(--space-2); }
+
+.dbb-inspector { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.dbb-inspector .field { margin: 0; }
+.dbb-inspector input[type="text"], .dbb-inspector input[type="number"], .dbb-inspector select, .dbb-inspector textarea { width: 100%; min-width: 0; }
+.dbb-own-findings[hidden] { display: none; }
+.dbb-subhead { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); margin-top: var(--space-2); }
+.dbb-settings-form { display: flex; flex-direction: column; gap: var(--space-2); }
+.dbb-setting-help { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.15rem; }
+.dbb-problem { font-size: 0.75rem; color: var(--danger); }
+.dbb-problem:empty { display: none; }
+.dbb-required { color: var(--danger); }
+.dbb-xywh { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.35rem; }
+.dbb-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dbb-mini { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.7rem; color: var(--text-muted); min-width: 0; }
+.dbb-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+@media (max-width: 420px) { .dbb-pair { grid-template-columns: minmax(0, 1fr); } }
+.dbb-combo { display: flex; flex-direction: column; gap: 0.3rem; }
+.dbb-combo input[hidden] { display: none; }
+.dbb-multi { display: flex; flex-direction: column; gap: 0.3rem; }
+.dbb-multi .checklist { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; font-size: 0.8rem; }
+.dbb-metrics { display: flex; flex-direction: column; gap: 0.25rem; align-items: stretch; }
+.dbb-metric { display: flex; gap: 0.25rem; align-items: center; }
+.dbb-metric input { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 0.8rem; }
+.dbb-metrics > .btn { align-self: flex-start; }
+.dbb-colors { display: flex; flex-direction: column; gap: 0.25rem; }
+.dbb-swatches { display: flex; gap: 0.2rem; }
+.dbb-swatch { width: 1.1rem; height: 1.1rem; border-radius: 3px; border: 1px solid var(--border-strong); }
+.dbb-help, .dbb-kept { font-size: 0.82rem; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.3rem 0.5rem; }
+.dbb-help summary, .dbb-kept summary { cursor: pointer; color: var(--text-muted); }
+.dbb-help p { margin: 0.35rem 0; }
+.dbb-kept ul { margin: 0.35rem 0 0.2rem; padding-left: 1.1rem; overflow-wrap: anywhere; }
+.btn-danger { color: var(--danger); }
+
+.dbb-settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: var(--space-2) var(--space-4); align-items: start; }
+.dbb-settings-grid .field { margin: 0; min-width: 0; }
+.dbb-settings-grid input, .dbb-settings-grid select, .dbb-settings-grid textarea { width: 100%; min-width: 0; }
+.dbb-textarea { width: 100%; min-height: 14rem; font-size: 0.8rem; white-space: pre; overflow-x: auto; }

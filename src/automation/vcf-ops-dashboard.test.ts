@@ -12,7 +12,9 @@ import { defaultValues, type BlueprintValues } from '../kit/blueprint.ts';
 import type { Finding } from '../core/findings.ts';
 import { zip } from '../kit/archive.ts';
 import { openZip } from '../core/zip.ts';
-import { readAriaFile } from '../aria/parse.ts';
+import { readAriaFile, readDashboardExports } from '../aria/parse.ts';
+import { dashboardChoices, loadDashboard } from './blueprints/vcf-ops-dashboard-import.ts';
+import { __test as builderRows } from '../ui/dashboard-builder.ts';
 import { tableShape } from '../ui/multi-editors.ts';
 import { VCF_OPS_BUILD, layoutWidgets, parseWidgetRows } from './blueprints/vcf-ops-build.ts';
 import { Settings, WIDGET_TYPES, metricKeyProblem, parseKind, type WidgetType } from './blueprints/vcf-ops-widgets.ts';
@@ -79,7 +81,7 @@ describe('vcfops_dashboard: templates', () => {
       expect(TEMPLATES).toContain(value);
       const grid = DASHBOARD.inputs.find((i) => i.id === `widgets_${value}`);
       expect(grid?.showWhen?.equals).toEqual([value]);
-      expect(tableShape(grid!)?.columns).toEqual(['Type', 'Title', 'Settings', 'Position', 'Provider', 'Receives from']);
+      expect(tableShape(grid!)?.columns).toEqual(['Type', 'Title', 'Settings', 'Position', 'Provider', 'Receives from', 'Loaded widget']);
     }
   });
 
@@ -383,5 +385,250 @@ describe('the grid editor reads a declared grid', () => {
     expect(shape.choices?.[1]).toBeUndefined();
     // A textarea without options is read as before.
     expect(tableShape({ id: 'x', label: 'x', control: 'textarea', default: 'a | b', hint: 'A | B' })?.spaced).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Loading a dashboard from an export, editing it, and writing it back
+// ---------------------------------------------------------------------------
+
+/**
+ * A content export shaped like a real one (a live 9.x appliance's Content
+ * Management export, read for its shapes: keys only, no customer values): one
+ * zip per dashboard under dashboards/<owner>, an entries table with an
+ * adapterKind table beside resourceKind and resource, per-widget states,
+ * widget x/y/height beside gridsterCoords, a widget type the catalogue lacks
+ * (ParetoChart), a Tag Picker wired by tagId, a receiver with two senders,
+ * repeated titles, a title holding " | ", a stale navigation, a collapsed
+ * widget overlapping another, and dashboard keys the builder never writes
+ * (docCenterKey, entryKeys, adapterName).
+ */
+function realShapedDashboard(id: string, name: string): Record<string, unknown> {
+  const w = (suffix: string) => `${id}-${suffix}`;
+  return {
+    shared: true,
+    temporary: false,
+    hidden: false,
+    creationTime: 1718000000000,
+    autoswitchEnabled: false,
+    importAttempts: 0,
+    columnProportion: '1',
+    importComplete: true,
+    columnCount: 1,
+    userId: 'a1b2c3d4-0000-4000-8000-000000000001',
+    states: [{ key: `permDashboardTime_dashboard_${id}`, value: 'o%3AdateRange%3Ds%253Alast24Hour%5EdateRangeText%3Ds%253A24H' }],
+    homeTab: false,
+    name,
+    gridsterMaxColumns: 12,
+    rank: 4,
+    disabled: false,
+    id,
+    locked: false,
+    lastUpdateUserId: 'a1b2c3d4-0000-4000-8000-000000000001',
+    lastUpdateTime: 1718000500000,
+    description: 'VMs by tag, with their load',
+    adapterName: null,
+    namePath: 'Operations',
+    docCenterKey: '',
+    entryKeys: [],
+    dashboardNavigations: { [w('list')]: [{ id: 'ffffffff-0000-4000-8000-00000000abcd', widgets: [{ interactionType: 'resourceId', id: 'eeeeeeee-0000-4000-8000-000000000001' }] }], 'no-such-widget': [] },
+    widgetInteractions: [
+      { type: 'tagId', widgetIdProvider: w('tags'), widgetIdReceiver: w('list') },
+      { type: 'resourceId', widgetIdProvider: w('list'), widgetIdReceiver: w('chart') },
+      { type: 'resourceId', widgetIdProvider: w('list2'), widgetIdReceiver: w('chart') },
+      { type: 'resourceId', widgetIdProvider: w('list'), widgetIdReceiver: w('pareto') },
+    ],
+    widgets: [
+      { collapsed: false, id: w('tags'), gridsterCoords: { w: 3, x: 1, h: 8, y: 1 }, type: 'TagPicker', title: 'Tags', config: { refreshInterval: 300, refreshContent: { refreshContent: true } }, states: [{ key: 'expanded', value: 'b%3A1' }] },
+      {
+        collapsed: false,
+        x: 4,
+        y: 1,
+        id: w('list'),
+        gridsterCoords: { w: 5, x: 4, h: 8, y: 1 },
+        type: 'ResourceList',
+        title: 'VMs | by tag',
+        height: 300,
+        config: {
+          refreshInterval: 300,
+          resource: [],
+          refreshContent: { refreshContent: true },
+          relationshipMode: { relationshipMode: 0 },
+          additionalColumns: [{ boxLabel: 'CPU', metricKey: 'cpu|usage_average', metricName: 'CPU Usage (%)', resourceKindId: 'resourceKind:id:1_::_', metricUnitId: 'percent' }],
+          selfProvider: { selfProvider: false },
+          title: 'VMs | by tag',
+          mode: 'all',
+          filterMode: 'tagPicker',
+          tagFilter: { path: ['/source/kind/kind:resourceKind:id:1_::_'], value: { kind: ['resourceKind:id:1_::_'], tag: [] } },
+          depth: 1,
+          customFilter: { filter: [], excludedResources: null, includedResources: null },
+          selectFirstRow: { selectFirstRow: true },
+          pageSize: 50,
+        },
+      },
+      {
+        collapsed: false,
+        id: w('list2'),
+        gridsterCoords: { w: 4, x: 9, h: 8, y: 1 },
+        type: 'ResourceList',
+        title: 'Hosts',
+        config: { refreshInterval: 300, refreshContent: { refreshContent: true }, selfProvider: { selfProvider: true }, title: 'Hosts', mode: 'all', filterMode: 'tagPicker', tagFilter: { path: ['/source/kind/kind:resourceKind:id:0_::_'], value: { kind: ['resourceKind:id:0_::_'] } }, depth: 1 },
+      },
+      {
+        collapsed: false,
+        id: w('chart'),
+        gridsterCoords: { w: 6, x: 1, h: 6, y: 9 },
+        type: 'MetricChart',
+        title: 'Hosts',
+        config: {
+          refreshInterval: 300,
+          refreshContent: { refreshContent: true },
+          selfProvider: { selfProvider: false },
+          title: 'Hosts',
+          metric: { mode: 'resourceKind', resourceMetrics: [], subMode: 'resourceKindAll', resourceKindMetrics: [{ metricKey: 'cpu|usage_average', resourceKindId: 'resourceKind:id:1_::_', label: 'CPU', colorMethod: 2, id: 'extModel1-1' }] },
+          relationshipMode: { relationshipMode: 0 },
+          chartType: 'area',
+        },
+      },
+      { collapsed: false, id: w('pareto'), gridsterCoords: { w: 6, x: 7, h: 6, y: 9 }, type: 'ParetoChart', title: '', config: { barsCount: 10, metricKey: 'mem|usage_average', whatever: { nested: [1, 2, 3] } } },
+      { collapsed: true, id: w('folded'), gridsterCoords: { w: 6, x: 7, h: 1, y: 9 }, type: 'View', title: 'Folded view', config: { viewDefinitionId: '0f8b2b9c-3a1e-4b7a-9c2d-1e2f3a4b5c6d', refreshInterval: 300, selfProvider: { selfProvider: false }, title: 'Folded view', traversalSpecId: 'vSphere Hosts and Clusters-VMWARE-vSphere World' } },
+    ],
+  };
+}
+
+function realShapedExport(id: string, name: string): string {
+  return JSON.stringify({
+    entries: {
+      resourceKind: [
+        { resourceKindKey: 'HostSystem', internalId: 'resourceKind:id:0_::_', adapterKindKey: 'VMWARE' },
+        { resourceKindKey: 'VirtualMachine', internalId: 'resourceKind:id:1_::_', adapterKindKey: 'VMWARE' },
+      ],
+      adapterKind: [{ internalId: 'adapterKind:id:0_::_', adapterKindKey: 'VMWARE' }],
+      resource: [],
+    },
+    dashboards: [realShapedDashboard(id, name)],
+    uuid: `9d0c1e2f-0000-4000-8000-${id.slice(-12)}`,
+  });
+}
+
+const ID_A = '11111111-2222-4333-8444-555555555555';
+const ID_B = '11111111-2222-4333-8444-666666666666';
+
+async function contentPackageZip(): Promise<Uint8Array> {
+  const one = await zip({ 'dashboard/dashboard.json': realShapedExport(ID_A, 'Operations/VM tags') });
+  const two = await zip({ 'dashboard/dashboard.json': realShapedExport(ID_B, 'Operations/Host tags') });
+  // A content export: one zip per dashboard owner under dashboards/, beside the other content.
+  return zip({ 'dashboards/a1b2c3d4-0000-4000-8000-000000000001': one, 'dashboards/a1b2c3d4-0000-4000-8000-000000000002': two, 'supermetrics.json': '{}', 'customgroups.json': '{"customGroups":[]}' });
+}
+
+describe('vcfops_dashboard: loading an export to edit', () => {
+  it('finds every dashboard in a content export and offers them to pick', async () => {
+    const exports = await readDashboardExports('content.zip', await contentPackageZip());
+    const choices = dashboardChoices(exports);
+    expect(choices.map((c) => c.name)).toEqual(['Operations/VM tags', 'Operations/Host tags']);
+    expect(choices.map((c) => c.widgets)).toEqual([6, 6]);
+  });
+
+  it('loads, generates with no edits, and writes the dashboard back exactly as exported', async () => {
+    const exports = await readDashboardExports('content.zip', await contentPackageZip());
+    const original = JSON.parse(realShapedExport(ID_B, 'Operations/Host tags')) as Record<string, unknown>;
+    const loaded = loadDashboard(exports[1]!, 0, exports);
+    // What the builder shows: a row for every widget, titles made unique and single-line.
+    const rows = String(loaded.values['widgets_custom']).split('\n');
+    expect(rows.length).toBe(6);
+    expect(rows[1]!.startsWith('ResourceList | VMs|by tag | kinds=vm; columns=cpu|usage_average | 4,1,5,8 | no | Tags | ')).toBe(true);
+    expect(rows[3]!.split(' | ').slice(0, 2)).toEqual(['MetricChart', 'Hosts (2)']);
+    expect(rows[4]!.split(' | ')[0]).toBe('ParetoChart');
+    expect(loaded.values['dashboard_name']).toBe('Host tags');
+    expect(loaded.values['folder']).toBe('Operations');
+    expect(loaded.values['time_range']).toBe('last24Hour');
+    // Flagged: the unknown type, the second sender, the navigation known only by id.
+    expect((loaded.store.kept[`${ID_B}-pareto`] ?? []).some((k) => k.includes('does not know'))).toBe(true);
+    expect(loaded.store.notes.some((n) => n.includes('beyond one sender'))).toBe(true);
+    expect(loaded.store.notes.some((n) => n.includes('navigation'))).toBe(true);
+
+    const out = DASHBOARD.build({ ...BASE, ...loaded.values }, 'test');
+    expect(errors(out.findings ?? [])).toEqual([]);
+    const json = JSON.parse(out.files['import/dashboard.json']!) as Record<string, unknown>;
+    expect(json['dashboards']).toEqual(original['dashboards']);
+    expect(json['entries']).toEqual(original['entries']);
+    expect(json['uuid']).toBe(original['uuid']);
+    // The zip the content page reads holds the same.
+    const zipped = await readAriaFile('dashboard.zip', await fromArchive({ ...out.files }, 'import/dashboard.zip'));
+    expect(zipped.dashboards[0]?.widgets.length).toBe(6);
+  });
+
+  it('applies an edit to what it changes and keeps everything else as exported', async () => {
+    const exports = await readDashboardExports('content.zip', await contentPackageZip());
+    const loaded = loadDashboard(exports[0]!, 0, exports);
+    const original = realShapedDashboard(ID_A, 'Operations/VM tags') as { widgets: Record<string, any>[]; widgetInteractions: unknown[]; dashboardNavigations: Record<string, unknown> };
+    const rows = String(loaded.values['widgets_custom']).split('\n');
+    // Add a column to the Object List, move the chart, and remove the unknown widget.
+    rows[1] = rows[1]!.replace('columns=cpu|usage_average', 'columns=cpu|usage_average,mem|usage_average');
+    rows[3] = rows[3]!.replace('1,9,6,6', '1,15,6,6');
+    rows.splice(4, 1);
+    const out = DASHBOARD.build({ ...BASE, ...loaded.values, widgets_custom: rows.join('\n') }, 'test');
+    const dash = (JSON.parse(out.files['import/dashboard.json']!) as { dashboards: { widgets: Record<string, any>[]; widgetInteractions: unknown[]; dashboardNavigations: Record<string, unknown> }[] }).dashboards[0]!;
+    const list = dash.widgets[1]!;
+    expect(list['config'].additionalColumns.map((c: { metricKey: string }) => c.metricKey)).toEqual(['cpu|usage_average', 'mem|usage_average']);
+    // Keys the builder does not write are still there, and so is the exported title.
+    expect(list['height']).toBe(300);
+    expect(list['title']).toBe('VMs | by tag');
+    for (const key of Object.keys(original.widgets[1]!['config'])) if (key !== 'additionalColumns') expect(list['config'][key]).toEqual(original.widgets[1]!['config'][key]);
+    // The chart moved and nothing else about it changed.
+    expect(dash.widgets[3]!['gridsterCoords']).toEqual({ x: 1, y: 15, w: 6, h: 6 });
+    expect(dash.widgets[3]!['config']).toEqual(original.widgets[3]!['config']);
+    // The removed widget took its interaction with it; the rest are as they were, and so are the navigations.
+    expect(dash.widgets.length).toBe(5);
+    expect(dash.widgetInteractions).toEqual(original.widgetInteractions.slice(0, 3));
+    expect(dash.dashboardNavigations).toEqual(original.dashboardNavigations);
+  });
+
+  it('reads back the file this builder generates, and generates the same dashboard from it', async () => {
+    for (const template of ['capacity', 'tier1', 'alerts', 'home', 'nsx']) {
+      const first = DASHBOARD.build({ ...BASE, template }, 'test');
+      // The .zip the page downloads: every file, import/dashboard.zip nested inside.
+      const exports = await readDashboardExports('bundle.zip', await zip({ ...first.files }));
+      const choices = dashboardChoices(exports);
+      expect(choices.length).toBe(1);
+      const loaded = loadDashboard(exports[choices[0]!.exportIndex]!, choices[0]!.dashboardIndex, exports);
+      // Its own output reads back into rows the catalogue fully understands.
+      expect(Object.values(loaded.store.kept).flat().filter((k) => k.startsWith('config keys'))).toEqual([]);
+      const again = DASHBOARD.build({ ...BASE, ...loaded.values }, 'test');
+      expect(JSON.parse(again.files['import/dashboard.json']!)).toEqual(JSON.parse(first.files['import/dashboard.json']!));
+      expect(errors(again.findings ?? [])).toEqual([]);
+    }
+  });
+
+  it('takes a bare dashboard .json holding several dashboards', async () => {
+    const one = JSON.parse(realShapedExport(ID_A, 'A')) as { dashboards: unknown[] };
+    const two = JSON.parse(realShapedExport(ID_B, 'B')) as { dashboards: unknown[] };
+    const both = { ...one, dashboards: [...one.dashboards, ...two.dashboards] };
+    const exports = await readDashboardExports('two.json', new TextEncoder().encode(JSON.stringify(both)));
+    expect(dashboardChoices(exports).map((c) => c.name)).toEqual(['A', 'B']);
+    const loaded = loadDashboard(exports[0]!, 1, exports);
+    const out = DASHBOARD.build({ ...BASE, ...loaded.values }, 'test');
+    expect((JSON.parse(out.files['import/dashboard.json']!) as { dashboards: unknown[] }).dashboards).toEqual([two.dashboards[0]]);
+  });
+
+  it('leaves a loaded dashboard alone once another template is chosen', async () => {
+    const exports = await readDashboardExports('content.zip', await contentPackageZip());
+    const loaded = loadDashboard(exports[0]!, 0, exports);
+    const out = DASHBOARD.build({ ...BASE, ...loaded.values, template: 'capacity' }, 'test');
+    const dash = (JSON.parse(out.files['import/dashboard.json']!) as DashboardJson).dashboards[0]!;
+    expect(dash.widgets.map((w) => w.title)).toEqual(['About this dashboard', 'Clusters', 'Capacity remaining', 'Least time remaining', 'Cluster capacity', 'CPU demand by cluster', 'CPU demand trend']);
+    expect(dash.id).toBe(stableId('dashboard:VM tags'));
+  });
+});
+
+describe('the dashboard builder rows', () => {
+  it('splits and joins rows without changing them, the loaded widget id included', () => {
+    const text = ['# a comment', 'ResourceList | VMs | kinds=vm; columns=cpu|usage_average | 1,1,4,6 | yes | ', 'ParetoChart | Odd |  | 5,1,4,6 | no | VMs | 1234-abcd'].join('\n');
+    const { rows, comments } = builderRows.splitRows(text);
+    expect(rows.length).toBe(2);
+    expect(rows[1]!.source).toBe('1234-abcd');
+    expect(builderRows.joinRows(rows, comments)).toBe(text);
+    const settings = builderRows.readSettings('kind=vm; text=a; b=c');
+    expect(builderRows.writeSettings(settings.pairs, settings.malformed)).toBe('kind=vm; text=a; b=c');
   });
 });

@@ -29,7 +29,8 @@ import { networksPreamble, networksScheduledEnv } from './vcf-networks-logs.ts';
 import { authFileVar, workDirLines } from './vcf-operations-content.ts';
 import { CSV_COLUMNS } from '../../migration/portfolio.ts';
 import { familyOf, formatHostPort, isIp, isIpv6, overlapsAny, splitHostPort } from '../../core/ip.ts';
-import { Entries, Settings, WIDGET_TYPES, catalogueHelp, metricKeyProblem, parseKind, settingProblems, widgetType, type KindRef, type WidgetContext, type WidgetType } from './vcf-ops-widgets.ts';
+import { mergeDashboard, passthroughType, readStore, referencedEntries, sameRow, storeWidget, type ImportStore } from './vcf-ops-dashboard-import.ts';
+import { DASHBOARD_TIME_RANGES, Entries, Settings, WIDGET_TYPES, metricKeyProblem, parseKind, settingProblems, widgetType, type KindRef, type WidgetContext, type WidgetType } from './vcf-ops-widgets.ts';
 import {
   CONTENT_ZIP,
   DASHBOARD_OWNER_PLACEHOLDER,
@@ -927,7 +928,7 @@ function viewTemplate(template: string, tagCategories: readonly string[]): ViewT
 // ---------------------------------------------------------------------------
 
 /** The widget grid's columns, as the page's grid editor reads them from the hint. */
-const GRID_HINT = 'Type | Title | Settings (key=value; …) | Position (x,y,w,h — or w,h or auto) | Provider (yes/no) | Receives from (a widget title)';
+const GRID_HINT = 'Type | Title | Settings (key=value; …) | Position (x,y,w,h — or w,h or auto) | Provider (yes/no) | Receives from (a widget title) | Loaded widget (its id in a loaded export; blank for a new one)';
 
 /** The grid's dropdowns: an option's group is the column it belongs to. */
 const GRID_OPTIONS = [
@@ -948,6 +949,10 @@ export interface WidgetRow {
   readonly position: string;
   readonly providerText: string;
   readonly receives: string;
+  /** The settings cell as written. */
+  readonly settingsText: string;
+  /** The widget id in a loaded export this row came from, or ''. */
+  readonly source: string;
 }
 
 export interface PlacedWidget extends WidgetRow {
@@ -973,8 +978,8 @@ export function parseWidgetRows(text: string): WidgetRow[] {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'))
     .map((line, index) => {
-      const [typeName = '', title = '', settings = '', position = '', provider = '', receives = ''] = cellsOf(line);
-      return { index, typeName, type: widgetType(typeName), title, settings: new Settings(settings), position: position || 'auto', providerText: provider, receives };
+      const [typeName = '', title = '', settings = '', position = '', provider = '', receives = '', source = ''] = cellsOf(line);
+      return { index, typeName, type: widgetType(typeName), title, settings: new Settings(settings), settingsText: settings, position: position || 'auto', providerText: provider, receives, source };
     });
 }
 
@@ -1075,18 +1080,24 @@ const PROVIDER_NO = /^(no|n|false|off|0|)$/i;
  * interactions that name no widget, name one that cannot send, or go round in
  * a loop.
  */
-export function checkWidgetRows(rows: readonly WidgetRow[], placed: readonly PlacedWidget[], layoutProblems: readonly { row: WidgetRow; message: string }[]): Finding[] {
+export function checkWidgetRows(rows: readonly WidgetRow[], placed: readonly PlacedWidget[], layoutProblems: readonly { row: WidgetRow; message: string }[], verbatim: ReadonlySet<number> = new Set(), unmoved: ReadonlySet<number> = new Set()): Finding[] {
   const findings: Finding[] = [];
   const name = (row: WidgetRow): string => `"${row.title || `row ${row.index + 1}`}"`;
+  // Which rows a finding is about, so the builder can show it beside them.
+  const at = (...about: readonly { index: number }[]): { path: string } => ({ path: [...new Set(about.map((row) => row.index + 1))].map((n) => `row ${n}`).join(', ') });
   if (rows.length === 0) findings.push(error('vcfops.dashboard.no-widgets', 'The widget grid is empty, so the dashboard would be a blank page.', { source: SRC }));
 
-  const titles = new Map<string, number>();
+  const titles = new Map<string, WidgetRow[]>();
   for (const row of rows) {
-    if (!row.title) findings.push(error('vcfops.dashboard.no-title', `Row ${row.index + 1} (${row.typeName || 'no type'}) has no title.`, { remediation: 'Every widget needs a title: it is what "Receives from" and navigations name.', source: SRC }));
-    else titles.set(row.title.toLowerCase(), (titles.get(row.title.toLowerCase()) ?? 0) + 1);
+    if (!row.title) findings.push(error('vcfops.dashboard.no-title', `Row ${row.index + 1} (${row.typeName || 'no type'}) has no title.`, { remediation: 'Every widget needs a title: it is what "Receives from" and navigations name.', source: SRC, ...at(row) }));
+    else titles.set(row.title.toLowerCase(), [...(titles.get(row.title.toLowerCase()) ?? []), row]);
   }
-  const dupes = [...titles.entries()].filter(([, count]) => count > 1).map(([title]) => title);
-  if (dupes.length > 0) findings.push(error('vcfops.dashboard.duplicate-title', `More than one widget is titled ${dupes.map((t) => `"${t}"`).join(', ')}.`, { remediation: '"Receives from" finds a widget by its title, so titles must be unique.', source: SRC }));
+  const dupes = [...titles.entries()].filter(([, list]) => list.length > 1);
+  if (dupes.length > 0) {
+    findings.push(
+      error('vcfops.dashboard.duplicate-title', `More than one widget is titled ${dupes.map(([t]) => `"${t}"`).join(', ')}.`, { remediation: '"Receives from" finds a widget by its title, so titles must be unique.', source: SRC, ...at(...dupes.flatMap(([, list]) => list)) }),
+    );
+  }
 
   for (const row of rows) {
     if (!row.type) {
@@ -1094,29 +1105,33 @@ export function checkWidgetRows(rows: readonly WidgetRow[], placed: readonly Pla
         error('vcfops.dashboard.unknown-type', `${name(row)}: "${row.typeName}" is not a VCF Operations widget type.`, {
           remediation: `Use one of: ${WIDGET_TYPES.map((t) => t.type).join(', ')} (or its name in the widget list, such as Top-N or Object List).`,
           source: SRC,
+          ...at(row),
         }),
       );
       continue;
     }
     const provider = PROVIDER_YES.test(row.providerText);
-    if (!provider && !PROVIDER_NO.test(row.providerText)) findings.push(error('vcfops.dashboard.bad-provider', `${name(row)}: Provider is "${row.providerText}", not yes or no.`, { source: SRC }));
+    if (!provider && !PROVIDER_NO.test(row.providerText)) findings.push(error('vcfops.dashboard.bad-provider', `${name(row)}: Provider is "${row.providerText}", not yes or no.`, { source: SRC, ...at(row) }));
+    // A loaded widget not edited here is written back as it was exported, so its settings are not second-guessed.
+    if (verbatim.has(row.index)) continue;
     const { errors, warnings } = settingProblems(row.type, row.settings, provider);
-    if (errors.length > 0) findings.push(error('vcfops.dashboard.bad-setting', `${name(row)} (${row.type.label}): ${errors.join('; ')}.`, { remediation: `A ${row.type.label} takes ${row.type.settings.map((s) => `${s.key}${s.required ? '*' : ''} (${s.help})`).join('; ') || 'no settings'}.`, source: SRC }));
-    if (warnings.length > 0) findings.push(warning('vcfops.dashboard.setting-ignored', `${name(row)}: ${warnings.join('; ')}.`, { source: SRC }));
+    if (errors.length > 0) findings.push(error('vcfops.dashboard.bad-setting', `${name(row)} (${row.type.label}): ${errors.join('; ')}.`, { remediation: `A ${row.type.label} takes ${row.type.settings.map((s) => `${s.key}${s.required ? '*' : ''} (${s.help})`).join('; ') || 'no settings'}.`, source: SRC, ...at(row) }));
+    if (warnings.length > 0) findings.push(warning('vcfops.dashboard.setting-ignored', `${name(row)}: ${warnings.join('; ')}.`, { source: SRC, ...at(row) }));
     if (!row.type.verified) {
       findings.push(
         warning('vcfops.dashboard.unverified-widget', `${name(row)}: no real export of a ${row.type.label} widget was found, so its config (${row.type.type}) is what the product documentation implies.`, {
           remediation: `${row.type.note ?? ''} Open the widget after import and save it once; export it to see the config your release writes. Source: ${row.type.source}.`.trim(),
           source: SRC,
+          ...at(row),
         }),
       );
     }
-    if (row.type.deprecated) findings.push(warning('vcfops.dashboard.deprecated-widget', `${name(row)}: ${row.type.label} is deprecated in VCF Operations 9 and will be removed.`, { source: SRC }));
+    if (row.type.deprecated) findings.push(warning('vcfops.dashboard.deprecated-widget', `${name(row)}: ${row.type.label} is deprecated in VCF Operations 9 and will be removed.`, { source: SRC, ...at(row) }));
     if (provider && row.receives) {
-      findings.push(error('vcfops.dashboard.provider-receives', `${name(row)} provides for itself and also receives from "${row.receives}".`, { remediation: 'A self-providing widget ignores what it is sent. Set Provider to no, or clear Receives from.', source: SRC }));
+      findings.push(error('vcfops.dashboard.provider-receives', `${name(row)} provides for itself and also receives from "${row.receives}".`, { remediation: 'A self-providing widget ignores what it is sent. Set Provider to no, or clear Receives from.', source: SRC, ...at(row) }));
     }
     if (!provider && !row.receives && row.type.needsSubject && !(row.type.type === 'AlertList' && row.settings.yes('world', false))) {
-      findings.push(warning('vcfops.dashboard.no-subject', `${name(row)} neither provides for itself nor receives from another widget, so it opens empty.`, { remediation: 'Set Provider to yes, or name the widget whose selection drives it in Receives from.', source: SRC }));
+      findings.push(warning('vcfops.dashboard.no-subject', `${name(row)} neither provides for itself nor receives from another widget, so it opens empty.`, { remediation: 'Set Provider to yes, or name the widget whose selection drives it in Receives from.', source: SRC, ...at(row) }));
     }
   }
 
@@ -1125,31 +1140,54 @@ export function checkWidgetRows(rows: readonly WidgetRow[], placed: readonly Pla
   for (const row of rows) {
     if (!row.receives) continue;
     const sender = byTitle.get(row.receives.toLowerCase());
-    if (!sender) findings.push(error('vcfops.dashboard.unknown-sender', `${name(row)} receives from "${row.receives}", which is not a widget on this dashboard.`, { remediation: 'Receives from takes the title of another widget in the grid, exactly as written there.', source: SRC }));
-    else if (sender === row) findings.push(error('vcfops.dashboard.interaction-cycle', `${name(row)} receives from itself.`, { source: SRC }));
-    else if (sender.type && !sender.type.provides) findings.push(error('vcfops.dashboard.sender-cannot-provide', `${name(row)} receives from "${sender.title}", a ${sender.type.label}, which cannot send a selection.`, { remediation: `Widgets that send: ${WIDGET_TYPES.filter((t) => t.provides).map((t) => t.label).join(', ')}.`, source: SRC }));
+    if (!sender) findings.push(error('vcfops.dashboard.unknown-sender', `${name(row)} receives from "${row.receives}", which is not a widget on this dashboard.`, { remediation: 'Receives from takes the title of another widget in the grid, exactly as written there.', source: SRC, ...at(row) }));
+    else if (sender === row) findings.push(error('vcfops.dashboard.interaction-cycle', `${name(row)} receives from itself.`, { source: SRC, ...at(row) }));
+    else if (sender.type && !sender.type.provides) findings.push(error('vcfops.dashboard.sender-cannot-provide', `${name(row)} receives from "${sender.title}", a ${sender.type.label}, which cannot send a selection.`, { remediation: `Widgets that send: ${WIDGET_TYPES.filter((t) => t.provides).map((t) => t.label).join(', ')}.`, source: SRC, ...at(row, sender) }));
   }
   for (const loop of interactionCycles(rows).filter((cycle) => cycle.length > 1)) {
-    findings.push(error('vcfops.dashboard.interaction-cycle', `The interactions go round in a loop: ${[...loop, loop[0]].map((t) => `"${t}"`).join(' → ')}.`, { remediation: 'Each widget should be driven from one direction; break the loop at the widget that should start it (Provider yes).', source: SRC }));
+    const members = rows.filter((row) => loop.includes(row.title));
+    findings.push(error('vcfops.dashboard.interaction-cycle', `The interactions go round in a loop: ${[...loop, loop[0]].map((t) => `"${t}"`).join(' → ')}.`, { remediation: 'Each widget should be driven from one direction; break the loop at the widget that should start it (Provider yes).', source: SRC, ...at(...members) }));
   }
 
   // Layout.
-  for (const { row, message } of layoutProblems) findings.push(error('vcfops.dashboard.bad-position', `${name(row)}: ${message}.`, { source: SRC }));
-  const offGrid = placed.filter((widget) => widget.x + widget.w - 1 > GRID_COLUMNS);
+  for (const { row, message } of layoutProblems) findings.push(error('vcfops.dashboard.bad-position', `${name(row)}: ${message}.`, { source: SRC, ...at(row) }));
+  const pastEdge = placed.filter((widget) => widget.x + widget.w - 1 > GRID_COLUMNS);
+  const offGrid = pastEdge.filter((widget) => !unmoved.has(widget.index));
+  const exportedOff = pastEdge.filter((widget) => unmoved.has(widget.index));
+  if (exportedOff.length > 0) {
+    findings.push(warning('vcfops.dashboard.off-grid-as-exported', `${exportedOff.map((w) => `"${w.title}"`).join(', ')} run${exportedOff.length === 1 ? 's' : ''} past column ${GRID_COLUMNS} as exported.`, { remediation: 'It is written back where the export had it; move or narrow it to bring it onto the grid.', source: SRC, ...at(...exportedOff) }));
+  }
   if (offGrid.length > 0) {
-    findings.push(error('vcfops.dashboard.off-grid', `${offGrid.map((w) => `"${w.title}"`).join(', ')} run${offGrid.length === 1 ? 's' : ''} past column ${GRID_COLUMNS}.`, { remediation: `x + w − 1 must be ${GRID_COLUMNS} or less on a ${GRID_COLUMNS}-column dashboard.`, source: SRC }));
+    findings.push(error('vcfops.dashboard.off-grid', `${offGrid.map((w) => `"${w.title}"`).join(', ')} run${offGrid.length === 1 ? 's' : ''} past column ${GRID_COLUMNS}.`, { remediation: `x + w − 1 must be ${GRID_COLUMNS} or less on a ${GRID_COLUMNS}-column dashboard.`, source: SRC, ...at(...offGrid) }));
   }
   const clashes: string[] = [];
+  const clashing: PlacedWidget[] = [];
+  const asExported: string[] = [];
+  const exportedClashing: PlacedWidget[] = [];
   for (let i = 0; i < placed.length; i += 1) {
     for (let j = i + 1; j < placed.length; j += 1) {
-      if (overlaps(placed[i]!, placed[j]!)) clashes.push(`"${placed[i]!.title}" and "${placed[j]!.title}"`);
+      if (!overlaps(placed[i]!, placed[j]!)) continue;
+      // Two loaded widgets neither of which was moved overlap in the export itself (collapsed widgets keep their old rows).
+      const loaded = unmoved.has(placed[i]!.index) && unmoved.has(placed[j]!.index);
+      (loaded ? asExported : clashes).push(`"${placed[i]!.title}" and "${placed[j]!.title}"`);
+      (loaded ? exportedClashing : clashing).push(placed[i]!, placed[j]!);
     }
+  }
+  if (asExported.length > 0) {
+    findings.push(
+      warning('vcfops.dashboard.overlap-as-exported', `Widgets overlap on the grid as they were exported: ${asExported.join('; ')}.`, {
+        remediation: 'The loaded dashboard already had them there (a collapsed widget keeps its place). They are written back as they were; move one to tidy the layout.',
+        source: SRC,
+        ...at(...exportedClashing),
+      }),
+    );
   }
   if (clashes.length > 0) {
     findings.push(
       error('vcfops.dashboard.overlap', `Widgets overlap on the grid: ${clashes.join('; ')}.`, {
         remediation: 'Gridster pushes overlapping widgets down on import, so the dashboard you open is not the one you wrote. Move them so no two rectangles share a cell, or set one to auto.',
         source: SRC,
+        ...at(...clashing),
       }),
     );
   }
@@ -1168,12 +1206,7 @@ function parseNavigations(text: string): { from: string; to: string; line: strin
     });
 }
 
-/** The dashboard time state the exports carry (permDashboardTime_dashboard_<id>), for the ranges seen in them. */
-const TIME_RANGES: Readonly<Record<string, string>> = {
-  last6Hour: 'o%3AdateRange%3Ds%253Alast6Hour%5EdateRangeText%3Ds%253A6H',
-  last24Hour: 'o%3AdateRange%3Ds%253Alast24Hour%5EdateRangeText%3Ds%253A24H',
-  last7Days: 'o%3AdateRange%3Ds%253Alast7Days%5EdateRangeText%3Ds%253A7D',
-};
+const TIME_RANGES = DASHBOARD_TIME_RANGES;
 
 /** A property whose value is text rather than a number, for isStringAttribute. */
 function isStringProperty(column: ViewColumn): boolean {
@@ -1405,6 +1438,208 @@ function viewXml(view: ViewTemplate, opts: ViewOptions): string {
   ].join('\n');
 }
 
+/** Everything the dashboard blueprint derives from its values, before the files are written. */
+interface ComposedDashboard {
+  readonly baseName: string;
+  readonly dashName: string;
+  readonly dashId: string;
+  readonly sharing: string;
+  readonly shared: boolean;
+  readonly groups: { name: string; source: string }[];
+  readonly placed: PlacedWidget[];
+  readonly findings: Finding[];
+  readonly viewNames: Set<string>;
+  readonly navTargets: string[];
+  /** dashboards[0], as an export holds it. */
+  readonly dashboard: Record<string, unknown>;
+}
+
+/**
+ * Build the dashboard from the values. With a loaded export (store), a row
+ * that came from it keeps its widget id, a widget type the catalogue does not
+ * know builds as its own exported config, and a row not edited since it was
+ * loaded is not checked setting by setting — it is written back as exported.
+ */
+function composeDashboard(values: BlueprintValues, entries: Entries, store: ImportStore | undefined): ComposedDashboard {
+  const template = templateOf(str(values, 'template', 'capacity'));
+  const baseName = str(values, 'dashboard_name', template.label);
+  const folder = str(values, 'folder', '').replace(/^\/+|\/+$/g, '');
+  // The folder is the leading segment of the name, and namePath mirrors it:
+  // namePath alone does not put a dashboard in a folder (CF render.py,
+  // matching the vROpsTOP and tkopton bundles).
+  const dashName = folder ? `${folder}/${baseName}` : baseName;
+  const description = str(values, 'description', template.about);
+  const sharing = str(values, 'sharing', 'everyone');
+  const shareGroups = listOf(str(values, 'share_groups', ''));
+  const shared = sharing !== 'private';
+  const refresh = num(values, 'refresh', 300);
+  const refreshContent = bool(values, 'refresh_content', true);
+  const timeRange = str(values, 'time_range', 'none');
+  const homeTab = bool(values, 'home_tab', false);
+  const locked = bool(values, 'locked', false);
+  const autoswitch = bool(values, 'autoswitch', false);
+  const autoswitchDelay = num(values, 'autoswitch_delay', 300);
+  const maxWidgets = num(values, 'max_widgets', 10);
+  const rowsText = str(values, `widgets_${template.value}`, template.rows.map((row) => row.join(' | ')).join('\n'));
+
+  // Rows from a loaded export: the first row naming a widget keeps its id; an unknown type builds as exported.
+  const sources = new Set<string>();
+  const rows = parseWidgetRows(rowsText).map((row): WidgetRow => {
+    const original = store && row.source && !sources.has(row.source) ? storeWidget(store, row.source) : undefined;
+    if (!original) return { ...row, source: '' };
+    sources.add(row.source);
+    return row.type ? row : { ...row, type: passthroughType(original) };
+  });
+  const verbatim = new Set(rows.filter((row) => row.source && store?.rows[row.source] && sameRow(store.rows[row.source]!, [row.typeName, row.title, row.settingsText, row.position, row.providerText, row.receives])).map((row) => row.index));
+  const { placed, problems } = layoutWidgets(rows);
+  const unmoved = new Set(rows.filter((row) => row.source && store?.rows[row.source]?.[3] === row.position).map((row) => row.index));
+  const findings: Finding[] = checkWidgetRows(rows, placed, problems, verbatim, unmoved);
+  if (placed.length > maxWidgets) {
+    findings.push(
+      warning('vcfops.dashboard.too-many', `${placed.length} widgets, more than the ${maxWidgets} you set as a limit.`, {
+        remediation: 'Each widget queries on every refresh, for every viewer. Split it into two dashboards and open one from the other (a navigation).',
+        source: SRC,
+      }),
+    );
+  }
+  if (sharing === 'groups' && shareGroups.length === 0) findings.push(error('vcfops.dashboard.no-groups', 'Shared with named user groups, but no group is named.', { source: SRC }));
+  const groups = shareGroups.map((group) => {
+    const at = group.lastIndexOf('@');
+    return at > 0 ? { name: group.slice(0, at).trim(), source: group.slice(at + 1).trim().toUpperCase() } : { name: group, source: 'LOCAL' };
+  });
+  if (sharing === 'groups' && groups.some((group) => group.source !== 'LOCAL')) {
+    findings.push(
+      warning('vcfops.dashboard.group-source', `${groups.filter((g) => g.source !== 'LOCAL').map((g) => `${g.name}@${g.source}`).join(', ')}: only sourceType LOCAL has been seen in a dashboardsharings file.`, {
+        remediation: 'Share one dashboard with that group in the interface, export it (export-reference.sh) and compare its dashboardsharings entry before importing.',
+        source: SRC,
+      }),
+    );
+  }
+
+  const dashId = (store && typeof store.dashboard['id'] === 'string' && store.dashboard['id']) || stableId(`dashboard:${baseName}`);
+  const ids = new Map(placed.map((widget) => [widget.index, widget.source || stableId(`widget:${baseName}:${widget.index}:${widget.title}`)]));
+  const byTitle = new Map(placed.map((widget) => [widget.title.toLowerCase(), widget]));
+  const viewNames = new Set<string>();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // Sections hold the widgets below them, down to the next section.
+  const sections = placed.filter((widget) => widget.type.type === 'Section').sort((a, b) => a.y - b.y);
+  const sectionMembers = (section: PlacedWidget): string[] => {
+    const next = sections.find((other) => other.y > section.y);
+    return placed.filter((widget) => widget.type.type !== 'Section' && widget.y > section.y && (!next || widget.y < next.y)).map((widget) => ids.get(widget.index)!);
+  };
+
+  const widgetsJson = placed.map((widget) => {
+    const selfProvider = PROVIDER_YES.test(widget.providerText) && !widget.receives;
+    const rowRefresh = widget.settings.get('refresh');
+    const ctx: WidgetContext = {
+      id: ids.get(widget.index)!,
+      title: widget.title,
+      selfProvider,
+      refreshInterval: /^\d+$/.test(rowRefresh) ? Number(rowRefresh) : refresh,
+      refreshContent: /^off$/i.test(rowRefresh) ? false : refreshContent,
+      s: widget.settings,
+      entries,
+      viewId: (view) => {
+        if (uuid.test(view)) return view;
+        viewNames.add(view);
+        return viewIdOf(view);
+      },
+    };
+    const config = widget.type.build(ctx);
+    if (widget.type.type === 'Section') config['widgets'] = sectionMembers(widget);
+    return {
+      id: ctx.id,
+      type: widget.type.type,
+      title: widget.title,
+      collapsed: widget.type.type === 'Section' ? widget.settings.yes('collapsed', false) : false,
+      gridsterCoords: { x: widget.x, y: widget.y, w: widget.w, h: widget.h },
+      config,
+    };
+  });
+
+  // "Receives from" becomes a widget interaction: resourceId; metricId from a
+  // Metric Picker (BP exports); tagId from a Tag Picker (a live 9.x export).
+  const interactions = placed
+    .filter((widget) => widget.receives && byTitle.get(widget.receives.toLowerCase()) && byTitle.get(widget.receives.toLowerCase()) !== widget)
+    .map((widget) => {
+      const sender = byTitle.get(widget.receives.toLowerCase())!;
+      const type = sender.type.type === 'MetricPicker' ? 'metricId' : sender.type.type === 'TagPicker' ? 'tagId' : 'resourceId';
+      return { type, widgetIdProvider: ids.get(sender.index)!, widgetIdReceiver: ids.get(widget.index)! };
+    });
+
+  // Navigations: {<sending widget id>: [{id: <dashboard id>, widgets: []}]}, as the
+  // notoriousbdg showback and content-factory exports carry them. The target's id is
+  // the one this blueprint derives from its name.
+  const navigations: Record<string, { id: string; widgets: unknown[] }[]> = {};
+  const navTargets: string[] = [];
+  for (const nav of parseNavigations(str(values, 'navigations', ''))) {
+    const from = byTitle.get(nav.from.toLowerCase());
+    if (!nav.from || !nav.to) {
+      findings.push(error('vcfops.dashboard.bad-navigation', `"${nav.line}" is not widget title -> dashboard name.`, { source: SRC }));
+    } else if (!from) {
+      findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" starts from "${nav.from}", which is not a widget on this dashboard.`, { source: SRC }));
+    } else if (!from.type.provides) {
+      findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" starts from a ${from.type.label}, which cannot send a selection.`, { source: SRC, path: `row ${from.index + 1}` }));
+    } else if (nav.to.toLowerCase() === baseName.toLowerCase()) {
+      findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" opens this dashboard itself.`, { source: SRC, path: `row ${from.index + 1}` }));
+    } else {
+      const list = (navigations[ids.get(from.index)!] ??= []);
+      list.push({ id: stableId(`dashboard:${nav.to}`), widgets: [] });
+      navTargets.push(nav.to);
+    }
+  }
+  if (navTargets.length > 0) {
+    findings.push(
+      info('vcfops.dashboard.navigation-target', `Navigations open ${[...new Set(navTargets)].map((t) => `"${t}"`).join(', ')} by the id this blueprint gives a dashboard of that name.`, {
+        remediation: 'Generate and import those dashboards here too. A dashboard built by hand has another id: re-point the navigation in the dashboard editor.',
+        source: SRC,
+      }),
+    );
+  }
+  for (const view of viewNames) {
+    const fromTemplate = TEMPLATES.find((t) => t.label === view);
+    findings.push(
+      info('vcfops.dashboard.needs-view', `The View widget shows the view "${view}", id ${viewIdOf(view)}.`, {
+        remediation: fromTemplate
+          ? `Generate "A view for dashboards and reports" starting from "${fromTemplate.label}" and import it before the dashboard.`
+          : `Generate "A view for dashboards and reports" with "My own columns" and the view name "${view}", and import it before the dashboard — or give the view’s UUID in view=.`,
+        source: SRC,
+      }),
+    );
+  }
+
+  const dashboard = {
+    id: dashId,
+    name: dashName,
+    namePath: folder,
+    description,
+    shared,
+    temporary: false,
+    hidden: false,
+    homeTab,
+    disabled: false,
+    locked,
+    autoswitchEnabled: autoswitch,
+    ...(autoswitch ? { autoswitchDelay } : {}),
+    columnCount: 1,
+    columnProportion: '1',
+    gridsterMaxColumns: 12,
+    rank: 0,
+    creationTime: 0,
+    lastUpdateTime: 0,
+    importAttempts: 0,
+    importComplete: true,
+    userId: DASHBOARD_OWNER_PLACEHOLDER,
+    lastUpdateUserId: DASHBOARD_OWNER_PLACEHOLDER,
+    states: TIME_RANGES[timeRange] ? [{ key: `permDashboardTime_dashboard_${dashId}`, value: TIME_RANGES[timeRange] }] : [],
+    dashboardNavigations: navigations,
+    widgetInteractions: interactions,
+    widgets: widgetsJson,
+  };
+  return { baseName, dashName, dashId, sharing, shared, groups, placed, findings, viewNames, navTargets, dashboard };
+}
+
 // ---------------------------------------------------------------------------
 // VCF Operations: build
 // ---------------------------------------------------------------------------
@@ -1426,7 +1661,6 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
         control: 'textarea' as const,
         default: t.rows.map((row) => row.join(' | ')).join('\n'),
         hint: GRID_HINT,
-        help: catalogueHelp(),
         options: GRID_OPTIONS,
         showWhen: { input: 'template', equals: [t.value] },
       })),
@@ -1480,180 +1714,42 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
       { id: 'autoswitch_delay', label: 'Switch after (seconds)', control: 'number', default: 300, min: 5, max: 3600, showWhen: { input: 'autoswitch', equals: ['true'] } },
       { id: 'navigations', label: 'Open another dashboard from a widget', control: 'textarea', default: '', placeholder: 'Clusters -> ESX host health', hint: 'One per line: widget title -> dashboard name' },
       { id: 'max_widgets', label: 'Warn above (widgets)', control: 'number', default: 10, min: 1, max: 40, hint: 'Every widget is a query on every refresh' },
+      {
+        id: 'imported',
+        label: 'Loaded dashboard, kept as exported',
+        control: 'textarea',
+        default: '',
+        hint: 'Set by Load from export; written back with only your edits applied',
+        showWhen: { input: 'template', equals: ['custom'] },
+      },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
-      const template = templateOf(str(values, 'template', 'capacity'));
-      const baseName = str(values, 'dashboard_name', template.label);
-      const folder = str(values, 'folder', '').replace(/^\/+|\/+$/g, '');
-      // The folder is the leading segment of the name, and namePath mirrors it:
-      // namePath alone does not put a dashboard in a folder (CF render.py,
-      // matching the vROpsTOP and tkopton bundles).
-      const dashName = folder ? `${folder}/${baseName}` : baseName;
-      const description = str(values, 'description', template.about);
-      const sharing = str(values, 'sharing', 'everyone');
-      const shareGroups = listOf(str(values, 'share_groups', ''));
-      const shared = sharing !== 'private';
-      const refresh = num(values, 'refresh', 300);
-      const refreshContent = bool(values, 'refresh_content', true);
-      const timeRange = str(values, 'time_range', 'none');
-      const homeTab = bool(values, 'home_tab', false);
-      const locked = bool(values, 'locked', false);
-      const autoswitch = bool(values, 'autoswitch', false);
-      const autoswitchDelay = num(values, 'autoswitch_delay', 300);
-      const maxWidgets = num(values, 'max_widgets', 10);
-      const rowsText = str(values, `widgets_${template.value}`, template.rows.map((row) => row.join(' | ')).join('\n'));
-
-      const rows = parseWidgetRows(rowsText);
-      const { placed, problems } = layoutWidgets(rows);
-      const findings: Finding[] = checkWidgetRows(rows, placed, problems);
-      if (placed.length > maxWidgets) {
+      // A dashboard loaded from an export is kept whole and written back with only the edits applied.
+      const store = str(values, 'template', 'capacity') === 'custom' ? readStore(values['imported']) : undefined;
+      const entries = store ? Entries.seeded(store.entries) : new Entries();
+      const now = composeDashboard(values, entries, store);
+      const { dashName, dashId, sharing, groups, shared, placed, viewNames, navTargets, findings } = now;
+      let dashboard: Record<string, unknown>;
+      if (store) {
+        const base = composeDashboard({ ...values, ...store.values }, entries, store);
+        const merged = mergeDashboard(store, base.dashboard, now.dashboard);
+        const refs = referencedEntries(merged);
+        // Every table the export's entries held (adapterKind as well) is kept; new object types and objects are added.
+        const table = typeof store.entries === 'object' && store.entries !== null ? (store.entries as Record<string, unknown>) : {};
+        const fresh: Record<string, unknown[]> = entries.toJson((id, loaded) => loaded || refs.has(id));
+        const kept = { ...table };
+        for (const [key, list] of Object.entries(fresh)) if (key in table || list.length > 0) kept[key] = list;
+        dashboard = { entries: kept, dashboards: [merged], ...store.top };
+        if (!('uuid' in dashboard)) dashboard['uuid'] = stableId(`dashboard-export:${now.baseName}`);
         findings.push(
-          warning('vcfops.dashboard.too-many', `${placed.length} widgets, more than the ${maxWidgets} you set as a limit.`, {
-            remediation: 'Each widget queries on every refresh, for every viewer. Split it into two dashboards and open one from the other (a navigation).',
+          info('vcfops.dashboard.loaded', `Loaded from ${store.file}. Every widget, setting and key the builder does not edit is written back as it was exported; only what was changed here is rewritten.`, {
+            remediation: store.notes.join(' '),
             source: SRC,
           }),
         );
+      } else {
+        dashboard = { entries: entries.toJson(), dashboards: [now.dashboard], uuid: stableId(`dashboard-export:${now.baseName}`) };
       }
-      if (sharing === 'groups' && shareGroups.length === 0) findings.push(error('vcfops.dashboard.no-groups', 'Shared with named user groups, but no group is named.', { source: SRC }));
-      const groups = shareGroups.map((group) => {
-        const at = group.lastIndexOf('@');
-        return at > 0 ? { name: group.slice(0, at).trim(), source: group.slice(at + 1).trim().toUpperCase() } : { name: group, source: 'LOCAL' };
-      });
-      if (sharing === 'groups' && groups.some((group) => group.source !== 'LOCAL')) {
-        findings.push(
-          warning('vcfops.dashboard.group-source', `${groups.filter((g) => g.source !== 'LOCAL').map((g) => `${g.name}@${g.source}`).join(', ')}: only sourceType LOCAL has been seen in a dashboardsharings file.`, {
-            remediation: 'Share one dashboard with that group in the interface, export it (export-reference.sh) and compare its dashboardsharings entry before importing.',
-            source: SRC,
-          }),
-        );
-      }
-
-      const dashId = stableId(`dashboard:${baseName}`);
-      const ids = new Map(placed.map((widget) => [widget.index, stableId(`widget:${baseName}:${widget.index}:${widget.title}`)]));
-      const byTitle = new Map(placed.map((widget) => [widget.title.toLowerCase(), widget]));
-      const entries = new Entries();
-      const viewNames = new Set<string>();
-      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-      // Sections hold the widgets below them, down to the next section.
-      const sections = placed.filter((widget) => widget.type.type === 'Section').sort((a, b) => a.y - b.y);
-      const sectionMembers = (section: PlacedWidget): string[] => {
-        const next = sections.find((other) => other.y > section.y);
-        return placed.filter((widget) => widget.type.type !== 'Section' && widget.y > section.y && (!next || widget.y < next.y)).map((widget) => ids.get(widget.index)!);
-      };
-
-      const widgetsJson = placed.map((widget) => {
-        const selfProvider = PROVIDER_YES.test(widget.providerText) && !widget.receives;
-        const rowRefresh = widget.settings.get('refresh');
-        const ctx: WidgetContext = {
-          id: ids.get(widget.index)!,
-          title: widget.title,
-          selfProvider,
-          refreshInterval: /^\d+$/.test(rowRefresh) ? Number(rowRefresh) : refresh,
-          refreshContent: /^off$/i.test(rowRefresh) ? false : refreshContent,
-          s: widget.settings,
-          entries,
-          viewId: (view) => {
-            if (uuid.test(view)) return view;
-            viewNames.add(view);
-            return viewIdOf(view);
-          },
-        };
-        const config = widget.type.build(ctx);
-        if (widget.type.type === 'Section') config['widgets'] = sectionMembers(widget);
-        return {
-          id: ctx.id,
-          type: widget.type.type,
-          title: widget.title,
-          collapsed: widget.type.type === 'Section' ? widget.settings.yes('collapsed', false) : false,
-          gridsterCoords: { x: widget.x, y: widget.y, w: widget.w, h: widget.h },
-          config,
-        };
-      });
-
-      // "Receives from" becomes a widget interaction: resourceId, or metricId from a Metric Picker (BP exports).
-      const interactions = placed
-        .filter((widget) => widget.receives && byTitle.get(widget.receives.toLowerCase()) && byTitle.get(widget.receives.toLowerCase()) !== widget)
-        .map((widget) => {
-          const sender = byTitle.get(widget.receives.toLowerCase())!;
-          return { type: sender.type.type === 'MetricPicker' ? 'metricId' : 'resourceId', widgetIdProvider: ids.get(sender.index)!, widgetIdReceiver: ids.get(widget.index)! };
-        });
-
-      // Navigations: {<sending widget id>: [{id: <dashboard id>, widgets: []}]}, as the
-      // notoriousbdg showback and content-factory exports carry them. The target's id is
-      // the one this blueprint derives from its name.
-      const navigations: Record<string, { id: string; widgets: unknown[] }[]> = {};
-      const navTargets: string[] = [];
-      for (const nav of parseNavigations(str(values, 'navigations', ''))) {
-        const from = byTitle.get(nav.from.toLowerCase());
-        if (!nav.from || !nav.to) {
-          findings.push(error('vcfops.dashboard.bad-navigation', `"${nav.line}" is not widget title -> dashboard name.`, { source: SRC }));
-        } else if (!from) {
-          findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" starts from "${nav.from}", which is not a widget on this dashboard.`, { source: SRC }));
-        } else if (!from.type.provides) {
-          findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" starts from a ${from.type.label}, which cannot send a selection.`, { source: SRC }));
-        } else if (nav.to.toLowerCase() === baseName.toLowerCase()) {
-          findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" opens this dashboard itself.`, { source: SRC }));
-        } else {
-          const list = (navigations[ids.get(from.index)!] ??= []);
-          list.push({ id: stableId(`dashboard:${nav.to}`), widgets: [] });
-          navTargets.push(nav.to);
-        }
-      }
-      if (navTargets.length > 0) {
-        findings.push(
-          info('vcfops.dashboard.navigation-target', `Navigations open ${[...new Set(navTargets)].map((t) => `"${t}"`).join(', ')} by the id this blueprint gives a dashboard of that name.`, {
-            remediation: 'Generate and import those dashboards here too. A dashboard built by hand has another id: re-point the navigation in the dashboard editor.',
-            source: SRC,
-          }),
-        );
-      }
-      for (const view of viewNames) {
-        const fromTemplate = TEMPLATES.find((t) => t.label === view);
-        findings.push(
-          info('vcfops.dashboard.needs-view', `The View widget shows the view "${view}", id ${viewIdOf(view)}.`, {
-            remediation: fromTemplate
-              ? `Generate "A view for dashboards and reports" starting from "${fromTemplate.label}" and import it before the dashboard.`
-              : `Generate "A view for dashboards and reports" with "My own columns" and the view name "${view}", and import it before the dashboard — or give the view’s UUID in view=.`,
-            source: SRC,
-          }),
-        );
-      }
-
-      const dashboard = {
-        entries: entries.toJson(),
-        dashboards: [
-          {
-            id: dashId,
-            name: dashName,
-            namePath: folder,
-            description,
-            shared,
-            temporary: false,
-            hidden: false,
-            homeTab,
-            disabled: false,
-            locked,
-            autoswitchEnabled: autoswitch,
-            ...(autoswitch ? { autoswitchDelay } : {}),
-            columnCount: 1,
-            columnProportion: '1',
-            gridsterMaxColumns: 12,
-            rank: 0,
-            creationTime: 0,
-            lastUpdateTime: 0,
-            importAttempts: 0,
-            importComplete: true,
-            userId: DASHBOARD_OWNER_PLACEHOLDER,
-            lastUpdateUserId: DASHBOARD_OWNER_PLACEHOLDER,
-            states: TIME_RANGES[timeRange] ? [{ key: `permDashboardTime_dashboard_${dashId}`, value: TIME_RANGES[timeRange] }] : [],
-            dashboardNavigations: navigations,
-            widgetInteractions: interactions,
-            widgets: widgetsJson,
-          },
-        ],
-        uuid: stableId(`dashboard-export:${baseName}`),
-      };
       const dashboardJson = `${JSON.stringify(dashboard, null, 2)}\n`;
 
       // Sharing: the content import files dashboardsharings/<owner> as a list of

@@ -80,7 +80,7 @@ export const KIND_ALIASES: Readonly<Record<string, KindRef>> = {
  * _WORLD_DISPLAY_NAME; "vSphere World", "vSAN World" and "VCF World" are the
  * names in the QA92 and BP exports).
  */
-const WORLDS: Readonly<Record<string, { readonly kind: string; readonly name: string }>> = {
+export const WORLDS: Readonly<Record<string, { readonly kind: string; readonly name: string }>> = {
   VMWARE: { kind: 'vSphere World', name: 'vSphere World' },
   VirtualAndPhysicalSANAdapter: { kind: 'vSAN World', name: 'vSAN World' },
   NSXTAdapter: { kind: 'NSXT World', name: 'NSX World' },
@@ -135,14 +135,47 @@ export function metricKeyProblem(key: string): string | undefined {
  * target, so the ids are local to the file (CF render.py; every export read).
  */
 export class Entries {
-  private readonly kinds = new Map<string, { readonly ref: KindRef; readonly id: string }>();
-  private readonly resources = new Map<string, { readonly ref: KindRef; readonly name: string; readonly id: string }>();
+  private readonly kinds = new Map<string, { readonly ref: KindRef; readonly id: string; readonly raw?: Record<string, unknown> }>();
+  private readonly resources = new Map<string, { readonly ref: KindRef; readonly name: string; readonly id: string; readonly raw?: Record<string, unknown> }>();
+  private nextKind = 0;
+  private nextResource = 0;
+
+  /**
+   * Start from the entries table of a loaded export: its ids are kept, an
+   * object type or object it already lists is found under its own id, and a
+   * new one is numbered after the highest there. The entries are written back
+   * exactly as the export had them.
+   */
+  static seeded(json: unknown): Entries {
+    const entries = new Entries();
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+    const table = record(json) ? json : {};
+    const index = (id: string): number => Number(/:id:(\d+)_::_$/.exec(id)?.[1] ?? -1);
+    for (const raw of Array.isArray(table['resourceKind']) ? table['resourceKind'] : []) {
+      if (!record(raw) || typeof raw['internalId'] !== 'string') continue;
+      const ref = { adapterKind: String(raw['adapterKindKey'] ?? ''), resourceKind: String(raw['resourceKindKey'] ?? '') };
+      const key = `${ref.adapterKind}\u0000${ref.resourceKind}`;
+      const entry = { ref, id: raw['internalId'], raw };
+      entries.kinds.set(entries.kinds.has(key) ? `${key}\u0000${raw['internalId']}` : key, entry);
+      entries.nextKind = Math.max(entries.nextKind, index(raw['internalId']) + 1);
+    }
+    for (const raw of Array.isArray(table['resource']) ? table['resource'] : []) {
+      if (!record(raw) || typeof raw['internalId'] !== 'string') continue;
+      const ref = { adapterKind: String(raw['adapterKindKey'] ?? ''), resourceKind: String(raw['resourceKindKey'] ?? '') };
+      const name = String(raw['name'] ?? '');
+      const key = `${ref.adapterKind}\u0000${ref.resourceKind}\u0000${name}`;
+      entries.resources.set(entries.resources.has(key) ? `${key}\u0000${raw['internalId']}` : key, { ref, name, id: raw['internalId'], raw });
+      entries.nextResource = Math.max(entries.nextResource, index(raw['internalId']) + 1);
+    }
+    return entries;
+  }
 
   kind(ref: KindRef): string {
     const key = `${ref.adapterKind}\u0000${ref.resourceKind}`;
     const found = this.kinds.get(key);
     if (found) return found.id;
-    const id = `resourceKind:id:${this.kinds.size}_::_`;
+    const id = `resourceKind:id:${this.nextKind}_::_`;
+    this.nextKind += 1;
     this.kinds.set(key, { ref, id });
     return id;
   }
@@ -151,15 +184,36 @@ export class Entries {
     const key = `${ref.adapterKind}\u0000${ref.resourceKind}\u0000${name}`;
     const found = this.resources.get(key);
     if (found) return found.id;
-    const id = `resource:id:${this.resources.size}_::_`;
+    const id = `resource:id:${this.nextResource}_::_`;
+    this.nextResource += 1;
     this.resources.set(key, { ref, name, id });
     return id;
   }
 
-  toJson(): { resourceKind: Record<string, unknown>[]; resource: Record<string, unknown>[] } {
+  /** The object type an entries id stands for. */
+  kindOf(id: string): KindRef | undefined {
+    for (const entry of this.kinds.values()) if (entry.id === id) return entry.ref;
+    return undefined;
+  }
+
+  /** The object an entries id stands for. */
+  resourceOf(id: string): { readonly ref: KindRef; readonly name: string } | undefined {
+    for (const entry of this.resources.values()) if (entry.id === id) return { ref: entry.ref, name: entry.name };
+    return undefined;
+  }
+
+  /**
+   * The table as an export writes it. With `keep`, only the entries it says
+   * to: a loaded export's own entries are always kept, a new one only when
+   * the dashboard refers to it.
+   */
+  toJson(keep?: (id: string, loaded: boolean) => boolean): { resourceKind: Record<string, unknown>[]; resource: Record<string, unknown>[] } {
+    const wanted = (id: string, loaded: boolean): boolean => (keep ? keep(id, loaded) : true);
     return {
-      resourceKind: [...this.kinds.values()].map((entry) => ({ adapterKindKey: entry.ref.adapterKind, internalId: entry.id, resourceKindKey: entry.ref.resourceKind })),
-      resource: [...this.resources.values()].map((entry) => ({ adapterKindKey: entry.ref.adapterKind, identifiers: [], internalId: entry.id, name: entry.name, resourceKindKey: entry.ref.resourceKind })),
+      resourceKind: [...this.kinds.values()].filter((entry) => wanted(entry.id, !!entry.raw)).map((entry) => entry.raw ?? { adapterKindKey: entry.ref.adapterKind, internalId: entry.id, resourceKindKey: entry.ref.resourceKind }),
+      resource: [...this.resources.values()]
+        .filter((entry) => wanted(entry.id, !!entry.raw))
+        .map((entry) => entry.raw ?? { adapterKindKey: entry.ref.adapterKind, identifiers: [], internalId: entry.id, name: entry.name, resourceKindKey: entry.ref.resourceKind }),
     };
   }
 }
@@ -364,13 +418,13 @@ function extraColumns(ctx: WidgetContext, kind: KindRef, keys: readonly string[]
   return keys.map((key) => ({ boxLabel: key, metricKey: key, metricName: key, resourceKindId: ctx.entries.kind(kind) }));
 }
 
-const PERIODS = ['dashboardTime', 'lastHour', 'last6Hour', 'last24Hour', 'last7Days', 'last30Days'] as const;
+export const PERIODS = ['dashboardTime', 'lastHour', 'last6Hour', 'last24Hour', 'last7Days', 'last30Days'] as const;
 
 /** Alert subtypes as the Alert List's type codes carry them, `<type>_<subtype>`, types 15 to 20 (BP and QA92 exports). */
-const ALERT_SUBTYPES: Readonly<Record<string, number>> = { availability: 18, performance: 19, capacity: 20, compliance: 21, configuration: 22 };
-const CRITICALITY: Readonly<Record<string, number>> = { info: 1, warning: 2, immediate: 3, critical: 4 };
+export const ALERT_SUBTYPES: Readonly<Record<string, number>> = { availability: 18, performance: 19, capacity: 20, compliance: 21, configuration: 22 };
+export const CRITICALITY: Readonly<Record<string, number>> = { info: 1, warning: 2, immediate: 3, critical: 4 };
 
-const SCOREBOARD_THEMES = ['original', 'solid', 'default', 'simple', 'pastel', 'shadow', 'outline', 'gradient', 'gauge'] as const;
+export const SCOREBOARD_THEMES = ['original', 'solid', 'default', 'simple', 'pastel', 'shadow', 'outline', 'gradient', 'gauge'] as const;
 
 // ---------------------------------------------------------------------------
 // The catalogue
@@ -1465,4 +1519,17 @@ export function catalogueHelp(): string {
     'Settings are key=value pairs separated by ";". Object types are aliases (vm, host, cluster, datastore, datacenter, vcenter, world, namespace, vks, vsan-cluster, nsx-node, nsx-world, k8s-namespace …) or Adapter/Kind. Metric keys are as VCF Operations writes them (cpu|usage_average). text= and html= take the rest of the cell. Position is x,y,w,h on the 12-column grid, w,h to place it automatically at that size, or auto. Provider yes makes the widget pick its own objects; Receives from names the widget whose selection drives it.',
     ...lines,
   ].join('\n');
+}
+
+/** The dashboard time state the exports carry (permDashboardTime_dashboard_<id>), for the ranges seen in them. */
+export const DASHBOARD_TIME_RANGES: Readonly<Record<string, string>> = {
+  last6Hour: 'o%3AdateRange%3Ds%253Alast6Hour%5EdateRangeText%3Ds%253A6H',
+  last24Hour: 'o%3AdateRange%3Ds%253Alast24Hour%5EdateRangeText%3Ds%253A24H',
+  last7Days: 'o%3AdateRange%3Ds%253Alast7Days%5EdateRangeText%3Ds%253A7D',
+};
+
+/** An object type as a row writes it: its alias where it has one ("cluster"), else the vSphere kind or Adapter/Kind. */
+export function kindAlias(kind: KindRef): string {
+  for (const [alias, ref] of Object.entries(KIND_ALIASES)) if (ref.adapterKind === kind.adapterKind && ref.resourceKind === kind.resourceKind) return alias;
+  return kind.adapterKind === 'VMWARE' ? kind.resourceKind : `${kind.adapterKind}/${kind.resourceKind}`;
 }
