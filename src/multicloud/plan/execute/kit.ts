@@ -25,6 +25,7 @@ import { buildManifest, renderItemsJson, renderItemsTsv, renderWavesJson, type M
 import { resolvePlanPaths, type PathResolution } from './paths.ts';
 import { PATH_OWNERS, PATH_REGISTRY, pendingGenerator, type PathContext, type PathGenerator, type PathRegistry, type ToolNeed } from './registry.ts';
 import { renderStatusSchema } from './schema.ts';
+import { waveKit } from './waves/index.ts';
 
 export interface ExecutionKitOptions {
   /** The generators to use; default `PATH_REGISTRY`. */
@@ -147,6 +148,12 @@ export function executionKit(
       if (!(entry in out)) findings.push(error('exec.kit.no-entry', `The ${g.id} path generator names ${entry} as the ${p} script but does not write it.`));
     }
   }
+
+  // The wave orchestrators, DNS / LB switching and the kit-level plays.
+  const wk = waveKit(ctx);
+  for (const [p, t] of Object.entries(wk.files)) put(p, t, 'waves');
+  needs.push(...wk.needs);
+  findings.push(...wk.findings);
 
   // 4. the kit's own files
   const hasPs = Object.keys(files).some((f) => f.endsWith('.ps1')) || needs.some((n) => n.kind === 'pwsh-module');
