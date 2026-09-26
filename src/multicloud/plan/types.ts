@@ -818,6 +818,19 @@ export interface AppPlan {
   /** The provider-style strategy (11 Rs); undefined = `strategyOf(route)`. */
   readonly strategy?: MigrationStrategy;
   readonly phase?: MigrationPhase;
+  /** The decision wizard's state for this app (its Design): undefined until the wizard is first answered. */
+  readonly design?: AppDesign;
+}
+/**
+ * An app's design in the decision wizard. `cloud` is the platform the wizard
+ * designs for, which is also the app's chosen `platform`. `answers` are the
+ * answers the user gave (field id → value; a list for a checkbox group);
+ * every other answer is prefilled from the plan each time it is read, so the
+ * prefill follows the plan and never overwrites what the user changed.
+ */
+export interface AppDesign {
+  readonly cloud: Platform;
+  readonly answers: Readonly<Record<string, string | readonly string[]>>;
 }
 export interface AppRecommendation {
   readonly app: ItemId;

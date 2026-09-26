@@ -90,7 +90,9 @@ src/
   core/       IP/CIDR arithmetic, capacity units, findings
   vcf/        VCF 9.1 sizing data, sizing engine, provenance tagging
   vmware/     inventory model, RVTools and PowerCLI import, analysis
-  multicloud/ platform routing, capability table, VMware-on-cloud services
+  multicloud/ platform routing, capability table, VMware-on-cloud services;
+              plan/ the migration planner (intake, rules, design, sizing, patterns,
+              execution kit, waves, tracker); change/ the day-2 utilities
   terraform/  HCL writer, provider registry, foundations, resource catalog
   ansible/    YAML writer, collection registry, playbooks, module catalog
   ui/         DOM helpers, shared components, page controllers
@@ -127,10 +129,11 @@ importable from Node, testable without a browser, and reusable from a CLI or a f
 | VCF 9.1 sizing | Working — greenfield, brownfield converge/import, fleet scale |
 | VCF 9.1 `SddcSpec` builder | Working — all 8 documented deployment scenarios |
 | VMware inventory import and analysis | Working — RVTools and PowerCLI import, analysis, readiness |
-| Multi-cloud decision matrix | Working — explainable routing across VCF, AWS, Azure, Google Cloud and OCI |
+| Decision rules | Working — explainable placement of every server and database across VCF, AWS, Azure, Google Cloud (GCP) and OCI |
 | Terraform authoring kit | Working — scaffold for 5 clouds, network foundation for each, VCF bring-up, every resource of AWS, Azure, GCP, OCI and the six VMware providers, Linux and Windows OS builds |
 | Ansible authoring kit | Working — repository scaffold for 7 platforms, vSphere collection and configuration playbooks, every module of the Ansible package (~10,900) across 13 platforms |
-| Application migration and modernization | Working — single-application evaluation and portfolio wave planning |
+| Application Migration | Working — every application from any source, a target architecture on the chosen cloud, Terraform and Ansible per application or stacked |
+| Multi-Cloud Migration & Utilities | Working — landing zones, waves, the execution kit per move path, tracking, and day-2 utilities |
 | Data editor | Working — JSON and YAML for VCF, Ansible, Terraform, AWS, Google, Azure, Oracle, F5 and Kubernetes |
 
 ## Terraform authoring
@@ -350,17 +353,90 @@ spec builder's validator. Schema chunks load only for what the file names.
 `update-data-editor.bat` refreshes every schema, revalidates, rebuilds, runs
 the tests, and asks before it commits.
 
-## Multi-cloud decision matrix
+## Application Migration
+
+`migration.html` plans every application: its servers, databases and
+dependencies from any source (VMware, Hyper-V, Nutanix AHV, KVM, Proxmox, oVirt,
+Xen, physical, another cloud, or a CSV for IBM Power, SPARC, HP-UX and
+mainframe), and a target architecture on the one cloud chosen for it — AWS,
+Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation. Each application is
+designed in the Multi-Cloud Decision & Onboarding Wizard: the cloud chosen in
+the header, the steps on the left (migrate an application, set up a new service,
+or change a running service, in the chosen provider's own words), and that
+cloud's services card by card on the right, with the connectors to the data
+centre and to dependencies on other clouds, what gets built, the playbook, and
+Full view, Print and Word export. A new service needs no inventory at all.
+
+| Pane | What it does |
+| --- | --- |
+| `#sources` | The imported VMware estate, collector files (one discovery format for every hypervisor, guest and cloud), the provider import formats (Azure Migrate, Google Migration Center, AWS Migration Hub, Prism Central, AWS Transform MGN, Cloud Migration Factory), CSV and manual entry, the old portfolio, the app grouping rules, and the collectors to download. Every table is read by column header, never by position. |
+| `#servers`, `#databases` | Every server and database from every source in one grid each, with detected types, the sizing basis, IP strategy and OS upgrade. |
+| `#applications` | The application catalogue, the dependency map, and **New application** for a greenfield service. |
+| `#app:<slug>` | One application's Design: the decision wizard. Its answers are prefilled from the plan and stored on it; its cloud is the app's platform; the answers drive the components, connectors and landing-zone decision; components, sizing, dependencies, coupling, assessment and the target sit in the steps' Advanced sections; the Build step generates it. |
+| `#constraints` | Platforms, compliance and sovereignty, commercial and licensing, operating model and exit, resilience. |
+| `#sizing` | The sizing policy and every application's sizing, from utilisation where a collector measured it. |
+| `#stack` | Pick applications and generate one stacked project. |
+
+Generation is the same code for one application or a stack: one Terraform root
+module per platform holding every selected app on it (on a shared landing zone,
+or including its own), the Ansible for their servers, the CI/CD pipeline, the
+app plan and the decision record, plus each cloud's own deployment path (an
+Infrastructure Manager root module for Google Cloud, a Resource Manager stack
+.zip for OCI, a VCF Automation cloud template for VCF). The archive is dated
+from the plan, so the same plan gives the same bytes. Details in `docs/application-migration.md`.
+
+## Multi-Cloud Migration & Utilities
+
+`multicloud.html` (Migration & Utilities in the menu) takes the application
+plans and moves them, then keeps changing the estate. It shares one plan with
+Application Migration; a **Plan mode** in both headers (data-centre exit, migrate
+applications, one application, new services only) decides which panes matter,
+and a pane with data in it always shows.
+
+| Pane | What it does |
+| --- | --- |
+| `#overview` | The application plans and the estate check: placements, landing zones needed, licences, the read-only decision tables, capacity, quotas and transfer time. |
+| `#landing-zones` | One card per platform: networks, connectivity, identity, backup and DR, governance, the relocate target; generates each landing zone. |
+| `#capacity` | Totals per platform and region, quotas, licences, and estimates from your own rate card. |
+| `#datacentre` | Data-centre exit: network, storage, security, operations, partners, facility, firewall and load-balancer translation, the exit sequence and lights-out. |
+| `#waves` | Move groups, waves and capacity; `#waves:governance` for RACI, communications, change requests, CMDB and sign-offs. |
+| `#execute` | The execution settings per path (`#execute:settings`) and the wave console (`#execute:<wave>/<stage>`). |
+| `#board`, `#timeline`, `#raid`, `#reports` | The tracker, fed by the status files the generated scripts write. |
+| `#generate` | The migration project: plan, landing zones, app stacks, Ansible, the execution kit, waves, governance, reports, pipeline and collectors, as one archive. |
+| `#utilities` | Day-2 changes without a migration (`#utilities:<utility-id>`), and **Deploy a new service**. |
+
+**The execution kit** (`migration/execute/`) gives every server and database a
+move path from its source and target — HCX (Bulk, Replication Assisted vMotion,
+vMotion, Cold, OS Assisted), cross-vCenter vMotion, VCF Import, vCenter
+Converter, AWS Transform MGN, Azure Migrate, Migrate to Virtual Machines,
+Compute Engine image import, Oracle Cloud Migrations, rebuild, and the native
+or managed database paths (ZDM, Data Guard, DMS, the Managed Instance link,
+logical replication …) — and generates the scripts that replicate, test, cut
+over, switch DNS and load balancers, validate, roll back and decommission, wave
+by wave. Every script applies by default (`--dry-run` is opt-in), is
+idempotent, takes credentials only from the environment, a mode-600 file or a
+vault hook, uses one set of verbs and exit codes, and writes
+`archtoolkit.migration-status` events that the Board imports.
+
+**Utilities** are 24 small day-2 changes — add or resize a server, add or extend
+a disk, open a port, a DNS record, a load-balancer member, a patch run, tags, a
+node pool, a budget, rotate a certificate, grant access, add any resource or
+module, and more — each a bundle with `apply.sh` (applies by default) and
+`rollback.sh`. Details in `docs/migration-and-utilities.md`.
+
+## Decision rules
 
 Not "which cloud is best" — nobody can answer that. Given a set of constraints,
-which of the five platforms is left, and why. Every rule states what it looked
-at, which way it pushed and where the claim came from, so any of them can be
-read and disagreed with on its own, and a margin of one point is reported as too
-close to call rather than resolved.
+which of the five platforms is left for each server and database, and why. Every
+rule states what it looked at, which way it pushed and where the claim came
+from, so any of them can be read and disagreed with on its own, and a margin
+that small is reported as too close to call rather than resolved.
 
 Rules that encode something structural score. Rules about region coverage,
 sovereign offerings and pricing only report, because those change constantly and
-cannot be checked from an offline toolkit.
+cannot be checked from an offline toolkit. The plan's rule sets (eliminations,
+shape, commercial, Microsoft and Oracle licensing, databases, report-only) run
+over every item, and each application pattern adds its own rules.
 
 The capability table checks itself: every entry carries the Terraform resource
 type as well as the product name, and a test validates all of them against the
@@ -424,7 +500,7 @@ a redraw triggered by the blur of clicking a button destroyed that button
 mid-click, and a `let` declared below the code that reached it left a page dead
 on arrival. Neither is visible without a browser.
 
-## Working across the three tools
+## Working across the tools
 
 The tools answer consecutive questions, and each hands its result to the next
 rather than making you retype it:
@@ -432,8 +508,8 @@ rather than making you retype it:
     inventory  ->  sizing  ->  spec builder
     what is there   what it must become   the document that builds it
 
-    inventory  ->  multi-cloud  ->  Terraform / Ansible
-    what is there   where it goes    what builds it there
+    inventory  ->  Application Migration  ->  Migration & Utilities  ->  Terraform / Ansible /
+    what is there   where each app goes        how the estate moves       VCF Sizing / Network
 
 Import the RVTools `.xlsx` once, on any page — it is read in the browser with
 no library (the zip is inflated by `DecompressionStream`, the sheets streamed),
@@ -453,23 +529,45 @@ until **Forget** is pressed. Every page reads it:
   every VM sized onto a real instance type and a disk per VMDK.
 - **Ansible** — an inventory of a cluster's VMs, and plays for before the move
   (snapshots, the readiness worklist) and after it (DRS rules, attributes).
-- **Multi-cloud** — answers the wizard's questions the estate can answer.
+- **Application Migration** — its Sources pane loads the estate's VMs as servers,
+  with the app, environment and owner taken from the attributes you pick.
 
 From a sizing
 result, **Continue in the spec builder** carries the host count, storage type,
 failures to tolerate, deployment scenario and the IP pool counts, so the pools a
 specification emits match the sizing that justified them.
 
-The decision matrix takes the estate rather than the sizing result: it reads
-machine counts, guest OS families and the machines large enough to narrow the
-instance shapes, then says plainly that the databases, the latency tolerance and
-the deadline are in no export and move the answer more than anything that is.
-Once a platform leads by more than a point, it hands off to the Terraform and
-Ansible kits.
+The migration flow, and what hands over at each step:
 
-A handoff applies once and lives only for the browser tab, so reloading a page
-never silently re-applies a decision that has since changed. Each step remains
-usable on its own; nothing requires starting at the beginning.
+1. **VMware Inventory → Application Migration.** **Plan the applications** on the
+   inventory page opens `migration.html#sources`, where **Load from the estate**
+   reads the stored estate into servers. Other sources (collector files, provider
+   exports, CSV) are added on the same pane.
+2. **Application Migration → Migration & Utilities.** Both pages read and write one
+   plan in this browser, so the saved application plans, their chosen clouds and
+   the constraints are simply there on `multicloud.html`; each page links to the
+   other, and a banner resolves a save made on the other page while this one had
+   unsaved edits. Links run both ways: a missing landing zone on an app's Target
+   tab opens `multicloud.html#landing-zones`, and the estate check links each app
+   back to `migration.html#app:<slug>`.
+3. **→ Terraform and Ansible.** Every generated Terraform root module
+   (`terraform/<platform>/`, per app, stacked or the landing zone) carries
+   `archtoolkit-terraform-settings.json`, and the generated `ansible/` carries
+   `archtoolkit-ansible-settings.json`. **Load** either on the Terraform or Ansible
+   page and the same stack or site opens there, editable (a Terraform stack
+   rebuilds byte for byte).
+4. **→ VCF Sizing.** A landing zone whose relocate target is VMware (VCF on your
+   own hardware, or Amazon EVS, AVS, GCVE or OCVS) shows a first host count and
+   **Open VCF Sizing →**, which sizes the fleet properly from the same stored estate.
+5. **→ Network.** In a data-centre exit, the exit sequence's circuit cuts are sent to
+   `network.html`, which opens on the BGP-peer or static-route change for each device,
+   prefilled.
+6. **Back to Inventory.** Once a tracker exists, the inventory's VM table shows a
+   read-only **Migration** column (state and wave) and links to the board.
+
+A handoff between pages applies once and lives only for the browser tab, so
+reloading a page never silently re-applies a decision that has since changed.
+Each step remains usable on its own; nothing requires starting at the beginning.
 
 ## Spec builder inputs
 

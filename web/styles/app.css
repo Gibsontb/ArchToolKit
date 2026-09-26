@@ -1363,6 +1363,276 @@ tbody tr:hover {
   font-weight: 400;
 }
 
+/* --- The decision wizard as a mount (Application Migration's Design) -------
+   The original's layout: the title and "Currently designing for …" on the
+   left of the header, the cloud (and the application) on the right; the steps
+   in the left card; the recommendation cards in the right card. */
+
+.decision-wizard .wizard-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.decision-wizard .wizard-header h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 1.35rem;
+}
+
+.decision-wizard .wizard-header p {
+  margin: 0;
+}
+
+.decision-wizard .wizard-header-controls,
+.decision-wizard .wizard-app-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.decision-wizard .wizard-app-buttons {
+  margin: 0;
+  gap: var(--space-2);
+}
+
+.decision-wizard .cloud-picker-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+}
+
+.decision-wizard .cloud-picker select {
+  max-width: 100%;
+}
+
+.wizard-phase {
+  font-size: 0.78rem;
+  color: var(--accent);
+  margin-top: var(--space-1);
+}
+
+.wizard-steps-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-3);
+}
+
+.wizard-dot {
+  min-width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.wizard-dot.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.field-source.is-from-plan {
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-left: var(--space-2);
+}
+
+.decision-wizard .field-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.decision-wizard .field-head label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.74rem;
+}
+
+.decision-wizard .wizard-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.decision-wizard .wizard-nav .section-note {
+  flex: 1 1 12rem;
+  font-size: 0.78rem;
+}
+
+.decision-wizard .wizard-intro.is-generated p:first-child {
+  display: none;
+}
+
+.decision-wizard .wizard-intro-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.decision-wizard .wizard-intro-row p {
+  flex: 1 1 12rem;
+  margin: 0;
+}
+
+/* Each recommendation section is a card of its own, as in the original. */
+.decision-wizard .result-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-3);
+  background: var(--surface-hover);
+}
+
+.decision-wizard .result-section:first-child {
+  border-top: 1px solid var(--border);
+  margin-top: 0;
+}
+
+.decision-wizard .result-section h3 {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.85rem;
+  margin: 0 0 var(--space-2);
+}
+
+.decision-wizard .result-main {
+  font-weight: 500;
+}
+
+.result-built {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+  font-size: 0.84rem;
+}
+
+.result-built ul,
+#resultsContent .result-built ul {
+  margin: var(--space-1) 0;
+}
+
+.not-generated {
+  color: var(--text-muted);
+}
+
+.result-types code {
+  font-size: 0.72rem;
+}
+
+.decision-wizard #resultsContent {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.decision-wizard .result-section {
+  overflow-x: auto;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.wizard-advanced {
+  margin-top: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.wizard-advanced > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.wizard-live {
+  margin-top: var(--space-3);
+  font-size: 0.86rem;
+  overflow-x: auto;
+}
+
+.wizard-live table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.wizard-live th,
+.wizard-live td {
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.wizard-extra-title {
+  font-size: 0.95rem;
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.wizard-step-extra {
+  min-width: 0;
+}
+
+.design-start-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.design-start-choices .design-choice {
+  margin: 0;
+}
+
+/* On a wide screen the recommendation stays in view while the steps scroll. */
+@media (min-width: 1101px) {
+  .decision-wizard .wizard-results {
+    position: sticky;
+    top: var(--space-3);
+    max-height: calc(100vh - 2 * var(--space-3));
+    overflow: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .decision-wizard .wizard-header {
+    align-items: stretch;
+  }
+
+  .decision-wizard .wizard-header-controls,
+  .decision-wizard .wizard-app-controls {
+    justify-content: flex-start;
+  }
+
+  .decision-wizard .cloud-picker {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .decision-wizard .cloud-picker select {
+    width: 100%;
+  }
+}
+
 /* The wizard's cloud picker, when it sits beside the page navigation. */
 .cloud-picker {
   display: flex;

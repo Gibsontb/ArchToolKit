@@ -248,7 +248,7 @@
           <h3>What it shows</h3>
           <ul>
             <li><strong>Estate</strong>: hosts, VMs, physical cores and sockets, physical and allocated memory.</li>
-            <li><strong>Take it further</strong>: buttons to size VCF, decide where it goes, and generate Terraform or Ansible from it.</li>
+            <li><strong>Take it further</strong>: buttons to size VCF, plan the applications (<a href="#application-migration">Application Migration</a>), and generate Terraform or Ansible from it.</li>
             <li><strong>Source</strong>: the vCenters, their versions and collection times, and rows read per tab.</li>
             <li><strong>Consolidation</strong>: vCPU:pCPU (warns above 4:1), memory commitment (amber above 80%, red above 100%), provisioned vs consumed storage, the thin-provisioning gap, RDMs.</li>
             <li><strong>Clusters</strong>: per cluster hosts, VMs, cores, memory, vCPU, vRAM, storage, ratios and CPU models (mixed models flagged).</li>
@@ -471,29 +471,105 @@
             <a href="migration.html">Application Migration</a> plans every application: its servers,
             databases and dependencies from any source (VMware, physical, Hyper-V, Nutanix AHV, KVM, Xen or
             another cloud), its non-functionals and pattern, and a target architecture on the one cloud
-            chosen for it &mdash; AWS, Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation &mdash;
-            recommended by the engine, switchable, and comparable side by side. It generates Terraform and
-            Ansible for one application or a stack of them, and saves the application plans that
-            <a href="#migration-and-utilities">Migration &amp; Utilities</a> moves.
+            chosen for it &mdash; AWS, Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation. Each
+            application is designed in the <strong>Multi-Cloud Decision &amp; Onboarding Wizard</strong>, one
+            cloud at a time. It generates Terraform, Ansible and a pipeline for one application or a stack of
+            them, in the form the chosen cloud takes, and saves the application plans that
+            <a href="#migration-and-utilities">Migration &amp; Utilities</a> moves. It also sets up a new
+            service on its own, with no inventory.
           </p>
           <h3>The steps</h3>
+          <p>The step bar reads Sources &middot; Servers &middot; Databases &middot; Applications &middot; Constraints &middot; Stack. Sizing and an application's workspace are panes without a step number.</p>
           <table>
             <tr><th>Step</th><th>Address</th><th>What it holds</th></tr>
-            <tr><td>Sources</td><td><code>#sources</code></td><td>Bring in servers and applications: the imported estate, collector files, CSV, the old portfolio (<strong>Import the old portfolio</strong> comes first), or manual entry.</td></tr>
-            <tr><td>Servers</td><td><code>#servers</code></td><td>Every server from every source in one grid.</td></tr>
-            <tr><td>Databases</td><td><code>#databases</code></td><td>Every database, its engine, edition and host.</td></tr>
-            <tr><td>Applications</td><td><code>#applications</code></td><td>The application catalogue and the dependency map. One application's workspace is <code>#app:&lt;name&gt;</code>, with the tabs Overview, Components, Configuration, Dependencies, Coupling, Assessment, Target, Sizing, Compare and Generate.</td></tr>
-            <tr><td>Constraints</td><td><code>#constraints</code></td><td>Platforms, compliance and sovereignty, commercial and licensing, operating model and exit, resilience.</td></tr>
-            <tr><td>Sizing</td><td><code>#sizing</code></td><td>The sizing policy and every application's sizing in one grid.</td></tr>
-            <tr><td>Stack</td><td><code>#stack</code></td><td>Pick applications and generate one stacked project.</td></tr>
+            <tr><td>Sources</td><td><code>#sources</code></td><td>Bring in servers, databases and applications. In order: <strong>Import the old portfolio</strong>; the plan's name and merge mode; the imported VMware estate (<strong>Load from the estate</strong>, with scope and the app, environment and owner attributes); provider and collector files (the collectors' discovery JSON, Azure Migrate CSV, Google Migration Center's four tables, the AWS Migration Hub template, Nutanix Prism Central's export, the AWS Transform MGN import sheet, the Cloud Migration Factory intake form, a performance time series, the Azure Migrate dependency export); CSV templates and manual entry; the app grouping rules and <strong>Regroup</strong>; the collectors to download per source platform; coupling files and network flows, proposed as dependencies for you to tick. Every file is read by its column headings, never by position.</td></tr>
+            <tr><td>Servers</td><td><code>#servers</code></td><td>Every server from every source in one grid: source, detected type (with its confidence until confirmed), sizing basis, IPv4 and IPv6 addresses, IP strategy, rename, OS upgrade, criticality, RPO, RTO, disposition, dependencies and pin. Filters, paging and a bulk edit bar first.</td></tr>
+            <tr><td>Databases</td><td><code>#databases</code></td><td>Every database instance (engine, edition, version, hosts, size, HA, DR, features, licence), and the catalogue of every service on every platform that runs an engine.</td></tr>
+            <tr><td>Applications</td><td><code>#applications</code></td><td>The application catalogue (recommended and chosen cloud, margin, status, complexity), <strong>New application</strong> for a greenfield service, and the dependency map, where a synchronous link that crosses clouds is red.</td></tr>
+            <tr><td>Constraints</td><td><code>#constraints</code></td><td>Platforms, compliance and sovereignty, commercial and licensing, operating model and exit, resilience. Connectivity and identity are on Migration &amp; Utilities &rsaquo; Landing zones.</td></tr>
+            <tr><td>Sizing</td><td><code>#sizing</code></td><td>The sizing policy and every application's sizing in one grid, with overrides and bulk <strong>Accept</strong>. Measured utilisation wins over nameplate where a collector gave it.</td></tr>
+            <tr><td>Stack</td><td><code>#stack</code></td><td>Pick applications (<strong>Select planned</strong>), <strong>Save application plans</strong>, <strong>Export selected</strong> as a plan file, and generate one stacked project.</td></tr>
           </table>
+          <h3>One application: its Design</h3>
           <p>
-            With no address the page opens on Applications when the plan has any, else on Sources. The
-            rating page this replaces is retired: its six ratings are gone, and its old addresses
-            (<code>#intake</code>, <code>#ratings</code>, <code>#results</code>, <code>#portfolio</code>,
-            <code>#help</code>) open Applications. Its portfolio is never deleted: <strong>Import the old
-            portfolio</strong> on Sources reads it from this browser, and a portfolio file it exported
-            (JSON or CSV) still imports.
+            <code>#app:&lt;slug&gt;</code> opens the application in the decision wizard, laid out as the
+            original: the title and <em>Designing &lt;app&gt;, currently for Microsoft Azure</em> in the header
+            with the application picker and the <strong>Cloud</strong> dropdown; the steps on the left
+            (<em>Step N &middot; Title</em>, <em>Step N of M</em>, the questions two to a row with a hint under
+            each, <strong>Back</strong> and <strong>Next</strong>, <strong>Finish</strong> on the last); and on the
+            right the recommendation for that cloud only, updating as you answer: the answer pills,
+            <strong>Generate recommendation</strong>, <strong>Full view</strong>, <strong>Print</strong>,
+            <strong>Save as Word</strong>, and the cards &mdash; compute pattern, data and storage, integration
+            and messaging, ops and resilience, security and network controls, the controls checklist, the
+            migration focus (with how the provider does it), the migration path per server and database,
+            connectivity and cross-cloud connectors, licensing, the DR pattern, assumptions and gaps, sizing
+            with the per-server sizes, what gets built, and the implementation playbook. <code>#app:</code>
+            with no application offers <strong>Set up a new service</strong>, <strong>Migrate an
+            application</strong> and <strong>Change a running service</strong>.
+          </p>
+          <p>
+            The <strong>initiative type</strong> in step 1 chooses the flow, and the steps use the chosen
+            provider's words (Azure's <em>test migration, migrate, complete migration</em>, Google Cloud's
+            <em>test-clone, cut-over, finalize</em>, AWS's <em>move group, hypercare</em>, OCI's <em>migration
+            project, mark migration complete</em>, VCF's <em>switchover</em>):
+          </p>
+          <ul>
+            <li><strong>Migrate an application</strong>: source and inventory, the strategy (the R), design
+              (data and integration, non-functionals, sizing), foundation (the landing zone and connectivity),
+              build (Terraform and Ansible), replicate and test, cutover and rollback, hypercare and
+              decommission.</li>
+            <li><strong>Set up a new service</strong>: what it is and its expected load, design, foundation
+              (reused or built), build (Terraform, Ansible and a pipeline), deploy and smoke test, hand over.</li>
+            <li><strong>Change a running service</strong>: the service or server and the change (from the
+              Utilities catalogue for the cloud), apply it with rollback (it opens the utility on Migration
+              &amp; Utilities with the application, server and cloud filled in), record it.</li>
+          </ul>
+          <p>
+            The answers are filled in from the plan (servers, databases, OS, criticality, RPO and RTO, the
+            source, data volume, environments, the route, new or migrating) and marked <em>from the plan</em>;
+            the ones you change are stored on the plan and never overwritten. The cloud you pick is the
+            application's platform, remembered per application, and the answers decide its components, so
+            what the wizard recommends is what <strong>Build</strong> generates. Each card lists <em>what gets
+            built</em> with its Terraform resources or Ansible roles, and anything the wizard names that
+            cannot be generated as <em>named, not generated</em>, with the reason.
+          </p>
+          <p>
+            <strong>Connectivity &amp; cross-cloud connectors</strong> names every link on both ends: back to
+            the data centre (ExpressRoute, Direct Connect, Cloud Interconnect or FastConnect with a VPN, or
+            a VPN; NSX and HCX on VCF), and to each dependency on another cloud (Oracle Interconnect for
+            Microsoft Azure, Oracle Interconnect for Google Cloud, AWS Interconnect &ndash; multicloud,
+            Google Cross-Cloud Interconnect, Oracle Interconnect for AWS, else a site-to-site VPN), with the
+            bandwidth, latency, Terraform resources and the vendor's page. Each application's stack builds
+            its own end. The first application on a cloud builds its landing zone and connectivity; the next
+            ones reuse it.
+          </p>
+          <p>
+            The old tabs' content is in the steps, or in an <strong>Advanced</strong> section of the step it
+            belongs to: the components and configuration, the sizing grid, dependencies and coupling, the
+            assessment, the target and the recommendation scores. Old addresses such as
+            <code>#app:billing/target</code> open the matching step.
+          </p>
+          <p>
+            <strong>Build</strong> generates this application's Terraform (one root module per cloud),
+            Ansible, CI/CD pipeline, plan file and decision record, as one archive, labelled with how the
+            cloud takes it: the Terraform root module on AWS and Azure; an Infrastructure Manager folder and
+            the <code>gcloud infra-manager deployments apply</code> command on Google Cloud; a Resource Manager
+            stack .zip and <code>oci resource-manager stack create</code> on OCI; the vSphere Terraform and a
+            VCF Automation cloud template on VCF. A stack is the same generation for several applications:
+            each cloud gets one root module holding every selected application on it. Every Terraform folder
+            carries <code>archtoolkit-terraform-settings.json</code> and the <code>ansible</code> folder
+            <code>archtoolkit-ansible-settings.json</code>: <strong>Load</strong> either on the
+            <a href="#terraform">Terraform</a> or <a href="#ansible">Ansible</a> page to see and edit the
+            same stack there.
+          </p>
+          <p>
+            With no address the page opens on Applications when the plan has any, else on Sources.
+            <strong>Plan the applications</strong> on the <a href="#inventory">inventory page</a> opens
+            Sources. The rating page this replaces is retired: its six ratings are gone, and its old
+            addresses (<code>#intake</code>, <code>#ratings</code>, <code>#results</code>,
+            <code>#portfolio</code>, <code>#help</code>) open Applications. Its portfolio is never deleted:
+            <strong>Import the old portfolio</strong> on Sources reads it from this browser, and a portfolio
+            file it exported (JSON or CSV) still imports.
           </p>
           <h3>Plan mode</h3>
           <p>
@@ -502,7 +578,8 @@
             or <strong>New services only</strong>. The mode decides which steps are listed, and a step with
             data in it is always listed, so changing the mode never hides or deletes work. In
             <em>New services only</em> the Sources, Servers and Databases steps are hidden until something
-            that migrates is added; in <em>One application</em> the page opens on that application.
+            that migrates is added; in <em>One application</em>, with one application in the plan, the page
+            opens on it.
           </p>
           <h3>One plan, two pages</h3>
           <p>
@@ -522,32 +599,63 @@
           <h3>Migrate</h3>
           <table>
             <tr><th>Step</th><th>Address</th><th>What it holds</th></tr>
-            <tr><td>Overview</td><td><code>#overview</code></td><td>The saved application plans and the estate placement check.</td></tr>
-            <tr><td>Landing zones</td><td><code>#landing-zones</code></td><td>One card per platform: networks, connectivity, identity, backup and DR, monitoring, governance; generates the landing-zone projects.</td></tr>
+            <tr><td>Overview</td><td><code>#overview</code></td><td>The saved application plans and the estate check: where each application lands, the platforms in use, the landing zones needed, licence totals, the decision tables (read-only; each row opens its application on Application Migration), capacity, quotas and transfer time.</td></tr>
+            <tr><td>Landing zones</td><td><code>#landing-zones</code></td><td>One card per platform: region, accounts, networks and subnets, connectivity, identity, backup and DR, governance (tags, policies, budgets), the landing-zone mode (shared or included), and <strong>Generate landing zone</strong>. When a relocate target is VMware, the card shows a first host count and <strong>Open VCF Sizing</strong> to size it properly.</td></tr>
             <tr><td>Estate capacity</td><td><code>#capacity</code></td><td>Totals per platform and region, quotas, licences and costs from your own rate card.</td></tr>
-            <tr><td>Data centre</td><td><code>#datacentre</code></td><td>Data-centre exit only: everything that is not a server, the exit sequence and lights-out.</td></tr>
-            <tr><td>Waves</td><td><code>#waves</code></td><td>Move groups, waves and runbooks; <code>#waves:governance</code> holds RACI, communications, change requests and sign-offs.</td></tr>
-            <tr><td>Execute</td><td><code>#execute</code></td><td>The execution settings per path, and the wave console: replicate, test, cutover, validate, decommission.</td></tr>
-            <tr><td>Board, Timeline, RAID, Reports</td><td><code>#board</code> &hellip; <code>#reports</code></td><td>Tracking, from the status files the generated scripts write.</td></tr>
-            <tr><td>Generate</td><td><code>#generate</code></td><td>The migration project as one zip.</td></tr>
+            <tr><td>Data centre</td><td><code>#datacentre</code></td><td>Data-centre exit: everything that is not a server (network, storage, security, operations, partners, facility and contracts), firewall and load-balancer translation, the exit sequence and lights-out. The circuit cuts open on the <a href="#network">Network</a> page, prefilled.</td></tr>
+            <tr><td>Waves</td><td><code>#waves</code></td><td>Wave settings and freeze windows, the team's capacity, move groups against waves; <code>#waves:governance</code> holds RACI, communications, change requests, the CMDB and sign-offs.</td></tr>
+            <tr><td>Execute</td><td><code>#execute</code></td><td><code>#execute:settings</code>: the execution settings per path. <code>#execute:&lt;wave&gt;/&lt;stage&gt;</code>: the wave console, stages replicate, test, cutover, validate and decommission.</td></tr>
+            <tr><td>Board</td><td><code>#board</code></td><td>Import the status files the scripts write (zip, jsonl or json; drop them on the page) and see every item's state by workload, by wave (with the gates) or by application. A manual change of state needs a reason. Once there is a tracker, the <a href="#inventory">inventory page</a>'s VM table shows each VM's state and wave.</td></tr>
+            <tr><td>Timeline, RAID, Reports</td><td><code>#timeline</code>, <code>#raid</code>, <code>#reports</code></td><td>The timeline with the T-minus gates and the burn-down; risks, assumptions, issues, decisions and blockers; status reports, the evidence pack and <strong>Reconcile with estate</strong>.</td></tr>
+            <tr><td>Generate</td><td><code>#generate</code></td><td>The migration project as one archive: pick the parts (plan, landing zones, app stacks per environment, per-app projects, Ansible, the execution kit, waves, governance, reports, pipeline, collectors), look through the files, download.</td></tr>
           </table>
           <p>
             With no address the page opens on the Board once anything tracked is past <em>planned</em>, else on
-            Overview. The old Multi-Cloud planner's intake addresses (<code>#sources</code>,
-            <code>#workloads</code>, <code>#databases</code>, <code>#apps</code>, <code>#requirements</code>,
-            <code>#decision</code>, <code>#design</code>) now open the matching step of Application Migration;
-            <code>#waves</code> and <code>#generate</code> stay here. The four-step Multi-Cloud wizard is retired.
+            Overview. The plan mode applies here too: <em>Data-centre exit</em> adds Data centre;
+            <em>New services only</em> hides Waves, Execute and the Board until something migrates. The old
+            Multi-Cloud planner's intake addresses (<code>#sources</code>, <code>#workloads</code>,
+            <code>#databases</code>, <code>#apps</code>, <code>#requirements</code>, <code>#decision</code>,
+            <code>#design</code>) now open the matching step of Application Migration; <code>#waves</code> and
+            <code>#generate</code> stay here. The Multi-Cloud Decision &amp; Onboarding Wizard is retired.
           </p>
+          <h3>The execution kit</h3>
+          <p>
+            Every server and database gets a move path from where it is and where it goes: HCX (Bulk,
+            Replication Assisted vMotion, vMotion, Cold, OS Assisted), cross-vCenter vMotion, VCF Import,
+            vCenter Converter, AWS Transform MGN, Azure Migrate, Migrate to Virtual Machines, Compute Engine
+            image import, Oracle Cloud Migrations, rebuild, or a database path (Zero Downtime Migration,
+            Data Guard, the migration services, the Managed Instance link, log shipping, logical
+            replication and more). The generated <code>migration/execute/</code> folder holds a script per
+            path, the source-platform adapters, DNS and load-balancer switching, and per wave
+            <code>precheck.sh</code>, <code>replicate.sh</code>, <code>test.sh</code>, <code>cutover.sh</code>,
+            <code>commit.sh</code>, <code>rollback.sh</code>, <code>validate.sh</code> and
+            <code>decommission.sh</code>. Every script:
+          </p>
+          <ul>
+            <li>applies by default; <code>--dry-run</code> prints each change instead, and there is no prompt;</li>
+            <li>is safe to run again: it checks the current state first and skips what is already done;</li>
+            <li>takes credentials from environment variables, a file only you can read, or your vault &mdash; never from a file it wrote;</li>
+            <li>exits 0 (done), 2 (usage), 3 (a tool, module or credential is missing), 4 (a gate is not open), 5 (a pre-check failed), 10 (some items failed) or 1 (anything else);</li>
+            <li>writes a status event per step to <code>status/events.jsonl</code>, which the Board imports.</li>
+          </ul>
+          <p>A wave cannot be cut over until its go / no-go gate, recorded on the tracker, is exported as a gate file for the scripts; <code>--gate-override "reason"</code> proceeds and records why.</p>
           <h3>Utilities</h3>
           <p>
-            <code>#utilities</code>: day-2 changes without a migration &mdash; add or resize a server, add or
-            extend a disk, open a port, add a DNS record, a patch run and more &mdash; each a small Terraform
-            and Ansible bundle that applies by default (<code>--dry-run</code> to check first), with its
-            rollback. <strong>Deploy a new service</strong> is here too. A utility's form is
+            <code>#utilities</code>: day-2 changes without a migration &mdash; add, resize, power or remove a
+            server; add or extend a disk; add a database or a file share; open a port; add a DNS record or a
+            load-balancer member; snapshots and backup policy; a patch run; restart a service; install or
+            remove software; tags, budgets and monitoring alerts; scale a node pool; rotate a certificate;
+            users, groups and cloud access; or any resource or module &mdash; each a small Terraform and / or
+            Ansible bundle with <code>apply.sh</code>, which applies by default (<code>--dry-run</code> to
+            check first), and <code>rollback.sh</code>. A change to something an application stack manages
+            updates the plan instead, and the bundle carries that stack's diff. The utility log records
+            each bundle and, from its status file, when it was applied or rolled back.
+            <strong>Deploy a new service</strong> is here too: a new application is built into an existing
+            landing zone, with no waves or replication. A utility's form is
             <code>#utilities:&lt;utility&gt;</code>.
           </p>
           <div class="tip">
-            Several steps on both pages are still being built; each one says so, and says what it will do.
+            Some panes on this page are still being built; each one says so, and says what it will do.
             The plan, its mode, its file and the sync between the two pages already work.
           </div>
           <!-- ================================================================ -->
@@ -1366,7 +1474,7 @@
           <ul>
             <li><strong>Sizing and specifications are estimates.</strong> Validate them against Broadcom's current documentation and a live VCF Installer before you commit to hardware, licensing or a deployment window.</li>
             <li><strong>Generated Terraform, Ansible and declarations are unreviewed code.</strong> Read them, run <code>terraform plan</code> or <code>--check --diff</code>, and test them somewhere that does not matter first. Applying them can create billable cloud resources, change running systems or interrupt service.</li>
-            <li><strong>Migration routes, risk bands, waves and service recommendations are decision support.</strong> They are a weighted reading of the answers you gave, and they do not replace the judgement of the people accountable for the applications.</li>
+            <li><strong>Recommended clouds, move paths, waves, gates and service recommendations are decision support.</strong> They are a weighted reading of the answers you gave, and they do not replace the judgement of the people accountable for the applications.</li>
             <li><strong>Nothing here is legal, regulatory, certification, financial or licensing advice.</strong> Compliance scopes and regulatory references are informational and may be out of date. Confirm them with your own auditors, legal counsel and the relevant authority.</li>
             <li><strong>Your data is yours.</strong> The toolkit is offline and stores everything in your own browser (see <a href="#privacy">Where your data goes</a>). What you enter, and where you send what comes out, is your responsibility.</li>
           </ul>

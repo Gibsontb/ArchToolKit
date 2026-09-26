@@ -818,6 +818,19 @@
                                                                               
                                         
                                   
+                                                                                                             
+                              
+ 
+/**
+ * An app's design in the decision wizard. `cloud` is the platform the wizard
+ * designs for, which is also the app's chosen `platform`. `answers` are the
+ * answers the user gave (field id → value; a list for a checkbox group);
+ * every other answer is prefilled from the plan each time it is read, so the
+ * prefill follows the plan and never overwrites what the user changed.
+ */
+                            
+                           
+                                                                         
  
                                     
                        

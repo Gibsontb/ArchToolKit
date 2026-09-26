@@ -11,6 +11,7 @@ import { topLevelBlocks } from '../../stack.ts';
 import { ident } from '../migration/common.ts';
 import { APP_CONTEXT_BLUEPRINTS } from './app-context.ts';
 import { APPLIANCE_BLUEPRINTS } from './appliance.ts';
+import { CONNECTOR_BLUEPRINTS } from './connectors.ts';
 import { CONTAINER_BLUEPRINTS } from './containers.ts';
 import { DATA_SERVICE_BLUEPRINTS } from './data-services.ts';
 import { FILE_BLUEPRINTS } from './file.ts';
@@ -94,6 +95,7 @@ export const PATTERN_TERRAFORM_BLUEPRINTS: readonly Blueprint[] = [
   ...APPLIANCE_BLUEPRINTS,
   ...MONITORING_BLUEPRINTS,
   ...GOVERNANCE_BLUEPRINTS,
+  ...CONNECTOR_BLUEPRINTS,
 ].map(scoped);
 
 /** The blueprints of one platform's group: `aws`, `azure`, `google`, `oci` or `vsphere`. */

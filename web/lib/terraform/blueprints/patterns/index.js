@@ -11,6 +11,7 @@ import { topLevelBlocks } from '../../stack.js';
 import { ident } from '../migration/common.js';
 import { APP_CONTEXT_BLUEPRINTS } from './app-context.js';
 import { APPLIANCE_BLUEPRINTS } from './appliance.js';
+import { CONNECTOR_BLUEPRINTS } from './connectors.js';
 import { CONTAINER_BLUEPRINTS } from './containers.js';
 import { DATA_SERVICE_BLUEPRINTS } from './data-services.js';
 import { FILE_BLUEPRINTS } from './file.js';
@@ -94,6 +95,7 @@ export const PATTERN_TERRAFORM_BLUEPRINTS                       = [
   ...APPLIANCE_BLUEPRINTS,
   ...MONITORING_BLUEPRINTS,
   ...GOVERNANCE_BLUEPRINTS,
+  ...CONNECTOR_BLUEPRINTS,
 ].map(scoped);
 
 /** The blueprints of one platform's group: `aws`, `azure`, `google`, `oci` or `vsphere`. */

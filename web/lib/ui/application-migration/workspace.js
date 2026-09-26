@@ -1,164 +1,88 @@
 /**
- * Application workspace (`#app:<slug>[/<tab>]`) on Application Migration
- * (addendum A.2.2): one application, and its target presence on the one cloud
- * chosen for it (else the engine's recommendation), switchable at any time.
+ * An application's Design (`#app:<slug>[/step-<n>]`) on Application Migration:
+ * the Multi-Cloud Decision & Onboarding Wizard, for this application.
  *
- * Tabs, in order: Overview · Components · Configuration · Dependencies ·
- * Coupling · Assessment · Target · Sizing · Compare · Generate. A new
- * application (greenfield) has no servers, so Dependencies, Coupling and
- * Assessment are hidden for it.
+ * The page is the original wizard's design: one cloud chosen in the header
+ * ("Designing <app>, currently for Microsoft Azure", with the application
+ * picker beside the cloud picker), the steps on the left, and on the right the
+ * recommendation for THAT cloud, card by card, updating as you answer, with
+ * Full view, Print and Save as Word.
  *
- * Overview and Dependencies are drawn here; each other tab is its own module
- * (components.ts, configuration.ts, coupling.ts, assessment.ts, target.ts,
- * sizing.ts, compare.ts, stack.ts), handed an `AppView`.
+ * The initiative type in step 1 chooses the flow, and the steps and their
+ * words follow the chosen provider's method (wording.ts):
+ *   - Migrate an application: source & inventory → strategy → design (data,
+ *     non-functionals, sizing) → foundation (landing zone, connectivity) →
+ *     build (Terraform, Ansible) → replicate & test → cutover & rollback →
+ *     hypercare & decommission;
+ *   - Set up a new service: what it is and its load → design → foundation
+ *     (reused or built) → build (with a pipeline) → deploy & smoke test →
+ *     hand over;
+ *   - Change a running service: the service or server and the change → apply
+ *     it with rollback (the Utilities catalogue, on the same cloud) → record.
+ *
+ * The answers are prefilled from the plan (its servers, databases, OS,
+ * criticality, RPO / RTO, source, data, environments, route, origin) and
+ * stored on the plan (`AppPlan.design`: the cloud and the user's answers), so
+ * they persist and sync like the rest of it. The cloud IS the app's chosen
+ * platform, and the answers drive its components (wizard-map.ts), so what
+ * the wizard recommends is what Generate builds. Everything the old tabs
+ * showed is still here, inside the step it belongs to or an Advanced
+ * disclosure: components and configuration, sizing, dependencies and
+ * coupling, assessment, the target and the generator.
  */
 
 import { el, append, downloadFile } from '../dom.js';
 import { renderBlueprintForm } from '../blueprint-form.js';
                                                     
                                                              
-import { setLoadProfile } from '../../multicloud/plan/apps/components.js';
+import { mountDecisionWizard,                           } from '../decision-wizard.js';
+import { designResult,                   } from '../../multicloud/plan/apps/built.js';
+import { appDatabases, appWorkloads, setLoadProfile } from '../../multicloud/plan/apps/components.js';
+import { designAnswers, designCloud, setDesignAnswer, setDesignCloud } from '../../multicloud/plan/apps/design.js';
 import { recommendationChanged, saveAppPlans } from '../../multicloud/plan/apps/recommend.js';
 import { appSlice } from '../../multicloud/plan/apps/slice.js';
+import { findUtility, utilitiesFor } from '../../multicloud/change/index.js';
+import { providerTerm } from '../../multicloud/plan/methodology.js';
 import {
   APP_KIND_OPTIONS, APP_PATTERN_OPTIONS, APP_PLAN_STATUS_OPTIONS, CHANGE_WINDOW_OPTIONS, CRITICALITY_OPTIONS, EDGE_KIND_OPTIONS, FRAMEWORK_OPTIONS,
-  LATENCY_OPTIONS, RESIDENCY_OPTIONS, RPO_OPTIONS, RTO_OPTIONS, SPECIAL_OPTIONS, WORKLOAD_TYPE_OPTIONS, labelOf, slugName,
+  LATENCY_OPTIONS, OS_OPTIONS, PLATFORM_LABELS, RESIDENCY_OPTIONS, RPO_OPTIONS, RTO_OPTIONS, SOURCE_PLATFORM_OPTIONS, SPECIAL_OPTIONS, labelOf, slugName,
 } from '../../multicloud/plan/options.js';
+import { supportStatus } from '../../multicloud/plan/os.js';
 import { planEnvelope } from '../../multicloud/plan/store.js';
-                                                                                   
+                                                                                             
+import { PROVIDER_FLOWS } from '../../multicloud/wizard/provider-flows.js';
+import { wizardCloudOf } from '../../multicloud/wizard/steps.js';
+import { flowKindOf, platformOfCloud } from '../../multicloud/wizard/wording.js';
 import {
-  PLATFORM_NAME, appBySlug, appEdgeRows, appHash, appPlanOrDraft, parseAppArg, recommendationOf, setAppField, setEdgeKind, shownPlatform,
+  PLATFORM_NAME, appBySlug, appEdgeRows, appHash, appPlanOrDraft, appReadiness, parseAppArg, providerReadiness, recommendationOf, setAppField, setEdgeKind, shownPlatform,
 } from './app-model.js';
 import { renderAssessment } from './assessment.js';
-import { renderCompare } from './compare.js';
 import { renderComponents } from './components.js';
 import { renderConfiguration } from './configuration.js';
 import { renderCoupling } from './coupling.js';
-import { button, buttonRow, chip, dropdown, factBadge, fill, note, rowsTable, sourceLink, watchPlan,              } from './kit.js';
-import { loadProfileForm } from './new-app.js';
+import {
+  builtHtml, connectivityHtml, esc, gapsHtml, licensingHtml, pathsHtml, planBlock, providerFlowHtml, sizingPlanHtml,
+} from './design-cards.js';
+import { button, buttonRow, chip, dropdown, factBadge, fill, judgedOn, note, rowsTable, sourceLink, watchPlan,              } from './kit.js';
+import { loadProfileForm, newAppCard } from './new-app.js';
 import { renderSizingTab } from './sizing.js';
-import { renderGenerateTab } from './stack.js';
+import { generatorCard } from './stack.js';
 import { renderTarget } from './target.js';
 
-                                                                                                                                                                   
-
-export const WORKSPACE_TABS                                                                                                     = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'components', label: 'Components' },
-  { id: 'configuration', label: 'Configuration' },
-  { id: 'dependencies', label: 'Dependencies', migratingOnly: true },
-  { id: 'coupling', label: 'Coupling', migratingOnly: true },
-  { id: 'assessment', label: 'Assessment', migratingOnly: true },
-  { id: 'target', label: 'Target' },
-  { id: 'sizing', label: 'Sizing' },
-  { id: 'compare', label: 'Compare' },
-  { id: 'generate', label: 'Generate' },
-];
-
-/** The tabs an app shows: a new application has no Dependencies, Coupling or Assessment. */
-export function tabsFor(origin                   )                 {
-  return WORKSPACE_TABS.filter((t) => origin === 'migrate' || !t.migratingOnly).map((t) => t.id);
-}
-
-const TAB_RENDERERS                                                                                                       = {
-  components: renderComponents,
-  configuration: renderConfiguration,
-  coupling: renderCoupling,
-  assessment: renderAssessment,
-  target: renderTarget,
-  sizing: renderSizingTab,
-  compare: renderCompare,
-  generate: renderGenerateTab,
+/** The old tab names, which still open: each lands on the step that now holds it. */
+export const TAB_TO_STEP                                   = {
+  overview: 1, assessment: 2, target: 10, components: 3, configuration: 3, sizing: 5, dependencies: 6, coupling: 6, compare: 1, generate: 7,
 };
 
-export function mount(root             , ctx             )       {
-  const head = el('div');
-  const strip = el('div', { class: 'tabs', attrs: { role: 'tablist', 'aria-label': 'Application workspace', 'data-control': 'workspace-tabs' }, style: { margin: 'var(--space-3) 0' } });
-  const body = el('div', { attrs: { 'data-control': 'workspace-body' } });
-  append(root, head, strip, body);
-
-  const draw = () => {
-    const { slug, tab } = parseAppArg(ctx.arg());
-    const plan = ctx.session.plan();
-    const app = appBySlug(plan, slug);
-    if (!app) {
-      fill(strip);
-      fill(body);
-      fill(head, el('section', { class: 'card' },
-        el('div', { class: 'card-title' }, el('h2', { text: slug ? `No application called "${slug}"` : 'Choose an application' })),
-        note('Open one from the catalogue.'),
-        plan.apps.length > 0
-          ? el('ul', {}, ...plan.apps.map((a) => el('li', {}, el('a', { text: a.name, attrs: { href: `#${appHash(a)}` } }))))
-          : null,
-        buttonRow(button('All applications', () => ctx.go('applications')))));
-      return;
-    }
-    const ap = appPlanOrDraft(plan, app);
-    const tabs = tabsFor(ap.origin);
-    const current               = (tabs            ).includes(tab) ? (tab                ) : 'overview';
-    const rec = recommendationOf(plan, app.id);
-    const platform = shownPlatform(plan, app.id, rec);
-    const view          = {
-      ctx, app, plan, appPlan: ap, rec, platform,
-      current: () => ctx.session.plan(),
-      edit: (change, options) => watcher.edit(change, options),
-      redraw: () => draw(),
-      go: (t) => ctx.go(appHash(app, t)),
-    };
-    drawHead(view);
-    fill(strip, ...tabs.map((t) => {
-      const b = el('button', {
-        class: t === current ? 'tab active' : 'tab',
-        text: WORKSPACE_TABS.find((x) => x.id === t) .label,
-        attrs: { type: 'button', role: 'tab', 'aria-selected': t === current ? 'true' : 'false', 'data-tab': t },
-      });
-      b.addEventListener('click', () => ctx.go(appHash(app, t)));
-      return b;
-    }));
-    let content             ;
-    try {
-      content = current === 'overview' ? renderOverview(view) : current === 'dependencies' ? renderDependencies(view) : TAB_RENDERERS[current](view);
-    } catch (e) {
-      content = el('div', { class: 'tip warn' }, el('strong', { text: 'This tab could not be drawn. ' }), el('span', { text: String(e instanceof Error ? e.message : e) }));
-    }
-    fill(body, content);
-  };
-
-  function drawHead(view         )       {
-    const { app, appPlan: ap, rec, platform } = view;
-    const chosen = ap.platform;
-    const changed = ap.recommendation ? recommendationChanged(ap, rec) : false;
-    const message = el('span', { class: 'small', attrs: { role: 'status' } });
-    fill(head, el('section', { class: 'card', attrs: { 'data-control': 'workspace-head' } },
-      el('div', { class: 'card-title' }, el('h2', { text: app.name })),
-      el('div', { class: 'pill-row' },
-        chip(ap.origin === 'new' ? 'New application' : 'Migrating', ap.origin === 'new' ? 'good' : 'neutral'),
-        chip(labelOf(APP_PATTERN_OPTIONS, app.pattern ?? 'generic')),
-        chip(labelOf(APP_KIND_OPTIONS, app.kind ?? 'unknown')),
-        chip(labelOf(APP_PLAN_STATUS_OPTIONS, ap.status), ap.status === 'draft' ? 'neutral' : 'good'),
-        chip(`${PLATFORM_NAME[platform]} (${chosen ? 'chosen' : rec.recommended ? 'recommended' : 'first allowed'})`, chosen ? 'good' : 'neutral'),
-        rec.recommended && chosen && rec.recommended !== chosen ? chip(`Engine recommends ${PLATFORM_NAME[rec.recommended]}`, 'warn') : null,
-        changed ? chip('Recommendation changed since saved', 'warn') : null),
-      buttonRow(
-        button('Save application plan', () => {
-          view.edit((p) => saveAppPlans(p, [app.id], { [app.id]: rec }, new Date().toISOString()), { immediate: true, redraw: true });
-        }, { primary: true, control: 'workspace-save' }),
-        button('Export this application', () => {
-          const slice = appSlice(view.current(), [app.id]);
-          downloadFile(`${slugName(app.name) || 'app'}-app-plan.json`, JSON.stringify(planEnvelope(slice), null, 2));
-          message.textContent = 'Exported the app slice (loadable on both pages).';
-        }, { control: 'workspace-export' }),
-        button('All applications', () => ctx.go('applications'), { control: 'workspace-back' }),
-        message)));
-  }
-
-  const watcher = watchPlan(root, ctx, draw);
-  ctx.onArg(() => draw());
-  draw();
+/** The step a `#app:<slug>/<tab>` argument asks for, if any. */
+export function stepOfTab(tab        )                     {
+  const m = /^step-(\d+)$/.exec(tab);
+  if (m) return Number(m[1]);
+  return TAB_TO_STEP[tab];
 }
 
 // ---------------------------------------------------------------------------
-// Overview
+// The application's non-functionals (the old Overview form, now in step 4)
 // ---------------------------------------------------------------------------
 
 const NF_INPUTS                            = [
@@ -177,7 +101,6 @@ const NF_INPUTS                            = [
   { id: 'businessOwner', label: 'Business owner', control: 'text' },
   { id: 'supportGroup', label: 'Support group', control: 'text' },
   { id: 'kind', label: 'Kind', control: 'select', options: APP_KIND_OPTIONS },
-  { id: 'pattern', label: 'Pattern', control: 'select', options: APP_PATTERN_OPTIONS },
 ];
 
 function appValues(app     )                         {
@@ -188,7 +111,6 @@ function appValues(app     )                         {
     out[i.id] = Array.isArray(v) ? v.join(', ') : String(v);
   }
   if (!out.kind) out.kind = 'unknown';
-  if (!out.pattern) out.pattern = 'generic';
   return out;
 }
 
@@ -203,60 +125,384 @@ function recommendationTable(rec                   )              {
   ]), { control: 'recommendation-table', numeric: [2], empty: 'No platform is allowed: set the platforms on Constraints.' });
 }
 
-function renderOverview(view         )              {
-  const { app, appPlan: ap, rec, plan } = view;
-  let values = appValues(app);
-  const form = el('div', { class: 'two', attrs: { 'data-control': 'app-nonfunctionals' } });
-  append(form, ...renderBlueprintForm({ inputs: NF_INPUTS }, {
-    values: () => values,
-    set: (id, v) => {
-      values = { ...values, [id]: v };
-      view.edit((p) => setAppField(p, app.id, id                                     , v), { redraw: id === 'pattern' || id === 'kind' });
-    },
-  }));
-  const detections = plan.workloads.filter((w) => w.app === app.name && !w.synthetic && (w.facts?.detection || w.workloadType));
-  const top = rec.recommended ? rec.perPlatform.find((x) => x.platform === rec.recommended) : undefined;
-  return el('div', {},
-    el('section', { class: 'card', attrs: { 'data-control': 'app-recommendation' } },
-      el('div', { class: 'card-title' }, el('h2', { text: 'Recommendation' })),
-      rec.recommended
-        ? el('p', {}, el('strong', { text: PLATFORM_NAME[rec.recommended] }), ` leads by ${rec.margin >= 99 ? 'being the only eligible cloud' : `${rec.margin} point(s)`}${top ? ` (score ${top.score})` : ''}. `,
-          rec.tooClose ? chip('Too close to call: compare before choosing', 'warn') : null)
-        : el('p', { text: 'No allowed cloud can take every item of this application; the table says which rules eliminate each.' }),
-      note('Reasons are the rules that scored the app\'s items, summed. [U] marks an inferred fact and [C] a community source; both are shown, never presented as published.'),
-      recommendationTable(rec),
-      buttonRow(button('Compare side by side', () => view.go('compare'), { control: 'overview-compare' }), button('Choose the cloud on Target', () => view.go('target')))),
-    ap.origin === 'new'
-      ? el('section', { class: 'card' },
-        el('div', { class: 'card-title' }, el('h2', { text: 'Load profile' })),
-        note('The components are sized from this (planning assumptions: replace them with your load-test numbers on Sizing → Assumptions).'),
-        loadProfileForm(ap.load, (load) => view.edit((p) => setLoadProfile(p, app.id, load).plan)))
-      : null,
-    el('section', { class: 'card' },
-      el('div', { class: 'card-title' }, el('h2', { text: 'Non-functionals' })),
-      form,
-      detections.length > 0
-        ? el('div', {}, el('h3', { text: 'Detection evidence', style: { fontSize: '1rem', margin: 'var(--space-3) 0 var(--space-2)' } }),
-          rowsTable(['Server', 'Type', 'Confidence', 'Evidence'], detections.map((w) => [
-            w.name,
-            labelOf(WORKLOAD_TYPE_OPTIONS, w.workloadType ?? w.facts?.detection?.type ?? 'unknown'),
-            w.facts?.detection ? `${Math.round(w.facts.detection.confidence * 100)}%${w.typeConfirmed ? ' (confirmed)' : ''}` : 'set by hand',
-            (w.facts?.detection?.evidence ?? []).join('; '),
-          ])))
-        : null));
+/** An Advanced disclosure: drawn when opened, and again on refresh while open. */
+function advanced(title        , render                   , control        )                                             {
+  const body = el('div');
+  const node = el('details', { class: 'wizard-advanced', attrs: { 'data-control': control } }, el('summary', { text: `Advanced: ${title}` }), body);
+  const draw = ()       => {
+    if (!(node                      ).open) return;
+    try {
+      fill(body, render());
+    } catch (e) {
+      fill(body, el('div', { class: 'tip warn', text: `This could not be drawn: ${e instanceof Error ? e.message : String(e)}` }));
+    }
+  };
+  node.addEventListener('toggle', draw);
+  return { node, refresh: draw };
 }
 
 // ---------------------------------------------------------------------------
-// Dependencies
+// The pane
 // ---------------------------------------------------------------------------
 
-function renderDependencies(view         )              {
-  const rows = appEdgeRows(view.plan, view.app.id);
-  return el('section', { class: 'card', attrs: { 'data-control': 'app-dependencies' } },
-    el('div', { class: 'card-title' }, el('h2', { text: 'Dependencies' })),
-    note('The app\'s edges in and out. Synchronous edges keep apps together (and are flagged when they cross clouds); asynchronous ones tolerate the distance.'),
-    rowsTable(['Direction', 'From', 'To', 'Kind'], rows.map((r) => [
-      r.direction === 'out' ? 'Out' : 'In', r.from, r.to,
-      dropdown(EDGE_KIND_OPTIONS, r.kind, (v) => view.edit((p) => setEdgeKind(p, r.index, v                    )), { label: `Kind of ${r.from} → ${r.to}` }),
-    ]), { empty: 'No dependencies recorded for this application. Flows imported on Sources propose them.' }));
+export function mount(root             , ctx             )       {
+  const body = el('div', { attrs: { 'data-control': 'app-design' } });
+  append(root, body);
+  let handle                              = null;
+  const stepOf = new Map                ();
+  let refreshers                 = [];
+  let last                          ;
+  let drawnFor = '';
+
+  const refreshAll = ()       => {
+    for (const r of refreshers) {
+      try {
+        r();
+      } catch {
+        // A block that cannot redraw keeps its last content.
+      }
+    }
+  };
+
+  /** A block of a step that redraws when the design changes. */
+  const live = (render                            )              => {
+    const box = el('div', { class: 'wizard-live' });
+    const draw = ()       => {
+      const out = render();
+      if (typeof out === 'string') box.innerHTML = out;
+      else fill(box, out);
+    };
+    draw();
+    refreshers.push(draw);
+    return box;
+  };
+
+  const startCard = (plan      )              => {
+    const slot = el('div');
+    const showNew = ()       => {
+      fill(slot, newAppCard(() => ctx.session.plan(), (next, appId) => {
+        const app = next.apps.find((a) => a.id === appId);
+        watcher.edit(() => next, { immediate: true });
+        if (app) {
+          watcher.edit((p) => setDesignAnswer(p, app.id, 'initiativeType', 'new-service', designCloud(p, app.id, p.requirements.allowed[0] ?? 'aws')).plan, { immediate: true });
+          ctx.go(appHash(app, 'step-1'));
+        }
+      }, () => fill(slot)));
+    };
+    return el('section', { class: 'card', attrs: { 'data-control': 'design-start' } },
+      el('div', { class: 'card-title' }, el('h2', { text: 'Multi-Cloud Decision & Onboarding Wizard' })),
+      el('p', { text: 'Design one application on the cloud you choose: the services card by card, the connectors, the playbook, and the Terraform, Ansible and pipeline for it.' }),
+      el('div', { class: 'design-start-choices' },
+        el('div', { class: 'card design-choice' },
+          el('h3', { text: 'Set up a new service' }),
+          el('p', { class: 'small', text: 'Nothing to move: pick what it is and its load, choose the cloud, design it, and generate its stack and pipeline. No inventory needed.' }),
+          button('Set up a new service', showNew, { primary: true, control: 'design-start-new' })),
+        el('div', { class: 'card design-choice' },
+          el('h3', { text: 'Migrate an application' }),
+          el('p', { class: 'small', text: 'Bring the servers in first (RVTools, a CSV, a cloud or hypervisor export): they are grouped into applications, and each gets its design here.' }),
+          buttonRow(button('Bring servers in', () => ctx.go('sources'), { control: 'design-start-sources' }), button('All applications', () => ctx.go('applications')))),
+        el('div', { class: 'card design-choice' },
+          el('h3', { text: 'Change a running service' }),
+          el('p', { class: 'small', text: 'Resize, add a disk, open a port, change DNS, patch: pick the application, choose "Change to existing service" in step 1, and the change goes to the Utilities catalogue.' }),
+          plan.apps.length > 0 ? note('Pick the application below.') : note('Add or import the application first.'))),
+      plan.apps.length > 0 ? el('ul', { attrs: { 'data-control': 'design-app-list' } }, ...plan.apps.map((a) => el('li', {}, el('a', { text: a.name, attrs: { href: `#${appHash(a)}` } })))) : null,
+      slot);
+  };
+
+  const draw = ()       => {
+    const { slug, tab } = parseAppArg(ctx.arg());
+    const plan = ctx.session.plan();
+    const app = appBySlug(plan, slug);
+    refreshers = [];
+    if (!app) {
+      handle?.destroy();
+      handle = null;
+      drawnFor = '';
+      fill(body,
+        slug ? el('div', { class: 'tip warn', text: `There is no application called "${slug}".` }) : null,
+        startCard(plan));
+      return;
+    }
+    const ap = appPlanOrDraft(plan, app);
+    const rec = recommendationOf(plan, app.id);
+    const platform = designCloud(plan, app.id, shownPlatform(plan, app.id, rec));
+    const da = designAnswers(plan, app.id);
+    if (!da.answers.initiativeType) da.answers.initiativeType = ap.origin === 'new' ? 'new-service' : 'migration';
+    const asked = stepOfTab(tab);
+    const step = asked ?? stepOf.get(app.id) ?? 1;
+    drawnFor = app.id;
+
+    const view = ()          => {
+      const p = ctx.session.plan();
+      const a = p.apps.find((x) => x.id === app.id) ?? app;
+      return {
+        ctx, app: a, plan: p, appPlan: appPlanOrDraft(p, a), rec, platform,
+        current: () => ctx.session.plan(),
+        edit: (change, options) => { watcher.edit(change, options?.redraw ? { ...options, redraw: false } : options); if (options?.redraw) refreshAll(); },
+        redraw: () => refreshAll(),
+        go: (t) => { const n = stepOfTab(t); if (n) handle?.goTo(n); },
+      };
+    };
+    const adv = (title        , render                             , control        )              => {
+      const a = advanced(title, () => render(view()), control);
+      refreshers.push(a.refresh);
+      return a.node;
+    };
+
+    // ---- the header: the application picker, and the plan's buttons
+    const picker = el('select', { attrs: { 'aria-label': 'Application', 'data-control': 'design-app-picker' } })                     ;
+    for (const a of plan.apps) picker.appendChild(el('option', { text: a.name, attrs: { value: a.id } }));
+    picker.appendChild(el('option', { text: '+ Set up a new service…', attrs: { value: '__new' } }));
+    picker.value = app.id;
+    picker.addEventListener('change', () => {
+      if (picker.value === '__new') { ctx.go('app:'); return; }
+      const next = plan.apps.find((a) => a.id === picker.value);
+      if (next) ctx.go(appHash(next));
+    });
+    const message = el('span', { class: 'small', attrs: { role: 'status', 'data-control': 'design-message' } });
+    const changed = ap.recommendation ? recommendationChanged(ap, rec) : false;
+    const headerExtra = el('div', { class: 'wizard-app-controls' },
+      el('label', { class: 'cloud-picker' }, el('span', { class: 'cloud-picker-label', text: 'Application:' }), picker),
+      el('div', { class: 'btn-row wizard-app-buttons' },
+        chip(ap.origin === 'new' ? 'New service' : 'Migrating', ap.origin === 'new' ? 'good' : 'neutral'),
+        chip(labelOf(APP_PLAN_STATUS_OPTIONS, ap.status), ap.status === 'draft' ? 'neutral' : 'good'),
+        rec.recommended && rec.recommended !== platform ? chip(`Engine prefers ${PLATFORM_NAME[rec.recommended]}`, 'warn', 'The decision engine\'s recommendation from the constraints; see step 1, Why this cloud.') : null,
+        changed ? chip('Recommendation changed since saved', 'warn') : null,
+        button('Save application plan', () => {
+          watcher.edit((p) => saveAppPlans(p, [app.id], { [app.id]: rec }, new Date().toISOString()), { immediate: true });
+          message.textContent = 'Saved: the plan is marked planned, and Migration & Utilities reads it from here.';
+        }, { small: true, control: 'workspace-save' }),
+        button('Export', () => {
+          downloadFile(`${slugName(app.name) || 'app'}-app-plan.json`, JSON.stringify(planEnvelope(appSlice(ctx.session.plan(), [app.id])), null, 2));
+          message.textContent = 'Exported the app slice (loadable on both pages).';
+        }, { small: true, control: 'workspace-export' }),
+        message));
+
+    const cloudName = PLATFORM_LABELS[platform];
+
+    // ---- what each step holds besides its questions
+    const stepExtras                                           = {
+      1: () => el('div', {},
+        note(`The engine's recommendation from the constraints: ${rec.recommended ? `${PLATFORM_NAME[rec.recommended]}${rec.tooClose ? ' (too close to call)' : ''}` : 'no eligible cloud'}. The cloud in the header is the one this design is for; changing it re-does the recommendation for that cloud only.`),
+        adv('why this cloud (the decision engine\'s scores)', () => recommendationTable(rec), 'design-why-cloud')),
+      2: () => el('div', {},
+        live(() => inventoryBlock(ctx.session.plan(), app, platform)),
+        adv('assessment (readiness, coupling answers)', renderAssessment, 'design-assessment')),
+      9: () => el('div', {},
+        el('h3', { class: 'wizard-extra-title', text: 'Load profile' }),
+        note('The new service is sized from this (planning assumptions; replace them with load-test numbers on Sizing).'),
+        loadProfileForm(appPlanOrDraft(ctx.session.plan(), app).load, (load) => watcher.edit((p) => setLoadProfile(p, app.id, load).plan))),
+      8: () => changeBlock(),
+      10: () => el('div', {},
+        live(() => last ? pathsHtml(last, 'migration') : ''),
+        adv('target (the components on this cloud, ingress, what must exist first)', renderTarget, 'design-target')),
+      3: () => el('div', {},
+        adv('components (what the design builds, editable)', renderComponents, 'design-components'),
+        adv('configuration (Ansible roles and modules)', renderConfiguration, 'design-configuration')),
+      4: () => el('div', {}, adv('the application\'s non-functionals on the plan', () => nfForm(), 'design-nonfunctionals')),
+      5: () => el('div', {},
+        live(() => last ? sizingPlanHtml(last) : ''),
+        adv('sizing grid, policy and overrides', renderSizingTab, 'design-sizing')),
+      6: () => el('div', {},
+        live(() => last ? connectivityHtml(last) : ''),
+        el('h3', { class: 'wizard-extra-title', text: 'Dependencies' }),
+        live(() => dependenciesBlock()),
+        adv('coupling (what the dependencies mean for the move)', renderCoupling, 'design-coupling')),
+      7: () => el('div', {},
+        live(() => el('p', {}, el('strong', { text: `How ${cloudName} takes it: ` }), last?.deploy ?? '', last ? el('br') : null, last ? el('span', { class: 'small', text: last.landingZone.text }) : null)),
+        generatorCard(() => ctx.session.plan(), () => [app.id], `Generate ${app.name} on ${cloudName}`)),
+      11: () => live(() => executionBlock('replicate')),
+      12: () => live(() => executionBlock('cutover')),
+      13: () => live(() => executionBlock('hypercare')),
+      14: () => el('div', {},
+        note(`Apply the stack through the pipeline chosen on Build (it runs terraform plan, then apply on approval) or, on ${cloudName}, as the cloud takes it: ${last?.deploy ?? ''}`),
+        live(() => smokeBlock())),
+      15: () => el('div', {},
+        note('Hand the service to operations: its owner and support group, its monitoring (the app\'s alerts are in the stack), its runbook and its SLO.'),
+        adv('ownership and non-functionals', () => nfForm(), 'design-handover')),
+      16: () => changeApplyBlock(),
+      17: () => el('div', {},
+        note('Record the change: the Utilities page keeps the utility log (generated, applied, rolled back) with the change request number; the scripts\' status events import into it.'),
+        buttonRow(el('a', { class: 'btn', text: 'Open the utility log →', attrs: { href: 'multicloud.html#utilities', 'data-control': 'design-utility-log' } }))),
+    };
+
+    const nfForm = ()              => {
+      const a = ctx.session.plan().apps.find((x) => x.id === app.id) ?? app;
+      let values = appValues(a);
+      const form = el('div', { class: 'two', attrs: { 'data-control': 'app-nonfunctionals' } });
+      append(form, ...renderBlueprintForm({ inputs: NF_INPUTS }, {
+        values: () => values,
+        set: (id, v) => {
+          values = { ...values, [id]: v };
+          watcher.edit((p) => setAppField(p, app.id, id                                     , v));
+        },
+      }));
+      return form;
+    }
+
+    const dependenciesBlock = ()              => {
+      const rows = appEdgeRows(ctx.session.plan(), app.id);
+      return rowsTable(['Direction', 'From', 'To', 'Kind'], rows.map((r) => [
+        r.direction === 'out' ? 'Out' : 'In', r.from, r.to,
+        dropdown(EDGE_KIND_OPTIONS, r.kind, (v) => { watcher.edit((p) => setEdgeKind(p, r.index, v                    )); handle?.regenerate(); }, { label: `Kind of ${r.from} → ${r.to}` }),
+      ]), { control: 'app-dependencies', empty: 'No dependencies recorded for this application. Flows imported on Sources propose them.' });
+    }
+
+    const executionBlock = (stage                                       )              => {
+      const f = PROVIDER_FLOWS[platform];
+      const words = stage === 'replicate' ? providerTerm('test-run', platform) : stage === 'cutover' ? providerTerm('cutover', platform) : providerTerm('hypercare', platform);
+      const link = stage === 'replicate' ? ['multicloud.html#execute', 'Open the execution kit →'] : stage === 'cutover' ? ['multicloud.html#board', 'Open the cutover board →'] : ['multicloud.html#board', 'Open the tracker →'];
+      const box = el('div', { attrs: { 'data-control': `design-${stage}` } });
+      box.innerHTML = [
+        stage === 'replicate' ? `<p>Each server replicates with its path below; then the <strong>${esc(words)}</strong> runs on the target, the findings are fixed, and it is marked ready.</p>${last ? pathsHtml(last, 'migration') : ''}` : '',
+        stage === 'cutover' ? `<p><strong>${esc(words)}.</strong> ${esc(f.cutover)}</p><p><strong>Gates:</strong> ${esc(f.gates)}</p><p>The way back: <strong>${esc(providerTerm('rollback', platform))}</strong>. DNS and load-balancer switching are generated per ${esc(f.waveLabel.toLowerCase())} on Migration &amp; Utilities.</p>` : '',
+        stage === 'hypercare' ? `<p><strong>${esc(words)}</strong> after the move, then the hand-over to operations and the source retired (decommission: archive, backups and monitoring removed, licences reclaimed).</p>` : '',
+        `<p class="muted">The execution itself runs from Migration &amp; Utilities, which reads this design: the app's cloud, its components and connectors, the landing-zone decision and each server's path.</p>`,
+      ].join('');
+      append(box, buttonRow(el('a', { class: 'btn', text: link[1] , attrs: { href: link[0]  } }), el('a', { class: 'btn', text: `${f.waveLabel}s →`, attrs: { href: 'multicloud.html#waves' } })));
+      return box;
+    }
+
+    const smokeBlock = ()              => {
+      const smoke = appPlanOrDraft(ctx.session.plan(), app).smoke ?? [];
+      return el('div', {},
+        smoke.length > 0
+          ? rowsTable(['Check', 'Target', 'Expect'], smoke.map((s) => [s.kind, s.target, s.expect ?? '']))
+          : note('No smoke checks yet: the ingress names get an HTTP check once the stack is up; add others on Migration & Utilities → Execute.'),
+        buttonRow(el('a', { class: 'btn', text: 'Deploy a new service in Utilities →', attrs: { href: `multicloud.html#utilities:deploy-service/app=${encodeURIComponent(app.name)}&platform=${platform}` } })));
+    }
+
+    const changeBlock = ()              => {
+      const p = ctx.session.plan();
+      const answers = designAnswers(p, app.id).answers;
+      const servers = appWorkloads(p, app).filter((w) => !w.synthetic);
+      const target = el('select', { attrs: { 'aria-label': 'Service or server', 'data-control': 'design-change-target' } })                     ;
+      target.appendChild(el('option', { text: `The whole service (${app.name})`, attrs: { value: '' } }));
+      for (const w of servers) target.appendChild(el('option', { text: `${w.name} (${labelOf(OS_OPTIONS, w.os)})`, attrs: { value: w.name } }));
+      target.value = String(answers.changeTarget ?? '');
+      const util = el('select', { attrs: { 'aria-label': 'Change', 'data-control': 'design-change-utility' } })                     ;
+      for (const u of utilitiesFor(platform)) util.appendChild(el('option', { text: u.label, attrs: { value: u.id } }));
+      if (answers.changeUtility) util.value = String(answers.changeUtility);
+      const save = (id        , v        )       => watcher.edit((q) => setDesignAnswer(q, app.id, id, v, platform).plan);
+      target.addEventListener('change', () => save('changeTarget', target.value));
+      util.addEventListener('change', () => { save('changeUtility', util.value); describe(); });
+      const about = el('p', { class: 'small' });
+      const describe = ()       => {
+        const u = findUtility(util.value);
+        about.textContent = u ? `${u.description} Risk: ${u.risk}; ${u.reversible ? 'reversible (rollback.sh restores it)' : `compensating rollback: ${u.rollback}`}.` : '';
+      };
+      describe();
+      return el('div', { class: 'field-grid' },
+        el('div', { class: 'field' }, el('div', { class: 'field-head' }, el('label', { text: 'Service or server' })), target, el('div', { class: 'field-hint', text: 'The running service, or one of its servers.' })),
+        el('div', { class: 'field' }, el('div', { class: 'field-head' }, el('label', { text: `The change (on ${cloudName})` })), util, el('div', { class: 'field-hint', text: 'From the Utilities catalogue: only the changes this cloud supports.' })),
+        el('div', { style: { gridColumn: '1 / -1' } }, about));
+    }
+
+    const changeApplyBlock = ()              => {
+      const answers = designAnswers(ctx.session.plan(), app.id).answers;
+      const u = findUtility(String(answers.changeUtility ?? '')) ?? utilitiesFor(platform)[0];
+      const params = new URLSearchParams({ platform, app: app.name, ...(answers.changeTarget ? { server: String(answers.changeTarget), workload: String(answers.changeTarget) } : {}) });
+      return el('div', { attrs: { 'data-control': 'design-change-apply' } },
+        note(`The change goes into the stack that manages ${app.name} on ${cloudName}: Utilities generates a change bundle (Terraform and / or Ansible against the landing zone) with apply.sh, which applies by default (--dry-run previews), rollback.sh, and a status event. A change to a plan-managed target updates the plan, so the app's stack regenerates with it.`),
+        u ? buttonRow(el('a', { class: 'btn btn-primary', text: `Open "${u.label}" in Utilities →`, attrs: { href: `multicloud.html#utilities:${u.id}/${params.toString()}`, 'data-control': 'design-open-utility' } })) : note(`No utility supports ${cloudName} yet.`));
+    }
+
+    // ---- the wizard
+    handle = mountDecisionWizard(body, {
+      cloud: wizardCloudOf(platform),
+      answers: da.answers,
+      prefilled: da.prefilled,
+      subject: app.name,
+      headerExtra,
+      step,
+      stepExtras,
+      onChange: (id, value) => {
+        watcher.edit((p) => {
+          let q = setDesignAnswer(p, app.id, id, value                              , platform).plan;
+          if (id === 'appPattern' && typeof value === 'string' && value && (APP_PATTERN_OPTIONS                                ).some((o) => o.value === value)) q = setAppField(q, app.id, 'pattern', value);
+          return q;
+        });
+      },
+      onCloud: (cloud) => {
+        const p = platformOfCloud(cloud);
+        watcher.edit((plan0) => setDesignCloud(plan0, app.id, p).plan, { immediate: true });
+        // Everything on the page is for one cloud: draw it again for the new one (the step is kept).
+        setTimeout(draw, 0);
+      },
+      onStep: (n) => {
+        stepOf.set(app.id, n);
+        try {
+          globalThis.history?.replaceState(null, '', `#${appHash(app, `step-${n}`)}`);
+        } catch {
+          // A sandboxed page: the step is still remembered for this session.
+        }
+      },
+      onRecommendation: (state, cloud, write) => {
+        const p = platformOfCloud(cloud);
+        const kind = flowKindOf(state.initiativeType);
+        const r = designResult(ctx.session.plan(), app.id, p);
+        last = r;
+        write('computePlan', planBlock(r, 'compute'));
+        write('dataPlan', planBlock(r, 'data'));
+        write('integrationPlan', planBlock(r, 'integration'));
+        write('opsPlan', planBlock(r, 'ops'));
+        write('securityPlan', planBlock(r, 'security'));
+        write('migrationPlan', providerFlowHtml(p, kind) + planBlock(r, 'migration'));
+        write('pathsMain', pathsHtml(r, kind));
+        write('connectivityMain', connectivityHtml(r));
+        write('connectivityPlan', '');
+        write('licensingMain', licensingHtml(r));
+        write('sizingPlan', sizingPlanHtml(r));
+        write('assumptionsPlan', gapsHtml(r));
+        write('drPlan', ctx.session.plan().requirements.regions[p]?.dr ? `<p class="muted">DR region on ${esc(PLATFORM_LABELS[p])}: ${esc(ctx.session.plan().requirements.regions[p]?.dr)} (the DR stack is generated).</p>` : '');
+        write('builtMain', builtHtml(r));
+        const t = document.querySelector('[data-section-title="built"]');
+        if (t) t.textContent = `What gets built on ${PLATFORM_LABELS[p]}`;
+        refreshAll();
+      },
+    });
+  };
+
+  /** The servers and databases the app brings, with the facts the plan knows about them. */
+  function inventoryBlock(plan      , app     , platform          )              {
+    const ws = appWorkloads(plan, app).filter((w) => !w.synthetic);
+    const dbs = appDatabases(plan, app);
+    const on = judgedOn(plan);
+    const r = appReadiness(plan, app.id, on);
+    const pr = providerReadiness(platform, r);
+    const eol = (os        )         => {
+      try {
+        return supportStatus(os                                       , on);
+      } catch {
+        return '';
+      }
+    };
+    return el('div', { attrs: { 'data-control': 'design-inventory' } },
+      el('p', {}, el('strong', { text: `${pr.term}: ` }), pr.verdict, ` (${ws.length} server(s), ${dbs.length} database(s)).`),
+      ws.length === 0 && dbs.length === 0 ? note('This application has no servers or databases in the plan yet: bring them in on Sources, or choose "New service" in step 1.') : null,
+      ws.length > 0 ? rowsTable(['Server', 'Env', 'Role', 'OS', 'Support', 'vCPU · GiB', 'Disks (GiB)', 'Source'], ws.map((w) => [
+        w.name, w.env, w.role, labelOf(OS_OPTIONS, w.os), eol(w.os) === 'end-of-life' ? chip('end of life', 'danger') : eol(w.os) === 'extended' ? chip('extended support', 'warn') : '',
+        `${w.vcpu} · ${w.ramGib}`, w.disksGib.join(' + '), labelOf(SOURCE_PLATFORM_OPTIONS, w.origin ?? 'vsphere'),
+      ]), { control: 'design-servers', numeric: [5] }) : null,
+      dbs.length > 0 ? rowsTable(['Database', 'Engine', 'Version', 'Size (GiB)', 'HA', 'Hosts'], dbs.map((d) => [d.name, d.engine, d.version, String(d.sizeGib), d.ha, d.hosts.join(', ')]), { control: 'design-databases', numeric: [3] }) : null);
+  }
+
+  const watcher = watchPlan(root, ctx, () => {
+    // Another page (or pane) changed the plan: redraw only when the app on show is affected enough to need it.
+    const { slug } = parseAppArg(ctx.arg());
+    const app = appBySlug(ctx.session.plan(), slug);
+    if (!app || app.id !== drawnFor) draw();
+    else refreshAll();
+  });
+  ctx.onArg(() => {
+    const { slug } = parseAppArg(ctx.arg());
+    const app = appBySlug(ctx.session.plan(), slug);
+    if (app && app.id === drawnFor && handle) {
+      const n = stepOfTab(parseAppArg(ctx.arg()).tab);
+      if (n) handle.goTo(n);
+      return;
+    }
+    draw();
+  });
+  draw();
 }

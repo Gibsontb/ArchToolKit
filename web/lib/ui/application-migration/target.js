@@ -17,7 +17,6 @@ import { findingsList } from '../components.js';
 import { renderBlueprintForm } from '../blueprint-form.js';
                                                              
 import { appPlanOf } from '../../multicloud/plan/apps/components.js';
-import { clearAppPlatform } from '../../multicloud/plan/apps/recommend.js';
 import { variantFindings } from '../../multicloud/plan/apps/translate.js';
 import { providerTerm } from '../../multicloud/plan/methodology.js';
 import {
@@ -25,8 +24,8 @@ import {
   TIER_PATTERN_OPTIONS, YES_NO_OPTIONS, labelOf,
 } from '../../multicloud/plan/options.js';
                                                                                   
-import { COMPARE_PLATFORMS, PLATFORM_CHOICES, PLATFORM_NAME, editAppPlan } from './app-model.js';
-import { choose, compareAll, lastSwitch, OUTCOME_TONE } from './compare.js';
+import { COMPARE_PLATFORMS, PLATFORM_NAME, editAppPlan } from './app-model.js';
+import { compareAll, lastSwitch, OUTCOME_TONE } from './compare.js';
 import { button, buttonRow, chip, dropdown, labelled, note, rowsTable,              } from './kit.js';
 
 const INGRESS_INPUTS                            = [
@@ -60,11 +59,6 @@ export function renderTarget(view         )              {
   const col = compareAll(view.plan, app.id, [p]).columns[0];
   const variants = appPlanOf(view.plan, app.id)?.variants ?? {};
 
-  const cloud = dropdown(PLATFORM_CHOICES.filter((c) => view.plan.requirements.allowed.includes(c.value)), ap.platform ?? '', (v) => {
-    if (!v) view.edit((pl) => clearAppPlatform(pl, app.id), { redraw: true });
-    else choose(view, v            );
-  }, { blank: `Follow the recommendation${rec.recommended ? ` (${PLATFORM_NAME[rec.recommended]})` : ''}`, control: 'target-cloud', label: 'Cloud' });
-
   let ingress = ingressValues(ap.ingress);
   const ingressForm = el('div', { class: 'two', attrs: { 'data-control': 'target-ingress' } });
   append(ingressForm, ...renderBlueprintForm({ inputs: INGRESS_INPUTS }, {
@@ -82,9 +76,8 @@ export function renderTarget(view         )              {
   return el('div', {},
     el('section', { class: 'card', attrs: { 'data-control': 'target' } },
       el('div', { class: 'card-title' }, el('h2', { text: `Target: ${PLATFORM_NAME[p]}` })),
-      note('Choose the cloud this application lands on. Every cloud it has been placed on keeps its own components, so switching back restores them exactly; a cloud it has not been on is translated from the current one.'),
+      note(`The cloud is chosen in the design's header${rec.recommended && rec.recommended !== p ? ` (the engine would recommend ${PLATFORM_NAME[rec.recommended]})` : ''}. Every cloud this application has been designed on keeps its own components, so switching back restores them exactly; a cloud it has not been on is translated from the current one.`),
       el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end' } },
-        labelled('Cloud', cloud),
         labelled(providerTerm('landing-zone', p), lz)),
       el('div', { class: 'pill-row', style: { marginTop: 'var(--space-3)' } },
         el('span', { class: 'small', text: 'Component sets kept:' }),
@@ -101,7 +94,7 @@ export function renderTarget(view         )              {
           el('span', {}, chip(k.outcome, OUTCOME_TONE[k.outcome] ?? 'neutral', k.reason), k.dropped.length > 0 ? el('span', { class: 'small', text: ` ${k.dropped.length} argument(s) not carried` }) : null),
         ]), { control: 'target-components', empty: 'Nothing is stood up yet: add components.' })
         : note('This cloud is not among the allowed platforms.'),
-      buttonRow(button('Edit components', () => view.go('components')), button('Size it', () => view.go('sizing')), button('Compare the clouds', () => view.go('compare')))),
+      buttonRow(button('Edit components', () => view.go('components')), button('Size it', () => view.go('sizing')))),
     col ? el('section', { class: 'card' },
       el('div', { class: 'card-title' }, el('h2', { text: 'Stood up for this app' })),
       rowsTable(['What', 'State'], col.standUpFirst.map((s) => [

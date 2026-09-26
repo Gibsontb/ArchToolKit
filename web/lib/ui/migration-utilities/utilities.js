@@ -141,6 +141,14 @@ export function mount(root             , ctx             )       {
       bundleFor = u.id;
     }
     const values = valuesById.get(u.id) ?? defaultUtilityValues(u);
+    // `#utilities:<id>/<k=v&…>` presets (the decision wizard's "Change a running service" opens a utility for its app, server and cloud).
+    const presets = new URLSearchParams(ctx.arg().split('/').slice(1).join('/'));
+    if (!valuesById.has(u.id)) {
+      for (const [k, v] of presets) {
+        if (k === 'platform' && (u.platforms                     ).includes(v)) values.platform = v;
+        else if (u.inputs.some((i) => i.id === k)) values[k] = v;
+      }
+    }
     valuesById.set(u.id, values);
     const uctx = () => utilityContext(ctx.session.plan(), tracker, date);
     const form = el('div', { class: 'stack', attrs: { 'data-control': 'utility-form', 'data-utility': u.id } });

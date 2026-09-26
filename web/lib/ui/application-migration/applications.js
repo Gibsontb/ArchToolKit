@@ -82,7 +82,7 @@ export function mount(root             , ctx             )       {
         ctx.session.update(() => next, { immediate: true });
         showNew = false;
         const app = next.apps.find((a) => a.id === appId);
-        if (app) ctx.go(appHash(app, 'overview'));
+        if (app) ctx.go(appHash(app, 'step-1'));
       }, plan.apps.length > 0 ? () => { showNew = false; draw(); } : undefined)
       : null);
     drawList(plan);

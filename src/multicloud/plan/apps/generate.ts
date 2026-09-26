@@ -39,6 +39,7 @@ import type {
   ArchiveFormat, Env, GeneratedProject, LandingZoneMode, Plan, PlanDecision, Platform, RateCard, StateBackend, TargetDesign, TerraformSettingsEnvelope,
 } from '../types.ts';
 import { compareApp } from './compare.ts';
+import { deployPaths, type DeployPath } from './deploy-paths.ts';
 import { appPlanOf, defaultAppPlan, findApp, withAppPlan, withoutServiceSynthetics } from './components.ts';
 import { decideApps, recommendApp, recommendationDecision } from './recommend.ts';
 import { appSlice, selectedApps, sliceFolder } from './slice.ts';
@@ -78,6 +79,8 @@ export interface AppStackResult extends GeneratedProject {
   readonly landingZones: Readonly<Partial<Record<Platform, LandingZoneMode>>>;
   /** Apps whose error findings block Download. */
   readonly blocked: readonly string[];
+  /** How each cloud takes the output (its own deployment path). */
+  readonly deploy: readonly DeployPath[];
 }
 
 /**
@@ -98,13 +101,21 @@ export function placedSlice(plan: Plan, appIds: readonly string[], engine?: Engi
   return slice;
 }
 
-/** The landing-zone mode per platform. */
-function modeOf(plan: Plan, p: Platform, option: LandingZoneMode | undefined): LandingZoneMode {
+/**
+ * The landing-zone mode per platform: the option; else shared when the
+ * landing zone is designed on Migration & Utilities; else shared when every
+ * selected app on the platform reuses another app's landing zone (the design
+ * rule: the first app on a cloud builds it, the later ones reuse it); else
+ * included.
+ */
+function modeOf(plan: Plan, slice: Plan, p: Platform, option: LandingZoneMode | undefined): LandingZoneMode {
   if (option) return option;
-  return plan.execution?.landingZones?.[p] ? 'shared' : 'included';
+  if (plan.execution?.landingZones?.[p]) return 'shared';
+  const here = (slice.appPlans ?? []).filter((ap) => ap.platform === p);
+  return here.length > 0 && here.every((ap) => ap.landingZone === 'shared') ? 'shared' : 'included';
 }
 
-function readme(plan: Plan, slice: Plan, folder: string, modes: Readonly<Partial<Record<Platform, LandingZoneMode>>>, files: Readonly<Record<string, string>>): string {
+function readme(plan: Plan, slice: Plan, folder: string, modes: Readonly<Partial<Record<Platform, LandingZoneMode>>>, files: Readonly<Record<string, string>>, deploy: readonly DeployPath[] = []): string {
   const apps = slice.apps.map((a) => {
     const ap = appPlanOf(slice, a.id);
     return `- ${a.name}${ap?.platform ? ` → ${PLATFORM_LABELS[ap.platform]}` : ''}${ap?.origin === 'new' ? ' (new application)' : ''}`;
@@ -147,6 +158,7 @@ function readme(plan: Plan, slice: Plan, folder: string, modes: Readonly<Partial
     '',
     'Each `terraform/<platform>/README.md` lists what to sign in with and the sensitive variables to export from your vault. Credentials are never written into these files.',
     '',
+    ...(deploy.length > 0 ? ['## How each cloud takes it', '', ...deploy.flatMap((d) => d.readme)] : []),
   ];
   return lines.join('\n');
 }
@@ -220,7 +232,7 @@ export function generateAppStack(plan: Plan, appIds: readonly string[], options:
   const files: Record<string, string> = {};
   const envelopes: Partial<Record<Platform, TerraformSettingsEnvelope>> = {};
   const modes: Partial<Record<Platform, LandingZoneMode>> = {};
-  for (const p of design.platforms.map((d) => d.platform)) modes[p] = modeOf(plan, p, options.landingZone);
+  for (const p of design.platforms.map((d) => d.platform)) modes[p] = modeOf(plan, slice, p, options.landingZone);
   for (const mode of ['included', 'shared'] as const) {
     const platforms = design.platforms.filter((d) => modes[d.platform] === mode);
     if (platforms.length === 0) continue;
@@ -240,9 +252,14 @@ export function generateAppStack(plan: Plan, appIds: readonly string[], options:
   for (const [path, text] of Object.entries(an.files)) files[`${folder}/${path}`] = text;
   findings.push(...an.findings);
 
+  // Each cloud's own deployment path (Infrastructure Manager, a Resource Manager stack, a VCF Automation template).
+  const title = slice.apps.length === 1 ? slice.apps[0]!.name : `${plan.name} apps`;
+  const deploy = deployPaths(slice, design, folder, files, title);
+  Object.assign(files, deploy.files);
+
   files[`${folder}/app-plan.json`] = writeSettings(planEnvelope(slice) as unknown as Json, 'json');
   if (options.record !== false) files[`${folder}/decision/app-record.md`] = appRecord(plan, slice, options);
-  files[`${folder}/README.md`] = readme(plan, slice, folder, modes, files);
+  files[`${folder}/README.md`] = readme(plan, slice, folder, modes, files, deploy.paths);
 
   // An error names its app when it can, and blocks that app's Download.
   for (const f of findings) {
@@ -266,6 +283,7 @@ export function generateAppStack(plan: Plan, appIds: readonly string[], options:
     design,
     landingZones: modes,
     blocked: [...blocked].sort(),
+    deploy: deploy.paths,
   };
 }
 

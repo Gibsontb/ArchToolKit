@@ -27,6 +27,16 @@
  */
 
 const byId = (id) => document.getElementById(id);
+
+/** Free text (names and notes, which can come from an imported inventory) is escaped before it goes into HTML. */
+export function escapeHtml(text) {
+      return String(text === undefined || text === null ? "" : text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 
@@ -44,10 +54,23 @@ export function setCurrentStep(step) {
   currentStep = step;
 }
 
+/**
+ * The provider's display name. VCF is the fifth target: VMware Cloud
+ * Foundation 9.1 on owned hardware (or a VCF service provider).
+ */
+export function providerNameOf(cloud) {
+      return cloud === "azure" ? "Azure"
+        : cloud === "aws" ? "AWS"
+        : cloud === "gcp" ? "Google Cloud"
+        : cloud === "vcf" ? "VMware Cloud Foundation (VCF 9.1)"
+        : "Oracle Cloud Infrastructure";
+    }
+
+/** A select's chosen values; the "Select..." placeholder (an empty value) is not an answer. */
 export function getMultiSelectValues(select) {
       if (!select) return [];
       return Array.from(select.options)
-        .filter(o => o.selected)
+        .filter(o => o.selected && o.value !== "")
         .map(o => o.value);
     }
 
@@ -57,66 +80,68 @@ export function getCheckedValues(name) {
     }
 
 export function clearErrors() {
-      ["error-step-1", "error-step-2", "error-step-3", "error-step-4"].forEach(id => {
-        const el = byId(id);
-        if (el) el.textContent = "";
+      qsa('[id^="error-step-"]').forEach(el => {
+        el.textContent = "";
       });
     }
 
+const valueOf = (id) => {
+      const node = byId(id);
+      return node ? String(node.value || "").trim() : "";
+    };
+
+/**
+ * Soft validation, per step number (the steps of ./steps.ts): 1 Initiative &
+ * basics · 2 Source & inventory · 10 Strategy · 3 data & integration ·
+ * 4 non-functional · 5 sizing & environments · 6 foundation & connectivity.
+ * It names what is missing and never blocks: recommendations are only more
+ * generic without the answers.
+ */
 export function validateStep(step) {
       clearErrors();
       let missing = [];
+      let message = "";
 
       if (step === 1) {
-        const initiativeType = byId("initiativeType").value;
-        const workloadName = byId("workloadName").value.trim();
-        const architectureType = byId("architectureType").value;
-        const trafficPattern = byId("trafficPattern").value;
-        const latencySensitivity = byId("latencySensitivity").value;
-        const teamSkills = getMultiSelectValues(byId("teamSkills"));
-
-        if (!initiativeType) missing.push("Initiative type");
-        if (!workloadName) missing.push("Workload / initiative name");
-        if (!architectureType) missing.push("Architecture type");
-        if (!trafficPattern) missing.push("Traffic pattern");
-        if (!latencySensitivity) missing.push("Latency sensitivity");
-        if (teamSkills.length === 0) missing.push("Team strengths");
-
+        if (!valueOf("initiativeType")) missing.push("Initiative type");
+        if (!valueOf("workloadName")) missing.push("Workload / initiative name");
+        if (!valueOf("architectureType")) missing.push("Architecture type");
+        if (!valueOf("trafficPattern")) missing.push("Traffic pattern");
+        if (!valueOf("latencySensitivity")) missing.push("Latency sensitivity");
+        if (getMultiSelectValues(byId("teamSkills")).length === 0) missing.push("Team strengths");
         if (missing.length > 0) {
-          const el = byId("error-step-1");
-          if (el) el.textContent =
-            "Missing: " + missing.join(", ") + ". You can continue, but recommendations will be more generic.";
+          message = "Missing: " + missing.join(", ") + ". You can continue, but recommendations will be more generic.";
         }
-
       } else if (step === 2) {
-        const dataType = byId("dataType").value;
-        const dataSensitivity = byId("dataSensitivity").value;
-
-        if (!dataType || !dataSensitivity) {
-          const el = byId("error-step-2");
-          if (el) el.textContent =
-            "Set at least primary data pattern and data sensitivity / sector for better recommendations.";
+        if (!valueOf("sourceEnv")) {
+          message = "Set the source environment: it drives the migration tooling, the connectivity and the VMware options.";
         }
-
+      } else if (step === 10) {
+        if (!valueOf("migrationApproach")) {
+          message = "Choose the migration strategy (the R): it decides the execution method for each server and database.";
+        }
       } else if (step === 3) {
-        const criticality = byId("criticality").value;
-        const iaCTools = getMultiSelectValues(byId("iaCTools"));
-
-        if (!criticality || iaCTools.length === 0) {
-          const el = byId("error-step-3");
-          if (el) el.textContent =
-            "Business criticality and IaC / automation tooling are empty. Set them to drive HA/DR, migration and automation guidance.";
+        if (!valueOf("dataType") || !valueOf("dataSensitivity")) {
+          message = "Set at least primary data pattern and data sensitivity / sector for better recommendations.";
         }
-
       } else if (step === 4) {
-        const envChecked = qsa('input[name="envScope"]:checked').length;
-        if (!envChecked) {
-          const el = byId("error-step-4");
-          if (el) el.textContent =
-            "Select at least one environment (typically Prod plus Dev/Test) for meaningful sizing guidance.";
+        if (!valueOf("criticality") || getMultiSelectValues(byId("iaCTools")).length === 0) {
+          message = "Business criticality and IaC / automation tooling are empty. Set them to drive HA/DR, migration and automation guidance.";
+        }
+      } else if (step === 5) {
+        if (!qsa('input[name="envScope"]:checked').length) {
+          message = "Select at least one environment (typically Prod plus Dev/Test) for meaningful sizing guidance.";
+        }
+      } else if (step === 6) {
+        if (!valueOf("onPremLink")) {
+          message = "Say how this workload reaches the data centre (or that it does not) so the connectivity card names the right link.";
         }
       }
 
+      if (message) {
+        const el = byId("error-step-" + step);
+        if (el) el.textContent = message;
+      }
       return true; // soft validation only
     }
 
@@ -124,6 +149,7 @@ export function buildSummaryPills(state) {
       const pills = [];
 
       if (state.workloadName) pills.push("Workload: " + state.workloadName);
+      if (state.appPattern) pills.push("Pattern: " + state.appPattern);
 
       const pathMap = {
         "new-service": "New service",
@@ -343,11 +369,7 @@ export function buildSizingPlan(cloud, state) {
         matrixHtml = "<p>No environments selected yet. Tick at least Prod plus relevant non-prod environments in Step 4.</p>";
       }
 
-      const providerName =
-        cloud === "azure" ? "Azure" :
-        cloud === "aws"   ? "AWS" :
-        cloud === "gcp"   ? "Google Cloud" :
-                            "Oracle Cloud Infrastructure";
+      const providerName = providerNameOf(cloud);
 
       const main = `
         <p>This is a <strong>${trafficBand}</strong> traffic workload on <strong>${providerName}</strong> with a <strong>${computeSize}</strong>.</p>
@@ -418,6 +440,14 @@ export function buildDrPatternCard(state, cloud) {
       } else if (key === "gcp") {
         lines.push(
           "GCP: use multi-region or paired regional setup with global load balancing, regional SLOs, and tested failover playbooks."
+        );
+      } else if (key === "oci") {
+        lines.push(
+          "OCI: pair regions with cross-region Autonomous Data Guard / Data Guard, Object Storage replication, Full Stack Disaster Recovery plans, and DNS traffic steering for failover."
+        );
+      } else if (key === "vcf") {
+        lines.push(
+          "VCF: protect the workload domain with VMware Live Recovery (vSphere Replication and recovery plans) to a second VCF instance or a VCF-based cloud, vSAN stretched clusters for zero-RPO inside a metro, and NSX / DNS changes scripted into the recovery plan."
         );
       }
 
@@ -683,11 +713,8 @@ export function buildHowToPlaybook(cloud, state) {
           ? "commercial private-sector workload"
           : "general commercial workload";
 
-      const cloudLabel =
-        cloud === "azure" ? "Azure"
-        : cloud === "aws" ? "AWS"
-        : cloud === "gcp" ? "Google Cloud"
-        : "Oracle Cloud Infrastructure";
+      const cloudLabel = providerNameOf(cloud);
+      const isVcf = cloud === "vcf";
 
       const iaCLabel = iaCTools.length > 0
         ? iaCTools.join(", ")
@@ -785,18 +812,22 @@ export function buildHowToPlaybook(cloud, state) {
             Decide the primary migration or change approach (${approachLabel}) per component and confirm which parts will be retained or retired.
           </li>
           <li>
-            <strong>Phase 3 – Landing zone & architecture on ${cloudLabel}.</strong><br>
-            Design a secure landing zone: management hierarchy (accounts/subscriptions/projects/tenancies),
-            network topology (hub–spoke or mesh), connectivity into CHEDC / enterprise core
-            (ExpressRoute / Direct Connect / Interconnect / FastConnect + VPN),
-            and baseline guardrails (policies, configuration rules, encryption standards).
+            <strong>Phase 3 – ${isVcf ? "Workload domain" : "Landing zone"} & architecture on ${cloudLabel}.</strong><br>
+            ${isVcf
+              ? "Design the VCF workload domain: VCF Automation organizations and projects, NSX (Tier-0 / Tier-1 gateways or VPCs, segments, Distributed Firewall), vSAN storage policies, " +
+                "connectivity into CHEDC / enterprise core (NSX Tier-0 BGP, NSX IPsec VPN, HCX Interconnect and Network Extension), " +
+                "and baseline guardrails (VCF Automation policies, VCF Operations compliance packs, encryption with a key provider)."
+              : "Design a secure landing zone: management hierarchy (accounts/subscriptions/projects/tenancies), " +
+                "network topology (hub–spoke or mesh), connectivity into CHEDC / enterprise core " +
+                "(ExpressRoute / Direct Connect / Cloud Interconnect / FastConnect + VPN), " +
+                "and baseline guardrails (policies, configuration rules, encryption standards)."}
             Produce a reference architecture for <em>${workloadLabel}</em> (compute pattern, data services, integration and observability)
             using your cross-cloud service catalog and impact-level rules.
           </li>
           <li>
             <strong>Phase 4 – IaC, automation, and pipelines.</strong><br>
             Implement the landing zone, guardrails, and core shared services using <strong>${iaCLabel}</strong>.
-            Stand up CI/CD pipelines (Azure DevOps / GitHub Actions / CodePipeline / Cloud Build / OCI DevOps) for both
+            Stand up CI/CD pipelines (${isVcf ? "VCF Automation blueprints driven from GitHub Actions / GitLab CI / Azure DevOps" : "Azure DevOps / GitHub Actions / CodePipeline / Cloud Build / OCI DevOps"}) for both
             infrastructure and application code. Integrate secret management, image scanning, policy-as-code, and test gates into the pipelines
             so every change to ${workloadLabel} is repeatable and auditable.
           </li>
@@ -807,7 +838,7 @@ export function buildHowToPlaybook(cloud, state) {
                 ? "Group systems into migration waves (pilot → early adopters → bulk waves) according to dependency and risk. "
                 : "Group work into waves (pilot → early adopters → broader rollout) so you can de-risk changes before full scale. "
             }
-            For VMware-heavy estates, plan which systems use native ${cloudLabel} services vs the cloud’s VMware offering.
+            ${isVcf ? "For VMware estates, plan which systems move with HCX (Bulk, Replication Assisted vMotion, vMotion) and which are rebuilt from VCF Automation templates." : "For VMware-heavy estates, plan which systems use native " + cloudLabel + " services vs the cloud’s VMware offering."}
             Define cutover strategy per wave (blue/green, canary, phased, or big-bang), rollback plans, and detailed runbooks
             for both technical tasks and communications.
           </li>
@@ -873,7 +904,8 @@ export function generateCloudRecommendation(cloud, state) {
         secOpsMaturity,
         sourceEnv,
         migrationApproach,
-        iaCTools
+        iaCTools,
+        regionCount
       } = state;
 
       const hasSkill = s => teamSkills.indexOf(s) !== -1;
@@ -907,11 +939,7 @@ export function generateCloudRecommendation(cloud, state) {
           ? "Tier 2/3 – supporting / batch"
           : "Unspecified";
 
-      const providerName =
-        cloud === "azure" ? "Azure" :
-        cloud === "aws"   ? "AWS" :
-        cloud === "gcp"   ? "Google Cloud" :
-                            "Oracle Cloud Infrastructure";
+      const providerName = providerNameOf(cloud);
 
       let computeMain = "General-purpose compute with managed load balancing.";
       let computeNotes = "";
@@ -941,7 +969,7 @@ export function generateCloudRecommendation(cloud, state) {
             computeMain =
               "Use <strong>Azure Functions</strong> behind <strong>Azure API Management</strong>.";
             computeNotes =
-              "Good for bursty traffic. Use Premium Functions to avoid cold starts. API Management handles auth, quotas, and versioning.";
+              "Good for bursty traffic. Use the Flex Consumption or Premium plan to avoid cold starts. API Management handles auth, quotas, and versioning.";
           } else if (hasSkill("containers")) {
             computeMain =
               "Use <strong>Azure Kubernetes Service (AKS)</strong> or <strong>Azure Container Apps</strong> behind Application Gateway.";
@@ -967,9 +995,9 @@ export function generateCloudRecommendation(cloud, state) {
           }
         } else if (architectureType === "batch") {
           computeMain =
-            "Use <strong>Azure Batch</strong> or <strong>Synapse/Fabric pipelines</strong> scheduled via <strong>Azure Data Factory</strong> or Logic Apps.";
+            "Use <strong>Azure Batch</strong> or <strong>Microsoft Fabric</strong> pipelines scheduled via <strong>Azure Data Factory</strong> or Logic Apps.";
           computeNotes =
-            "Batch manages pools of compute VMs; Synapse/Fabric covers ELT/analytics-style jobs.";
+            "Batch manages pools of compute VMs; Fabric covers ELT/analytics-style jobs.";
         } else if (architectureType === "event-driven") {
           computeMain =
             "Use <strong>Azure Functions</strong> with <strong>Event Grid</strong> / <strong>Event Hubs</strong> triggers.";
@@ -977,26 +1005,26 @@ export function generateCloudRecommendation(cloud, state) {
             "Serverless consumers for events; Event Hubs for high-throughput streams, Event Grid for discrete events.";
         } else if (architectureType === "legacy-vm") {
           computeMain =
-            "Lift & shift to <strong>Azure VMs / VM Scale Sets</strong>, or use <strong>Azure VMware Solution (AVS)</strong> if staying on VMware.";
+            "Lift & shift to <strong>Azure VMs / Virtual Machine Scale Sets</strong> with <strong>Azure Migrate</strong>, or use <strong>Azure VMware Solution (AVS)</strong> if staying on VMware.";
           computeNotes =
             "For on-prem VMware with minimal change, AVS + HCX gives low-friction relocation; otherwise migrate VMs to native Azure with Azure Migrate.";
         } else if (architectureType === "data-analytics") {
           computeMain =
-            "Use <strong>Azure Synapse Analytics</strong> or <strong>Microsoft Fabric</strong> with <strong>Azure Data Lake Storage Gen2</strong>.";
+            "Use <strong>Microsoft Fabric</strong> (or <strong>Azure Synapse Analytics</strong> for an existing estate) with <strong>Azure Data Lake Storage Gen2</strong> / OneLake.";
           computeNotes =
-            "Data flows via Azure Data Factory / Synapse pipelines; consider serverless SQL pools, Spark pools, and Power BI.";
+            "Data flows via Data Factory pipelines; consider Fabric Warehouse, Spark, and Power BI.";
         }
 
         // Data
         if (dataType === "relational" || dataType === "") {
           dataMain =
             "Use <strong>Azure SQL Database</strong> or <strong>Azure SQL Managed Instance</strong> for core OLTP, with " +
-            "<strong>Azure Database for PostgreSQL / MySQL</strong> as needed.";
+            "<strong>Azure Database for PostgreSQL / MySQL flexible server</strong> as needed.";
           dataNotes =
             "Choose single/elastic pools vs managed instance based on compatibility and isolation. Always-on encryption, TDE, and private endpoints for regulated data.";
         } else if (dataType === "nosql") {
           dataMain =
-            "Use <strong>Azure Cosmos DB</strong> (Core API, Mongo API, or Cassandra API) for low-latency, globally distributed data.";
+            "Use <strong>Azure Cosmos DB</strong> (NoSQL API) or <strong>Azure DocumentDB</strong> (MongoDB-compatible) for low-latency, globally distributed data.";
           dataNotes =
             "Cosmos DB gives multi-region writes and global distribution. Combine with Azure Functions/Event Grid for reactive patterns.";
         } else if (dataType === "files") {
@@ -1008,12 +1036,12 @@ export function generateCloudRecommendation(cloud, state) {
           dataMain =
             "Use <strong>Azure Event Hubs</strong> or <strong>Azure IoT Hub</strong> for ingestion, landing into Data Lake Storage and/or Synapse.";
           dataNotes =
-            "Process streams with Azure Stream Analytics or Synapse/Fabric streaming workloads.";
+            "Process streams with Azure Stream Analytics or Fabric Real-Time Intelligence.";
         } else if (dataType === "analytics-lake") {
           dataMain =
-            "Use <strong>Data Lake Storage Gen2</strong> as the lake and <strong>Synapse / Fabric</strong> for lakehouse & analytics.";
+            "Use <strong>Data Lake Storage Gen2</strong> / OneLake as the lake and <strong>Microsoft Fabric</strong> for lakehouse & analytics.";
           dataNotes =
-            "Use Data Factory / Synapse pipelines for ingestion, Microsoft Purview for governance/catalog, and Power BI for BI.";
+            "Use Data Factory pipelines for ingestion, Microsoft Purview for governance/catalog, and Power BI for BI.";
         }
 
         if (regulated) {
@@ -1035,9 +1063,9 @@ export function generateCloudRecommendation(cloud, state) {
           integNotes =
             "Good for ordered, durable messaging between services; pair with Functions or Logic Apps for handlers.";
         } else if (integrations === "event-streaming") {
-          integMain = "Use <strong>Event Hubs</strong> with <strong>Stream Analytics</strong> / Synapse.";
+          integMain = "Use <strong>Event Hubs</strong> with <strong>Stream Analytics</strong> / Fabric Real-Time Intelligence.";
           integNotes =
-            "Event Hubs for high-throughput event streams; Stream Analytics / Synapse for near-real-time processing.";
+            "Event Hubs for high-throughput event streams; Stream Analytics / Fabric for near-real-time processing.";
         } else if (integrations === "orchestration") {
           integMain =
             "Use <strong>Logic Apps</strong> and/or <strong>Durable Functions</strong> for orchestration of complex workflows.";
@@ -1061,7 +1089,7 @@ export function generateCloudRecommendation(cloud, state) {
 
         opsNotes =
           "Use <strong>Azure Monitor</strong>, <strong>Log Analytics</strong>, and <strong>Application Insights</strong> for observability; " +
-          "<strong>Microsoft Sentinel</strong> for SIEM; <strong>Defender for Cloud</strong> and Azure Policy/Blueprints for security posture.";
+          "<strong>Microsoft Sentinel</strong> for SIEM; <strong>Defender for Cloud</strong> and Azure Policy with Azure landing zones for security posture.";
 
         if (regulated) {
           opsNotes +=
@@ -1101,7 +1129,7 @@ export function generateCloudRecommendation(cloud, state) {
               "Beanstalk / App Runner give managed application runtimes with autoscaling, fronted by <strong>Application Load Balancer (ALB)</strong>.";
           } else if (hasSkill("containers")) {
             computeMain =
-              "Use <strong>Amazon ECS</strong> (Fargate) or <strong>Amazon EKS</strong> with ALB and AWS App Mesh if needed.";
+              "Use <strong>Amazon ECS</strong> (Fargate) or <strong>Amazon EKS</strong> with ALB, and ECS Service Connect or Amazon VPC Lattice for service-to-service traffic.";
             computeNotes =
               "Fargate reduces ops burden; EKS for full Kubernetes. Use target groups, autoscaling, and multi-AZ.";
           } else {
@@ -1114,7 +1142,7 @@ export function generateCloudRecommendation(cloud, state) {
           computeMain =
             "Run microservices on <strong>EKS</strong> or <strong>ECS on Fargate</strong> with a shared ALB/API Gateway front end.";
           computeNotes =
-            "Use service discovery (Cloud Map), App Mesh (if needed), and GitOps/CI pipelines for deployments.";
+            "Use service discovery (Cloud Map), ECS Service Connect or Amazon VPC Lattice (AWS App Mesh is discontinued), and GitOps/CI pipelines for deployments.";
         } else if (architectureType === "batch") {
           computeMain =
             "Use <strong>AWS Batch</strong> or <strong>Step Functions + Lambda/ECS</strong> for scheduled jobs.";
@@ -1127,14 +1155,14 @@ export function generateCloudRecommendation(cloud, state) {
             "EventBridge for event bus, SQS for queues, SNS for fan-out notifications.";
         } else if (architectureType === "legacy-vm") {
           computeMain =
-            "Lift & shift with <strong>AWS Application Migration Service (MGN)</strong> to EC2, or use <strong>VMware Cloud on AWS</strong> for minimal change.";
+            "Lift & shift with <strong>AWS Transform MGN</strong> (formerly AWS Application Migration Service) to EC2, or use <strong>Amazon Elastic VMware Service (Amazon EVS)</strong> to stay on VCF.";
           computeNotes =
-            "MGN for rehost; VMware Cloud on AWS for relocate. Combine with AWS Systems Manager for patching.";
+            "AWS Transform MGN for rehost; Amazon EVS with HCX for relocate. Combine with AWS Systems Manager for patching.";
         } else if (architectureType === "data-analytics") {
           computeMain =
             "Use <strong>Amazon Redshift</strong> or <strong>Athena + Glue Data Catalog</strong> over data in <strong>Amazon S3</strong>.";
           computeNotes =
-            "Glue ETL/ELT, EMR or Glue for Spark jobs, QuickSight for BI.";
+            "Glue ETL/ELT, EMR or Glue for Spark jobs, Amazon QuickSight for BI.";
         }
 
         if (dataType === "relational" || dataType === "") {
@@ -1154,9 +1182,9 @@ export function generateCloudRecommendation(cloud, state) {
             "Use S3 bucket policies, encryption, and lifecycle management; Glacier for archives.";
         } else if (dataType === "streaming") {
           dataMain =
-            "Use <strong>Amazon Kinesis</strong> or <strong>Amazon MSK (Managed Kafka)</strong> for streaming data.";
+            "Use <strong>Amazon Kinesis Data Streams</strong> or <strong>Amazon MSK (Managed Kafka)</strong> for streaming data.";
           dataNotes =
-            "Kinesis Data Streams + Firehose into S3/Redshift; MSK for Kafka-based ecosystems.";
+            "Kinesis Data Streams + Amazon Data Firehose into S3/Redshift; MSK for Kafka-based ecosystems.";
         } else if (dataType === "analytics-lake") {
           dataMain =
             "Use <strong>Amazon S3</strong> as the data lake with <strong>Athena</strong>, <strong>Redshift</strong>, and <strong>Glue</strong>.";
@@ -1217,9 +1245,9 @@ export function generateCloudRecommendation(cloud, state) {
 
         migrationMain = "AWS migration & onboarding focus.";
         migrationNotes =
-          "Use <strong>AWS Migration Hub</strong> and <strong>AWS Application Migration Service (MGN)</strong> for discovery and rehost; " +
+          "Use <strong>AWS Transform</strong> for discovery and wave planning and <strong>AWS Transform MGN</strong> for rehost; " +
           "<strong>AWS Database Migration Service (DMS)</strong> for database moves. " +
-          "For 'relocate' VMware workloads, use <strong>VMware Cloud on AWS</strong>.";
+          "For 'relocate' VMware workloads, use <strong>Amazon Elastic VMware Service (Amazon EVS)</strong> with HCX.";
 
         if (usesIaC("terraform") || usesIaC("cloud-native")) {
           migrationNotes +=
@@ -1238,19 +1266,19 @@ export function generateCloudRecommendation(cloud, state) {
       /* ===================== GCP ===================== */
       else if (cloud === "gcp") {
         if (architectureType === "web-api" || architectureType === "") {
-          if (hasSkill("serverless")) {
+          if (hasSkill("serverless") || hasSkill("paas")) {
             computeMain =
-              "Use <strong>Cloud Run</strong> or <strong>Cloud Functions</strong> behind <strong>API Gateway</strong> or <strong>External HTTP(S) Load Balancing</strong>.";
+              "Use <strong>Cloud Run</strong> or <strong>Cloud Run functions</strong> behind <strong>API Gateway</strong> or the <strong>external Application Load Balancer</strong>.";
             computeNotes =
-              "Cloud Run (containers) and Cloud Functions (functions) both scale to zero; Cloud Run often best for web APIs.";
+              "Cloud Run services and Cloud Run functions both scale to zero; a Cloud Run service is often best for web APIs.";
           } else if (hasSkill("containers")) {
             computeMain =
-              "Use <strong>Google Kubernetes Engine (GKE)</strong> behind global HTTP(S) Load Balancing.";
+              "Use <strong>Google Kubernetes Engine (GKE)</strong> behind the global external Application Load Balancer.";
             computeNotes =
-              "Use regional clusters with multiple zones; autopilot mode for reduced ops overhead.";
+              "Use regional clusters with multiple zones; Autopilot mode for reduced ops overhead.";
           } else {
             computeMain =
-              "Use <strong>Compute Engine</strong> managed instance groups behind HTTP(S) load balancers.";
+              "Use <strong>Compute Engine</strong> managed instance groups behind Application Load Balancers.";
             computeNotes =
               "Lift & shift baseline with autoscaling and multi-zone deployments.";
           }
@@ -1258,22 +1286,22 @@ export function generateCloudRecommendation(cloud, state) {
           computeMain =
             "Run microservices on <strong>GKE</strong> or <strong>Cloud Run</strong> with service-to-service auth via IAM and mTLS.";
           computeNotes =
-            "Use Anthos/GKE for hybrid environments if needed; integrate with Config Sync / GitOps.";
+            "Use GKE Enterprise (fleets) for hybrid environments if needed; integrate with Config Sync / GitOps.";
         } else if (architectureType === "batch") {
           computeMain =
-            "Use <strong>Cloud Run jobs</strong>, <strong>Cloud Functions</strong>, or <strong>Compute Engine with Cloud Scheduler</strong>.";
+            "Use <strong>Cloud Run jobs</strong>, <strong>Batch</strong>, or <strong>Compute Engine with Cloud Scheduler</strong>.";
           computeNotes =
             "For heavy data workloads, combine with Dataflow or Dataproc.";
         } else if (architectureType === "event-driven") {
           computeMain =
-            "Use <strong>Cloud Functions</strong> or <strong>Cloud Run</strong> triggered by <strong>Pub/Sub</strong> and <strong>Eventarc</strong>.";
+            "Use <strong>Cloud Run functions</strong> or <strong>Cloud Run</strong> triggered by <strong>Pub/Sub</strong> and <strong>Eventarc</strong>.";
           computeNotes =
             "Pub/Sub + Eventarc capture events from GCP services and custom apps.";
         } else if (architectureType === "legacy-vm") {
           computeMain =
             "Lift & shift to <strong>Compute Engine</strong> (managed instance groups) or use <strong>Google Cloud VMware Engine</strong> for VMware relocation.";
           computeNotes =
-            "Combine with Migrate to Virtual Machines or Cloud VMware Engine HCX for minimal-change moves.";
+            "Combine with Migrate to Virtual Machines, or Google Cloud VMware Engine with HCX for minimal-change moves.";
         } else if (architectureType === "data-analytics") {
           computeMain =
             "Use <strong>BigQuery</strong> over data in <strong>Cloud Storage</strong> with <strong>Dataproc</strong> / <strong>Dataflow</strong> for processing.";
@@ -1305,7 +1333,7 @@ export function generateCloudRecommendation(cloud, state) {
           dataMain =
             "Use <strong>Cloud Storage</strong> as the lake and <strong>BigQuery</strong> as the analytics engine.";
           dataNotes =
-            "Use Dataplex/Data Catalog for governance, Looker for BI, and Dataflow/Dataproc for ETL.";
+            "Use Dataplex Universal Catalog for governance, Looker for BI, and Dataflow/Dataproc for ETL.";
         }
 
         if (regulated) {
@@ -1323,7 +1351,7 @@ export function generateCloudRecommendation(cloud, state) {
           integMain =
             "Use <strong>Pub/Sub</strong> as the main asynchronous messaging layer.";
           integNotes =
-            "Use multiple subscriptions for fan-out; pair with Functions/Cloud Run and Dataflow.";
+            "Use multiple subscriptions for fan-out; pair with Cloud Run functions / Cloud Run and Dataflow.";
         } else if (integrations === "event-streaming") {
           integMain =
             "Use <strong>Pub/Sub</strong> with <strong>Dataflow</strong> or <strong>Eventarc</strong>.";
@@ -1366,7 +1394,7 @@ export function generateCloudRecommendation(cloud, state) {
 
         if (usesIaC("terraform") || usesIaC("cloud-native")) {
           migrationNotes +=
-            " Provision landing zones, VPCs, firewall rules, and projects with <strong>Terraform</strong> and/or <strong>Deployment Manager</strong>, integrated into Cloud Build / your CI/CD.";
+            " Provision landing zones, VPCs, firewall rules, and projects with <strong>Terraform</strong> (or <strong>Infrastructure Manager</strong>, which runs Terraform; Deployment Manager is retired), integrated into Cloud Build / your CI/CD.";
         }
         if (usesIaC("ansible")) {
           migrationNotes +=
@@ -1382,12 +1410,12 @@ export function generateCloudRecommendation(cloud, state) {
         if (architectureType === "web-api" || architectureType === "") {
           if (hasSkill("serverless")) {
             computeMain =
-              "Use <strong>Oracle Functions</strong> (Fn) behind <strong>OCI API Gateway</strong>.";
+              "Use <strong>OCI Functions</strong> behind <strong>OCI API Gateway</strong>.";
             computeNotes =
               "Good for bursty HTTP APIs; integrate with Object Storage, Streaming, and DB services.";
           } else if (hasSkill("containers")) {
             computeMain =
-              "Use <strong>Oracle Container Engine for Kubernetes (OKE)</strong> behind Load Balancers.";
+              "Use <strong>OCI Kubernetes Engine (OKE)</strong> behind OCI Load Balancers.";
             computeNotes =
               "OKE is the managed Kubernetes service; use node pools, autoscaling, and NSGs for isolation.";
           } else {
@@ -1398,22 +1426,22 @@ export function generateCloudRecommendation(cloud, state) {
           }
         } else if (architectureType === "microservices") {
           computeMain =
-            "Run microservices on <strong>OKE</strong>, combined with API Gateway and Service Mesh (where available) for east-west traffic.";
+            "Run microservices on <strong>OKE</strong>, combined with API Gateway and Istio on OKE for east-west traffic.";
           computeNotes =
             "Use Helm/Argo/etc. for deployments and observability via OCI Monitoring + Logging.";
         } else if (architectureType === "batch") {
           computeMain =
-            "Use <strong>OCI Container Engine</strong> or Compute with <strong>Resource Manager</strong>-provisioned clusters and scheduled jobs.";
+            "Use <strong>OCI Kubernetes Engine (OKE)</strong> jobs or Compute with <strong>Resource Manager</strong>-provisioned clusters and scheduled jobs.";
           computeNotes =
             "Combine with Events + Functions for triggers.";
         } else if (architectureType === "event-driven") {
           computeMain =
-            "Use <strong>Oracle Functions</strong> and <strong>OCI Streaming</strong> triggered by Events.";
+            "Use <strong>OCI Functions</strong> and <strong>OCI Streaming</strong> triggered by Events.";
           computeNotes =
             "Events + Streaming + Functions pattern for asynchronous processing.";
         } else if (architectureType === "legacy-vm") {
           computeMain =
-            "Lift & shift to <strong>OCI Compute</strong> or use <strong>Oracle Cloud VMware Solution (OCVS)</strong> for VMware relocation.";
+            "Lift & shift to <strong>OCI Compute</strong> with <strong>Oracle Cloud Migrations</strong>, or use <strong>Oracle Cloud VMware Solution (OCVS)</strong> for VMware relocation.";
           computeNotes =
             "OCVS gives dedicated VMware SDDCs on OCI for minimal-change migrations.";
         } else if (architectureType === "data-analytics") {
@@ -1425,7 +1453,7 @@ export function generateCloudRecommendation(cloud, state) {
 
         if (dataType === "relational" || dataType === "") {
           dataMain =
-            "Use <strong>Oracle Autonomous Transaction Processing (ATP)</strong> or <strong>Autonomous Database</strong>, and/or <strong>Oracle Database Cloud Service</strong>.";
+            "Use <strong>Oracle Autonomous Database</strong> (Transaction Processing), and/or <strong>OCI Base Database Service</strong> or <strong>Exadata Database Service</strong>.";
           dataNotes =
             "Autonomous DB handles patching and tuning; use Data Guard for HA/DR and Transparent Data Encryption.";
         } else if (dataType === "nosql") {
@@ -1460,10 +1488,10 @@ export function generateCloudRecommendation(cloud, state) {
           integMain =
             "Expose APIs via <strong>OCI API Gateway</strong> in front of Functions, OKE, or Compute.";
           integNotes =
-            "Use JWT/identity integration with IDCS and WAF policies.";
+            "Use JWT/identity integration with OCI IAM identity domains and WAF policies.";
         } else if (integrations === "enterprise-messaging") {
           integMain =
-            "Use <strong>OCI Streaming</strong> plus <strong>OCI Queue</strong> (where available) and <strong>Integration Cloud (OIC)</strong> for SaaS/ERP integration.";
+            "Use <strong>OCI Queue</strong> and <strong>OCI Streaming</strong>, with <strong>Oracle Integration 3</strong> for SaaS/ERP integration.";
           integNotes =
             "Useful for complex integrations across Oracle SaaS, on-prem, and third-party systems.";
         } else if (integrations === "event-streaming") {
@@ -1473,7 +1501,7 @@ export function generateCloudRecommendation(cloud, state) {
             "Pattern similar to Kafka + serverless / Spark processing.";
         } else if (integrations === "orchestration") {
           integMain =
-            "Use <strong>Oracle Integration Cloud (OIC)</strong> for rich workflow/orchestration and SaaS integration patterns.";
+            "Use <strong>Oracle Integration 3</strong> for rich workflow/orchestration and SaaS integration patterns.";
           integNotes =
             "Good for ERP/HCM/financial package integration flows.";
         }
@@ -1503,7 +1531,7 @@ export function generateCloudRecommendation(cloud, state) {
         migrationMain = "OCI migration & onboarding focus.";
         migrationNotes =
           "For VMware-heavy estates, use <strong>Oracle Cloud VMware Solution (OCVS)</strong> as a relocation target. " +
-          "Use <strong>OCI Database Migration</strong> and Data Pump/GoldenGate for DB moves; " +
+          "Use <strong>Oracle Cloud Migrations</strong> for VM rehost, <strong>OCI Database Migration</strong> / <strong>Zero Downtime Migration (ZDM)</strong> and Data Pump/GoldenGate for DB moves; " +
           "<strong>Data Transfer Service</strong> / FastConnect for large data sets.";
 
         if (usesIaC("terraform") || usesIaC("cloud-native")) {
@@ -1516,7 +1544,106 @@ export function generateCloudRecommendation(cloud, state) {
         }
 
         migrationNotes +=
-          " Connect into CHEDC or central networks with <strong>FastConnect + VPN</strong>; integrate IDCS SAML federation and OCI DevOps Pipelines for CI/CD.";
+          " Connect into CHEDC or central networks with <strong>FastConnect + VPN</strong>; federate with OCI IAM identity domains (SAML) and use OCI DevOps pipelines for CI/CD.";
+      }
+
+      /* ===================== VCF 9.1 ===================== */
+      else if (cloud === "vcf") {
+        if (architectureType === "microservices" || (architectureType === "web-api" && hasSkill("containers"))) {
+          computeMain =
+            "Run the services on <strong>vSphere Kubernetes Service (VKS)</strong> clusters in a VCF workload domain, " +
+            "requested through <strong>VCF Automation</strong> and fronted by the <strong>NSX</strong> load balancer or <strong>VMware Avi Load Balancer</strong>.";
+          computeNotes =
+            "The Supervisor on the workload domain hosts the VKS clusters; use one cluster per environment, VCF Automation projects for self-service, and GitOps for the workloads.";
+        } else if (architectureType === "batch") {
+          computeMain =
+            "Run the jobs on <strong>vSphere VMs</strong> (or a <strong>VKS</strong> cluster for containerised jobs) built from <strong>VCF Automation</strong> templates.";
+          computeNotes =
+            "VCF has no managed batch service: keep the scheduler (cron, Control-M, a Kubernetes CronJob) with the jobs and size the pool for the batch window.";
+        } else if (architectureType === "event-driven") {
+          computeMain =
+            "Run the consumers on <strong>VKS</strong> (containers) or <strong>vSphere VMs</strong>, with the event broker on the same workload domain.";
+          computeNotes =
+            "VCF has no functions service: build the handlers as containers on VKS and scale them with the cluster autoscaler.";
+        } else if (architectureType === "data-analytics") {
+          computeMain =
+            "Run the analytics platform on <strong>vSphere VMs</strong> or <strong>VKS</strong> with <strong>vSAN</strong> storage policies sized for throughput.";
+          computeNotes =
+            "Use <strong>VMware Data Services Manager</strong> for the PostgreSQL / MySQL tiers and keep the lake on an S3-compatible object store.";
+        } else {
+          computeMain =
+            "Relocate the VMs to a <strong>VCF 9.1 workload domain</strong> with <strong>HCX</strong> (or import them in place), and provide new VMs from <strong>VCF Automation</strong> templates.";
+          computeNotes =
+            "vSphere HA and DRS across the cluster give the availability; use VM anti-affinity rules for the redundant tiers and vSAN storage policies (FTT=1 or 2) by criticality.";
+        }
+
+        if (dataType === "relational" || dataType === "") {
+          dataMain =
+            "Keep the databases on <strong>vSphere VMs</strong> on <strong>vSAN</strong>, or provide PostgreSQL / MySQL from <strong>VMware Data Services Manager</strong>.";
+          dataNotes =
+            "Commercial engines (SQL Server, Oracle) stay in VMs: licence the cluster's cores (or a dedicated cluster) and use their own HA (Always On AG, Data Guard) across hosts.";
+        } else if (dataType === "nosql") {
+          dataMain =
+            "Run the NoSQL store on <strong>vSphere VMs</strong> or as a stateful set on <strong>VKS</strong> with vSAN-backed persistent volumes.";
+          dataNotes = "VCF has no managed NoSQL service; the operator or the VMs are yours to run.";
+        } else if (dataType === "files") {
+          dataMain =
+            "Serve files from <strong>vSAN File Services</strong> (NFS / SMB) or a file-server VM on <strong>vSAN</strong>.";
+          dataNotes = "Use vSAN storage policies for protection and VMware Live Recovery for DR copies.";
+        } else if (dataType === "streaming") {
+          dataMain = "Run Kafka on <strong>VKS</strong> (an operator) or on <strong>vSphere VMs</strong> across hosts and fault domains.";
+          dataNotes = "VCF has no managed streaming service; size the brokers' vSAN policy for write throughput.";
+        } else if (dataType === "analytics-lake") {
+          dataMain = "Keep the lake on an <strong>S3-compatible object store</strong> alongside VCF and run the engines on <strong>VKS</strong> or VMs.";
+          dataNotes = "VCF has no object store of its own in the vSphere provider: use an appliance or the target cloud's object storage.";
+        }
+
+        if (regulated) {
+          dataNotes +=
+            (dataNotes ? " " : "") +
+            "For regulated data, encrypt vSAN with a key provider (vSphere Native Key Provider or an external KMS) and segment with the NSX Distributed Firewall.";
+        }
+
+        if (integrations === "simple-http" || integrations === "") {
+          integMain =
+            "Publish the APIs through the <strong>NSX</strong> load balancer or <strong>VMware Avi Load Balancer</strong>, with an ingress controller on <strong>VKS</strong> for container services.";
+          integNotes = "VCF has no API management service: keep the existing gateway (or an F5) in front of the services.";
+        } else if (integrations === "enterprise-messaging") {
+          integMain = "Run the message broker (RabbitMQ, IBM MQ) on <strong>vSphere VMs</strong> or on <strong>VKS</strong>.";
+          integNotes = "VCF has no managed broker; cluster it across hosts with anti-affinity.";
+        } else if (integrations === "event-streaming") {
+          integMain = "Run Kafka on <strong>VKS</strong> or <strong>vSphere VMs</strong>.";
+          integNotes = "Keep the event platform close to its producers in the workload domain.";
+        } else if (integrations === "orchestration") {
+          integMain = "Run the orchestrator on <strong>vSphere VMs</strong> or <strong>VKS</strong>, and use <strong>VCF Automation</strong> for the infrastructure workflows.";
+          integNotes = "VCF Automation orchestrates provisioning; the application's own workflows stay in its orchestrator.";
+        }
+
+        opsMain =
+          "Treat this as <strong>" + tierLabel + "</strong> on VCF and design HA/DR with vSphere HA, DRS and vSAN fault domains.";
+        if (criticality === "tier0") {
+          opsMain += " Use a vSAN stretched cluster or a second VCF instance with VMware Live Recovery.";
+        } else if (criticality === "tier1") {
+          opsMain += " Use vSphere HA with anti-affinity and replicate to a second site with VMware Live Recovery.";
+        } else if (criticality === "tier2") {
+          opsMain += " vSphere HA in one cluster with backups is usually enough.";
+        }
+
+        opsNotes =
+          "Use <strong>VCF Operations</strong> for capacity, performance and compliance, <strong>VCF Operations for logs</strong> for logs, " +
+          "and <strong>VCF Operations for networks</strong> for flows and dependency mapping; forward to your central SIEM.";
+
+        migrationMain = "VCF migration & onboarding focus.";
+        migrationNotes =
+          "Move VMs with <strong>HCX</strong> (Bulk Migration, Replication Assisted vMotion, vMotion; OS Assisted Migration for non-vSphere sources), " +
+          "or bring existing vSphere clusters under management with <strong>VCF Import</strong>. Rebuilt VMs come from <strong>VCF Automation</strong> templates.";
+        if (usesIaC("terraform") || usesIaC("cloud-native")) {
+          migrationNotes += " Describe the VMs, NSX segments and VPN with <strong>Terraform</strong> (the vsphere and nsxt providers) and publish the templates in VCF Automation.";
+        }
+        if (usesIaC("ansible")) {
+          migrationNotes += " Use <strong>Ansible</strong> for guest OS and middleware configuration after the move.";
+        }
+        migrationNotes += " Connect to the data centre and clouds with the <strong>NSX Tier-0 gateway</strong> (BGP), <strong>NSX IPsec VPN</strong> and the <strong>HCX Interconnect</strong> / Network Extension.";
       }
 
       // Generic initiative-type adjustments
@@ -1706,63 +1833,139 @@ return {
       };
     }
 
-export function generateRecommendation() {
-      const envScope = Array.from(
-        qsa('input[name="envScope"]:checked')
-      ).map(c => c.value);
+/**
+ * The wizard's answers read from the page: every control the page marks with
+ * data-wizard-field (its value is the field id). A checkbox group gives its
+ * ticked values; a select, input or textarea its value.
+ */
+export function readWizardAnswers() {
+      const out = {};
+      qsa("[data-wizard-field]").forEach(node => {
+        const id = node.getAttribute("data-wizard-field");
+        if (!id) return;
+        if (node.matches && node.matches(".checkbox-group")) {
+          out[id] = getCheckedValues(id);
+        } else {
+          out[id] = String(node.value || "");
+        }
+      });
+      return out;
+    }
 
-      const state = {
-        initiativeType: byId("initiativeType").value,
-        newServiceType: byId("newServiceType").value,
-        newServiceStage: byId("newServiceStage").value,
-        existingChangeType: byId("existingChangeType").value,
-        existingPainPoints: (byId("existingPainPoints").value || "").trim(),
-        maintenanceFocus: byId("maintenanceFocus").value,
-        maintenanceCadence: byId("maintenanceCadence").value,
-        migrationScope: byId("migrationScope").value,
-        cutoverStrategy: byId("cutoverStrategy").value,
-
-        workloadName: (byId("workloadName").value || "").trim(),
-        architectureType: byId("architectureType").value,
-        trafficPattern: byId("trafficPattern").value,
-        latencySensitivity: byId("latencySensitivity").value,
-        teamSkills: getMultiSelectValues(byId("teamSkills")),
-        description: (byId("description").value || "").trim(),
-
-        dataType: byId("dataType").value,
-        dataSensitivity: byId("dataSensitivity").value,
-        writePattern: byId("writePattern").value,
-        geoPattern: byId("geoPattern").value,
-        integrations: byId("integrations").value,
-        complianceNotes: (byId("complianceNotes").value || "").trim(),
-
-        criticality: byId("criticality").value,
-        uptimeTarget: byId("uptimeTarget").value,
-        rto: byId("rto").value,
-        rpo: byId("rpo").value,
-        timeToMarket: byId("timeToMarket").value,
-        opsMaturity: byId("opsMaturity").value,
-        securityBaseline: byId("securityBaseline").value,
-        identityModel: byId("identityModel").value,
-        secretsModel: byId("secretsModel").value,
-        dataProtection: byId("dataProtection").value,
-        perimeterPattern: byId("perimeterPattern").value,
-        f5Usage: getCheckedValues("f5Usage"),
-        secOpsMaturity: byId("secOpsMaturity").value,
-
-        sourceEnv: byId("sourceEnv").value,
-        migrationApproach: byId("migrationApproach").value,
-        iaCTools: getMultiSelectValues(byId("iaCTools")),
-
-        peakUsers: Number(byId("peakUsers").value || 0),
-        peakRps: Number(byId("peakRps").value || 0),
-        dataVolumeBand: byId("dataVolumeBand").value,
-        dailyIngestBand: byId("dailyIngestBand").value,
-        retentionPeriod: byId("retentionPeriod").value,
-        envScope,
-        nonProdScale: byId("nonProdScale").value,
-        regionCount: byId("regionCount").value
+/**
+ * The engine's state from a plain answers object (field id -> value, or a
+ * list for checkbox groups). Pure: the recommendation can be built without a
+ * page, which is what the tests and the plan-side modules use.
+ */
+export function stateFromAnswers(answers) {
+      const a = answers || {};
+      const str = (k) => {
+        const v = a[k];
+        if (Array.isArray(v)) return String(v[0] || "").trim();
+        return v === undefined || v === null ? "" : String(v).trim();
       };
+      const list = (k) => {
+        const v = a[k];
+        if (Array.isArray(v)) return v.map(String).filter(Boolean);
+        return v ? [String(v)] : [];
+      };
+      return {
+        initiativeType: str("initiativeType"),
+        newServiceType: str("newServiceType"),
+        newServiceStage: str("newServiceStage"),
+        existingChangeType: str("existingChangeType"),
+        existingPainPoints: escapeHtml(str("existingPainPoints")),
+        maintenanceFocus: str("maintenanceFocus"),
+        maintenanceCadence: str("maintenanceCadence"),
+        migrationScope: str("migrationScope"),
+        cutoverStrategy: str("cutoverStrategy"),
+
+        workloadName: escapeHtml(str("workloadName")),
+        appPattern: str("appPattern"),
+        architectureType: str("architectureType"),
+        trafficPattern: str("trafficPattern"),
+        latencySensitivity: str("latencySensitivity"),
+        teamSkills: list("teamSkills"),
+        description: escapeHtml(str("description")),
+
+        dataType: str("dataType"),
+        dataSensitivity: str("dataSensitivity"),
+        writePattern: str("writePattern"),
+        geoPattern: str("geoPattern"),
+        integrations: str("integrations"),
+        complianceNotes: escapeHtml(str("complianceNotes")),
+
+        criticality: str("criticality"),
+        uptimeTarget: str("uptimeTarget"),
+        rto: str("rto"),
+        rpo: str("rpo"),
+        timeToMarket: str("timeToMarket"),
+        opsMaturity: str("opsMaturity"),
+        securityBaseline: str("securityBaseline"),
+        identityModel: str("identityModel"),
+        secretsModel: str("secretsModel"),
+        dataProtection: str("dataProtection"),
+        perimeterPattern: str("perimeterPattern"),
+        f5Usage: list("f5Usage"),
+        secOpsMaturity: str("secOpsMaturity"),
+
+        sourceEnv: str("sourceEnv"),
+        migrationApproach: str("migrationApproach"),
+        dbStrategy: str("dbStrategy"),
+        iaCTools: list("iaCTools"),
+
+        peakUsers: Number(str("peakUsers") || 0),
+        peakRps: Number(str("peakRps") || 0),
+        dataVolumeBand: str("dataVolumeBand"),
+        dailyIngestBand: str("dailyIngestBand"),
+        retentionPeriod: str("retentionPeriod"),
+        envScope: list("envScope"),
+        nonProdScale: str("nonProdScale"),
+        regionCount: str("regionCount"),
+
+        onPremLink: str("onPremLink"),
+        crossCloud: str("crossCloud")
+      };
+    }
+
+/**
+ * Every section of the recommendation for a cloud, as HTML, from a state.
+ * Pure (no page): the page writes these into its sections.
+ */
+export function recommendationSections(cloud, state) {
+      const rec = generateCloudRecommendation(cloud, state);
+      const howTo = buildHowToPlaybook(cloud, state);
+      const sizing = buildSizingPlan(cloud, state);
+      return {
+        computeMain: rec.computeMain,
+        computeNotes: rec.computeNotes,
+        dataMain: rec.dataMain,
+        dataNotes: rec.dataNotes,
+        integrationMain: rec.integMain,
+        integrationNotes: rec.integNotes,
+        opsMain: rec.opsMain,
+        opsNotes: rec.opsNotes,
+        securityMain: rec.securityMain,
+        securityNotes: rec.securityNotes,
+        controlsMain: buildCyberChecklist(state, cloud),
+        migrationMain: rec.migrationMain,
+        migrationNotes: rec.migrationNotes,
+        drPatternMain: buildDrPatternCard(state, cloud),
+        sizingMain: sizing.main,
+        sizingNotes: sizing.notes,
+        sizingMatrix: sizing.matrixHtml,
+        howToMain: howTo,
+        assumptionsMain: buildAssumptionsAndGaps(state, cloud),
+        pills: buildSummaryPills(state)
+      };
+    }
+
+/**
+ * Builds the recommendation and writes it into the results pane. The state is
+ * read from the page unless one is given. Returns the state it used.
+ */
+export function generateRecommendation(given) {
+      const state = given || stateFromAnswers(readWizardAnswers());
 
       const pillRow = byId("summaryPills");
       if (pillRow) {
@@ -1771,54 +1974,25 @@ export function generateRecommendation() {
         pills.forEach(text => {
           const span = document.createElement("span");
           span.className = "pill";
-          span.textContent = text;
+          span.innerHTML = text; // the free text in a pill is escaped by stateFromAnswers
           pillRow.appendChild(span);
         });
       }
 
-      const rec = generateCloudRecommendation(currentCloud, state);
-      const howTo = buildHowToPlaybook(currentCloud, state);
-      const sizing = buildSizingPlan(currentCloud, state);
-      const assumptions = buildAssumptionsAndGaps(state, currentCloud);
-      const drPattern = buildDrPatternCard(state, currentCloud);
-      const controlsChecklist = buildCyberChecklist(state, currentCloud);
+      const sections = recommendationSections(currentCloud, state);
 
       const resultsContent = byId("resultsContent");
       if (resultsContent) resultsContent.style.display = "block";
-      const fullBtn = byId("fullViewBtn");
-      const printBtn = byId("printBtn");
-      const wordBtn = byId("exportWordBtn");
-      [fullBtn, printBtn, wordBtn].forEach(btn => {
+      [byId("fullViewBtn"), byId("printBtn"), byId("exportWordBtn")].forEach(btn => {
         if (btn) btn.disabled = false;
       });
 
-
-      const mapping = [
-        ["computeMain", rec.computeMain],
-        ["computeNotes", rec.computeNotes],
-        ["dataMain", rec.dataMain],
-        ["dataNotes", rec.dataNotes],
-        ["integrationMain", rec.integMain],
-        ["integrationNotes", rec.integNotes],
-        ["opsMain", rec.opsMain],
-        ["opsNotes", rec.opsNotes],
-        ["securityMain", rec.securityMain],
-        ["securityNotes", rec.securityNotes],
-        ["controlsMain", controlsChecklist],
-        ["migrationMain", rec.migrationMain],
-        ["migrationNotes", rec.migrationNotes],
-        ["drPatternMain", drPattern],
-        ["sizingMain", sizing.main],
-        ["sizingNotes", sizing.notes],
-        ["sizingMatrix", sizing.matrixHtml],
-        ["howToMain", howTo],
-        ["assumptionsMain", assumptions]
-      ];
-
+      const mapping = Object.entries(sections).filter(([id]) => id !== "pills");
       mapping.forEach(([id, html]) => {
         const el = byId(id);
         if (el) el.innerHTML = html || "";
       });
+      return state;
     }
 
 export function buildRecommendationDocumentHtml() {
@@ -1827,9 +2001,9 @@ export function buildRecommendationDocumentHtml() {
         ? providerSelect.options[providerSelect.selectedIndex].text
         : "";
       const workloadNameInput = byId("workloadName");
-      const workloadName = workloadNameInput && workloadNameInput.value
+      const workloadName = escapeHtml(workloadNameInput && workloadNameInput.value
         ? workloadNameInput.value
-        : "Cloud workload";
+        : "Cloud workload");
       const summaryPills = byId("summaryPills");
       const resultsContent = byId("resultsContent");
       const now = new Date();
@@ -1842,9 +2016,7 @@ export function buildRecommendationDocumentHtml() {
         ).map(c => c.value);
 
         return {
-          f5Usage: window.getCheckedValues
-            ? window.getCheckedValues("f5Usage")
-            : [],
+          f5Usage: getCheckedValues("f5Usage"),
           perimeterPattern: byId("perimeterPattern")
             ? byId("perimeterPattern").value
             : "",
@@ -1861,7 +2033,7 @@ export function buildRecommendationDocumentHtml() {
       let pillsLine = "";
       if (summaryPills) {
         const spans = Array.from(summaryPills.querySelectorAll("span"));
-        pillsLine = spans.map(s => s.textContent).join(" | ");
+        pillsLine = spans.map(s => s.innerHTML).join(" | ");
       }
 
       const resultsHtml = resultsContent && resultsContent.style.display !== "none"
@@ -1929,7 +2101,7 @@ export function buildRecommendationDocumentHtml() {
 
       const docBody = `
         <h1>Cloud Recommendation for ${workloadName}</h1>
-        <p><strong>Cloud:</strong> ${providerLabel}</p>
+        <p><strong>Cloud:</strong> ${escapeHtml(providerLabel)}</p>
         <p><strong>Generated:</strong> ${generatedAt}</p>
         ${pillsLine ? `<p><strong>Summary:</strong> ${pillsLine}</p>` : ""}
         ${f5PostureLine || ""}

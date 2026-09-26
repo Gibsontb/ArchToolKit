@@ -197,8 +197,9 @@ describe('pane visibility follows the mode and the data (A.1.7)', () => {
 });
 
 describe('landing rules', () => {
-  it('Application Migration opens Sources on an empty plan and Applications once there are apps', () => {
-    expect(landingHash('application-migration', planFacts(fixture('migrate')))).toBe('sources');
+  it('Application Migration opens the start card on an empty plan, Sources with servers and no apps, and Applications once there are apps', () => {
+    expect(landingHash('application-migration', planFacts(fixture('migrate')))).toBe('app:');
+    expect(landingHash('application-migration', planFacts(fixture('migrate', { workloads: 3 })))).toBe('sources');
     expect(landingHash('application-migration', planFacts(fixture('migrate', { apps: ['billing'] })))).toBe('applications');
   });
 
@@ -206,8 +207,8 @@ describe('landing rules', () => {
     expect(landingHash('application-migration', planFacts(fixture('single', { apps: ['billing'] })))).toBe('app:billing');
   });
 
-  it('opens Applications (New application) in new mode', () => {
-    expect(landingHash('application-migration', planFacts(fixture('new')))).toBe('applications');
+  it('opens the start card in new mode with nothing in the plan', () => {
+    expect(landingHash('application-migration', planFacts(fixture('new')))).toBe('app:');
   });
 
   it('Migration & Utilities opens the board only once something is past planned', () => {

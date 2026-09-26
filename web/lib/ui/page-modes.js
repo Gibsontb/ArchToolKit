@@ -221,6 +221,9 @@ export function landingHash(page        , f           )         {
   if (page === 'application-migration') {
     if (f.mode === 'single' && f.onlyAppSlug) return `app:${f.onlyAppSlug}`;
     if (f.apps > 0) return 'applications';
+    // An empty plan opens the start card (new service, migrate, change), so a
+    // new service never has to go through Sources first.
+    if (f.workloads === 0 && f.databases === 0) return 'app:';
     return isPaneVisible(page, 'sources', f) ? 'sources' : 'applications';
   }
   if (f.trackerPastPlanned > 0 && isPaneVisible(page, 'board', f)) return 'board';
