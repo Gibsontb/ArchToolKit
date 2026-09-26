@@ -134,8 +134,8 @@ export const PYTHON_EXTRA: readonly ScriptBlueprint[] = [
         usage: [
           'export NET_USER=svc-backup',
           'read -s NET_PASSWORD && export NET_PASSWORD',
-          `python3 ${module}.py devices.csv --dry-run`,
           `python3 ${module}.py devices.csv -o /srv/network-configs`,
+          `python3 ${module}.py devices.csv --dry-run   # optional preview: reports what it would do, changes nothing`,
         ],
         undo: [
           ...(git ? ['Every version is in git: `git checkout <commit> -- <device>.cfg` restores one.'] : ['The dated folders are the history.']),
@@ -471,7 +471,7 @@ export const PYTHON_EXTRA: readonly ScriptBlueprint[] = [
           'The workbook is written to a temporary name and moved into place, so an interrupted run does not leave a corrupt file that Excel will refuse to open.',
           '--dry-run reads the data and reports the sheets, the row counts and the columns without writing anything, which is how you check the input is the shape you expected.',
         ],
-        usage: [`python3 ${module}.py data.csv --dry-run`, `python3 ${module}.py data.csv`, `python3 ${module}.py data.csv -o monthly-report.xlsx`],
+        usage: [`python3 ${module}.py data.csv`, `python3 ${module}.py data.csv --dry-run   # optional preview: reports what it would do, changes nothing`, `python3 ${module}.py data.csv -o monthly-report.xlsx`],
         undo: ['The input is untouched. Delete the workbook and run it again.'],
         body: [
           ...preamble(
@@ -774,8 +774,8 @@ export const PYTHON_EXTRA: readonly ScriptBlueprint[] = [
           'Exit codes: 0 success, 1 a handled failure, 2 bad arguments, 3 already running. Whatever schedules this can act on them.',
         ],
         usage: [
-          `python3 ${module}.py --dry-run --verbose`,
           `python3 ${module}.py`,
+          `python3 ${module}.py --dry-run --verbose   # optional preview: reports what it would do, changes nothing`,
           `# in cron, with the output going somewhere it will be seen:`,
           `*/15 * * * * /usr/bin/python3 /opt/jobs/${module}.py >> /var/log/${module}.log 2>&1`,
         ],

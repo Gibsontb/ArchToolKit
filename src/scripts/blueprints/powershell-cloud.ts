@@ -682,7 +682,7 @@ export const POWERSHELL_CLOUD: readonly ScriptBlueprint[] = [
             : []),
           'Disks needing consolidation are reported separately. That state — a snapshot removed but the delta not merged — is invisible in the snapshot manager and is a common cause of "I deleted the snapshot and the space did not come back".',
         ],
-        usage: [`pwsh -File .\\${name}.ps1 -WhatIf`, `pwsh -File .\\${name}.ps1 -OlderThanDays 30`, ...(action === 'remove' ? [`pwsh -File .\\${name}.ps1 -Confirm:$false`] : [])],
+        usage: [`pwsh -File .\\${name}.ps1 -OlderThanDays 30`, `pwsh -File .\\${name}.ps1 -OlderThanDays 30 -WhatIf   # optional preview: reports what it would do, changes nothing`, ...(action === 'remove' ? [`pwsh -File .\\${name}.ps1 -OlderThanDays 30 -Confirm:$false   # unattended: no prompt per snapshot`] : [])],
         undo:
           action === 'remove'
             ? [
@@ -889,7 +889,7 @@ export const POWERSHELL_CLOUD: readonly ScriptBlueprint[] = [
           ...(inherit ? ['Tags are merged, not replaced. An existing tag keeps its value; only the missing ones are added. Replacing would wipe tags something else set.'] : []),
           'Some resource types cannot hold tags at all and will always look non-compliant. The skip list is for those.',
         ],
-        usage: [`pwsh -File .\\${name}.ps1 -Verbose`, ...(inherit ? [`pwsh -File .\\${name}.ps1 -WhatIf`] : []), `pwsh -File .\\${name}.ps1 | Where-Object { $_.Missing }`],
+        usage: [`pwsh -File .\\${name}.ps1 -Verbose`, ...(inherit ? [`pwsh -File .\\${name}.ps1 -WhatIf   # optional preview: reports what it would do, changes nothing`] : []), `pwsh -File .\\${name}.ps1 | Where-Object { $_.Missing }`],
         undo: inherit
           ? [
               'The report lists every resource that had a tag added, and which tag.',

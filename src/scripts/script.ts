@@ -90,8 +90,11 @@ export const EFFECT_MEANING: Readonly<Record<ScriptEffect, string>> = {
   read: 'Reads and reports. It changes nothing, so it is safe to run whenever.',
   idempotent: 'Changes things, and is safe to run again — a second run finds the work already done and leaves it alone.',
   'repeat-unsafe': 'Changes things, and a second run does the work a second time. Run it once, and check before re-running.',
-  destructive: 'Deletes, overwrites or disables something. Run the dry run first, read what it lists, and make sure a backup exists.',
+  destructive: 'Deletes, overwrites or disables what it is pointed at, and there may be no way back. Under "Running it", the line directly after the command that applies it is the preview: it lists what would go and changes nothing. Make sure a backup exists before you run it.',
 };
+
+/** The label a destructive script carries at the top of its header and README. */
+export const DESTRUCTIVE_LABEL = 'DESTRUCTIVE - there may be no way back.';
 
 /** What the script needs before it will run. */
 export interface ScriptRequirement {
@@ -120,7 +123,10 @@ export interface Script {
   readonly parameters: readonly ScriptParameter[];
   /** The script itself. */
   readonly body: readonly string[];
-  /** How to run it — dry run first. */
+  /**
+   * How to run it — the command that applies it first, and the dry run on the
+   * line directly after it, worded as an optional preview.
+   */
   readonly usage: readonly string[];
   /** How to undo it, or why it cannot be undone. */
   readonly undo: readonly string[];
@@ -171,6 +177,10 @@ export function renderScript(script: Script, name: string): string {
   if (platform.shebang) lines.push(platform.shebang);
   lines.push(`${c} ${script.title}`);
   lines.push(`${c}`);
+  if (script.effect === 'destructive') {
+    lines.push(`${c} ${DESTRUCTIVE_LABEL}`);
+    lines.push(`${c}`);
+  }
   for (const line of wrap(EFFECT_MEANING[script.effect])) lines.push(`${c} ${line}`);
   lines.push(`${c}`);
   lines.push(`${c} Read it before you run it.`);
@@ -227,6 +237,7 @@ export function renderReadme(script: Script, name: string): string[] {
   return [
     `# ${script.title}`,
     '',
+    ...(script.effect === 'destructive' ? [`> **${DESTRUCTIVE_LABEL}**`, ''] : []),
     `**Platform:** ${platform.label}  `,
     `**Effect:** ${EFFECT_MEANING[script.effect]}`,
     '',
@@ -306,7 +317,7 @@ export function standingFindings(script: Script): Finding[] {
 
   if (script.effect === 'destructive') {
     findings.push(
-      warning('scripts.destructive', 'This script deletes, overwrites or disables something. Run the dry run, read every line of what it lists, and confirm a backup exists and has been restored from at least once.', {
+      warning('scripts.destructive', 'Destructive: this script deletes, overwrites or disables something, and there may be no way back. The preview command is on the line under the one that runs it, in "Running it". Make sure a backup exists, and has been restored from at least once, before you run it.', {
         source: 'ArchToolKit',
       }),
     );

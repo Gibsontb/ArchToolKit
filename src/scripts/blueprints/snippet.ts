@@ -17,7 +17,7 @@
 import { bool, str, type BlueprintValues, type SelectOption } from '../../kit/blueprint.ts';
 import { info, warning, type Finding } from '../../core/findings.ts';
 import { scriptBlueprint, type ScriptBlueprint } from '../from-script.ts';
-import type { Script, ScriptEffect, ScriptPlatform } from '../script.ts';
+import { SCRIPT_PLATFORMS, type Script, type ScriptEffect, type ScriptPlatform } from '../script.ts';
 import { commandById, type CommandEntry } from '../catalog.ts';
 import { catalogFor, commandsFor } from '../catalog-index.ts';
 
@@ -108,8 +108,8 @@ function findingsFor(command: CommandEntry): Finding[] {
   }
   if (command.effect === 'destructive') {
     findings.push(
-      warning('scripts.snippet.destructive', `${command.name} deletes, overwrites or disables something. The wrapper asks for confirmation and runs the dry run by default, but there may be no way back.`, {
-        remediation: 'Run it once with the dry run, read what it lists, and make sure something has a backup before you take the flag off.',
+      warning('scripts.snippet.destructive', `Destructive: ${command.name} deletes, overwrites or disables something, and there may be no way back.`, {
+        remediation: 'The preview command is on the line under the one that runs it, in "Running it"; it lists what would change and changes nothing. Make sure a backup exists before you run it.',
         source: 'ArchToolKit',
       }),
     );
@@ -137,7 +137,13 @@ const COMMON_INPUTS = (platform: ScriptPlatform) => [
     ],
     default: 'once',
   },
-  { id: 'dry_run', label: 'Dry run by default', control: 'toggle' as const, default: true, hint: 'The script reports what it would do until the flag is taken off' },
+  {
+    id: 'dry_run',
+    label: 'Report-only by default',
+    control: 'toggle' as const,
+    default: false,
+    hint: 'Off: the script applies when run, and the dry-run flag (-WhatIf, --dry-run, /WHATIF) is there if you want a preview. On: it only reports until run with -Execute, --execute or /EXECUTE.',
+  },
   { id: 'log_file', label: 'Also write a log file', control: 'toggle' as const, default: false },
 ];
 
@@ -145,7 +151,7 @@ const COMMON_INPUTS = (platform: ScriptPlatform) => [
 
 function powershellBody(command: CommandEntry, values: BlueprintValues): string[] {
   const perItem = str(values, 'iterate', 'once') === 'list';
-  const dryRun = bool(values, 'dry_run', true);
+  const dryRun = bool(values, 'dry_run', false);
   const logFile = bool(values, 'log_file', false);
   const changes = command.effect !== 'read';
 
@@ -153,11 +159,11 @@ function powershellBody(command: CommandEntry, values: BlueprintValues): string[
     '[CmdletBinding(SupportsShouldProcess)]',
     'param(',
   ];
-  if (perItem) lines.push('    [Parameter(Mandatory)][string]$InputList,');
-  lines.push(
-    `    [Parameter()][switch]$Execute${dryRun ? '' : ','}`,
-  );
-  if (!dryRun) lines.push('    [Parameter()][switch]$WhatIfOnly');
+  // -WhatIf comes with SupportsShouldProcess, so the opt-in preview needs no
+  // parameter of its own. -Execute exists only when report-only is the default.
+  const guarded = dryRun && changes;
+  if (perItem) lines.push(`    [Parameter(Mandatory)][string]$InputList${guarded ? ',' : ''}`);
+  if (guarded) lines.push('    [Parameter()][switch]$Execute');
   lines.push(')', '', "Set-StrictMode -Version Latest", "$ErrorActionPreference = 'Stop'", '');
 
   if (logFile) {
@@ -204,8 +210,8 @@ function powershellBody(command: CommandEntry, values: BlueprintValues): string[
 
   if (dryRun && changes) {
     lines.push(
-      '# The dry run is the default. -Execute is what takes it off, so nobody',
-      '# changes anything by running the file to see what it does.',
+      '# Report-only was chosen for this file: -Execute is what takes it off.',
+      '# Without that choice the script applies, and -WhatIf is the preview.',
       'if (-not $Execute) { $WhatIfPreference = $true }',
       '',
     );
@@ -241,7 +247,7 @@ function powershellBody(command: CommandEntry, values: BlueprintValues): string[
 
 function pythonBody(command: CommandEntry, values: BlueprintValues): string[] {
   const perItem = str(values, 'iterate', 'once') === 'list';
-  const dryRun = bool(values, 'dry_run', true);
+  const dryRun = bool(values, 'dry_run', false);
   const logFile = bool(values, 'log_file', false);
   const changes = command.effect !== 'read';
 
@@ -330,7 +336,7 @@ function p_input(lines: string[]): void {
 
 function bashBody(command: CommandEntry, values: BlueprintValues): string[] {
   const perItem = str(values, 'iterate', 'once') === 'list';
-  const dryRun = bool(values, 'dry_run', true);
+  const dryRun = bool(values, 'dry_run', false);
   const logFile = bool(values, 'log_file', false);
   const changes = command.effect !== 'read';
 
@@ -347,7 +353,11 @@ function bashBody(command: CommandEntry, values: BlueprintValues): string[] {
     `Usage: $(basename "\${BASH_SOURCE[0]}") [options]`,
     `  ${command.task}`,
     ...(perItem ? ['  --list FILE     one item per line'] : []),
-    ...(changes ? ['  --execute       actually do it (the default is a dry run)', '  --dry-run       report without changing anything'] : []),
+    ...(changes
+      ? dryRun
+        ? ['  --execute       actually do it (this file only reports without it)', '  --dry-run       report without changing anything']
+        : ['  --dry-run       preview: report without changing anything', '  --execute       apply (the default)']
+      : []),
     '  -h, --help      this',
     'USAGE',
     '}',
@@ -424,7 +434,7 @@ function bashBody(command: CommandEntry, values: BlueprintValues): string[] {
 
 function cmdBody(command: CommandEntry, values: BlueprintValues): string[] {
   const perItem = str(values, 'iterate', 'once') === 'list';
-  const dryRun = bool(values, 'dry_run', true);
+  const dryRun = bool(values, 'dry_run', false);
   const logFile = bool(values, 'log_file', false);
   const changes = command.effect !== 'read';
 
@@ -507,31 +517,22 @@ const BODY: Readonly<Record<ScriptPlatform, (command: CommandEntry, values: Blue
 
 function usageFor(platform: ScriptPlatform, command: CommandEntry, perItem: boolean, dryRun: boolean, name: string): string[] {
   const changes = command.effect !== 'read';
-  // With the dry run on by default, the first line reports and the second
-  // acts. With it off, the first line acts and the dry run is an opt-in.
-  const guarded = changes && dryRun;
-  switch (platform) {
-    case 'powershell': {
-      const base = `pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''}`;
-      if (guarded) return [base, `${base} -Execute   # once the dry run reads correctly`];
-      return [base, ...(changes ? [`${base} -WhatIf   # a dry run first, if you want one`] : [])];
-    }
-    case 'python':
-      return [
-        `python3 ${name}.py${perItem ? ' --input-list items.txt' : ''}`,
-        ...(changes ? [`python3 ${name}.py${perItem ? ' --input-list items.txt' : ''} ${dryRun ? '--execute' : '--dry-run   # a dry run first, if you want one'}`] : []),
-      ];
-    case 'bash': {
-      const base = `./${name}.sh${perItem ? ' --list items.txt' : ''}`;
-      if (guarded) return [base, `${base} --execute   # once the dry run reads correctly`];
-      return [base, ...(changes ? [`${base} --dry-run   # a dry run first, if you want one`] : [])];
-    }
-    default: {
-      const base = `${name}.cmd${perItem ? ' /LIST items.txt' : ''}`;
-      if (guarded) return [base, `${base} /EXECUTE   # once the /WHATIF run reads correctly`];
-      return [base, ...(changes ? [`${base} /WHATIF   # a dry run first, if you want one`] : [])];
-    }
+  const base = {
+    powershell: `pwsh -File .\\${name}.ps1${perItem ? ' -InputList .\\items.txt' : ''}`,
+    python: `python3 ${name}.py${perItem ? ' --input-list items.txt' : ''}`,
+    bash: `./${name}.sh${perItem ? ' --list items.txt' : ''}`,
+    cmd: `${name}.cmd${perItem ? ' /LIST items.txt' : ''}`,
+  }[platform];
+  if (!changes) return [base];
+  // The applying command comes first, and the preview sits on the line
+  // directly under it. With report-only chosen, the bare command is the
+  // preview and the execute flag is what applies.
+  const remark = platform === 'cmd' ? '& rem' : '#';
+  const execute = { powershell: '-Execute', python: '--execute', bash: '--execute', cmd: '/EXECUTE' }[platform];
+  if (dryRun) {
+    return [`${base} ${execute}`, `${base}   ${remark} optional preview: without ${execute} it only reports, and changes nothing`];
   }
+  return [base, `${base} ${SCRIPT_PLATFORMS[platform].dryRunFlag}   ${remark} optional preview: reports what it would do, and changes nothing`];
 }
 
 function undoFor(command: CommandEntry): string[] {
@@ -546,7 +547,7 @@ function undoFor(command: CommandEntry): string[] {
     default:
       return [
         `There may be no way back. ${command.name} deletes, overwrites or disables something.`,
-        'Run the dry run, read every line of what it lists, and confirm a backup exists and has been restored from at least once.',
+        'The preview command under the one that runs it (in "Running it") lists what would go and changes nothing. Make sure a backup exists, and has been restored from at least once, before you run it.',
       ];
   }
 }
@@ -561,7 +562,7 @@ function scriptName(platform: ScriptPlatform, values: BlueprintValues): string {
 function buildScript(platform: ScriptPlatform, values: BlueprintValues): Script {
   const command = chosenCommand(platform, values);
   const perItem = str(values, 'iterate', 'once') === 'list';
-  const dryRun = bool(values, 'dry_run', true);
+  const dryRun = bool(values, 'dry_run', false);
   const changes = command.effect !== 'read';
 
   return {
@@ -578,8 +579,10 @@ function buildScript(platform: ScriptPlatform, values: BlueprintValues): Script 
       ...(changes
         ? [
             {
-              name: platform === 'powershell' ? '-Execute' : platform === 'python' ? (dryRun ? '--execute' : '--dry-run') : platform === 'bash' ? '--execute' : '/EXECUTE',
-              description: dryRun ? 'Takes the dry run off. Without it the script reports what it would do and changes nothing.' : 'Reports what it would do without changing anything.',
+              name: dryRun ? { powershell: '-Execute', python: '--execute', bash: '--execute', cmd: '/EXECUTE' }[platform] : SCRIPT_PLATFORMS[platform].dryRunFlag,
+              description: dryRun
+                ? 'Applies it. This file was generated report-only, so without it the script reports what it would do and changes nothing.'
+                : 'Optional preview: reports what it would do without changing anything. Without it the script applies.',
               required: false,
             },
           ]
@@ -594,7 +597,7 @@ function buildScript(platform: ScriptPlatform, values: BlueprintValues): Script 
       command.note ?? `${command.name}: ${command.task}`,
       ...(command.deprecated ? [`Deprecated. Use ${command.deprecated} in anything new.`] : []),
       ...(command.related && command.related.length > 0 ? [`Worth reading beside it: ${command.related.join(', ')} — all in the Commands tab.`] : []),
-      'The wrapper is the point: strict mode, logging, a dry run and a loop. The command in the middle is one line of it, and it is the line to read before running this.',
+      'The wrapper is the point: strict mode, logging, an opt-in dry run and a loop. The command in the middle is one line of it, and it is the line to read before running this.',
     ],
     findings: findingsFor(command),
   };

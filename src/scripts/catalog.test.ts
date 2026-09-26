@@ -20,7 +20,7 @@ import { hasErrors } from '../core/findings.ts';
 import { allCommands, catalogFindings, coverage, group, search, type CommandEntry } from './catalog.ts';
 import { ALL_CATALOG_GROUPS, ALL_COMMANDS, CATALOG_BY_PLATFORM, catalogFor, commandsFor } from './catalog-index.ts';
 import { SNIPPET_SCRIPTS } from './blueprints/snippet.ts';
-import { SCRIPT_PLATFORMS, renderScript, type ScriptPlatform } from './script.ts';
+import { DESTRUCTIVE_LABEL, SCRIPT_PLATFORMS, renderScript, type ScriptPlatform } from './script.ts';
 
 const PLATFORMS: readonly ScriptPlatform[] = ['powershell', 'python', 'bash', 'cmd'];
 
@@ -194,19 +194,76 @@ describe('scripts/catalog: the generator over it', () => {
     expect(failures).toEqual([]);
   });
 
-  it('gives anything that changes something a dry run that comes first', () => {
+  it('applies by default, and still offers a dry run as an opt-in preview', () => {
+    // The house rule: what is generated applies when run. The dry run stays —
+    // every changing command can still be made to report instead of act — but
+    // it is a flag someone adds, and the usage shows it second.
+    const reportOnlyByDefault: Readonly<Record<ScriptPlatform, RegExp>> = {
+      powershell: /\$WhatIfPreference = \$true/,
+      python: /dry_run = not args\.execute/,
+      bash: /^DRY_RUN=1$/m,
+      cmd: /^set "DRY_RUN=1"$/m,
+    };
     const failures: string[] = [];
     for (const platform of PLATFORMS) {
       const blueprint = blueprintFor(platform);
       const info = SCRIPT_PLATFORMS[platform];
+      expect(blueprint.inputs.find((i) => i.id === 'dry_run')?.default).toBe(false);
       for (const command of commandsFor(platform).filter((c) => c.effect !== 'read')) {
         const script = blueprint.script({ ...defaultValues(blueprint), command: command.id }, command.id);
         const text = renderScript(script, 'wrapped');
+        const body = script.body.join('\n');
         const hasDryRun =
-          text.includes(info.dryRunFlag) ||
-          /DRY RUN|ShouldProcess|dry_run|DRY_RUN|--execute|\/EXECUTE/.test(text);
+          body.includes(info.dryRunFlag) ||
+          (platform === 'powershell' && body.includes('SupportsShouldProcess') && body.includes('ShouldProcess($Item'));
         if (!hasDryRun) failures.push(`${command.id}: nothing to make it report instead of act`);
+        if (reportOnlyByDefault[platform].test(body)) failures.push(`${command.id}: the wrapped script only reports unless told otherwise`);
+        const [apply, preview] = script.usage;
+        if (!apply || apply.includes(info.dryRunFlag) || /preview/i.test(apply)) failures.push(`${command.id}: the first usage line is not the command that applies it`);
+        if (!preview || !preview.includes(info.dryRunFlag) || !/optional preview/.test(preview)) failures.push(`${command.id}: the second usage line is not the optional preview`);
         if (!/Undoing it/.test(text)) failures.push(`${command.id}: no undo section`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('keeps report-only as a choice someone can still make', () => {
+    for (const platform of PLATFORMS) {
+      const blueprint = blueprintFor(platform);
+      const command = commandsFor(platform).find((c) => c.effect !== 'read');
+      if (!command) throw new Error(`nothing changing in ${platform}`);
+      const script = blueprint.script({ ...defaultValues(blueprint), command: command.id, dry_run: true }, command.id);
+      const body = script.body.join('\n');
+      const execute = { powershell: '$Execute', python: '--execute', bash: '--execute', cmd: '/EXECUTE' }[platform];
+      expect([platform, body.includes(execute)]).toEqual([platform, true]);
+      // Even then the applying command is the first usage line.
+      expect([platform, (script.usage[0] ?? '').includes(execute.replace('$', '-'))]).toEqual([platform, true]);
+    }
+  });
+
+  it('labels every destructive command, with its preview directly under the line that runs it', () => {
+    const failures: string[] = [];
+    for (const platform of PLATFORMS) {
+      const blueprint = blueprintFor(platform);
+      const info = SCRIPT_PLATFORMS[platform];
+      for (const command of commandsFor(platform).filter((c) => c.effect === 'destructive')) {
+        for (const dry_run of [false, true]) {
+          const values = { ...defaultValues(blueprint), command: command.id, dry_run };
+          const script = blueprint.script(values, command.id);
+          const text = renderScript(script, 'wrapped');
+          const out = blueprint.build(values, command.id);
+          const readme = String(out.files['README.md'] ?? '');
+          if (!text.includes(DESTRUCTIVE_LABEL)) failures.push(`${command.id}: no Destructive label in the script header`);
+          if (!readme.includes(DESTRUCTIVE_LABEL)) failures.push(`${command.id}: no Destructive label in the README`);
+          if (!(out.findings ?? []).some((f) => /^Destructive/.test(f.message))) failures.push(`${command.id}: no Destructive finding on the page`);
+          if (/Run the dry run first/i.test(text)) failures.push(`${command.id}: says the dry run is required`);
+          // In the rendered header, the preview is the very next line after the applying one.
+          const running = text.split('\n');
+          const at = running.findIndex((line) => line.includes(script.usage[0] ?? '\u0000'));
+          const next = running[at + 1] ?? '';
+          const previewShown = /optional preview/.test(next) && (dry_run || next.includes(info.dryRunFlag));
+          if (at < 0 || !previewShown) failures.push(`${command.id} (report-only ${dry_run}): the preview is not directly under the applying line`);
+        }
       }
     }
     expect(failures).toEqual([]);

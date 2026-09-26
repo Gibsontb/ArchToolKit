@@ -122,7 +122,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
           ...(lock ? ['The lock is held on a file descriptor, so it is released by the kernel when the process ends — including when it is killed with -9, which a lock file on disk would not survive.'] : []),
           'Every variable is quoted. An unquoted "$path" with a space in it is the most common bug in shell, and it usually appears in production rather than in testing.',
         ],
-        usage: [`./${name}.sh --help`, ...(dryRun ? [`./${name}.sh --dry-run --verbose`] : []), `./${name}.sh${options[0] ? ` --${options[0].replace(/:$/, '')} value` : ''}`],
+        usage: [`./${name}.sh --help`, `./${name}.sh${options[0] ? ` --${options[0].replace(/:$/, '')} value` : ''}`, ...(dryRun ? [`./${name}.sh --dry-run --verbose   # optional preview: reports what it would do, changes nothing`] : [])],
         undo: dryRun ? ['What there is to undo depends on what goes in run(). Write it here as that is filled in.', '--dry-run changes nothing, so it is always safe.'] : ['Nothing to undo — this skeleton reads and reports.'],
         body: [
           ...preamble(),
@@ -324,7 +324,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
           ...(verify ? ['Verification lists the archive back, which proves it is readable and not truncated. It does not prove the contents restore — only a restore test does that.'] : []),
           'Free space is checked before starting. Filling the backup volume takes the application down with it on most layouts.',
         ],
-        usage: [`./${name}.sh --dry-run`, `./${name}.sh`, `# in cron:`, `0 2 * * * /usr/local/bin/${name}.sh >> /var/log/${name}.log 2>&1`],
+        usage: [`./${name}.sh`, `./${name}.sh --dry-run   # optional preview: reports what it would do, changes nothing`, `# in cron:`, `0 2 * * * /usr/local/bin/${name}.sh >> /var/log/${name}.log 2>&1`],
         undo: [
           'Nothing to undo — this creates files and deletes only ones older than the retention.',
           'To restore: tar -x -f <backup> -C /restore/target   (test it somewhere that is not production first)',
@@ -795,7 +795,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
           ...(preHook ? [`The pre-switch hook runs before the symlink moves: ${preHook}`] : []),
           'Run it with --dry-run against production once, and read every line, before you trust it.',
         ],
-        usage: [`./${name}.sh v2.4.1 --dry-run`, `./${name}.sh v2.4.1`, `./${name}.sh v2.4.0   # a rollback is just deploying the previous version`],
+        usage: [`./${name}.sh v2.4.1`, `./${name}.sh v2.4.1 --dry-run   # optional preview: reports what it would do, changes nothing`, `./${name}.sh v2.4.0   # a rollback is just deploying the previous version`],
         undo: [
           'Automatic: a failed health check switches the symlink back and restarts the service.',
           `Manual: ln -sfn ${installDir}/releases/<previous> ${installDir}/current && systemctl restart ${service}`,
@@ -1016,7 +1016,7 @@ export const BASH_BASE: readonly ScriptBlueprint[] = [
           'No password is ever set. Access is by key, which is what the key installation is for.',
           ...(bool(values, 'disable_password_login', true) ? ['Password authentication is only disabled after at least one key has been installed successfully. A machine you cannot reach is worse than one with password login.'] : []),
         ],
-        usage: [`sudo ./${name}.sh --dry-run`, `sudo ./${name}.sh`, `sudo ./${name}.sh --verbose`],
+        usage: [`sudo ./${name}.sh`, `sudo ./${name}.sh --dry-run   # optional preview: reports what it would do, changes nothing`, `sudo ./${name}.sh --verbose`],
         undo: [
           'Users created: userdel -r <username>   (that removes the home directory too)',
           `Sudo rule: rm /etc/sudoers.d/vcf-${name}`,

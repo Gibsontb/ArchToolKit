@@ -119,8 +119,8 @@ export const PYTHON_BASE: readonly ScriptBlueprint[] = [
         usage: [
           `python3 ${module}.py --help`,
           ...(subcommands.length > 0 ? [`python3 ${module}.py ${subcommands[0]} --verbose`] : [`python3 ${module}.py --verbose`]),
-          ...(dryRun ? [`python3 ${module}.py ${subcommands[1] ?? ''} --dry-run`.replace(/\s+/g, ' ')] : []),
           `${envPrefix}_API_TOKEN=... python3 ${module}.py ${subcommands[0] ?? ''}`.replace(/\s+$/, ''),
+          ...(dryRun ? [`${`python3 ${module}.py ${subcommands[0] ?? ''} --dry-run`.replace(/\s+/g, ' ')}   # optional preview: reports what it would do, changes nothing`] : []),
         ],
         undo: dryRun
           ? ['What there is to undo depends on what the subcommands end up doing. Write it here as they are filled in.', 'Until then: --dry-run changes nothing, so it is always safe.']
@@ -355,8 +355,8 @@ export const PYTHON_BASE: readonly ScriptBlueprint[] = [
           ...(duplicates === 'error' ? ['A duplicate key stops the run. That is the right default when the key is supposed to be unique.'] : [`Duplicate keys keep the ${duplicates} occurrence and the rest are reported.`]),
         ],
         usage: [
-          `python3 ${module}.py input.csv --dry-run`,
           `python3 ${module}.py input.csv -o cleaned.csv`,
+          `python3 ${module}.py input.csv --dry-run   # optional preview: reports what it would do, changes nothing`,
           ...(operation === 'join' ? [`python3 ${module}.py input.csv --second ${str(values, 'join_file', 'other.csv')} -o joined.csv`] : []),
         ],
         undo: ['The input file is untouched, so there is nothing to undo — delete the output and run it again.'],
@@ -1200,7 +1200,7 @@ export const PYTHON_BASE: readonly ScriptBlueprint[] = [
           'Files that cannot be read are reported, not skipped silently — a permission error on a share usually means something is missing from the report.',
           ...(action !== 'report' ? ['A manifest CSV is written before anything is moved, listing every source and destination. That file is the undo.'] : []),
         ],
-        usage: [`python3 ${module}.py /mnt/share --dry-run`, `python3 ${module}.py /mnt/share --min-size 10`, ...(action !== 'report' ? [`python3 ${module}.py /mnt/share`] : [])],
+        usage: [`python3 ${module}.py /mnt/share`, `python3 ${module}.py /mnt/share --dry-run   # optional preview: reports what it would do, changes nothing`, `python3 ${module}.py /mnt/share --min-size 10`],
         undo:
           action === 'move'
             ? [

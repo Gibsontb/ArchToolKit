@@ -160,7 +160,7 @@ export function catalogFindings(commands: readonly CommandEntry[]): Finding[] {
 
   if (destructive.length > 0) {
     findings.push(
-      info('scripts.catalog.destructive', `${destructive.length} delete, overwrite or disable something. The generator wraps those in a confirmation and a dry run rather than emitting them bare.`, { source: 'ArchToolKit' }),
+      info('scripts.catalog.destructive', `${destructive.length} delete, overwrite or disable something. The generator labels those Destructive and wraps them with a confirmation and an opt-in dry run rather than emitting them bare.`, { source: 'ArchToolKit' }),
     );
   }
 

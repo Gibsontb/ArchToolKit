@@ -429,7 +429,7 @@ export const BASH_EXTRA                             = [
           'Every path is checked for existence and for being a directory before anything is deleted. An unmounted filesystem leaves an empty mount point, and cleaning that would do nothing — but cleaning the wrong path would do a great deal.',
           ...(num(values, 'min_free_percent', 0) > 0 ? [`The whole thing only runs when a filesystem is below ${num(values, 'min_free_percent', 0)}% free, so a scheduled run is a no-op on a healthy machine.`] : []),
         ],
-        usage: [`sudo ./${name}.sh --dry-run`, `sudo ./${name}.sh`, `0 3 * * * /usr/local/bin/${name}.sh >> /var/log/${name}.log 2>&1`],
+        usage: [`sudo ./${name}.sh`, `sudo ./${name}.sh --dry-run   # optional preview: reports what it would do, changes nothing`, `0 3 * * * /usr/local/bin/${name}.sh >> /var/log/${name}.log 2>&1`],
         undo: [
           'Deleted files are gone. There is no undo, which is why --dry-run exists and why it prints every path.',
           'The journal trim is likewise permanent. Journal data older than the threshold is removed.',
@@ -650,8 +650,8 @@ export const BASH_EXTRA                             = [
           'BatchMode=yes means SSH never prompts. A host needing a password fails fast and is reported, rather than stopping everything.',
         ],
         usage: [
-          ...(changes ? [`./${name}.sh ${fromFile ? 'hosts.txt' : 'host1 host2'} --dry-run`] : []),
           `./${name}.sh ${fromFile ? 'hosts.txt' : 'host1 host2 host3'}`,
+          ...(changes ? [`./${name}.sh ${fromFile ? 'hosts.txt' : 'host1 host2 host3'} --dry-run   # optional preview: reports what it would do, changes nothing`] : []),
           `./${name}.sh ${fromFile ? 'hosts.txt' : 'host1'} -p 25`,
         ],
         undo: changes
@@ -896,7 +896,7 @@ export const BASH_EXTRA                             = [
           'If this machine takes its IPv6 address from DHCPv6, replies arrive on UDP 546 from a link-local address and conntrack does not always match them to the multicast request; add "546/udp | fe80::/10 | DHCPv6 client" if the address disappears at renewal.',
           ...(bool(values, 'log_dropped', false) ? ['Dropped packets are logged and rate limited. It is useful for a day; leave it on for a week and the journal is mostly firewall logs.'] : []),
         ],
-        usage: [`sudo ./${name}.sh --dry-run`, `sudo ./${name}.sh`, `# then, from a NEW session, having confirmed you are still connected:`, `sudo ./${name}.sh --confirm`],
+        usage: [`sudo ./${name}.sh`, `sudo ./${name}.sh --dry-run   # optional preview: reports what it would do, changes nothing`, `# then, from a NEW session, having confirmed you are still connected:`, `sudo ./${name}.sh --confirm`],
         undo: [
           ...(timer > 0 ? [`Automatic: the rules revert after ${timer} seconds unless --confirm is run.`] : []),
           'Manual: the previous rule set is saved before anything changes, and the path is printed. Restore it with the backend\u2019s own restore command.',
@@ -1169,7 +1169,7 @@ export const BASH_EXTRA                             = [
           'The renewal is skipped when there is plenty of time left, so this is safe to run daily from cron — and it should be, because a weekly schedule has no retries before expiry.',
           ...(str(values, 'copy_to', '') ? ['Copies are made after a successful renewal, with the ownership and mode set explicitly. A private key readable by everyone is worse than an expired certificate.'] : []),
         ],
-        usage: [`sudo ./${name}.sh --dry-run`, `sudo ./${name}.sh`, `# daily, because a weekly schedule leaves no room for a retry:`, `17 3 * * * /usr/local/bin/${name}.sh >> /var/log/${name}.log 2>&1`],
+        usage: [`sudo ./${name}.sh`, `sudo ./${name}.sh --dry-run   # optional preview: reports what it would do, changes nothing`, `# daily, because a weekly schedule leaves no room for a retry:`, `17 3 * * * /usr/local/bin/${name}.sh >> /var/log/${name}.log 2>&1`],
         undo: [
           'certbot and acme.sh both keep the previous certificate. certbot: the archive directory holds every version.',
           'To go back: point the live symlink at the previous version and reload the services.',

@@ -98,6 +98,36 @@ describe('every script', () => {
     }
   });
 
+  it('shows the command that applies it first, and the dry run after it as an optional preview', () => {
+    // Everything generated applies by default; the dry run is opt-in. So no
+    // usage leads with it, and wherever it appears it says it is optional.
+    const dryRunLine = /(^|\s)(-WhatIf|--dry-run|\/WHATIF)(\s|$)/;
+    const notARun = /^(#|rem\b)|--help|\/\?|Get-Help|^export |^read /i;
+    const failures: string[] = [];
+    // The defaults, every toggle on, and each option of each select on its
+    // own: the changing and destructive paths are often behind a choice.
+    const variants = SCRIPTS.flatMap((blueprint) => {
+      const base = defaultValues(blueprint);
+      const toggles = Object.fromEntries(blueprint.inputs.filter((i) => i.control === 'toggle').map((i) => [i.id, true]));
+      const selects = blueprint.inputs.flatMap((i) => (i.control === 'select' && i.id !== 'command' ? (i.options ?? []).map((o) => ({ [i.id]: o.value })) : []));
+      return [base, { ...base, ...toggles }, ...selects.map((s) => ({ ...base, ...s }))].map((values) => ({ id: blueprint.id, script: blueprint.script(values, blueprint.id) }));
+    });
+    for (const { id, script } of variants) {
+      const first = script.usage.findIndex((line) => dryRunLine.test(line));
+      if (first < 0) continue;
+      for (const line of script.usage.filter((l) => dryRunLine.test(l))) {
+        if (!/optional preview/.test(line)) failures.push(`${id}: "${line}" is not worded as an optional preview`);
+      }
+      const before = script.usage.slice(0, first).filter((line) => !notARun.test(line.trim()));
+      if (before.length === 0) failures.push(`${id}: the dry run comes before any command that applies it`);
+      if (script.effect === 'destructive') {
+        const previous = script.usage[first - 1] ?? '';
+        if (notARun.test(previous.trim())) failures.push(`${id}: the preview is not directly under the command that applies it`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   it('builds a script and a README, always', () => {
     for (const blueprint of SCRIPTS) {
       const result = blueprint.build(defaultValues(blueprint), blueprint.id);

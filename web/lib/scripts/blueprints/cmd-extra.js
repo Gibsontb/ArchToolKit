@@ -365,7 +365,7 @@ export const CMD_EXTRA                             = [
           `Verification is by ${verifyBy === 'registry' ? 'the uninstall registry key' : verifyBy === 'file' ? 'the file existing' : 'the service existing'}, after the install, because an exit code of 0 only means the installer finished.`,
           'The full installer log is kept. When something fails, that log is the only thing that says why — and it is the first thing anyone asks for.',
         ],
-        usage: [`${name}.cmd /WHATIF`, `${name}.cmd`, `${name}.cmd /SOURCE:\\\\files01\\Software$\\App`, `echo %ERRORLEVEL%`],
+        usage: [`${name}.cmd`, `${name}.cmd /WHATIF   & rem optional preview: reports what it would do, changes nothing`, `${name}.cmd /SOURCE:\\\\files01\\Software$\\App`, `echo %ERRORLEVEL%`],
         undo: [
           type === 'msi'
             ? 'msiexec /x {ProductCode} /qn — the product code is in the log and in the uninstall key.'

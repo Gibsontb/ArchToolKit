@@ -116,7 +116,7 @@ export const CMD_BASE                             = [
           'Every path is quoted. `C:\\Program Files\\...` unquoted becomes two arguments, and the error it produces never mentions the space.',
           'There is a single exit path through :finish, so cleanup always runs and the exit code is always set.',
         ],
-        usage: [`${name}.cmd /?`, ...(dryRun ? [`${name}.cmd /WHATIF /VERBOSE`] : []), `${name}.cmd${args[0] ? ` /${args[0].toUpperCase()}:value` : ''}`],
+        usage: [`${name}.cmd /?`, `${name}.cmd${args[0] ? ` /${args[0].toUpperCase()}:value` : ''}`, ...(dryRun ? [`${name}.cmd /WHATIF /VERBOSE   & rem optional preview: reports what it would do, changes nothing`] : [])],
         undo: dryRun ? ['What there is to undo depends on what goes in :main. Write it here as that is filled in.', '/WHATIF changes nothing, so it is always safe.'] : ['Nothing to undo — this skeleton reads and reports.'],
         body: [
           ...preamble(),
@@ -290,7 +290,7 @@ export const CMD_BASE                             = [
           '/WHATIF passes /L to robocopy, which lists what it would do and copies nothing. Use it the first time, every time.',
           '/Z is not used. It makes a copy restartable and costs a great deal of speed; /ZB is worse. Use them only over a link that genuinely drops.',
         ],
-        usage: [`${name}.cmd /WHATIF`, `${name}.cmd`, `${name}.cmd /SOURCE:E:\\Other /DEST:\\\\backup01\\Other$`, 'rem As a scheduled task, run it with: cmd /c "path\\to\\' + name + '.cmd"'],
+        usage: [`${name}.cmd`, `${name}.cmd /WHATIF   & rem optional preview: reports what it would do, changes nothing`, `${name}.cmd /SOURCE:E:\\Other /DEST:\\\\backup01\\Other$`, 'rem As a scheduled task, run it with: cmd /c "path\\to\\' + name + '.cmd"'],
         undo:
           mode === 'copy'
             ? ['Nothing is deleted, so nothing needs undoing — remove the copied files from the destination if they are not wanted.']
@@ -431,7 +431,7 @@ export const CMD_BASE                             = [
           'A service that is already in the wanted state is left alone and reported, not restarted.',
           'A service that does not exist on this machine is a warning rather than a failure — the same script often runs across machines with slightly different roles.',
         ],
-        usage: [`${name}.cmd /WHATIF`, `${name}.cmd`, `${name}.cmd /WAIT:180`],
+        usage: [`${name}.cmd`, `${name}.cmd /WHATIF   & rem optional preview: reports what it would do, changes nothing`, `${name}.cmd /WAIT:180`],
         undo:
           action === 'stop'
             ? [`Start them again in order: ${services.join(', ')}`, `net start <service>`]
@@ -656,9 +656,9 @@ export const CMD_BASE                             = [
           'The window is hidden by the policy that calls it, not by the script. If it flashes, the Group Policy setting "Run logon scripts synchronously" or the task’s window style is what to change.',
         ],
         usage: [
-          `${name}.cmd /WHATIF /VERBOSE`,
-          `rem As a user logon script, via Group Policy: User Configuration > Policies > Windows Settings > Scripts`,
           `${name}.cmd /VERBOSE`,
+          `${name}.cmd /WHATIF /VERBOSE   & rem optional preview: reports what it would do, changes nothing`,
+          `rem As a user logon script, via Group Policy: User Configuration > Policies > Windows Settings > Scripts`,
           `rem Log: %TEMP%\\${name}-<date>.log`,
         ],
         undo: [

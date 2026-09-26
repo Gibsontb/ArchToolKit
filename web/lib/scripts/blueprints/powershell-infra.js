@@ -1151,8 +1151,8 @@ export const POWERSHELL_INFRA                             = [
           ...(both ? ['CompatiblePSEdition is declared as both, so PowerShell will refuse to import it where it will not work rather than failing halfway through.'] : []),
         ],
         usage: [
-          `pwsh -File .\\New-${module.replace(/\./g, '')}Module.ps1 -WhatIf`,
           `pwsh -File .\\New-${module.replace(/\./g, '')}Module.ps1`,
+          `pwsh -File .\\New-${module.replace(/\./g, '')}Module.ps1 -WhatIf   # optional preview: reports what it would do, changes nothing`,
           `Import-Module .\\${module}\\${module}.psd1 -Force -Verbose`,
           `Invoke-Pester .\\${module}\\Tests`,
         ],

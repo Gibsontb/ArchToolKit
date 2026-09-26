@@ -150,14 +150,14 @@ export const POWERSHELL_BASE                             = [
           { name: '-WhatIf', description: 'List what would be created and create nothing.', required: false },
         ],
         notes: [
-          'Run it with -WhatIf first and read every line. A CSV with a stray blank row, a trailing space or a duplicate name is the normal case, not the exception.',
+          'On a new CSV, the -WhatIf preview is worth reading line by line. A CSV with a stray blank row, a trailing space or a duplicate name is the normal case, not the exception.',
           'Accounts that already exist are skipped and reported, not overwritten. That is what makes it safe to re-run after fixing a few rows.',
           ...(random ? ['The per-user passwords are written to a separate file beside the transcript. Treat that file as a credential: hand it over by whatever means your organisation uses for one, then delete it.'] : []),
           'Nothing here sets a manager or a licence. Those are separate steps and belong in separate scripts, so a failure in one does not leave the other half done.',
         ],
         usage: [
-          `pwsh -File .\\${name}.ps1 -CsvPath .\\starters.csv -WhatIf`,
           `pwsh -File .\\${name}.ps1 -CsvPath .\\starters.csv`,
+          `pwsh -File .\\${name}.ps1 -CsvPath .\\starters.csv -WhatIf   # optional preview: reports what it would do, changes nothing`,
           `pwsh -File .\\${name}.ps1 -CsvPath .\\starters.csv -Verbose`,
         ],
         undo: [
@@ -352,8 +352,8 @@ export const POWERSHELL_BASE                             = [
           'Disabling is reversible. Deleting is not, and this script never deletes: the account sits disabled until someone decides, deliberately, that it can go.',
         ],
         usage: [
-          `pwsh -File .\\${name}.ps1 -Days ${days} -WhatIf`,
           `pwsh -File .\\${name}.ps1 -Days ${days}`,
+          `pwsh -File .\\${name}.ps1 -Days ${days} -WhatIf   # optional preview: reports what it would do, changes nothing`,
           `pwsh -File .\\${name}.ps1 -Days 180 -ReportPath C:\\Reports`,
         ],
         undo:
@@ -673,7 +673,8 @@ export const POWERSHELL_BASE                             = [
           ...(restart ? [`A service that is already starting is left alone. Only a genuinely stopped service is started, and only ${num(values, 'max_restarts', 2)} times.`] : []),
         ],
         usage: [
-          `pwsh -File .\\${name}.ps1 -ComputerName SRV01, SRV02 -WhatIf`,
+          `pwsh -File .\\${name}.ps1 -ComputerName SRV01, SRV02`,
+          `pwsh -File .\\${name}.ps1 -ComputerName SRV01, SRV02 -WhatIf   # optional preview: reports what it would do, changes nothing`,
           `pwsh -File .\\${name}.ps1 -ComputerName (Get-Content .\\servers.txt)`,
           `pwsh -File .\\${name}.ps1 | Where-Object Status -ne 'Running' | Format-Table`,
         ],
@@ -1146,8 +1147,8 @@ export const POWERSHELL_BASE                             = [
           ...(changes ? ['This has been marked as changing things, so it asks before it starts and supports -WhatIf. Use it.'] : []),
         ],
         usage: [
-          ...(changes ? [`pwsh -File .\\${name}.ps1 -WhatIf`] : []),
           `pwsh -File .\\${name}.ps1${source === 'file' ? ' -ComputerListPath .\\servers.txt' : source === 'parameter' ? ' -ComputerName SRV01, SRV02' : ''}`,
+          ...(changes ? [`pwsh -File .\\${name}.ps1${source === 'file' ? ' -ComputerListPath .\\servers.txt' : source === 'parameter' ? ' -ComputerName SRV01, SRV02' : ''} -WhatIf   # optional preview: reports what it would do, changes nothing`] : []),
           `pwsh -File .\\${name}.ps1 | Export-Csv .\\results.csv -NoTypeInformation`,
         ],
         undo: changes
@@ -1298,7 +1299,7 @@ export const POWERSHELL_BASE                             = [
         ],
         usage: [
           `pwsh -File .\\${name}.ps1`,
-          ...(cleanup ? [`pwsh -File .\\${name}.ps1 -WhatIf`, `pwsh -File .\\${name}.ps1 -Confirm:$false`] : []),
+          ...(cleanup ? [`pwsh -File .\\${name}.ps1 -WhatIf   # optional preview: reports what it would do, changes nothing`, `pwsh -File .\\${name}.ps1 -Confirm:$false   # unattended: no prompt per folder`] : []),
           `pwsh -File .\\${name}.ps1 | Where-Object Level -ne 'OK' | Format-Table`,
         ],
         undo: cleanup
@@ -1484,7 +1485,7 @@ export const POWERSHELL_BASE                             = [
           `. .\\${fn}.ps1`,
           `Get-Help ${fn} -Full`,
           ...(pipeline ? [`'thing1', 'thing2' | ${fn} -Verbose`] : [`${fn} -${pipeline ? pipeParam : 'Name'} thing1`]),
-          ...(changes ? [`${fn} -${pipeParam} thing1 -WhatIf`] : []),
+          ...(changes ? [`${fn} -${pipeParam} thing1 -WhatIf   # optional preview: reports what it would do, changes nothing`] : []),
         ],
         undo: ['Nothing to undo — this is a function definition. What the function itself does when called is up to the body you fill in.'],
         body: [
@@ -1721,7 +1722,7 @@ export const POWERSHELL_BASE                             = [
           'PowerShell is invoked with -NonInteractive and -ExecutionPolicy Bypass, because a task has nobody to answer a prompt and the execution policy is not a security boundary.',
           'Check it actually runs. Register-ScheduledTask succeeding says nothing about whether the account can read the script.',
         ],
-        usage: [`pwsh -File .\\Install-${task}.ps1 -WhatIf`, `pwsh -File .\\Install-${task}.ps1`, `Get-ScheduledTask -TaskName '${task}' | Get-ScheduledTaskInfo`],
+        usage: [`pwsh -File .\\Install-${task}.ps1`, `pwsh -File .\\Install-${task}.ps1 -WhatIf   # optional preview: reports what it would do, changes nothing`, `Get-ScheduledTask -TaskName '${task}' | Get-ScheduledTaskInfo`],
         undo: [`Unregister-ScheduledTask -TaskName '${task}' -Confirm:$false`, 'The script itself is left on disk — removing the task does not remove it.'],
         body: [
           ...preamble(
