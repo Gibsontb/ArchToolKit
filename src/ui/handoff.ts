@@ -24,7 +24,9 @@ export type HandoffKind =
   /** The Multi-Cloud Planner's Terraform settings envelope for one platform, for terraform.html. */
   | 'plan-to-terraform'
   /** The planner's Ansible settings envelope, for ansible.html. */
-  | 'plan-to-ansible';
+  | 'plan-to-ansible'
+  /** Device changes from a migration plan (the circuit cut of a data-centre exit, addendum A.5.5), for network.html. */
+  | 'plan-to-network';
 
 /** Every kind, for tests and for anything that sweeps them. */
 export const HANDOFF_KINDS: readonly HandoffKind[] = [
@@ -33,6 +35,7 @@ export const HANDOFF_KINDS: readonly HandoffKind[] = [
   'spec-to-editor',
   'plan-to-terraform',
   'plan-to-ansible',
+  'plan-to-network',
 ];
 
 /** Bumped when a payload shape changes, so a stale entry is discarded. */

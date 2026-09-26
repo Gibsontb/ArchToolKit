@@ -12,7 +12,8 @@
 
 import type { Platform } from '../platforms.ts';
 import { DB_SERVICE_LABELS, DB_SERVICE_VALUES, platformOfService } from './options.ts';
-import type { DbEdition, DbEngine, DbFeature, DbHa, DbServiceId, DbVersionId, Verification } from './types.ts';
+import type { CoreDbServiceId, DbEdition, DbEngine, DbFeature, DbHa, DbServiceId, DbVersionId, Verification } from './types.ts';
+import { DB_SERVICES_EXTRA } from './db-catalog-extra.ts';
 
 export type ServiceLicence = 'li' | 'byol';
 
@@ -43,13 +44,18 @@ export interface DbServiceInfo {
   readonly notes?: readonly string[];
 }
 
-const ALL_ENGINES: readonly DbEngine[] = ['oracle', 'sqlserver', 'postgres', 'mysql', 'mariadb', 'db2', 'mongodb', 'sybase-ase', 'other'];
+const ALL_ENGINES: readonly DbEngine[] = [
+  'oracle', 'sqlserver', 'postgres', 'mysql', 'mariadb', 'db2', 'mongodb', 'sybase-ase',
+  'informix', 'sap-hana', 'redis', 'cassandra', 'elasticsearch', 'other',
+];
 /** Every HA form a self-managed VM can carry, bar the ones that need shared storage the platform lacks. */
 const VM_HA: readonly DbHa[] = ['none', 'data-guard-local', 'sql-ag', 'sql-mirroring', 'log-shipping', 'pg-streaming', 'mysql-group-replication', 'other-cluster'];
 
-type Row = Omit<DbServiceInfo, 'id' | 'platform' | 'label'>;
+/** A service's catalogue row: everything but the id, platform and label, which come from its id. */
+export type DbServiceRow = Omit<DbServiceInfo, 'id' | 'platform' | 'label'>;
+type Row = DbServiceRow;
 
-const ROWS: Readonly<Record<DbServiceId, Row>> = {
+const ROWS: Readonly<Record<CoreDbServiceId, Row>> = {
   // ---- AWS ------------------------------------------------------------------
   'aws-rds': {
     engines: ['oracle', 'sqlserver', 'postgres', 'mysql', 'mariadb', 'db2'],
@@ -425,15 +431,29 @@ const ROWS: Readonly<Record<DbServiceId, Row>> = {
   },
 };
 
+const ALL_ROWS: Readonly<Partial<Record<DbServiceId, Row>>> = { ...ROWS, ...DB_SERVICES_EXTRA };
+
+/**
+ * The services the catalogue has a row for, in option order: every core
+ * service, plus each of the A.4.9 services once `db-catalog-extra.ts` (WP-16)
+ * carries its row. Options, `servicesFor` and the decision only ever name these.
+ */
+export const CATALOGUED_DB_SERVICES: readonly DbServiceId[] = Object.freeze(DB_SERVICE_VALUES.filter((id) => ALL_ROWS[id] !== undefined));
+
+/**
+ * Every catalogued service. The A.4.9 ids without a row yet are absent, so
+ * check `id in DB_SERVICES` before indexing with an id that did not come from
+ * `servicesFor` or an option (validate.ts does, for pins).
+ */
 export const DB_SERVICES: Readonly<Record<DbServiceId, DbServiceInfo>> = Object.freeze(
   Object.fromEntries(
-    DB_SERVICE_VALUES.map((id) => [id, Object.freeze({ id, platform: platformOfService(id), label: DB_SERVICE_LABELS[id], ...ROWS[id] })]),
+    CATALOGUED_DB_SERVICES.map((id) => [id, Object.freeze({ id, platform: platformOfService(id), label: DB_SERVICE_LABELS[id], ...ALL_ROWS[id]! })]),
   ) as Record<DbServiceId, DbServiceInfo>,
 );
 
 /** The services on `platform` that run `engine` (and, when given, that edition), in catalog order. */
 export function servicesFor(engine: DbEngine, platform?: Platform, edition?: DbEdition): readonly DbServiceInfo[] {
-  return DB_SERVICE_VALUES.map((id) => DB_SERVICES[id]).filter(
+  return CATALOGUED_DB_SERVICES.map((id) => DB_SERVICES[id]).filter(
     (s) => (platform === undefined || s.platform === platform) && s.engines.includes(engine) && (!edition || !s.editions || s.editions.includes(edition)),
   );
 }

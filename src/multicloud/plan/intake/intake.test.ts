@@ -8,7 +8,7 @@ import type { PortfolioEntry, Evaluation, Route } from '../../../migration/types
 import { EMPTY_APPLICATION } from '../../../migration/types.ts';
 import type { Criticality as PortfolioCriticality } from '../../../migration/options.ts';
 import { emptyPlan } from '../store.ts';
-import { csvHeader, WORKLOAD_COLUMNS, DATABASE_COLUMNS, APP_COLUMNS, SITE_COLUMNS, itemId } from '../options.ts';
+import { csvHeader, WORKLOAD_COLUMNS, WORKLOAD_SOURCE_COLUMNS, DATABASE_COLUMNS, APP_COLUMNS, SITE_COLUMNS, itemId } from '../options.ts';
 import type { App, Database, Plan, Site, Workload } from '../types.ts';
 import {
   INTAKE_ADAPTERS, intakeAdapter, intakeStats, intakeFromServers,
@@ -17,6 +17,7 @@ import {
   parseWorkloadsCsv, parseDatabasesCsv, parseAppsCsv, parseSitesCsv, toCsv, CSV_TEMPLATES, intakeFromCsv,
   mergeRows, editRow, mergeIntake, applyDbHostRoles, applyAppDefaults, ensureApps,
   validatePlan, validateScreen, screenOf, findingsForRow, PLAN_FINDING_IDS, type IntakeFacts,
+  SERVERS_CSV_HEADER, usedPerDisk, pointInTimeUtilisation,
 } from './index.ts';
 
 const ON = '2026-09-26';
@@ -530,5 +531,125 @@ describe('validatePlan', () => {
     expect(screenOf('plan.workloads.os-unknown')).toBe('workloads');
     expect(screenOf('tf.other')).toBeUndefined();
     for (const x of f) expect(allIds.has(x.code)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Addendum A.3.2 / A.3.6: server columns and utilisation
+// ---------------------------------------------------------------------------
+
+describe('workloads.csv: the A.3.2 server columns', () => {
+  const header = `${csvHeader(WORKLOAD_COLUMNS)},${csvHeader(WORKLOAD_SOURCE_COLUMNS)}`;
+  const blanks = WORKLOAD_COLUMNS.length - 2;
+
+  it('reads origin, source reference, type, utilisation, software and ports', () => {
+    const csv = `${header}\nsrv-01,Payroll${','.repeat(blanks)},physical,cmdb-01,SN123,,10.9.9.9,db-host,31,9.4,740,38,14,Microsoft SQL Server 2019 (64-bit); Veeam Agent,1433/tcp 53/udp 443\n`;
+    const { rows, findings } = parseWorkloadsCsv(csv);
+    expect(findings.filter((f) => f.severity !== 'info')).toEqual([]);
+    const w = rows[0] as Workload;
+    expect(w.origin).toBe('physical');
+    expect(w.sourceRef).toEqual({ platform: 'physical', manager: 'cmdb-01', id: 'SN123', bmc: '10.9.9.9' });
+    expect(w.workloadType).toBe('db-host');
+    expect(w.typeConfirmed).toBe(true);
+    expect(w.facts?.utilisation).toEqual({ days: 14, samples: 0, coverage: 1, cpuP95Pct: 31, memP95Gib: 9.4, iopsP95: 740, mbpsP95: 38 });
+    expect(w.facts?.software).toEqual(['Microsoft SQL Server 2019 (64-bit)', 'Veeam Agent']);
+    expect(w.facts?.listening).toEqual([{ port: 1433, proto: 'tcp' }, { port: 53, proto: 'udp' }, { port: 443, proto: 'tcp' }]);
+    // The source columns are the user's own cells; the facts stay provenance.
+    expect(w.edited).toEqual(['app', 'origin', 'sourceRef', 'workloadType']);
+  });
+
+  it('accepts the columns in any order, and a file with only some of them', () => {
+    const csv = 'name,cpu_p95_pct,origin,host\nsrv-02,55,hyperv,hv03\n';
+    const w = parseWorkloadsCsv(csv).rows[0] as Workload;
+    expect(w.origin).toBe('hyperv');
+    expect(w.sourceRef).toEqual({ platform: 'hyperv', host: 'hv03' });
+    // No util_days: one reading, which the sizing does not size on.
+    expect(w.facts?.utilisation).toEqual({ days: 0, samples: 0, coverage: 0, cpuP95Pct: 55 });
+  });
+
+  it('flags what it cannot read, and leaves the cell blank', () => {
+    const csv = 'name,origin,workload_type,cpu_p95_pct,ports\nsrv-03,zos,teapot,140,1433/tcp 70000 abc\n';
+    const { rows, findings } = parseWorkloadsCsv(csv);
+    const w = rows[0] as Workload;
+    expect(w.origin).toBeUndefined();
+    expect(w.workloadType).toBeUndefined();
+    expect(w.facts?.utilisation).toBeUndefined();
+    expect(w.facts?.listening).toEqual([{ port: 1433, proto: 'tcp' }]);
+    expect(findings.filter((f) => f.code === 'plan.csv.unknown-value')).toHaveLength(5);
+  });
+
+  it('still reads an old file exactly as before', () => {
+    const csv = `${csvHeader(WORKLOAD_COLUMNS)}\napp-01,Payroll,prod,app,win-2019,4,16,80 200,tier1,15m,1h,li,,,,\n`;
+    const w = parseWorkloadsCsv(csv).rows[0] as Workload;
+    expect(w.origin).toBeUndefined();
+    expect(w.sourceRef).toBeUndefined();
+    expect(w.facts).toBeUndefined();
+  });
+
+  it('writes the server columns only when a row has them, and reads them back', () => {
+    const plain = parseWorkloadsCsv(`${csvHeader(WORKLOAD_COLUMNS)}\napp-01,Payroll,prod,app,win-2019,4,16,80,tier1,15m,1h,li,,,,\n`).rows;
+    expect(toCsv('workloads', plain).split('\n')[0]).toBe(csvHeader(WORKLOAD_COLUMNS));
+    const csv = `${header}\nsrv-01,Payroll${','.repeat(blanks)},physical,cmdb-01,SN123,,10.9.9.9,db-host,31,9.4,740,38,14,SQL Server; Veeam,1433/tcp 53/udp\n`;
+    const rows = parseWorkloadsCsv(csv).rows;
+    const out = toCsv('workloads', rows);
+    expect(out.split('\n')[0]).toBe(SERVERS_CSV_HEADER);
+    expect(strip(parseWorkloadsCsv(out).rows)).toEqual(strip(rows));
+  });
+});
+
+describe('workloadsFromInventory: used disk and point-in-time utilisation', () => {
+  const disk = (key: string, label: string, capacityGib: number, raw = false) => ({ key, label, capacityGib, raw });
+  const part = (diskKey: string | undefined, consumedGib: number) => ({ mount: '/', ...(diskKey ? { diskKey } : {}), capacityGib: 100, consumedGib, freeGib: 0 });
+
+  it('fills disksUsedGib per disk from the guest partitions, boot first, never over the disk', () => {
+    const v = vm({
+      name: 'app-01',
+      disks: [disk('2001', 'Hard disk 2', 200), disk('2000', 'Hard disk 1', 80)],
+      partitions: [part('2000', 30.04), part('2000', 10), part('2001', 150.55), part('2001', 90)],
+    });
+    expect(usedPerDisk(v)).toEqual([40, 200]);
+    const w = workloadsFromInventory(inventoryOf([v]), { includePoweredOff: true, on: ON }).workloads[0] as Workload;
+    expect(w.disksGib).toEqual([80, 200]);
+    expect(w.facts?.disksUsedGib).toEqual([40, 200]);
+  });
+
+  it('counts a disk no partition names as full, and skips RDMs', () => {
+    const v = vm({ name: 'db-01', disks: [disk('2000', 'Hard disk 1', 80), disk('2001', 'Hard disk 2', 500), disk('2002', 'Hard disk 3', 1000, true)], partitions: [part('2000', 25)] });
+    expect(usedPerDisk(v)).toEqual([25, 500]);
+  });
+
+  it('uses the partitions total or the consumed storage for a single disk, and says nothing for several without detail', () => {
+    expect(usedPerDisk(vm({ name: 'a', disks: [disk('2000', 'Hard disk 1', 100)], partitions: [part(undefined, 20), part(undefined, 12.34)] }))).toEqual([32.3]);
+    expect(usedPerDisk(vm({ name: 'b', provisionedGib: 100, usedGib: 41.26 }))).toEqual([41.3]);
+    expect(usedPerDisk(vm({ name: 'c', provisionedGib: 100, usedGib: 180 }))).toEqual([100]);
+    expect(usedPerDisk(vm({ name: 'd', disks: [disk('2000', 'Hard disk 1', 80), disk('2001', 'Hard disk 2', 80)], usedGib: 60 }))).toBeUndefined();
+    expect(usedPerDisk(vm({ name: 'e', provisionedGib: 100 }))).toBeUndefined();
+  });
+
+  it('records one reading of CPU and active memory for a running VM (days 0), and none for one that is off', () => {
+    const on = vm({ name: 'web-01', cpu: { overallMhz: 1300, maxMhz: 5200 }, activeMemoryGib: 3.14 });
+    expect(pointInTimeUtilisation(on)).toEqual({ days: 0, samples: 1, coverage: 0, cpuP95Pct: 25, memP95Gib: 3.1 });
+    expect(pointInTimeUtilisation(vm({ name: 'web-02', memory: { activeGib: 2 } }))).toEqual({ days: 0, samples: 1, coverage: 0, memP95Gib: 2 });
+    expect(pointInTimeUtilisation(vm({ name: 'web-03', powerState: 'poweredOff', activeMemoryGib: 3 }))).toBeUndefined();
+    expect(pointInTimeUtilisation(vm({ name: 'web-04' }))).toBeUndefined();
+    const w = workloadsFromInventory(inventoryOf([on]), { includePoweredOff: true, on: ON }).workloads[0] as Workload;
+    expect(w.facts?.utilisation?.days).toBe(0);
+    expect(w.facts?.utilisation?.cpuP95Pct).toBe(25);
+    // Demand stays the allocation: a single reading is shown, not sized on.
+    expect(w.vcpu).toBe(2);
+    expect(w.ramGib).toBe(8);
+  });
+
+  it('fills both from the estate fixture where RVTools has the data', async () => {
+    const inv = (await importRvToolsWorkbook(await estateWorkbook(), { label: 'estate.xlsx' })).inventory;
+    const r = workloadsFromInventory(inv, { includePoweredOff: true, on: ON });
+    for (const w of r.workloads) {
+      const used = w.facts?.disksUsedGib;
+      if (used) {
+        expect(used).toHaveLength(w.disksGib.length);
+        used.forEach((u, i) => expect(u).toBeLessThanOrEqual(w.disksGib[i] as number));
+      }
+      if (w.facts?.utilisation) expect(w.facts.utilisation.days).toBe(0);
+    }
   });
 });

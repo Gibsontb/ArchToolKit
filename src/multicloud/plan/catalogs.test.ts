@@ -5,7 +5,7 @@ import { GCP_IMAGE_FAMILIES } from '../../kit/choices.ts';
 import { PLATFORMS, platformInfo } from '../platforms.ts';
 import { OS_VALUES, DB_SERVICE_VALUES, DB_VERSION_VALUES, DB_ENGINE_VALUES, defaultRequirements as emptyPlanRequirementsForTest } from './options.ts';
 import { OS_CATALOG, classifyOs, classifyVm, osKind, osFamily, roleFromName, dbFromVm, supportStatus, defaultLicenceFor } from './os.ts';
-import { DB_SERVICES, DB_VERSIONS, servicesFor, serviceLicences, unsupportedOn, cloudSqlVersion, isVersionEol } from './db-catalog.ts';
+import { CATALOGUED_DB_SERVICES, DB_SERVICES, DB_VERSIONS, servicesFor, serviceLicences, unsupportedOn, cloudSqlVersion, isVersionEol } from './db-catalog.ts';
 import { LICENSING_FACTS, LICENSING_FACT_IDS, licenceNeed } from './licensing-facts.ts';
 import { IMAGE_TABLE, IMAGED_OS, imageFor, isUnavailable, sqlImageFor, GCP_SQL_IMAGE_FAMILIES } from './images.ts';
 import { CONTROLS, CYBER_CONTROLS, DR_PATTERNS, cyberChecklist, drPatternFor } from './controls.ts';
@@ -129,6 +129,9 @@ const OS_STRINGS: readonly (readonly [string, OsId])[] = [
   ['', 'unknown'],
   ['   ', 'unknown'],
 ];
+
+
+const EXTRA_IDS: readonly string[] = ['aws-rds-db2', 'aws-docdb', 'aws-elasticache', 'aws-memorydb', 'aws-keyspaces', 'aws-opensearch', 'azure-documentdb', 'azure-managed-redis', 'azure-cassandra-mi', 'google-memorystore', 'oci-cache', 'oci-opensearch', 'oci-adb-mongo'];
 
 describe('plan/os: classifyOs on real strings', () => {
   it('has at least 60 fixture strings', () => {
@@ -273,7 +276,7 @@ describe('plan/db-catalog: the services check themselves', () => {
   it('names only Terraform types the provider catalog holds, for the service’s own provider', () => {
     const have = catalogTypes();
     const missing: string[] = [];
-    for (const id of DB_SERVICE_VALUES) {
+    for (const id of CATALOGUED_DB_SERVICES) {
       const s = DB_SERVICES[id];
       const target = platformInfo(s.platform).terraform;
       expect(s.terraformTypes.length).toBeGreaterThan(0);
@@ -282,8 +285,8 @@ describe('plan/db-catalog: the services check themselves', () => {
     expect(missing).toEqual([]);
   });
 
-  it('has every service, with its platform, a source and at least one engine and HA form', () => {
-    for (const id of DB_SERVICE_VALUES) {
+  it('has every catalogued service, with its platform, a source and at least one engine and HA form', () => {
+    for (const id of CATALOGUED_DB_SERVICES) {
       const s = DB_SERVICES[id];
       expect(s.id).toBe(id);
       expect(PLATFORMS).toContain(s.platform);
@@ -292,6 +295,14 @@ describe('plan/db-catalog: the services check themselves', () => {
       expect(s.source.length).toBeGreaterThan(0);
       expect(s.licence.length).toBeGreaterThan(0);
     }
+  });
+
+  it('catalogues every core service, and only ids the option table has (the A.4.9 rows come from db-catalog-extra.ts)', () => {
+    const core = DB_SERVICE_VALUES.filter((id) => !EXTRA_IDS.includes(id));
+    for (const id of core) expect(CATALOGUED_DB_SERVICES).toContain(id);
+    for (const id of Object.keys(DB_SERVICES)) expect(DB_SERVICE_VALUES).toContain(id);
+    expect(Object.keys(DB_SERVICES)).toEqual([...CATALOGUED_DB_SERVICES]);
+    for (const id of EXTRA_IDS) if (!(id in DB_SERVICES)) for (const e of DB_ENGINE_VALUES) expect(servicesFor(e).map((s) => s.id)).not.toContain(id);
   });
 
   it('gives every engine a VM home on every platform', () => {

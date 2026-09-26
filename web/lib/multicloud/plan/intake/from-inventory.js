@@ -15,7 +15,7 @@ import { isWorkload, scopedKey,                                               } 
 import { assessVm } from '../../../vmware/vm-readiness.js';
 import { classifyVm, guestOsRaw } from '../os.js';
 import { ENV_OPTIONS, optionValue } from '../options.js';
-                                                                      
+                                                                                   
 import { intakeFromServers, isoDay,                                                          } from './adapter.js';
 
 // ---------------------------------------------------------------------------
@@ -163,8 +163,71 @@ export function movableDisks(vm             )                                   
   return { sizes, rdm: raw.length, rdmGib };
 }
 
+const tenth = (x        )         => Math.round(x * 10) / 10;
+
+/**
+ * Used GiB per movable disk, aligned with `movableDisks(vm).sizes` (boot
+ * first), or undefined when the inventory cannot say per disk:
+ *
+ *  - guest partitions (RVTools vPartition) that name their disk: the sum of
+ *    each disk's partitions; a disk no partition names counts as full, so
+ *    nothing is shrunk on a guess;
+ *  - one movable disk: its partitions' total, else the VM's consumed storage
+ *    (`usedGib`, which also counts swap and snapshots, so it errs high);
+ *  - several disks and nothing per disk: undefined (a total is not split by guesswork).
+ *
+ * Never more than the disk's own size.
+ */
+export function usedPerDisk(vm             )                       {
+  const { sizes } = movableDisks(vm);
+  if (sizes.length === 0) return undefined;
+  const disks = [...(vm.disks ?? [])].sort((a, b) => diskOrdinal(a) - diskOrdinal(b)).filter((d) => !d.raw);
+  const parts = vm.partitions ?? [];
+  const byKey = new Map                ();
+  for (const p of parts) if (p.diskKey !== undefined) byKey.set(p.diskKey, (byKey.get(p.diskKey) ?? 0) + p.consumedGib);
+  if (disks.length === sizes.length && disks.some((d) => d.key !== undefined && byKey.has(d.key))) {
+    return disks.map((d, i) => {
+      const size = sizes[i] ?? 0;
+      const used = d.key !== undefined ? byKey.get(d.key) : undefined;
+      return used === undefined ? size : tenth(Math.min(used, size));
+    });
+  }
+  if (sizes.length === 1) {
+    const size = sizes[0] ?? 0;
+    if (parts.length > 0) return [tenth(Math.min(parts.reduce((t, p) => t + p.consumedGib, 0), size))];
+    if (vm.usedGib !== undefined) return [tenth(Math.min(Math.max(0, vm.usedGib - (vm.rdmGib ?? 0)), size))];
+  }
+  return undefined;
+}
+
+/**
+ * The inventory's one reading of a running VM's demand (`days` 0): CPU as
+ * the MHz in use over the MHz it could use, memory as the guest's active
+ * memory. One sample covers no window, so `coverage` is 0 and the sizing
+ * falls back to the allocated size (addendum A.3.6); the figures are shown,
+ * not sized on. Undefined for a VM that is not running, or with neither figure.
+ */
+export function pointInTimeUtilisation(vm             )                          {
+  if (vm.powerState !== 'poweredOn') return undefined;
+  const used = vm.cpu?.overallMhz;
+  const max = vm.cpu?.maxMhz;
+  const cpu = used !== undefined && max !== undefined && max > 0 ? tenth(Math.min(100, (used / max) * 100)) : undefined;
+  const active = vm.activeMemoryGib ?? vm.memory?.activeGib;
+  const mem = active !== undefined ? tenth(active) : undefined;
+  if (cpu === undefined && mem === undefined) return undefined;
+  return {
+    days: 0,
+    samples: 1,
+    coverage: 0,
+    ...(cpu !== undefined ? { cpuP95Pct: cpu } : {}),
+    ...(mem !== undefined ? { memP95Gib: mem } : {}),
+  };
+}
+
 function factsOf(vm             , collectedAt                    )                {
   const { rdmGib } = movableDisks(vm);
+  const disksUsedGib = usedPerDisk(vm);
+  const utilisation = pointInTimeUtilisation(vm);
   const shared = (vm.disks ?? []).some((d) => /multiwriter/i.test(d.sharing ?? '') || (d.sharedBus !== undefined && !/nosharing/i.test(d.sharedBus)));
   const ips = vm.ipAddresses && vm.ipAddresses.length > 0 ? vm.ipAddresses : vm.ipAddress ? [vm.ipAddress] : [];
   const active = vm.activeMemoryGib ?? vm.memory?.activeGib;
@@ -181,6 +244,8 @@ function factsOf(vm             , collectedAt                    )              
     ...(ips.length > 0 ? { ipAddresses: [...ips] } : {}),
     readiness: assessVm(vm, collectedAt).map((f) => ({ id: f.check.id, severity: f.check.severity })),
     ...(raw ? { guestOsRaw: raw } : {}),
+    ...(disksUsedGib ? { disksUsedGib } : {}),
+    ...(utilisation ? { utilisation } : {}),
   };
 }
 

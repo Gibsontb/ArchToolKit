@@ -7,8 +7,8 @@
  * `options.ts`, which is the single source for the dropdowns and the CSV, and
  * a test proves the two agree in both directions.
  *
- * Nothing here is behaviour: this file is types, plus the one constant that
- * names the plan's file kind.
+ * Nothing here is behaviour: this file is types, plus the constants that
+ * name the file and record kinds (plan, tracker, rate card, status event).
  */
 
                                                 
@@ -74,7 +74,13 @@
                                                                                                  
                                                                                                           
                                                           
-                                                                                                                 
+/**
+ * What happens to an item (the plan's 6 Rs). `new` (addendum A.1.7) is a
+ * greenfield item: nothing moves; the engine maps it to method `rebuild` and
+ * skips the migration-only rules. The finer 11-value strategy list the
+ * providers publish is `MigrationStrategy`, kept beside this, not instead.
+ */
+                                                                                                                         
                     
                                                                                               
                                                                
@@ -115,7 +121,28 @@
                                         
                                  
                                                 
+                                                                       
+                                                                                
+                                   
+                                 
+                                       
+                                                                            
+                                   
+                                                      
+                               
+                                   
+                                        
+                           
+                               
+                                                                
+                               
+                                                                                                                             
+                                        
+                                                                     
+                              
  
+/** The A.11.1 `WorkloadDelta`, as a name for code that wants only the new fields. */
+                                                                                                                                                                    
                                 
                                    
                            
@@ -130,9 +157,29 @@
                                
                                                                       
                                    
+                                             
+                                                                                        
+                                                                                                                 
+                                                                          
+                                            
+                                     
+                                                                                    
+                                          
+                                        
+                                        
+                                                
+                                         
  
+/** The A.11.1 `WorkloadFactsDelta`. */
+                                                                                                                                                                              
+                                        
+                                                                                                                
+                                                                                                                                     
 
-                                                                                                                              
+                                                                                                                   
+                   
+                                                                     
+            
                                                                                                                 
                                                                  
 /** The Version column's values. `other` for anything not listed. */
@@ -174,6 +221,10 @@
                               
                                                
                                                 
+                                                                                    
+                                        
+                                                                     
+                              
  
 
                                                                                                             
@@ -207,7 +258,20 @@
     
                                                               
                                            
+                                             
+                          
+                                
+                                                            
+                                
+                                             
+                          
+                                    
+                                  
+                                 
+                                       
  
+/** The A.11.1 `AppDelta` (`rpo` / `rto` were already on `App`). */
+                                                                                                                                                                                      
                                         
                                                                                                        
 
@@ -311,13 +375,20 @@
 
 // ---------- decision ---------------------------------------------------------
 
-                         
+/** The services `db-catalog.ts` carries rows for itself. */
+                             
                                                                                                
                                                                                                      
                                          
                                                                                                                        
                                                                                             
                 
+/** Databases beyond the core (addendum A.4.9); their rows come from `db-catalog-extra.ts` (WP-16). */
+                              
+                                                                                                         
+                                                                     
+                                                                            
+                                                             
                           
                                     
                         
@@ -477,11 +548,56 @@
                                                        
                           
                                             
+                                                                                             
+                                   
  
-                                                                                                                                                           
+                               
+                                     
+                                           
+                                        
+                                    
+ 
+/**
+ * A move group: what is cut over together (AWS and Google "move group", Azure
+ * "dependency group", HCX "Mobility Group", OCI "migration project"). A
+ * separate entity from the wave, which is a batch of move groups in time.
+ * A single service is one move group in one wave.
+ */
+                            
+                      
+                                    
+                                                  
+                       
+                        
+                          
+                                               
+                         
+                                                                            
+                                    
+                                                                                            
+                                        
+                                  
+ 
+                                                     
+/** A wave: move groups, in order, run in one window, with its dates and gates. */
+                       
+                     
+                                      
+                                     
+                          
+                        
+                                                                       
+                           
+                                                                             
+                              
+                         
+                                  
+                                           
+                                     
+ 
                            
                                   
-                                                                                                                                        
+                                  
                                         
                                         
  
@@ -504,7 +620,11 @@
                                      
                                   
                                 
+                                                                                         
+                                              
  
+                                                                                                                                  
+                                                                                        
 
 /** Screen 9 (Generate). */
                                                                                 
@@ -515,6 +635,625 @@
                                                                                                 
                                  
                                   
+ 
+
+// ---------- modes, origins and sources (addendum A.1.7, A.3) -----------------
+
+                                                                
+                                          
+                                                                                                            
+                                                                                                           
+                            
+                                    
+                                                                                             
+                            
+                                                                           
+                       
+                         
+                            
+                           
+                                                           
+                        
+ 
+                                                                            
+                              
+                                                          
+                        
+                           
+                                  
+                            
+                              
+                              
+                              
+                              
+                              
+                              
+                            
+                            
+                            
+                               
+                                                                                                                
+ 
+                                                                            
+                                                                                                                
+
+// ---------- workload types and patterns (addendum A.4) -----------------------
+
+                          
+                                       
+                                                                                                                  
+                                                                                                                      
+                                                                                                                
+                                                                                                           
+                                                                                                   
+                                                                                                                                 
+              
+                                                                                        
+                        
+             
+                                                                                                                    
+                                                                      
+                                                             
+                                                                      
+                                                                      
+                                                           
+                                              
+                                                                             
+                                                                                                             
+               
+                                                                                                            
+                                             
+                                                                                                                            
+                                                                                                                      
+                                                                                                                                  
+                                                                                                                              
+                                                                                 
+
+// ---------- the application plan (addendum A.2) ------------------------------
+
+                                                             
+                                                                          
+                                       
+                              
+                               
+                           
+                                                                                                              
+ 
+                                
+                                       
+                      
+                        
+                               
+                                                        
+                                    
+                                                 
+ 
+                                                         
+                           
+                                       
+                                                                 
+                                     
+                        
+                                      
+                        
+                                        
+                                         
+                                                      
+ 
+                                                          
+                            
+                              
+                        
+                                                        
+                               
+                                                                                           
+                                                    
+ 
+                                                        
+                          
+                                               
+                               
+                                                    
+                                                                          
+                                        
+                         
+ 
+                                                                                  
+                                                 
+                                                    
+                                             
+                                                     
+                             
+                                    
+                                     
+                         
+                           
+                        
+ 
+                                                                 
+                                                               
+                                     
+                                            
+                              
+                          
+                                    
+                            
+                              
+                                 
+                            
+                                  
+                                       
+                        
+                     
+                          
+                                        
+                                  
+ 
+                                               
+                                                                                                                                    
+                                                    
+                          
+                
+                       
+                             
+                                 
+                                                       
+                               
+                                                          
+                                                                                  
+                                    
+                                                     
+                                
+                      
+                              
+                                         
+                             
+                               
+                                        
+                            
+                                                                                                                    
+                                                         
+                                                                            
+                                               
+                                                                              
+                                        
+                                  
+ 
+                                    
+                       
+                                  
+                                
+                               
+                           
+                                             
+                                         
+      
+                                  
+                          
+                             
+ 
+
+// ---------- sizing (addendum A.2.8) ------------------------------------------
+
+                                                                                                                
+                                                               
+                                                                          
+                                                
+                                                             
+                                             
+                                                                                                
+                               
+                                    
+                                  
+                                    
+                                
+                                        
+                                      
+                                               
+                                    
+                             
+                                     
+                                     
+                                                          
+                                                         
+ 
+                                                                                                                                        
+                            
+                                                                                            
+                       
+                                                    
+                                                      
+                          
+                                                             
+                         
+                                            
+                                           
+ 
+                                                                                                                                                                                  
+/** `overrides`: row key → chosen value. */
+                                                                                                                    
+
+// ---------- execution (addendum A.6) -----------------------------------------
+
+/** A server's move path: the generated script family that moves it. */
+                                                                                                                                        
+                                                                                                                              
+                                                              
+                                                                                                                
+/** A database's move path. */
+                                                                                                                                          
+                                                                          
+                                                                                                              
+                                                                 
+                                                                                                       
+                                                                                                                                         
+                                                                                                                               
+                                                                                                   
+                                                                                                                            
+                                                        
+                                                   
+                                            
+                                                                                       
+                                                         
+                                                    
+                                           
+                                                                                                                                                                      
+                                                                                                                        
+                                                                                                                                                                           
+                                    
+                                                                          
+                                                           
+                                                                
+                                                                        
+                                               
+                                     
+                  
+                                
+                              
+                                       
+                                                                                 
+                                
+                                
+                             
+                                         
+    
+                                                                                                                                                   
+                                                                                                                                                                      
+                                                                              
+                                                                                                      
+                                                                 
+                                               
+                                                
+                                                                               
+ 
+
+// ---------- governance (addendum A.10) ---------------------------------------
+
+                                                                                                                          
+                                                 
+                                             
+                                          
+                                                                                                                                                
+                                                     
+                                                                            
+                             
+                                    
+                                                                        
+                                                           
+                                                                           
+                      
+                                        
+ 
+
+// ---------- data-centre exit (addendum A.5.5) --------------------------------
+
+                                                                                                                            
+                                                                                         
+                                                                                  
+                            
+                      
+                                   
+                        
+                           
+                          
+                         
+                          
+                                          
+                           
+                              
+                         
+                                                                                                         
+                                                   
+ 
+                                                                                                                                         
+                                                      
+                               
+                      
+                              
+                         
+                                        
+                            
+                            
+                                         
+                        
+                          
+                              
+ 
+                                                                                                                
+                                                                                                                                                           
+/** NIST SP 800-88 media sanitisation methods. */
+                                                         
+                        
+                      
+                        
+                           
+                             
+                                 
+                                       
+                                  
+                               
+                                     
+ 
+                         
+                             
+                                   
+                                       
+                                       
+                                             
+                                          
+                                    
+ 
+
+// ---------- other records in the `plan` store (addendum A.11.2) --------------
+
+/** A utility run (the Utilities area, A.9); stored under the `changes` key. */
+                               
+                      
+                           
+                          
+                           
+                                                    
+                               
+                              
+                                 
+                       
+ 
+                                                                                                         
+                          
+                                          
+                          
+                                  
+                       
+                        
+                        
+                            
+                          
+ 
+export const RATECARD_KIND = 'archtoolkit.ratecard';
+                                                                                                                   
+/** Which page wrote an audit entry ('migration-change' is the Multi-Cloud Migration & Utilities page). */
+                                                                     
+                             
+                      
+                           
+                        
+                          
+                                      
+                           
+                           
+ 
+
+// ---------- tracker and the status contract (addendum A.11.3) ----------------
+
+                                                                                                 
+                                                                              
+                                                                        
+                                                                                                                         
+                                                                                                                  
+                                                                                                                          
+                                                                     
+/** Status-event channels that are not a move path ('change' is a Utilities run). */
+                                                                              
+                                                                   
+export const STATUS_EVENT_KIND = 'archtoolkit.migration-status';
+                              
+                                          
+                
+                          
+                         
+                                                             
+                      
+                               
+                               
+                         
+                                                       
+                        
+                            
+                           
+                             
+                           
+                                                                      
+                                      
+ 
+                                                                              
+                             
+                        
+                                
+                        
+                                       
+                            
+                         
+                                      
+                              
+                              
+                             
+                                                                                  
+                             
+                                                                                            
+                                  
+                                                            
+                              
+ 
+                                                      
+                                          
+                                                                                                                              
+                             
+                                      
+                        
+                                  
+                      
+                          
+                            
+                                              
+ 
+                                                          
+                                                                                                                                    
+                                                      
+                          
+                               
+                      
+                             
+                          
+                                     
+                      
+                            
+ 
+/** Probability and impact, 1 (low) to 5 (high). */
+                                          
+                                                                      
+                                                                       
+                           
+                      
+                        
+                         
+                        
+                                  
+                             
+                          
+                                  
+                               
+                              
+                             
+ 
+                                                              
+                                                                                                                                                                                                          
+                                                              
+                                                                         
+                                                                                        
+                            
+                      
+                         
+                                   
+                         
+                                     
+                          
+                          
+                        
+                               
+                               
+                                
+ 
+                                                                                                                             
+                               
+                      
+                            
+                              
+                         
+                        
+                                  
+                                    
+ 
+                                                                                                                                                                          
+                                                                        
+                                                                         
+                                 
+                                     
+                         
+                          
+                           
+                                 
+                                        
+ 
+                                                                                  
+                                                                                                                                     
+                                                                                                       
+                              
+                                      
+                                                  
+                                        
+                                              
+ 
+export const TRACKER_KIND = 'archtoolkit.migration-tracker';
+                          
+                                     
+                      
+                          
+                           
+                                                       
+                                          
+                                        
+                                        
+                             
+                                             
+                                     
+                                                 
+                                               
+ 
+
+// ---------- methodology: phases, strategies, methods, terms, service status ----
+// (cloud-migration-methodologies research, sections 6(a), 6(d), 6(e) 1–3)
+
+/** The unified phase model P0–P9. A single service runs the same phases for one move group in one wave. */
+                                                                                                                        
+                                                          
+/** A phase, or the governance track (G) that runs beside all of them. */
+                                                       
+/** The canonical 11 Rs; the provider's own word is `strategyLabel(s, platform)`. `repurchase` is Replace / Repurchase. */
+                                                                                                                  
+                                                           
+/** Execution methods: the provider tool that carries out a strategy (per-provider lists, research 6(e) 3). */
+                             
+                                                                                            
+                                                                                                              
+                                                                                                  
+                                                                                        
+                                                                                                             
+                                  
+                                                                                                                             
+/** Where an execution method belongs: one provider, or any. */
+                                              
+/** Concepts each provider names differently (research 6(d)). */
+                                                                                                                 
+                                                                                                         
+                                 
+/** A tool or service's standing, for warnings when a retired one is chosen. */
+                                                                                                                                                       
+                                     
+                      
+                              
+                        
+                                     
+                                                             
+                          
+                                
+                        
+                          
+                                      
+                                                    
+                        
+ 
+/** The provider tools whose lifecycle vocabulary the tracker can show. */
+                                                                                                                              
+                                         
+                               
+                                               
+                         
+                                                                             
+                             
+                                                           
+                           
+                          
+                                      
  
 
 // ---------- the plan and its output ------------------------------------------
@@ -540,7 +1279,18 @@ export const PLAN_KIND = 'archtoolkit.multicloud-plan';
                                       
                                    
                                        
+                                                                                    
+                           
+                           
+                    
+                                         
+                                
+                                         
+                                   
+                           
  
+/** The A.11.1 `PlanDelta`. */
+                                                                                                           
                                    
                                                   
                                                    

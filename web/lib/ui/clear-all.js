@@ -20,6 +20,8 @@ import { forgetInventory, resetEstateCache } from '../kit/estate-store.js';
 import { DB_NAME, run } from '../kit/idb.js';
 
 const PREFIX = 'archtoolkit.';
+/** plan/store.ts's PLAN_RECORD_KEYS, repeated here so the header does not import the planner (a test keeps them equal). */
+export const PLAN_RECORD_KEYS = ['current', 'tracker', 'changes', 'ratecard', 'audit']         ;
 
 function sweep(store                     )         {
   if (!store) return 0;
@@ -63,11 +65,12 @@ export async function clearEverything()                {
   }
   await forgetInventory();
   resetEstateCache();
-  // The Multi-Cloud Planner's plan. Deleting the database below takes it too;
-  // this is for when another open tab blocks that delete.
-  // (The store and key are plan/store.ts's PLAN_STORE and PLAN_KEY; not imported,
-  // so every page's header does not load the planner.)
-  await run('plan', 'readwrite', (store) => store.delete('current'));
+  // The plan store's records: the plan, the migration tracker, the utility log
+  // (key `changes`), the rate card and the audit trail. Deleting the database
+  // below takes them too; this is for when another open tab blocks that delete.
+  // (The store and keys are plan/store.ts's PLAN_STORE and PLAN_RECORD_KEYS; not
+  // imported, so every page's header does not load the planner.)
+  for (const key of PLAN_RECORD_KEYS) await run('plan', 'readwrite', (store) => store.delete(key));
   await deleteDatabase();
 }
 

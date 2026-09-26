@@ -8,7 +8,7 @@
 
 export {
   ENGINE_VERSION, NO_ALTERNATIVE_MARGIN, CLOSE_MARGIN, decidePlan, evaluatePlan, evaluateItem, createContext, optionSpecs,
-  effectiveEdition, compareOptions, activeRules, rule,
+  effectiveEdition, compareOptions, activeRules, rule, rulesOf, MIGRATION_ONLY_RULES, NEW_WHY,
   type AnyRule, type ItemRule, type RuleContext, type RuleResult, type OptionSpec, type EngineOptions, type ItemEvaluation,
 } from './engine.ts';
 export { whatIfItem, whatIfEstate, licenceTotals, type EstateMove, type EstateWhatIf } from './whatif.ts';

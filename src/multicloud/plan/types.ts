@@ -7,8 +7,8 @@
  * `options.ts`, which is the single source for the dropdowns and the CSV, and
  * a test proves the two agree in both directions.
  *
- * Nothing here is behaviour: this file is types, plus the one constant that
- * names the plan's file kind.
+ * Nothing here is behaviour: this file is types, plus the constants that
+ * name the file and record kinds (plan, tracker, rate card, status event).
  */
 
 import type { Platform } from '../platforms.ts';
@@ -74,7 +74,13 @@ export type Rto = '15m' | '1h' | '4h' | '24h' | '72h';
 export type OsLicence = 'li' | 'byol-sa' | 'byol-perpetual' | 'rhel-byos' | 'sles-byos' | 'free';
 export type Residency = 'any' | 'eu' | 'uk' | 'us' | 'ca' | 'de' | 'fr' | 'ch' | 'nl' | 'se' | 'au' | 'nz'
   | 'jp' | 'kr' | 'in' | 'sg' | 'ae' | 'sa' | 'br' | 'za';
-export type Disposition = 'rehost' | 'relocate' | 'replatform' | 'refactor' | 'repurchase' | 'retire' | 'retain';
+/**
+ * What happens to an item (the plan's 6 Rs). `new` (addendum A.1.7) is a
+ * greenfield item: nothing moves; the engine maps it to method `rebuild` and
+ * skips the migration-only rules. The finer 11-value strategy list the
+ * providers publish is `MigrationStrategy`, kept beside this, not instead.
+ */
+export type Disposition = 'rehost' | 'relocate' | 'replatform' | 'refactor' | 'repurchase' | 'retire' | 'retain' | 'new';
 export type Method =
   | 'replicate'      // AWS MGN / Azure Migrate / Google Migrate to VMs / OCI Cloud Migrations
   | 'rebuild'        // new VM from image + Ansible + data copy
@@ -115,7 +121,28 @@ export interface Workload {
   /** From the estate, used by rules. */
   readonly facts?: WorkloadFacts;
   readonly edited?: readonly (keyof Workload)[];
+  // ---- addendum A.11.1 and the methodology delta (all optional) ----
+  /** Where the machine runs today. Undefined on estate rows means 'vsphere'. */
+  readonly origin?: SourcePlatform;
+  readonly sourceRef?: SourceRef;
+  readonly workloadType?: WorkloadType;
+  /** false / undefined with `facts.detection` set = "detected, confirm". */
+  readonly typeConfirmed?: boolean;
+  /** Which figures `vcpu` / `ramGib` hold (A.3.6). */
+  readonly basis?: SizingBasis;
+  readonly ipStrategy?: IpStrategy;
+  /** New hostname; undefined = keep. */
+  readonly rename?: string;
+  readonly upgrade?: OsUpgrade;
+  /** Generated from a new app's components; hidden in grids. */
+  readonly synthetic?: boolean;
+  /** The provider-style strategy (11 Rs); undefined = `strategyOf(disposition)`. The execution method is the item's path. */
+  readonly strategy?: MigrationStrategy;
+  /** The move group it belongs to (`MoveGroup.id`), once grouped. */
+  readonly moveGroup?: string;
 }
+/** The A.11.1 `WorkloadDelta`, as a name for code that wants only the new fields. */
+export type WorkloadDelta = Pick<Workload, 'origin' | 'sourceRef' | 'workloadType' | 'typeConfirmed' | 'basis' | 'ipStrategy' | 'rename' | 'upgrade' | 'synthetic'>;
 export interface WorkloadFacts {
   readonly powerState?: PowerState;
   readonly rdmGib?: number;
@@ -130,9 +157,29 @@ export interface WorkloadFacts {
   readonly guestOsRaw?: string;
   /** Provisioned capacity, to compare with the movable disk total. */
   readonly provisionedGib?: number;
+  // ---- addendum A.11.1 (all optional) ----
+  /** The machine as configured, when `Workload.vcpu` / `ramGib` hold demand instead. */
+  readonly nameplate?: { readonly cores: number; readonly ramGib: number; readonly disksGib: readonly number[] };
+  /** Used GiB per disk, aligned with `Workload.disksGib` (boot first). */
+  readonly disksUsedGib?: readonly number[];
+  readonly utilisation?: Utilisation;
+  /** Utilisation measured on the target after the move (post-move right-sizing). */
+  readonly observedOnTarget?: Utilisation;
+  readonly software?: readonly string[];
+  readonly services?: readonly string[];
+  readonly listening?: readonly ListeningPort[];
+  readonly detection?: WorkloadDetection;
 }
+/** The A.11.1 `WorkloadFactsDelta`. */
+export type WorkloadFactsDelta = Pick<WorkloadFacts, 'nameplate' | 'disksUsedGib' | 'utilisation' | 'observedOnTarget' | 'software' | 'services' | 'listening' | 'detection'>;
+export type ListenProto = 'tcp' | 'udp';
+export interface ListeningPort { readonly port: number; readonly proto: ListenProto; readonly process?: string }
+export interface WorkloadDetection { readonly type: WorkloadType; readonly confidence: number; readonly evidence: readonly string[] }
 
-export type DbEngine = 'oracle' | 'sqlserver' | 'postgres' | 'mysql' | 'mariadb' | 'db2' | 'mongodb' | 'sybase-ase' | 'other';
+export type DbEngine = 'oracle' | 'sqlserver' | 'postgres' | 'mysql' | 'mariadb' | 'db2' | 'mongodb' | 'sybase-ase'
+  // addendum A.4.9
+  | 'informix' | 'sap-hana' | 'redis' | 'cassandra' | 'elasticsearch'
+  | 'other';
 export type DbEdition = 'oracle-ee' | 'oracle-se2' | 'oracle-xe' | 'sql-enterprise' | 'sql-standard' | 'sql-web'
   | 'sql-express' | 'sql-developer' | 'community' | 'commercial';
 /** The Version column's values. `other` for anything not listed. */
@@ -174,6 +221,10 @@ export interface Database {
   readonly inferred?: boolean;
   readonly source: 'estate' | 'csv' | 'manual';
   readonly edited?: readonly (keyof Database)[];
+  /** The provider-style strategy (11 Rs); undefined = derived from the decision. */
+  readonly strategy?: MigrationStrategy;
+  /** The move group it belongs to (`MoveGroup.id`), once grouped. */
+  readonly moveGroup?: string;
 }
 
 export type Special = 'none' | 'gpu' | 'large-memory' | 'physical-dongle' | 'mainframe-link' | 'ot-network';
@@ -207,7 +258,20 @@ export interface App {
   };
   readonly source?: 'estate' | 'csv' | 'manual' | 'portfolio';
   readonly edited?: readonly (keyof App)[];
+  // ---- addendum A.11.1 (all optional) ----
+  readonly kind?: AppKind;
+  readonly pattern?: AppPattern;
+  /** `PortfolioEntry.id` of the old Migration portfolio. */
+  readonly portfolioId?: string;
+  readonly frameworks?: readonly Framework[];
+  readonly users?: number;
+  readonly concurrentUsers?: number;
+  readonly businessOwner?: string;
+  readonly supportGroup?: string;
+  readonly changeWindow?: ChangeWindow;
 }
+/** The A.11.1 `AppDelta` (`rpo` / `rto` were already on `App`). */
+export type AppDelta = Pick<App, 'kind' | 'pattern' | 'portfolioId' | 'rpo' | 'rto' | 'frameworks' | 'users' | 'concurrentUsers' | 'businessOwner' | 'supportGroup' | 'changeWindow'>;
 export type EdgeKind = 'sync' | 'async';
 export interface DependencyEdge { readonly from: string; readonly to: string; readonly kind: EdgeKind }
 
@@ -311,13 +375,20 @@ export type RequirementsPatch = { readonly [K in keyof Requirements]?: Requireme
 
 // ---------- decision ---------------------------------------------------------
 
-export type DbServiceId =
+/** The services `db-catalog.ts` carries rows for itself. */
+export type CoreDbServiceId =
   | 'aws-rds' | 'aws-rds-custom' | 'aws-aurora' | 'aws-ec2' | 'aws-odb-exadata' | 'aws-odb-adb'
   | 'azure-sqldb' | 'azure-sqlmi' | 'azure-sqlvm' | 'azure-pg-flex' | 'azure-mysql-flex' | 'azure-vm'
   | 'azure-odb-exadata' | 'azure-odb-adb'
   | 'google-cloudsql' | 'google-alloydb' | 'google-gce' | 'google-odb-exadata' | 'google-odb-adb' | 'google-odb-basedb'
   | 'oci-adb' | 'oci-basedb' | 'oci-exacs' | 'oci-mysql-heatwave' | 'oci-pg' | 'oci-compute'
   | 'vmware-vm';
+/** Databases beyond the core (addendum A.4.9); their rows come from `db-catalog-extra.ts` (WP-16). */
+export type ExtraDbServiceId =
+  | 'aws-rds-db2' | 'aws-docdb' | 'aws-elasticache' | 'aws-memorydb' | 'aws-keyspaces' | 'aws-opensearch'
+  | 'azure-documentdb' | 'azure-managed-redis' | 'azure-cassandra-mi'
+  | 'google-memorystore' | 'oci-cache' | 'oci-opensearch' | 'oci-adb-mongo';
+export type DbServiceId = CoreDbServiceId | ExtraDbServiceId;
 export interface RuleHit {
   /** e.g. 'lic.oracle.ace-vcpu'. */
   readonly rule: string;
@@ -477,11 +548,56 @@ export interface WaveSettings {
   /** yyyy-mm-dd; blank means runbooks say "Week N". */
   readonly start?: string;
   readonly freezes: readonly FreezeWindow[];
+  /** Addendum A.5.4 / A.5.5.2: the team's capacity per window; undefined = unconstrained. */
+  readonly capacity?: WaveCapacity;
 }
-export interface MoveGroup { readonly id: string; readonly items: readonly ItemId[]; readonly why: string; readonly wave: number; readonly method: Method }
+export interface WaveCapacity {
+  readonly cutoversPerWindow: number;
+  readonly replicationSetupsPerDay: number;
+  readonly dbaCutoversPerWindow: number;
+  readonly parallelAppTeams: number;
+}
+/**
+ * A move group: what is cut over together (AWS and Google "move group", Azure
+ * "dependency group", HCX "Mobility Group", OCI "migration project"). A
+ * separate entity from the wave, which is a batch of move groups in time.
+ * A single service is one move group in one wave.
+ */
+export interface MoveGroup {
+  readonly id: string;
+  readonly items: readonly ItemId[];
+  /** Why these items go together, in one line. */
+  readonly why: string;
+  readonly wave: number;
+  readonly method: Method;
+  // ---- methodology delta (all optional) ----
+  readonly name?: string;
+  /** App names in the group (the items are its workloads and databases). */
+  readonly apps?: readonly string[];
+  /** The rules that formed it (e.g. 'dependency.sync', 'app', 'db.hosts-follow', 'pin'). */
+  readonly formedBy?: readonly string[];
+  readonly phase?: MigrationPhase;
+}
+export type WaveKind = 'foundation' | 'app' | 'exit';
+/** A wave: move groups, in order, run in one window, with its dates and gates. */
+export interface Wave {
+  readonly n: number;
+  /** Move group ids, in run order. */
+  readonly groups: readonly string[];
+  readonly start?: string;
+  readonly end?: string;
+  // ---- addendum A.11.1 and the methodology delta (all optional) ----
+  readonly kind?: WaveKind;
+  /** What capped the wave's size ('cutoversPerWindow', 'maxPerWave' ...). */
+  readonly limitedBy?: string;
+  readonly name?: string;
+  readonly phase?: MigrationPhase;
+  /** The gates the wave passes (A.7.3). */
+  readonly gates?: readonly GateId[];
+}
 export interface WavePlan {
   readonly settings: WaveSettings;
-  readonly waves: readonly { readonly n: number; readonly groups: readonly string[]; readonly start?: string; readonly end?: string }[];
+  readonly waves: readonly Wave[];
   readonly groups: readonly MoveGroup[];
   readonly findings: readonly Finding[];
 }
@@ -504,7 +620,11 @@ export interface IntakeSettings {
   /** '' | a customAttributes key. */
   readonly ownerAttribute: string;
   readonly mergeMode: MergeMode;
+  /** Addendum A.2.1: the app-grouping rules, in order; undefined = the default order. */
+  readonly grouping?: readonly GroupingRule[];
 }
+export type GroupingRuleKind = 'attribute' | 'folder-leaf' | 'vapp' | 'resource-pool' | 'name-regex' | 'cloud-tag' | 'csv-column';
+export interface GroupingRule { readonly rule: GroupingRuleKind; readonly key?: string }
 
 /** Screen 9 (Generate). */
 export type GeneratePart = 'terraform' | 'ansible' | 'waves' | 'bom' | 'record';
@@ -515,6 +635,625 @@ export interface GenerateSettings {
   /** 'platform' = each platform's own backend (s3 / azurerm / gcs / oci; local for vSphere). */
   readonly backend: StateBackend;
   readonly archive: ArchiveFormat;
+}
+
+// ---------- modes, origins and sources (addendum A.1.7, A.3) -----------------
+
+export type PlanMode = 'dc-exit' | 'migrate' | 'single' | 'new';
+export type AppOrigin = 'migrate' | 'new';
+export type SourcePlatform = 'vsphere' | 'hyperv' | 'ahv' | 'kvm' | 'proxmox' | 'ovirt' | 'xen' | 'physical'
+  | 'aws' | 'azure' | 'google' | 'oci' | 'power' | 'sparc' | 'itanium' | 'pa-risc' | 'mainframe' | 'other';
+export interface SourceRef {
+  readonly platform: SourcePlatform;
+  /** vCenter / SCVMM / Prism Central / engine / account-subscription-project-compartment. */
+  readonly manager?: string;
+  /** MoRef / VM GUID / extId / vmid / instance id / resource id / OCID. */
+  readonly id?: string;
+  readonly host?: string;
+  readonly cluster?: string;
+  readonly region?: string;
+  /** Physical: the Redfish address (never credentials). */
+  readonly bmc?: string;
+}
+export type SizingBasis = 'allocated' | 'utilisation' | 'observed' | 'load';
+export interface Utilisation {
+  /** The window in days; 0 = one point-in-time sample. */
+  readonly days: number;
+  readonly samples: number;
+  /** 0..1: samples / expected. */
+  readonly coverage: number;
+  readonly cpuP50Pct?: number;
+  readonly cpuP95Pct?: number;
+  readonly cpuP99Pct?: number;
+  readonly cpuMaxPct?: number;
+  readonly memP95Gib?: number;
+  readonly memMaxGib?: number;
+  readonly iopsP95?: number;
+  readonly iopsMax?: number;
+  readonly mbpsP95?: number;
+  readonly netMbpsP95?: number;
+  readonly perDisk?: readonly { readonly disk: number; readonly iopsP95?: number; readonly mbpsP95?: number }[];
+}
+export type IpStrategy = 're-ip' | 'keep-ip-l2-extension' | 'keep-ip-cloud';
+export type OsUpgrade = 'none' | 'before-move' | 'during-move' | 'rebuild' | 'extended-support' | 'accept-risk';
+
+// ---------- workload types and patterns (addendum A.4) -----------------------
+
+export type WorkloadType =
+  | 'generic-windows' | 'generic-linux'
+  | 'sap-hana' | 'sap-netweaver' | 'sap-java' | 'oracle-ebs' | 'peoplesoft' | 'jd-edwards' | 'siebel' | 'weblogic'
+  | 'exchange' | 'sharepoint' | 'dynamics-crm' | 'iis-dotnet' | 'citrix-vda' | 'citrix-infra' | 'rds-host' | 'horizon'
+  | 'file-server' | 'nas-gateway' | 'print' | 'websphere' | 'jboss' | 'tomcat' | 'ibm-mq' | 'rabbitmq' | 'kafka'
+  | 'ad-ds' | 'dns' | 'dhcp' | 'adcs' | 'ntp' | 'jump-host' | 'k8s-node' | 'openshift-node' | 'docker-host'
+  | 'db-host' | 'batch' | 'aix' | 'ibm-i' | 'solaris-sparc' | 'solaris-x86' | 'hp-ux' | 'mainframe'
+  | 'appliance-f5' | 'appliance-paloalto' | 'appliance-fortinet' | 'appliance-checkpoint' | 'appliance-cisco' | 'appliance-other'
+  | 'unknown';
+export type AppKind = 'cots' | 'packaged' | 'home-grown' | 'infrastructure' | 'unknown';
+export type AppPattern =
+  | 'generic'
+  | 'sap-s4hana' | 'sap-ecc-hana' | 'sap-ecc-anydb' | 'sap-bw' | 'sap-netweaver-java' | 'sap-po' | 'sap-hana-native'
+  | 'oracle-ebs' | 'peoplesoft' | 'jd-edwards' | 'siebel' | 'weblogic'
+  | 'exchange' | 'sharepoint' | 'dynamics-crm' | 'iis-dotnet'
+  | 'citrix-vad' | 'rds' | 'horizon' | 'file-server' | 'nas' | 'print'
+  | 'websphere' | 'jboss' | 'tomcat' | 'ibm-mq' | 'rabbitmq' | 'kafka'
+  | 'ad-ds' | 'dns' | 'dhcp' | 'adcs' | 'ntp' | 'jump-host'
+  | 'kubernetes' | 'openshift' | 'docker-host'
+  | 'aix' | 'ibm-i' | 'solaris-sparc' | 'solaris-x86' | 'hp-ux' | 'mainframe'
+  | 'appliance-f5' | 'appliance-paloalto' | 'appliance-fortinet' | 'appliance-checkpoint' | 'appliance-cisco'
+  // greenfield
+  | 'web-app' | 'api' | 'microservices' | 'batch-pipeline' | 'database' | 'file-share' | 'vdi' | 'messaging'
+  | 'static-site' | 'event-driven' | 'blank';
+export type TierPattern = 'vm' | 'vmware-service' | 'paas-web' | 'containers' | 'serverless' | 'static-site' | 'api-gateway'
+  | 'batch' | 'workflow' | 'object-storage' | 'managed-db' | 'file-service' | 'vdi-service' | 'saas' | 'sap-certified'
+  | 'managed-messaging' | 'managed-kafka' | 'managed-cache' | 'managed-search' | 'appliance' | 'specialist' | 'retire' | 'retain';
+export type ComponentTier = 'web' | 'app' | 'integration' | 'data' | 'file' | 'vdi' | 'infra' | 'edge' | 'platform' | 'other';
+export type ChangeWindow = 'weekday-night' | 'weekend' | 'any' | 'blackout-only';
+
+// ---------- the application plan (addendum A.2) ------------------------------
+
+export type AppPlanStatus = 'draft' | 'planned' | 'approved';
+export type ComponentStatus = 'ok' | 'partial' | 'unresolved' | 'invalid';
+export interface ComponentTranslation {
+  readonly platform: Platform;
+  readonly componentId: string;
+  readonly carried: number;
+  readonly dropped: readonly { readonly argument: string; readonly value: string; readonly reason: string }[];
+}
+export interface ComponentBase {
+  /** Stable: 'c:<app-slug>:<slug>'. */
+  readonly id: string;
+  readonly name: string;
+  readonly tier: ComponentTier;
+  /** Computed; stored for display after translation. */
+  readonly status?: ComponentStatus;
+  readonly translatedFrom?: ComponentTranslation;
+}
+export interface PatternComponent extends ComponentBase {
+  readonly kind: 'pattern';
+  readonly workloadType?: WorkloadType;
+  /** undefined = the pattern's default / the engine's choice. */
+  readonly tierPattern?: TierPattern;
+  /** Workload names. */
+  readonly servers: readonly string[];
+  /** Database names. */
+  readonly databases: readonly string[];
+  /** Pattern settings, 'key' → value. */
+  readonly settings: Readonly<Record<string, string>>;
+}
+export interface ResourceComponent extends ComponentBase {
+  readonly kind: 'resource';
+  /** e.g. 'aws_s3_bucket'. */
+  readonly type: string;
+  /** The Terraform page's per-resource blueprint id. */
+  readonly blueprintId: string;
+  /** The blueprint's own input ids → strings, exactly as the Terraform page saves them. */
+  readonly values: Readonly<Record<string, string>>;
+}
+export interface ConfigComponent extends ComponentBase {
+  readonly kind: 'config';
+  /** 'mig_*' / pattern role / 'mod_<fqcn>'. */
+  readonly blueprintId: string;
+  readonly values: Readonly<Record<string, string>>;
+  /** Component ids and/or workload names; [] = all servers of the app. */
+  readonly appliesTo: readonly string[];
+  readonly order: number;
+}
+export type AppComponent = PatternComponent | ResourceComponent | ConfigComponent;
+export type ComponentKind = AppComponent['kind'];
+export type IngressExposure = 'internal' | 'public';
+export type IngressLb = 'none' | 'l4' | 'l7';
+export type IngressTls = 'terminate' | 'passthrough';
+export interface AppIngress {
+  readonly fqdns: readonly string[];
+  readonly exposure: IngressExposure;
+  readonly lb: IngressLb;
+  readonly tls: IngressTls;
+  readonly waf: boolean;
+}
+export type CostClass = 'static' | 'light' | 'typical' | 'heavy';
+export type Slo = '99.0' | '99.5' | '99.9' | '99.95' | '99.99';
+export type HorizonYears = 1 | 3 | 5;
+export type NonprodPct = 10 | 25 | 50 | 100;
+export interface LoadProfile {
+  readonly users?: number;
+  readonly concurrentUsers?: number;
+  readonly peakRps?: number;
+  readonly payloadKb?: number;
+  readonly costClass?: CostClass;
+  readonly dataGib?: number;
+  readonly growthPctYear?: number;
+  readonly horizonYears?: HorizonYears;
+  readonly tps?: number;
+  readonly slo?: Slo;
+  readonly p95Ms?: number;
+  readonly environments: readonly Env[];
+  readonly nonprodPct: NonprodPct;
+}
+export type SmokeKind = 'http' | 'tcp' | 'sql';
+export interface SmokeCheck { readonly kind: SmokeKind; readonly target: string; readonly expect?: string; readonly maxMs?: number }
+export type LandingZoneMode = 'shared' | 'included';
+export interface AppPlan {
+  /** App.id. */
+  readonly app: ItemId;
+  readonly origin: AppOrigin;
+  readonly status: AppPlanStatus;
+  /** Chosen; undefined = follow the recommendation. */
+  readonly platform?: Platform;
+  /** One component set per platform used or previewed. */
+  readonly variants: Readonly<Partial<Record<Platform, readonly AppComponent[]>>>;
+  /** Pattern assessment answers. */
+  readonly answers: Readonly<Record<string, string>>;
+  readonly ingress?: AppIngress;
+  /** Origin 'new'. */
+  readonly load?: LoadProfile;
+  readonly smoke?: readonly SmokeCheck[];
+  /** 6R for migrate apps. */
+  readonly route?: Disposition;
+  readonly landingZone: LandingZoneMode;
+  readonly savedAt?: string;
+  readonly recommendation?: { readonly platform: Platform; readonly score: number; readonly engineVersion: string };
+  /** Component ids accepted as dropped on a platform. */
+  readonly leftOut?: Readonly<Partial<Record<Platform, readonly string[]>>>;
+  // ---- methodology delta (all optional) ----
+  /** The provider-style strategy (11 Rs); undefined = `strategyOf(route)`. */
+  readonly strategy?: MigrationStrategy;
+  readonly phase?: MigrationPhase;
+}
+export interface AppRecommendation {
+  readonly app: ItemId;
+  readonly perPlatform: readonly {
+    readonly platform: Platform;
+    readonly eligible: boolean;
+    readonly score: number;
+    readonly eliminatedBy: readonly string[];
+    readonly topHits: readonly RuleHit[];
+  }[];
+  readonly recommended?: Platform;
+  readonly margin: number;
+  readonly tooClose: boolean;
+}
+
+// ---------- sizing (addendum A.2.8) ------------------------------------------
+
+export type SizingConcern = 'server' | 'storage' | 'k8s' | 'database' | 'sap' | 'vdi' | 'file' | 'vcf' | 'load';
+export type Percentile = 'p50' | 'p90' | 'p95' | 'p99' | 'max';
+export type SizingPolicyBasis = 'auto' | 'allocated' | 'utilisation-only';
+export type HeadroomPct = 0 | 10 | 20 | 30 | 50;
+export type DiskBasis = 'provisioned' | 'used-plus-headroom';
+export type GrowthPctYear = 0 | 10 | 20 | 30;
+export type InstanceFamily = 'general' | 'compute' | 'memory' | 'burstable' | 'storage' | 'gpu';
+export interface SizingPolicy {
+  readonly basis: SizingPolicyBasis;
+  readonly percentile: Percentile;
+  readonly headroomPct: HeadroomPct;
+  readonly diskBasis: DiskBasis;
+  readonly growthPctYear: GrowthPctYear;
+  readonly horizonYears: HorizonYears;
+  readonly families: readonly InstanceFamily[];
+  readonly burstableInProd: boolean;
+  readonly allowArm: boolean;
+  readonly latestGeneration: boolean;
+  readonly licenceOptimised: boolean;
+  /** The load engine's planning assumptions, editable. */
+  readonly assumptions: Readonly<Record<string, number>>;
+}
+export interface SizingReason { readonly text: string; readonly fact?: string; readonly source?: string; readonly assumption?: boolean }
+export interface SizingRow {
+  /** 'server:<name>' | 'volume:<name>:<n>' | 'pool:<component>:<pool>' | 'db:<name>' | … */
+  readonly key: string;
+  readonly demand: Readonly<Record<string, number>>;
+  /** Size / class / tier / node type / host count. */
+  readonly choice: string;
+  readonly detail: Readonly<Record<string, string | number>>;
+  readonly fits: boolean;
+  readonly reasons: readonly SizingReason[];
+  readonly alternatives: readonly string[];
+}
+export interface SizingRecommendation { readonly concern: SizingConcern; readonly platform: Platform; readonly rows: readonly SizingRow[]; readonly findings: readonly Finding[] }
+/** `overrides`: row key → chosen value. */
+export interface SizingState { readonly policy: SizingPolicy; readonly overrides: Readonly<Record<string, string>> }
+
+// ---------- execution (addendum A.6) -----------------------------------------
+
+/** A server's move path: the generated script family that moves it. */
+export type MovePath = 'hcx-bulk' | 'hcx-rav' | 'hcx-vmotion' | 'hcx-cold' | 'hcx-osam' | 'xvc-vmotion' | 'vcf-import' | 'vcf-converter'
+  | 'aws-mgn' | 'azure-migrate' | 'azure-migrate-hyperv' | 'azure-migrate-agent' | 'gcp-m2vm' | 'gcp-image-import' | 'oci-ocm'
+  | 'rebuild' | 'with-db' | 'retire' | 'specialist' | 'deploy'
+  | 'sap-hsr' | 'sap-backup-restore' | 'saas-exchange' | 'saas-sharepoint' | 'k8s-velero' | 'appliance-rebuild';
+/** A database's move path. */
+export type DbMovePath = 'with-vm' | 'oracle-zdm-physical' | 'oracle-zdm-logical' | 'oracle-dataguard' | 'oracle-rman' | 'oracle-datapump'
+  | 'oci-dms' | 'aws-dms' | 'azure-dms' | 'azure-pg-migration' | 'gcp-dms'
+  | 'sql-ag-seeding' | 'sql-log-shipping' | 'sql-backup-url' | 'sql-mi-link' | 'sql-mi-lrs' | 'sql-rds-native'
+  | 'pg-logical' | 'pg-dump' | 'mysql-replication' | 'mysql-dump'
+  | 'db2-backup-restore' | 'db2-hadr' | 'ase-dump-load' | 'informix-backup-restore' | 'mongo-mongosync'
+  | 'redis-replicaof' | 'redis-rdb-import' | 'cassandra-zdm-proxy' | 'cassandra-ring-join' | 'es-snapshot-restore' | 'es-reindex-remote';
+export type DnsProvider = 'route53' | 'azure-dns' | 'azure-private-dns' | 'cloud-dns' | 'oci-dns' | 'windows-dns' | 'infoblox';
+export type LbKind = 'none' | 'aws-elbv2' | 'azure-lb' | 'gcp-neg' | 'oci-lb' | 'f5-bigip' | 'avi';
+export type DataCopyMethod = 'robocopy' | 'rsync' | 'datasync' | 'storage-mover' | 'storage-transfer' | 'azcopy' | 'rclone';
+export type LandingZoneState = 'designed' | 'generated';
+export type MgnReplication = 'agent' | 'agentless';
+export type MgnIpProtocol = 'IPV4' | 'IPV6';
+export type AzureMigrateDiskType = 'Premium_LRS' | 'PremiumV2_LRS' | 'StandardSSD_LRS';
+export type AzureSecurityType = 'TrustedLaunch' | 'None';
+export type DmsCapacityUnits = 4 | 8 | 16 | 32 | 64;
+export type HcxWindowHours = 1 | 2 | 4 | 8;
+export interface DnsZoneSetting { readonly zone: string; readonly provider: DnsProvider; readonly zoneId?: string; readonly view?: string; readonly private: boolean }
+export interface LbSetting { readonly app: string; readonly kind: LbKind; readonly pool: string; readonly port: number }
+export interface DataSetSetting { readonly workload: string; readonly source: string; readonly target: string; readonly method: DataCopyMethod; readonly exclude?: string }
+export interface ExecutionSettings {
+  readonly pathOverrides: Readonly<Record<ItemId, MovePath | DbMovePath>>;
+  readonly keepDays: Readonly<Record<Criticality, number>>;
+  readonly hypercareDays: Readonly<Record<Criticality, number>>;
+  readonly lagSeconds: { readonly server: number; readonly db: number };
+  readonly dnsZones: readonly DnsZoneSetting[];
+  readonly lbs: readonly LbSetting[];
+  readonly hcx?: {
+    readonly sourceSite: string;
+    readonly destSite: string;
+    readonly extend: readonly string[];
+    readonly mappings: readonly { readonly from: string; readonly to: string }[];
+    readonly container?: string;
+    readonly datastore?: string;
+    readonly folder?: string;
+    readonly windowHours: HcxWindowHours;
+  };
+  readonly mgn?: { readonly replication: MgnReplication; readonly serverType: string; readonly bandwidthMbps: number; readonly ip: MgnIpProtocol };
+  readonly azureMigrate?: { readonly project: string; readonly appliance: string; readonly diskType: AzureMigrateDiskType; readonly securityType: AzureSecurityType };
+  readonly m2vm?: { readonly source: string; readonly targetProject: string };
+  readonly ocm?: { readonly environment: string; readonly bucket: string; readonly schedule: string };
+  readonly dms?: { readonly maxCapacityUnits: DmsCapacityUnits };
+  readonly dataSets: readonly DataSetSetting[];
+  readonly vcfImportClusters: readonly string[];
+  readonly landingZones: Readonly<Partial<Record<Platform, LandingZoneState>>>;
+}
+
+// ---------- governance (addendum A.10) ---------------------------------------
+
+export type RaciRole = 'migration-lead' | 'app-owner' | 'infra-vmware' | 'cloud-platform' | 'network' | 'security' | 'dba'
+  | 'service-desk' | 'change-manager' | 'vendor';
+export type RaciCell = 'R' | 'A' | 'C' | 'I';
+export type RaciPhase = 'migrate' | 'run';
+export interface RaciRow { readonly activity: string; readonly phase: RaciPhase; readonly cells: Readonly<Partial<Record<RaciRole, RaciCell>>> }
+export type CrSystem = 'none' | 'servicenow' | 'csv';
+export type Cicd = 'none' | 'github-actions' | 'azure-devops' | 'gitlab-ci';
+export interface Governance {
+  readonly raci: readonly RaciRow[];
+  readonly cr: { readonly system: CrSystem; readonly perWave: boolean };
+  /** Text placed in the templates, entered by the user. */
+  readonly comms: { readonly helpdesk?: string; readonly sender?: string };
+  readonly cicd: Cicd;
+  readonly environments: readonly Env[];
+}
+
+// ---------- data-centre exit (addendum A.5.5) --------------------------------
+
+export type InfraCategory = 'network-device' | 'circuit' | 'subnet' | 'net-service' | 'storage-array' | 'backup' | 'archive'
+  | 'security-service' | 'ops-tool' | 'job' | 'telephony' | 'print' | 'ot-iot' | 'other';
+export type InfraDisposition = 'migrate' | 'replace' | 'retire' | 'stays' | 'n/a';
+export interface InfraItem {
+  readonly id: string;
+  readonly category: InfraCategory;
+  readonly name: string;
+  readonly vendor?: string;
+  readonly model?: string;
+  readonly site?: string;
+  readonly owner?: string;
+  readonly disposition?: InfraDisposition;
+  readonly target?: string;
+  readonly afterWave?: number;
+  readonly date?: string;
+  /** Category-specific columns (platform, config file, bandwidth, retention, legal hold, schedule …). */
+  readonly facts: Readonly<Record<string, string>>;
+}
+export type ExternalKind = 'partner-allowlist' | 'b2b-edi' | 'sftp' | 'inbound-api' | 'vendor-support' | 'user-access' | 'outbound-saas';
+export type ExternalDirection = 'in' | 'out' | 'both';
+export interface ExternalLink {
+  readonly id: string;
+  readonly kind: ExternalKind;
+  readonly party: string;
+  readonly direction: ExternalDirection;
+  readonly protocol: string;
+  readonly endpoint: string;
+  readonly currentIps: readonly string[];
+  readonly app?: string;
+  readonly owner?: string;
+  readonly noticeDays: number;
+}
+export type ContractKind = 'support' | 'maintenance' | 'colocation' | 'power' | 'circuit' | 'licence' | 'lease';
+export interface Contract { readonly id: string; readonly kind: ContractKind; readonly vendor: string; readonly ends: string; readonly noticeDays: number }
+/** NIST SP 800-88 media sanitisation methods. */
+export type Sanitisation = 'clear' | 'purge' | 'destroy';
+export interface Asset {
+  readonly id: string;
+  readonly kind: string;
+  readonly serial?: string;
+  readonly location?: string;
+  readonly containsData: boolean;
+  readonly sanitisation?: Sanitisation;
+  readonly certificateId?: string;
+  readonly disposedOn?: string;
+  readonly registerUpdated?: boolean;
+}
+export interface DcExit {
+  readonly exitDate?: string;
+  readonly dualRunningDays: number;
+  readonly hardwareRemovalDays: number;
+  readonly infra: readonly InfraItem[];
+  readonly external: readonly ExternalLink[];
+  readonly contracts: readonly Contract[];
+  readonly assets: readonly Asset[];
+}
+
+// ---------- other records in the `plan` store (addendum A.11.2) --------------
+
+/** A utility run (the Utilities area, A.9); stored under the `changes` key. */
+export interface ChangeRecord {
+  readonly id: string;
+  readonly utility: string;
+  readonly target: string;
+  readonly summary: string;
+  readonly values: Readonly<Record<string, string>>;
+  readonly generatedAt: string;
+  readonly appliedAt?: string;
+  readonly rolledBackAt?: string;
+  readonly cr?: string;
+}
+export type RateCategory = 'compute' | 'storage' | 'db' | 'network' | 'licence' | 'service' | 'facility';
+export interface RateRow {
+  readonly platform: Platform | 'on-prem';
+  readonly region: string;
+  readonly category: RateCategory;
+  readonly key: string;
+  readonly unit: string;
+  readonly rate: number;
+  readonly currency: string;
+  readonly source: string;
+}
+export const RATECARD_KIND = 'archtoolkit.ratecard';
+export interface RateCard { readonly kind: typeof RATECARD_KIND; readonly v: 1; readonly rows: readonly RateRow[] }
+/** Which page wrote an audit entry ('migration-change' is the Multi-Cloud Migration & Utilities page). */
+export type AuditPage = 'application-migration' | 'migration-change';
+export interface AuditEntry {
+  readonly at: string;
+  readonly page: AuditPage;
+  readonly area: string;
+  readonly action: string;
+  readonly targets: readonly string[];
+  readonly summary: string;
+  readonly role?: RaciRole;
+}
+
+// ---------- tracker and the status contract (addendum A.11.3) ----------------
+
+export type ItemState = 'planned' | 'prepared' | 'replicating' | 'in-sync' | 'testing' | 'tested'
+  | 'cutting-over' | 'cut-over' | 'validated' | 'accepted' | 'decommissioned';
+export type ItemFlag = 'blocked' | 'failed' | 'rolled-back' | 'on-hold';
+export type StepId = 'precheck' | 'prepare' | 'replicate' | 'in-sync' | 'test' | 'test-cleanup' | 'freeze' | 'final-sync'
+  | 'stop-source' | 'cutover' | 'start-target' | 'adopt' | 'dns-switch' | 'lb-switch' | 'post-config' | 'identity'
+  | 'validate' | 'commit' | 'accept' | 'rollback' | 'decommission' | 'finalize' | 'notice' | 'gate' | 'deploy' | 'manual';
+export type Outcome = 'started' | 'succeeded' | 'failed' | 'skipped';
+/** Status-event channels that are not a move path ('change' is a Utilities run). */
+export type StatusChannel = 'orchestrator' | 'dns' | 'lb' | 'change' | 'gate';
+export type StatusEventSource = 'script' | 'manual' | 'validation';
+export const STATUS_EVENT_KIND = 'archtoolkit.migration-status';
+export interface StatusEvent {
+  readonly kind: typeof STATUS_EVENT_KIND;
+  readonly v: 1;
+  readonly planId: string;
+  readonly runId: string;
+  /** UTC ISO; no user, host or path anywhere in an event. */
+  readonly at: string;
+  readonly wave: number | null;
+  readonly item: ItemId | null;
+  readonly name?: string;
+  readonly path: MovePath | DbMovePath | StatusChannel;
+  readonly step: StepId;
+  readonly outcome: Outcome;
+  readonly dryRun: boolean;
+  readonly state?: ItemState;
+  readonly detail?: string;
+  readonly data?: Readonly<Record<string, string | number | boolean>>;
+  readonly source?: StatusEventSource;
+}
+export type ItemStatusKind = 'workload' | 'database' | 'app-deploy' | 'infra';
+export interface ItemStatus {
+  readonly item: ItemId;
+  readonly kind: ItemStatusKind;
+  readonly wave: number;
+  readonly path: MovePath | DbMovePath;
+  readonly state: ItemState;
+  readonly since: string;
+  readonly flags: readonly ItemFlag[];
+  readonly lastEvent?: string;
+  readonly lastError?: string;
+  readonly rollbacks: number;
+  readonly sync?: { readonly progressPct?: number; readonly lagSeconds?: number };
+  readonly removed?: boolean;
+  /** Methodology delta: the phase the item is in; undefined = `ITEM_STATE_PHASE[state]`. */
+  readonly phase?: MigrationPhase;
+  /** Methodology delta: the move group (`MoveGroup.id`). */
+  readonly moveGroup?: string;
+}
+export type GateId = 'G1' | 'G2' | 'G3' | 'G4' | 'G5';
+export type GateDecision = 'go' | 'no-go';
+export interface GateCriterion { readonly id: string; readonly auto: boolean; readonly met: boolean; readonly detail: string }
+export interface GateRecord {
+  readonly wave: number | 'programme';
+  readonly gate: GateId;
+  readonly decision: GateDecision;
+  readonly at: string;
+  readonly role: RaciRole;
+  readonly comment?: string;
+  readonly criteria: readonly GateCriterion[];
+}
+export type SignOffScope = 'app' | 'wave' | 'plan' | 'dc';
+export type SignOffKind = 'plan-approved' | 'design-approved' | 'test-passed' | 'go' | 'accepted' | 'decom-approved' | 'lights-out';
+export type SignOffDecision = 'approved' | 'rejected';
+export interface SignOff {
+  readonly scope: SignOffScope;
+  readonly id: string;
+  readonly kind: SignOffKind;
+  readonly role: RaciRole;
+  readonly decision: SignOffDecision;
+  readonly at: string;
+  readonly comment?: string;
+}
+/** Probability and impact, 1 (low) to 5 (high). */
+export type RaidScore = 1 | 2 | 3 | 4 | 5;
+export type RiskResponse = 'avoid' | 'reduce' | 'transfer' | 'accept';
+export type RiskStatus = 'open' | 'mitigating' | 'closed' | 'occurred';
+export interface RaidRisk {
+  readonly id: string;
+  readonly risk: string;
+  readonly wave?: number;
+  readonly app?: string;
+  readonly probability: RaidScore;
+  readonly impact: RaidScore;
+  readonly owner?: string;
+  readonly response: RiskResponse;
+  readonly mitigation?: string;
+  readonly status: RiskStatus;
+  readonly reviewBy?: string;
+}
+export type AssumptionStatus = 'open' | 'confirmed' | 'false';
+export interface RaidAssumption { readonly id: string; readonly assumption: string; readonly owner?: string; readonly validateBy?: string; readonly status: AssumptionStatus; readonly evidence?: string }
+export type IssueSeverity = 'sev1' | 'sev2' | 'sev3' | 'sev4';
+export type IssueStatus = 'open' | 'in-progress' | 'resolved' | 'closed';
+export type IssueOrigin = 'manual' | 'coupling' | 'capacity' | 'validation' | 'licence';
+export interface RaidIssue {
+  readonly id: string;
+  readonly issue: string;
+  readonly severity: IssueSeverity;
+  readonly wave?: number;
+  readonly blocks: readonly string[];
+  readonly owner?: string;
+  readonly opened: string;
+  readonly due?: string;
+  readonly status: IssueStatus;
+  readonly resolution?: string;
+  readonly origin?: IssueOrigin;
+}
+export type DecisionSource = 'manual' | 'gate' | 'rollback' | 're-wave' | 'pin' | 'what-if' | 'platform-switch' | 'left-out';
+export interface RaidDecision {
+  readonly id: string;
+  readonly decision: string;
+  readonly rationale?: string;
+  readonly by?: RaciRole;
+  readonly date: string;
+  readonly source: DecisionSource;
+  readonly links: readonly string[];
+}
+export interface DecomRecord { readonly item: ItemId; readonly at: string; readonly hostsFreed?: number; readonly backupVerified: boolean; readonly cmdbUpdated: boolean }
+export type ReclaimedLicence = LicenceKind | 'vcf-core' | 'third-party';
+export type LicenceReclaimStatus = 'freed' | 'reassigned' | 'terminated';
+export interface LicenceReclaim {
+  readonly licence: ReclaimedLicence;
+  readonly count: number;
+  readonly source: string;
+  readonly freedOn: string;
+  readonly reassignedTo?: string;
+  readonly status: LicenceReclaimStatus;
+}
+export type CrStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'closed';
+export interface TrackerNotice { readonly template: string; readonly wave?: number; readonly link?: string; readonly sentAt: string }
+export interface TrackerCr { readonly id: string; readonly number?: string; readonly status: CrStatus }
+export interface TrackerRaid {
+  readonly risks: readonly RaidRisk[];
+  readonly assumptions: readonly RaidAssumption[];
+  readonly issues: readonly RaidIssue[];
+  readonly decisions: readonly RaidDecision[];
+}
+export const TRACKER_KIND = 'archtoolkit.migration-tracker';
+export interface Tracker {
+  readonly kind: typeof TRACKER_KIND;
+  readonly version: 1;
+  readonly planId: string;
+  readonly savedAt: string;
+  readonly items: Readonly<Record<ItemId, ItemStatus>>;
+  readonly events: readonly StatusEvent[];
+  readonly gates: readonly GateRecord[];
+  readonly signoffs: readonly SignOff[];
+  readonly raid: TrackerRaid;
+  readonly notices: readonly TrackerNotice[];
+  readonly crs: readonly TrackerCr[];
+  readonly decommissions: readonly DecomRecord[];
+  readonly licences: readonly LicenceReclaim[];
+}
+
+// ---------- methodology: phases, strategies, methods, terms, service status ----
+// (cloud-migration-methodologies research, sections 6(a), 6(d), 6(e) 1–3)
+
+/** The unified phase model P0–P9. A single service runs the same phases for one move group in one wave. */
+export type MigrationPhase = 'strategy' | 'discover-assess' | 'plan' | 'foundation' | 'prepare-pilot' | 'replicate-test'
+  | 'cutover' | 'hypercare' | 'decommission' | 'optimize';
+/** A phase, or the governance track (G) that runs beside all of them. */
+export type Workstream = MigrationPhase | 'governance';
+/** The canonical 11 Rs; the provider's own word is `strategyLabel(s, platform)`. `repurchase` is Replace / Repurchase. */
+export type MigrationStrategy = 'retire' | 'retain' | 'rehost' | 'relocate' | 'replatform' | 'refactor' | 'revise'
+  | 'rearchitect' | 'rebuild' | 'repurchase' | 'reimagine';
+/** Execution methods: the provider tool that carries out a strategy (per-provider lists, research 6(e) 3). */
+export type ExecutionMethod =
+  | 'aws-transform-mgn' | 'aws-vm-import' | 'aws-dms' | 'aws-datasync' | 'aws-app2container'
+  | 'azure-migrate-agentless' | 'azure-migrate-agent' | 'azure-dms' | 'azure-data-box' | 'azure-storage-mover'
+  | 'gcp-m2vm' | 'gcp-m2c' | 'gcp-image-import' | 'gcp-dms' | 'gcp-sts' | 'gcp-transfer-appliance'
+  | 'oci-ocm' | 'oci-zdm-physical' | 'oci-zdm-logical' | 'oci-dms' | 'oracle-data-guard'
+  | 'hcx-bulk' | 'hcx-vmotion' | 'hcx-cold' | 'hcx-rav' | 'hcx-osam' | 'hcx-assisted-vmotion' | 'xvc-vmotion'
+  | 'vcf-import' | 'vcf-converter'
+  | 'rebuild' | 'with-server' | 'native-db' | 'sap-hsr' | 'saas-migration' | 'k8s-velero' | 'deploy' | 'specialist' | 'none';
+/** Where an execution method belongs: one provider, or any. */
+export type MethodProvider = Platform | 'any';
+/** Concepts each provider names differently (research 6(d)). */
+export type ProviderTerm = 'framework' | 'phases' | 'move-group' | 'wave' | 'iteration' | 'factory' | 'readiness'
+  | 'sizing-basis' | 'data-quality' | 'cost-document' | 'test-run' | 'cutover' | 'rollback' | 'hypercare'
+  | 'landing-zone' | 'collector';
+/** A tool or service's standing, for warnings when a retired one is chosen. */
+export type ServiceStatusKind = 'available' | 'renamed' | 'closed-to-new-customers' | 'end-of-support' | 'retired' | 'removed' | 'reintroduced' | 'ga';
+export interface ServiceStatusEntry {
+  readonly id: string;
+  readonly platform: Platform;
+  readonly name: string;
+  readonly status: ServiceStatusKind;
+  /** ISO date of the change, where the vendor states one. */
+  readonly since?: string;
+  readonly replacement?: string;
+  readonly note: string;
+  readonly source: string;
+  readonly verification: Verification;
+  /** When the entry was last checked (ISO date). */
+  readonly asOf: string;
+}
+/** The provider tools whose lifecycle vocabulary the tracker can show. */
+export type LifecycleTool = 'aws-transform-mgn' | 'azure-migrate' | 'gcp-m2vm' | 'gcp-dms' | 'hcx-mobility-group' | 'oci-ocm';
+export interface ProviderLifecycleState {
+  readonly tool: LifecycleTool;
+  /** The provider's own name for the state. */
+  readonly label: string;
+  /** The tracker state it maps to; undefined = leaves the state as it is. */
+  readonly state?: ItemState;
+  /** A flag it raises (e.g. a "needs attention" state). */
+  readonly flag?: ItemFlag;
+  readonly source: string;
+  readonly verification: Verification;
 }
 
 // ---------- the plan and its output ------------------------------------------
@@ -540,7 +1279,18 @@ export interface Plan {
   readonly waveSettings: WaveSettings;
   readonly intake?: IntakeSettings;
   readonly generate?: GenerateSettings;
+  // ---- addendum A.11.1 (all optional; `planFromEnvelope` fills the defaults) ----
+  /** Default 'migrate'. */
+  readonly mode?: PlanMode;
+  /** Default []. */
+  readonly appPlans?: readonly AppPlan[];
+  readonly sizing?: SizingState;
+  readonly execution?: ExecutionSettings;
+  readonly governance?: Governance;
+  readonly dcExit?: DcExit;
 }
+/** The A.11.1 `PlanDelta`. */
+export type PlanDelta = Pick<Plan, 'mode' | 'appPlans' | 'sizing' | 'execution' | 'governance' | 'dcExit'>;
 export interface GeneratedProject {
   /** path → text; handed to kit/archive zip(). */
   readonly files: Readonly<Record<string, string>>;

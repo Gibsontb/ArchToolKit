@@ -16,3 +16,4 @@ export * from './db-catalog.ts';
 export * from './licensing-facts.ts';
 export * from './images.ts';
 export * from './controls.ts';
+export * from './methodology.ts';

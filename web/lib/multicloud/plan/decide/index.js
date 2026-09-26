@@ -8,7 +8,7 @@
 
 export {
   ENGINE_VERSION, NO_ALTERNATIVE_MARGIN, CLOSE_MARGIN, decidePlan, evaluatePlan, evaluateItem, createContext, optionSpecs,
-  effectiveEdition, compareOptions, activeRules, rule,
+  effectiveEdition, compareOptions, activeRules, rule, rulesOf, MIGRATION_ONLY_RULES, NEW_WHY,
                                                                                                                            
 } from './engine.js';
 export { whatIfItem, whatIfEstate, licenceTotals,                                    } from './whatif.js';

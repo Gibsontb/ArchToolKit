@@ -165,4 +165,5 @@ export const SETTINGS_KINDS                                   = {
   'archtoolkit.terraform-generator': 'the Terraform',
   'archtoolkit.ansible-generator': 'the Ansible',
   'archtoolkit.multicloud-plan': 'the Multi-Cloud Planner',
+  'archtoolkit.migration-tracker': 'the migration tracker',
 };

@@ -16,3 +16,4 @@ export * from './db-catalog.js';
 export * from './licensing-facts.js';
 export * from './images.js';
 export * from './controls.js';
+export * from './methodology.js';

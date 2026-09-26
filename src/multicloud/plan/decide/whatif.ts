@@ -7,13 +7,17 @@ import type { Platform } from '../../platforms.ts';
 import type {
   ItemDecision, ItemId, LicenceKind, LicenceTotals, Option, Plan, PlanDecision, RequirementsPatch, RuleHit,
 } from '../types.ts';
-import { createContext, decidePlan, evaluateItem, type EngineOptions } from './engine.ts';
+import { createContext, decidePlan, evaluateItem, rulesOf, type EngineOptions } from './engine.ts';
 
-/** Every option of one item, best first, with hits and licence. Empty when the id is unknown. */
+/**
+ * Every option of one item, best first, with hits and licence. Empty when the
+ * id is unknown. `options.rules` replaces the registry and `options.extraRules`
+ * adds to it, exactly as for `decidePlan`.
+ */
 export function whatIfItem(plan: Plan, id: ItemId, options: EngineOptions = {}): readonly Option[] {
   const item = plan.workloads.find((w) => w.id === id) ?? plan.databases.find((d) => d.id === id);
   if (!item) return [];
-  return evaluateItem(item, createContext(plan, options), options.rules).options;
+  return evaluateItem(item, createContext(plan, options), rulesOf(options)).options;
 }
 
 export interface EstateMove {

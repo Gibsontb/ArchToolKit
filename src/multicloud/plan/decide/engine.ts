@@ -22,6 +22,12 @@
  *   5. assignment inside the subset;
  *   6. the affinity pass (`affinity.ts`);
  *   7. margins, findings and database coupling.
+ *
+ * Callers add rules without a second engine: `extraRules` (patterns, per-app
+ * choices) are appended to the registry (or to `rules`, when that replaces it).
+ * Greenfield items (disposition `new`) are decided by the same rules, less the
+ * migration-only ones (`MIGRATION_ONLY_RULES`, or any rule with
+ * `migrationOnly: true`), which are about how a thing moves.
  */
 
 import { info, warning, type Finding } from '../../../core/findings.ts';
@@ -32,7 +38,7 @@ import type {
   App, Database, DbEdition, DbServiceId, Disposition, ItemDecision, ItemId, LicenceNeed, Method, Option, Plan,
   PlanDecision, Requirements, RuleHit, Verification, Workload,
 } from '../types.ts';
-import { isDatabase, workloadPlacement, type Placement, type PlanItem } from './disposition.ts';
+import { NEW_WHY, isDatabase, workloadPlacement, type Placement, type PlanItem } from './disposition.ts';
 import { RULES } from './rules/index.ts';
 import { buildUnits, chooseSubset, assignUnits, type Unit, type Assignment } from './estate.ts';
 import { affinityPass } from './affinity.ts';
@@ -78,6 +84,12 @@ export interface RuleContext {
   readonly placementOf: (w: Workload) => Placement;
   /** A database's disposition before its service is chosen (retire / retain / repurchase), else undefined. */
   readonly dbRouteOf: (db: Database) => Disposition | undefined;
+  /**
+   * A greenfield item: a workload whose placement is `new`; a database whose
+   * app is new (route `new`, or an app plan with origin `new`) or whose hosts
+   * are all new.
+   */
+  readonly isNew: (item: PlanItem) => boolean;
 }
 
 export interface ItemRule<T extends PlanItem = PlanItem> {
@@ -96,7 +108,21 @@ export interface ItemRule<T extends PlanItem = PlanItem> {
   readonly findings?: (item: T, ctx: RuleContext) => readonly Finding[];
   /** Findings once the item is assigned (chosen may be undefined). */
   readonly review?: (item: T, chosen: Option | undefined, ctx: RuleContext) => readonly Finding[];
+  /** About how a thing moves (deadline, relocation, readiness): skipped for greenfield items. */
+  readonly migrationOnly?: boolean;
 }
+
+/**
+ * The registry's rules that are about moving, not placing: the deadline rule
+ * and the relocate ("rehost-*") rules. Skipped for `new` items, as is any rule
+ * that sets `migrationOnly`. (The readiness-driven dispositions are skipped in
+ * `workloadPlacement`, which never gives a new item one.)
+ */
+export const MIGRATION_ONLY_RULES: ReadonlySet<string> = new Set([
+  'shape.short-timeline',
+  'shape.relocate-suits-vmware-services',
+  'shape.relocate-at-scale',
+]);
 
 /** A rule of any kind, as the registry holds them. */
 export type AnyRule = ItemRule<Workload> | ItemRule<Database> | ItemRule<PlanItem>;
@@ -109,12 +135,20 @@ export function rule<T extends PlanItem>(r: ItemRule<T>): AnyRule {
 export interface EngineOptions {
   /** Replace the registry (tests, the what-if, plug-ins). Defaults to `RULES`. */
   readonly rules?: readonly AnyRule[];
+  /** Rules appended to the registry (or to `rules`): pattern rules, per-app choices. */
+  readonly extraRules?: readonly AnyRule[];
   /** ISO date for support-date rules. Defaults to today. */
   readonly today?: string;
   /** Override the estate size seen by scale rules (the decide.ts wrapper). */
   readonly workloadCount?: number;
   /** Override the licensing facts (what-if on a policy change). */
   readonly facts?: LicensingFacts;
+}
+
+/** The rules a run uses: `rules` (default the registry), then `extraRules`. */
+export function rulesOf(options: EngineOptions = {}): readonly AnyRule[] {
+  const base = options.rules ?? RULES;
+  return options.extraRules && options.extraRules.length > 0 ? [...base, ...options.extraRules] : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +171,19 @@ export function createContext(plan: Plan, options: EngineOptions = {}): RuleCont
   }
   const placements = new Map<ItemId, Placement>();
   const appOf = (item: PlanItem): App | undefined => (item.app ? apps.get(item.app) : undefined);
+  const newAppIds = new Set((plan.appPlans ?? []).filter((p) => p.origin === 'new').map((p) => p.app));
+  const appIsNew = (item: PlanItem): boolean => {
+    const app = appOf(item);
+    return !!app && (app.route === 'new' || newAppIds.has(app.id));
+  };
+  const placementOf = (w: Workload): Placement => {
+    let p = placements.get(w.id);
+    if (!p) {
+      p = workloadPlacement(w, appOf(w), plan.requirements, today, appIsNew(w));
+      placements.set(w.id, p);
+    }
+    return p;
+  };
   return {
     plan,
     requirements: plan.requirements,
@@ -146,17 +193,16 @@ export function createContext(plan: Plan, options: EngineOptions = {}): RuleCont
     appOf,
     hostsOf: (db) => db.hosts.map((n) => workloadsByName.get(n)).filter((w): w is Workload => w !== undefined),
     databasesOf: (w) => dbsByHost.get(w.name) ?? [],
-    placementOf: (w) => {
-      let p = placements.get(w.id);
-      if (!p) {
-        p = workloadPlacement(w, appOf(w), plan.requirements, today);
-        placements.set(w.id, p);
-      }
-      return p;
-    },
+    placementOf,
     dbRouteOf: (db) => {
       const route = appOf(db)?.route;
       return route === 'retire' || route === 'retain' || route === 'repurchase' ? route : undefined;
+    },
+    isNew: (item) => {
+      if (!isDatabase(item)) return placementOf(item).disposition === 'new';
+      if (appIsNew(item)) return true;
+      const hosts = item.hosts.map((n) => workloadsByName.get(n)).filter((w): w is Workload => w !== undefined);
+      return hosts.length > 0 && hosts.every((h) => placementOf(h).disposition === 'new');
     },
   };
 }
@@ -203,10 +249,12 @@ function kindOf(item: PlanItem): 'workload' | 'database' {
 /** The rules that apply to an item (kind and gate). */
 export function activeRules(item: PlanItem, ctx: RuleContext, rules: readonly AnyRule[] = RULES): ItemRule<PlanItem>[] {
   const kind = kindOf(item);
+  const greenfield = ctx.isNew(item);
   const out: ItemRule<PlanItem>[] = [];
   for (const r0 of rules) {
     const r = r0 as ItemRule<PlanItem>;
     if (r.kind !== 'any' && r.kind !== kind) continue;
+    if (greenfield && (r.migrationOnly || MIGRATION_ONLY_RULES.has(r.id))) continue;
     if (r.applies && !r.applies(item, ctx)) continue;
     out.push(r);
   }
@@ -310,7 +358,7 @@ export interface Evaluated {
 
 /** Steps 1–3 for every item. */
 export function evaluatePlan(plan: Plan, options: EngineOptions = {}): Evaluated {
-  const rules = options.rules ?? RULES;
+  const rules = rulesOf(options);
   const ctx = createContext(plan, options);
   const evals = new Map<ItemId, ItemEvaluation>();
   for (const d of plan.databases) evals.set(d.id, evaluateItem(d, ctx, rules));
@@ -318,7 +366,7 @@ export function evaluatePlan(plan: Plan, options: EngineOptions = {}): Evaluated
   return { ctx, rules, evals };
 }
 
-/** The whole decision for a plan. */
+/** The whole decision for a plan. `options.extraRules` adds rules for this run (patterns, per-app choices). */
 export function decidePlan(plan: Plan, options: EngineOptions = {}): PlanDecision {
   const { ctx, evals } = evaluatePlan(plan, options);
   const findings: Finding[] = [];
@@ -372,6 +420,10 @@ export function decidePlan(plan: Plan, options: EngineOptions = {}): PlanDecisio
     if (route) {
       disposition = route;
       method = 'none';
+    } else if (ctx.isNew(db)) {
+      // Greenfield: built on the chosen service; nothing to move.
+      disposition = 'new';
+      method = chosen && chosen.service && DB_SERVICES[chosen.service].managed ? 'managed-db' : 'rebuild';
     } else if (hosts.length > 0 && liveHosts.length === 0) {
       disposition = 'retire';
       method = 'none';
@@ -419,7 +471,10 @@ export function decidePlan(plan: Plan, options: EngineOptions = {}): PlanDecisio
     const coupled = hostOverride.get(w.id);
     if (coupled) {
       if (coupled.managed) {
-        if (!placement.explicit) {
+        if (disposition === 'new') {
+          // A new app's database host is not built when its database is a managed service.
+          method = 'managed-db';
+        } else if (!placement.explicit) {
           disposition = 'replatform';
           method = 'managed-db';
         }
@@ -489,4 +544,4 @@ export function decidePlan(plan: Plan, options: EngineOptions = {}): PlanDecisio
   };
 }
 
-export { HOSTS_FOLLOW };
+export { HOSTS_FOLLOW, NEW_WHY };

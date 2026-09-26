@@ -5,7 +5,7 @@ import { defaultRequirements } from '../options.ts';
 import { PLAN_KIND } from '../types.ts';
 import type { App, Database, ItemDecision, Option, Plan, Requirements, Workload } from '../types.ts';
 import {
-  ENGINE_VERSION, RULES, decidePlan, rule, whatIfEstate, whatIfItem, withRules,
+  ENGINE_VERSION, RULES, decidePlan, rule, whatIfEstate, whatIfItem, withRules, MIGRATION_ONLY_RULES, methodFor,
 } from './index.ts';
 
 const TODAY = '2026-09-26';
@@ -368,5 +368,107 @@ describe('decide: engine behaviour', () => {
     for (const id of ['policy.excluded', 'lic.ms.ahb', 'lic.oracle.se2-cap', 'db.rac-needs-exadata', 'db.hosts-follow', 'shape.dc-rebuild', 'os.no-image-rebuild']) {
       expect(ids).toContain(id);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Addendum deltas: extra rules, and greenfield (disposition 'new')
+// ---------------------------------------------------------------------------
+
+describe('decide: extraRules, alongside rules and withRules', () => {
+  const ociNudge = rule<Workload>({
+    id: 'test.extra-oci',
+    kind: 'workload',
+    verification: 'I',
+    evaluate: (_w, o) => (o.platform === 'oci' ? { delta: 50, reason: 'A pattern rule prefers OCI.' } : undefined),
+  });
+  const p = () => plan({ workloads: [workload('app-01', { os: 'ubuntu-24.04', licence: 'free' })] });
+
+  it('appends extra rules to the registry for one run, without a second engine', () => {
+    const d = decidePlan(p(), { ...opts, extraRules: [ociNudge] });
+    expect(d.items['w:app-01']?.chosen?.platform).toBe('oci');
+    expect(rulesOf(d.items['w:app-01']?.chosen)).toContain('test.extra-oci');
+    // The registry itself is untouched.
+    expect(RULES.some((r) => r.id === 'test.extra-oci')).toBe(false);
+    expect(rulesOf(decidePlan(p(), opts).items['w:app-01']?.chosen)).not.toContain('test.extra-oci');
+  });
+
+  it('gives the same answer as withRules, and appends to a replaced registry too', () => {
+    const a = decidePlan(p(), { ...opts, extraRules: [ociNudge] });
+    const b = decidePlan(p(), { ...opts, rules: withRules(ociNudge) });
+    expect(a).toEqual(b);
+    const onlyExtra = decidePlan(p(), { ...opts, rules: [], extraRules: [ociNudge] });
+    expect(rulesOf(onlyExtra.items['w:app-01']?.chosen)).toEqual(['test.extra-oci']);
+  });
+
+  it('reaches the item what-if too', () => {
+    const options = whatIfItem(p(), 'w:app-01', { ...opts, extraRules: [ociNudge] });
+    expect(options[0]?.platform).toBe('oci');
+    expect(rulesOf(options[0])).toContain('test.extra-oci');
+    expect(rulesOf(whatIfItem(p(), 'w:app-01', opts)[0])).not.toContain('test.extra-oci');
+  });
+});
+
+describe('decide: greenfield items (disposition new)', () => {
+  it('maps new to method rebuild, explicitly, whatever the readiness says', () => {
+    const off = workload('svc-01', {
+      disposition: 'new',
+      facts: { powerState: 'poweredOff', sharedDisks: true, readiness: [{ id: 'retire', severity: 'note' }] },
+    });
+    const d = decidePlan(plan({ workloads: [off] }), opts).items['w:svc-01'];
+    expect(d?.disposition).toBe('new');
+    expect(d?.method).toBe('rebuild');
+    expect(d?.chosen).toBeDefined();
+    expect(methodFor('new')).toBe('rebuild');
+  });
+
+  it('treats a workload of a new app as new: by the app route, or by an app plan with origin new', () => {
+    const byRoute = decidePlan(plan({ workloads: [workload('api-01', { app: 'Orders' })], apps: [app('Orders', { route: 'new' })] }), opts);
+    expect(byRoute.items['w:api-01']?.disposition).toBe('new');
+    const withPlan: Plan = {
+      ...plan({ workloads: [workload('api-02', { app: 'Billing' })], apps: [app('Billing')] }),
+      appPlans: [{ app: 'a:Billing', origin: 'new', status: 'draft', variants: {}, answers: {}, landingZone: 'shared' }],
+    };
+    expect(decidePlan(withPlan, opts).items['w:api-02']?.disposition).toBe('new');
+    // The workload's own disposition still wins.
+    const own = decidePlan(plan({ workloads: [workload('api-03', { app: 'Orders', disposition: 'retire' })], apps: [app('Orders', { route: 'new' })] }), opts);
+    expect(own.items['w:api-03']?.disposition).toBe('retire');
+  });
+
+  it('skips the migration-only rules for new items, and keeps them for moving ones', () => {
+    const tight = { timelineMonths: 3 };
+    const moving = decidePlan(plan({ workloads: [workload('old-01')], requirements: tight }), opts).items['w:old-01'];
+    expect(moving?.options.some((o) => rulesOf(o).includes('shape.short-timeline'))).toBe(true);
+    const fresh = decidePlan(plan({ workloads: [workload('new-01', { disposition: 'new' })], requirements: tight }), opts).items['w:new-01'];
+    for (const o of fresh?.options ?? []) for (const id of MIGRATION_ONLY_RULES) expect(rulesOf(o)).not.toContain(id);
+    // Placement rules still apply: a policy exclusion still eliminates.
+    const excluded = decidePlan(plan({ workloads: [workload('new-02', { disposition: 'new' })], requirements: { allowed: ['aws'] } }), opts).items['w:new-02'];
+    expect(excluded?.chosen?.platform).toBe('aws');
+  });
+
+  it('skips a rule that marks itself migrationOnly, for new items only', () => {
+    const moveOnly = rule<Workload>({
+      id: 'test.move-only', kind: 'workload', verification: 'I', migrationOnly: true,
+      evaluate: () => ({ delta: 1, reason: 'Only about moving.' }),
+    });
+    const d = decidePlan(plan({ workloads: [workload('m-01'), workload('n-01', { disposition: 'new' })] }), { ...opts, extraRules: [moveOnly] });
+    expect(rulesOf(d.items['w:m-01']?.chosen)).toContain('test.move-only');
+    expect(rulesOf(d.items['w:n-01']?.chosen)).not.toContain('test.move-only');
+  });
+
+  it('decides a new app database as new: built on a managed service, or rebuilt with its host', () => {
+    const p = plan({
+      workloads: [workload('ord-db', { app: 'Orders', role: 'db', os: 'ubuntu-24.04', licence: 'free' })],
+      databases: [database('orders', { engine: 'postgres', edition: 'community', version: 'pg-16', licence: 'community', hosts: ['ord-db'], app: 'Orders', vcpu: 4, ramGib: 16 })],
+      apps: [app('Orders', { route: 'new' })],
+    });
+    const d = decidePlan(p, opts);
+    const db = d.items['d:orders'];
+    expect(db?.disposition).toBe('new');
+    const managed = !!db?.chosen?.service && !['aws-ec2', 'azure-vm', 'google-gce', 'oci-compute', 'vmware-vm'].includes(db.chosen.service);
+    expect(db?.method).toBe(managed ? 'managed-db' : 'rebuild');
+    const host = d.items['w:ord-db'];
+    expect(host?.disposition).toBe('new');
+    expect(host?.method).toBe(managed ? 'managed-db' : 'rebuild');
   });
 });

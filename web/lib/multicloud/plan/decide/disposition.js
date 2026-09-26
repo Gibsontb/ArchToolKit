@@ -11,6 +11,11 @@
  *    promoted (`shape.dc-rebuild`);
  *  - nothing is left in the plan with a method its disposition cannot use.
  *
+ * A greenfield item (disposition `new`, addendum A.1.7) is built, not moved:
+ * its method is `rebuild`, and the readiness-driven dispositions (powered-off
+ * retire, relocate for move blockers, replicate an unimageable EOL OS) never
+ * apply to it, because there is nothing on the source to read them from.
+ *
  * Pure, and imported by the rules at runtime, so it must not import the engine.
  */
 
@@ -52,6 +57,7 @@ export function methodFor(disposition             )         {
       return 'relocate-hcx';
     case 'replatform':
     case 'refactor':
+    case 'new':
       return 'rebuild';
     default:
       return 'none';
@@ -82,13 +88,20 @@ function place(disposition             , explicit         , why        , finding
   return { disposition, method, explicit, why, findings };
 }
 
+/** The one line the decision record prints for a greenfield item. */
+export const NEW_WHY = 'A new service: built on the target from the design; nothing moves.';
+
 /**
  * The workload's disposition and method before database coupling (the engine
  * turns a managed database's hosts into replatform / managed-db afterwards).
+ * `appIsNew`: the app is a new service (its route is `new`, or its app plan's
+ * origin is `new`); the workload's own disposition still wins over it.
  */
-export function workloadPlacement(w          , app                 , requirements              , today        )            {
+export function workloadPlacement(w          , app                 , requirements              , today        , appIsNew = false)            {
   let p           ;
-  if (w.disposition) p = place(w.disposition, true, `Set on the workload: ${w.disposition}.`);
+  if (w.disposition === 'new') p = place('new', true, NEW_WHY);
+  else if (w.disposition) p = place(w.disposition, true, `Set on the workload: ${w.disposition}.`);
+  else if (appIsNew || app?.route === 'new') p = place('new', true, `${NEW_WHY} (the app ${app?.name ?? w.app} is new)`);
   else if (isRetireCandidate(w)) p = place('retire', false, 'Powered off for more than 90 days: retire rather than migrate.');
   else if (app?.route) p = place(app.route, true, `The app ${app.name} is routed ${app.route}.`);
   else if (w.role === 'ad-dc') p = place('replatform', false, 'A domain controller is rebuilt and promoted, never replicated (USN rollback).');

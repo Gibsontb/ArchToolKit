@@ -24,6 +24,8 @@
                                                                                                     
                        
                                                                    
+                     
+                                                                                                                        
                       
 
 /** Every kind, for tests and for anything that sweeps them. */
@@ -33,6 +35,7 @@ export const HANDOFF_KINDS                         = [
   'spec-to-editor',
   'plan-to-terraform',
   'plan-to-ansible',
+  'plan-to-network',
 ];
 
 /** Bumped when a payload shape changes, so a stale entry is discarded. */

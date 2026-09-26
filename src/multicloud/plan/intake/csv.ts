@@ -13,6 +13,13 @@
  * Multi-valued cells (disks, depends on, hosts, features, CIDRs) are
  * space-separated. Rows keep, in `edited`, the columns the file actually
  * filled, so a later estate reload in merge mode does not overwrite them.
+ *
+ * `workloads.csv` also accepts the server columns of addendum A.3.2
+ * (`WORKLOAD_SOURCE_COLUMNS`: origin, source manager and id, host, BMC,
+ * workload type, p95 utilisation, software, listening ports), which is how
+ * any source without a collector (physical, IBM Power, SPARC, a CMDB) comes
+ * in. They are optional, so an old file loads as before, and `toCsv` writes
+ * them only when a row carries any of them.
  */
 
 import { warning, error, info, type Finding } from '../../../core/findings.ts';
@@ -20,11 +27,13 @@ import { parseCsv } from '../../../migration/portfolio.ts';
 import { classifyOs, defaultLicenceFor, roleFromName } from '../os.ts';
 import {
   APP_COLUMNS, DATABASE_COLUMNS, EDITIONS_BY_ENGINE, OS_OPTIONS, RPO_BY_CRITICALITY, RTO_BY_CRITICALITY, SITE_COLUMNS,
-  WAVE_PIN_OPTIONS, WORKLOAD_COLUMNS, csvHeader, itemId, optionValue, pinForWave, waveFromPin, type GridColumn, type PlanOption,
+  WAVE_PIN_OPTIONS, WORKLOAD_COLUMNS, WORKLOAD_SOURCE_COLUMNS, csvHeader, itemId, optionValue, pinForWave, waveFromPin,
+  type GridColumn, type PlanOption,
 } from '../options.ts';
 import type {
   App, Bandwidth, Circuit, Criticality, Database, DbDr, DbEdition, DbEngine, DbFeature, DbHa, DbLicence, DbServiceId,
-  DbVersionId, Disposition, Env, Latency, OsId, OsLicence, Platform, Residency, Role, Rpo, Rto, Site, Special, Workload,
+  DbVersionId, Disposition, Env, Latency, ListeningPort, OsId, OsLicence, Platform, Residency, Role, Rpo, Rto, Site, SourcePlatform,
+  SourceRef, Special, Utilisation, Workload, WorkloadFacts, WorkloadType,
 } from '../types.ts';
 import { appsForNames, defaultDbLicence, type IntakeAdapter, type IntakeResult } from './adapter.ts';
 
@@ -36,6 +45,17 @@ export const CSV_COLUMNS: Readonly<Record<CsvKind, readonly GridColumn[]>> = Obj
   apps: APP_COLUMNS,
   sites: SITE_COLUMNS,
 });
+
+/** The columns a file may carry when read: the grid's, plus (for workloads) the A.3.2 server columns. */
+export const CSV_READ_COLUMNS: Readonly<Record<CsvKind, readonly GridColumn[]>> = Object.freeze({
+  workloads: [...WORKLOAD_COLUMNS, ...WORKLOAD_SOURCE_COLUMNS],
+  databases: DATABASE_COLUMNS,
+  apps: APP_COLUMNS,
+  sites: SITE_COLUMNS,
+});
+
+/** The `servers.csv` header: `workloads.csv` with the A.3.2 server columns (the same parser reads both). */
+export const SERVERS_CSV_HEADER = csvHeader(CSV_READ_COLUMNS.workloads);
 
 export const CSV_FILES: Readonly<Record<CsvKind, string>> = Object.freeze({
   workloads: 'workloads.csv',
@@ -76,13 +96,35 @@ export function toCsv(kind: 'apps', rows: readonly App[]): string;
 export function toCsv(kind: 'sites', rows: readonly Site[]): string;
 export function toCsv(kind: CsvKind, rows: readonly object[]): string;
 export function toCsv(kind: CsvKind, rows: readonly object[]): string {
-  const columns = CSV_COLUMNS[kind];
+  const withSource = kind === 'workloads' && rows.some((r) => Object.keys(sourceCells(r as Workload)).length > 0);
+  const columns = withSource ? CSV_READ_COLUMNS.workloads : CSV_COLUMNS[kind];
   const lines = [csvHeader(columns)];
   for (const row of rows) {
-    const r = row as Record<string, unknown>;
+    const r = withSource ? { ...(row as Record<string, unknown>), ...sourceCells(row as Workload) } : (row as Record<string, unknown>);
     lines.push(columns.map((c) => csvCell(formatCell(c, r[c.key]))).join(','));
   }
   return `${lines.join('\n')}\n`;
+}
+
+/** A workload's A.3.2 server cells, by column key; only the ones it has. */
+function sourceCells(w: Workload): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  const ref = w.sourceRef;
+  const u = w.facts?.utilisation;
+  if (w.origin) out.origin = w.origin;
+  if (ref?.manager) out.sourceManager = ref.manager;
+  if (ref?.id) out.sourceId = ref.id;
+  if (ref?.host) out.host = ref.host;
+  if (ref?.bmc) out.bmc = ref.bmc;
+  if (w.workloadType) out.workloadType = w.workloadType;
+  if (u?.cpuP95Pct !== undefined) out.cpuP95Pct = u.cpuP95Pct;
+  if (u?.memP95Gib !== undefined) out.memP95Gib = u.memP95Gib;
+  if (u?.iopsP95 !== undefined) out.iopsP95 = u.iopsP95;
+  if (u?.mbpsP95 !== undefined) out.mbpsP95 = u.mbpsP95;
+  if (u && u.days > 0) out.utilDays = u.days;
+  if (w.facts?.software && w.facts.software.length > 0) out.software = w.facts.software.join('; ');
+  if (w.facts?.listening && w.facts.listening.length > 0) out.ports = w.facts.listening.map((l) => `${l.port}/${l.proto}`).join(' ');
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +141,7 @@ interface TableRow {
 }
 
 function readTable(kind: CsvKind, text: string, findings: Finding[]): TableRow[] | undefined {
-  const columns = CSV_COLUMNS[kind];
+  const columns = CSV_READ_COLUMNS[kind];
   const file = CSV_FILES[kind];
   const rows = parseCsv(text);
   const header = rows[0];
@@ -125,13 +167,13 @@ function readTable(kind: CsvKind, text: string, findings: Finding[]): TableRow[]
   const first = columns[0];
   if (!first || !taken.has(first.key)) {
     findings.push(error('plan.csv.no-name-column', `${file} has no “${first?.slug ?? 'name'}” column, so no rows were read.`, {
-      remediation: `The header should be: ${csvHeader(columns)}`,
+      remediation: `The header should be: ${csvHeader(CSV_COLUMNS[kind])}`,
     }));
     return undefined;
   }
   if (unknown.length > 0) {
     findings.push(warning('plan.csv.unknown-column', `${file}: column(s) not recognised and ignored: ${unknown.join(', ')}.`, {
-      remediation: `The header should be: ${csvHeader(columns)}`,
+      remediation: `The header should be: ${csvHeader(CSV_COLUMNS[kind])}${kind === 'workloads' ? `, optionally followed by ${csvHeader(WORKLOAD_SOURCE_COLUMNS)}` : ''}`,
     }));
   }
   const out: TableRow[] = [];
@@ -166,7 +208,7 @@ class Cells {
   }
 
   private col(key: string): GridColumn {
-    const c = CSV_COLUMNS[this.kind].find((x) => x.key === key);
+    const c = CSV_READ_COLUMNS[this.kind].find((x) => x.key === key);
     if (!c) throw new Error(`No column ${key} in ${this.kind}`);
     return c;
   }
@@ -213,6 +255,35 @@ class Cells {
     }
     this.filled.push(key);
     return n;
+  }
+
+  /** A number no greater than `max` (a percentage). */
+  bounded(key: string, max: number): number | undefined {
+    const v = this.raw(key);
+    const n = this.number(key);
+    if (n === undefined || n <= max) return n;
+    this.filled.pop();
+    this.bad(key, v, `is over ${max}`);
+    return undefined;
+  }
+
+  /** Listening ports: `1433/tcp 53/udp 443` (TCP when no protocol is given). */
+  ports(key: string): ListeningPort[] | undefined {
+    const v = this.raw(key);
+    if (!v) return undefined;
+    const out: ListeningPort[] = [];
+    for (const t of v.split(/[\s,;]+/).filter(Boolean)) {
+      const m = /^(\d{1,5})(?:\/(tcp|udp))?$/i.exec(t);
+      const port = m ? Number(m[1]) : 0;
+      if (!m || port < 1 || port > 65535) {
+        this.bad(key, t, 'is not a port (1-65535, optionally /tcp or /udp)');
+        continue;
+      }
+      const proto = (m[2]?.toLowerCase() ?? 'tcp') as ListeningPort['proto'];
+      if (!out.some((p) => p.port === port && p.proto === proto)) out.push({ port, proto });
+    }
+    if (out.length > 0) this.filled.push(key);
+    return out.length > 0 ? out : undefined;
   }
 
   list(key: string, split: RegExp = /\s+/): string[] | undefined {
@@ -348,10 +419,82 @@ export function parseWorkloadsCsv(text: string): CsvParse<Workload> {
       dependsOn: c.list('dependsOn') ?? [],
       ...(pin ? { pin } : {}),
       source: 'csv',
+      ...serverColumns(c),
     };
-    return withEdited(row, c.filled);
+    return withEdited(row, c.filled.map((k) => SOURCE_EDITED[k] ?? k).filter((k) => k !== ''));
   });
 }
+
+/**
+ * The A.3.2 cells a workloads row may carry, as fields. A type given in the
+ * file is the user's, so it counts as confirmed. The utilisation figures are
+ * p95s over `util_days` days; the file states no sample count, so `samples` is
+ * 0 and `coverage` 1 (the figures are taken as covering the window). With no
+ * `util_days` they are one reading: `days` 0 and `coverage` 0, which the
+ * sizing treats as too little to size on.
+ */
+function serverColumns(c: Cells): Partial<Workload> {
+  const origin = c.choice<SourcePlatform>('origin');
+  const manager = c.text('sourceManager');
+  const id = c.text('sourceId');
+  const host = c.text('host');
+  const bmc = c.text('bmc');
+  const workloadType = c.choice<WorkloadType>('workloadType');
+  const cpuP95Pct = c.bounded('cpuP95Pct', 100);
+  const memP95Gib = c.number('memP95Gib');
+  const iopsP95 = c.number('iopsP95');
+  const mbpsP95 = c.number('mbpsP95');
+  const utilDays = c.number('utilDays');
+  const software = c.list('software', /\s*[;|]\s*/);
+  const listening = c.ports('ports');
+
+  const out: { -readonly [K in keyof Workload]?: Workload[K] } = {};
+  if (origin) out.origin = origin;
+  if (manager || id || host || bmc) {
+    const ref: SourceRef = {
+      platform: origin ?? 'other',
+      ...(manager ? { manager } : {}),
+      ...(id ? { id } : {}),
+      ...(host ? { host } : {}),
+      ...(bmc ? { bmc } : {}),
+    };
+    out.sourceRef = ref;
+  }
+  if (workloadType) {
+    out.workloadType = workloadType;
+    out.typeConfirmed = true;
+  }
+  const facts: { -readonly [K in keyof WorkloadFacts]?: WorkloadFacts[K] } = {};
+  if ([cpuP95Pct, memP95Gib, iopsP95, mbpsP95].some((x) => x !== undefined)) {
+    const days = utilDays ?? 0;
+    const u: Utilisation = {
+      days,
+      samples: 0,
+      coverage: days > 0 ? 1 : 0,
+      ...(cpuP95Pct !== undefined ? { cpuP95Pct } : {}),
+      ...(memP95Gib !== undefined ? { memP95Gib } : {}),
+      ...(iopsP95 !== undefined ? { iopsP95 } : {}),
+      ...(mbpsP95 !== undefined ? { mbpsP95 } : {}),
+    };
+    facts.utilisation = u;
+  }
+  if (software) facts.software = software;
+  if (listening) facts.listening = listening;
+  if (Object.keys(facts).length > 0) out.facts = facts;
+  return out;
+}
+
+/**
+ * Which `Workload` field each A.3.2 column fills, for `edited`. The fact
+ * columns map to '' (left out): facts are provenance, so a fresh import may
+ * replace them, and marking `facts` edited would pin the power state and the
+ * readiness checks too.
+ */
+const SOURCE_EDITED: Readonly<Record<string, string>> = {
+  sourceManager: 'sourceRef', sourceId: 'sourceRef', host: 'sourceRef', bmc: 'sourceRef',
+  workloadType: 'workloadType',
+  cpuP95Pct: '', memP95Gib: '', iopsP95: '', mbpsP95: '', utilDays: '', software: '', ports: '',
+};
 
 /** The edition a database row starts with when the file does not say. */
 function defaultEdition(engine: DbEngine): DbEdition {

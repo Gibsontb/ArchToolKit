@@ -12,7 +12,8 @@
 
                                                 
 import { DB_SERVICE_LABELS, DB_SERVICE_VALUES, platformOfService } from './options.js';
-                                                                                                               
+                                                                                                                                
+import { DB_SERVICES_EXTRA } from './db-catalog-extra.js';
 
                                            
 
@@ -43,13 +44,18 @@ import { DB_SERVICE_LABELS, DB_SERVICE_VALUES, platformOfService } from './optio
                                      
  
 
-const ALL_ENGINES                      = ['oracle', 'sqlserver', 'postgres', 'mysql', 'mariadb', 'db2', 'mongodb', 'sybase-ase', 'other'];
+const ALL_ENGINES                      = [
+  'oracle', 'sqlserver', 'postgres', 'mysql', 'mariadb', 'db2', 'mongodb', 'sybase-ase',
+  'informix', 'sap-hana', 'redis', 'cassandra', 'elasticsearch', 'other',
+];
 /** Every HA form a self-managed VM can carry, bar the ones that need shared storage the platform lacks. */
 const VM_HA                  = ['none', 'data-guard-local', 'sql-ag', 'sql-mirroring', 'log-shipping', 'pg-streaming', 'mysql-group-replication', 'other-cluster'];
 
-                                                            
+/** A service's catalogue row: everything but the id, platform and label, which come from its id. */
+                                                                            
+                        
 
-const ROWS                                     = {
+const ROWS                                         = {
   // ---- AWS ------------------------------------------------------------------
   'aws-rds': {
     engines: ['oracle', 'sqlserver', 'postgres', 'mysql', 'mariadb', 'db2'],
@@ -425,15 +431,29 @@ const ROWS                                     = {
   },
 };
 
+const ALL_ROWS                                              = { ...ROWS, ...DB_SERVICES_EXTRA };
+
+/**
+ * The services the catalogue has a row for, in option order: every core
+ * service, plus each of the A.4.9 services once `db-catalog-extra.ts` (WP-16)
+ * carries its row. Options, `servicesFor` and the decision only ever name these.
+ */
+export const CATALOGUED_DB_SERVICES                         = Object.freeze(DB_SERVICE_VALUES.filter((id) => ALL_ROWS[id] !== undefined));
+
+/**
+ * Every catalogued service. The A.4.9 ids without a row yet are absent, so
+ * check `id in DB_SERVICES` before indexing with an id that did not come from
+ * `servicesFor` or an option (validate.ts does, for pins).
+ */
 export const DB_SERVICES                                               = Object.freeze(
   Object.fromEntries(
-    DB_SERVICE_VALUES.map((id) => [id, Object.freeze({ id, platform: platformOfService(id), label: DB_SERVICE_LABELS[id], ...ROWS[id] })]),
+    CATALOGUED_DB_SERVICES.map((id) => [id, Object.freeze({ id, platform: platformOfService(id), label: DB_SERVICE_LABELS[id], ...ALL_ROWS[id]  })]),
   )                                      ,
 );
 
 /** The services on `platform` that run `engine` (and, when given, that edition), in catalog order. */
 export function servicesFor(engine          , platform           , edition            )                           {
-  return DB_SERVICE_VALUES.map((id) => DB_SERVICES[id]).filter(
+  return CATALOGUED_DB_SERVICES.map((id) => DB_SERVICES[id]).filter(
     (s) => (platform === undefined || s.platform === platform) && s.engines.includes(engine) && (!edition || !s.editions || s.editions.includes(edition)),
   );
 }

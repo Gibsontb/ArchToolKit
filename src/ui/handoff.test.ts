@@ -145,10 +145,23 @@ describe('handoff from the Multi-Cloud Planner', () => {
     expect(peekHandoff('plan-to-terraform')?.origin).toBe('tf');
   });
 
+  it('carries device changes to the Network page, separately from the Terraform and Ansible handoffs', () => {
+    installStorage();
+    putHandoff('plan-to-terraform', 'tf', { kind: 'archtoolkit.terraform-generator' });
+    const changes = { devices: [{ name: 'edge-fw-01', vendor: 'fortios', lines: ['config firewall policy'] }] };
+    expect(putHandoff('plan-to-network', 'DC exit · wave 4 circuit cut', changes)).toBe(true);
+    const got = takeHandoff<typeof changes>('plan-to-network');
+    expect(got?.origin).toBe('DC exit · wave 4 circuit cut');
+    expect(got?.payload).toEqual(changes);
+    expect(takeHandoff('plan-to-network')).toBeNull();
+    expect(peekHandoff('plan-to-terraform')?.origin).toBe('tf');
+  });
+
   it('lists every kind once, and no longer has the dead inventory-to-multicloud', () => {
     expect(new Set(HANDOFF_KINDS).size).toBe(HANDOFF_KINDS.length);
     expect(HANDOFF_KINDS).toContain('plan-to-terraform');
     expect(HANDOFF_KINDS).toContain('plan-to-ansible');
+    expect(HANDOFF_KINDS).toContain('plan-to-network');
     expect(HANDOFF_KINDS).toContain('inventory-to-sizing');
     expect((HANDOFF_KINDS as readonly string[]).includes('inventory-to-multicloud')).toBe(false);
   });
