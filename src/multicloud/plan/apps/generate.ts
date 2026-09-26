@@ -40,6 +40,8 @@ import type {
 } from '../types.ts';
 import { compareApp } from './compare.ts';
 import { deployPaths, type DeployPath } from './deploy-paths.ts';
+import { cloudFormationFiles } from '../generate/native/cloudformation.ts';
+import { bicepFiles } from '../generate/native/bicep.ts';
 import { appPlanOf, defaultAppPlan, findApp, withAppPlan, withoutServiceSynthetics } from './components.ts';
 import { decideApps, recommendApp, recommendationDecision } from './recommend.ts';
 import { appSlice, selectedApps, sliceFolder } from './slice.ts';
@@ -256,6 +258,16 @@ export function generateAppStack(plan: Plan, appIds: readonly string[], options:
   const title = slice.apps.length === 1 ? slice.apps[0]!.name : `${plan.name} apps`;
   const deploy = deployPaths(slice, design, folder, files, title);
   Object.assign(files, deploy.files);
+
+  // AWS and Azure also get their own template formats, built from the same design.
+  const onPlatform = new Set(design.platforms.map((d) => d.platform));
+  const nativeOptions = { scope: 'apps' as const, apps: slice.apps.map((a) => a.id), ...(options.environment ? { environment: options.environment } : {}) };
+  for (const [platform, make] of [['aws', cloudFormationFiles], ['azure', bicepFiles]] as const) {
+    if (!onPlatform.has(platform)) continue;
+    const native = make(slice, decision, design, nativeOptions);
+    for (const [path, text] of Object.entries(native.files)) files[`${folder}/${path}`] = text;
+    findings.push(...native.findings);
+  }
 
   files[`${folder}/app-plan.json`] = writeSettings(planEnvelope(slice) as unknown as Json, 'json');
   if (options.record !== false) files[`${folder}/decision/app-record.md`] = appRecord(plan, slice, options);

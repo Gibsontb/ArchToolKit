@@ -330,6 +330,15 @@ describe('apps/generate', () => {
     expect(Object.keys(included.files).some((f) => /shop\/terraform\/aws\/01-landing-zone\.tf$/.test(f))).toBe(true);
   });
 
+  it("adds the cloud's own template format: CloudFormation on AWS, Bicep and ARM on Azure", () => {
+    const aws = generateAppStack(placedOn('aws'), ['shop'], { record: false, engine: ENGINE });
+    expect(Object.keys(aws.files).some((f) => /^shop\/aws-cloudformation\/.+\.yaml$/.test(f))).toBe(true);
+    expect(Object.keys(aws.files).some((f) => f.startsWith('shop/azure-bicep/'))).toBe(false);
+    const azure = generateAppStack(placedOn('azure'), ['shop'], { record: false, engine: ENGINE });
+    expect(azure.files['shop/azure-bicep/main.bicep']).toBeDefined();
+    expect(azure.files['shop/azure-bicep/azuredeploy.json']).toBeDefined();
+  });
+
   it('defaults to shared where the landing zone is designed on Migration & Utilities, else included', () => {
     const plan = placedOn('aws');
     const designed = { ...plan, execution: { landingZones: { aws: 'designed' } } } as unknown as Plan;
