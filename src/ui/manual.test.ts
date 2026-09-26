@@ -33,8 +33,7 @@ function isRedirect(html: string): boolean {
 }
 
 const pages = readdirSync(join(web, 'app'))
-  // The user's original wizard is kept byte for byte, outside the toolkit's shell.
-  .filter((name) => name.endsWith('.html') && name !== 'manual.html' && name !== 'multi-cloud-wizard.html')
+  .filter((name) => name.endsWith('.html') && name !== 'manual.html')
   .filter((name) => !isRedirect(readFileSync(join(web, 'app', name), 'utf8')));
 
 const sections = [...manual.matchAll(/<h2 id="([^"]+)">(\d+)\.\s*([^<]+)<\/h2>/g)].map((m) => ({
