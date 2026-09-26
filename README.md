@@ -290,6 +290,24 @@ their own environment inside WSL, set up by `tools/setup-ansible-wsl.sh`:
 `update-ansible.bat` runs the whole refresh — update Ansible, catalog,
 schemas, rules, validation, rebuild, tests — and asks before it commits.
 
+## Network device configuration
+
+339 changes across twelve platforms: Cisco IOS/IOS-XE, NX-OS, IOS-XR, the
+Catalyst 9800, ASA, Secure Firewall through FMC, Arista EOS, Juniper Junos,
+Aruba AOS-CX, Palo Alto PAN-OS (and Panorama), Fortinet FortiOS and F5 BIG-IP.
+Every change carries what to capture first, the configuration in the device's
+own syntax, what proves it worked and the exact back-out, plus the playbook
+that applies it (each platform's `*_config` module, its object modules, AS3,
+or one FMC API operation per task) and a change record. Steps collect into a
+change list, which also writes the whole device's configuration merged.
+
+    npm run network:validate    every blueprint, every choice: builds, module
+                                options, whole-device merge per platform, and
+                                ansible-playbook --syntax-check in WSL
+
+`update-network.bat` updates the vendor collections, revalidates everything,
+rebuilds, runs the tests, and asks before it commits.
+
 ## Multi-cloud decision matrix
 
 Not "which cloud is best" — nobody can answer that. Given a set of constraints,

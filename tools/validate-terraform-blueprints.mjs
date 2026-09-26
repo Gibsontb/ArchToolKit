@@ -30,6 +30,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { PLUGIN_CACHE, terraformEnv, terraformInit } from './terraform-init.mjs';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,7 +76,7 @@ if (blueprints.length === 0) {
 }
 
 const work = mkdtempSync(join(tmpdir(), 'archtoolkit-terraform-validate-'));
-const cache = join(tmpdir(), 'archtoolkit-tf-plugin-cache');
+const cache = PLUGIN_CACHE;
 mkdirSync(cache, { recursive: true });
 
 /** `variable "x" { type = T ... }` blocks with no default: name → type. */
@@ -133,11 +134,9 @@ blueprints.flatMap((blueprint) => variants(blueprint).map((variant) => ({ bluepr
 });
 writeFileSync(join(work, 'main.tf'), `${root.join('\n\n')}\n`);
 
-const env = { ...process.env, TF_PLUGIN_CACHE_DIR: cache, TF_IN_AUTOMATION: '1' };
+const env = terraformEnv();
 console.log(`Validating ${blueprints.length} blueprints (${modules.length} builds) in ${work}`);
-try {
-  execFileSync('terraform', ['init', '-input=false', '-no-color', '-backend=false'], { cwd: work, env, stdio: ['ignore', 'ignore', 'inherit'] });
-} catch {
+if (!terraformInit(work, env)) {
   console.error('terraform init failed.');
   process.exit(1);
 }

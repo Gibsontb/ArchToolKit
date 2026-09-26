@@ -32,6 +32,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { terraformEnv, terraformInit } from './terraform-init.mjs';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -371,10 +372,10 @@ async function generate(set) {
         .join('\n')}\n  }\n}\n`,
     );
     console.log('Downloading the providers (terraform init)…');
-    execFileSync('terraform', ['init', '-input=false', '-no-color', '-backend=false'], { cwd: work, stdio: ['ignore', 'ignore', 'inherit'] });
+    if (!terraformInit(work)) throw new Error('terraform init failed');
     console.log('Reading their schemas…');
     const schema = JSON.parse(
-      execFileSync('terraform', ['providers', 'schema', '-json'], { cwd: work, maxBuffer: 512 * 1024 * 1024 }).toString(),
+      execFileSync('terraform', ['providers', 'schema', '-json'], { cwd: work, env: terraformEnv(), maxBuffer: 512 * 1024 * 1024 }).toString(),
     ).provider_schemas;
 
     const out = {};

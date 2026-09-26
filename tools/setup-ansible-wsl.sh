@@ -25,10 +25,11 @@ fi
 
 "$VENV/bin/pip" install -q --upgrade ansible ansible-lint
 "$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" oracle.oci
-# The Juniper, Aruba and FMC config modules the network page pushes with, at
-# their newest (the ansible package lags, or does not ship them at all).
+# The network page's collections the ansible package lags on or leaves out:
+# Juniper, Aruba, FMC, ASA, PAN-OS and F5 (npm run network:validate needs them).
 "$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" \
-  junipernetworks.junos arubanetworks.aoscx cisco.fmcansible
+  junipernetworks.junos arubanetworks.aoscx cisco.fmcansible \
+  cisco.asa paloaltonetworks.panos f5networks.f5_modules f5networks.f5_bigip
 
 "$VENV/bin/ansible" --version | head -1
 echo "Ansible is in $VENV"

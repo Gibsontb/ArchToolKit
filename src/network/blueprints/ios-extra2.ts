@@ -244,10 +244,15 @@ export const IOS_EXTRA_2: readonly ChangeBlueprint[] = [
           ...vlans.map((v) => `show ip igmp snooping groups vlan ${v}`),
           'show mac address-table multicast',
         ],
-        backout: vlans.flatMap((vlan) => [
-          ...(querier ? [`no ip igmp snooping vlan ${vlan} querier`] : []),
-          ...(bool(values, 'immediate_leave', false) ? [`no ip igmp snooping vlan ${vlan} immediate-leave`] : []),
-        ]),
+        backout: [
+          ...vlans.flatMap((vlan) => [
+            ...(querier ? [`no ip igmp snooping vlan ${vlan} querier`] : []),
+            ...(bool(values, 'immediate_leave', false) ? [`no ip igmp snooping vlan ${vlan} immediate-leave`] : []),
+          ]),
+          // Report suppression is on by default: turning it off is the one thing to put back.
+          ...(bool(values, 'report_suppression', true) ? [] : ['ip igmp snooping report-suppression']),
+          '! Snooping itself stays on: it is the default, and turning it off floods multicast to every port.',
+        ],
         findings,
       };
     },
