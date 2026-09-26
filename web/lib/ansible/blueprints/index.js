@@ -24,6 +24,7 @@ import { DATABASES_PLAYBOOKS } from './databases.js';
 import { STORAGE_PLAYBOOKS } from './storage.js';
 import { PRIVATE_CLOUDS_PLAYBOOKS } from './private-clouds.js';
 import { OPERATIONS_PLAYBOOKS } from './operations.js';
+import { MIGRATION_LINUX, MIGRATION_WINDOWS } from './migration/index.js';
 
 /** The estate blueprints follow; the page opens on them when an estate is loaded. */
 function withEstate(group                , estate                      )                 {
@@ -56,8 +57,8 @@ export const ANSIBLE_BLUEPRINTS                            = withAnsibleProjectA
   GCP_ANSIBLE,
   OCI_ANSIBLE,
   withEstate(VMWARE_ANSIBLE, [inventoryBlueprint('all'), PREMIGRATION, POSTMIGRATION]),
-  withEstate(LINUX_ANSIBLE, [inventoryBlueprint('linux')]),
-  withEstate(WINDOWS_ANSIBLE, [inventoryBlueprint('windows')]),
+  withEstate({ ...LINUX_ANSIBLE, blueprints: [...LINUX_ANSIBLE.blueprints, ...MIGRATION_LINUX] }, [inventoryBlueprint('linux')]),
+  withEstate({ ...WINDOWS_ANSIBLE, blueprints: [...WINDOWS_ANSIBLE.blueprints, ...MIGRATION_WINDOWS] }, [inventoryBlueprint('windows')]),
 ].map(withModules).concat(newPlatformGroups(MODULES, {
   network: NETWORK_PLAYBOOKS,
   containers: CONTAINERS_PLAYBOOKS,
@@ -66,3 +67,18 @@ export const ANSIBLE_BLUEPRINTS                            = withAnsibleProjectA
   'private-clouds': PRIVATE_CLOUDS_PLAYBOOKS,
   operations: OPERATIONS_PLAYBOOKS,
 })), 'ansible'));
+
+let byId                                    ;
+
+/**
+ * The blueprint with this id, from any platform (the first one listed when two
+ * platforms carry it, as the migration blueprints for both families do): the
+ * lookup buildSite takes, for callers that compose a site without the page.
+ */
+export function findAnsibleBlueprint(id        )                        {
+  if (!byId) {
+    byId = new Map();
+    for (const group of ANSIBLE_BLUEPRINTS) for (const b of group.blueprints) if (!byId.has(b.id)) byId.set(b.id, b);
+  }
+  return byId.get(id);
+}

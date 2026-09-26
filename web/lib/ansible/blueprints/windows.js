@@ -2,7 +2,8 @@
  * Generic Windows hosts Ansible blueprints.
  *
  * Ported from the previous toolkit's SCENARIO_DEFS — the inputs and the play
- * structures are the originals, unchanged. What is new around them: the plays
+ * structures are the originals, except that no credential is written: join_domain
+ * and windows_local_user read vault variables, with no_log. What is new around them: the plays
  * are rendered by this toolkit's own YAML writer, a requirements.yml is derived
  * from the modules each play actually uses, and every module name is checked
  * against the committed Galaxy catalog.
@@ -51,15 +52,25 @@ const BLUEPRINTS                       = [
                 },
                 tasks: [
                   {
+                    // No fallback: without the vaulted password the join stops here, saying why.
+                    name: "Check the join password is in the vault",
+                    "ansible.builtin.assert": {
+                      that: ["(vault_domain_join_password | default('') | string | length) > 0"],
+                      fail_msg: "Set vault_domain_join_password in an ansible-vault file (group_vars/all/vault.yml) before joining the domain.",
+                      quiet: true
+                    }
+                  },
+                  {
                     name: "Join domain",
                     "microsoft.ad.membership": {
                       dns_domain_name: "{{ domain_name }}",
                       domain_admin_user: "{{ domain_user }}",
-                      domain_admin_password: "{{ domain_join_password | default('CHANGEME') }}",
-                      domain_ou_path: "{{ ou_path }}",
+                      domain_admin_password: "{{ vault_domain_join_password }}",
+                      domain_ou_path: "{{ ou_path | default(omit, true) }}",
                       state: "domain"
                     },
-                    register: "domain_state"
+                    register: "domain_state",
+                    no_log: true
                   },
                   {
                     name: "Reboot if domain join changed and reboot_after is true",
@@ -194,7 +205,13 @@ const BLUEPRINTS                       = [
     HOSTS_INPUT,
 
             { id: "username", label: "Username", control: 'text', default: "svc_ansible", hint: "Local account" },
-            { id: "password", label: "Password", control: 'text', default: "CHANGE_ME!", hint: "Use vault/secret in real life" },
+            {
+              id: "password_var",
+              label: "Password (vault variable)",
+              control: 'text',
+              default: "vault_windows_local_user_password",
+              hint: "The name of the ansible-vault variable that holds it, not the password"
+            },
             {
               id: "group",
               label: "Primary group",
@@ -204,8 +221,11 @@ const BLUEPRINTS                       = [
             }
           ],
     emits: [],
-    build: (values                 , name        ) =>
-      playbookFiles(
+    build: (values                 , name        ) => {
+      // Only a variable name is accepted; the password itself lives in the vault.
+      const raw = str(values, 'password_var', 'vault_windows_local_user_password').replace(/^\{\{\s*|\s*\}\}$/g, '');
+      const passwordVar = /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : 'vault_windows_local_user_password';
+      const built = playbookFiles(
         ((vals                , hosts        ) => {
             return [
               {
@@ -214,18 +234,26 @@ const BLUEPRINTS                       = [
                 gather_facts: false,
                 vars: {
                   username: vals.username,
-                  password: vals.password,
                   group: vals.group
                 },
                 tasks: [
                   {
+                    name: `Check ${passwordVar} is set`,
+                    "ansible.builtin.assert": {
+                      that: [`(${passwordVar} | default('') | string | length) > 0`],
+                      fail_msg: `Set ${passwordVar} in an ansible-vault file (group_vars/all/vault.yml).`,
+                      quiet: true
+                    }
+                  },
+                  {
                     name: "Ensure user exists",
                     "ansible.windows.win_user": {
                       name: "{{ username }}",
-                      password: "{{ password }}",
+                      password: `{{ ${passwordVar} }}`,
                       groups: "{{ group }}",
                       state: "present"
-                    }
+                    },
+                    no_log: true
                   }
                 ]
               }
@@ -233,7 +261,24 @@ const BLUEPRINTS                       = [
           })(values, str(values, 'hosts', 'all')),
         name,
         'Identity – Local user',
-      ),
+      );
+      return {
+        ...built,
+        files: {
+          ...built.files,
+          // What the playbook needs and this file must not hold: the vault variable, by name.
+          'group_vars/all.yml': [
+            '# Values the playbook needs and has no answer for yet.',
+            '# A vault_ value is a secret: put it in an ansible-vault encrypted file',
+            '# (ansible-vault create group_vars/all/vault.yml), never here.',
+            '---',
+            "# The local user's password",
+            `# ${passwordVar}: set in vault.yml, not here`,
+            '',
+          ].join('\n'),
+        },
+      };
+    },
   },
 ];
 

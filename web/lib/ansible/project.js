@@ -55,6 +55,15 @@ export function playHosts(playbook        )           {
                             
                                       
                                     
+     
+                                                                             
+                                                                        
+                                                                             
+                                
+     
+                              
+                                                                      
+                                      
  
 
 /** Group names a host pattern like `web:&prod:!old` refers to. */
@@ -75,7 +84,24 @@ function groupsIn(pattern        )           {
  * with the connection settings the group needs.
  */
 export function inventoryYaml(needs                )         {
-  const groups = [...new Set(needs.hosts.flatMap(groupsIn))];
+  const groups = [...new Set([...needs.hosts.flatMap(groupsIn), ...(needs.groups ?? []).flatMap(groupsIn)])];
+  if (needs.skeleton) {
+    const skeleton = [
+      '---',
+      '# The groups the playbooks run against, with no hosts: the hosts come from',
+      '# the other inventory sources beside this file (the dynamic inventory',
+      '# configs, or hosts_<platform>.yml written from terraform output), and the',
+      '# connection settings from group_vars.',
+      '',
+      'all:',
+    ];
+    if (groups.length === 0) skeleton.push('  children: {}');
+    else {
+      skeleton.push('  children:');
+      for (const g of [...groups].sort()) skeleton.push(`    ${g}: {}`);
+    }
+    return `${skeleton.join('\n')}\n`;
+  }
   const lines = [
     '---',
     '# Starting inventory, ansible.cfg points at it, so',
@@ -140,20 +166,30 @@ export function inventoryYaml(needs                )         {
   return `${lines.join('\n')}\n`;
 }
 
-export const ANSIBLE_CFG = [
-  '# Ansible reads this when it is run from this',
-  '# directory (and the directory is not world-writable).',
-  '',
-  '[defaults]',
-  'inventory = inventory/hosts.yml',
-  '# Left on: it is the only check that the host answering is the one meant.',
-  'host_key_checking = True',
-  '',
-  '[inventory]',
-  '# A mistake in the inventory fails the run instead of being skipped.',
-  'unparsed_is_failed = True',
-  '',
-].join('\n');
+/**
+ * ansible.cfg for a project. `inventory` is the file or folder Ansible reads
+ * (default inventory/hosts.yml); `rolesPath` adds roles_path, for a project
+ * whose playbooks are in a folder and whose roles are at the top.
+ */
+export function ansibleCfg(options                                                               = {})         {
+  return [
+    '# Ansible reads this when it is run from this',
+    '# directory (and the directory is not world-writable).',
+    '',
+    '[defaults]',
+    `inventory = ${options.inventory ?? 'inventory/hosts.yml'}`,
+    ...(options.rolesPath ? ['# Roles are found here from playbooks in any folder.', `roles_path = ${options.rolesPath}`] : []),
+    '# Left on: it is the only check that the host answering is the one meant.',
+    'host_key_checking = True',
+    '',
+    '[inventory]',
+    '# A mistake in the inventory fails the run instead of being skipped.',
+    'unparsed_is_failed = True',
+    '',
+  ].join('\n');
+}
+
+export const ANSIBLE_CFG = ansibleCfg();
 
 function readme(playbooks                   , apiPlay         , hasRequirements         )         {
   const first = playbooks[0] ?? 'playbook.yml';

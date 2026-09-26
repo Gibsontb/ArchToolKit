@@ -8,9 +8,20 @@
  *   site.yml           imports each item, in list order
  *   NN-<name>.yml      one playbook per item
  *   group_vars/all.yml the answers more than one item gave the same way
- *   requirements.yml   every collection the items use, merged and pinned
+ *   requirements.yml   every collection (and role) the items use, merged and pinned
  *   inventory/hosts.yml  a starting inventory, with the hosts the plays name
  *   README.md          what it does and how to run it
+ *
+ * What an item writes beside its playbook is kept too: its roles/, templates/
+ * and files/ (the same file from two items is written once; two different
+ * ones keep the first, with a warning), its group_vars/<group>.yml merged key
+ * by key, and its host_vars/.
+ *
+ * With `playbookDir` the playbooks go in that folder and site.yml imports
+ * them from there. Ansible reads group_vars/ and host_vars/ beside the
+ * inventory or beside the playbook that is running, not beside site.yml, so
+ * in that layout they are written under inventory/, and templates/ and files/
+ * beside the playbooks; roles/ stays at the top, found through roles_path.
  *
  * Two plays cannot pass values to each other the way two Terraform resources
  * can — a registered variable belongs to the play that registered it. What
@@ -20,11 +31,13 @@
  * changed in one place.
  */
 
-import { ANSIBLE_CFG, API_COLLECTIONS, inventoryYaml, requiredCollections, WINDOWS_COLLECTIONS } from './project.ts';
+import { ansibleCfg, API_COLLECTIONS, inventoryYaml, requiredCollections, WINDOWS_COLLECTIONS } from './project.ts';
 import { info, warning, type Finding } from '../core/findings.ts';
 import { defaultValues } from '../kit/blueprint.ts';
 import { numbered, slug, type BlueprintLookup, type StackBuild, type StackItem, type StackReference } from '../kit/stack.ts';
 import type { BlueprintValues } from '../kit/blueprint.ts';
+import { readYaml, type YamlData } from '../core/yaml-read.ts';
+import { renderYaml, type YamlValue } from './yaml.ts';
 
 /** Controls whose value can be swapped for a `{{ variable }}` without breaking it. */
 const FREE_TEXT = new Set(['text', 'textarea', 'combo']);
@@ -44,6 +57,24 @@ function variableName(inputId: string): string {
   return RESERVED.has(inputId) ? `site_${inputId}` : inputId;
 }
 
+export interface SiteOptions {
+  readonly stackName?: string;
+  /**
+   * Write the playbooks under this folder (e.g. `playbooks`): site.yml imports
+   * `<dir>/NN-*.yml`, group_vars/ and host_vars/ go under inventory/, and
+   * templates/ and files/ beside the playbooks.
+   */
+  readonly playbookDir?: string;
+  /** NN in NN-<name>.yml for each item; the default is its position, from 01. */
+  readonly playbookNumber?: (item: StackItem, index: number) => number;
+  /**
+   * 'skeleton': inventory/hosts.yml lists the groups the plays name and no
+   * hosts, for a caller that writes the inventories (dynamic plugin configs,
+   * hosts from terraform output) itself. Default 'starting'.
+   */
+  readonly inventory?: 'starting' | 'skeleton';
+}
+
 /**
  * YAML says a value starting with `{` opens a flow mapping, so `name: {{ x }}`
  * is a parse error. The templates were written for literal answers; quote the
@@ -53,19 +84,35 @@ export function quoteJinjaScalars(yaml: string): string {
   return yaml.replace(/^(\s*(?:- )?[A-Za-z0-9_.-]+:\s+)(\{\{[^\n]*\}\})\s*$/gm, (_all, head: string, value: string) => `${head}"${value}"`);
 }
 
-/** The collections a generated requirements.yml lists, with their version. */
-function readRequirements(text: string): Map<string, string> {
-  const out = new Map<string, string>();
-  let name: string | undefined;
-  for (const line of text.split('\n')) {
-    const n = /^\s*-\s*name:\s*(\S+)/.exec(line);
-    if (n) {
-      name = n[1] as string;
-      out.set(name, '');
-      continue;
-    }
-    const v = /^\s*version:\s*'?([^'\n]+)'?/.exec(line);
-    if (v && name) out.set(name, (v[1] as string).trim().replace(/'$/, ''));
+interface Requirements {
+  readonly collections: Map<string, string>;
+  readonly roles: Map<string, Readonly<Record<string, string>>>;
+}
+
+function isMap(v: unknown): v is Record<string, YamlData> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** The collections (with their version) and roles a generated requirements.yml lists. */
+function readRequirements(text: string): Requirements {
+  const out: Requirements = { collections: new Map(), roles: new Map() };
+  let doc: YamlData | undefined;
+  try {
+    doc = readYaml(text).documents[0];
+  } catch {
+    doc = undefined;
+  }
+  // A requirements file that is only a list is a list of collections.
+  const map: Record<string, YamlData> = isMap(doc) ? doc : Array.isArray(doc) ? { collections: doc } : {};
+  for (const entry of Array.isArray(map.collections) ? map.collections : []) {
+    if (typeof entry === 'string') out.collections.set(entry, '');
+    else if (isMap(entry) && typeof entry.name === 'string') out.collections.set(entry.name, entry.version === undefined || entry.version === null ? '' : String(entry.version));
+  }
+  for (const entry of Array.isArray(map.roles) ? map.roles : []) {
+    if (!isMap(entry)) continue;
+    const name = String(entry.name ?? entry.src ?? '');
+    if (!name) continue;
+    out.roles.set(name, Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== null && typeof v !== 'object').map(([k, v]) => [k, String(v)])));
   }
   return out;
 }
@@ -77,6 +124,29 @@ function hostsIn(playbook: string): string[] {
     .filter((h) => h !== '' && !h.includes('{{'));
 }
 
+/** The top-level keys a group_vars file sets, in order; undefined when it does not read as a mapping. */
+function readVars(text: string): Map<string, YamlData> | undefined {
+  try {
+    const doc = readYaml(text).documents[0];
+    if (doc === null || doc === undefined) return new Map();
+    return isMap(doc) ? new Map(Object.entries(doc)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where an item's extra file goes in the site, or null when the site does not keep it. */
+function placeOf(path: string, playbookDir: string): { kind: 'roles' | 'beside' | 'host_vars' | 'group_vars' | 'all'; to: string } | null {
+  const varsBase = playbookDir ? 'inventory/' : '';
+  const besideBase = playbookDir ? `${playbookDir}/` : '';
+  if (path.startsWith('roles/')) return { kind: 'roles', to: path };
+  if (path.startsWith('templates/') || path.startsWith('files/')) return { kind: 'beside', to: `${besideBase}${path}` };
+  if (path.startsWith('host_vars/')) return { kind: 'host_vars', to: `${varsBase}${path}` };
+  if (path === 'group_vars/all.yml') return { kind: 'all', to: `${varsBase}${path}` };
+  if (/^group_vars\/[^/]+\.ya?ml$/.test(path)) return { kind: 'group_vars', to: `${varsBase}${path}` };
+  return null;
+}
+
 /**
  * Assemble the items into one site playbook.
  *
@@ -86,10 +156,12 @@ function hostsIn(playbook: string): string[] {
  * too, empty if nothing supplies it, so `ansible-playbook` fails with a clear
  * "undefined variable" rather than a silent empty string.
  */
-export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLookup, options: { stackName?: string } = {}): StackBuild {
+export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLookup, options: SiteOptions = {}): StackBuild {
   const findings: Finding[] = [];
   const files: Record<string, string> = {};
   const references: StackReference[] = [];
+  const playbookDir = (options.playbookDir ?? '').trim().replace(/^\.?\/+|\/+$/g, '');
+  const varsBase = playbookDir ? 'inventory/' : '';
 
   if (items.length === 0) {
     return { files: {}, findings: [info('ansible.site.empty', 'Nothing in the build list yet.', {})], references: [] };
@@ -115,6 +187,9 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
       }
       if (value.length < 3) continue;
       if (SECRET_NAME.test(input.id)) continue;
+      // A play's hosts are resolved before any inventory variable exists, so
+      // `hosts: "{{ site_hosts }}"` would be undefined: the pattern stays literal.
+      if (input.id === 'hosts') continue;
       const seen = shared.get(input.id);
       if (!seen) shared.set(input.id, { value, items: [item.label] });
       else if (seen.value === value) seen.items.push(item.label);
@@ -129,7 +204,7 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
     hoisted.set(id, { name, value: seen.value });
     findings.push(
       info('ansible.site.hoisted', `${seen.items.join(' and ')} all answer ${id} with ${seen.value}; it is now ${name} in group_vars/all.yml, and they reference it.`, {
-        path: 'group_vars/all.yml',
+        path: `${varsBase}group_vars/all.yml`,
       }),
     );
   }
@@ -149,7 +224,7 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
     variables.set(name, '');
     findings.push(
       warning('ansible.site.undefined-variable', `${users.join(' and ')} use {{ ${name} }}, which nothing sets. group_vars/all.yml now declares it, with no value.`, {
-        path: 'group_vars/all.yml',
+        path: `${varsBase}group_vars/all.yml`,
         remediation: 'Give it a value there, or pass it with -e on the command line.',
       }),
     );
@@ -157,11 +232,19 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
 
   const names = new Set<string>();
   const imports: string[] = [];
+  const playbooks: { file: string; label: string }[] = [];
   const collections = new Map<string, { version: string; from: string }>();
+  const roleRequirements = new Map<string, Readonly<Record<string, string>>>();
   const hosts = new Set<string>();
   /** Host patterns of the plays that call an API, and of the ones that manage hosts. */
   const apiHosts = new Set<string>();
   const hostPlayHosts = new Set<string>();
+  /** Files kept from the items: path → [text, item that wrote it]. */
+  const kept = new Map<string, { text: string; from: string }>();
+  /** group_vars/<g>.yml merged: path → key → [value, item]. */
+  const groupVars = new Map<string, Map<string, { value: YamlData; from: string }>>();
+  /** Names the items' own group_vars/all.yml declare for the person to fill in. */
+  const declared = new Map<string, string>();
 
   items.forEach((item, index) => {
     const blueprint = blueprintFor(item.blueprintId);
@@ -199,7 +282,8 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
 
     const requirements = built.files['requirements.yml'];
     if (requirements) {
-      for (const [collection, version] of readRequirements(requirements)) {
+      const read = readRequirements(requirements);
+      for (const [collection, version] of read.collections) {
         const seen = collections.get(collection);
         if (!seen) collections.set(collection, { version, from: item.label });
         else if (seen.version !== version && version !== '') {
@@ -210,12 +294,60 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
           );
         }
       }
+      for (const [role, entry] of read.roles) if (!roleRequirements.has(role)) roleRequirements.set(role, entry);
     }
 
-    const playbook = Object.entries(built.files).find(([file]) => /\.ya?ml$/i.test(file) && file !== 'requirements.yml')?.[1];
-    if (!playbook) {
+    const playbookFile = Object.keys(built.files).find((file) => /\.ya?ml$/i.test(file) && !file.includes('/') && file !== 'requirements.yml');
+    const playbook = playbookFile === undefined ? undefined : built.files[playbookFile];
+    if (playbookFile === undefined || playbook === undefined) {
       findings.push(warning('ansible.site.no-playbook', `${item.label} produced no playbook.`, {}));
       return;
+    }
+
+    // Everything else the item wrote that the site keeps.
+    for (const [path, text] of Object.entries(built.files)) {
+      if (path === playbookFile) continue;
+      const place = placeOf(path, playbookDir);
+      if (!place) continue;
+      if (place.kind === 'all') {
+        for (const m of text.matchAll(/^([A-Za-z_][A-Za-z0-9_]*):/gm)) {
+          const key = m[1] as string;
+          if (!key.startsWith('vault_') && !declared.has(key)) declared.set(key, item.label);
+        }
+        continue;
+      }
+      if (place.kind === 'group_vars') {
+        const read = readVars(text);
+        if (!read) {
+          findings.push(warning('ansible.site.group-vars-unreadable', `${item.label}: ${path} is not a mapping of variables, so it was left out.`, { path: place.to }));
+          continue;
+        }
+        const merged = groupVars.get(place.to) ?? new Map<string, { value: YamlData; from: string }>();
+        for (const [key, value] of read) {
+          const seen = merged.get(key);
+          if (!seen) merged.set(key, { value, from: item.label });
+          else if (JSON.stringify(seen.value) !== JSON.stringify(value)) {
+            findings.push(
+              warning('ansible.site.group-vars-conflict', `${item.label} and ${seen.from} set ${key} differently in ${path}; the site keeps ${seen.from}'s.`, {
+                path: place.to,
+                remediation: 'Give the two items the same answer, or move one of them to a group of its own.',
+              }),
+            );
+          }
+        }
+        groupVars.set(place.to, merged);
+        continue;
+      }
+      const seen = kept.get(place.to);
+      if (!seen) kept.set(place.to, { text, from: item.label });
+      else if (seen.text !== text) {
+        findings.push(
+          warning('ansible.site.file-conflict', `${item.label} and ${seen.from} both write ${place.to}, differently; the site keeps ${seen.from}'s.`, {
+            path: place.to,
+            remediation: 'Two items that bring the same role or file should agree on it; rename one if they really differ.',
+          }),
+        );
+      }
     }
 
     const text = quoteJinjaScalars(playbook);
@@ -224,37 +356,75 @@ export function buildSite(items: readonly StackItem[], blueprintFor: BlueprintLo
       hosts.add(host);
       (isApi ? apiHosts : hostPlayHosts).add(host);
     }
-    const fileName = numbered(index, name, '.yml');
+    const number = options.playbookNumber?.(item, index);
+    const base = number !== undefined && Number.isInteger(number) && number >= 0 ? `${String(number).padStart(2, '0')}-${name}.yml` : numbered(index, name, '.yml');
+    const fileName = playbookDir ? `${playbookDir}/${base}` : base;
+    if (files[fileName] !== undefined) findings.push(warning('ansible.site.duplicate-file', `${item.label} would overwrite ${fileName}; two items were given the same number.`, { path: fileName }));
     files[fileName] = text;
+    playbooks.push({ file: fileName, label: item.label });
     imports.push(`- name: ${item.label}\n  import_playbook: ${fileName}`);
   });
 
   const siteName = options.stackName?.trim() || 'site';
+  const inventoryArg = playbookDir ? 'inventory' : 'inventory/hosts.yml';
 
   files['site.yml'] = `---
 # ${siteName} — every playbook in this site, in order.
 #
-# Install the collections first:  ansible-galaxy collection install -r requirements.yml
-# Then dry-run it:                ansible-playbook -i inventory/hosts.yml site.yml --check --diff
+# Install the collections first:  ansible-galaxy ${roleRequirements.size > 0 ? 'install' : 'collection install'} -r requirements.yml
+# Then dry-run it:                ansible-playbook -i ${inventoryArg} site.yml --check --diff
 
 ${imports.join('\n\n')}
 `;
+
+  for (const [path, { text }] of kept) files[path] = text;
+  for (const [path, merged] of groupVars) {
+    files[path] = renderYaml(Object.fromEntries([...merged].map(([k, { value }]) => [k, value as YamlValue])), {
+      header: `Variables for the ${path.replace(/^.*group_vars\//, '').replace(/\.ya?ml$/, '')} group, merged from the playbooks that need them.`,
+    });
+  }
+
+  for (const [name, from] of declared) {
+    if (variables.has(name)) continue;
+    variables.set(name, '');
+    findings.push(
+      warning('ansible.site.undefined-variable', `${from} needs ${name}, which nothing sets. group_vars/all.yml now declares it, with no value.`, {
+        path: `${varsBase}group_vars/all.yml`,
+        remediation: 'Give it a value there, or pass it with -e on the command line.',
+      }),
+    );
+  }
 
   if (variables.size > 0) {
     const rows = [...variables.entries()].map(([name, value]) =>
       value === '' ? `${name}: ""   # set this before running` : `${name}: ${/[:#{}[\]]|^\s|\s$/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value}`,
     );
-    files['group_vars/all.yml'] = `---\n# Answers every playbook in this site shares. Change one here and every\n# playbook that references it follows.\n\n${rows.join('\n')}\n`;
+    files[`${varsBase}group_vars/all.yml`] = `---\n# Answers every playbook in this site shares. Change one here and every\n# playbook that references it follows.\n\n${rows.join('\n')}\n`;
     for (const name of variables.keys()) {
-      references.push({ expression: name, item: 'group_vars/all.yml', address: 'group_vars/all.yml', attribute: name });
+      references.push({ expression: name, item: 'group_vars/all.yml', address: `${varsBase}group_vars/all.yml`, attribute: name });
     }
   }
 
-  if (collections.size > 0) {
+  if (collections.size > 0 || roleRequirements.size > 0) {
     const rows = [...collections.entries()].sort(([a], [b]) => a.localeCompare(b));
-    files['requirements.yml'] = `---\n# Every collection this site uses, merged from its playbooks.\n# Install with: ansible-galaxy collection install -r requirements.yml\n\ncollections:\n${rows
-      .map(([name, { version }]) => `  - name: ${name}${version ? `\n    version: '${version}'` : ''}`)
-      .join('\n')}\n`;
+    const sections: string[] = [];
+    if (rows.length > 0) {
+      sections.push(`collections:\n${rows.map(([name, { version }]) => `  - name: ${name}${version ? `\n    version: '${version}'` : ''}`).join('\n')}`);
+    }
+    if (roleRequirements.size > 0) {
+      const roles = [...roleRequirements.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      sections.push(
+        `roles:\n${roles
+          .map((r) =>
+            Object.entries(r)
+              .map(([k, v], i) => `${i === 0 ? '  - ' : '    '}${k}: '${v.replace(/'/g, "''")}'`)
+              .join('\n'),
+          )
+          .join('\n')}`,
+      );
+    }
+    const install = roleRequirements.size > 0 ? 'ansible-galaxy install -r requirements.yml   (collections and roles)' : 'ansible-galaxy collection install -r requirements.yml';
+    files['requirements.yml'] = `---\n# Every collection${roleRequirements.size > 0 ? ' and role' : ''} this site uses, merged from its playbooks.\n# Install with: ${install}\n\n${sections.join('\n')}\n`;
   }
 
   // The inventory the plays need: localhost for API work (a play against
@@ -270,37 +440,46 @@ ${imports.join('\n\n')}
     );
   }
   files['inventory/hosts.yml'] = inventoryYaml({
-    api: apiNeedsEntry && hostPlayHosts.size === 0,
+    api: options.inventory !== 'skeleton' && apiNeedsEntry && hostPlayHosts.size === 0,
     windows: used.some((c) => WINDOWS_COLLECTIONS.test(c)),
     hosts: [...hosts],
+    ...(options.inventory === 'skeleton' ? { skeleton: true } : {}),
   });
-  files['ansible.cfg'] = ANSIBLE_CFG;
+  const hasRoles = Object.keys(files).some((f) => f.startsWith('roles/'));
+  files['ansible.cfg'] = ansibleCfg({
+    inventory: playbookDir ? 'inventory' : 'inventory/hosts.yml',
+    ...(hasRoles || playbookDir ? { rolesPath: './roles' } : {}),
+  });
 
-  files['README.md'] = readme(siteName, items, files, variables);
+  files['README.md'] = readme(siteName, playbooks, variables, { inventoryArg, varsBase, roles: roleRequirements.size > 0 });
 
   return { files, findings, references };
 }
 
-function readme(siteName: string, items: readonly StackItem[], files: Readonly<Record<string, string>>, variables: ReadonlyMap<string, string>): string {
-  const playbooks = Object.keys(files).filter((f) => /^\d\d-/.test(f));
+function readme(
+  siteName: string,
+  playbooks: readonly { file: string; label: string }[],
+  variables: ReadonlyMap<string, string>,
+  layout: { inventoryArg: string; varsBase: string; roles: boolean },
+): string {
   return `${[
     `# ${siteName}`,
     '',
-    `An Ansible site playbook, from ${items.length} playbook${items.length === 1 ? '' : 's'}.`,
+    `An Ansible site playbook, from ${playbooks.length} playbook${playbooks.length === 1 ? '' : 's'}.`,
     '',
     '## What it runs, in order',
     '',
-    ...playbooks.map((f, i) => `${i + 1}. \`${f}\` — ${items[i]?.label ?? ''}`),
+    ...playbooks.map((p, i) => `${i + 1}. \`${p.file}\` — ${p.label}`),
     '',
     '## Before the first run',
     '',
     '```',
-    'ansible-galaxy collection install -r requirements.yml',
+    layout.roles ? 'ansible-galaxy install -r requirements.yml' : 'ansible-galaxy collection install -r requirements.yml',
     '```',
     '',
     ...(variables.size > 0
       ? [
-          `Then check \`group_vars/all.yml\`: ${variables.size} value${variables.size === 1 ? '' : 's'} are shared by the playbooks, and any left empty must be filled in.`,
+          `Then check \`${layout.varsBase}group_vars/all.yml\`: ${variables.size} value${variables.size === 1 ? '' : 's'} are shared by the playbooks, and any left empty must be filled in.`,
           '',
         ]
       : []),
@@ -309,8 +488,8 @@ function readme(siteName: string, items: readonly StackItem[], files: Readonly<R
     '## Running it',
     '',
     '```',
-    'ansible-playbook -i inventory/hosts.yml site.yml --check --diff   # dry run',
-    'ansible-playbook -i inventory/hosts.yml site.yml                  # for real',
+    `ansible-playbook -i ${layout.inventoryArg} site.yml --check --diff   # dry run`,
+    `ansible-playbook -i ${layout.inventoryArg} site.yml                  # for real`,
     '```',
     '',
     'To run one part on its own, point `ansible-playbook` at that file instead',
