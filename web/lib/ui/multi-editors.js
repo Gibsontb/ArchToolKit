@@ -10,7 +10,7 @@
  */
 
 import { el, replace } from './dom.js';
-                                                          
+                                                                        
 
 // --- deciding which editor a field gets ---------------------------------------
 
@@ -31,7 +31,22 @@ export function isListField(input                )          {
                                       
                                                   
                                   
+     
+                                                                               
+                                                              
+     
+                            
+                                                                               
+                                                                      
  
+
+const columnName = (hintPart        )         => hintPart.replace(/\s*(\(|—).*$/, '').trim();
+
+/** The cells of a row: on "|", or in a spaced table only on " | ". */
+function splitCells(line        , shape                                          )           {
+  if (shape.separator === ',') return line.split(',');
+  return shape.spaced ? ` ${line} `.split(/(?<=\s)\|(?=\s)/) : line.split('|');
+}
 
 /** Rows of columns: a " | " table whose hint names the columns, or a CSV whose first line does. */
 export function tableShape(input                )                         {
@@ -41,9 +56,20 @@ export function tableShape(input                )                         {
   if (/^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)+$/i.test(first)) return { separator: ',', columns: first.split(','), headerInValue: true };
   const hint = input.hint ?? '';
   const named = hint.split('|').map((h) => h.trim()).filter(Boolean);
+  // A textarea that brings options is a grid by declaration: its cells split on
+  // " | " only, and an option whose group names a column is offered in that
+  // column's dropdown. Textareas without options are read as before.
+  if ((input.options?.length ?? 0) > 0 && named.length >= 2 && hint.includes(' | ')) {
+    const columns = named.map(columnName);
+    const choices = columns.map((column) => {
+      const offered = (input.options ?? []).filter((option) => option.group === column);
+      return offered.length > 0 ? offered : undefined;
+    });
+    return { separator: ' | ', columns, headerInValue: false, spaced: true, choices };
+  }
   // A table only when the hint names every column and the rows use the same separator: SPL and scripts that happen to contain a pipe stay text.
   if (named.length >= 2 && hint.includes(' | ') && lines.length > 0 && lines.every((l) => l.split('|').length === named.length) && !first.startsWith('|')) {
-    return { separator: ' | ', columns: named.map((n) => n.replace(/\s*(\(|—).*$/, '').trim()), headerInValue: false };
+    return { separator: ' | ', columns: named.map(columnName), headerInValue: false };
   }
   return undefined;
 }
@@ -123,9 +149,12 @@ export function tableEditor(shape            , value        , onChange          
   const lines = value.split('\n');
   const comments = lines.filter((l) => l.trim().startsWith('#'));
   const split = (line        )           => {
-    const cells = shape.separator === ',' ? line.split(',') : line.split('|');
+    const cells = splitCells(line, shape);
     return shape.columns.map((_, i) => (cells[i] ?? '').trim());
   };
+  // What would end a cell is taken out of it: a comma in a CSV, a pipe in a
+  // table — or, in a spaced table, only a pipe with spaces round it.
+  const clean = (cell        )         => (shape.separator === ',' ? cell.replace(/[,\n]/g, ' ') : shape.spaced ? cell.replace(/\n/g, ' ').replace(/\s+\|\s+/g, '|') : cell.replace(/[|\n]/g, ' ')).trim();
   let rows = lines.map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map(split);
   if (shape.headerInValue) rows = rows.slice(1);
   let asText = false;
@@ -136,7 +165,7 @@ export function tableEditor(shape            , value        , onChange          
 
   const serialize = ()         => {
     const kept = rows.filter((r) => r.some((c) => c.trim() !== ''));
-    const joined = kept.map((r) => r.map((c) => c.replace(shape.separator === ',' ? /[,\n]/g : /[|\n]/g, ' ').trim()).join(shape.separator));
+    const joined = kept.map((r) => r.map(clean).join(shape.separator));
     return [...comments, ...(shape.headerInValue ? [shape.columns.join(',')] : []), ...joined].join('\n');
   };
   const commit = ()       => {
@@ -177,7 +206,25 @@ export function tableEditor(shape            , value        , onChange          
     rows.forEach((row, r) => {
       const tr = el('tr');
       row.forEach((cell, c) => {
-        const inp = el('input', { attrs: { type: 'text', 'aria-label': `${shape.columns[c]} row ${r + 1}` } })                    ;
+        const label = `${shape.columns[c]} row ${r + 1}`;
+        const offered = shape.choices?.[c];
+        if (offered) {
+          // A dropdown; a value it does not offer (typed as text) stays, so nothing is lost.
+          const select = el('select', { attrs: { 'aria-label': label } })                     ;
+          const options = offered.some((o) => o.value === cell) ? offered : [{ value: cell, label: cell || '—' }, ...offered];
+          for (const option of options) {
+            const opt = el('option', { text: option.label, attrs: { value: option.value } })                     ;
+            if (option.value === cell) opt.selected = true;
+            select.appendChild(opt);
+          }
+          select.addEventListener('change', () => {
+            rows[r] [c] = select.value;
+            commit();
+          });
+          tr.appendChild(el('td', {}, select));
+          return;
+        }
+        const inp = el('input', { attrs: { type: 'text', 'aria-label': label } })                    ;
         inp.value = cell;
         inp.addEventListener('input', () => {
           rows[r] [c] = inp.value;

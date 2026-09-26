@@ -680,13 +680,13 @@ export function policyMergeScript(overridesFile        , policyName        )    
 /** The sources the formats were established from, cited in every IMPORT.md that imports content. */
 export const FORMAT_SOURCES                    = [
   'Broadcom TechDocs, VCF Operations 9.0: "Importing Content" (Content Management) and "Exporting and Importing a Super Metric".',
-  'Real exports: github.com/notoriousbdg (VMware, Aria Operations 8.x: alert XML, CustomGroups.json, Supermetrics.json, Views.zip, Dashboard.zip) and github.com/sentania-labs/vcf-content-factory-bundles (VCF Operations 9: AlertContent.xml, supermetric.json, Views.zip, Reports.zip, Dashboard.zip, content-zip installer).',
+  'Real exports: github.com/notoriousbdg (VMware, 8.x: alert XML, CustomGroups.json, Supermetrics.json, Views.zip, Dashboard.zip) and github.com/sentania-labs/vcf-content-factory-bundles (VCF Operations 9: AlertContent.xml, supermetric.json, Views.zip, Reports.zip, Dashboard.zip, content-zip installer).',
   'VCF Operations API reference: /api/content/operations/{export,import}, /api/policies/{export,import}.',
 ];
 
 export function importMd(opts                                                                                                                                             )         {
   const lines = [`# Importing: ${opts.title}`, ''];
-  lines.push(...(opts.intro ?? ['Each step says which file goes where, in the order they depend on each other. Menu paths are VCF Operations 9.1; Aria Operations 8.x names are in brackets where they differ.']), '');
+  lines.push(...(opts.intro ?? ['Each step says which file goes where, in the order they depend on each other. Menu paths are VCF Operations 9.1.']), '');
   opts.steps.forEach((step, index) => {
     lines.push(`## ${index + 1}. ${step.heading}`, '');
     if (step.files.length > 0) lines.push(`Files: ${step.files.map((file) => `\`${file}\``).join(', ')}`, '');

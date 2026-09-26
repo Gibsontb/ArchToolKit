@@ -201,7 +201,7 @@ export function toPackage(spec                       )                    {
       heading: 'Then use it',
       lines: [
         '- **On a schedule:** select the workflow in the Library and click **Schedule** (listed under Activity → Scheduled). VCF 9.1: Orchestrate tab → Library → the workflow → Schedule.',
-        '- **From the catalog:** add a content source of type Automation Orchestrator (VCF Automation 8.x: Service Broker → Content & Policies → Content Sources; VCF Automation 9.1: the organization\'s catalog content sources — VERIFY the menu on your release) that includes this workflow, and share it with the projects that should see it.',
+        '- **From the catalog:** add a content source of type Automation Orchestrator (VCF Automation 9.1: the organization\'s catalog content sources — VERIFY the menu on your release) that includes this workflow, and share it with the projects that should see it.',
         '- **From a VCF Automation event:** Extensibility → Subscriptions → New, runnable type Workflow, this workflow.',
         `- **From a VCF Operations alert (9.1):** Operate → Administration → Configurations → Outbound Settings → Add a Webhook Notification Plugin with URL https://<VCF Automation FQDN>/vro/runs/ and a bearer token of a service account; Payload Template → Add, application/json, POST, a body with "workflowId": "${id}" and its parameters; Notifications → Add a rule with that outbound method and template, scoped to the alert (techtested.org, "How to trigger a VCF Operations Orchestrator Workflow from VCF Operations 9.1").`,
       ],

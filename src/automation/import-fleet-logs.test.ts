@@ -112,7 +112,7 @@ function b32decode(text: string): string {
 
 describe('automation/import: Networks and fleet blueprints emit what their targets import', () => {
   it('covers every blueprint in the five files', () => {
-    expect(MINE.length).toBe(26);
+    expect(MINE.length).toBe(40);
   });
 
   it('every build has an IMPORT.md that names every file under import/', () => {

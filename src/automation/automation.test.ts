@@ -38,10 +38,10 @@ describe('automation: the vocabulary', () => {
     expect(AUTOMATION_PLATFORMS['vcf-automation'].label).toBe('VCF Automation');
     expect(AUTOMATION_PLATFORMS['vcf-operations-logs'].label).toBe('VCF Operations for Logs');
     expect(AUTOMATION_PLATFORMS['vcf-operations-networks'].label).toBe('VCF Operations for Networks');
-    // The old names have to be here: every runbook and half the interface still
-    // says Aria, and somebody will be reading this with 8.x in front of them.
-    for (const id of ['vcf-operations', 'vcf-automation', 'vcf-operations-logs', 'vcf-operations-networks'] as const) {
-      expect((AUTOMATION_PLATFORMS[id].formerly ?? '').toLowerCase().includes('aria')).toBe(true);
+    // VCF 9.1 names only: no old product name in any README written.
+    for (const blueprint of AUTOMATIONS) {
+      const readme = renderReadme(blueprint.automation(defaultValues(blueprint), blueprint.id), blueprint.id);
+      expect([blueprint.id, /\b(Aria|vRealize)\b/.test(readme)]).toEqual([blueprint.id, false]);
     }
   });
 

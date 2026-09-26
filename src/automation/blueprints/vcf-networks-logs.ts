@@ -17,6 +17,7 @@ import { num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
 import { listOf, slugOf, type Automation } from '../automation.ts';
+import { envCheck, mailServerStep, NET_SRC, notificationInputs, notifyAny, notifyDescribe, notifyJson, notifyPlan, notifyShell, searchAlertShell, SEVERITY_OPTIONS } from './vcf-networks-common.ts';
 
 const NETWORKS = 'vcf-operations-networks' as const;
 
@@ -33,8 +34,8 @@ const NETWORKS = 'vcf-operations-networks' as const;
  * The password is read from a file only its owner can read and sent on stdin,
  * so it never appears in a crontab, a process list or the shell history.
  *
- * The body is the one PowervRNI's Connect-vRNIServer sends: username, password
- * and a domain of LOCAL/local, or LDAP and the directory domain.
+ * The body is POST /api/ni/auth/token's: username, password and a domain of
+ * LOCAL/local, or LDAP and the directory domain.
  */
 export function networksPreamble(): string[] {
   return [
@@ -51,6 +52,30 @@ export function networksPreamble(): string[] {
     ': "${VCFNET_HOST:?set VCFNET_HOST, e.g. vcfnet.example.com}"',
     ': "${VCFNET_TOKEN:?set VCFNET_TOKEN (POST /api/ni/auth/token), or set VCFNET_USER and VCFNET_PASSWORD_FILE to a file holding its password, mode 600}"',
     'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+  ];
+}
+
+/**
+ * The login, then `ni METHOD PATH [curl args]` for JSON calls and
+ * `ni_form METHOD PATH [curl args]` for multipart uploads. The token goes in a
+ * header read from a process substitution, never on the command line.
+ */
+export function networksApi(): string[] {
+  return [
+    ...networksPreamble(),
+    '',
+    'ni() {',
+    '  local method="$1" path="$2"; shift 2',
+    '  curl -sS -f -X "$method" "https://${VCFNET_HOST}/api/ni${path}" \\',
+    '    -H @<(printf \'Authorization: NetworkInsight %s\\n\' "$VCFNET_TOKEN") \\',
+    '    -H "Accept: application/json" -H "Content-Type: application/json" "$@"',
+    '}',
+    'ni_form() {',
+    '  local method="$1" path="$2"; shift 2',
+    '  curl -sS -f -X "$method" "https://${VCFNET_HOST}/api/ni${path}" \\',
+    '    -H @<(printf \'Authorization: NetworkInsight %s\\n\' "$VCFNET_TOKEN") \\',
+    '    -H "Accept: application/json" "$@"',
+    '}',
   ];
 }
 
@@ -253,13 +278,13 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
               },
             ],
             verify: ['The search condition names (security group, port) are the search bar’s own; if the search bar rejects them, so will the API.'],
-            sources: ['POST /api/ni/search/ql {query, size} and the {username, password, domain} login: PowervRNI (Invoke-vRNISearch, Connect-vRNIServer).'],
+            sources: ['POST /api/ni/search/ql {query, size, time_range} and POST /api/ni/auth/token {username, password, domain}: VCF Operations for Networks API reference (Search, Authentication).'],
           }),
         },
         notes: [
           'Networks sees flows, not intent. A flow that appears here may be perfectly legitimate and undocumented, which is itself the finding.',
           'Run it for a month before anyone proposes acting on it. The first four weeks are mostly discovering what the boundary really carries.',
-          'The body {query, size} for POST /api/ni/search/ql, the entity_list_response it returns, and the {username, password, domain} login body all follow PowervRNI (Invoke-vRNISearch, Connect-vRNIServer). The search condition names — source security group, destination security group, port — are the search bar’s; check the query returns what you expect there before scheduling it.',
+          'POST /api/ni/search/ql takes {query, size, time_range} and the login body is {username, password, domain}, both from the VCF Operations for Networks API reference. The entity_list_response shape is VERIFY: check the first run’s output. The search condition names — source security group, destination security group, port — are the search bar’s; check the query returns what you expect there before scheduling it.',
         ],
         findings,
       };
@@ -269,10 +294,10 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'vcfnet_change_watch',
     platform: NETWORKS,
-    label: 'Watch for NSX changes nobody raised',
+    label: 'Alert on NSX changes (firewall rules, groups, segments, gateways)',
     group: 'Change control',
     description:
-      'A scheduled comparison of the NSX configuration against what it was, so a firewall rule added out of process is found in a day rather than at the next audit. Reports the difference; changes nothing.',
+      'A search-based change alert in Networks for each part of NSX being watched: the alert fires whenever the search result changes — a firewall rule added, a group edited, a segment removed — and notifies by e-mail, SNMP trap, syslog or webhook. Applied through the API and created enabled; it reports the change and never reverts it.',
     inputs: [
       { id: 'watch_name', label: 'Name', control: 'text', default: 'NSX change watch' },
       {
@@ -282,72 +307,130 @@ export const NETWORKS_AUTOMATIONS: readonly AutomationBlueprint[] = [
         options: [
           { value: 'dfw', label: 'Distributed firewall rules' },
           { value: 'groups', label: 'Security groups and their membership' },
-          { value: 'segments', label: 'Segments and gateways' },
-          { value: 'all', label: 'All of it' },
+          { value: 'segments', label: 'Segments' },
+          { value: 'gateways', label: 'Tier-0 / Tier-1 gateways' },
+          { value: 'all', label: 'All of it (one alert each)' },
         ],
         default: 'dfw',
       },
-      { id: 'webhook', label: 'Report to', control: 'text', default: 'https://runbooks.example.com/hooks/nsx-change' },
-      { id: 'ignore_users', label: 'Ignore changes by', control: 'text', default: 'svc-terraform, svc-automation', hint: 'The accounts that are supposed to make changes' },
+      { id: 'query', label: 'Search (override)', control: 'text', default: '', hint: 'Empty uses the search for what is watched. Try it in the search bar first' },
+      { id: 'severity', label: 'Severity', control: 'select', options: SEVERITY_OPTIONS, default: 'Moderate' },
+      ...notificationInputs().map((input) => (input.id === 'notify_webhook' ? { ...input, default: 'https://runbooks.example.com/hooks/nsx-change' } : input)),
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
       const watchName = str(values, 'watch_name', 'NSX change watch');
       const what = str(values, 'watch_what', 'dfw');
-      const webhook = str(values, 'webhook', '');
-      const ignore = listOf(str(values, 'ignore_users', ''));
+      const override = str(values, 'query', '');
+      const severity = str(values, 'severity', 'Moderate');
+      const plan = notifyPlan(values);
       const base = slugOf(name || watchName, 'nsx-change-watch');
 
-      const findings: Finding[] = [];
-      if (ignore.length === 0) {
-        findings.push(
-          warning('vcfnet.change.no-exclusions', 'Nothing is excluded, so every change your own automation makes will be reported as unexpected.', {
-            remediation: 'List the service accounts that are meant to change NSX. What is left is the interesting part.',
-            source: 'ArchToolKit',
-          }),
-        );
+      const parts = what === 'all' ? ['dfw', 'groups', 'segments', 'gateways'] : [CHANGE_WATCH[what] ? what : 'dfw'];
+      const alerts = parts.map((part) => ({
+        alert_name: parts.length > 1 ? `${watchName} — ${CHANGE_WATCH[part]!.label}` : watchName,
+        search_criteria: override && parts.length === 1 ? override : CHANGE_WATCH[part]!.query,
+        generate_alert_criteria: 'SEARCH_RESULT_CHANGE',
+        alert_type: 'CHANGE',
+        severity,
+      }));
+
+      const findings: Finding[] = [...plan.findings];
+      if (!notifyAny(plan)) {
+        findings.push(warning('vcfnet.change.nobody-told', 'No destination is set: the alert shows in Networks and nobody is told.', { remediation: 'Give it an e-mail, a trap receiver, syslog or a webhook.', source: NET_SRC }));
       }
+      if (override && parts.length > 1) {
+        findings.push(warning('vcfnet.change.override-ignored', 'A search override applies to one watched part only; with "All of it" each part keeps its own search.', { source: NET_SRC }));
+      }
+
+      const script = [
+        '#!/usr/bin/env bash',
+        `# Create (or update) ${alerts.length} search-based change alert(s) in VCF Operations for Networks,`,
+        '# enabled, with their notification destinations. --dry-run prints each body.',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        ...networksApi(),
+        '',
+        'DRY_RUN=0; [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1',
+        ...envCheck(plan.env),
+        ...notifyShell('notify.json'),
+        ...searchAlertShell(),
+        '',
+        '(( DRY_RUN )) || : > created-alert-ids.txt',
+        'NS=$(setup_notify)',
+        'for body in alerts/*.json; do upsert_alert "$body" "$NS"; done',
+        '(( DRY_RUN )) && echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
+        'exit 0',
+        '',
+      ].join('\n');
+
+      const files: Record<string, string> = {
+        [`${base}.sh`]: script,
+        'notify.json': `${JSON.stringify(notifyJson(plan, `${base}-traps`), null, 2)}\n`,
+      };
+      for (const alert of alerts) files[`alerts/${slugOf(alert.alert_name, 'alert')}.json`] = `${JSON.stringify(alert, null, 2)}\n`;
+      files['IMPORT.md'] = importGuide({
+        product: 'VCF Operations for Networks',
+        intro: `${base}.sh creates each alert in alerts/ through POST /api/ni/settings/alerts/search-based-alerts (or updates the one with the same name) and enables it. notify.json holds the destinations; secrets come from the environment.`,
+        steps: [
+          mailServerStep(plan),
+          {
+            heading: 'Apply',
+            lines: [
+              `${plan.env.length > 0 ? `Export ${plan.env.join(', ')} from your vault, then run` : 'Run'} \`./${base}.sh\` (\`--dry-run\` prints every body first). Each search is run once before its alert is written, so a search the product rejects stops the script.`,
+              '',
+              'By hand: Settings > Alerts > Search based alerts > Add, one per file in alerts/, alert type Change, raised when the search results change.',
+            ],
+          },
+        ],
+        verify: [
+          'The search strings for firewall rules, security groups, segments and gateways are the search bar’s entity names; if one returns nothing there, put your own in Search (override).',
+          'notification_settings type SNMP takes the SNMP trap profile id as its receiver (the API reference does not say what receivers holds for SNMP).',
+          'That user-defined alerts reach the databus "problems" message group (the webhook): check the first alert arrives.',
+        ],
+        sources: [
+          'VCF Operations for Networks API reference, Settings: Search Based Alert Config (alert_name, search_criteria, generate_alert_criteria SEARCH_RESULT_CHANGE | ZERO_SEARCH_RESULTS, alert_type PROBLEM | CHANGE | INTENT, severity, notification_settings type EMAIL | SNMP), SNMP trap destination profiles, syslog targets, databus subscribers. User-defined events are deprecated there in favour of search-based alerts.',
+        ],
+      });
 
       return {
         platform: NETWORKS,
-        title: `${watchName} — report NSX changes made outside the expected accounts`,
-        effect: 'read',
-        trigger: { kind: 'schedule', detail: 'Daily, comparing against the previous run', worstCase: 'once a day' },
+        title: `${watchName} — alert when ${parts.map((part) => CHANGE_WATCH[part]!.label.toLowerCase()).join(', ')} change`,
+        effect: 'reversible',
+        trigger: { kind: 'alert', detail: `Networks raises the alert whenever the search result changes: ${alerts.map((alert) => alert.search_criteria).join('; ')}.`, worstCase: 'once per change Networks sees, at its collection interval' },
         scope: {
-          what: what === 'all' ? 'Firewall rules, security groups and segments.' : what === 'dfw' ? 'Distributed firewall rules.' : what === 'groups' ? 'Security groups and membership.' : 'Segments and gateways.',
-          decidedBy: ['What the previous run recorded.', ignore.length > 0 ? `Changes by ${ignore.join(', ')} are ignored.` : 'No accounts are ignored.'],
-          ifWrong: 'A noisy report, or one that misses a change because the account making it was on the ignore list. Review that list as carefully as the report.',
+          what: 'Alert definitions in Networks only. Nothing in NSX is changed; Networks already collects NSX.',
+          decidedBy: alerts.map((alert) => `"${alert.alert_name}": ${alert.search_criteria}.`),
+          ifWrong: 'A search wider than meant alerts on every change anywhere it matches; a narrower one misses the change you wanted to see. Neither touches NSX.',
         },
         guardrails: [
-          { rule: 'Compares and reports; never reverts', because: 'Reverting a network change automatically, without knowing why it was made, is how a fix becomes an outage.' },
-          ...(ignore.length > 0 ? [{ rule: `Changes by ${ignore.join(', ')} are expected`, because: 'Your own automation changing NSX is not a finding. Everything else is.' }] : []),
+          { rule: 'Alerts; never reverts', because: 'Reverting a network change automatically, without knowing why it was made, is how a fix becomes an outage.' },
+          { rule: 'Each search is run once before its alert is written', because: 'A search the product rejects would make an alert that never fires.' },
+          { rule: 'Updates by name instead of adding a duplicate', because: 'Two alerts on the same search send every change twice.' },
         ],
-        dryRun: ['The first run has nothing to compare against and simply records the baseline. Keep that file; it is the reference.'],
-        undo: ['Nothing to undo. Reverting an NSX change is a change of its own and belongs in the change process.'],
-        told: webhook ? [`Posted to ${webhook}.`] : ['Nobody. Set a destination.'],
-        requires: ['Read access to the NSX manager through Networks, and somewhere to keep the previous run’s baseline.'],
-        files: {
-          [`${base}.json`]: `${JSON.stringify({ name: watchName, watch: what, ignoreAccounts: ignore, destination: webhook || '<REQUIRED>', reportOnly: true, baselineFile: `${base}-baseline.json` }, null, 2)}\n`,
-          'IMPORT.md': importGuide({
-            product: 'VCF Operations for Networks',
-            intro: `Nothing here is imported into Networks. ${base}.json is the specification for the job that runs the comparison — what to watch, whose changes to ignore, where to report — for your scheduler or runbook tool to read.`,
-            steps: [
-              {
-                heading: 'Take the baseline',
-                lines: [
-                  'In Networks, search the objects being watched (for example `firewall rules`, `security groups` or `nsx segments`) and export the result (the export action on the results page) as the first baseline; keep it in version control as the file named in baselineFile.',
-                ],
-              },
-            ],
-            verify: ['The comparison job itself is not generated here; the file says what it must do.'],
-            sources: ['The search bar and its export: VMware Aria Operations for Networks user guide.'],
-          }),
-        },
+        dryRun: [`Run ./${base}.sh --dry-run. It runs each search, then prints every alert body it would send, and creates nothing.`],
+        undo: ['DELETE /api/ni/settings/alerts/search-based-alerts/{id} for each id in created-alert-ids.txt, or POST .../{id}/disable to switch it off; or Settings > Alerts.'],
+        told: notifyAny(plan) ? notifyDescribe(plan) : ['Nobody — set a destination.'],
+        requires: [
+          'NSX Manager added as a data source in Networks.',
+          'A Networks admin account: VCFNET_USER and VCFNET_PASSWORD_FILE, or VCFNET_TOKEN.',
+          ...plan.env.map((variable) => `${variable} from your vault.`),
+          'jq and curl.',
+        ],
+        files,
         notes: [
           'An out-of-process firewall change is usually somebody fixing something at speed. The value here is the conversation the next morning, not the blame.',
-          'Keep the baseline in version control rather than on the appliance. Then the diff is a commit, and the history is free.',
+          'The alert says what changed, not who changed it: search-based alerts do not filter on the account. The NSX audit log (VCF Operations for Logs) has the who.',
         ],
         findings,
       };
     },
   }),
 ];
+
+/** Search bar entity names for each watched part. VERIFY each in the search bar. */
+const CHANGE_WATCH: Readonly<Record<string, { label: string; query: string }>> = {
+  dfw: { label: 'Firewall rules', query: 'NSX-T Firewall Rule' },
+  groups: { label: 'Security groups', query: 'NSX Policy Group' },
+  segments: { label: 'Segments', query: 'NSX Policy Segment' },
+  gateways: { label: 'Gateways', query: 'NSX-T Router' },
+};

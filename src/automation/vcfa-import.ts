@@ -416,7 +416,8 @@ export function createAbxScript(): string {
       [
         'Create, or update, every ABX action under abx/ in VCF Automation through the',
         'ABX API, in the project VCFA_PROJECT_ID; then create its event subscription',
-        '(abx/<action>/subscription.json), disabled, with the new action id filled in.',
+        '(abx/<action>/subscription.json) with the new action id filled in, enabled or',
+        'disabled as that file says.',
         'The ids of new actions are appended to abx/created-ids.txt.',
       ],
       { needsProject: true, flags: './create-abx-action.sh [--dry-run]' },
@@ -452,7 +453,7 @@ export function createAbxScript(): string {
     '  esac',
     '  if (( DRY_RUN )); then',
     '    if [[ -n "$ID" ]]; then echo "   DRY RUN: would update action $ID"; else echo "   DRY RUN: would create it"; fi',
-    "    [[ -f \"$DIR/subscription.json\" ]] && echo \"   DRY RUN: would create subscription \\\"$(jq -r '.name' \"$DIR/subscription.json\")\\\" on $(jq -r '.eventTopicId' \"$DIR/subscription.json\"), disabled\"",
+    "    [[ -f \"$DIR/subscription.json\" ]] && echo \"   DRY RUN: would create subscription \\\"$(jq -r '.name' \"$DIR/subscription.json\")\\\" on $(jq -r '.eventTopicId' \"$DIR/subscription.json\"), $(jq -r 'if .disabled then \"disabled\" else \"enabled\" end' \"$DIR/subscription.json\")\"",
     '    continue',
     '  fi',
     '  if [[ -n "$ID" ]]; then',
@@ -467,7 +468,7 @@ export function createAbxScript(): string {
     "    printf '%s\\t%s\\n' \"$NAME\" \"$ID\" >> \"$HERE/abx/created-ids.txt\"",
     '  fi',
     '',
-    '  # The subscription: created disabled, never twice.',
+    '  # The subscription: created as its file says (enabled unless it cannot be scoped), never twice.',
     '  if [[ -f "$DIR/subscription.json" ]]; then',
     "    SUB=$(jq -r '.name' \"$DIR/subscription.json\")",
     "    S=$(call GET \"$VCFA_URL/event-broker/api/subscriptions?%24filter=$(uri \"name eq '$SUB'\")\")",
@@ -480,7 +481,7 @@ export function createAbxScript(): string {
     "        '.runnableId = $r | .id = (.id // $s) | if (.criteria | type) == \"string\" and (.criteria | startswith(\"<\")) then del(.criteria) else . end' \\",
     '        "$DIR/subscription.json" > "$TMP/subscription.json"',
     '      S=$(call POST "$VCFA_URL/event-broker/api/subscriptions" "$TMP/subscription.json"); must "$S" "Creating subscription $SUB"',
-    '      echo "   subscription \\"$SUB\\" created, disabled — enable it once its criteria are right"',
+    '      echo "   subscription \\"$SUB\\" created, $(jq -r \'if .disabled then "disabled — enable it once its criteria are right" else "enabled" end\' "$DIR/subscription.json")"',
     '    fi',
     '  fi',
     'done',
@@ -811,9 +812,9 @@ export function importBundle(spec: {
               lines: [
                 'Each folder is one template in the layout the git integration reads: one folder per template, the file named `blueprint.yaml`, `name:` and `version:` at the top. Pick one route:',
                 '',
-                '- **Script (any organization type, and Aria Automation 8.x):** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/import-templates.sh` validates each template on the server, creates it (or updates the draft of the template with that name in that project) and creates the version in `version:` (`--dry-run` only validates and says what it would do); add `--release` as well to release that version to the catalog. Ids go to `import/imported-templates.txt`.',
+                '- **Script (any organization type, and the 8.x releases):** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/import-templates.sh` validates each template on the server, creates it (or updates the draft of the template with that name in that project) and creates the version in `version:` (`--dry-run` only validates and says what it would do); add `--release` as well to release that version to the catalog. Ids go to `import/imported-templates.txt`.',
                 ...(hasVmApps
-                  ? ['- **VM Apps organization / Aria Automation 8.x, by hand:** Assembler → Design → Templates → New from → Upload; enter the name and project and choose `blueprint.yaml` (menu labels VERIFY on your release). Then Version, and Release to the catalog.']
+                  ? ['- **VM Apps organization, by hand:** Design → Templates → New from → Upload; enter the name and project and choose `blueprint.yaml` (menu labels VERIFY on your release). Then Version, and Release to the catalog.']
                   : []),
                 ...(hasAllApps
                   ? ['- **All Apps organization (9.1), by hand:** Build & Deploy → Content Hub → Blueprint Design → Blueprints → New From Import; enter the name and project and choose `blueprint.yaml`, then Import. Version it from the design page (Version History) and release it.']
@@ -833,12 +834,12 @@ export function importBundle(spec: {
                 'Pick one route:',
                 '',
                 '- **Script:** `VCFA_HOST=… VCFA_PROJECT_ID=<project id> ./import/create-abx-action.sh` creates the action through the ABX API (`--dry-run` only shows what it would create) with the script inline (or updates the one with the same name in the project), writes the id of a new action to `import/abx/created-ids.txt`' +
-                  (abx.some((a) => a.subscription) ? ', and creates the event subscription from `subscription.json`, disabled, pointing at it.' : '.'),
-                `- **By hand:** \`./import/package-abx.sh\` (or \`package-abx.ps1\` on Windows) builds \`import/abx/<action>-package.zip\` with the script at its root. In Assembler (VM Apps organization, or Aria Automation 8.x): Extensibility → Library → Actions → New, pick the project, choose ${abx.map((a) => (a.runtime === 'python' ? 'Python' : 'Node.js')).filter((v, i, all) => all.indexOf(v) === i).join(' / ')}, then Import package, select the zip, and set the Main function to \`main.handler\`. Set the timeout to ${abx.map((a) => `${a.timeoutSeconds}s`).join(' / ')}.` +
+                  (abx.some((a) => a.subscription) ? ', and creates the event subscription from `subscription.json`, pointing at it, enabled or disabled as that file says.' : '.'),
+                `- **By hand:** \`./import/package-abx.sh\` (or \`package-abx.ps1\` on Windows) builds \`import/abx/<action>-package.zip\` with the script at its root. In the VM Apps organization: Extensibility → Library → Actions → New, pick the project, choose ${abx.map((a) => (a.runtime === 'python' ? 'Python' : 'Node.js')).filter((v, i, all) => all.indexOf(v) === i).join(' / ')}, then Import package, select the zip, and set the Main function to \`main.handler\`. Set the timeout to ${abx.map((a) => `${a.timeoutSeconds}s`).join(' / ')}.` +
                   (abx.some((a) => a.subscription) ? ' Then Extensibility → Subscriptions → New with the topic and settings in `subscription.json`.' : ''),
                 '- **Git (VERIFY):** the `<action>.abx` descriptor and the script beside it are the form an exported action and an action repository use; the descriptor format is from community examples, not Broadcom documentation, so export one action from your release and compare before relying on it.',
                 '',
-                'ABX actions and subscriptions belong to VM Apps organizations (and Aria Automation 8.x). Subscriptions need an organization administrator; a project-level token is refused.',
+                'ABX actions and subscriptions belong to VM Apps organizations. Subscriptions need an organization administrator; a project-level token is refused.',
               ],
             },
           }
@@ -923,7 +924,7 @@ export function setupOrderStep(current: string): ImportStep {
   return {
     heading: 'Where this sits in the order',
     lines: [
-      'A VM Apps organization (or Aria Automation 8.x) is set up in this order, each from its own blueprint on this page; later objects name the ids of earlier ones:',
+      'A VM Apps organization is set up in this order, each from its own blueprint on this page; later objects name the ids of earlier ones:',
       '',
       ...SETUP_ORDER.map(([id, label], index) => `${index + 1}. ${id === current ? `**${label} — this one**` : label} (\`${id}\`)`),
     ],
@@ -959,7 +960,7 @@ export function importMd(opts: {
     '',
     `${opts.subject}`,
     '',
-    `Works with: ${opts.orgs ?? 'VCF Automation 9.1 / 9.1.1 VM Apps organizations, and Aria Automation 8.x where the format is the same'}.`,
+    `Works with: ${opts.orgs ?? 'VCF Automation 9.1 / 9.1.1 VM Apps organizations, and the 8.x releases where the format is the same'}.`,
     '',
     'Do the steps in order: later ones refer to what earlier ones created. Every script applies when run; add `--dry-run` to preview.',
     '',
@@ -968,7 +969,7 @@ export function importMd(opts: {
     '## Confirmed, and what to verify',
     '',
     ...(opts.verify ?? []).map((line) => `- ${line}`),
-    '- Sources: Broadcom TechDocs 9.1 "Import a Blueprint into VCF Automation" and 9.0 "How do I use Git integration in VCF Automation for VM Apps" (blueprint.yaml, name and version); Aria Automation 8.18 API Programming Guide (blueprint create, validate, version and release); ABX and Orchestrator API references at developer.broadcom.com. Anything marked VERIFY was not in those.',
+    '- Sources: Broadcom TechDocs 9.1 "Import a Blueprint into VCF Automation" and 9.0 "How do I use Git integration in VCF Automation for VM Apps" (blueprint.yaml, name and version); the 8.18 API Programming Guide (blueprint create, validate, version and release); ABX and Orchestrator API references at developer.broadcom.com. Anything marked VERIFY was not in those.',
     '',
   ].join('\n');
 }

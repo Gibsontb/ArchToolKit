@@ -4,20 +4,22 @@
  * Two sets here.
  *
  * VCF_OPS_LOGS_91 is log management as 9.1 ships it: no longer a separate
- * appliance with its own /api/v2, but a containerised service inside VCF
- * Operations, configured from Operate → Administration → Configurations. In
- * 9.1.1 the SDDC Manager log configuration moved there too. Most of that
- * configuration is interface-only in 9.1 — the public suite API documents
- * saved log queries (/api/logs/queryconfigs) and VCF Operations' own
- * self-logging, not masking, filtering, forwarding or partitions — so these
- * blueprints write the rule down as a reviewable spec, give the steps to enter
- * it, and ship a local test that proves the rule does what it says before
- * anybody types it in.
+ * appliance, but a containerised service inside VCF Operations, configured from
+ * Operate → Administration → Configurations. In 9.1.1 the SDDC Manager log
+ * configuration moved there too. Saved queries have a documented suite-API
+ * resource (/suite-api/api/logs/queryconfigs); everything else is reached with
+ * the KB 450054 ops-li token exchange (vcf-logs91-api.ts). Every blueprint here
+ * applies what it writes: apply.sh creates it enabled, --dry-run only prints,
+ * and where a path is not answered on a release the script stops without
+ * changing anything and the APPLY.md beside it gives the exact manual steps.
+ * The local tests (masking, filters, extraction) prove a rule does what it says
+ * before it is applied. Content packs are End of General Support in 9.1 and
+ * are not offered.
  *
- * VCF_OPS_OPERATE is the day-two read side of 9.1: VCF Health across ESX,
+ * VCF_OPS_OPERATE is the day-two side of 9.1: VCF Health across ESX,
  * vCenter, NSX and vSAN, the new Findings API, real-time investigation,
- * vSAN storage operations, the audit trail, and Security Posture Management.
- * Everything in it reads.
+ * vSAN storage operations, the audit trail, Security Posture Management, and
+ * Workload Automation with business intent (applied through the policy API).
  *
  * Sources: the VCF Operations 9.1 what's new and 9.1.1 release notes, the 9.1
  * log-analysis and VCF Health pages on techdocs, the Advanced Cyber Compliance
@@ -29,48 +31,17 @@ import { bool, num, str,                      } from '../../kit/blueprint.js';
 import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
-import { applyScript, readScript, scheduledEnv } from '../apply.js';
-import { withScriptsImportMd } from '../vcfops-import.js';
+import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.js';
+import { policyMergeScript, withScriptsImportMd } from '../vcfops-import.js';
 import { PAGED_HELPERS, WEBHOOK_HELPER, shq, workDirLines } from './vcf-operations-content.js';
+import { CONDITION_OPERATORS, VALUELESS, condition, conditionRows, describe, describeAll, json, linesOf, logsApplyNote, logsApplyScript, logsCallLines, logsScriptHead, md, rowsOf, sq } from './vcf-logs91-api.js';
+import { VCF_LOGS91_MORE } from './vcf-logs91-more.js';
 
 const OPS = 'vcf-operations'         ;
 const LOGS = 'vcf-operations-logs'         ;
 const SRC = 'ArchToolKit';
 
 const CONFIGURATIONS = 'Operate → Administration → Configurations';
-
-/** The filter operators every 9.1 log processing, forwarding and masking rule offers. */
-const CONDITION_OPERATORS = [
-  { value: 'Contains', label: 'Contains' },
-  { value: 'Does not contain', label: 'Does not contain' },
-  { value: 'Starts with', label: 'Starts with' },
-  { value: 'Does not start with', label: 'Does not start with' },
-  { value: 'Matches Regex', label: 'Matches Regex' },
-  { value: 'Exists', label: 'Exists' },
-  { value: 'Does not exist', label: 'Does not exist' },
-];
-const VALUELESS = new Set(['Exists', 'Does not exist']);
-
-function json(value         )         {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-function md(lines                   )         {
-  return `${lines.join('\n')}\n`;
-}
-
-/** A condition as the 9.1 rule forms take it, or nothing when the value is blank. */
-function condition(field        , operator        , value        )                                                                  {
-  if (!field) return undefined;
-  if (VALUELESS.has(operator)) return { field, operator };
-  if (!value) return undefined;
-  return { field, operator, value };
-}
-
-function describe(c                                                                 )         {
-  if (!c) return 'no condition';
-  return c.value === undefined ? `${c.field} ${c.operator.toLowerCase()}` : `${c.field} ${c.operator.toLowerCase()} "${c.value}"`;
-}
 
 // ===========================================================================
 // Log management, 9.1
@@ -250,13 +221,6 @@ const FILTER_TEST = [
   '',
 ].join('\n');
 
-function linesOf(text        )           {
-  return text
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim() !== '');
-}
-
 export const VCF_OPS_LOGS_91                                 = [
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -265,7 +229,7 @@ export const VCF_OPS_LOGS_91                                 = [
     label: 'Mask secrets and PII at ingestion (9.1)',
     group: 'Log management 9.1',
     description:
-      'A 9.1 log masking rule — passwords, tokens, keys, email addresses or card numbers replaced as the event is ingested — written as a spec, with sample lines that must be masked and lines that must not change, and a local test that fails if the selector gets either wrong. Masking is configured in the Log Processing card; the public suite API does not cover it in 9.1.',
+      'A 9.1 log masking rule — passwords, tokens, keys, email addresses or card numbers replaced as the event is ingested — applied through the log management API (KB 450054 token exchange) and created enabled, with sample lines that must be masked and lines that must not change, and a local test that fails if the selector gets either wrong. apply.sh runs the test first and refuses to apply a selector that fails it.',
     inputs: [
       { id: 'rule_name', label: 'Rule name', control: 'text', default: 'Mask passwords in key=value' },
       {
@@ -331,7 +295,6 @@ export const VCF_OPS_LOGS_91                                 = [
         maskValue,
         enabled: true,
         filterCriteria: filter ? [filter] : [],
-        _note: 'A spec to review and to enter in Log Processing → Log Masking. Not an API payload — 9.1 documents no API for masking.',
       };
 
       return {
@@ -340,7 +303,7 @@ export const VCF_OPS_LOGS_91                                 = [
         effect: 'reversible',
         trigger: {
           kind: 'manual',
-          detail: `Entered once in ${CONFIGURATIONS} → Log Processing → Log Masking; from then it runs on every event ingested that ${filter ? `has ${describe(filter)}` : 'reaches log management'}.`,
+          detail: `Applied once by apply.sh (the Log Masking tab of ${CONFIGURATIONS} → Log Processing shows it); from then it runs on every event ingested that ${filter ? `has ${describe(filter)}` : 'reaches log management'}.`,
           worstCase: 'on every ingested event, at the full ingestion rate',
         },
         scope: {
@@ -353,27 +316,38 @@ export const VCF_OPS_LOGS_91                                 = [
           ifWrong: 'A selector that matches too much blanks the evidence an investigation needs, permanently, for every event ingested while it is on. One that matches too little leaves the secret in the store and in every forwarded copy.',
         },
         guardrails: [
-          { rule: 'test-masking.sh exits 1 when a sample secret survives masking or a clean line is changed', because: 'A selector one character off masks nothing, and nobody notices until the secret turns up in a forwarded copy.' },
+          { rule: 'test-masking.sh exits 1 when a sample secret survives masking or a clean line is changed, and apply.sh runs it first and stops on a failure', because: 'A selector one character off masks nothing, and nobody notices until the secret turns up in a forwarded copy.' },
           { rule: 'The platform masks only events ingested after the rule is enabled', because: 'A bad selector cannot destroy the history already stored — it can only damage new events until it is turned off.' },
         ],
         dryRun: [
           'Run ./test-masking.sh. It reads only the files beside it.',
+          'Run ./apply.sh --dry-run: it prints what it would send and signs in to nothing.',
           'In the Log Masking tab, use the rule form’s preview on real events before enabling it.',
           'After enabling, search Explore Logs for the next event from a sample source and check the value arrives masked.',
         ],
         undo: [
-          'Log Processing → Log Masking → the rule → turn Enable Configuration off, or delete it. New events stop being masked at once.',
+          'Log Processing → Log Masking → the rule → turn Enable Configuration off, or delete it (or DELETE it by the id apply.sh saved under before-<time>/). New events stop being masked at once.',
           'Events ingested while it was on stay masked. That part cannot be undone — which is the point of masking, and the risk of a selector that is too wide.',
         ],
         told: ['Nobody — masking is silent by design. Record the rule and its test output in the change that enabled it.'],
-        requires: ['Log management 9.1 deployed and integrated with VCF Operations.', 'An account with rights to Operate → Administration → Configurations.', 'python3 on the machine that runs the test.'],
+        requires: ['Log management 9.1 deployed and integrated with VCF Operations.', 'A VCF Operations account with rights to Operate → Administration → Configurations (VCFOPS_USER with VCFOPS_PASSWORD_FILE, or VCFOPS_TOKEN).', 'python3, jq and curl on the machine that runs apply.sh.'],
         files: {
           'masking-rule.json': json(rule),
           'samples-must-mask.txt': md(['# Lines that must come out masked. Fake secrets of the real shape only.', ...mustMask]),
           'samples-must-not-change.txt': md(['# Lines that must come out exactly as they went in.', ...mustNot]),
           'test-masking.sh': MASK_TEST,
+          'apply.sh': logsApplyScript({
+            purpose: `Test, then apply the log masking rule "${ruleName}" to VCF Operations 9.1 log management, enabled.`,
+            extraTools: ['python3'],
+            first: ['bash "$HERE/test-masking.sh" || { echo "test-masking.sh failed: nothing applied." >&2; exit 1; }', ''],
+            calls: [{ what: `masking rule ${ruleName}`, key: 'masking', path: '/api/v2/log-masking', payload: 'masking-rule.json', name: ruleName }],
+            undo: 'turn the rule off or delete it in Log Processing → Log Masking; events already masked stay masked.',
+            manual: `${base}-APPLY.md`,
+          }),
           [`${base}-APPLY.md`]: md([
-            `# Apply "${ruleName}" (VCF Operations 9.1 log masking)`,
+            `# "${ruleName}" by hand (only when apply.sh stops with exit 3)`,
+            '',
+            '`./apply.sh` applies this rule. Use these steps only when it reports that the log management path is not answered on your release.',
             '',
             '1. Run `./test-masking.sh` and read every line. It must end with 0 failures.',
             `2. VCF Operations → ${CONFIGURATIONS} → **Log Processing** card → **Log Masking** tab → **Add**.`,
@@ -389,6 +363,7 @@ export const VCF_OPS_LOGS_91                                 = [
           ]),
         },
         notes: [
+          logsApplyNote(),
           'VERIFY: whether a forwarded copy is masked depends on whether forwarding runs after masking in the 9.1 pipeline, which the documentation does not state. Send one sample line and look at it on the far side before relying on it.',
           'Masking is not a substitute for fixing the application that logs the secret. Open a ticket against it as well.',
           'In 9.1.1 SDDC Manager log collection is also configured from VCF Operations, so its events pass through the same masking rules.',
@@ -405,7 +380,7 @@ export const VCF_OPS_LOGS_91                                 = [
     label: 'Drop noisy events before they are stored (9.1)',
     group: 'Log management 9.1',
     description:
-      'A 9.1 ingestion filter — debug and trace from non-production hosts, health-check chatter — with a scope condition so it cannot reach production by accident, a savings estimate from your own ingest numbers, and a local test that fails if a line you meant to keep would be dropped.',
+      'A 9.1 ingestion filter — debug and trace from non-production hosts, health-check chatter — with a scope condition so it cannot reach production by accident, a savings estimate from your own ingest numbers, and a local test that fails if a line you meant to keep would be dropped. apply.sh runs the test, then creates the filter enabled through the log management API.',
     inputs: [
       { id: 'filter_name', label: 'Filter name', control: 'text', default: 'Drop debug from non-production' },
       { id: 'scope_field', label: 'Only for events where', control: 'text', default: 'hostname', hint: 'The scope condition. Keep one — it is what keeps production out' },
@@ -477,7 +452,6 @@ export const VCF_OPS_LOGS_91                                 = [
         scope: scope ?? null,
         match: match ?? { field: 'text', operator: matchOp },
         conditions: [scope, match].filter(Boolean),
-        _note: 'A spec to review and enter in Log Processing → Log Filtering. Not an API payload — 9.1 documents no API for filters.',
       };
 
       const estimate = md([
@@ -504,7 +478,7 @@ export const VCF_OPS_LOGS_91                                 = [
         effect: 'reversible',
         trigger: {
           kind: 'manual',
-          detail: `Entered once in ${CONFIGURATIONS} → Log Processing → Log Filtering; from then it runs on every event ingested.`,
+          detail: `Applied once by apply.sh (it shows in ${CONFIGURATIONS} → Log Processing → Log Filtering); from then it runs on every event ingested.`,
           worstCase: 'on every ingested event',
         },
         scope: {
@@ -516,18 +490,35 @@ export const VCF_OPS_LOGS_91                                 = [
           { rule: 'test-filter.sh exits 1 when a line meant to be kept would be dropped', because: 'A regex that also matches ERROR lines turns a debug filter into an outage blind spot.' },
           { rule: 'This generator refuses a field-exists filter with no scope condition (an error finding)', because: '"message exists" with no scope drops everything, and the rule form will accept it.' },
         ],
-        dryRun: ['Run ./test-filter.sh.', 'In the Log Filtering tab, press PREVIEW before CREATE and read what it would drop.'],
+        dryRun: ['Run ./test-filter.sh.', 'Run ./apply.sh --dry-run: it prints what it would send and signs in to nothing.', 'After it is applied, open it in the Log Filtering tab and use PREVIEW to read what it drops.'],
         undo: ['Log Processing → Log Filtering → the filter → Enabled off, or delete it. Ingestion resumes at once.', 'Events dropped while it was on were never stored and cannot be recovered.'],
         told: ['Nobody. Record the PREVIEW result and the measured share in the change.'],
-        requires: ['Log management 9.1.', 'Fewer than 10 filters already defined — the documented maximum is 10.', 'python3 on the machine that runs the test.'],
+        requires: ['Log management 9.1.', 'Fewer than 10 filters already defined — the documented maximum is 10; apply.sh counts them and stops at 10.', 'python3, jq and curl on the machine that runs apply.sh.'],
         files: {
           'log-filter.json': json(spec),
           'samples-drop.txt': md(['# Lines the filter should drop.', ...linesOf(str(values, 'samples_drop', ''))]),
           'samples-keep.txt': md(['# Lines the filter must keep.', ...linesOf(str(values, 'samples_keep', ''))]),
           'test-filter.sh': FILTER_TEST,
           'savings-estimate.md': estimate,
+          'apply.sh': logsApplyScript({
+            purpose: `Test, then apply the ingestion filter "${filterName}" to VCF Operations 9.1 log management, enabled.`,
+            extraTools: ['python3'],
+            first: ['bash "$HERE/test-filter.sh" || { echo "test-filter.sh failed: nothing applied." >&2; exit 1; }', ''],
+            calls: [
+              {
+                what: `ingestion filter ${filterName}`,
+                key: 'filters',
+                path: '/api/v2/log-filters',
+                payload: 'log-filter.json',
+                name: filterName,
+                check: ['N=$(jq \'[.. | objects | select(has("name") and (has("conditions") or has("filters") or has("match")))] | length\' "$LIST")', '(( N < 10 )) || { echo "$N filters already defined: 10 is the documented maximum. Combine them first." >&2; exit 1; }'],
+              },
+            ],
+            undo: 'turn the filter off or delete it in Log Processing → Log Filtering; ingestion of those events resumes at once.',
+            manual: `${base}-APPLY.md`,
+          }),
           [`${base}-APPLY.md`]: md([
-            `# Apply "${filterName}" (VCF Operations 9.1 log filtering)`,
+            `# "${filterName}" by hand (only when apply.sh stops with exit 3)`,
             '',
             '1. Run `./test-filter.sh`; it must end with 0 failures.',
             `2. VCF Operations → ${CONFIGURATIONS} → **Log Processing** card → **Log Filtering** tab → **ADD**.`,
@@ -540,6 +531,7 @@ export const VCF_OPS_LOGS_91                                 = [
           ]),
         },
         notes: [
+          logsApplyNote(),
           '9.1 also offers volume control per log source — logical service groups on or off, and the log level per source (Info by default). Turning a source down to Info at the source is cheaper than filtering its debug at ingestion.',
           'The documented maximum is 10 filters. Combine related noise into one filter with a regex rather than spending them one source at a time.',
         ],
@@ -555,7 +547,7 @@ export const VCF_OPS_LOGS_91                                 = [
     label: 'Forward filtered logs out of VCF Operations (9.1)',
     group: 'Log management 9.1',
     description:
-      'A 9.1 log forwarding rule — syslog over TLS, TCP or UDP, or raw — to a SIEM, a Splunk heavy forwarder, or another log instance, filtered so only what is needed leaves. With a destination check that fails on a closed port or an untrusted certificate before the rule is created.',
+      'A 9.1 log forwarding rule — syslog over TLS, TCP or UDP, raw, or CFAPI to another log instance — to a SIEM, a Splunk heavy forwarder or another log store, with the CA chain it trusts, worker count, disk buffer and retry, tags added to every event, and filter rows so only what is needed leaves. apply.sh checks the destination, then creates the rule enabled.',
     inputs: [
       { id: 'dest_name', label: 'Name', control: 'text', default: 'SIEM — security events' },
       {
@@ -568,16 +560,35 @@ export const VCF_OPS_LOGS_91                                 = [
           { value: 'syslog_udp', label: 'Syslog over UDP', group: 'Syslog' },
           { value: 'raw', label: 'Raw (no syslog header)', group: 'Other' },
           { value: 'splunk', label: 'Splunk (syslog TLS to a heavy forwarder)', group: 'Other' },
-          { value: 'logs_instance', label: 'Another log instance (VCF Operations log management, or VCF Operations for Logs 8.18)', group: 'Other' },
+          { value: 'logs_instance', label: 'Another log instance (CFAPI over TLS)', group: 'Other' },
         ],
         default: 'syslog_tls',
       },
-      { id: 'host', label: 'Host', control: 'text', default: 'siem-collector01.example.com' },
-      { id: 'port', label: 'Port', control: 'number', default: 6514, min: 1, max: 65535, hint: '6514 syslog TLS, 514 plain' },
-      { id: 'filter_field', label: 'Only forward events where', control: 'text', default: 'appname', hint: 'Empty value forwards everything' },
-      { id: 'filter_op', label: 'Filter operator', control: 'select', options: CONDITION_OPERATORS, default: 'Matches Regex' },
-      { id: 'filter_value', label: 'Filter value', control: 'text', default: '^(sshd|sudo|vpxd-svcs|nsx-audit)' },
-      { id: 'custom_fields', label: 'Custom fields to add', control: 'text', default: 'source_platform=vcf, site=dc1', hint: 'key=value pairs, comma separated' },
+      { id: 'host', label: 'Host', control: 'text', default: 'siem-collector01.example.com', hint: 'FQDN, IPv4 or IPv6 address' },
+      { id: 'port', label: 'Port', control: 'number', default: 6514, min: 1, max: 65535, hint: '6514 syslog TLS, 514 plain, 9543 CFAPI TLS' },
+      { id: 'ca_file', label: 'CA chain to trust (PEM file beside apply.sh)', control: 'text', default: 'destination-ca.pem', hint: 'Read when apply.sh runs; empty trusts the platform’s own store', showWhen: { input: 'dest_kind', equals: ['syslog_tls', 'splunk', 'logs_instance'] } },
+      { id: 'workers', label: 'Worker count', control: 'number', default: 8, min: 1, max: 32, hint: 'Parallel connections to the destination' },
+      { id: 'disk_buffer_mb', label: 'Disk buffer (MB)', control: 'number', default: 2000, min: 0, max: 50000, hint: 'Events queue here while the destination is down' },
+      { id: 'retry_seconds', label: 'Retry every (seconds)', control: 'number', default: 30, min: 5, max: 3600, hint: 'VERIFY: field name on 9.1' },
+      {
+        id: 'filter_join',
+        label: 'Forward events matching',
+        control: 'select',
+        options: [
+          { value: 'ANY', label: 'Any filter row (OR)' },
+          { value: 'ALL', label: 'Every filter row (AND)' },
+        ],
+        default: 'ANY',
+      },
+      {
+        id: 'filters',
+        label: 'Filters',
+        control: 'textarea',
+        default: 'appname | Starts with | sshd\nappname | Starts with | sudo\ntext | Contains | audit',
+        hint: 'field | operator | value',
+        help: 'Operators: Contains, Does not contain, Starts with, Does not start with, Matches Regex, Exists, Does not exist. No rows forwards everything.',
+      },
+      { id: 'custom_fields', label: 'Tags to add to every event', control: 'text', default: 'source_platform=vcf, site=dc1', hint: 'key=value pairs, comma separated' },
       { id: 'splunk_index', label: 'Splunk index', control: 'text', default: 'vcf', showWhen: { input: 'dest_kind', equals: ['splunk'] } },
     ],
     automation: (values                 , name        )             => {
@@ -585,7 +596,11 @@ export const VCF_OPS_LOGS_91                                 = [
       const kind = str(values, 'dest_kind', 'syslog_tls');
       const host = str(values, 'host', '');
       const port = num(values, 'port', 6514);
-      const filter = condition(str(values, 'filter_field', ''), str(values, 'filter_op', 'Contains'), str(values, 'filter_value', ''));
+      const workers = num(values, 'workers', 8);
+      const buffer = num(values, 'disk_buffer_mb', 2000);
+      const retry = num(values, 'retry_seconds', 30);
+      const join = str(values, 'filter_join', 'ANY') === 'ALL' ? 'AND' : 'OR';
+      const { conditions: filters, bad } = conditionRows(str(values, 'filters', ''));
       const custom = listOf(str(values, 'custom_fields', ''))
         .map((pair) => pair.split('='))
         .filter((pair) => pair.length === 2 && pair[0] .trim() && pair[1] .trim())
@@ -594,11 +609,15 @@ export const VCF_OPS_LOGS_91                                 = [
       const base = slugOf(name || destName, 'log-forwarding');
 
       const tls = kind === 'syslog_tls' || kind === 'splunk' || kind === 'logs_instance';
+      const caFile = tls ? str(values, 'ca_file', '') : '';
       const transport = kind === 'syslog_udp' ? 'UDP' : 'TCP';
-      const protocol = kind === 'raw' ? 'Raw' : 'Syslog';
+      const protocol = kind === 'raw' ? 'Raw' : kind === 'logs_instance' ? 'CFAPI' : 'Syslog';
+      const ipv6 = host.includes(':');
+      const filterText = describeAll(filters, join);
 
       const findings            = [];
       if (!host) findings.push(error('vcflog91.fwd.no-host', 'No destination host.', { source: SRC }));
+      for (const row of bad) findings.push(error('vcflog91.fwd.bad-filter', `Filter row "${row}" has an operator 9.1 does not offer, or no value.`, { source: SRC }));
       if (kind === 'syslog_udp') {
         findings.push(
           warning('vcflog91.fwd.udp', 'UDP drops events under load and cannot be encrypted.', {
@@ -610,13 +629,19 @@ export const VCF_OPS_LOGS_91                                 = [
       if (tls && port === 514) {
         findings.push(warning('vcflog91.fwd.tls-514', 'Port 514 is the plain syslog port. TLS listeners are normally on 6514.', { source: SRC }));
       }
-      if (!filter) {
+      if (filters.length === 0) {
         findings.push(
           warning('vcflog91.fwd.unfiltered', 'Unfiltered: every event log management ingests is forwarded.', {
             remediation: 'Most destinations charge by volume. Forward the security and audit sources, not the debug of every appliance.',
             source: SRC,
           }),
         );
+      }
+      if (buffer === 0) {
+        findings.push(warning('vcflog91.fwd.no-buffer', 'No disk buffer: while the destination is down, events for it are dropped.', { remediation: 'Size the buffer for the longest outage the destination owner will admit to, at this rule’s rate.', source: SRC }));
+      }
+      if (workers > 16) {
+        findings.push(info('vcflog91.fwd.workers', `${workers} workers: each is a connection the destination has to accept. Check its limit.`, { source: SRC }));
       }
       if (kind === 'splunk') {
         findings.push(
@@ -628,16 +653,20 @@ export const VCF_OPS_LOGS_91                                 = [
       }
 
       const spec = {
+        id: destName,
         name: destName,
         host,
         port,
-        protocol,
-        transport,
-        useSsl: tls,
+        protocol: protocol.toLowerCase(),
+        transportProtocol: transport,
+        sslEnabled: tls,
+        workerCount: workers,
+        diskCacheSize: buffer,
+        retryIntervalSeconds: retry,
         enabled: true,
-        customFields: custom,
-        filters: filter ? [filter] : [],
-        _note: 'A spec to review and enter in the Log Forwarding card. Not an API payload — /suite-api/api/logs/forwarding configures VCF Operations’ own self-logging, not log management forwarding.',
+        tags: Object.fromEntries(custom.map((field) => [field.key, field.value])),
+        filterOperator: join,
+        filters,
       };
 
       const check = [
@@ -645,16 +674,18 @@ export const VCF_OPS_LOGS_91                                 = [
         `# Check ${host}:${port} can take what the forwarding rule will send.`,
         '#',
         '# Reads only. Run it from a machine on the same network as the VCF Operations',
-        '# and log management nodes; the rule form’s VALIDATE CONNECTION, which runs',
-        '# from the platform itself, is the authoritative test.',
+        '# and log management nodes. apply.sh runs it before it creates the rule.',
         '# Exits 1 on a name that does not resolve, a closed port, or (for TLS) a',
         '# certificate that does not verify or expires within 30 days.',
         'set -euo pipefail',
         `HOST="\${HOST:-${host}}"`,
         `PORT="\${PORT:-${port}}"`,
+        ...(caFile ? [`CA_FILE="\${CA_FILE:-$(dirname "$0")/${caFile}}"`, '[[ -r "$CA_FILE" ]] || CA_FILE=""'] : []),
         'PROBLEMS=()',
         '',
-        'getent hosts "$HOST" >/dev/null || PROBLEMS+=("$HOST does not resolve")',
+        '# An IPv6 literal is its own address; anything else must resolve (A or AAAA).',
+        'if [[ "$HOST" != *:* ]]; then getent ahosts "$HOST" >/dev/null || PROBLEMS+=("$HOST does not resolve"); fi',
+        'TARGET="$HOST"; [[ "$HOST" == *:* ]] && TARGET="[$HOST]"',
         ...(transport === 'UDP'
           ? ['echo "UDP cannot be tested from here: nothing answers a UDP syslog packet. Check the collector’s own counters after the rule is created."']
           : [
@@ -664,8 +695,8 @@ export const VCF_OPS_LOGS_91                                 = [
                 ? [
                     'else',
                     '  command -v openssl >/dev/null || { echo "openssl is required for the TLS check" >&2; exit 2; }',
-                    '  CERT=$(openssl s_client -connect "$HOST:$PORT" -servername "$HOST" ${CA_FILE:+-CAfile "$CA_FILE"} -verify_return_error </dev/null 2>/dev/null) \\',
-                    '    || PROBLEMS+=("TLS to $HOST:$PORT does not verify — set CA_FILE to the chain log management will trust")',
+                    '  CERT=$(openssl s_client -connect "$TARGET:$PORT" -servername "$HOST" ${CA_FILE:+-CAfile "$CA_FILE"} -verify_return_error </dev/null 2>/dev/null) \\',
+                    '    || PROBLEMS+=("TLS to $HOST:$PORT does not verify — put the chain log management will trust in CA_FILE")',
                     '  if [[ -n "${CERT:-}" ]]; then',
                     '    echo "$CERT" | openssl x509 -noout -subject -enddate || true',
                     '    echo "$CERT" | openssl x509 -noout -checkend $((30*86400)) >/dev/null || PROBLEMS+=("the certificate on $HOST:$PORT expires within 30 days")',
@@ -686,16 +717,47 @@ export const VCF_OPS_LOGS_91                                 = [
       const files                         = {
         'forwarding-rule.json': json(spec),
         'check-destination.sh': check,
+        'apply.sh': logsApplyScript({
+          purpose: `Check the destination, then create the log forwarding rule "${destName}" in VCF Operations 9.1 log management, enabled.`,
+          first: [
+            '(( DRY_RUN )) || bash "$HERE/check-destination.sh" || { echo "check-destination.sh failed: nothing applied." >&2; exit 1; }',
+            ...(caFile
+              ? [
+                  `CA="$HERE/${caFile}"`,
+                  'if [[ -r "$CA" ]]; then',
+                  '  jq --rawfile ca "$CA" \'. + {sslCertificate: $ca}\' "$HERE/forwarding-rule.json" > "$HERE/forwarding-rule.applied.json"',
+                  'else',
+                  `  echo "No ${caFile} beside this script: the rule will trust the platform’s own certificate store." >&2`,
+                  '  cp "$HERE/forwarding-rule.json" "$HERE/forwarding-rule.applied.json"',
+                  'fi',
+                ]
+              : ['cp "$HERE/forwarding-rule.json" "$HERE/forwarding-rule.applied.json"']),
+            '',
+          ],
+          calls: [
+            {
+              what: `forwarding rule ${destName}`,
+              key: 'forwarding',
+              path: '/api/v1/forwarding',
+              payload: 'forwarding-rule.applied.json',
+              name: destName,
+              check: ['N=$(jq \'[.. | objects | select(has("host") and has("port"))] | length\' "$LIST")', '(( N < 10 )) || { echo "$N forwarding rules already defined: 10 is the documented maximum." >&2; exit 1; }'],
+            },
+          ],
+          undo: 'turn the rule off or delete it in the Log Forwarding card (or DELETE it by the id saved under before-<time>/). Events already sent stay at the destination.',
+          manual: `${base}-APPLY.md`,
+        }),
         [`${base}-APPLY.md`]: md([
-          `# Apply "${destName}" (VCF Operations 9.1 log forwarding)`,
+          `# "${destName}" by hand (only when apply.sh stops with exit 3)`,
           '',
           '1. Run `./check-destination.sh` from the management network.',
           `2. VCF Operations → ${CONFIGURATIONS} → **Log Forwarding** card → **ADD**.`,
-          `3. Name \`${destName}\`, Host \`${host}\`, Port \`${port}\`, Protocol ${protocol}${protocol === 'Syslog' ? `, Transport ${transport}` : ''}${tls ? ', SSL/TLS on' : ''}.`,
-          ...(custom.length > 0 ? [`4. Custom fields: ${custom.map((field) => `\`${field.key}=${field.value}\``).join(', ')}.`] : ['4. No custom fields.']),
-          ...(filter ? [`5. Add Filter: ${filter.field} — ${filter.operator}${filter.value !== undefined ? ` — \`${filter.value}\`` : ''}.`] : ['5. No filter (everything is forwarded).']),
-          '6. VALIDATE CONNECTION, then CREATE.',
-          '7. On the destination, search for an event from the last minute that matches the filter.',
+          `3. Name \`${destName}\`, Host \`${host}\`, Port \`${port}\`, Protocol ${protocol}${protocol === 'Syslog' ? `, Transport ${transport}` : ''}${tls ? `, SSL/TLS on${caFile ? `, paste the chain from ${caFile}` : ''}` : ''}.`,
+          `4. Workers ${workers}, disk buffer ${buffer} MB, retry ${retry} s (where the form offers them).`,
+          ...(custom.length > 0 ? [`5. Custom fields: ${custom.map((field) => `\`${field.key}=${field.value}\``).join(', ')}.`] : ['5. No custom fields.']),
+          ...(filters.length > 0 ? [`6. Filters, matching ${join === 'AND' ? 'all' : 'any'}:`, ...filters.map((f) => `   - ${f.field} — ${f.operator}${f.value !== undefined ? ` — \`${f.value}\`` : ''}`)] : ['6. No filter (everything is forwarded).']),
+          '7. VALIDATE CONNECTION, then CREATE with Enable Configuration on.',
+          '8. On the destination, search for an event from the last minute that matches the filter.',
           '',
           'The documented maximum is 10 forwarding rules.',
         ]),
@@ -714,26 +776,29 @@ export const VCF_OPS_LOGS_91                                 = [
 
       return {
         platform: LOGS,
-        title: `Forward ${filter ? `events where ${describe(filter)}` : 'all events'} to ${host || 'an external destination'} (${protocol}${protocol === 'Syslog' ? `/${transport}` : ''}${tls ? ' + TLS' : ''})`,
+        title: `Forward ${filters.length > 0 ? `events where ${filterText}` : 'all events'} to ${host || 'an external destination'} (${protocol}${protocol === 'Syslog' ? `/${transport}` : ''}${tls ? ' + TLS' : ''})`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: `Entered once in ${CONFIGURATIONS} → Log Forwarding; from then every matching event is sent as it is ingested.`, worstCase: 'at the ingestion rate of every matching source' },
+        trigger: { kind: 'manual', detail: 'Applied once by apply.sh (it shows in the Log Forwarding card); from then every matching event is sent as it is ingested.', worstCase: 'at the ingestion rate of every matching source' },
         scope: {
-          what: filter ? `Events where ${describe(filter)}.` : 'Every event log management ingests.',
-          decidedBy: ['Which sources send to log management at all (Log Collection and the adapters’ log settings).', 'Ingestion filters, which drop events before they can be forwarded.', 'This rule’s own filter.'],
+          what: filters.length > 0 ? `Events where ${filterText}.` : 'Every event log management ingests.',
+          decidedBy: ['Which sources send to log management at all (Log Collection and the adapters’ log settings).', 'Ingestion filters, which drop events before they can be forwarded.', `This rule’s filter rows, matched ${join === 'AND' ? 'all together' : 'any one'}.`],
           ifWrong: 'Too wide, and the destination’s licence and storage fill with appliance chatter; too narrow, and the SIEM misses the event it was bought to see. Either way, forwarded events cannot be recalled.',
         },
         guardrails: [
-          { rule: 'check-destination.sh exits 1 on a closed port, or on a certificate that does not verify or expires within 30 days', because: 'A forwarding rule to a dead or untrusted endpoint queues and then drops, silently.' },
-          ...(filter ? [{ rule: `Only events where ${describe(filter)} leave`, because: 'The platform applies the rule’s filter before sending, so unrelated data never reaches a third party.' }] : []),
+          { rule: 'apply.sh runs check-destination.sh first and applies nothing when it fails (closed port, or a certificate that does not verify or expires within 30 days)', because: 'A forwarding rule to a dead or untrusted endpoint queues and then drops, silently.' },
+          { rule: 'apply.sh stops at the documented maximum of 10 forwarding rules, and leaves a rule with the same name alone', because: 'Running it twice must not make two rules sending every event twice.' },
+          ...(filters.length > 0 ? [{ rule: `Only events where ${filterText} leave`, because: 'The platform applies the rule’s filter before sending, so unrelated data never reaches a third party.' }] : []),
         ],
-        dryRun: ['Run ./check-destination.sh.', 'Use VALIDATE CONNECTION in the rule form before CREATE.'],
+        dryRun: ['Run ./check-destination.sh.', 'Run ./apply.sh --dry-run: it prints what it would send and signs in to nothing.'],
         undo: ['Log Forwarding → the rule → turn Enable Configuration off, or delete it. Events already sent stay at the destination.'],
         told: [`${host || 'The destination'} receives the events; nobody is told the rule exists. Record it with the destination owner.`],
-        requires: [`${host}:${port} reachable from the log management instance${tls ? ', with a certificate chain it trusts' : ''}.`, 'Log management 9.1.'],
+        requires: [`${host}:${port} reachable from the log management instance${tls ? ', with a certificate chain it trusts' : ''}${ipv6 ? ' over IPv6' : ''}.`, 'Log management 9.1.', 'curl, jq and openssl on the machine that runs apply.sh.'],
         files,
         notes: [
+          logsApplyNote(),
           'Two different things are called log forwarding in 9.1. This one (the Log Forwarding card) forwards the logs log management collects. PUT /suite-api/api/logs/forwarding forwards VCF Operations’ own service logs (ANALYTICS, COLLECTOR, SUITEAPI…) and is not this.',
-          'For 9.0 the equivalent is configured on the VCF Operations for Logs appliance itself (Log Management → Log Forwarding), per KB 423960.',
+          'VERIFY: the payload field names (workerCount, diskCacheSize, retryIntervalSeconds, tags, filters, sslCertificate) follow the VCF Operations for Logs 8.18 forwarding API; check the saved before-<time>/forwarding-before.json after the first run for the 9.1 names.',
+          'IPv6: a literal IPv6 destination is accepted by the check and the rule; the platform must have an IPv6 path to it.',
         ],
         findings,
       };
@@ -747,15 +812,31 @@ export const VCF_OPS_LOGS_91                                 = [
     label: 'A partition with its own retention and archive (9.1)',
     group: 'Log management 9.1',
     description:
-      'A 9.1 log partition — a separate index with its own retention period and its own archive location on NFS or S3 — for the events that must be kept longer than the rest. Refuses a retention shorter than the requirement unless an archive covers the gap, and ships a check that the archive target is reachable.',
+      'A 9.1 log partition — a separate index with its own filter rows, retention period, archive location on NFS or S3 and the roles allowed to search it — for the events that must be kept longer than the rest. Enforces the 9.1 limit of 9 partitions besides Audit & Logs (apply.sh counts what is there and stops), refuses a retention shorter than the requirement unless an archive covers the gap, and checks the archive target before it creates anything.',
     inputs: [
       { id: 'partition_name', label: 'Partition', control: 'text', default: 'security-audit' },
-      { id: 'filter_field', label: 'Events where', control: 'text', default: 'appname' },
-      { id: 'filter_op', label: 'Operator', control: 'select', options: CONDITION_OPERATORS, default: 'Matches Regex' },
-      { id: 'filter_value', label: 'Value', control: 'text', default: '^(sshd|sudo|vpxd-svcs|nsx-audit)' },
+      {
+        id: 'filter_join',
+        label: 'Events matching',
+        control: 'select',
+        options: [
+          { value: 'ANY', label: 'Any filter row (OR)' },
+          { value: 'ALL', label: 'Every filter row (AND)' },
+        ],
+        default: 'ANY',
+      },
+      {
+        id: 'filters',
+        label: 'Filters',
+        control: 'textarea',
+        default: 'appname | Starts with | sshd\nappname | Starts with | sudo\nappname | Starts with | vpxd-svcs\nappname | Contains | nsx-audit',
+        hint: 'field | operator | value',
+        help: 'Operators: Contains, Does not contain, Starts with, Does not start with, Matches Regex, Exists, Does not exist.',
+      },
       { id: 'retention_days', label: 'Keep searchable for (days)', control: 'number', default: 90, min: 1, max: 3650 },
       { id: 'required_days', label: 'Required retention (days)', control: 'number', default: 365, min: 1, max: 3650, hint: 'What policy or regulation requires' },
-      { id: 'partitions_total', label: 'Partitions in total, including this one', control: 'number', default: 3, min: 1, max: 20, hint: 'The default Audit & Logs partition counts' },
+      { id: 'extra_partitions', label: 'Partitions besides Audit & Logs, including this one', control: 'number', default: 2, min: 1, max: 20, hint: '9.1 allows at most 9. apply.sh also counts what already exists' },
+      { id: 'roles', label: 'Roles that may search it', control: 'text', default: 'Security Auditor, Administrator', hint: 'Comma separated. Empty leaves access to the defaults' },
       {
         id: 'archive',
         label: 'Archive to',
@@ -775,10 +856,12 @@ export const VCF_OPS_LOGS_91                                 = [
     ],
     automation: (values                 , name        )             => {
       const partition = str(values, 'partition_name', 'partition');
-      const filter = condition(str(values, 'filter_field', ''), str(values, 'filter_op', 'Contains'), str(values, 'filter_value', ''));
+      const join = str(values, 'filter_join', 'ANY') === 'ALL' ? 'AND' : 'OR';
+      const { conditions: filters, bad } = conditionRows(str(values, 'filters', ''));
       const retention = num(values, 'retention_days', 90);
       const required = num(values, 'required_days', 365);
-      const total = num(values, 'partitions_total', 3);
+      const extra = num(values, 'extra_partitions', 2);
+      const roles = listOf(str(values, 'roles', ''));
       const archive = str(values, 'archive', 's3');
       const endpoint = str(values, 's3_endpoint', '');
       const bucket = str(values, 's3_bucket', '');
@@ -786,11 +869,21 @@ export const VCF_OPS_LOGS_91                                 = [
       const nfs = str(values, 'nfs_address', '');
       const ticket = str(values, 'change_ticket', '');
       const base = slugOf(name || partition, 'log-partition');
+      const filterText = describeAll(filters, join);
 
       const findings            = [];
-      if (!filter) findings.push(error('vcflog91.part.no-filter', 'A partition needs a filter to decide which events go into it.', { source: SRC }));
-      if (total > 10) {
-        findings.push(error('vcflog91.part.too-many', `${total} partitions: 9.1 allows the default Audit & Logs partition plus up to 9 more.`, { source: SRC }));
+      if (filters.length === 0) findings.push(error('vcflog91.part.no-filter', 'A partition needs at least one filter row to decide which events go into it.', { source: SRC }));
+      for (const row of bad) findings.push(error('vcflog91.part.bad-filter', `Filter row "${row}" has an operator 9.1 does not offer, or no value.`, { source: SRC }));
+      if (extra > 9) {
+        findings.push(
+          error('vcflog91.part.too-many', `${extra} partitions besides Audit & Logs: 9.1 allows at most 9.`, {
+            remediation: 'Merge partitions that share a retention: a partition is for a different retention or a different audience, not for a different source.',
+            source: SRC,
+          }),
+        );
+      }
+      if (/^(audit\s*&?\s*logs|logs|audit)$/i.test(partition)) {
+        findings.push(error('vcflog91.part.reserved', `"${partition}" is the name of the default partition.`, { source: SRC }));
       }
       if (retention < required && archive === 'none') {
         findings.push(
@@ -815,32 +908,35 @@ export const VCF_OPS_LOGS_91                                 = [
         );
       }
 
+      const storageName = `${partition}-archive`;
       const spec = {
         name: partition,
-        filter: filter ?? null,
-        retentionDays: retention,
+        enabled: true,
+        filterOperator: join,
+        filters,
+        retentionPeriod: retention,
         requiredRetentionDays: required,
-        archive: archive === 'none' ? null : archive === 's3' ? { type: 'S3', storage: `${bucket} at ${endpoint}` } : { type: 'NFS', storage: nfs },
+        archiveEnabled: archive !== 'none',
+        ...(archive !== 'none' ? { archiveLocation: storageName } : {}),
+        ...(roles.length > 0 ? { roles } : {}),
         change: ticket,
-        _note: 'A spec to review and enter in the interface. 9.1 documents no API for partitions.',
       };
       const storage =
         archive === 's3'
-          ? { type: 'S3', name: `${partition}-archive`, endpoint, bucketName: bucket, region, serverSideEncryption: 'AES256', pathStyleAccess: true, accessKey: '<REQUIRED — enter in the form>', secretKey: '<REQUIRED — enter in the form; never stored in this file>' }
+          ? { type: 'S3', name: storageName, endpoint, bucketName: bucket, region, serverSideEncryption: 'AES256', pathStyleAccess: true, accessKey: '<from S3_ACCESS_KEY_ID when apply.sh runs>', secretKey: '<from S3_SECRET_KEY_FILE when apply.sh runs>' }
           : archive === 'nfs'
-            ? { type: 'NFS', hostName: `${partition}-archive`, hostAddress: nfs }
+            ? { type: 'NFS', name: storageName, hostAddress: nfs }
             : undefined;
 
-      const nfsHost = nfs.replace(/^nfs:\/\//, '').split(/[:/]/)[0] ?? '';
+      const nfsHost = nfs.replace(/^nfs:\/\//, '').replace(/^\[([^\]]+)\].*$/, '$1').split(/:\//)[0] .replace(/:$/, '');
       const s3Host = endpoint.replace(/^https?:\/\//, '').split('/')[0] ?? '';
       const check = storage
         ? [
             '#!/usr/bin/env bash',
             `# Is the ${archive.toUpperCase()} archive target for "${partition}" reachable?`,
             '#',
-            '# Reads only. Run it from the management network. The External Storage',
-            '# form’s Validate, which runs from the platform, is the authoritative test.',
-            '# Exits 1 when the target cannot be reached.',
+            '# Reads only. Run it from the management network; apply.sh runs it before',
+            '# it creates anything. Exits 1 when the target cannot be reached.',
             'set -euo pipefail',
             'PROBLEMS=()',
             ...(archive === 's3'
@@ -848,7 +944,10 @@ export const VCF_OPS_LOGS_91                                 = [
                   `S3_HOST="${s3Host}"`,
                   `BUCKET="${bucket}"`,
                   'command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 2; }',
-                  'if ! openssl s_client -connect "${S3_HOST}:443" -servername "${S3_HOST%%:*}" ${CA_FILE:+-CAfile "$CA_FILE"} -verify_return_error </dev/null >/dev/null 2>&1; then',
+                  '# An IPv6 endpoint is written bracketed, https://[2001:db8::10]/, as in any URL.',
+                  'CONNECT="$S3_HOST"',
+                  '[[ "$CONNECT" =~ :[0-9]+$ ]] || CONNECT="$CONNECT:443"',
+                  'if ! openssl s_client -connect "$CONNECT" ${CA_FILE:+-CAfile "$CA_FILE"} -verify_return_error </dev/null >/dev/null 2>&1; then',
                   '  PROBLEMS+=("TLS to $S3_HOST does not verify with a trusted CA — 9.1 requires one for S3")',
                   'fi',
                   '# Optional: list the bucket with credentials from your own AWS profile.',
@@ -868,50 +967,88 @@ export const VCF_OPS_LOGS_91                                 = [
           ].join('\n')
         : undefined;
 
+      const countCheck = [
+        '# 9.1 allows Audit & Logs plus at most 9 more.',
+        'N=$(jq \'[.. | objects | select(has("retentionPeriod") or has("retentionDays"))] | length\' "$LIST")',
+        `if has_named "$LIST" ${sq(partition)}; then :; elif (( N >= 10 )); then echo "$N partitions exist, Audit & Logs included: 9.1 allows 9 besides it. Nothing created." >&2; exit 1; fi`,
+      ];
+
+      const apply = logsApplyScript({
+        purpose: `Create the log partition "${partition}"${storage ? ` and its ${archive.toUpperCase()} archive location` : ''} in VCF Operations 9.1 log management, enabled.`,
+        first: [
+          ...(storage ? ['(( DRY_RUN )) || bash "$HERE/check-archive.sh" || { echo "check-archive.sh failed: nothing applied." >&2; exit 1; }'] : []),
+          ...(archive === 's3'
+            ? [
+                'STORAGE="$HERE/external-storage.json"',
+                'if (( ! DRY_RUN )); then',
+                '  : "${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID to the access key limited to this bucket}"',
+                '  : "${S3_SECRET_KEY_FILE:?set S3_SECRET_KEY_FILE to a file holding its secret key, mode 600}"',
+                '  STORAGE="$PRIVATE/external-storage.json"',
+                '  jq --arg a "$S3_ACCESS_KEY_ID" --rawfile s "$S3_SECRET_KEY_FILE" \'.accessKey = $a | .secretKey = ($s | rtrimstr("\\n"))\' "$HERE/external-storage.json" > "$STORAGE"',
+                'fi',
+              ]
+            : archive === 'nfs'
+              ? ['STORAGE="$HERE/external-storage.json"']
+              : []),
+          '',
+        ],
+        calls: [
+          ...(storage ? [{ what: `archive location ${storageName}`, key: 'archive', path: '/api/v1/archiving', payload: '$STORAGE', name: storageName }] : []),
+          { what: `partition ${partition}`, key: 'partitions', path: '/api/v2/partitions', payload: 'partition.json', name: partition, check: countCheck },
+        ],
+        undo: `raise the retention back, or delete the partition "${partition}"; events already aged out come back only from the archive.`,
+        manual: `${base}-APPLY.md`,
+      });
+
       return {
         platform: LOGS,
         title: `Partition "${partition}" — ${retention} days searchable${storage ? `, archived to ${archive.toUpperCase()}` : ', not archived'}`,
         effect: 'irreversible',
-        trigger: { kind: 'schedule', detail: `Configured once; from then log management deletes events in "${partition}" older than ${retention} days, continuously.`, worstCase: 'every day, on every event past its retention' },
+        trigger: { kind: 'schedule', detail: `Created once by apply.sh; from then log management deletes events in "${partition}" older than ${retention} days, continuously.`, worstCase: 'every day, on every event past its retention' },
         scope: {
-          what: `Events where ${describe(filter)}, stored in their own partition.`,
-          decidedBy: ['The partition’s filter.', 'Ingestion filters, which drop events before any partition sees them.', 'The retention on this partition, independent of the others.'],
+          what: `Events where ${filterText}, stored in their own partition${roles.length > 0 ? `, searchable by ${roles.join(', ')}` : ''}.`,
+          decidedBy: [`The partition’s filter rows, matched ${join === 'AND' ? 'all together' : 'any one'}.`, 'Ingestion filters, which drop events before any partition sees them.', 'The retention on this partition, independent of the others.', ...(roles.length > 0 ? ['The roles given access, for who can search it.'] : [])],
           ifWrong: 'A filter too wide pulls ordinary events into a long-retention partition and fills it; a retention too short deletes evidence that was required. Deleted events come back only from the archive.',
         },
         guardrails: [
+          { rule: 'At most 9 partitions besides Audit & Logs: the generator refuses more, and apply.sh counts the partitions that exist and creates nothing at the limit', because: 'The platform refuses the tenth anyway, after the archive location has already been created for it.' },
           { rule: 'The generator refuses a retention below the required retention unless an archive is configured', because: 'The requirement is usually discovered in an audit, after the events have gone.' },
           { rule: `A change number is required (${ticket || 'none given'}); the generator refuses without one`, because: 'Retention is a delete schedule. Lowering it later deletes history at once.' },
-          ...(storage ? [{ rule: 'check-archive.sh exits 1 when the archive target cannot be reached or its certificate does not verify', because: 'An archive that fails to write is found when somebody needs to restore from it.' }] : []),
+          ...(storage ? [{ rule: 'apply.sh runs check-archive.sh first and applies nothing when the archive target cannot be reached or its certificate does not verify', because: 'An archive that fails to write is found when somebody needs to restore from it.' }] : []),
         ],
-        dryRun: ['Read partition.json and the filter in it.', ...(storage ? ['Run ./check-archive.sh, then Validate in the External Storage form.'] : []), 'In Explore Logs, run the partition’s filter over the last day and count what it matches.'],
-        undo: ['Raise the retention back. Events already aged out are gone unless they were archived.', ...(storage ? ['Archived events can be brought back with the log import task (Configuring Log Import and Export Tasks).'] : [])],
+        dryRun: ['Run ./apply.sh --dry-run: it prints what it would send and signs in to nothing.', ...(storage ? ['Run ./check-archive.sh.'] : []), 'In Explore Logs, run the partition’s filter over the last day and count what it matches.'],
+        undo: ['Raise the retention back. Events already aged out are gone unless they were archived.', ...(storage ? ['Archived events can be brought back with "Import archived logs into a partition (9.1)".'] : [])],
         told: ['Nobody when events age out — that is the design. Put the retention in the records-retention register.'],
         requires: [
           'Log management 9.1.',
-          ...(archive === 's3' ? ['An S3 bucket with an access key limited to it, entered in the form — not stored here.'] : []),
+          ...(archive === 's3' ? ['An S3 bucket with an access key limited to it: S3_ACCESS_KEY_ID and S3_SECRET_KEY_FILE (mode 600) in the environment of apply.sh — never in these files.'] : []),
           ...(archive === 'nfs' ? ['An NFSv3 export reachable from the VCF management network, owned by root.'] : []),
+          ...(roles.length > 0 ? [`The roles ${roles.join(', ')} to exist in VCF Operations.`] : []),
         ],
         files: {
           'partition.json': json(spec),
           ...(storage ? { 'external-storage.json': json(storage), 'check-archive.sh': check  } : {}),
+          'apply.sh': apply,
           [`${base}-APPLY.md`]: md([
-            `# Apply partition "${partition}" (VCF Operations 9.1)`,
+            `# Partition "${partition}" by hand (only when apply.sh stops with exit 3)`,
             '',
             ...(storage
               ? [
                   `1. ${CONFIGURATIONS} → **External Storage** card → add the ${archive.toUpperCase()} location from external-storage.json; enter the keys in the form. **Validate**, **SAVE**, then **APPLY** (restarts the service). Up to 5 locations.`,
                 ]
               : ['1. No archive.']),
-            '2. Create the partition with the filter and retention in partition.json, and select the archive location for it.',
-            '   VERIFY: the 9.1 pages reviewed do not name the card that holds partitions; it sits with Log Processing and External Storage under Configurations.',
-            '3. Check the retention the form accepts: it is capped by the size profile and the number of partitions.',
+            `2. Create the partition \`${partition}\` with the filter rows in partition.json (match ${join === 'AND' ? 'all' : 'any'}), retention ${retention} days, and the archive location.`,
+            ...(roles.length > 0 ? [`3. Give ${roles.join(', ')} access to it (see "Control who can search which logs (9.1)").`] : ['3. No role changes.']),
+            '4. Check the retention the form accepts: it is capped by the size profile and the number of partitions.',
             '',
-            `Archives reach external storage within at most 24 hours, so an archive does not cover the most recent day.`,
+            'Archives reach external storage within at most 24 hours, so an archive does not cover the most recent day.',
           ]),
         },
         notes: [
+          logsApplyNote(),
           'In 9.1 a partition is a distinct index. The default is "Audit & Logs"; up to 9 more can be added, each with its own retention and archive location.',
           'Archive storage in 9.1 is NFSv3 or S3-compatible. S3 is the documented preference, and it must present a certificate from a trusted CA.',
+          'VERIFY: the partition and archive payload field names follow VCF Operations for Logs 8.18; compare with before-<time>/partitions-before.json after the first run.',
         ],
         findings,
       };
@@ -922,10 +1059,10 @@ export const VCF_OPS_LOGS_91                                 = [
   automationBlueprint({
     id: 'vcflog91_agents',
     platform: LOGS,
-    label: 'Standard agent configuration by OS and role (9.1)',
+    label: 'Agent configuration by OS and role: parsers, tags, filters, TLS (9.1)',
     group: 'Log management 9.1',
     description:
-      'Central agent configuration for a group of servers — the log management agent on Linux and Windows, Fluent Bit on Kubernetes — grouped by operating system and role so every server of a kind sends the same files with the same tags. With a check to run on a server that fails when its agent is not running or cannot reach its target.',
+      'Central agent configuration for a group of servers — the log management agent on Linux and Windows, Fluent Bit on Kubernetes — with a parser per file (auto, CLF, CSV, JSON, KVP, syslog or your own regex), tags per source, event whitelist and blacklist, the protocol (CFAPI or syslog), TLS and reconnect. apply.sh creates the agent group through the log management API, or on Kubernetes applies the Fluent Bit ConfigMap and restarts the DaemonSet; a check on a server fails when its agent is not running or cannot reach its target.',
     inputs: [
       { id: 'group_name', label: 'Agent group', control: 'text', default: 'Linux — web tier' },
       {
@@ -951,30 +1088,120 @@ export const VCF_OPS_LOGS_91                                 = [
         ],
         default: 'proxy',
       },
-      { id: 'target', label: 'Target FQDN', control: 'text', default: 'cloudproxy-dc1.example.com' },
-      { id: 'port', label: 'Port', control: 'number', default: 9543, min: 1, max: 65535, hint: 'VERIFY for 9.1: 9543 is the historical cfapi TLS port' },
-      { id: 'directory', label: 'Log directory', control: 'text', default: '/var/log/nginx', showWhen: { input: 'os', equals: ['linux'] } },
-      { id: 'include', label: 'Files', control: 'text', default: '*.log', showWhen: { input: 'os', equals: ['linux'] } },
-      { id: 'channels', label: 'Event channels', control: 'text', default: 'Application, System, Security', showWhen: { input: 'os', equals: ['windows'] } },
-      { id: 'k8s_namespaces', label: 'Namespaces', control: 'text', default: 'orders, payments', showWhen: { input: 'os', equals: ['kubernetes'] } },
+      { id: 'target', label: 'Target FQDN or address', control: 'text', default: 'cloudproxy-dc1.example.com', hint: 'FQDN, IPv4 or IPv6' },
+      {
+        id: 'protocol',
+        label: 'Protocol',
+        control: 'select',
+        options: [
+          { value: 'cfapi', label: 'CFAPI (the agent’s own protocol, keeps fields and tags)' },
+          { value: 'syslog', label: 'Syslog' },
+        ],
+        default: 'cfapi',
+        showWhen: { input: 'os', notEquals: ['kubernetes'] },
+      },
+      { id: 'port', label: 'Port', control: 'number', default: 9543, min: 1, max: 65535, hint: 'CFAPI 9543 with TLS / 9000 without; syslog 6514 with TLS / 514 without. VERIFY on 9.1' },
+      { id: 'ssl', label: 'TLS', control: 'toggle', default: true },
+      { id: 'ca_path', label: 'CA bundle on the servers', control: 'text', default: '/etc/pki/tls/certs/ca-bundle.crt', hint: 'Path the agent reads to verify the target', showWhen: { input: 'ssl', equals: ['true'] } },
+      { id: 'reconnect_minutes', label: 'Reconnect every (minutes)', control: 'number', default: 30, min: 1, max: 1440, hint: 'Spreads load across targets behind a balancer', showWhen: { input: 'os', notEquals: ['kubernetes'] } },
+      { id: 'disk_buffer_mb', label: 'Disk buffer (MB)', control: 'number', default: 200, min: 50, max: 8000, hint: 'Events queued while the target is unreachable' },
+      {
+        id: 'files',
+        label: 'Files',
+        control: 'textarea',
+        default:
+          'nginx-access | /var/log/nginx | access*.log | clf | log=access\nnginx-error | /var/log/nginx | error*.log | auto | log=error\norders-app | /var/log/orders | *.log | orders-regex | app=orders',
+        hint: 'name | directory | include | parser | tags',
+        help: 'parser: auto, clf, csv, json, kvp, syslog, or the name of a custom parser below. tags: key=value, separated by semicolons.',
+        showWhen: { input: 'os', equals: ['linux'] },
+      },
+      {
+        id: 'channels',
+        label: 'Event channels',
+        control: 'textarea',
+        default: 'application | Application | log=application\nsystem | System | log=system\nsecurity | Security | log=security',
+        hint: 'name | channel | tags',
+        help: 'Any Windows event log channel, e.g. Microsoft-Windows-PowerShell/Operational. tags: key=value, separated by semicolons.',
+        showWhen: { input: 'os', equals: ['windows'] },
+      },
+      {
+        id: 'event_filters',
+        label: 'Event whitelist and blacklist',
+        control: 'textarea',
+        default: 'orders-app | whitelist | level == "ERROR" or level == "WARN"\nsecurity | blacklist | eventid == 4662',
+        hint: 'source name | whitelist or blacklist | expression',
+        help: 'An expression on the parsed fields. whitelist keeps only matching events; blacklist drops them. The source name is a row name from Files or Event channels.',
+        showWhen: { input: 'os', notEquals: ['kubernetes'] },
+      },
+      {
+        id: 'parsers',
+        label: 'Custom parsers',
+        control: 'textarea',
+        default: 'orders-regex | regex | (?<timestamp>\\S+) (?<level>[A-Z]+) (?<message>.*)',
+        hint: 'name | base parser | format',
+        help: 'base parser: regex (format is a regex with named groups), clf (format is a CLF pattern), csv (format is the field names, comma separated), kvp (format is the field names to keep).',
+        showWhen: { input: 'os', equals: ['linux', 'windows'] },
+      },
+      { id: 'k8s_namespaces', label: 'Namespaces', control: 'text', default: 'orders, payments', hint: 'Comma separated. Empty collects every namespace', showWhen: { input: 'os', equals: ['kubernetes'] } },
+      { id: 'k8s_labels', label: 'Only pods labelled', control: 'text', default: 'tier=frontend', hint: 'key=value pairs, comma separated. Empty takes every pod', showWhen: { input: 'os', equals: ['kubernetes'] } },
+      {
+        id: 'k8s_output',
+        label: 'Fluent Bit output',
+        control: 'select',
+        options: [
+          { value: 'syslog_tls', label: 'Syslog RFC 5424 over TLS' },
+          { value: 'syslog_tcp', label: 'Syslog RFC 5424 over TCP' },
+          { value: 'http', label: 'HTTP JSON (VERIFY the ingestion path on 9.1)' },
+        ],
+        default: 'syslog_tls',
+        showWhen: { input: 'os', equals: ['kubernetes'] },
+      },
+      { id: 'k8s_namespace_fb', label: 'Fluent Bit runs in namespace', control: 'text', default: 'logging', showWhen: { input: 'os', equals: ['kubernetes'] } },
     ],
     automation: (values                 , name        )             => {
       const group = str(values, 'group_name', 'Agents');
       const os = str(values, 'os', 'linux');
+      const k8s = os === 'kubernetes';
       const role = str(values, 'role', 'app');
       const hostFilter = str(values, 'hostname_filter', '*');
       const via = str(values, 'send_via', 'proxy');
       const target = str(values, 'target', '');
+      const protocol = str(values, 'protocol', 'cfapi');
       const port = num(values, 'port', 9543);
-      const directory = str(values, 'directory', '/var/log');
-      const include = str(values, 'include', '*.log');
-      const channels = listOf(str(values, 'channels', 'Application, System'));
+      const ssl = bool(values, 'ssl', true);
+      const caPath = str(values, 'ca_path', '');
+      const reconnect = num(values, 'reconnect_minutes', 30);
+      const diskBuffer = num(values, 'disk_buffer_mb', 200);
+      const fileRows = rowsOf(str(values, 'files', ''), 5).filter((row) => row[0]);
+      const channelRows = rowsOf(str(values, 'channels', ''), 3).filter((row) => row[0]);
+      const filterRows = rowsOf(str(values, 'event_filters', ''), 3).filter((row) => row[0]);
+      const parserRows = rowsOf(str(values, 'parsers', ''), 3).filter((row) => row[0]);
       const namespaces = listOf(str(values, 'k8s_namespaces', ''));
+      const labels = listOf(str(values, 'k8s_labels', ''))
+        .map((pair) => pair.split('='))
+        .filter((pair) => pair.length === 2 && pair[0] .trim() && pair[1] .trim())
+        .map(([key, value]) => ({ key: key .trim(), value: value .trim() }));
+      const output = str(values, 'k8s_output', 'syslog_tls');
+      const fbNamespace = str(values, 'k8s_namespace_fb', 'logging');
       const base = slugOf(name || group, 'agent-group');
+      const ipv6 = target.includes(':');
+
+      const BUILT_IN = ['auto', 'clf', 'csv', 'json', 'kvp', 'syslog'];
+      const custom = new Set(parserRows.map((row) => row[0] ));
+      const sources = os === 'windows' ? channelRows.map((row) => row[0] ) : fileRows.map((row) => row[0] );
+      const tagsOf = (text        )                         =>
+        Object.fromEntries([
+          ['role', role],
+          ...text
+            .split(';')
+            .map((pair) => pair.split('='))
+            .filter((pair) => pair.length === 2 && pair[0] .trim() && pair[1] .trim())
+            .map(([key, value]) => [key .trim(), value .trim()]),
+        ]);
 
       const findings            = [];
       if (!target) findings.push(error('vcflog91.agent.no-target', 'No target to send to.', { source: SRC }));
-      if (os !== 'kubernetes' && (hostFilter === '*' || hostFilter === '')) {
+      if (!k8s && (hostFilter === '*' || hostFilter === '')) {
         findings.push(
           warning('vcflog91.agent.all', 'The group matches every agent, so this configuration lands on every server of every role.', {
             remediation: 'Name a pattern. The point of a group per OS and role is that a web server does not tail a database’s logs.',
@@ -982,47 +1209,82 @@ export const VCF_OPS_LOGS_91                                 = [
           }),
         );
       }
+      if (os === 'linux' && fileRows.length === 0) findings.push(error('vcflog91.agent.no-files', 'No file rows: the agents would send nothing.', { source: SRC }));
+      if (os === 'windows' && channelRows.length === 0) findings.push(error('vcflog91.agent.no-channels', 'No event channel rows: the agents would send nothing.', { source: SRC }));
+      if (os === 'linux') {
+        for (const row of fileRows) {
+          const parser = row[3] || 'auto';
+          if (!BUILT_IN.includes(parser) && !custom.has(parser)) {
+            findings.push(error('vcflog91.agent.parser', `File row "${row[0]}" uses parser "${parser}", which is neither built in (${BUILT_IN.join(', ')}) nor a custom parser row.`, { source: SRC }));
+          }
+          if (!row[1] .startsWith('/')) findings.push(error('vcflog91.agent.relative', `File row "${row[0]}": the directory must be an absolute path.`, { source: SRC }));
+        }
+      }
+      for (const row of parserRows) {
+        if (!['regex', 'clf', 'csv', 'kvp'].includes(row[1] )) findings.push(error('vcflog91.agent.base-parser', `Custom parser "${row[0]}": base parser "${row[1]}" is not regex, clf, csv or kvp.`, { source: SRC }));
+        else if (row[1] === 'regex' && !/\(\?<[A-Za-z_]/.test(row[2] )) findings.push(error('vcflog91.agent.regex-groups', `Custom parser "${row[0]}": a regex parser needs named groups, (?<field>…), or it extracts nothing.`, { source: SRC }));
+      }
+      if (!k8s) {
+        for (const row of filterRows) {
+          if (!sources.includes(row[0] )) findings.push(warning('vcflog91.agent.filter-source', `Filter row for "${row[0]}": no ${os === 'windows' ? 'channel' : 'file'} row has that name, so it is left out.`, { source: SRC }));
+          if (row[1] !== 'whitelist' && row[1] !== 'blacklist') findings.push(error('vcflog91.agent.filter-kind', `Filter row for "${row[0]}": "${row[1]}" is not whitelist or blacklist.`, { source: SRC }));
+        }
+        if (!ssl) {
+          findings.push(warning('vcflog91.agent.no-tls', 'TLS is off: every event, including authentication logs, crosses the network in clear.', { remediation: 'Turn TLS on; it costs the agent almost nothing.', source: SRC }));
+        }
+        if (protocol === 'cfapi' && (port === 514 || port === 6514)) findings.push(warning('vcflog91.agent.port', `Port ${port} is a syslog port; CFAPI listens on 9543 (TLS) or 9000.`, { source: SRC }));
+        if (protocol === 'syslog' && (port === 9543 || port === 9000)) findings.push(warning('vcflog91.agent.port', `Port ${port} is a CFAPI port; syslog listens on 6514 (TLS) or 514.`, { source: SRC }));
+        if (protocol === 'syslog') findings.push(info('vcflog91.agent.syslog', 'Over syslog the agent’s tags and extracted fields are not carried as fields. CFAPI keeps them.', { source: SRC }));
+      }
       if (via === 'direct') {
         findings.push(info('vcflog91.agent.direct', 'Direct to log management skips the cloud proxy that would aggregate and buffer. Fine for a few servers; use the proxy for many.', { source: SRC }));
       }
 
-      const tags = JSON.stringify({ role, os, agent_group: group });
+      // --- the agent's configuration ---
+      const filtersFor = (source        )           => filterRows.filter((row) => row[0] === source).map((row) => `${row[1]}=${row[2]}`);
+      const server = [
+        '[server]',
+        `hostname=${target}`,
+        `proto=${protocol}`,
+        `port=${port}`,
+        `ssl=${ssl ? 'yes' : 'no'}`,
+        ...(ssl ? ['ssl_accept_any=no', ...(caPath ? [`ssl_ca_path=${caPath}`] : [])] : []),
+        `reconnect=${reconnect}`,
+        '',
+        '[storage]',
+        `max_disk_buffer=${diskBuffer}`,
+        '',
+      ];
+      const parsers = parserRows.flatMap((row) => [
+        `[parser|${row[0]}]`,
+        `base_parser=${row[1]}`,
+        row[1] === 'csv' || row[1] === 'kvp' ? `fields=${row[2]}` : `format=${row[2]}`,
+        '',
+      ]);
       const ini =
         os === 'windows'
           ? [
               '; Central configuration for the agent group — merged with each server’s own liagent.ini.',
-              '[server]',
-              `hostname=${target}`,
-              'proto=cfapi',
-              `port=${port}`,
-              'ssl=yes',
-              '',
-              ...channels.flatMap((channel) => [`[winlog|${slugOf(channel, 'channel')}]`, `channel=${channel}`, `tags=${tags}`, '']),
+              ...server,
+              ...parsers,
+              ...channelRows.flatMap((row) => [`[winlog|${slugOf(row[0] , 'channel')}]`, `channel=${row[1]}`, `tags=${JSON.stringify(tagsOf(row[2] ))}`, ...filtersFor(row[0] ), '']),
             ]
           : [
               '# Central configuration for the agent group — merged with each server’s own liagent.ini.',
-              '[server]',
-              `hostname=${target}`,
-              'proto=cfapi',
-              `port=${port}`,
-              'ssl=yes',
-              '',
-              `[filelog|${slugOf(role, 'app')}]`,
-              `directory=${directory}`,
-              `include=${include}`,
-              `tags=${tags}`,
-              '',
+              ...server,
+              ...parsers,
+              ...fileRows.flatMap((row) => [`[filelog|${slugOf(row[0] , 'file')}]`, `directory=${row[1]}`, `include=${row[2]}`, `parser=${row[3] || 'auto'}`, `tags=${JSON.stringify(tagsOf(row[4] ))}`, ...filtersFor(row[0] ), '']),
             ];
 
+      const k8sPort = output === 'http' ? 443 : port === 9543 || port === 9000 ? (output === 'syslog_tls' ? 6514 : 514) : port;
+      const k8sTls = output !== 'syslog_tcp';
+      const nsRegex = namespaces.length > 0 ? `^(${namespaces.join('|')})$` : '';
       const fluent = [
-        '# Fluent Bit for Kubernetes log collection to VCF log management.',
-        '# VERIFY: 9.1 standardises on Fluent Bit for Kubernetes and configures VKS',
-        '# clusters itself; this is for clusters it does not manage. The syslog TLS',
-        '# input on the target is an assumption — check which listener your',
-        '# log management or cloud proxy exposes for third-party agents.',
         '[SERVICE]',
-        '    Flush        5',
-        '    Log_Level    info',
+        '    Flush              5',
+        '    Log_Level          info',
+        '    storage.path       /var/fluent-bit/state/',
+        `    storage.backlog.mem_limit ${Math.max(5, Math.round(diskBuffer / 10))}M`,
         '',
         '[INPUT]',
         '    Name              tail',
@@ -1030,12 +1292,17 @@ export const VCF_OPS_LOGS_91                                 = [
         '    multiline.parser  docker, cri',
         '    Tag               kube.*',
         '    Mem_Buf_Limit     50MB',
+        '    storage.type      filesystem',
+        '    DB                /var/fluent-bit/state/tail.db',
         '',
         '[FILTER]',
         '    Name       kubernetes',
         '    Match      kube.*',
         '    Merge_Log  On',
+        '    Labels     On',
         '',
+        ...(nsRegex ? ['[FILTER]', '    Name   grep', '    Match  kube.*', `    Regex  $kubernetes['namespace_name'] ${nsRegex}`, ''] : []),
+        ...labels.flatMap((label) => ['[FILTER]', '    Name   grep', '    Match  kube.*', `    Regex  $kubernetes['labels']['${label.key}'] ^${label.value}$`, '']),
         '[FILTER]',
         '    Name    record_modifier',
         '    Match   *',
@@ -1043,16 +1310,35 @@ export const VCF_OPS_LOGS_91                                 = [
         `    Record  agent_group ${slugOf(group, 'group')}`,
         '',
         '[OUTPUT]',
-        '    Name                syslog',
-        '    Match               *',
-        `    Host                ${target}`,
-        '    Port                6514',
-        '    Mode                tls',
-        '    tls                 On',
-        '    tls.verify          On',
-        '    Syslog_Format       rfc5424',
-        '    Syslog_Message_Key  log',
-        '    Syslog_Appname_Key  kubernetes[\'container_name\']',
+        ...(output === 'http'
+          ? ['    Name                http', '    Match               *', `    Host                ${target}`, `    Port                ${k8sPort}`, '    URI                 /api/v1/events/ingest/fluent-bit', '    Format              json', '    tls                 On', '    tls.verify          On']
+          : [
+              '    Name                syslog',
+              '    Match               *',
+              `    Host                ${target}`,
+              `    Port                ${k8sPort}`,
+              `    Mode                ${k8sTls ? 'tls' : 'tcp'}`,
+              ...(k8sTls ? ['    tls                 On', '    tls.verify          On'] : []),
+              '    Syslog_Format       rfc5424',
+              '    Syslog_Message_Key  log',
+              "    Syslog_Hostname_Key $kubernetes['host']",
+              "    Syslog_Appname_Key  $kubernetes['container_name']",
+            ]),
+        `    Retry_Limit         ${Math.max(1, Math.round((reconnect * 60) / 30))}`,
+        '    storage.total_limit_size ' + `${diskBuffer}M`,
+        '',
+      ];
+      const configMap = [
+        'apiVersion: v1',
+        'kind: ConfigMap',
+        'metadata:',
+        '  name: fluent-bit-config',
+        `  namespace: ${fbNamespace}`,
+        '  labels:',
+        `    agent-group: ${slugOf(group, 'group')}`,
+        'data:',
+        '  fluent-bit.conf: |',
+        ...fluent.map((line) => (line ? `    ${line}` : '')),
         '',
       ];
 
@@ -1066,7 +1352,7 @@ export const VCF_OPS_LOGS_91                                 = [
         'PROBLEMS=()',
         'systemctl is-active --quiet liagentd || PROBLEMS+=("liagentd is not running")',
         'timeout 5 bash -c "exec 3<>/dev/tcp/$TARGET/$PORT" 2>/dev/null || PROBLEMS+=("cannot reach $TARGET:$PORT")',
-        `ls ${directory}/${include} >/dev/null 2>&1 || PROBLEMS+=("no files match ${directory}/${include} — the agent has nothing to send")`,
+        ...fileRows.map((row) => `ls ${row[1]}/${row[2]} >/dev/null 2>&1 || PROBLEMS+=("no files match ${row[1]}/${row[2]} (${row[0]}) — nothing to send")`),
         'if (( ${#PROBLEMS[@]} )); then printf "PROBLEM: %s\\n" "${PROBLEMS[@]}" >&2; exit 1; fi',
         'echo "Agent running and target reachable."',
         '',
@@ -1091,48 +1377,86 @@ export const VCF_OPS_LOGS_91                                 = [
 
       const spec = {
         name: group,
-        filter: os === 'kubernetes' ? { platform: 'kubernetes', namespaces } : { os, hostname: hostFilter },
+        description: `${os} agents, role ${role}`,
+        criteria: { os, hostname: hostFilter },
         tags: { role, os },
-        sendTo: { via, target, port },
+        sendTo: { via, target, port, protocol, ssl },
+        agentConfig: md(ini),
       };
+
+      const k8sApply = [
+        '#!/usr/bin/env bash',
+        `# Apply the Fluent Bit configuration for "${group}" to the cluster in KUBECONFIG, then`,
+        '# restart the DaemonSet so every node reads it. --dry-run validates against the',
+        '# API server and changes nothing.',
+        'set -euo pipefail',
+        'command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }',
+        'HERE=$(cd "$(dirname "$0")" && pwd)',
+        `NS=${sq(fbNamespace)}`,
+        'DS="${FLUENT_BIT_DAEMONSET:-fluent-bit}"',
+        'if [[ "${1:-}" == "--dry-run" ]]; then',
+        '  kubectl apply --dry-run=server -f "$HERE/fluent-bit-configmap.yaml"',
+        '  echo "Dry run: nothing was changed."',
+        '  exit 0',
+        'fi',
+        'kubectl -n "$NS" get daemonset "$DS" >/dev/null || { echo "No DaemonSet $DS in $NS: deploy Fluent Bit first (set FLUENT_BIT_DAEMONSET if it has another name)." >&2; exit 2; }',
+        'kubectl -n "$NS" get configmap fluent-bit-config -o yaml > "$HERE/fluent-bit-config-before.yaml" 2>/dev/null || echo "No ConfigMap before this one."',
+        'kubectl apply -f "$HERE/fluent-bit-configmap.yaml"',
+        'kubectl -n "$NS" rollout restart daemonset "$DS"',
+        'kubectl -n "$NS" rollout status daemonset "$DS" --timeout=300s',
+        'echo "Applied. Undo: kubectl apply -f fluent-bit-config-before.yaml, then restart the DaemonSet."',
+        '',
+      ].join('\n');
 
       return {
         platform: LOGS,
-        title: `Agent group "${group}" — ${os === 'kubernetes' ? 'Fluent Bit' : `${os} agents named ${hostFilter}`}, role ${role}`,
+        title: `Agent group "${group}" — ${k8s ? 'Fluent Bit' : `${os} agents named ${hostFilter}, ${os === 'windows' ? channelRows.length : fileRows.length} source(s), ${protocol}${ssl ? ' + TLS' : ''}`}, role ${role}`,
         effect: 'reversible',
-        trigger: { kind: 'manual', detail: os === 'kubernetes' ? 'Applied to the cluster as a DaemonSet config; each node picks it up on restart.' : 'Saved once as the group’s central configuration; each matching agent picks it up at its next check-in.', worstCase: 'on every matching agent at once' },
+        trigger: { kind: 'manual', detail: k8s ? 'Applied by apply.sh as the Fluent Bit ConfigMap; the DaemonSet is restarted so every node reads it.' : 'Created by apply.sh as the group’s central configuration; each matching agent picks it up at its next check-in.', worstCase: 'on every matching agent at once' },
         scope: {
-          what: os === 'kubernetes' ? `Container logs in ${namespaces.length > 0 ? namespaces.join(', ') : 'every namespace'}.` : `Agents on ${os} servers whose hostname matches ${hostFilter}.`,
-          decidedBy: os === 'kubernetes' ? ['The namespaces in the tail path.', 'Which nodes run the Fluent Bit DaemonSet.'] : ['The group’s filter on OS and hostname.', 'Which servers have the agent installed and pointed at this target.'],
-          ifWrong: 'The wrong servers start sending files nobody asked for — or the right ones stop sending, because a central section replaced a local one. Either shows as a gap in the logs, not an error.',
+          what: k8s ? `Container logs in ${namespaces.length > 0 ? namespaces.join(', ') : 'every namespace'}${labels.length > 0 ? ` from pods labelled ${labels.map((l) => `${l.key}=${l.value}`).join(', ')}` : ''}.` : `Agents on ${os} servers whose hostname matches ${hostFilter}.`,
+          decidedBy: k8s ? ['The namespaces in the tail path and the namespace filter.', 'The label filters.', 'Which nodes run the Fluent Bit DaemonSet.'] : ['The group’s filter on OS and hostname.', 'Which servers have the agent installed and pointed at this target.', 'The whitelist and blacklist rows, per source.'],
+          ifWrong: 'The wrong servers start sending files nobody asked for — or the right ones stop sending, because a central section replaced a local one, or a whitelist was too narrow. Either shows as a gap in the logs, not an error.',
         },
         guardrails: [
-          { rule: os === 'kubernetes' ? 'Fluent Bit verifies the target’s TLS certificate (tls.verify On)' : 'Central configuration applies only to agents that match the group filter', because: os === 'kubernetes' ? 'A collector that accepts any certificate will send logs to whoever answers.' : 'A configuration meant for web servers does not reach the database tier.' },
-          ...(os === 'kubernetes' ? [] : [{ rule: `${os === 'windows' ? 'Check-Agent.ps1' : 'check-agent.sh'} exits 1 when the agent is stopped or cannot reach ${target}`, because: 'A server that stopped sending looks exactly like a quiet server.' }]),
+          { rule: k8s ? 'Fluent Bit verifies the target’s TLS certificate (tls.verify On)' : 'Central configuration applies only to agents that match the group filter', because: k8s ? 'A collector that accepts any certificate will send logs to whoever answers.' : 'A configuration meant for web servers does not reach the database tier.' },
+          ...(k8s ? [{ rule: 'apply.sh keeps the ConfigMap as it was before and waits for the rollout to finish', because: 'A DaemonSet that does not come back is found at once, with the previous configuration in hand.' }] : [{ rule: 'apply.sh leaves a group with the same name alone and keeps the list of groups as it was', because: 'Running it twice must not make two groups fighting over the same agents.' }]),
+          ...(k8s ? [] : [{ rule: `${os === 'windows' ? 'Check-Agent.ps1' : 'check-agent.sh'} exits 1 when the agent is stopped or cannot reach ${target}`, because: 'A server that stopped sending looks exactly like a quiet server.' }]),
         ],
-        dryRun: [os === 'kubernetes' ? 'Run fluent-bit --dry-run -c fluent-bit.conf to parse it.' : `Apply to one server first: put the group filter on a single hostname, run the check there, then widen it to ${hostFilter}.`],
-        undo: [os === 'kubernetes' ? 'Restore the previous Fluent Bit ConfigMap and restart the DaemonSet.' : 'Delete the agent group. Agents drop the central configuration at their next check-in and fall back to their local liagent.ini.'],
+        dryRun: [k8s ? 'Run ./apply.sh --dry-run: kubectl validates the ConfigMap against the API server and changes nothing.' : 'Run ./apply.sh --dry-run: it prints what it would send and signs in to nothing.', ...(k8s ? [] : [`Apply to one server first: put the group filter on a single hostname, run the check there, then widen it to ${hostFilter}.`])],
+        undo: [k8s ? 'kubectl apply -f fluent-bit-config-before.yaml and restart the DaemonSet.' : 'Delete the agent group. Agents drop the central configuration at their next check-in and fall back to their local liagent.ini.'],
         told: ['Nobody. Agent health is on the agents page; the checks here are what make a silent agent noisy.'],
-        requires: [os === 'kubernetes' ? 'Fluent Bit deployed as a DaemonSet with read access to /var/log/containers.' : 'The log management agent installed on each server (RHEL 9/10, SLES 15 SP7/16, Ubuntu 22.04/24.04/26.04, Debian 12/13, Photon 4+, or Windows).', `${target}:${os === 'kubernetes' ? 6514 : port} reachable from the servers.`],
-        files:
-          os === 'kubernetes'
-            ? { 'fluent-bit.conf': md(fluent), 'agent-group.json': json(spec) }
-            : {
-                'liagent.ini': md(ini),
-                'agent-group.json': json(spec),
-                ...(os === 'windows' ? { 'Check-Agent.ps1': checkWindows } : { 'check-agent.sh': checkLinux }),
-                [`${base}-APPLY.md`]: md([
-                  `# Apply agent group "${group}"`,
-                  '',
-                  `1. VCF Operations → ${CONFIGURATIONS} → Log Collection → agents (VERIFY: 9.1 documents centralised agent configuration and agent groups under "Configuring Agent Group" without naming the card).`,
-                  `2. New group \`${group}\`, filter: OS ${os}, hostname matches \`${hostFilter}\`.`,
-                  '3. Paste liagent.ini into the group’s configuration and save.',
-                  `4. Run ${os === 'windows' ? 'Check-Agent.ps1' : 'check-agent.sh'} on one member, then search Explore Logs for \`role = ${role}\`.`,
-                ]),
-              },
+        requires: [
+          k8s ? `Fluent Bit deployed as a DaemonSet in ${fbNamespace} with read access to /var/log/containers, and kubectl with KUBECONFIG for the cluster.` : 'The log management agent installed on each server (RHEL 9/10, SLES 15 SP7/16, Ubuntu 22.04/24.04/26.04, Debian 12/13, Photon 4+, or Windows).',
+          `${target}:${k8s ? k8sPort : port} reachable from the ${k8s ? 'nodes' : 'servers'}${ipv6 ? ' over IPv6' : ''}.`,
+        ],
+        files: k8s
+          ? { 'fluent-bit-configmap.yaml': md(configMap), 'fluent-bit.conf': md(fluent), 'apply.sh': k8sApply }
+          : {
+              'liagent.ini': md(ini),
+              'agent-group.json': json(spec),
+              ...(os === 'windows' ? { 'Check-Agent.ps1': checkWindows } : { 'check-agent.sh': checkLinux }),
+              'apply.sh': logsApplyScript({
+                purpose: `Create the agent group "${group}" with its central configuration in VCF Operations 9.1 log management.`,
+                calls: [{ what: `agent group ${group}`, key: 'agent groups', path: '/api/v1/agent/groups', payload: 'agent-group.json', name: group }],
+                undo: 'delete the agent group; agents fall back to their local liagent.ini at the next check-in.',
+                manual: `${base}-APPLY.md`,
+              }),
+              [`${base}-APPLY.md`]: md([
+                `# Agent group "${group}" by hand (only when apply.sh stops with exit 3)`,
+                '',
+                `1. VCF Operations → ${CONFIGURATIONS} → Log Collection → agents → agent groups (VERIFY the card name on 9.1).`,
+                `2. New group \`${group}\`, filter: OS ${os}, hostname matches \`${hostFilter}\`.`,
+                '3. Paste liagent.ini into the group’s configuration and save.',
+                `4. Run ${os === 'windows' ? 'Check-Agent.ps1' : 'check-agent.sh'} on one member, then search Explore Logs for \`role = ${role}\`.`,
+              ]),
+            },
         notes: [
-          '9.1 standardises collection: the log management agent for appliances and servers, Fluent Bit for Kubernetes. Appliance and VCF component collection (vCenter, NSX, VCF Operations, Identity Broker, VCF Automation, and in 9.1.1 SDDC Manager) is configured by the platform, not by agent groups.',
+          ...(k8s ? [] : [logsApplyNote()]),
+          '9.1 standardises collection: the log management agent for servers, Fluent Bit for Kubernetes. Appliance and VCF component collection (ESX, vCenter, NSX, VCF Operations, Identity Broker, VCF Automation, and in 9.1.1 SDDC Manager) is configured by the platform — see "Log sources: which VCF components send, at what level (9.1)".',
           'Central configuration merges with each server’s local liagent.ini; a key set in both takes the central value.',
+          'VERIFY: the liagent.ini whitelist/blacklist expression syntax and the [parser|name] keys follow the 8.18 agent documentation.',
+          ...(k8s ? ['9.1 configures VKS clusters it manages itself; this is for clusters it does not.', ...(output === 'http' ? ['VERIFY: the HTTP ingestion URI on 9.1 log management; the syslog outputs are the documented route.'] : [])] : []),
         ],
         findings,
       };
@@ -1143,16 +1467,34 @@ export const VCF_OPS_LOGS_91                                 = [
   automationBlueprint({
     id: 'vcflog91_alert_query',
     platform: LOGS,
-    label: 'A saved log query, an extracted field and the alert on it (9.1)',
+    label: 'A saved log query, an extracted field and the alert on it, applied end to end (9.1)',
     group: 'Log management 9.1',
     description:
-      'A log alert as 9.1 builds it: a saved query created through the documented /suite-api/api/logs/queryconfigs, a dynamic field extracted from the matching lines, and a log-based alert definition that selects the saved query. With a local test that the extraction pulls the value out of a real line.',
+      'A log alert as 9.1 builds it, applied end to end: a saved query with several filters (AND), an aggregation (count, or unique count of a field) and group-by, created through /suite-api/api/logs/queryconfigs; a dynamic field extracted from the matching lines; a log-based symptom and alert definition that select the saved query; the alert enabled in a named policy (export, merge, import); and a notification rule to an outbound plugin instance. With a local test that the extraction pulls the value out of a real line.',
     inputs: [
       { id: 'query_name', label: 'Saved query', control: 'text', default: 'Orders API — payment gateway timeouts' },
       { id: 'query_text', label: 'Search text', control: 'text', default: 'payment gateway timeout' },
-      { id: 'filter_field', label: 'Where field', control: 'text', default: 'appname' },
-      { id: 'filter_value', label: 'Contains', control: 'text', default: 'orders-api' },
+      {
+        id: 'filters',
+        label: 'Filters (all must match)',
+        control: 'textarea',
+        default: 'appname | Contains | orders-api\ntext | Contains | ERROR',
+        hint: 'field | operator | value',
+        help: 'Operators: Contains, Does not contain, Starts with, Does not start with, Matches Regex, Exists, Does not exist.',
+      },
       { id: 'partition', label: 'Partition', control: 'text', default: '', hint: 'Empty searches the default. VERIFY: name or id' },
+      {
+        id: 'aggregation',
+        label: 'Count',
+        control: 'select',
+        options: [
+          { value: 'COUNT', label: 'Events' },
+          { value: 'UNIQUE_COUNT', label: 'Unique values of a field' },
+        ],
+        default: 'COUNT',
+      },
+      { id: 'agg_field', label: 'Unique values of', control: 'text', default: 'order_id', showWhen: { input: 'aggregation', equals: ['UNIQUE_COUNT'] } },
+      { id: 'group_by', label: 'Group by fields', control: 'text', default: 'hostname', hint: 'Comma separated. Empty counts across everything that matches' },
       { id: 'field_name', label: 'Extract field', control: 'text', default: 'gateway_latency_ms' },
       { id: 'pre_context', label: 'Text before the value', control: 'text', default: 'latency=' },
       { id: 'value_regex', label: 'The value', control: 'text', default: '\\d+' },
@@ -1166,19 +1508,36 @@ export const VCF_OPS_LOGS_91                                 = [
           { value: 'HostSystem', label: 'ESX host' },
           { value: 'VirtualMachine', label: 'Virtual machine' },
           { value: 'ClusterComputeResource', label: 'Cluster' },
+          { value: 'VMwareAdapter Instance', label: 'vCenter' },
         ],
         default: 'VirtualMachine',
       },
-      { id: 'threshold', label: 'More than (events)', control: 'number', default: 10, min: 1, max: 100000 },
+      { id: 'threshold', label: 'More than', control: 'number', default: 10, min: 1, max: 100000 },
       { id: 'window_minutes', label: 'In (minutes)', control: 'number', default: 15, min: 1, max: 1440 },
-      { id: 'severity', label: 'Severity', control: 'select', options: [{ value: 'CRITICAL', label: 'Critical' }, { value: 'IMMEDIATE', label: 'Immediate' }, { value: 'WARNING', label: 'Warning' }], default: 'WARNING' },
+      { id: 'severity', label: 'Severity', control: 'select', options: [{ value: 'CRITICAL', label: 'Critical' }, { value: 'IMMEDIATE', label: 'Immediate' }, { value: 'WARNING', label: 'Warning' }, { value: 'INFORMATION', label: 'Information' }], default: 'WARNING' },
+      {
+        id: 'impact',
+        label: 'Impact badge',
+        control: 'select',
+        options: [
+          { value: 'HEALTH', label: 'Health' },
+          { value: 'RISK', label: 'Risk' },
+          { value: 'EFFICIENCY', label: 'Efficiency' },
+        ],
+        default: 'HEALTH',
+      },
+      { id: 'recommendation', label: 'Recommendation', control: 'text', default: 'Check the payment gateway status page and the orders-api connection pool.' },
+      { id: 'policy_name', label: 'Enable in policy', control: 'text', default: 'Tier 1 production', hint: 'Its id is looked up by name when apply.sh runs. Empty leaves the alert in no policy' },
+      { id: 'notify_plugin', label: 'Notify through outbound plugin instance', control: 'text', default: 'Ops webhook', hint: 'The instance name. Empty creates no notification rule' },
     ],
     automation: (values                 , name        )             => {
       const queryName = str(values, 'query_name', 'Saved query');
       const queryText = str(values, 'query_text', '');
-      const filterField = str(values, 'filter_field', '');
-      const filterValue = str(values, 'filter_value', '');
+      const { conditions: filters, bad } = conditionRows(str(values, 'filters', ''));
       const partition = str(values, 'partition', '');
+      const aggregation = str(values, 'aggregation', 'COUNT');
+      const aggField = aggregation === 'UNIQUE_COUNT' ? str(values, 'agg_field', '') : '';
+      const groupBy = listOf(str(values, 'group_by', ''));
       const field = str(values, 'field_name', 'value');
       const pre = str(values, 'pre_context', '');
       const valueRx = str(values, 'value_regex', '\\d+');
@@ -1188,12 +1547,19 @@ export const VCF_OPS_LOGS_91                                 = [
       const threshold = num(values, 'threshold', 10);
       const windowMin = num(values, 'window_minutes', 15);
       const severity = str(values, 'severity', 'WARNING');
+      const impact = str(values, 'impact', 'HEALTH');
+      const recommendation = str(values, 'recommendation', '');
+      const policy = str(values, 'policy_name', '');
+      const plugin = str(values, 'notify_plugin', '');
       const base = slugOf(name || queryName, 'log-alert');
+      const counted = aggregation === 'UNIQUE_COUNT' ? `unique ${aggField || '<field>'} values` : 'events';
 
       const findings            = [];
-      if (!queryText && !filterValue) {
+      if (!queryText && filters.length === 0) {
         findings.push(error('vcflog91.query.empty', 'Neither search text nor a filter: the saved query matches every event.', { source: SRC }));
       }
+      for (const row of bad) findings.push(error('vcflog91.query.bad-filter', `Filter row "${row}" has an operator 9.1 does not offer, or no value.`, { source: SRC }));
+      if (aggregation === 'UNIQUE_COUNT' && !aggField) findings.push(error('vcflog91.query.no-agg-field', 'A unique count needs the field whose values are counted.', { source: SRC }));
       if (!pre && !post) {
         findings.push(
           error('vcflog91.query.no-context', 'The extracted field has no text before or after the value, so it matches every number in every line.', {
@@ -1205,7 +1571,21 @@ export const VCF_OPS_LOGS_91                                 = [
       if (threshold <= 1) {
         findings.push(warning('vcflog91.query.one', 'One matching event raises the alert. Log alerts on a single line page on every retry storm.', { source: SRC }));
       }
+      if (/default/i.test(policy)) {
+        findings.push(warning('vcflog91.query.default-policy', 'Enabling the alert in the default policy raises it on every object of that kind that logs the phrase.', { remediation: 'Enable it in the policy for the tier that runs the application.', source: SRC }));
+      }
+      if (!policy) findings.push(warning('vcflog91.query.no-policy', 'No policy: the alert definition is created but enabled nowhere, so it never fires.', { source: SRC }));
+      if (!plugin) findings.push(info('vcflog91.query.no-notify', 'No notification rule: the alert shows in VCF Operations and tells nobody.', { source: SRC }));
 
+      const OPERATOR_TYPE                                   = {
+        Contains: 'CONTAINS',
+        'Does not contain': 'NOT_CONTAINS',
+        'Starts with': 'STARTS_WITH',
+        'Does not start with': 'NOT_STARTS_WITH',
+        'Matches Regex': 'MATCHES_REGEX',
+        Exists: 'EXISTS',
+        'Does not exist': 'NOT_EXISTS',
+      };
       const queryConfig = {
         name: queryName,
         description: `Selected by the log-based alert "${queryName}".`,
@@ -1214,11 +1594,46 @@ export const VCF_OPS_LOGS_91                                 = [
         queryFilters: {
           logQueryFiltersOperator: 'AND',
           partitions: partition ? [partition] : [],
-          logQueryFilterConditions: filterField && filterValue ? [{ conditionField: filterField, conditionValues: [filterValue], queryFilterConditionOperatorType: 'CONTAINS' }] : [],
+          logQueryFilterConditions: filters.map((f) => ({ conditionField: f.field, conditionValues: f.value !== undefined ? [f.value] : [], queryFilterConditionOperatorType: OPERATOR_TYPE[f.operator] ?? 'CONTAINS' })),
         },
+        aggregation: { function: aggregation, ...(aggField ? { field: aggField } : {}), groupBy },
       };
 
-      const extraction = { name: field, preContext: pre, valueRegex: valueRx, postContext: post, appliesTo: filterField && filterValue ? `${filterField} contains ${filterValue}` : 'all events', sample };
+      const extraction = { name: field, preContext: pre, valueRegex: valueRx, postContext: post, appliesTo: filters.length > 0 ? describeAll(filters) : 'all events', sample };
+
+      const symptom = {
+        name: `${queryName} — more than ${threshold} ${counted} in ${windowMin} min`,
+        adapterKindKey: 'VMWARE',
+        resourceKindKey: kind,
+        waitCycles: 1,
+        cancelCycles: 1,
+        state: {
+          severity,
+          condition: { type: 'CONDITION_LOG', queryConfigId: '<set by apply.sh>', operator: 'GT', value: threshold, timeWindowMinutes: windowMin, aggregation, ...(aggField ? { field: aggField } : {}), groupBy },
+        },
+      };
+      const alertDef = {
+        name: queryName,
+        description: `More than ${threshold} ${counted} matching the saved log query "${queryName}" in ${windowMin} minutes.`,
+        adapterKindKey: 'VMWARE',
+        resourceKindKey: kind,
+        waitCycles: 1,
+        cancelCycles: 1,
+        type: 15,
+        subType: 19,
+        states: [
+          {
+            severity,
+            impact: { impactType: 'BADGE', detail: impact },
+            'base-symptom-set': { type: 'SYMPTOM_SET', relation: 'SELF', aggregation: 'ALL', symptomSetOperator: 'AND', symptomDefinitionIds: ['<set by apply.sh>'] },
+            recommendationPriorityMap: {},
+          },
+        ],
+      };
+      const recommendationDoc = recommendation ? { description: recommendation } : undefined;
+      const rule = plugin
+        ? { name: `${queryName} → ${plugin}`, pluginId: '<set by apply.sh>', alertControlStates: ['OPEN'], alertStatuses: ['NEW', 'UPDATED', 'CANCELED'], criticalities: [severity], alertDefinitionIdFilters: { values: ['<set by apply.sh>'] }, resourceKindFilters: [{ adapterKind: 'VMWARE', resourceKind: kind }] }
+        : undefined;
 
       const test = [
         '#!/usr/bin/env bash',
@@ -1242,45 +1657,121 @@ export const VCF_OPS_LOGS_91                                 = [
         '',
       ].join('\n');
 
+      const apply = [
+        ...logsScriptHead(`Create the saved log query "${queryName}", its extracted field, the log-based symptom and alert definition, enable it in a policy and notify on it.`),
+        'bash "$HERE/test-extraction.sh" || { echo "test-extraction.sh failed: nothing applied." >&2; exit 1; }',
+        `QNAME=${sq(queryName)}`,
+        `POLICY_NAME=${sq(policy)}`,
+        `PLUGIN_NAME=${sq(plugin)}`,
+        'if (( DRY_RUN )); then',
+        '  echo "DRY RUN: would POST queryconfig.json to /suite-api/api/logs/queryconfigs (unless $QNAME exists)"',
+        '  echo "DRY RUN: would POST extracted-field.json to the log management extracted fields"',
+        '  echo "DRY RUN: would POST symptom-definition.json, then alert-definition.json, to /suite-api/api/symptomdefinitions and /suite-api/api/alertdefinitions"',
+        '  [[ -n "$POLICY_NAME" ]] && echo "DRY RUN: would enable the alert in \\"$POLICY_NAME\\" with merge-policy.sh"',
+        '  [[ -n "$PLUGIN_NAME" ]] && echo "DRY RUN: would POST notification-rule.json to /suite-api/api/notifications/rules"',
+        '  echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
+        '  exit 0',
+        'fi',
+        '',
+        '# 1. The saved query (documented: /suite-api/api/logs/queryconfigs, OpsToken).',
+        'ops GET /suite-api/api/logs/queryconfigs > "$BEFORE_DIR/queryconfigs-before.json"',
+        'QID=$(jq -r --arg n "$QNAME" \'[.. | objects | select(.name? == $n) | (.id // .queryConfigId)] | map(select(. != null)) | .[0] // empty\' "$BEFORE_DIR/queryconfigs-before.json")',
+        'if [[ -z "$QID" ]]; then',
+        '  QID=$(ops POST /suite-api/api/logs/queryconfigs "$HERE/queryconfig.json" | tee "$BEFORE_DIR/queryconfig-created.json" | jq -r \'.id // .queryConfigId // empty\')',
+        '  [[ -n "$QID" ]] || { echo "POST queryconfigs returned no id." >&2; exit 1; }',
+        '  echo "saved query $QID"',
+        'else',
+        '  echo "saved query exists, left alone: $QID"',
+        'fi',
+        '',
+        '# 2. The extracted field (log management, ops-li JWT).',
+        ...logsCallLines({ what: `extracted field ${field}`, key: 'extracted fields', path: '/api/v2/extracted-fields', payload: 'extracted-field.json', name: field }, `${base}-ALERT.md`, true),
+        '# 3. The symptom that watches the saved query, and the alert on it.',
+        'jq --arg q "$QID" \'.state.condition.queryConfigId = $q\' "$HERE/symptom-definition.json" > "$BEFORE_DIR/symptom.json"',
+        'SID=$(ops POST /suite-api/api/symptomdefinitions "$BEFORE_DIR/symptom.json" | tee "$BEFORE_DIR/symptom-created.json" | jq -r \'.id // empty\')',
+        '[[ -n "$SID" ]] || { echo "POST symptomdefinitions returned no id (VERIFY the log condition shape: see the ALERT.md)." >&2; exit 1; }',
+        ...(recommendationDoc
+          ? [
+              'RID=$(ops POST /suite-api/api/recommendations "$HERE/recommendation.json" | tee "$BEFORE_DIR/recommendation-created.json" | jq -r \'.id // empty\')',
+              'jq --arg s "$SID" --arg r "$RID" \'.states[0]["base-symptom-set"].symptomDefinitionIds = [$s] | if $r != "" then .states[0].recommendationPriorityMap = {($r): 1} else . end\' "$HERE/alert-definition.json" > "$BEFORE_DIR/alert.json"',
+            ]
+          : ['jq --arg s "$SID" \'.states[0]["base-symptom-set"].symptomDefinitionIds = [$s]\' "$HERE/alert-definition.json" > "$BEFORE_DIR/alert.json"']),
+        'AID=$(ops POST /suite-api/api/alertdefinitions "$BEFORE_DIR/alert.json" | tee "$BEFORE_DIR/alert-created.json" | jq -r \'.id // empty\')',
+        '[[ -n "$AID" ]] || { echo "POST alertdefinitions returned no id." >&2; exit 1; }',
+        'echo "alert definition $AID"',
+        '',
+        '# 4. Enabled in the policy: export, merge this one <Alert>, import (merge-policy.sh).',
+        'if [[ -n "$POLICY_NAME" ]]; then',
+        '  if [[ -z "${POLICY_ID:-}" ]]; then',
+        '    POLICY_ID=$(ops GET /suite-api/api/policies | jq -r --arg n "$POLICY_NAME" \'[.. | objects | select(.name? == $n) | .id] | .[0] // empty\')',
+        '  fi',
+        '  [[ -n "$POLICY_ID" ]] || { echo "No policy named $POLICY_NAME: the alert exists ($AID) but is enabled nowhere." >&2; exit 1; }',
+        `  printf '<PolicyOverrides>\\n  <Alerts adapterKind="VMWARE" resourceKind="%s">\\n    <Alert id="%s" enabled="true"/>\\n  </Alerts>\\n</PolicyOverrides>\\n' ${sq(kind)} "$AID" > "$HERE/policy-overrides.xml"`,
+        '  # merge-policy.sh signs in the same way, from the same environment.',
+        '  POLICY_ID="$POLICY_ID" bash "$HERE/merge-policy.sh"',
+        'fi',
+        '',
+        '# 5. The notification rule.',
+        'if [[ -n "$PLUGIN_NAME" ]]; then',
+        '  PID=$(ops GET /suite-api/api/alertplugins | jq -r --arg n "$PLUGIN_NAME" \'[(.notificationPluginInstances[]?, .pluginInstances[]?) | select(.name == $n) | .pluginId] | .[0] // empty\')',
+        '  [[ -n "$PID" ]] || { echo "No outbound plugin instance named $PLUGIN_NAME: the alert is enabled but tells nobody." >&2; exit 1; }',
+        '  jq --arg p "$PID" --arg a "$AID" \'.pluginId = $p | .alertDefinitionIdFilters.values = [$a]\' "$HERE/notification-rule.json" > "$BEFORE_DIR/rule.json"',
+        '  ops POST /suite-api/api/notifications/rules "$BEFORE_DIR/rule.json" | tee "$BEFORE_DIR/rule-created.json"',
+        '  echo',
+        'fi',
+        'echo "Applied: query $QID, symptom $SID, alert $AID. Ids and payloads are in $BEFORE_DIR."',
+        '# Undo: DELETE the notification rule, the alert definition, the symptom definition, then /suite-api/api/logs/queryconfigs/{id}, by the ids above; re-import policy-before-*.zip.',
+        '',
+      ].join('\n');
+
       return {
         platform: LOGS,
-        title: `Log alert "${queryName}" — more than ${threshold} in ${windowMin} minutes`,
+        title: `Log alert "${queryName}" — more than ${threshold} ${counted} in ${windowMin} minutes${groupBy.length > 0 ? ` per ${groupBy.join(', ')}` : ''}`,
         effect: 'reversible',
-        trigger: { kind: 'alert', detail: `More than ${threshold} events matching the saved query "${queryName}" within ${windowMin} minutes, on a ${kind}`, worstCase: `once per ${kind} per ${windowMin} minutes while the errors continue` },
+        trigger: { kind: 'alert', detail: `More than ${threshold} ${counted} matching the saved query "${queryName}" within ${windowMin} minutes${groupBy.length > 0 ? `, per ${groupBy.join(', ')}` : ''}, on a ${kind}`, worstCase: `once per ${kind} per ${windowMin} minutes while the errors continue` },
         scope: {
-          what: `${kind} objects whose log events match the saved query.`,
-          decidedBy: ['The saved query: search text, filter and partition.', 'The mapping of log events to objects (hostname to inventory object).', 'The policies the log-based alert definition is enabled in.', 'Notification rules, which decide who hears.'],
+          what: `${kind} objects whose log events match the saved query, in the policy "${policy || 'none'}".`,
+          decidedBy: ['The saved query: search text, filter rows (all must match) and partition.', 'The mapping of log events to objects (hostname to inventory object).', `The policy "${policy || 'none'}" the alert is enabled in.`, plugin ? `The notification rule to "${plugin}", which decides who hears.` : 'No notification rule: nobody is told.'],
           ifWrong: 'Too broad a query raises the alert on every object that logs the phrase, including ones that log it harmlessly; too narrow and it never fires. Neither changes anything in the estate.',
         },
         guardrails: [
-          { rule: 'apply.sh sends when run; --dry-run only prints the payload', because: 'Every run of the POST creates another saved query with the same name, so run it once.' },
-          { rule: 'test-extraction.sh exits 1 when the sample line yields no value', because: 'An extracted field that never matches makes every chart built on it empty, and nobody notices for weeks.' },
+          { rule: 'apply.sh runs test-extraction.sh first and applies nothing when the sample line yields no value', because: 'An extracted field that never matches makes every chart built on it empty, and nobody notices for weeks.' },
+          { rule: 'A saved query with the same name is reused, not created again', because: 'Every run of the POST would otherwise create another saved query with the same name.' },
+          { rule: 'The policy is changed by export, merge of this one alert, import — and the export is kept', because: 'Importing a fragment would replace every other override the policy has.' },
         ],
-        dryRun: ['Run ./apply.sh --dry-run first.', 'Run ./test-extraction.sh.', `Run the query in Explore Logs over the last 7 days and count how often more than ${threshold} arrived in ${windowMin} minutes — that is how often this will fire.`],
-        undo: ['DELETE /suite-api/api/logs/queryconfigs/{queryConfigId} with the id the POST returned, after deleting the alert definition that selects it.', 'Delete the extracted field in Explore Logs.'],
-        told: ['Nobody until a notification rule matches the alert. Pair it with "Send an alert to a webhook".'],
-        requires: ['VCF Operations 9.1 with log management.', 'A VCF Operations account allowed to manage log queries and alert definitions.'],
+        dryRun: ['Run ./apply.sh --dry-run: it prints every call and signs in to nothing.', 'Run ./test-extraction.sh.', `Run the query in Explore Logs over the last 7 days and count how often more than ${threshold} arrived in ${windowMin} minutes — that is how often this will fire.`],
+        undo: ['DELETE the notification rule, the alert definition, the symptom definition and /suite-api/api/logs/queryconfigs/{queryConfigId}, by the ids apply.sh saved under before-<time>/.', 'Re-import policy-before-<time>.zip (merge-policy.sh saved it) to put the policy back.', 'Delete the extracted field in Explore Logs.'],
+        told: plugin ? [`The outbound plugin instance "${plugin}", through the notification rule apply.sh creates.`] : ['Nobody until a notification rule matches the alert.'],
+        requires: ['VCF Operations 9.1 with log management.', 'A VCF Operations account allowed to manage log queries, alert definitions, policies and notifications.', 'curl, jq and python3.', ...(plugin ? [`The outbound plugin instance "${plugin}".`] : [])],
         files: {
           'queryconfig.json': json(queryConfig),
-          'apply.sh': applyScript(OPS, [{ method: 'POST', path: '/suite-api/api/logs/queryconfigs', payload: 'queryconfig.json' }], 'DELETE /suite-api/api/logs/queryconfigs/{queryConfigId} with the id returned above.'),
           'extracted-field.json': json(extraction),
+          'symptom-definition.json': json(symptom),
+          'alert-definition.json': json(alertDef),
+          ...(recommendationDoc ? { 'recommendation.json': json(recommendationDoc) } : {}),
+          ...(rule ? { 'notification-rule.json': json(rule) } : {}),
+          ...(policy ? { 'merge-policy.sh': policyMergeScript('policy-overrides.xml', policy) } : {}),
           'test-extraction.sh': test,
+          'apply.sh': apply,
           [`${base}-ALERT.md`]: md([
-            `# Log-based alert on "${queryName}"`,
+            `# Log-based alert on "${queryName}" — by hand, only where apply.sh stops`,
             '',
-            '1. `./apply.sh` creates the saved query (add `--dry-run` first to preview); note the id it returns.',
-            `2. Explore Logs → run the saved query → select \`${pre}${sample ? '…' : ''}\` in a result → Extract Field → name \`${field}\`, before \`${pre}\`, value \`${valueRx}\`, after \`${post}\`.`,
+            '`./apply.sh` does all of this. Where a step fails on your release, it stops there; finish from that step.',
+            '',
+            `1. Saved query: \`${queryName}\`, search \`${queryText || '*'}\`${filters.length > 0 ? `, filters (all): ${describeAll(filters)}` : ''}${groupBy.length > 0 ? `, group by ${groupBy.join(', ')}` : ''}${aggregation === 'UNIQUE_COUNT' ? `, unique count of ${aggField}` : ''}.`,
+            `2. Explore Logs → run the saved query → select \`${pre}…\` in a result → Extract Field → name \`${field}\`, before \`${pre}\`, value \`${valueRx}\`, after \`${post}\`.`,
             '3. Infrastructure Operations → Configurations → Alert Definitions → Add.',
-            `4. Base Object Type: ${kind}. Next.`,
-            `5. Drag **Add Log Condition**; Filter By: \`${queryName}\` (the saved query); time period ${windowMin} minutes; count greater than ${threshold}.`,
-            `6. Severity ${severity}; add a recommendation; enable it in a policy scoped to the objects that log this; Create.`,
+            `4. Base Object Type: ${kind}. Impact ${impact.toLowerCase()}. Next.`,
+            `5. Drag **Add Log Condition**; Filter By: \`${queryName}\`; time period ${windowMin} minutes; ${aggregation === 'UNIQUE_COUNT' ? `unique count of ${aggField}` : 'count'} greater than ${threshold}.`,
+            `6. Severity ${severity}${recommendation ? `; recommendation "${recommendation}"` : ''}; enable it in "${policy || '<a policy>'}"; Create.`,
+            ...(plugin ? [`7. Configure → Alerts → Notifications → Add: plugin "${plugin}", filter on this alert definition.`] : []),
             '',
-            'VERIFY: operator names other than CONTAINS in queryFilters, and whether partitions takes names or ids, are not listed in the API reference.',
+            'VERIFY: the log condition in symptom-definition.json (CONDITION_LOG, queryConfigId, timeWindowMinutes, aggregation, groupBy), the queryFilters operator names other than CONTAINS, the aggregation block in queryconfig.json, and whether partitions takes names or ids are not in the 9.1 API reference. Create one by hand and GET /suite-api/api/symptomdefinitions/{id} to see the shape your release uses.',
           ]),
         },
         notes: [
-          'queryconfigs is the one log-management object with a documented public API in 9.1 (GET/POST/PUT /suite-api/api/logs/queryconfigs, GET/DELETE …/{queryConfigId}), authenticated with the ordinary OpsToken.',
-          'For anything else on the 9.1 log management service itself, KB 450054 documents exchanging an OpsToken for a JWT: POST /suite-api/api/auth/token/exchange with {"serviceKeys":["ops-li"]}, then Authorization: Bearer <jwt>. Write that header into a private file (umask 077; mktemp; trap rm) and pass it as curl -H @file, never on the command line. The old /api/v2/sessions login belongs to the standalone appliance and does not exist on 9.1.',
+          'queryconfigs is the log-management object with a documented public API in 9.1 (GET/POST/PUT /suite-api/api/logs/queryconfigs, GET/DELETE …/{queryConfigId}), authenticated with the ordinary OpsToken.',
+          logsApplyNote(),
         ],
         findings,
       };
@@ -1396,7 +1887,7 @@ export const VCF_OPS_LOGS_91                                 = [
         '- [ ] Export custom dashboards, saved queries and user alerts from the interface too — **custom content is not transferred automatically**.',
         `- [ ] New FQDN \`${fqdn || '<REQUIRED>'}\` in DNS (forward and reverse), on the network that hosts the VCF management services. Log management cannot run on a custom NSX overlay segment.`,
         `- [ ] Size ${size}. Replicas scale separately from the size profile (small 1–19, medium and large 3–19).`,
-        ...(source === '8.18' ? ['- [ ] You are on 8.18.x. Earlier Aria Operations for Logs 8.x has no direct path to 9.1; go to 8.18 first.'] : []),
+        ...(source === '8.18' ? ['- [ ] You are on 8.18.x. Earlier 8.x releases have no direct path to 9.1; go to 8.18 first.'] : []),
         '- [ ] Decide what happens to history: the transfer utility, importing archived logs, or leaving the old cluster queryable for its 90-day window.',
         '',
         '## Upgrade',
@@ -1450,6 +1941,7 @@ export const VCF_OPS_LOGS_91                                 = [
       };
     },
   }),
+  ...VCF_LOGS91_MORE,
 ];
 
 // ===========================================================================
@@ -2138,7 +2630,6 @@ export const VCF_OPS_OPERATE                                 = [
         useSsl: true,
         enabled: true,
         filters: [{ field: 'text', operator: 'Matches Regex', value: auditFilter }],
-        _note: 'Enter in Operate → Administration → Configurations → Log Forwarding. VERIFY the filter against PREVIEW: 9.1 does not document a single field that marks audit events.',
       };
 
       const exportUi = md([
@@ -2152,7 +2643,7 @@ export const VCF_OPS_OPERATE                                 = [
         `4. Copy the CSV beside the daily JSON in \`${destination || '<destination>'}\`, named \`vcf-audit-trail-<date>.csv\`.`,
         '',
         stream
-          ? 'Log forwarding (audit-forwarding.json) also streams the underlying audit events to the collector as they happen, so the CSV is a convenience rather than the record.'
+          ? 'Log forwarding (audit-forwarding.json, created by apply-forwarding.sh) also streams the underlying audit events to the collector as they happen, so the CSV is a convenience rather than the record.'
           : 'For a record that does not depend on a person exporting it, turn on "Also stream audit events via log forwarding".',
       ]);
 
@@ -2171,7 +2662,7 @@ export const VCF_OPS_OPERATE                                 = [
           { rule: 'Exits 1 on an empty report or a failed copy, and writes a SHA-256 beside each file', because: 'A missing day is found by the scheduler, and a changed file is found by the checksum.' },
           ...(stream ? [{ rule: 'Forwarded over TLS, filtered to audit events', because: 'Audit events carry user names and source addresses; they cross the network encrypted and nothing else goes with them.' }] : []),
         ],
-        dryRun: ['Run it once by hand with AUDIT_DEST pointing at a scratch location and read the file.', ...(stream ? ['PREVIEW the forwarding filter before CREATE.'] : [])],
+        dryRun: ['Run it once by hand with AUDIT_DEST pointing at a scratch location and read the file.', ...(stream ? ['Run ./apply-forwarding.sh --dry-run, and after it is applied check the rule’s filter with PREVIEW in the Log Forwarding card.'] : [])],
         undo: ['Nothing to undo for the export.', ...(stream ? ['Turn the forwarding rule off. Events already sent stay in the store.'] : [])],
         told: [`${destination || 'The store'}, daily.`, ...(stream ? [`${syslogHost}, continuously.`] : [])],
         requires: [
@@ -2183,11 +2674,318 @@ export const VCF_OPS_OPERATE                                 = [
           [`${base}.sh`]: script,
           'crontab.txt': `# Daily. The script logs in for itself from the password file (mode 600).\n10 ${hour} * * * ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/${base}.sh >> /var/log/vcf-audit.log 2>&1\n`,
           'EXPORT-AUDIT-TRAIL.md': exportUi,
-          ...(stream ? { 'audit-forwarding.json': json(forwarding) } : {}),
+          ...(stream
+            ? {
+                'audit-forwarding.json': json(forwarding),
+                'apply-forwarding.sh': logsApplyScript({
+                  purpose: `Create the log forwarding rule that streams audit events to ${syslogHost}, enabled.`,
+                  calls: [{ what: 'audit forwarding rule', key: 'forwarding', path: '/api/v1/forwarding', payload: 'audit-forwarding.json', name: forwarding.name }],
+                  undo: 'turn the rule off in the Log Forwarding card; events already sent stay in the store.',
+                  manual: 'EXPORT-AUDIT-TRAIL.md',
+                }),
+              }
+            : {}),
         },
         notes: [
           'The 9.1 API reference documents one audit operation, GET /api/audit/system ("Get system audit report": auditReports[].name and audits[] with name and count). It is a summary, not the per-action trail — which is why the trail itself goes out through the CSV export or log forwarding.',
           'Make the destination write-once where the store allows it: S3 Object Lock, or a share the job can write but not delete on.',
+          ...(stream ? [logsApplyNote(), 'VERIFY the audit filter with PREVIEW: 9.1 does not document a single field that marks audit events.'] : []),
+        ],
+        findings,
+      };
+    },
+  }),
+
+  // -------------------------------------------------------------------------
+  automationBlueprint({
+    id: 'vcfops_workload_automation',
+    platform: OPS,
+    label: 'Workload Automation and business intent for a datacenter (9.1)',
+    group: 'Workload Automation',
+    description:
+      'Workload Automation settings for a datacenter or custom datacenter — balance level, consolidation, cluster headroom, 9.1 storage-based eviction, business-intent placement by vSphere tag (cluster- or host-based, for licence-bound workloads), the optimisation schedule and whether it runs automatically — applied to the policy that covers it by export, merge and import, with the export kept as the undo.',
+    inputs: [
+      {
+        id: 'scope_kind',
+        label: 'Optimise',
+        control: 'select',
+        options: [
+          { value: 'Datacenter', label: 'A vCenter datacenter' },
+          { value: 'CustomDatacenter', label: 'A custom datacenter' },
+        ],
+        default: 'Datacenter',
+      },
+      { id: 'scope_name', label: 'Named', control: 'text', default: 'DC1' },
+      { id: 'policy_name', label: 'In policy', control: 'text', default: 'Tier 1 production', hint: 'The policy that covers the datacenter. Its id is looked up by name' },
+      {
+        id: 'balance',
+        label: 'Balance',
+        control: 'select',
+        options: [
+          { value: 'CONSERVATIVE', label: 'Conservative — move only when a cluster is under stress' },
+          { value: 'MODERATE', label: 'Moderate' },
+          { value: 'AGGRESSIVE', label: 'Aggressive — keep clusters evenly loaded' },
+        ],
+        default: 'MODERATE',
+      },
+      { id: 'consolidate', label: 'Consolidate workloads', control: 'toggle', default: false, hint: 'Packs VMs onto fewer clusters to free whole clusters' },
+      {
+        id: 'consolidation_level',
+        label: 'Consolidation',
+        control: 'select',
+        options: [
+          { value: 'CONSERVATIVE', label: 'Conservative' },
+          { value: 'MODERATE', label: 'Moderate' },
+          { value: 'AGGRESSIVE', label: 'Aggressive' },
+        ],
+        default: 'CONSERVATIVE',
+        showWhen: { input: 'consolidate', equals: ['true'] },
+      },
+      { id: 'headroom_pct', label: 'Cluster headroom (%)', control: 'number', default: 20, min: 0, max: 50, hint: 'Capacity kept free on every cluster; placement treats it as used' },
+      { id: 'storage_eviction', label: 'Storage-based eviction (9.1)', control: 'toggle', default: true, hint: 'Also move VMs off a cluster whose datastores are under pressure' },
+      {
+        id: 'intent',
+        label: 'Business intent placement',
+        control: 'select',
+        options: [
+          { value: 'NONE', label: 'None' },
+          { value: 'CLUSTER', label: 'Cluster-based — VMs go to clusters with the matching tag' },
+          { value: 'HOST', label: 'Host-based — VMs go to hosts with the matching tag (licence-bound workloads)' },
+        ],
+        default: 'HOST',
+      },
+      { id: 'intent_categories', label: 'Match tags in categories', control: 'text', default: 'License, Environment', hint: 'Comma separated vSphere tag categories. A VM is placed where the tag in each category matches its own', showWhen: { input: 'intent', notEquals: ['NONE'] } },
+      {
+        id: 'schedule',
+        label: 'Optimise on a schedule',
+        control: 'select',
+        options: [
+          { value: 'NONE', label: 'No schedule' },
+          { value: 'DAILY', label: 'Daily' },
+          { value: 'WEEKLY', label: 'Weekly' },
+          { value: 'MONTHLY', label: 'Monthly, first week' },
+        ],
+        default: 'WEEKLY',
+      },
+      {
+        id: 'schedule_day',
+        label: 'On',
+        control: 'select',
+        options: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'].map((day) => ({ value: day, label: day.charAt(0) + day.slice(1).toLowerCase() })),
+        default: 'SUNDAY',
+        showWhen: { input: 'schedule', equals: ['WEEKLY', 'MONTHLY'] },
+      },
+      { id: 'schedule_time', label: 'At (HH:MM, VCF Operations time zone)', control: 'text', default: '02:00', showWhen: { input: 'schedule', notEquals: ['NONE'] } },
+      { id: 'automate', label: 'Automate (act without asking)', control: 'toggle', default: true, hint: 'Off leaves optimisation as a recommendation someone runs' },
+    ],
+    automation: (values                 , name        )             => {
+      const scopeKind = str(values, 'scope_kind', 'Datacenter');
+      const scopeName = str(values, 'scope_name', '');
+      const policy = str(values, 'policy_name', '');
+      const balance = str(values, 'balance', 'MODERATE');
+      const consolidate = bool(values, 'consolidate', false);
+      const consolidation = consolidate ? str(values, 'consolidation_level', 'CONSERVATIVE') : 'OFF';
+      const headroom = num(values, 'headroom_pct', 20);
+      const eviction = bool(values, 'storage_eviction', true);
+      const intent = str(values, 'intent', 'HOST');
+      const categories = intent === 'NONE' ? [] : listOf(str(values, 'intent_categories', ''));
+      const schedule = str(values, 'schedule', 'WEEKLY');
+      const day = str(values, 'schedule_day', 'SUNDAY');
+      const time = str(values, 'schedule_time', '02:00');
+      const automate = bool(values, 'automate', true);
+      const base = slugOf(name || `workload-automation-${scopeName}`, 'workload-automation');
+      const scopeLabel = scopeKind === 'CustomDatacenter' ? 'custom datacenter' : 'datacenter';
+      const when = schedule === 'NONE' ? 'whenever it is needed' : schedule === 'DAILY' ? `daily at ${time}` : schedule === 'WEEKLY' ? `every ${day.toLowerCase()} at ${time}` : `on the first ${day.toLowerCase()} of the month at ${time}`;
+
+      const findings            = [];
+      if (!scopeName) findings.push(error('vcfops.wla.no-scope', `No ${scopeLabel} named.`, { source: SRC }));
+      if (!policy) findings.push(error('vcfops.wla.no-policy', 'No policy: Workload Automation settings live in the policy that covers the datacenter.', { source: SRC }));
+      if (/default/i.test(policy)) {
+        findings.push(warning('vcfops.wla.default-policy', 'The default policy covers every datacenter; these settings would move VMs everywhere it applies.', { remediation: 'Use a policy assigned to this datacenter’s group.', source: SRC }));
+      }
+      if (intent !== 'NONE' && categories.length === 0) {
+        findings.push(error('vcfops.wla.no-categories', 'Business intent placement with no tag category matches nothing.', { remediation: 'Name the tag categories whose values must match, e.g. License.', source: SRC }));
+      }
+      if (intent === 'HOST' && !categories.some((c) => /licen[cs]e/i.test(c))) {
+        findings.push(info('vcfops.wla.host-intent', 'Host-based intent is what licence-bound workloads (per-host database or OS licences) need; the categories named do not look like a licence category.', { source: SRC }));
+      }
+      if (balance === 'AGGRESSIVE' && headroom < 10) {
+        findings.push(warning('vcfops.wla.churn', `Aggressive balancing with ${headroom}% headroom: VMs move often and clusters sit close to full.`, { remediation: 'Keep at least 10–20% headroom, or balance less aggressively.', source: SRC }));
+      }
+      if (consolidate && consolidation === 'AGGRESSIVE' && headroom < 15) {
+        findings.push(warning('vcfops.wla.pack', 'Aggressive consolidation with little headroom packs clusters to the point where one host failure has nowhere to go.', { remediation: 'Keep headroom at least one host’s worth of capacity per cluster.', source: SRC }));
+      }
+      if (schedule !== 'NONE' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) findings.push(error('vcfops.wla.time', `"${time}" is not HH:MM.`, { source: SRC }));
+      if (automate && schedule === 'NONE') {
+        findings.push(info('vcfops.wla.unscheduled', 'Automated with no schedule: VMs move whenever the datacenter goes out of balance, at any hour.', { remediation: 'A weekly window in the quiet hours keeps vMotion traffic out of the working day.', source: SRC }));
+      }
+
+      const settings = {
+        scope: { resourceKind: scopeKind, name: scopeName },
+        policy,
+        workloadAutomation: {
+          balanceLevel: balance,
+          consolidationLevel: consolidation,
+          clusterHeadroomPercent: headroom,
+          storageBasedEviction: eviction,
+          businessIntent: { placement: intent, tagCategories: categories },
+          schedule: schedule === 'NONE' ? null : { recurrence: schedule, ...(schedule === 'DAILY' ? {} : { dayOfWeek: day }), time },
+          automate,
+        },
+      };
+
+      const merge = [
+        '#!/usr/bin/env bash',
+        `# Workload Automation for the ${scopeLabel} "${scopeName}", in the policy "${policy}".`,
+        '#',
+        '# Checks the datacenter exists, exports the policy (kept as the undo), merges',
+        '# the Workload Automation settings from workload-automation.json into its XML,',
+        '# shows what changed, and imports it: POST /suite-api/api/policies/import?',
+        '# forceImport=true. Applies when run; --dry-run stops before the import.',
+        'set -euo pipefail',
+        '',
+        ...authPreamble(OPS),
+        'for tool in curl jq python3; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 2; }; done',
+        'EXECUTE=1',
+        '[[ "${1:-}" == "--dry-run" ]] && EXECUTE=0',
+        'HERE=$(cd "$(dirname "$0")" && pwd)',
+        'mkdir -p "$HERE/import"',
+        'api() { curl -sS -f "https://${VCFOPS_HOST}/suite-api/api/$1" -H "' + authHeader(OPS) + '" -H "Accept: application/json"; }',
+        '',
+        `SCOPE_KIND=${sq(scopeKind)}`,
+        `SCOPE_NAME=${sq(scopeName)}`,
+        `POLICY_NAME=${sq(policy)}`,
+        'N=$(api "resources?resourceKind=${SCOPE_KIND}&name=$(jq -rn --arg v "$SCOPE_NAME" \'$v | @uri\')" | jq --arg n "$SCOPE_NAME" \'[.resourceList[]? | select(.resourceKey.name == $n)] | length\')',
+        '(( N == 1 )) || { echo "Expected one $SCOPE_KIND named $SCOPE_NAME, found $N. Nothing changed." >&2; exit 1; }',
+        'if [[ -z "${POLICY_ID:-}" ]]; then',
+        '  POLICY_ID=$(api policies | jq -r --arg n "$POLICY_NAME" \'[.. | objects | select(.name? == $n) | .id] | map(select(. != null)) | .[0] // empty\')',
+        'fi',
+        '[[ -n "$POLICY_ID" ]] || { echo "No policy named $POLICY_NAME (set POLICY_ID to override the lookup). Nothing changed." >&2; exit 1; }',
+        '',
+        'BEFORE="$HERE/policy-before-$(date +%Y%m%d-%H%M%S).zip"',
+        `curl -sS -f "https://\${VCFOPS_HOST}/suite-api/api/policies/export?id=\${POLICY_ID}" -H "${authHeader(OPS)}" -H "Accept: application/zip" -o "$BEFORE"`,
+        'echo "Exported the policy as it is now: $BEFORE (the undo)"',
+        '',
+        `python3 - "$BEFORE" "$HERE/workload-automation.json" "$HERE/import/policy-merged.zip" <<'PY'`,
+        'import json, re, sys, zipfile, xml.etree.ElementTree as ET',
+        'src, spec_path, out = sys.argv[1:4]',
+        'spec = json.load(open(spec_path, encoding="utf-8"))["workloadAutomation"]',
+        'with zipfile.ZipFile(src) as z:',
+        '    names = z.namelist()',
+        '    xmls = [n for n in names if n.lower().endswith(".xml")]',
+        '    if len(xmls) != 1:',
+        '        sys.exit("expected one XML file in the policy export, found %r" % xmls)',
+        '    name = xmls[0]',
+        '    raw = z.read(name)',
+        '    others = {n: z.read(n) for n in names if n != name}',
+        'for prefix, uri in re.findall(r\'xmlns(?::([A-Za-z_][\\w.-]*))?="([^"]+)"\', raw.decode("utf-8")):',
+        '    ET.register_namespace(prefix or "", uri)',
+        'root = ET.fromstring(raw)',
+        'policies = root.findall(".//{*}Policy")',
+        'if len(policies) != 1:',
+        '    sys.exit("expected exactly one <Policy> in the export, found %d" % len(policies))',
+        'policy = policies[0]',
+        'ns = policy.tag[: policy.tag.index("}") + 1] if policy.tag.startswith("{") else ""',
+        'package = policy.find("{*}PackageSettings")',
+        'if package is None:',
+        '    package = ET.SubElement(policy, ns + "PackageSettings")',
+        '# VERIFY: the element and attribute names. An export of a policy where Workload',
+        '# Automation was set once in the interface shows the names your release uses;',
+        '# an existing element whose name mentions workload automation or optimization',
+        '# is updated in place, so those names win over the ones below.',
+        'target = None',
+        'for el in package.iter():',
+        '    local = el.tag.split("}")[-1]',
+        '    if re.search(r"workload.?(automation|optimi[sz]ation)", local, re.I):',
+        '        target = el',
+        '        break',
+        'if target is None:',
+        '    target = ET.SubElement(package, ns + "WorkloadAutomation")',
+        'before = ET.tostring(target, encoding="unicode")',
+        'attrs = {',
+        '    "balanceLevel": spec["balanceLevel"],',
+        '    "consolidationLevel": spec["consolidationLevel"],',
+        '    "clusterHeadroom": str(spec["clusterHeadroomPercent"]),',
+        '    "storageBasedEviction": str(spec["storageBasedEviction"]).lower(),',
+        '    "automate": str(spec["automate"]).lower(),',
+        '}',
+        'for key, value in attrs.items():',
+        '    target.set(key, value)',
+        'for child in list(target):',
+        '    if child.tag.split("}")[-1] in ("BusinessIntent", "Schedule"):',
+        '        target.remove(child)',
+        'intent = spec["businessIntent"]',
+        'if intent["placement"] != "NONE":',
+        '    bi = ET.SubElement(target, ns + "BusinessIntent", {"placement": intent["placement"]})',
+        '    for category in intent["tagCategories"]:',
+        '        ET.SubElement(bi, ns + "TagCategory", {"name": category})',
+        'if spec["schedule"]:',
+        '    ET.SubElement(target, ns + "Schedule", {k: str(v) for k, v in spec["schedule"].items()})',
+        'after = ET.tostring(target, encoding="unicode")',
+        'print("before: " + before)',
+        'print("after:  " + after)',
+        'data = ET.tostring(root, encoding="utf-8", xml_declaration=True)',
+        'with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:',
+        '    z.writestr(name, data)',
+        '    for n, b in others.items():',
+        '        z.writestr(n, b)',
+        'print("wrote " + out)',
+        'PY',
+        '',
+        'if (( ! EXECUTE )); then',
+        '  echo "DRY RUN: would POST import/policy-merged.zip to https://${VCFOPS_HOST}/suite-api/api/policies/import?forceImport=true"',
+        '  echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
+        '  exit 0',
+        'fi',
+        `curl -sS -f -X POST "https://\${VCFOPS_HOST}/suite-api/api/policies/import?forceImport=true" -H "${authHeader(OPS)}" -H "Accept: application/json" -F "policy=@$HERE/import/policy-merged.zip;type=application/zip"`,
+        'echo',
+        '# Read back: the policy must now carry the settings.',
+        `curl -sS -f "https://\${VCFOPS_HOST}/suite-api/api/policies/export?id=\${POLICY_ID}" -H "${authHeader(OPS)}" -H "Accept: application/zip" -o "$HERE/policy-after.zip"`,
+        'python3 -c \'import sys,zipfile,re; z=zipfile.ZipFile(sys.argv[1]); x=b"".join(z.read(n) for n in z.namelist() if n.lower().endswith(".xml")).decode("utf-8","replace"); sys.exit(0 if re.search(r"workload.?(automation|optimi[sz]ation)", x, re.I) else 1)\' "$HERE/policy-after.zip" \\',
+        '  || { echo "Imported, but the policy read back carries no Workload Automation element: this release keeps it elsewhere. Set it from the APPLY.md steps; undo with $BEFORE." >&2; exit 1; }',
+        'echo "Applied. Undo: import $BEFORE the same way (POST /suite-api/api/policies/import?forceImport=true)."',
+        '',
+      ].join('\n');
+
+      return {
+        platform: OPS,
+        title: `Workload Automation for ${scopeLabel} "${scopeName}" — balance ${balance.toLowerCase()}, ${consolidate ? `consolidate ${consolidation.toLowerCase()}` : 'no consolidation'}, ${headroom}% headroom${intent !== 'NONE' ? `, ${intent.toLowerCase()}-based intent on ${categories.join(', ')}` : ''}, ${automate ? 'automated' : 'recommend only'} ${when}`,
+        effect: 'reversible',
+        trigger: { kind: automate ? 'schedule' : 'manual', detail: automate ? `Workload Automation acts on the ${scopeLabel} ${when}.` : `Optimisation is proposed ${when}; someone runs it from Workload Optimization.`, worstCase: automate ? `every VM in "${scopeName}" moved by vMotion ${when}` : 'never without someone pressing Optimize' },
+        scope: {
+          what: `Every VM in the ${scopeLabel} "${scopeName}", moved between its clusters${intent === 'HOST' ? ' and hosts' : ''}.`,
+          decidedBy: [`The ${scopeLabel} "${scopeName}" and the clusters in it.`, `The policy "${policy}" that covers it, which carries these settings.`, 'DRS and its rules inside each cluster, which Workload Automation works with, not around.', ...(intent !== 'NONE' ? [`The vSphere tags in ${categories.join(', ')} on VMs, and on clusters${intent === 'HOST' ? ' and hosts' : ''}.`] : [])],
+          ifWrong: 'VMs move between clusters when nobody expected it — vMotion load in the working day, or a licence-bound VM placed on a host that is not licensed for it when a tag is missing.',
+        },
+        guardrails: [
+          { rule: 'The datacenter must exist exactly once, and the policy by name, before anything is changed', because: 'A typo must not end up as settings on the wrong policy.' },
+          { rule: 'The policy is exported before the import and the export is kept; the merge prints the element before and after', because: 'The undo is that export, and the diff is what goes in the change.' },
+          { rule: 'The policy is read back after the import and the script fails when the settings are not in it', because: 'A policy import that silently drops an element it does not know would otherwise look like success.' },
+          ...(intent !== 'NONE' ? [{ rule: `Placement follows the tags in ${categories.join(', ')}`, because: 'A licence-bound VM goes only where the licence tag matches; untagged targets are not candidates.' }] : []),
+        ],
+        dryRun: ['Run ./apply-workload-automation.sh --dry-run: it checks the datacenter, exports and merges the policy, prints the change, and imports nothing.', `Leave "Automate" off for the first ${schedule === 'NONE' ? 'week' : 'run'}: Workload Optimization then shows what it would move without moving it.`],
+        undo: ['Import policy-before-<time>.zip the same way (POST /suite-api/api/policies/import?forceImport=true). VMs already moved stay where they are.'],
+        told: ['Workload Optimization shows each run and what it moved; vCenter records every vMotion as an event. Nobody is notified by default — add a notification rule on the optimisation alerts if they should be.'],
+        requires: [`The ${scopeLabel} "${scopeName}" in VCF Operations${scopeKind === 'CustomDatacenter' ? ' (Custom Datacenters)' : ''}.`, `The policy "${policy}" assigned to the group that holds it.`, 'DRS fully automated on the clusters, and vMotion between them.', ...(intent !== 'NONE' ? [`vSphere tags in ${categories.join(', ')} on the VMs and on the target ${intent === 'HOST' ? 'hosts' : 'clusters'}.`] : []), 'curl, jq and python3.'],
+        files: {
+          'workload-automation.json': json(settings),
+          'apply-workload-automation.sh': merge,
+          [`${base}-APPLY.md`]: md([
+            `# Workload Automation for "${scopeName}" by hand (only where the script stops)`,
+            '',
+            '`./apply-workload-automation.sh` applies all of this through the policy. Where the read-back says the settings are not in the policy on your release, set them here:',
+            '',
+            `1. Infrastructure Operations → Configurations → Policies → "${policy}" → Edit → Workload Automation.`,
+            `2. Balance: ${balance.toLowerCase()}. Consolidate: ${consolidate ? consolidation.toLowerCase() : 'off'}. Cluster headroom: ${headroom}%. Storage-based eviction: ${eviction ? 'on' : 'off'}.`,
+            ...(intent !== 'NONE' ? [`3. Business intent: ${intent === 'HOST' ? 'host-based' : 'cluster-based'} placement, tag categories ${categories.join(', ')}.`] : ['3. Business intent: none.']),
+            '4. Save.',
+            `5. Optimize → Workload Optimization → ${scopeName} → ${automate ? 'Automate on' : 'Automate off'}${schedule !== 'NONE' ? `; Schedule → ${when}` : ''}.`,
+          ]),
+        },
+        notes: [
+          'VERIFY: the policy XML element and attribute names for Workload Automation (WorkloadAutomation, balanceLevel, consolidationLevel, clusterHeadroom, storageBasedEviction, automate, BusinessIntent, Schedule) are not published. The script updates an existing workload-automation element in place when the export has one, and fails loudly on read-back when the release keeps the settings elsewhere.',
+          '9.1 adds storage-based eviction: balancing also considers datastore pressure, not only CPU and memory.',
+          'Business intent needs the same tag categories on VMs and on targets. A VM whose tag matches no target is left where it is and flagged, not moved.',
         ],
         findings,
       };
@@ -2201,7 +2999,7 @@ export const VCF_OPS_OPERATE                                 = [
     label: 'Security Posture Management drift report, and confidential computing hosts',
     group: 'Audit and compliance',
     description:
-      'A weekly read of 9.1 Security Posture Management against the VCF Security Configuration Guide or PCI DSS v4.0.1 — what fails now, what is newly failing since last week and what was fixed — plus a report of which ESX hosts the platform profiles as confidential-computing capable. Reports only; remediation stays in the interface and in change.',
+      'A weekly read of 9.1 Security Posture Management against the benchmarks it ships — the VCF 9.x Security Configuration Guide, PCI DSS v4.0.1 for VCF 9 and VCF 9 General Controls, one or all three — what fails now, what is newly failing since last week and what was fixed — plus a report of which ESX hosts the platform profiles as confidential-computing capable. Reports only; remediation stays in the interface and in change.',
     inputs: [
       {
         id: 'benchmark',
@@ -2211,6 +3009,7 @@ export const VCF_OPS_OPERATE                                 = [
           { value: 'VCF 9.x Security Configuration Guide v1.0', label: 'VCF 9.x Security Configuration Guide v1.0' },
           { value: 'PCI DSS v4.0.1 for VCF 9 v1.0', label: 'PCI DSS v4.0.1 for VCF 9 v1.0' },
           { value: 'VCF 9 General Controls v1.0', label: 'VCF 9 General Controls v1.0' },
+          { value: 'ALL', label: 'All three, each with its own drift' },
         ],
         default: 'VCF 9.x Security Configuration Guide v1.0',
       },
@@ -2243,7 +3042,10 @@ export const VCF_OPS_OPERATE                                 = [
       const maxHosts = num(values, 'max_hosts', 500);
       const webhook = str(values, 'webhook', '');
       const base = slugOf(name || 'security-posture', 'security-posture');
-      const pci = /PCI/.test(benchmark);
+      const SPM_BENCHMARKS = ['VCF 9.x Security Configuration Guide v1.0', 'PCI DSS v4.0.1 for VCF 9 v1.0', 'VCF 9 General Controls v1.0'];
+      const benchmarks = benchmark === 'ALL' ? SPM_BENCHMARKS : [benchmark];
+      const benchLabel = benchmark === 'ALL' ? 'All 9.1 Security Posture Management benchmarks' : benchmark;
+      const pci = benchmarks.some((b) => /PCI/.test(b));
 
       const findings            = [];
       if (/default/i.test(policy)) {
@@ -2263,13 +3065,16 @@ export const VCF_OPS_OPERATE                                 = [
         );
       }
 
-      const drift = readScript(OPS, `Security Posture Management drift: ${benchmark}.`, [
+      const slugOfBench = (b        )         => slugOf(b, 'benchmark');
+      const drift = readScript(OPS, `Security Posture Management drift: ${benchLabel}.`, [
         ...workDirLines(OPS),
         ...PAGED_HELPERS,
         ...WEBHOOK_HELPER,
-        'STATE_DIR="${POSTURE_STATE_DIR:-/var/lib/vcf-posture}"',
+        '# One state directory per benchmark, so each has its own baseline and drift.',
+        `BENCH="\${POSTURE_BENCHMARK:-${benchLabel}}"`,
+        'SLUG=$(printf "%s" "$BENCH" | tr "A-Z" "a-z" | tr -c "a-z0-9" "-" | sed "s/--*/-/g; s/^-//; s/-$//")',
+        'STATE_DIR="${POSTURE_STATE_DIR:-/var/lib/vcf-posture}/$SLUG"',
         'mkdir -p "$STATE_DIR"',
-        `BENCH='${benchmark}'`,
         `FAIL_NEW=${failNew ? 1 : 0}`,
         `FAIL_OVER=${failOver}`,
         'STAMP=$(date +%Y%m%d)',
@@ -2363,11 +3168,11 @@ export const VCF_OPS_OPERATE                                 = [
 
       return {
         platform: OPS,
-        title: `${benchmark} — weekly drift report${confidential ? ', with confidential computing hosts' : ''}`,
+        title: `${benchLabel} — weekly drift report${confidential ? ', with confidential computing hosts' : ''}`,
         effect: 'read',
         trigger: { kind: 'schedule', detail: 'Weekly, after the benchmark’s assessment has run', worstCase: 'once a week' },
         scope: {
-          what: `Objects covered by the policy "${policy}", assessed against ${benchmark}${confidential ? `; and up to ${maxHosts} ESX hosts for the confidential computing report` : ''}.`,
+          what: `Objects covered by the policy "${policy}", assessed against ${benchmarks.join(', ')}${confidential ? `; and up to ${maxHosts} ESX hosts for the confidential computing report` : ''}.`,
           decidedBy: [`The policy "${policy}" the benchmark is enabled in — the documented scope of an assessment is every object that policy covers.`, source === 'alerts' ? 'The compliance alerts it raises, narrowed by the name filter.' : 'The rows of the View Results export.'],
           ifWrong: 'The drift covers the wrong objects or rules. Nothing is changed either way; that is why remediation is not here.',
         },
@@ -2381,7 +3186,7 @@ export const VCF_OPS_OPERATE                                 = [
         undo: ['Nothing to undo. Delete the state directory to start a new baseline.'],
         told: webhook ? [`${webhook}, weekly, with failing, new and fixed.`] : ['The drift JSON in the state directory and the exit code.'],
         requires: [
-          `${benchmark} enabled: Protect → Security Posture Management → ⋮ → Enable Benchmark → assign "${policy}".`,
+          `${benchmarks.join(', ')} enabled: Protect → Security Posture Management → ⋮ → Enable Benchmark → assign "${policy}". No API to enable a benchmark is documented in 9.1, so this is the one manual step (see the ENABLE.md).`,
           'VERIFY licensing: the 9.1 Security Posture Management pages are published under VMware Advanced Cyber Compliance, and VMware’s 9.1 announcement ties the PCI and baseline benchmarks and remediation to that add-on.',
           'jq, bash 4 and coreutils comm.',
           'A read-only VCF Operations account.',
@@ -2389,22 +3194,30 @@ export const VCF_OPS_OPERATE                                 = [
         files: {
           'posture-drift.sh': drift,
           ...(confidential ? { 'confidential-computing.sh': cc } : {}),
-          'crontab.txt': `# Weekly, Monday 07:00. The scripts log in for themselves from the password file (mode 600).\n0 7 * * 1 ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/posture-drift.sh${source === 'csv' ? ' /var/lib/vcf-posture/latest-results.csv' : ''} >> /var/log/vcf-posture.log 2>&1\n${confidential ? `5 7 * * 1 cd /var/lib/vcf-posture && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/confidential-computing.sh >> /var/log/vcf-posture.log 2>&1\n` : ''}`,
+          'crontab.txt': `# Weekly, Monday 07:00. The scripts log in for themselves from the password file (mode 600).\n${
+            source === 'csv'
+              ? benchmarks.map((b) => `0 7 * * 1 POSTURE_BENCHMARK=${shq(b)} ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/posture-drift.sh /var/lib/vcf-posture/${slugOfBench(b)}/latest-results.csv >> /var/log/vcf-posture.log 2>&1\n`).join('')
+              : `0 7 * * 1 ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/posture-drift.sh >> /var/log/vcf-posture.log 2>&1\n`
+          }${confidential ? `5 7 * * 1 cd /var/lib/vcf-posture && ${scheduledEnv(OPS, 'svc-vcfops-readonly')} /usr/local/bin/confidential-computing.sh >> /var/log/vcf-posture.log 2>&1\n` : ''}`,
           [`${base}-ENABLE.md`]: md([
-            `# ${benchmark} in Security Posture Management (9.1)`,
+            `# ${benchLabel} in Security Posture Management (9.1)`,
+            '',
+            'No API to enable a benchmark or assign it to a policy is documented in 9.1: this is the one step done in the interface. Everything after it is read by posture-drift.sh.',
             '',
             '1. Protect → Security Posture Management.',
-            `2. ⋮ next to "${benchmark}" → Enable Benchmark → assign "${policy}" → OK.`,
+            ...benchmarks.map((b) => `2. ⋮ next to "${b}" → Enable Benchmark → assign "${policy}" → OK.`),
             '3. Open the benchmark → View Control Set. Rules marked with an asterisk need a site-specific value; Edit Rule and set them before the first assessment, or they report as failing.',
             '4. Run Assessment. Results appear under View Results as compliant, non-compliant or unknown, with a compliance score.',
             '5. Export as CSV from View Results for the record; generate the compliance report for the control-level summary.',
             '6. Remediation: select rules on the results page and run remediation — through change, not from this report.',
             '',
-            'Other benchmarks (browse more benchmarks → Solutions Catalog) install as compliance content packs.',
+            ...(source === 'csv' ? [`7. Save each export where the crontab reads it: ${benchmarks.map((b) => `/var/lib/vcf-posture/${slugOfBench(b)}/latest-results.csv`).join(', ')}.`] : []),
+            '',
+            'Other benchmarks are offered from the Solutions Catalog (browse more benchmarks).',
           ]),
         },
         notes: [
-          'Out of the box in 9.1 Security Posture Management: VCF 9.x Security Configuration Guide v1.0, PCI DSS v4.0.1 for VCF 9 v1.0, and VCF 9 General Controls v1.0.',
+          'Out of the box in 9.1 Security Posture Management: VCF 9.x Security Configuration Guide v1.0, PCI DSS v4.0.1 for VCF 9 v1.0, and VCF 9 General Controls v1.0. Compliance (with its CIS, DISA STIG, HIPAA and ISO 27001 packs) is deprecated in 9.1 and replaced by Security Posture Management; this is the blueprint for it.',
           'No public API for Security Posture Management results is documented in the 9.1 API reference; hence the two modes.',
           'Confidential computing: 9.1 profiles ESX hosts to find those capable of running confidential VMs (Intel TDX, AMD SEV-SNP) and shows whether it is enabled. The report reads what the host properties expose; the SecOps dashboard is the authoritative view.',
         ],

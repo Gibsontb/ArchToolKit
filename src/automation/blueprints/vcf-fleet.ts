@@ -1,41 +1,34 @@
 /**
- * VCF fleet operations: the SDDC Manager jobs that keep an instance alive.
+ * VCF fleet operations: the SDDC Manager jobs that keep an instance alive and
+ * build it out.
  *
- * Rotating passwords, watching certificates, checking the manager itself,
- * configuring its backup, prechecking an upgrade and commissioning hosts. None
- * of them are interesting until one is missed — a certificate expires on a
- * Saturday, a password rotation fails half way and leaves NSX locked, a backup
- * target has been full since March — and then each of them is the incident.
+ * Checking the manager itself, prechecking an upgrade and commissioning hosts —
+ * and, from vcf-fleet-91-domains.ts, creating workload domains, adding,
+ * expanding and shrinking clusters, network pools, decommissioning hosts,
+ * importing an existing vCenter and deploying Avi Load Balancer controllers.
+ * None of them are interesting until one is missed, and then each of them is
+ * the incident.
  *
  * Every script here talks to the SDDC Manager API at /v1 with a bearer token
  * from POST /v1/tokens, reads first, and acts when run (--dry-run previews). Where the
  * exact body shape moves between releases the file says so rather than
  * guessing quietly: check it against the API reference for the release in
- * front of you.
+ * front of you. The upgrade precheck is the exception: 9.1 deprecates the SDDC
+ * Manager prechecks, so it runs the fleet lifecycle enhanced precheck.
  */
 
 import { bool, num, str, type BlueprintValues } from '../../kit/blueprint.ts';
 import { error, info, warning, type Finding } from '../../core/findings.ts';
 import { automationBlueprint, type AutomationBlueprint } from '../from-automation.ts';
-import { listOf, slugOf, type Automation } from '../automation.ts';
+import { slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
-import { importGuide, type ImportStepSpec } from './vcf-networks-logs.ts';
+import type { ImportStepSpec } from './vcf-networks-logs.ts';
+import { hostPasswordVar, lifecycleGuard, sddcApiHelper as apiHelper, sddcImport } from './vcf-fleet-91-common.ts';
+import { VCF_FLEET_91 } from './vcf-fleet-91.ts';
+import { VCF_FLEET_91_DOMAINS } from './vcf-fleet-91-domains.ts';
 
 const PLATFORM = 'vcf-fleet' as const;
 const SRC = 'ArchToolKit';
-
-const SDDC_API = 'SDDC Manager API reference at developer.broadcom.com (VMware Cloud Foundation API 5.2 and the SDDC Manager API for 9.x): request bodies CredentialsUpdateSpec, CsrsGenerationSpec, ResourceCertificateSpec[], BackupConfigurationSpec, HostCommissionSpec[].';
-
-/** IMPORT.md for an SDDC Manager blueprint: everything goes in through /v1, in this order. */
-function sddcImport(intro: string, steps: readonly (ImportStepSpec | undefined)[], verify: readonly string[] = [], sources: readonly string[] = [SDDC_API]): string {
-  return importGuide({
-    product: 'SDDC Manager',
-    intro: `${intro} Every script reads SDDC_HOST and either SDDC_TOKEN (POST /v1/tokens) or SDDC_USER with SDDC_PASSWORD_FILE (mode 600). The same calls can be made from SDDC Manager > Developer Center > API Explorer by pasting the file as the body.`,
-    steps,
-    verify,
-    sources,
-  });
-}
 
 /** The one step of a read-only, scheduled script. */
 function scheduleStep(script: string, base: string, extra: readonly string[] = []): ImportStepSpec {
@@ -45,45 +38,11 @@ function scheduleStep(script: string, base: string, extra: readonly string[] = [
   };
 }
 
-/** The call helper every acting script here opens with. */
-function apiHelper(): string[] {
-  return [
-    'api() {',
-    '  local method="$1" path="$2"; shift 2',
-    '  curl -sS -f -X "$method" "https://${SDDC_HOST}${path}" \\',
-    `    -H "${authHeader('sddc-manager')}" \\`,
-    '    -H "Accept: application/json" -H "Content-Type: application/json" "$@"',
-    '}',
-  ];
-}
-
 /** Posts the PROBLEMS array to a webhook, never failing the script on the way. */
 function notify(webhook: string, source: string): string[] {
   if (!webhook) return [];
   return [`curl -sS -X POST "${webhook}" -H "Content-Type: application/json" --data "$(printf '%s\\n' "\${PROBLEMS[@]}" | jq -R . | jq -s '{source: "${source}", problems: .}')" || true`];
 }
-
-/** The two checks every acting fleet script makes before it touches anything. */
-function lifecycleGuard(): string[] {
-  return [
-    '# Guardrail: nothing else is running. Rotating, commissioning or replacing',
-    '# while an upgrade or a workload domain operation is in flight is how a',
-    '# resource ends up locked in SDDC Manager with no clean way to release it.',
-    'BUSY=$(api GET /v1/tasks | jq \'[.elements[]? | select((.status // "" | ascii_upcase) | test("IN_PROGRESS|IN PROGRESS|PENDING"))] | length\')',
-    'if (( BUSY > 0 )); then',
-    '  echo "Refusing: ${BUSY} SDDC Manager task(s) in progress. Wait for them to finish." >&2',
-    '  exit 1',
-    'fi',
-  ];
-}
-
-const RESOURCE_TYPES = [
-  { value: 'ESXI', label: 'ESXi hosts' },
-  { value: 'VCENTER', label: 'vCenter' },
-  { value: 'NSXT_MANAGER', label: 'NSX Manager' },
-  { value: 'NSXT_EDGE', label: 'NSX Edge' },
-  { value: 'BACKUP', label: 'Backup (SFTP) account' },
-];
 
 const STORAGE_TYPES = [
   { value: 'VSAN', label: 'vSAN (OSA)' },
@@ -232,119 +191,58 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
 
 
   // -------------------------------------------------------------------------
+  // VCF 9.1 deprecates the SDDC Manager upgrade prechecks (/v1/system/prechecks)
+  // this blueprint used to start. It keeps its id and now builds the fleet
+  // lifecycle enhanced precheck (fleet91_lifecycle, part "precheck") for one
+  // workload domain, or for chosen hosts in it.
   automationBlueprint({
     id: 'fleet_upgrade_precheck',
     platform: PLATFORM,
-    label: 'Precheck a workload domain before an upgrade (SDDC Manager)',
+    label: 'Enhanced precheck of a workload domain before an upgrade (fleet lifecycle, 9.1)',
     group: 'Lifecycle',
     description:
-      'Run the SDDC Manager precheck against one workload domain, wait for it, and list every check that failed — with the bundles that are available and downloaded for the target version beside it. It starts a precheck and reads; it upgrades nothing.',
+      'Run the fleet lifecycle enhanced precheck — the 9.1 replacement for the deprecated SDDC Manager upgrade prechecks — against one workload domain of a VCF instance, or selected ESX hosts in it, for a target version. It builds an upgrade plan, runs the precheck, exports the result as JSON and CSV, and lists every component that did not pass. It upgrades nothing.',
     inputs: [
       { id: 'domain', label: 'Workload domain name', control: 'text', default: 'mgmt-domain' },
-      { id: 'target_version', label: 'Target VCF version', control: 'text', default: '9.1.0.0', hint: 'As the bundle list names it' },
-      { id: 'timeout_minutes', label: 'Give up after (minutes)', control: 'number', default: 60, min: 5, max: 480 },
-      { id: 'webhook', label: 'Report to', control: 'text', default: 'https://runbooks.example.com/hooks/vcf-lifecycle' },
+      { id: 'target_version', label: 'Target VCF version', control: 'text', default: '9.1.1.0', hint: 'Four parts, as the depot names it' },
+      {
+        id: 'scope',
+        label: 'Precheck',
+        control: 'select',
+        options: [
+          { value: 'VCF_INSTANCE', label: 'The whole domain: SDDC Manager, NSX, vCenter and hosts' },
+          { value: 'HOSTS', label: 'Selected ESX hosts of the domain' },
+        ],
+        default: 'VCF_INSTANCE',
+      },
+      { id: 'hosts', label: 'ESX hosts', control: 'text', default: 'esx05.example.com, esx06.example.com', hint: 'Comma separated FQDNs', showWhen: { input: 'scope', equals: ['HOSTS'] } },
+      { id: 'lcm_host', label: 'Fleet lifecycle host', control: 'text', default: 'fleet-lcm.example.com', hint: 'The VCF management services runtime FQDN' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
+      const lifecycle = VCF_FLEET_91.find((blueprint) => blueprint.id === 'fleet91_lifecycle');
+      if (!lifecycle) throw new Error('fleet91_lifecycle is missing');
       const domain = str(values, 'domain', 'mgmt-domain');
-      const target = str(values, 'target_version', '');
-      const timeout = num(values, 'timeout_minutes', 60);
-      const webhook = str(values, 'webhook', '');
-      const base = slugOf(name || `precheck-${domain}`, 'precheck');
-
-      const findings: Finding[] = [];
-      if (!target) {
-        findings.push(warning('fleet.precheck.no-target', 'No target version is given, so bundle availability cannot be checked.', { source: SRC }));
-      }
-      if (timeout < 20) {
-        findings.push(info('fleet.precheck.short-timeout', 'A precheck of a large domain routinely takes longer than twenty minutes.', { source: SRC }));
-      }
-
-      const failuresJq = [
-        '# Every failed sub-check, flattened. The task shape nests validations under',
-        '# subTasks or validationChecks depending on release; both are walked.',
-        '[ .. | objects',
-        '  | select(((.resultStatus // .status // "") | ascii_upcase) | test("FAILED|ERROR"))',
-        '  | select(.name != null or .description != null)',
-        '  | "\\(.name // .description): \\((.errors // [])[0].message // .errorMessage // "see SDDC Manager")" ]',
-        '| unique',
-        '',
-      ].join('\n');
-
-      const script = readScript('sddc-manager', `Precheck ${domain} for an upgrade to ${target || 'the next release'}.`, [
-        'PROBLEMS=()',
-        `DOMAIN_NAME='${domain}'`,
-        `TARGET='${target}'`,
-        '',
-        'DOMAIN_ID=$(get /v1/domains | jq -r --arg n "$DOMAIN_NAME" \'.elements[]? | select(.name == $n) | .id\')',
-        '[[ -n "$DOMAIN_ID" ]] || { echo "No workload domain named ${DOMAIN_NAME}" >&2; exit 2; }',
-        '',
-        '# Bundles for the target: available, and downloaded? Verify field names.',
-        'if [[ -n "$TARGET" ]]; then',
-        '  BUNDLES=$(get /v1/bundles | jq -r --arg v "$TARGET" \'[.elements[]? | select((.version // "" | startswith($v)) or ((.components // []) | map(.toVersion // "") | any(startswith($v))))]\')',
-        '  echo "$BUNDLES" | jq -r \'.[] | "bundle \\(.id)  \\(.type // "")  \\(.downloadStatus // "UNKNOWN")"\'',
-        '  [[ "$(echo "$BUNDLES" | jq length)" == "0" ]] && PROBLEMS+=("no bundle found for ${TARGET}")',
-        '  while read -r b; do PROBLEMS+=("bundle not downloaded: $b"); done < <(echo "$BUNDLES" | jq -r \'.[] | select((.downloadStatus // "") != "SUCCESSFUL") | .id\')',
-        '  # What the domain can move to, per SDDC Manager. Path verify-per-release.',
-        '  get "/v1/upgradables/domains/${DOMAIN_ID}" 2>/dev/null | jq -r \'.elements[]? | "upgradable: \\(.bundleId // .bundle.id // "?") \\(.status // "")"\' || true',
-        'fi',
-        '',
-        '# Start the precheck. The one write: it runs checks and changes nothing.',
-        '# 9.x may use /v1/system/check-sets for targeted prechecks instead; verify.',
-        'TASK=$(curl -sS -f -X POST "https://${SDDC_HOST}/v1/system/prechecks" \\',
-        `  -H "${authHeader('sddc-manager')}" -H "Content-Type: application/json" \\`,
-        '  --data "$(jq -n --arg id "$DOMAIN_ID" \'{resources: [{resourceId: $id, type: "DOMAIN"}]}\')" | jq -r .id)',
-        'echo "precheck task ${TASK}"',
-        '',
-        `DEADLINE=$(( $(date +%s) + ${timeout} * 60 ))`,
-        'while :; do',
-        '  RESULT=$(get "/v1/system/prechecks/tasks/${TASK}")',
-        '  STATUS=$(echo "$RESULT" | jq -r \'.status // "UNKNOWN"\' | tr a-z A-Z)',
-        '  [[ "$STATUS" =~ IN_PROGRESS|IN\\ PROGRESS|PENDING ]] || break',
-        '  (( $(date +%s) < DEADLINE )) || { PROBLEMS+=("precheck still running after ' + timeout + ' minutes"); break; }',
-        '  sleep 30',
-        'done',
-        'echo "$RESULT" > precheck-result.json',
-        'while read -r f; do PROBLEMS+=("$f"); done < <(jq -r -f failures.jq precheck-result.json | jq -r \'.[]\')',
-        '',
-        'if (( ${#PROBLEMS[@]} == 0 )); then',
-        '  echo "Precheck passed for ${DOMAIN_NAME}. Full result in precheck-result.json."',
-        '  exit 0',
-        'fi',
-        'printf "%s\\n" "${PROBLEMS[@]}" >&2',
-        ...notify(webhook, 'vcf-upgrade-precheck'),
-        'exit 1',
-      ]);
-
+      const scope = str(values, 'scope', 'VCF_INSTANCE');
+      const inner = lifecycle.automation(
+        {
+          part: 'precheck',
+          scope,
+          domain,
+          hosts: str(values, 'hosts', ''),
+          target_version: str(values, 'target_version', '9.1.1.0'),
+          lcm_host: str(values, 'lcm_host', 'fleet-lcm.example.com'),
+          backup_hours: 24,
+        },
+        name || `precheck-${domain}`,
+      );
+      const findings: Finding[] = [...(inner.findings ?? [])];
+      if (/^mgmt|management/i.test(domain)) findings.push(info('fleet.precheck.management-first', 'The management domain is upgraded first; precheck it before any workload domain.', { source: SRC }));
       return {
-        platform: PLATFORM,
-        title: `Upgrade precheck — ${domain}${target ? ` to ${target}` : ''}`,
-        effect: 'read',
-        trigger: { kind: 'schedule', detail: 'Daily in the week before an upgrade window, and once by hand the morning of it', worstCase: 'once a day' },
-        scope: {
-          what: `The workload domain ${domain}: its components, as the SDDC Manager precheck sees them, and the bundle list.`,
-          decidedBy: [`GET /v1/domains, matched by name ${domain}.`, 'POST /v1/system/prechecks with that domain as the only resource.', target ? `GET /v1/bundles filtered to ${target}.` : 'No bundle check.'],
-          ifWrong: 'A precheck of the wrong domain passes and reassures nobody usefully. The script prints the domain id it resolved; check it.',
-        },
-        guardrails: [
-          { rule: 'Starts a precheck and nothing else', because: 'An upgrade is a change-window decision, not a scheduled job.' },
-          { rule: `Gives up after ${timeout} minutes`, because: 'A precheck that hangs should be a finding, not a scheduler slot held forever.' },
-        ],
-        dryRun: ['The precheck is itself the dry run of the upgrade. It changes no component.'],
-        undo: ['Nothing to undo. The precheck result stays in SDDC Manager’s task list.'],
-        told: [webhook ? `${webhook}, with each failed check.` : 'The exit code, and precheck-result.json.'],
-        requires: ['An SDDC Manager account allowed to run prechecks (OPERATOR or ADMIN).', 'The target bundles downloaded, or a depot configured, for the bundle part to mean anything.'],
-        files: {
-          [`${base}.sh`]: script,
-          'failures.jq': failuresJq,
-          'IMPORT.md': sddcImport('Nothing is imported. The script starts a precheck (POST /v1/system/prechecks with a body naming the domain, built at run time) and reads its result.', [
-            { heading: 'Run the precheck', lines: [`\`./${base}.sh\` from a host that reaches SDDC Manager, a day or more before the upgrade window. In the interface: Lifecycle Management > the domain > Precheck.`] },
-          ]),
-        },
+        ...inner,
+        title: `Enhanced precheck — ${scope === 'HOSTS' ? `hosts of ${domain}` : domain} for ${str(values, 'target_version', '9.1.1.0')}`,
         notes: [
-          'On VCF 9.1 the management components are upgraded through the fleet lifecycle upgrade plan: see "fleet91_lifecycle" in this kit. Workload domains are still prechecked in SDDC Manager, as here.',
-          'Newer releases split prechecks into check-sets (POST /v1/system/check-sets/queries, then /v1/system/check-sets) so you can precheck against a specific target. If /v1/system/prechecks is deprecated in yours, move to those.',
-          'Run it early enough to fix what it finds. A precheck on the morning of the window only tells you the window is lost.',
+          'VCF 9.1 deprecates the SDDC Manager upgrade prechecks (POST /v1/system/prechecks and /v1/system/check-sets). This runs the fleet lifecycle enhanced precheck instead; fleet91_lifecycle has the same precheck for the management components, and the apply step with its gates.',
+          ...(inner.notes ?? []),
         ],
         findings,
       };
@@ -355,10 +253,10 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet_host_commission',
     platform: PLATFORM,
-    label: 'Commission ESXi hosts (SDDC Manager)',
+    label: 'Commission ESX hosts (SDDC Manager)',
     group: 'Hosts',
     description:
-      'Add prepared ESXi hosts to SDDC Manager’s inventory so a domain or cluster can use them. It always validates first — validation is the dry run — reads each host’s root password from its own environment variable, and commissions only when every host has passed.',
+      'Add prepared ESX hosts to SDDC Manager’s inventory so a domain or cluster can use them. It always validates first — validation is the dry run — reads each host’s root password from its own environment variable, and commissions only when every host has passed.',
     inputs: [
       { id: 'hosts', label: 'Hosts', control: 'textarea', default: 'esx05.example.com\nesx06.example.com\nesx07.example.com\nesx08.example.com', hint: 'One FQDN per line. Append :NFS (or another type) to override the storage type for that host' },
       { id: 'storage_type', label: 'Storage type', control: 'select', options: STORAGE_TYPES, default: 'VSAN_ESA' },
@@ -381,7 +279,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
           fqdn,
           storageType: (type || defaultType).toUpperCase(),
           username: user,
-          envVar: `ESXI_PW_${fqdn.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+          envVar: hostPasswordVar(fqdn),
         };
       });
 
@@ -419,7 +317,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
 
       const script = [
         '#!/usr/bin/env bash',
-        `# Commission ${hosts.length} ESXi host(s) into SDDC Manager.`,
+        `# Commission ${hosts.length} ESX host(s) into SDDC Manager.`,
         '#',
         '# Always validates first, and commissions only if every host passed. With',
         '# --dry-run it stops after validation: SDDC Manager connects to each host and',
@@ -485,7 +383,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
 
       return {
         platform: PLATFORM,
-        title: `Commission ${hosts.length} ESXi host${hosts.length === 1 ? '' : 's'} (${types.join(', ') || defaultType}) into ${pool}`,
+        title: `Commission ${hosts.length} ESX host${hosts.length === 1 ? '' : 's'} (${types.join(', ') || defaultType}) into ${pool}`,
         effect: 'reversible',
         trigger: { kind: 'manual', detail: 'Run by hand when hosts have been racked, imaged and given DNS.', worstCase: 'once per batch' },
         scope: {
@@ -505,7 +403,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
         ],
         told: ['SDDC Manager records the validation and the commission task. Nothing else is told.'],
         requires: [
-          'Each host imaged at a supported ESXi build, with forward and reverse DNS, NTP, and SSH enabled.',
+          'Each host imaged at a supported ESX build, with forward and reverse DNS, NTP, and SSH enabled.',
           `The network pool ${pool} with free addresses for vMotion and storage for every host.`,
           ...hosts.map((host) => `${host.envVar} set to ${host.fqdn}’s ${user} password, from your vault.`),
         ],
@@ -531,4 +429,7 @@ export const VCF_FLEET: readonly AutomationBlueprint[] = [
       };
     },
   }),
+  // Building the instance out: workload domains, clusters, network pools, hosts,
+  // VCF Import and Avi Load Balancer controllers (vcf-fleet-91-domains.ts).
+  ...VCF_FLEET_91_DOMAINS,
 ];

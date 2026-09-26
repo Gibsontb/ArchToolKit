@@ -113,8 +113,8 @@ function everyVariant(): { id: string; label: string; files: Record<string, stri
 describe('pkg vcfa-extend: every automation is an Orchestrator package', () => {
   const variants = everyVariant();
 
-  it('covers all eight automations in the file', () => {
-    expect(IDS.sort()).toEqual(['vcfa_custom_resource', 'vcfa_day2_policy', 'vcfa_orchestrator_action', 'vcfa_orchestrator_workflow', 'vcfa_resource_action', 'vcfa_supervisor_namespace', 'vcfa_terraform_in_template', 'vcfa_vks_cluster']);
+  it('covers every automation in the file', () => {
+    expect(IDS.sort()).toEqual(['vcfa_custom_form', 'vcfa_custom_resource', 'vcfa_day2_policy', 'vcfa_orchestrator_action', 'vcfa_orchestrator_assets', 'vcfa_orchestrator_endpoint', 'vcfa_orchestrator_workflow', 'vcfa_resource_action', 'vcfa_secrets', 'vcfa_supervisor_namespace', 'vcfa_terraform_in_template', 'vcfa_vks_cluster']);
   });
 
   it('builds a package that parses, with the core library beside it, for every variant', () => {
@@ -469,7 +469,7 @@ describe('pkg vcfa-extend: vcfa_resource_action', { skip: !CURL }, () => {
     const action = bodyOf(requests, 'POST', '/form-service/api/custom/resource-actions') as { runnableItem: { id: string; endpointLink: string }; status: string; resourceType: string };
     expect(action.runnableItem.id).toBe(backingId);
     expect(action.runnableItem.endpointLink).toBe('/resources/endpoints/i-vro');
-    expect(action.status).toBe('DRAFT');
+    expect(action.status).toBe('RELEASED');
     expect('_binding' in action).toBe(false);
     const policy = bodyOf(requests, 'POST', '/policy/api/policies') as { projectId: string; definition: { approvers: string[]; actions: string[] } };
     expect(policy.projectId).toBe('p-1');

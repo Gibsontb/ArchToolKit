@@ -2,7 +2,7 @@
  * VCF Automation 9.1 and 9.1.1: what the 8.x-shaped blueprints do not cover.
  *
  * The other VCF Automation files in this kit are written against the APIs that
- * carried over from Aria Automation — /iaas/api, /blueprint/api, /policy/api —
+ * carried over from 8.x — /iaas/api, /blueprint/api, /policy/api —
  * which is what a VM Apps organisation still speaks. VCF Automation 9 added a
  * second half that came from Cloud Director and the Supervisor: a provider
  * portal with organisations, regions and quotas (/cloudapi), OAuth API tokens
@@ -31,6 +31,9 @@ import { listOf, slugOf,                 } from '../automation.js';
 import { blueprintYaml, importBundle, importMd, kubeStep, manualStep, verifyFor,                 } from '../vcfa-import.js';
 import { packageNameOf, toPackage } from '../vro/to-package.js';
 import { familyOf, isAnyNetwork, parseCidrAny } from '../../core/ip.js';
+import { nsxEnsureLines, nsxScript, portOf, rowsOf,                                } from './vcf-automation-91-kit.js';
+import { vcfa91Govern } from './vcf-automation-91-govern.js';
+import { vcfa91Network } from './vcf-automation-91-network.js';
 
 const ALL_APPS = 'VCF Automation 9.1 / 9.1.1 All Apps organizations';
 const PROVIDER = 'VCF Automation 9.1 / 9.1.1, provider (System) side';
@@ -1065,7 +1068,7 @@ if (soon.length > 0${revoke ? ' && !revokeId' : ''}) throw new Error(soon.length
 
 // ---------------------------------------------------------------------------
 
-export const VCF_AUTOMATION_91                                 = [
+const CORE_91                                 = [
   // -------------------------------------------------------------------------
   automationBlueprint({
     id: 'vcfa91_api_tokens',
@@ -1323,7 +1326,7 @@ export const VCF_AUTOMATION_91                                 = [
         files,
         notes: [
           'Provider: POST https://<vcfa>/oauth/provider/token. Organization: POST https://<vcfa>/oauth/tenant/<org>/token. Both form-encoded grant_type=refresh_token&refresh_token=<API token>, Accept: application/*; the answer has access_token and token_type Bearer, valid one hour (Broadcom TechDocs, 9.1).',
-          'Which login to use: /iaas/api/login with a refresh token is the Aria Automation 8.x method, still answered for VM Apps organizations upgraded from 8.x. A fresh 9.x organization — VM Apps or All Apps — authenticates like a tenant, at /oauth/tenant/<org>/token (vrealize.it, VCF Automation 9 API Access). When unsure, try the OAuth exchange first.',
+          'Which login to use: /iaas/api/login with a refresh token is the 8.x method, still answered for VM Apps organizations upgraded from 8.x. A fresh 9.x organization — VM Apps or All Apps — authenticates like a tenant, at /oauth/tenant/<org>/token (vrealize.it, VCF Automation 9 API Access). When unsure, try the OAuth exchange first.',
           'The /cloudapi calls send Accept: application/json;version=<version>. The workflow uses apiVersion when set (refused if GET /api/versions does not list it), otherwise the newest version listed; the scripts use VCFA_API_VERSION, default 9.1.0. Broadcom KB 419781 uses 40.0 on 9.0, vrealize.it uses 9.0.0 — GET /api/versions is the authority.',
           'Service accounts (Administration → Access Control → Service Accounts) use the OAuth device flow at /oauth/tenant/<org>/device_authorization and then the same token endpoint. The Terraform provider reads their token with service_account_token_file.',
           'The token list and revoke calls use /cloudapi/1.0.0/tokens, inherited from Cloud Director. VERIFY on your release: the probe prints the HTTP status if the path moved.',
@@ -1376,9 +1379,45 @@ export const VCF_AUTOMATION_91                                 = [
         options: [
           { value: 'oidc', label: 'OIDC — VCF Identity Broker or another IdP' },
           { value: 'ldap', label: 'LDAP / Active Directory' },
+          { value: 'saml', label: 'SAML 2.0' },
         ],
         default: 'oidc',
       },
+      { id: 'oidc_wellknown', label: 'OIDC well-known endpoint', control: 'text', default: 'https://idb.example.com/acs/t/CUSTOMER/.well-known/openid-configuration', section: 'Identity', showWhen: { input: 'identity', equals: ['oidc'] } },
+      { id: 'oidc_client_id', label: 'OIDC client id', control: 'text', default: 'vcfa-team-a', hint: 'The secret comes from TF_VAR_oidc_client_secret', section: 'Identity', showWhen: { input: 'identity', equals: ['oidc'] } },
+      { id: 'oidc_groups_claim', label: 'Groups claim', control: 'text', default: 'groups', section: 'Identity', showWhen: { input: 'identity', equals: ['oidc'] } },
+      { id: 'ldap_server', label: 'LDAP server', control: 'text', default: 'ad01.example.com', section: 'Identity', showWhen: { input: 'identity', equals: ['ldap'] } },
+      {
+        id: 'ldap_connector',
+        label: 'Directory',
+        control: 'select',
+        options: [
+          { value: 'ACTIVE_DIRECTORY', label: 'Active Directory' },
+          { value: 'OPEN_LDAP', label: 'OpenLDAP' },
+        ],
+        default: 'ACTIVE_DIRECTORY',
+        section: 'Identity',
+        showWhen: { input: 'identity', equals: ['ldap'] },
+      },
+      { id: 'ldap_base_dn', label: 'Base DN', control: 'text', default: 'DC=example,DC=com', section: 'Identity', showWhen: { input: 'identity', equals: ['ldap'] } },
+      { id: 'ldap_bind_user', label: 'Bind account', control: 'text', default: 'CN=svc-vcfa,OU=Service,DC=example,DC=com', hint: 'The password comes from TF_VAR_ldap_bind_password', section: 'Identity', showWhen: { input: 'identity', equals: ['ldap'] } },
+      { id: 'saml_metadata_url', label: 'SAML metadata URL', control: 'text', default: 'https://idp.example.com/saml/metadata', section: 'Identity', showWhen: { input: 'identity', equals: ['saml'] } },
+      { id: 'avi_lb', label: 'Delegate Avi load balancing (9.1)', control: 'toggle', default: true, section: '9.1 delegation and networking', showWhen: { input: 'org_type', equals: ['all-apps'] } },
+      { id: 'avi_lb_quota', label: 'Load balancer quota (virtual services)', control: 'number', default: 10, min: 0, max: 10000, section: '9.1 delegation and networking', showWhen: { input: 'avi_lb', equals: ['true'] } },
+      { id: 'dfw', label: 'Delegate vDefend distributed firewall (9.1)', control: 'toggle', default: true, section: '9.1 delegation and networking', showWhen: { input: 'org_type', equals: ['all-apps'] } },
+      { id: 'gateway_fw', label: 'Delegate vDefend gateway firewall (9.1)', control: 'toggle', default: true, section: '9.1 delegation and networking', showWhen: { input: 'org_type', equals: ['all-apps'] } },
+      {
+        id: 'external_connections',
+        label: 'External connections (9.1: several)',
+        control: 'textarea',
+        default: 'internet | provider-gw-01 | region1-external',
+        hint: 'name | provider gateway or connection | external IP block',
+        section: '9.1 delegation and networking',
+        showWhen: { input: 'org_type', equals: ['all-apps'] },
+      },
+      { id: 'shared_vlan_subnets', label: 'Shared VLAN extension subnets', control: 'text', default: '', hint: 'Comma separated provider subnets to share with the organization', section: '9.1 delegation and networking', showWhen: { input: 'org_type', equals: ['all-apps'] } },
+      { id: 'private_vpc_block', label: 'Default private VPC IP block', control: 'text', default: '10.64.0.0/16', section: '9.1 delegation and networking', showWhen: { input: 'org_type', equals: ['all-apps'] } },
+      { id: 'tgw_private_block', label: 'Transit gateway private IP block', control: 'text', default: '172.20.0.0/20', section: '9.1 delegation and networking', showWhen: { input: 'org_type', equals: ['all-apps'] } },
     ],
     automation: (values                 , name        )             => {
       const orgName = str(values, 'org_name', 'team-a');
@@ -1400,6 +1439,23 @@ export const VCF_AUTOMATION_91                                 = [
       const adminGroup = str(values, 'admin_group', '');
       const identity = str(values, 'identity', 'oidc');
       const tf = label(orgName, 'org').replace(/-/g, '_');
+      const avi = allApps && bool(values, 'avi_lb', true);
+      const aviQuota = num(values, 'avi_lb_quota', 10);
+      const dfw = allApps && bool(values, 'dfw', true);
+      const gatewayFw = allApps && bool(values, 'gateway_fw', true);
+      const externals = allApps
+        ? str(values, 'external_connections', '')
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l && !l.startsWith('#'))
+            .map((l) => {
+              const [cname = '', via = '', block = ''] = l.split('|').map((c) => c.trim());
+              return { name: cname, via, block, line: l };
+            })
+        : [];
+      const sharedVlans = allApps ? listOf(str(values, 'shared_vlan_subnets', '')) : [];
+      const privateVpcBlock = allApps ? str(values, 'private_vpc_block', '') : '';
+      const tgwBlock = allApps ? str(values, 'tgw_private_block', '') : '';
       void name;
 
       const findings            = [];
@@ -1431,6 +1487,23 @@ export const VCF_AUTOMATION_91                                 = [
       }
       if (!adminGroup) {
         findings.push(warning('vcfa91.org.no-admin', 'No administrator group is named, so the organization is administered only by the provider.', { source: SRC }));
+      }
+      if (identity === 'oidc' && !/^https:\/\/\S+\/\.well-known\/openid-configuration$/.test(str(values, 'oidc_wellknown', ''))) {
+        findings.push(warning('vcfa91.org.oidc-wellknown', 'The OIDC endpoint should be the https:// …/.well-known/openid-configuration URL of the identity provider.', { source: SRC }));
+      }
+      if (identity === 'saml') findings.push(info('vcfa91.org.saml', 'SAML is set in the provider portal: the vmware/vcfa provider has no SAML resource at 1.2.x (VERIFY).', { remediation: 'onboarding-checklist.md has the steps; OIDC through the VCF Identity Broker is the route the Terraform covers.', source: SRC }));
+      if (allApps) {
+        for (const e of externals) {
+          if (!e.name || !e.via) findings.push(error('vcfa91.org.external', `Could not read the external connection "${e.line}".`, { remediation: 'name | provider gateway or connection | external IP block', source: SRC }));
+        }
+        if (externals.length > 1) findings.push(info('vcfa91.org.multi-external', `${externals.length} external connections: new in 9.1; each transit gateway of the organization attaches to one.`, { source: SRC }));
+        for (const [what, cidr] of [['default private VPC', privateVpcBlock], ['transit gateway private', tgwBlock]]         ) {
+          if (!cidr) continue;
+          if (familyOf(cidr) === 6) findings.push(error('vcfa91.org.private-ipv6', `The ${what} IP block ${cidr} is IPv6; NSX VPC private blocks are IPv4.`, { source: SRC }));
+          else if (familyOf(cidr) !== 4 || !cidr.includes('/')) findings.push(error('vcfa91.org.private-cidr', `The ${what} IP block "${cidr}" is not an IPv4 CIDR.`, { source: SRC }));
+        }
+        if (avi && aviQuota === 0) findings.push(warning('vcfa91.org.avi-zero', 'Avi load balancing is delegated with a quota of 0, so no load balancer can be created.', { source: SRC }));
+        if (gatewayFw && !dfw) findings.push(info('vcfa91.org.gw-only', 'Gateway firewall is delegated without the distributed firewall: the organization can filter north-south but not between its own VMs.', { source: SRC }));
       }
 
       const main = [
@@ -1517,6 +1590,135 @@ export const VCF_AUTOMATION_91                                 = [
           : []),
       ].join('\n');
 
+      // Identity: OIDC or LDAP through the vmware/vcfa provider, the secret from a TF_VAR_ environment variable.
+      const ad = str(values, 'ldap_connector', 'ACTIVE_DIRECTORY') === 'ACTIVE_DIRECTORY';
+      const identityTf =
+        identity === 'oidc'
+          ? [
+              `# OIDC for ${orgName}. The client secret comes from TF_VAR_oidc_client_secret, never from this file.`,
+              'variable "oidc_client_secret" {',
+              '  type      = string',
+              '  sensitive = true',
+              '}',
+              '',
+              `resource "vcfa_org_oidc" "${tf}" {`,
+              `  org_id             = vcfa_org.${tf}.id`,
+              '  enabled            = true',
+              `  client_id          = ${q(str(values, 'oidc_client_id', ''))}`,
+              '  client_secret      = var.oidc_client_secret',
+              `  wellknown_endpoint = ${q(str(values, 'oidc_wellknown', ''))}`,
+              '  scopes             = ["openid", "profile", "email", "groups"]',
+              '  prefer_id_token    = false',
+              '',
+              '  claims_mapping {',
+              '    subject    = "sub"',
+              '    email      = "email"',
+              '    first_name = "given_name"',
+              '    last_name  = "family_name"',
+              '    full_name  = "name"',
+              `    groups     = ${q(str(values, 'oidc_groups_claim', 'groups'))}`,
+              '  }',
+              '}',
+              '',
+            ].join('\n')
+          : identity === 'ldap'
+            ? [
+                `# LDAP for ${orgName}. The bind password comes from TF_VAR_ldap_bind_password, never from this file.`,
+                'variable "ldap_bind_password" {',
+                '  type      = string',
+                '  sensitive = true',
+                '}',
+                '',
+                `resource "vcfa_org_ldap" "${tf}" {`,
+                `  org_id    = vcfa_org.${tf}.id`,
+                '  ldap_mode = "CUSTOM"',
+                '',
+                '  custom_settings {',
+                `    server                  = ${q(str(values, 'ldap_server', ''))}`,
+                '    port                    = 636',
+                '    is_ssl                  = true',
+                `    connector_type          = ${q(ad ? 'ACTIVE_DIRECTORY' : 'OPEN_LDAP')}`,
+                `    base_distinguished_name = ${q(str(values, 'ldap_base_dn', ''))}`,
+                '    authentication_method   = "SIMPLE"',
+                `    username                = ${q(str(values, 'ldap_bind_user', ''))}`,
+                '    password                = var.ldap_bind_password',
+                '',
+                '    user_attributes {',
+                `      object_class                = ${q(ad ? 'user' : 'inetOrgPerson')}`,
+                `      unique_identifier           = ${q(ad ? 'objectGuid' : 'entryUUID')}`,
+                `      username                    = ${q(ad ? 'sAMAccountName' : 'uid')}`,
+                '      email                       = "mail"',
+                '      display_name                = "displayName"',
+                '      given_name                  = "givenName"',
+                '      surname                     = "sn"',
+                '      telephone                   = "telephoneNumber"',
+                '      group_membership_identifier = "dn"',
+                '    }',
+                '',
+                '    group_attributes {',
+                `      object_class          = ${q(ad ? 'group' : 'groupOfUniqueNames')}`,
+                `      unique_identifier     = ${q(ad ? 'objectGuid' : 'entryUUID')}`,
+                '      name                  = "cn"',
+                `      membership            = ${q(ad ? 'member' : 'uniqueMember')}`,
+                '      membership_identifier = "dn"',
+                '    }',
+                '  }',
+                '}',
+                '',
+              ].join('\n')
+            : '';
+
+      // The 9.1 organization settings: delegation, external connections, shared VLAN subnets, private blocks.
+      const ORG_PATH = 'vcf/orgs/{orgId}';
+      const settings91 = allApps
+        ? [
+            ...(avi ? [{ what: `Avi load balancing, quota ${aviQuota}`, path: `${ORG_PATH}/loadBalancerSettings`, body: { enabled: true, virtualServiceQuota: aviQuota }, manual: `Provider portal → Organizations → ${orgName} → Networking → Load Balancing: enable, quota ${aviQuota} virtual services.` }] : []),
+            ...(dfw || gatewayFw
+              ? [{ what: `vDefend delegation (distributed ${dfw ? 'on' : 'off'}, gateway ${gatewayFw ? 'on' : 'off'})`, path: `${ORG_PATH}/securitySettings`, body: { distributedFirewallEnabled: dfw, gatewayFirewallEnabled: gatewayFw }, manual: `Provider portal → Organizations → ${orgName} → Networking → Security: Distributed Firewall ${dfw ? 'on' : 'off'}, Gateway Firewall ${gatewayFw ? 'on' : 'off'}.` }]
+              : []),
+            ...externals
+              .filter((e) => e.name && e.via)
+              .map((e) => ({ what: `external connection ${e.name}`, path: `${ORG_PATH}/externalConnections`, body: { name: e.name, providerGateway: e.via, ...(e.block ? { ipBlock: e.block } : {}) }, manual: `Provider portal → Organizations → ${orgName} → Networking → External Connections → Add: ${e.name}, through ${e.via}${e.block ? `, IP block ${e.block}` : ''}.` })),
+            ...(sharedVlans.length ? [{ what: `shared VLAN extension subnets ${sharedVlans.join(', ')}`, path: `${ORG_PATH}/sharedSubnets`, body: { subnets: sharedVlans }, manual: `Provider portal → Networking → Shared Subnets → ${sharedVlans.join(', ')} → Share with ${orgName}.` }] : []),
+            ...(privateVpcBlock || tgwBlock
+              ? [{ what: 'default private VPC and transit gateway IP blocks', path: `${ORG_PATH}/networkingDefaults`, body: { ...(privateVpcBlock ? { defaultPrivateVpcIpBlock: privateVpcBlock } : {}), ...(tgwBlock ? { transitGatewayPrivateIpBlock: tgwBlock } : {}) }, manual: `Provider portal → Organizations → ${orgName} → Networking → Regional networking ${region}: private VPC block ${privateVpcBlock || '(default)'}, transit gateway block ${tgwBlock || '(default)'}.` }]
+              : []),
+          ]
+        : [];
+      const apply91 = restScript({
+        purpose: `Apply the 9.1 delegation and networking settings of organization ${orgName}.`,
+        scope: 'provider',
+        act: true,
+        checkVersion: true,
+        body: [
+          'cd "$(dirname "$0")/.."',
+          `ORG=${q(orgName)}`,
+          'O=$(probe "/cloudapi/1.0.0/orgs?filter=name==${ORG}") || exit 2',
+          "ORG_ID=$(jq -r '.values[0].id // empty' <<<\"$O\")",
+          '[[ -n "$ORG_ID" ]] || { echo "Organization ${ORG} does not exist yet: apply main.tf first." >&2; exit 1; }',
+          '# Each setting is written only where its path answers on this release; otherwise the portal steps are printed.',
+          "jq -c '.[]' org-91-settings.json | while IFS= read -r S; do",
+          "  WHAT=$(jq -r .what <<<\"$S\")",
+          "  P=$(jq -r --arg id \"$ORG_ID\" '.path | sub(\"[{]orgId[}]\"; $id)' <<<\"$S\")",
+          '  if CUR=$(probe "/cloudapi/${P}" 2>/dev/null); then',
+          '    F=$(mktemp)',
+          "    if [[ \"$(jq -r '.values | type' <<<\"$CUR\")\" == array ]]; then",
+          "      NAME=$(jq -r '.body.name // empty' <<<\"$S\")",
+          "      if [[ -n \"$NAME\" ]] && jq -e --arg n \"$NAME\" '[.values[] | select(.name == $n)] | length > 0' <<<\"$CUR\" >/dev/null; then echo \"Exists, left as it is: ${WHAT}\"; rm -f \"$F\"; continue; fi",
+          "      jq .body <<<\"$S\" > \"$F\"; send POST \"/cloudapi/${P}\" \"$F\"",
+          '    else',
+          "      jq --argjson want \"$(jq .body <<<\"$S\")\" '. * $want' <<<\"$CUR\" > \"$F\"",
+          "      if [[ \"$(jq -S . <<<\"$CUR\")\" == \"$(jq -S . \"$F\")\" ]]; then echo \"Already set: ${WHAT}\"; else send PUT \"/cloudapi/${P}\" \"$F\"; fi",
+          '    fi',
+          '    rm -f "$F"',
+          '  else',
+          "    echo \"NO API on this release for ${WHAT} (VERIFY /cloudapi/${P}). By hand: $(jq -r .manual <<<\"$S\")\"",
+          '  fi',
+          'done',
+        ],
+        undo: 'set the same settings back in the provider portal (Organizations → <org> → Networking); withdrawing a delegation stops new objects, it does not delete existing ones.',
+      });
+
       const check = restScript({
         purpose: `Check organization ${orgName} exists, is enabled${allApps ? ', and its region quota is READY' : ''}.`,
         scope: 'provider',
@@ -1554,13 +1756,15 @@ export const VCF_AUTOMATION_91                                 = [
         '## Provider',
         '',
         `- [ ] \`plan.sh --dry-run\`, read the plan, then \`plan.sh\` to apply it. Then \`check-org.sh\`.`,
-        `- [ ] Identity: connect ${identity === 'oidc' ? 'OIDC (vcfa_org_oidc, or Organization → Identity Providers → OIDC)' : 'LDAP (vcfa_org_ldap, or Organization → Identity Providers → LDAP)'} for ${orgName}.`,
+        identity === 'saml'
+          ? `- [ ] Identity: SAML is not in the Terraform (VERIFY: no vmware/vcfa SAML resource at 1.2.x). Provider portal → Organizations → ${orgName} → Identity Providers → SAML → Configure: import the metadata from ${str(values, 'saml_metadata_url', '<metadata URL>')}, download the service provider metadata and register it at the IdP.`
+          : `- [ ] Identity: identity.tf connects ${identity === 'oidc' ? 'OIDC (vcfa_org_oidc)' : 'LDAP (vcfa_org_ldap)'} for ${orgName} in the same plan; export ${identity === 'oidc' ? 'TF_VAR_oidc_client_secret' : 'TF_VAR_ldap_bind_password'} from your vault before plan.sh.`,
         `- [ ] Import the group ${adminGroup || '<administrators>'} and give it the Organization Administrator role. VERIFY: the vcfa provider has no group resource at 1.2.x; do it in the portal.`,
         ...(allApps
           ? [
               '- [ ] Content: share a provider content library with the organization, or let it make its own (see "Content libraries and VM images").',
               '- [ ] Networking: confirm the default VPC `<region>-default-vpc` exists and has the external and private IP blocks you meant (9.1: default private VPC and TGW blocks are set per provider).',
-              '- [ ] 9.1 delegation: decide whether the organization gets vDefend firewall and Avi load balancer rights and quota, and set them now rather than on first request.',
+              `- [ ] 9.1 delegation and networking: \`scripts/apply-org-91.sh\` sets ${settings91.map((x) => x.what).join('; ') || 'nothing (none chosen)'} — where this release has no API for one it prints the portal steps instead.`,
             ]
           : [
               '- [ ] Cloud account, cloud zone and project: the VM Apps blueprints in this kit, run with this organization’s token.',
@@ -1619,6 +1823,8 @@ export const VCF_AUTOMATION_91                                 = [
         guardrails: [
           { rule: 'Apply only the saved plan (plan.sh applies tfplan and nothing else; --dry-run stops after the plan)', because: 'A plan re-made at apply time can differ from the one that was reviewed.' },
           { rule: 'prevent_destroy on the organization', because: 'A terraform destroy, or a rename that forces replacement, would delete every namespace and VM in it.' },
+          ...(settings91.length > 0 ? [{ rule: 'apply-org-91.sh writes a 9.1 setting only where its path answers, merges into what is there and never deletes', because: 'A guessed path is not written blindly, and a delegation someone widened in the portal is not narrowed by a rerun.' }] : []),
+          ...(identityTf ? [{ rule: 'The identity secret is a sensitive Terraform variable read from TF_VAR_, never in a .tf file', because: 'The .tf files go into version control.' }] : []),
           ...(allApps && cpuLimit > 0 && memLimit > 0 && storageGib > 0 ? [{ rule: `Explicit limits: ${cpuLimit} MHz and ${memLimit} MiB per zone, ${storageGib} GiB of ${storagePolicy}`, because: 'Without limits one tenant can consume the region.' }] : []),
           { rule: 'The workflow and check-org.sh stop if the server does not offer the API version they ask for', because: 'A version mismatch returns fields renamed or missing, and the check reports a healthy organization it did not read.' },
           { rule: 'The workflow creates the organization only when none of that name exists, refuses one of the other type, and makes at most cap changes', because: 'The type (VM Apps or All Apps) cannot be changed after creation; a second organization of the same name is not possible and a retry must not try.' },
@@ -1637,6 +1843,8 @@ export const VCF_AUTOMATION_91                                 = [
           ...pkg.files,
           'versions.tf': VERSIONS_TF,
           'main.tf': main,
+          ...(identityTf ? { 'identity.tf': identityTf } : {}),
+          ...(settings91.length > 0 ? { 'org-91-settings.json': json(settings91), 'scripts/apply-org-91.sh': apply91 } : {}),
           'org.json': json(orgBody),
           'scripts/plan.sh': tfScript(`Create organization ${orgName}.`, 'remove the resource from main.tf and apply; see the README for the organization itself.'),
           'scripts/check-org.sh': check,
@@ -1651,6 +1859,10 @@ export const VCF_AUTOMATION_91                                 = [
                 : tfStep('Or: the organization with Terraform', 'Run it with VCFA_ORG=System and a provider API token. It is the same organization; use one route or the other, or terraform import what the workflow created.'),
               manualStep('Or by the API, by hand', ['POST https://<vcfa>/cloudapi/1.0.0/orgs with `org.json` as the body, Accept and Content-Type `application/json;version=<version from GET /api/versions>`, and a provider bearer token (Broadcom KB 419781).']),
               checkStep('check-org.sh', `the organization is enabled${allApps ? ' and its region quota READY' : ''}.`),
+              ...(identityTf ? [manualStep('Identity', [`identity.tf is part of the same Terraform run: export ${identity === 'oidc' ? 'TF_VAR_oidc_client_secret' : 'TF_VAR_ldap_bind_password'} from your vault first. The saved plan (tfplan) holds that value while it exists; plan.sh deletes it after the apply.`])] : []),
+              ...(settings91.length > 0
+                ? [manualStep('The 9.1 delegation and networking settings', ['`VCFA_HOST=… VCFA_API_TOKEN_FILE=<provider token file> ./scripts/apply-org-91.sh` (`--dry-run` to preview) sets each of org-91-settings.json where this release answers the path, merging into what is there, and prints the portal steps for any it cannot.'])]
+                : []),
               manualStep('Then', ['Work through onboarding-checklist.md; the tenant-side blueprints on this page start once the organization has an administrator and an API token.']),
             ],
             auth: ['terraform', 'vcfa91'],
@@ -1658,6 +1870,8 @@ export const VCF_AUTOMATION_91                                 = [
               'Creating an organization: POST /cloudapi/1.0.0/orgs with name, displayName, description, isEnabled, canManageOrgs and isClassicTenant (true = VM Apps) is Broadcom KB 419781 (VCF Automation 9.0); the same TmOrg fields are in the go-vcloud-director v3 SDK. VERIFY on 9.1 with a dry run and GET /api/versions.',
               ...(allApps ? ['Region quotas are read at /cloudapi/vcf/virtualDatacenters (go-vcloud-director govcd/tm_region_quota.go: OpenApiPathVcf + virtualDatacenters/); earlier versions of this kit read /cloudapi/1.0.0/virtualDatacenters, which is not where the SDK has them.'] : []),
               'Terraform arguments follow the vmware/vcfa provider documentation (1.2.x, which states support for 9.1).',
+              ...(identityTf ? [`VERIFY: ${identity === 'oidc' ? 'vcfa_org_oidc (client_id, client_secret, wellknown_endpoint, scopes, claims_mapping)' : 'vcfa_org_ldap (ldap_mode CUSTOM, custom_settings with user_attributes and group_attributes)'} follows the Cloud Director provider resource it was ported from; check the argument names in the vmware/vcfa documentation for your provider version.`] : []),
+              ...(settings91.length > 0 ? ['VERIFY: the /cloudapi/vcf/orgs/<id>/… paths and bodies of the 9.1 settings (load balancing, security delegation, external connections, shared subnets, networking defaults). They are not in the public API reference; apply-org-91.sh writes only to a path that answers and prints the portal route for the rest.'] : []),
             ],
           }),
         },
@@ -1897,8 +2111,26 @@ export const VCF_AUTOMATION_91                                 = [
       { id: 'subnets', label: 'Subnets', control: 'textarea', default: 'web: Public: 16\napp: Private: 64\ndb: PrivateTGW: 32', hint: 'name: Public|Private|PrivateTGW: number of addresses (a power of two), one per line' },
       { id: 'dhcp', label: 'DHCP on the subnets', control: 'toggle', default: true },
       { id: 'include_ip_block', label: 'Also write the provider’s external IP block', control: 'toggle', default: false },
+      { id: 'vlan_connection', label: 'Also create the distributed VLAN connection (provider, NSX)', control: 'toggle', default: false, showWhen: { input: 'connectivity', equals: ['distributed-vlan'] } },
+      { id: 'vlan_name', label: 'VLAN connection name', control: 'text', default: 'vlan-120-external', showWhen: { input: 'vlan_connection', equals: ['true'] } },
+      { id: 'vlan_ids', label: 'VLAN ids', control: 'text', default: '120', hint: 'Comma separated, or a range 120-129', showWhen: { input: 'vlan_connection', equals: ['true'] } },
+      { id: 'vlan_gateways', label: 'Gateway addresses (CIDR)', control: 'text', default: '198.51.100.1/24', hint: 'The physical router on the VLAN, comma separated', showWhen: { input: 'vlan_connection', equals: ['true'] } },
       { id: 'ip_block_name', label: 'External IP block name', control: 'text', default: 'region1-external', showWhen: { input: 'include_ip_block', equals: ['true'] } },
-      { id: 'ip_block_cidr', label: 'External IP block CIDR', control: 'text', default: '203.0.113.0/24', showWhen: { input: 'include_ip_block', equals: ['true'] } },
+      { id: 'ip_block_cidr', label: 'External IP block CIDRs', control: 'text', default: '203.0.113.0/24', hint: 'Comma separated: 9.1 takes several CIDRs in one block', showWhen: { input: 'include_ip_block', equals: ['true'] } },
+      { id: 'ip_block_ranges', label: 'Only these ranges may be allocated', control: 'text', default: '', placeholder: '203.0.113.64-203.0.113.127', hint: 'start-end, comma separated; empty: the whole CIDRs', showWhen: { input: 'include_ip_block', equals: ['true'] } },
+      { id: 'ip_block_reserved', label: 'Keep these out', control: 'text', default: '203.0.113.1-203.0.113.9', hint: 'Addresses or start-end, comma separated: gateways, DNS, anything already in use', showWhen: { input: 'include_ip_block', equals: ['true'] } },
+      {
+        id: 'ipam',
+        label: 'Addresses managed by',
+        control: 'select',
+        options: [
+          { value: 'nsx', label: 'NSX (VCF Automation allocates)' },
+          { value: 'infoblox', label: 'Infoblox (9.1 integration)' },
+        ],
+        default: 'nsx',
+        showWhen: { input: 'include_ip_block', equals: ['true'] },
+      },
+      { id: 'infoblox_view', label: 'Infoblox network view', control: 'text', default: 'default', showWhen: { input: 'ipam', equals: ['infoblox'] } },
       { id: 'region', label: 'Region', control: 'text', default: 'region1', showWhen: { input: 'include_ip_block', equals: ['true'] } },
       { id: 'max_subnet_size', label: 'Largest prefix an organization may take', control: 'number', default: 26, min: 8, max: 32, showWhen: { input: 'include_ip_block', equals: ['true'] } },
     ],
@@ -1909,9 +2141,17 @@ export const VCF_AUTOMATION_91                                 = [
       const dhcp = bool(values, 'dhcp', true);
       const withBlock = bool(values, 'include_ip_block', false);
       const blockName = str(values, 'ip_block_name', 'region1-external');
-      const blockCidr = str(values, 'ip_block_cidr', '203.0.113.0/24');
+      const blockCidrs = listOf(str(values, 'ip_block_cidr', '203.0.113.0/24'));
+      const blockRanges = withBlock ? listOf(str(values, 'ip_block_ranges', '')) : [];
+      const blockReserved = withBlock ? listOf(str(values, 'ip_block_reserved', '')) : [];
+      const infoblox = withBlock && str(values, 'ipam', 'nsx') === 'infoblox';
+      const infobloxView = str(values, 'infoblox_view', 'default');
       const region = str(values, 'region', 'region1');
       const maxSize = num(values, 'max_subnet_size', 26);
+      const vlanConn = vlan && bool(values, 'vlan_connection', false);
+      const vlanName = label(str(values, 'vlan_name', 'vlan'), 'vlan');
+      const vlanIds = listOf(str(values, 'vlan_ids', ''));
+      const vlanGateways = listOf(str(values, 'vlan_gateways', ''));
       void name;
 
       const findings            = [];
@@ -1941,15 +2181,33 @@ export const VCF_AUTOMATION_91                                 = [
       }
       // VPC subnets from the NSX operator are sized with ipv4SubnetSize: there is
       // no IPv6 in this path, so an IPv6 block would be one nothing can use.
-      if (withBlock && familyOf(blockCidr) === 6) {
-        findings.push(
-          error('vcfa91.vpc.ipv6', `External IP blocks for NSX VPCs on VCF Automation 9.1 do not support IPv6 (${blockCidr}): VPC subnets are carved as IPv4 (ipv4SubnetSize).`, {
-            remediation: 'Give an IPv4 block. VERIFY: IPv6 for VPCs in the NSX release behind your 9.1.x before planning around it.',
-            source: SRC,
-          }),
-        );
-      } else if (withBlock && (familyOf(blockCidr) !== 4 || !blockCidr.includes('/'))) {
-        findings.push(error('vcfa91.vpc.cidr', `"${blockCidr}" is not an IPv4 CIDR.`, { source: SRC }));
+      for (const blockCidr of withBlock ? blockCidrs : []) {
+        if (familyOf(blockCidr) === 6) {
+          findings.push(
+            error('vcfa91.vpc.ipv6', `External IP blocks for NSX VPCs on VCF Automation 9.1 do not support IPv6 (${blockCidr}): VPC subnets are carved as IPv4 (ipv4SubnetSize).`, {
+              remediation: 'Give an IPv4 block. VERIFY: IPv6 for VPCs in the NSX release behind your 9.1.x before planning around it.',
+              source: SRC,
+            }),
+          );
+        } else if (familyOf(blockCidr) !== 4 || !blockCidr.includes('/')) {
+          findings.push(error('vcfa91.vpc.cidr', `"${blockCidr}" is not an IPv4 CIDR.`, { source: SRC }));
+        }
+      }
+      if (withBlock && blockCidrs.length === 0) findings.push(error('vcfa91.vpc.cidr', 'The external IP block has no CIDR.', { source: SRC }));
+      const v4 = (t        ) => familyOf(t) === 4 && !t.includes('/');
+      const rangeOf = (t        ) => {
+        const [a = '', b] = t.split('-').map((x) => x.trim());
+        return b === undefined ? { a, b: a } : { a, b };
+      };
+      for (const r of [...blockRanges, ...blockReserved]) {
+        const { a, b } = rangeOf(r);
+        if (!v4(a) || !v4(b)) findings.push(error('vcfa91.vpc.range', `"${r}" is not an IPv4 address or start-end range.`, { source: SRC }));
+      }
+      if (infoblox) findings.push(info('vcfa91.vpc.infoblox', `Allocations from ${blockName} come from Infoblox (network view ${infobloxView}): the Infoblox integration is set in the provider portal first.`, { remediation: 'IMPORT.md has the steps. VERIFY: whether the 9.1 Infoblox integration has an API; the steps are the portal route.', source: 'VCF Automation 9.1 what’s new' }));
+      if (vlanConn) {
+        for (const id of vlanIds) if (!/^\d{1,4}(-\d{1,4})?$/.test(id) || id.split('-').some((n) => Number(n) < 1 || Number(n) > 4094)) findings.push(error('vcfa91.vpc.vlan-id', `"${id}" is not a VLAN id (1–4094) or range.`, { source: SRC }));
+        for (const g of vlanGateways) if (familyOf(g) !== 4 || !g.includes('/')) findings.push(error('vcfa91.vpc.vlan-gateway', `"${g}" is not an IPv4 gateway address with its prefix (198.51.100.1/24).`, { source: SRC }));
+        if (vlanIds.length === 0 || vlanGateways.length === 0) findings.push(error('vcfa91.vpc.vlan-missing', 'A distributed VLAN connection needs VLAN ids and gateway addresses.', { source: SRC }));
       }
 
       const subnetObjects               = subnets.map((sn) => ({
@@ -2006,17 +2264,43 @@ export const VCF_AUTOMATION_91                                 = [
         '  default_quota_max_cidr_count  = 4',
         '  default_quota_max_ip_count    = 16',
         '',
-        '  cidr_blocks {',
-        `    name = ${q(blockName)}`,
-        `    cidr = ${q(blockCidr)}`,
-        '  }',
-        '',
+        ...blockCidrs.flatMap((cidr, i) => ['  cidr_blocks {', `    name = ${q(blockCidrs.length > 1 ? `${blockName}-${i + 1}` : blockName)}`, `    cidr = ${q(cidr)}`, '  }', '']),
+        ...(infoblox ? [`  # Addresses come from Infoblox (network view ${infobloxView}) once the provider has the integration set; VERIFY whether vcfa_ip_space has an argument for it on your provider version.`, ''] : []),
         '  lifecycle {',
         '    prevent_destroy = true',
         '  }',
         '}',
         '',
       ].join('\n');
+
+      // Include ranges and reserved addresses: on the NSX IP block behind the external IP block.
+      const rangeBody = {
+        range_list: blockRanges.map((r) => {
+          const [a = '', b] = r.split('-').map((x) => x.trim());
+          return { start: a, end: b ?? a };
+        }),
+        reserved_ips: blockReserved,
+      };
+      const rangesScript = nsxScript({
+        purpose: `Add the include ranges and reserved addresses of ${blockName} to its NSX IP block (adds only; never removes).`,
+        body: [
+          `NAME=${q(blockName)}`,
+          "ID=$(nsx_get '/infra/ip-blocks' | jq -r --arg n \"$NAME\" '[.results[]? | select(.display_name == $n) | .id][0] // empty')",
+          '[[ -n "$ID" ]] || { echo "No NSX IP block named ${NAME} yet: apply ip-block.tf first (VERIFY: the display name VCF Automation gives it)." >&2; exit 1; }',
+          'CUR=$(nsx_get "/infra/ip-blocks/${ID}")',
+          "NEW=$(jq --slurpfile w nsx/ip-block-ranges.json '{range_list: ((.range_list // []) + $w[0].range_list | unique), reserved_ips: ((.reserved_ips // []) + $w[0].reserved_ips | unique)}' <<<\"$CUR\")",
+          "if [[ \"$(jq -S '{range_list: (.range_list // []), reserved_ips: (.reserved_ips // [])}' <<<\"$CUR\")\" == \"$(jq -S . <<<\"$NEW\")\" ]]; then",
+          '  echo "Already set: ranges and reserved addresses of ${NAME}"',
+          'elif (( DRY_RUN )); then echo "DRY RUN: would PATCH /infra/ip-blocks/${ID}:"; echo "$NEW"',
+          'else',
+          '  curl -sS -f -K <(nsx_cfg) -X PATCH "${API}/infra/ip-blocks/${ID}" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary "$NEW" >/dev/null',
+          '  echo "Updated: ranges and reserved addresses of ${NAME}"',
+          'fi',
+        ],
+        undo: 'PATCH the block with the range_list and reserved_ips it had (the script prints the new values; GET it first to keep the old).',
+      });
+      const vlanObjects              = vlanConn ? [{ label: `distributed VLAN connection ${vlanName}`, path: `/infra/distributed-vlan-connections/${vlanName}`, file: `nsx/vlan-connection-${vlanName}.json`, body: { display_name: vlanName, vlan_ids: vlanIds, gateway_addresses: vlanGateways } }] : [];
+      const vlanScript = nsxScript({ purpose: `Create the distributed VLAN connection ${vlanName} for VLAN-backed VPCs.`, body: nsxEnsureLines(vlanObjects), undo: `DELETE /policy/api/v1/infra/distributed-vlan-connections/${vlanName} once no VPC or region uses it.` });
 
       return {
         platform: PLATFORM,
@@ -2048,22 +2332,32 @@ export const VCF_AUTOMATION_91                                 = [
           'scripts/create-subnets.sh': kubeScript(`Create the VPC subnets for ${namespace}.`, [], ['subnets.k8s.yaml'], `kubectl delete -f subnets.k8s.yaml (after the VMs on them are gone).`),
           'scripts/discover.sh': discover,
           ...(withBlock ? { 'versions.tf': VERSIONS_TF, 'ip-block.tf': blockTf, 'scripts/plan.sh': tfScript(`Create the external IP block ${blockName}.`, 'remove it from ip-block.tf and apply once nothing uses it.') } : {}),
+          ...(withBlock && (blockRanges.length > 0 || blockReserved.length > 0) ? { 'nsx/ip-block-ranges.json': json(rangeBody), 'scripts/ip-block-ranges.sh': rangesScript } : {}),
+          ...(vlanConn ? { [vlanObjects[0] .file]: json(vlanObjects[0] .body), 'scripts/vlan-connection.sh': vlanScript } : {}),
           'IMPORT.md': importMd({
             subject: `VPC subnets for the namespace ${namespace}: an Orchestrator workflow that creates them through the namespace's Kubernetes API, and the same objects as subnets.k8s.yaml for kubectl.`,
             orgs: ALL_APPS,
             steps: [
-              ...(withBlock ? [tfStep(`External IP block ${blockName} (provider)`, 'Provider work: VCFA_ORG=System. The external IP block is a provider object the vmware/vcfa provider manages (vcfa_ip_space); it comes before the Public subnets drawn from it.')] : []),
+              ...(vlanConn ? [manualStep(`Distributed VLAN connection ${vlanName} (provider, NSX)`, ['`NSX_HOST=… NSX_USER=… NSX_PASSWORD_FILE=… ./scripts/vlan-connection.sh` creates it unless it exists (`--dry-run` to preview). Then select it for the region’s VLAN-backed VPC connectivity in the provider portal (9.1.1).'])] : []),
+              ...(infoblox ? [manualStep('Infoblox (provider)', [`Provider portal → Infrastructure → IP Address Management → add the Infoblox integration (grid master, credentials from your vault) and map ${blockName} to network view ${infobloxView}, before the block is used. VERIFY the menu path on 9.1.`])] : []),
+              ...(withBlock ? [tfStep(`External IP block ${blockName} (provider)`, `Provider work: VCFA_ORG=System. The external IP block is a provider object the vmware/vcfa provider manages (vcfa_ip_space), with ${blockCidrs.length} CIDR(s); it comes before the Public subnets drawn from it.`)] : []),
+              ...(withBlock && (blockRanges.length > 0 || blockReserved.length > 0) ? [manualStep('Include ranges and reserved addresses (NSX)', ['`NSX_HOST=… NSX_USER=… NSX_PASSWORD_FILE=… ./scripts/ip-block-ranges.sh` adds nsx/ip-block-ranges.json to the NSX IP block behind the external block; it only adds, and `--dry-run` prints the result.'])] : []),
               manualStep('Look first', ['`./scripts/discover.sh` shows the namespace’s VPC, subnets and the API versions the server offers.']),
               ...pkg.importSteps,
               kubeStep('Or: the subnets with kubectl', 'scripts/create-subnets.sh', ['subnets.k8s.yaml']),
             ],
             auth: ['kube', 'vcfa91', ...(withBlock ? (['terraform']         ) : [])],
-            verify: ['The subnet apiVersion (crd.nsx.vmware.com/v1alpha1) and accessMode names: kubectl explain subnet.spec. The workflow stops before sending anything if the group is not served.', KUBE_VERIFY],
+            verify: [
+              'The subnet apiVersion (crd.nsx.vmware.com/v1alpha1) and accessMode names: kubectl explain subnet.spec. The workflow stops before sending anything if the group is not served.',
+              KUBE_VERIFY,
+              ...(withBlock && (blockRanges.length > 0 || blockReserved.length > 0) ? ['VERIFY: NSX IpAddressBlock range_list ({start, end}) and reserved_ips (NSX 4.2 and later), and that the NSX block carries the external IP block’s name as its display_name.'] : []),
+              ...(vlanConn ? ['VERIFY: /infra/distributed-vlan-connections with vlan_ids and gateway_addresses (NSX 9 VLAN-backed VPC connectivity).'] : []),
+            ],
           }),
         },
         notes: [
           'Access modes: Public comes from the external IP block and is advertised to the Tier-0; Private is reachable only inside the VPC and leaves by SNAT; PrivateTGW is reachable from every VPC on the same transit gateway (Tom Fojta, VCF Automation 9.0 networking deep dive). Older releases called PrivateTGW "Project" — VERIFY with kubectl explain subnet.spec.accessMode.',
-          '9.1 adds several transit gateways per organization with NAT, IPsec VPN and gateway firewall, organization-wide shared subnets, and shared VLAN extension subnets from the provider. Those are set in the organization portal; subnets here attach to whatever the VPC is connected to.',
+          '9.1 adds several transit gateways per organization with NAT, IPsec VPN and gateway firewall ("Transit gateway services" and "A vDefend firewall policy" on this page), organization-wide shared subnets, and shared VLAN extension subnets from the provider ("A tenant organization"). Subnets here attach to whatever the VPC is connected to.',
           'VMs join a subnet by name in spec.network.interfaces (kind Subnet or SubnetSet) — see "A VM Service virtual machine".',
           'The VPC itself — the region default <region>-default-vpc, or another — is chosen when the namespace is made. There is no separate VPC object to write here that could be confirmed on 9.1.',
           'IPv4 only: the NSX operator Subnet is sized with ipv4SubnetSize and the external IP block behind Public subnets is IPv4, so this writes no IPv6 and refuses an IPv6 block. VERIFY: IPv6 for VPCs in the NSX release behind your 9.1.x.',
@@ -3253,7 +3547,7 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
         ],
         dryRun: ['Run the workflow with the dryRun input set to true to preview: it looks everything up, exports the YAML and logs what it would post.', 'scripts/export-template.sh reads only.', 'scripts/version-template.sh and scripts/import-template.sh with --dry-run look everything up and stop before posting.'],
         undo: ['Unrelease the version (POST …/versions/{version}/actions/unrelease). Deployments made from it keep their version.', ...(target ? ['Delete the imported draft in the target.'] : [])],
-        told: ['The template’s version history in the design canvas.', 'Catalogue item change in Service Broker at the next content source sync.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
+        told: ['The template’s version history in the design canvas.', 'The catalog item changes at the next content source sync.', 'The workflow log (AUDIT lines), its summary output and the webhook when set.'],
         requires: ['An organization token for the source (and one for the target) — see "API tokens".', 'The template already exists in the source organization.'],
         files: {
           ...pkg.files,
@@ -3275,13 +3569,13 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
             ],
             auth: ['vcfa91'],
             verify: [
-              'The /blueprint/api paths are the Aria Automation 8.18 API (blueprints, versions with {version, description, changeLog, release}), which VM Apps organizations keep. Under a 9.x All Apps organization token they are VERIFY; the UI routes are documented (Broadcom 9.1, Import and Export a Blueprint).',
+              'The /blueprint/api paths are the 8.18 API (blueprints, versions with {version, description, changeLog, release}), which VM Apps organizations keep. Under a 9.x All Apps organization token they are VERIFY; the UI routes are documented (Broadcom 9.1, Import and Export a Blueprint).',
               ...(target ? [`The import logs in to ${target} with its own API token (targetApiToken): a template made with the source organization's token would land in the source organization.`] : []),
             ],
           }),
         },
         notes: [
-          'Paths are the /blueprint/api carried from Aria Automation 8.x: GET /blueprint/api/blueprints, GET/POST /blueprint/api/blueprints/{id}/versions ({version, description, changeLog, release}). VERIFY they answer under a 9.x tenant token for your organization type.',
+          'Paths are the /blueprint/api carried over from 8.x: GET /blueprint/api/blueprints, GET/POST /blueprint/api/blueprints/{id}/versions ({version, description, changeLog, release}). VERIFY they answer under a 9.x tenant token for your organization type.',
           'The catalogue shows released versions only; the requester picks among them unless the content source is set to the latest.',
           'In All Apps organizations templates are written in formatVersion 2 with CCI resource types. They are the same service underneath but not the same resource vocabulary as VM Apps.',
           'Export keeps the YAML, not the project, custom forms or property group ids; re-create those in the target.',
@@ -3651,9 +3945,27 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
       { id: 'namespace', label: 'Namespace', control: 'text', default: 'team-a-prod-q4m8z' },
       { id: 'policy_name', label: 'Policy name', control: 'text', default: 'web-tier' },
       { id: 'applied_to', label: 'Applies to VMs labelled', control: 'text', default: 'app=web01' },
-      { id: 'rules', label: 'Allow', control: 'textarea', default: 'from 10.0.0.0/8 tcp/443\nfrom app=bastion tcp/22', hint: 'from <label=value | IPv4 or IPv6 CIDR> <tcp|udp>/<port>, one per line' },
+      {
+        id: 'rules',
+        label: 'Rules',
+        control: 'textarea',
+        default: 'from 10.0.0.0/8 tcp/443\nfrom app=bastion tcp/22',
+        hint: '[allow|drop|reject] from <label=value or IPv4/IPv6 CIDR> [to <label=value or CIDR>] <tcp|udp>/<port[-port]> or any; one per line, allow when no action is given',
+      },
       { id: 'default_drop', label: 'Drop all other inbound traffic', control: 'toggle', default: true },
       { id: 'priority', label: 'Priority', control: 'number', default: 10, min: 0, max: 1000, hint: 'Lower is evaluated first' },
+      { id: 'gateway_firewall', label: 'Also a gateway firewall policy on the transit gateway', control: 'toggle', default: false },
+      { id: 'nsx_project', label: 'NSX project of the organization', control: 'text', default: 'team-a', showWhen: { input: 'gateway_firewall', equals: ['true'] } },
+      { id: 'tgw', label: 'Transit gateway', control: 'text', default: 'default', showWhen: { input: 'gateway_firewall', equals: ['true'] } },
+      {
+        id: 'gateway_rules',
+        label: 'Gateway rules',
+        control: 'textarea',
+        default: 'ALLOW | any | 203.0.113.20/32 | tcp/443\nALLOW | 10.10.0.0/16 | any | any\nDROP | any | 10.10.0.0/16 | any',
+        hint: 'action | source | destination | service',
+        help: 'Action ALLOW, DROP or REJECT. Source and destination: IPv4 or IPv6 CIDRs (comma separated) or any. Service: any, or tcp/443, udp/53, tcp/8000-8080. Evaluated top to bottom.',
+        showWhen: { input: 'gateway_firewall', equals: ['true'] },
+      },
     ],
     automation: (values                 , name        )             => {
       const ns = str(values, 'namespace', 'team-a');
@@ -3668,27 +3980,42 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
       const appliedLabels = kv(applied);
       if (Object.keys(appliedLabels).length === 0) findings.push(error('vcfa91.sp.no-selector', 'The policy applies to no VMs.', { source: SRC }));
 
+      const RULE_HELP = '[allow|drop|reject] from <label=value | CIDR> [to <label=value | CIDR>] <tcp|udp>/<port[-port]> | any';
+      // A peer is a label selector (has =) or a CIDR of either family; an ipBlocks
+      // cidr may be IPv6, one family per block.
+      const peerOf = (text        , line        )                                                                   => {
+        if (text.includes('=')) return { selector: true, value: text };
+        const parsed = parseCidrAny(text);
+        if (parsed === null || !text.includes('/')) {
+          findings.push(warning('vcfa91.sp.rule', `Could not read "${line}": ${text} is neither label=value nor an IPv4 or IPv6 CIDR.`, { remediation: RULE_HELP, source: SRC }));
+          return undefined;
+        }
+        return { selector: false, value: parsed.family === 6 ? `${parsed.network}/${parsed.prefix}` : text, family: parsed.family };
+      };
       const rules = str(values, 'rules', '')
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
         .map((line, i) => {
-          const m = /^from\s+(\S+)\s+(tcp|udp)\/(\d{1,5})$/i.exec(line);
+          const m = /^(?:(allow|drop|reject)\s+)?from\s+(\S+)(?:\s+to\s+(\S+))?\s+(?:(tcp|udp)\/(\d{1,5}(?:-\d{1,5})?)|(any))$/i.exec(line);
           if (!m) {
-            findings.push(warning('vcfa91.sp.rule', `Could not read "${line}".`, { remediation: 'from <label=value | CIDR> <tcp|udp>/<port>', source: SRC }));
+            findings.push(warning('vcfa91.sp.rule', `Could not read "${line}".`, { remediation: RULE_HELP, source: SRC }));
             return undefined;
           }
-          const [, from = '', proto = 'tcp', port = '0'] = m;
-          // A source is a label selector (has =) or a CIDR of either family; an
-          // ipBlocks cidr may be IPv6, one family per block.
-          const parsed = from.includes('=') ? null : parseCidrAny(from);
-          const cidr = parsed !== null && from.includes('/');
-          if (!from.includes('=') && !cidr) {
-            findings.push(warning('vcfa91.sp.rule', `Could not read "${line}": ${from} is neither label=value nor an IPv4 or IPv6 CIDR.`, { remediation: 'from <label=value | CIDR> <tcp|udp>/<port>', source: SRC }));
+          const [, act = 'allow', from = '', to, proto, portText, anyService] = m;
+          const action = act.toLowerCase();
+          const src = peerOf(from, line);
+          const dst = to === undefined ? undefined : peerOf(to, line);
+          if (!src || (to !== undefined && !dst)) return undefined;
+          const ports = anyService ? undefined : portOf(portText ?? '');
+          if (!anyService && !ports) {
+            findings.push(warning('vcfa91.sp.rule', `Could not read "${line}": ${portText} is not a port or range.`, { remediation: RULE_HELP, source: SRC }));
             return undefined;
           }
-          if (cidr && isAnyNetwork(from)) findings.push(warning('vcfa91.sp.any', `Rule ${i + 1} allows ${proto}/${port} from anywhere${parsed .family === 6 ? ' on IPv6' : ''}.`, { source: SRC }));
-          return { name: `allow-${proto.toLowerCase()}-${port}-${i + 1}`, from: cidr && parsed .family === 6 ? `${parsed .network}/${parsed .prefix}` : from, cidr, proto: proto.toUpperCase(), port: Number(port) };
+          if (!src.selector && isAnyNetwork(from) && action === 'allow') findings.push(warning('vcfa91.sp.any', `Rule ${i + 1} allows ${anyService ? 'everything' : `${proto}/${portText}`} from anywhere${src.family === 6 ? ' on IPv6' : ''}.`, { source: SRC }));
+          if (anyService && action === 'allow') findings.push(info('vcfa91.sp.any-service', `Rule ${i + 1} allows every port from ${from}.`, { source: SRC }));
+          const svc = anyService ? 'any' : `${(proto ?? 'tcp').toLowerCase()}-${portText}`;
+          return { name: `${action}-${svc}-${i + 1}`, action: action === 'allow' ? 'Allow' : action === 'drop' ? 'Drop' : 'Reject', src, dst, proto: (proto ?? 'tcp').toUpperCase(), ports };
         })
         .filter((r)                             => r !== undefined);
       if (!drop) findings.push(info('vcfa91.sp.no-drop', 'Without a drop rule the allows change nothing — everything else is still allowed by the default rule.', { source: SRC }));
@@ -3706,9 +4033,10 @@ items.unshift({ plural: "secrets", object: { apiVersion: "v1", kind: "Secret", m
               ...rules.map((r) => ({
                 name: r.name,
                 direction: 'In',
-                action: 'Allow',
-                sources: [r.cidr ? { ipBlocks: [{ cidr: r.from }] } : { vmSelector: { matchLabels: kv(r.from) } }],
-                ports: [{ protocol: r.proto, port: r.port }],
+                action: r.action,
+                sources: [r.src.selector ? { vmSelector: { matchLabels: kv(r.src.value) } } : { ipBlocks: [{ cidr: r.src.value }] }],
+                ...(r.dst ? { destinations: [r.dst.selector ? { vmSelector: { matchLabels: kv(r.dst.value) } } : { ipBlocks: [{ cidr: r.dst.value }] }] } : {}),
+                ...(r.ports ? { ports: [{ protocol: r.proto, port: r.ports.port, ...(r.ports.endPort ? { endPort: r.ports.endPort } : {}) }] } : {}),
               })),
               ...(drop ? [{ name: 'drop-other-inbound', direction: 'In', action: 'Drop' }] : []),
             ],
@@ -3741,19 +4069,91 @@ else {
         resources: [{ name: 'policy.json', content: json([policy]) }],
       });
 
+      // The gateway firewall on the organization's transit gateway: NSX Policy API objects.
+      const gw = bool(values, 'gateway_firewall', false);
+      const project = label(str(values, 'nsx_project', 'default'), 'default');
+      const tgw = label(str(values, 'tgw', 'default'), 'default');
+      const projectBase = `/orgs/default/projects/${project}`;
+      const gwObjects              = [];
+      const gwRules                            = [];
+      if (gw) {
+        const groupOf = (cells        , line        )                       => {
+          if (cells.toLowerCase() === 'any' || cells === '') return ['ANY'];
+          const cidrs = listOf(cells);
+          for (const c of cidrs) {
+            if (c.includes('=')) {
+              findings.push(error('vcfa91.sp.gw-label', `"${c}": gateway firewall rules match addresses; use CIDRs (labels are for the distributed firewall).`, { path: line, source: SRC }));
+              return undefined;
+            }
+            if (parseCidrAny(c) === null || !c.includes('/')) {
+              findings.push(error('vcfa91.sp.gw-cidr', `"${c}" is not an IPv4 or IPv6 CIDR.`, { path: line, source: SRC }));
+              return undefined;
+            }
+          }
+          const id = `gw-${cidrs.join('-').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`.slice(0, 60).replace(/-+$/, '');
+          const path = `${projectBase}/infra/domains/default/groups/${id}`;
+          if (!gwObjects.some((o) => o.path === path)) {
+            gwObjects.push({ label: `group ${cidrs.join(', ')}`, path, file: `nsx/group-${id}.json`, body: { display_name: id, expression: [{ resource_type: 'IPAddressExpression', ip_addresses: cidrs }] } });
+          }
+          return [path];
+        };
+        rowsOf(str(values, 'gateway_rules', '')).forEach(({ cells, line }, i) => {
+          const [action = '', src = 'any', dst = 'any', service = 'any'] = cells;
+          const act = action.toUpperCase();
+          if (!['ALLOW', 'DROP', 'REJECT'].includes(act)) {
+            findings.push(error('vcfa91.sp.gw-action', `"${action}" is not ALLOW, DROP or REJECT.`, { path: line, source: SRC }));
+            return;
+          }
+          const s = groupOf(src, line);
+          const d = groupOf(dst, line);
+          if (!s || !d) return;
+          const sm = /^(tcp|udp)\/(\S+)$/i.exec(service);
+          const p = sm ? portOf(sm[2] ) : undefined;
+          if (service.toLowerCase() !== 'any' && !p) {
+            findings.push(error('vcfa91.sp.gw-service', `"${service}" is not "any" or proto/port.`, { path: line, source: SRC }));
+            return;
+          }
+          if (act === 'ALLOW' && s[0] === 'ANY' && d[0] === 'ANY' && service.toLowerCase() === 'any') findings.push(warning('vcfa91.sp.gw-any', `Gateway rule ${i + 1} allows everything to everything.`, { path: line, source: SRC }));
+          gwRules.push({
+            id: `rule-${i + 1}`,
+            display_name: `${act.toLowerCase()}-${i + 1}`,
+            action: act,
+            sequence_number: (i + 1) * 10,
+            source_groups: s,
+            destination_groups: d,
+            services: ['ANY'],
+            ...(sm && p ? { service_entries: [{ resource_type: 'L4PortSetServiceEntry', id: `svc-${i + 1}`, l4_protocol: sm[1] .toUpperCase(), destination_ports: [p.endPort ? `${p.port}-${p.endPort}` : String(p.port)] }] } : {}),
+            scope: [`${projectBase}/transit-gateways/${tgw}`],
+            direction: 'IN_OUT',
+            logged: act !== 'ALLOW',
+            disabled: false,
+          });
+        });
+        if (gwRules.length === 0) findings.push(error('vcfa91.sp.gw-none', 'The gateway firewall has no rule.', { source: SRC }));
+        gwObjects.push({ label: `gateway policy ${pol} on ${tgw}`, path: `${projectBase}/infra/domains/default/gateway-policies/${pol}`, file: `nsx/gateway-policy-${pol}.json`, body: { display_name: pol, category: 'LocalGatewayRules', sequence_number: priority, rules: gwRules } });
+      }
+      const gwScript = gw
+        ? nsxScript({
+            purpose: `Gateway firewall policy ${pol} on transit gateway ${tgw} of NSX project ${project}.`,
+            body: [`nsx_get ${JSON.stringify(`${projectBase}/transit-gateways/${tgw}`)} >/dev/null || { echo "No transit gateway ${tgw} in project ${project} (VERIFY: GET /policy/api/v1${projectBase}/transit-gateways)" >&2; exit 1; }`, ...nsxEnsureLines(gwObjects)],
+            undo: `DELETE /policy/api/v1${projectBase}/infra/domains/default/gateway-policies/${pol}, then the groups: traffic through ${tgw} falls back to its default rule.`,
+          })
+        : '';
+
       return {
         platform: PLATFORM,
-        title: `Firewall policy ${pol} in ${ns}`,
+        title: `Firewall policy ${pol} in ${ns}${gw ? `, and gateway firewall on ${tgw}` : ''}`,
         effect: 'reversible',
         trigger: { kind: 'manual', detail: 'The application team, when the VMs are created or a flow changes.' },
         scope: {
-          what: `VMs in ${ns} labelled ${applied}: inbound ${rules.map((r) => `${r.proto}/${r.port}`).join(', ') || 'nothing'} allowed${drop ? ', everything else dropped' : ''}.`,
+          what: `VMs in ${ns} labelled ${applied}: inbound ${rules.map((r) => `${r.action.toLowerCase()} ${r.ports ? `${r.proto}/${r.ports.port}${r.ports.endPort ? `-${r.ports.endPort}` : ''}` : 'any'}`).join(', ') || 'nothing'}${drop ? ', everything else dropped' : ''}${gw ? `; and ${gwRules.length} gateway rule(s) on transit gateway ${tgw}` : ''}.`,
           decidedBy: ['The label selector — every VM that has, or later gets, those labels.', 'The namespace; the policy cannot reach VMs in another.', 'Priority against other policies in the namespace and the organization.'],
           ifWrong: 'A selector that matches more than meant drops traffic to VMs nobody considered; one that matches nothing leaves them open.',
         },
         guardrails: [
           { rule: 'Stops unless the current context is EXPECT_CONTEXT', because: 'The context is the scope.' },
           { rule: 'Server-side dry run before creating, and create rather than apply', because: 'The NSX operator validates selectors and ports; create refuses to overwrite a policy another team maintains.' },
+          ...(gw ? [{ rule: 'The gateway policy and its groups are created only when nothing is at their paths', because: 'A gateway policy someone tuned in the portal is not overwritten; change it there, or delete it and run again.' }] : []),
         ],
         dryRun: ['Run the workflow with the dryRun input set to true to preview: it logs the VMs the selector matches and sends the policy with dryRun=All, creating nothing.', 'scripts/create-policy.sh --dry-run runs a server-side dry run.', 'Before the first real run, kubectl get vm -n ' + ns + ' -l ' + applied.replace(/\s/g, '') + ' shows which VMs it will cover.'],
         undo: [`kubectl delete securitypolicy ${pol} -n ${ns} — traffic falls back to the default rule immediately.`],
@@ -3763,20 +4163,27 @@ else {
           ...pkg.files,
           [`${pol}.k8s.yaml`]: yaml,
           'scripts/create-policy.sh': kubeScript(`Create security policy ${pol} in ${ns}.`, [`echo "VMs it will cover:"; kubectl get vm -n ${q(ns)} -l ${q(Object.entries(appliedLabels).map(([k, v]) => `${k}=${v}`).join(','))} || true`], [`${pol}.k8s.yaml`], `kubectl delete securitypolicy ${pol} -n ${ns}`),
+          ...(gw ? { ...Object.fromEntries(gwObjects.map((o) => [o.file, json(o.body)])), 'scripts/apply-gateway-firewall.sh': gwScript } : {}),
           'IMPORT.md': importMd({
             subject: `The vDefend security policy ${pol} in ${ns}: an Orchestrator workflow that creates it through the namespace's Kubernetes API, and the same object as ${pol}.k8s.yaml for kubectl.`,
             orgs: ALL_APPS,
             steps: [
               ...pkg.importSteps,
               kubeStep('Or: the policy with kubectl', 'scripts/create-policy.sh', [`${pol}.k8s.yaml`], ['The script first lists the VMs the policy’s selector matches: that list is the scope.']),
+              ...(gw ? [manualStep(`The gateway firewall on ${tgw}`, ['`NSX_HOST=… NSX_USER=… NSX_PASSWORD_FILE=… ./scripts/apply-gateway-firewall.sh` creates the CIDR groups and the gateway policy unless they exist; `--dry-run` only reads. An organization administrator with gateway firewall delegated does the same in the organization portal: Networking → Transit Gateways → Gateway Firewall.'])] : []),
             ],
             auth: ['kube', 'vcfa91'],
-            verify: ['The SecurityPolicy apiVersion and resource name (crd.nsx.vmware.com/v1alpha1, securitypolicies): kubectl api-resources | grep -i securitypolic. The workflow stops before sending anything if the group is not served.', KUBE_VERIFY],
+            verify: [
+              'The SecurityPolicy apiVersion and resource name (crd.nsx.vmware.com/v1alpha1, securitypolicies): kubectl api-resources | grep -i securitypolic. The workflow stops before sending anything if the group is not served.',
+              KUBE_VERIFY,
+              'Rule actions Allow, Drop and Reject, destinations, and ports with endPort follow the NSX operator SecurityPolicy CRD; VERIFY with kubectl explain securitypolicy.spec.rules.',
+              ...(gw ? ['VERIFY: the gateway policy path /orgs/default/projects/<project>/infra/domains/default/gateway-policies, category LocalGatewayRules and the rule scope of a transit gateway path (NSX 9 multi-tenancy).'] : []),
+            ],
           }),
         },
         notes: [
-          '9.1 what’s new: providers can delegate vDefend Distributed and Gateway Firewall to organization administrators, with RBAC labels for dynamic groups. Gateway firewall on a transit gateway is set in the organization portal.',
-          ...(rules.some((r) => r.cidr && r.from.includes(':'))
+          '9.1 what’s new: providers can delegate vDefend Distributed and Gateway Firewall to organization administrators, with RBAC labels for dynamic groups.',
+          ...(rules.some((r) => !r.src.selector && r.src.value.includes(':')) || rules.some((r) => r.dst !== undefined && !r.dst.selector && r.dst.value.includes(':'))
             ? ['IPv6 sources are written as their own ipBlocks entries (cidr: 2001:db8::/32), one family per rule; the distributed firewall matches IPv6 as well as IPv4. VERIFY: kubectl explain securitypolicy.spec.rules.sources.ipBlocks accepts an IPv6 cidr on your NSX operator.']
             : []),
         ],
@@ -3920,3 +4327,42 @@ else {
     },
   }),
 ];
+
+// ---------------------------------------------------------------------------
+// The blueprints in the helper modules, built on the same building blocks.
+
+const KIT            = {
+  PLATFORM,
+  SRC,
+  ALL_APPS,
+  PROVIDER,
+  AREA,
+  LABEL,
+  VERSIONS_TF,
+  KUBE_VERIFY,
+  KUBE_OUTPUTS,
+  DRY_RUN_INPUT,
+  LOGIN_JS,
+  CLOUDAPI_JS,
+  CLOUD_LOGIN_JS,
+  VCFA_HOST_ATTR,
+  TOKEN_ATTR,
+  ORG_ATTR,
+  API_VERSION_ATTR,
+  GUARD_ATTRS,
+  WEBHOOK_ATTR,
+  label,
+  q,
+  json,
+  restScript,
+  kubeScript,
+  kubeReadScript,
+  tfScript,
+  k8sYaml,
+  kubeWorkflow,
+  kubeConfig,
+  tfStep,
+  checkStep,
+};
+
+export const VCF_AUTOMATION_91                                 = [...CORE_91, ...vcfa91Govern(KIT), ...vcfa91Network(KIT)];

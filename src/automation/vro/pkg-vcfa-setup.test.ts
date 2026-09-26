@@ -380,7 +380,7 @@ const CASES: Case[] = [
       const sub = bodyOf(requests, 'POST /event-broker/api/subscriptions');
       expect(sub.runnableId).toBe('act-1');
       expect(sub.id).toBe(SUBSCRIPTION_ID);
-      expect(sub.disabled).toBe(true);
+      expect(sub.disabled).toBe(false);
       expect(sub.eventTopicId).toBe('compute.provision.post');
       expect('criteria' in sub).toBe(false);
       expect(run.outputs.subscriptionId).toBe(SUBSCRIPTION_ID);

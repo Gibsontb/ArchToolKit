@@ -198,7 +198,7 @@ export function renderReadme(automation: Automation, name: string): string {
     '',
     ...wrap(EFFECT_MEANING[automation.effect]),
     '',
-    `label}**${platform.formerly ? ` (formerly ${platform.formerly})` : ''}.`,
+    `For **${platform.label}**.`,
     'Read this before you turn it on. An automation acts when nobody is watching.',
     '',
     RULE,

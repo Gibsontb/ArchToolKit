@@ -881,7 +881,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
               ], ['The passwords are read from the environment by jq and sent on stdin; they are never in the files. The ids go to scripts/created-ids.txt, for the zone and for undo. The script is not idempotent; the workflow is.']),
             ]),
             auth: ['apply'],
-            orgs: 'VCF Automation 9.1 / 9.1.1 VM Apps organizations and Aria Automation 8.x. In an All Apps organization vCenter and NSX arrive with the provider’s region instead',
+            orgs: 'VCF Automation 9.1 / 9.1.1 VM Apps organizations (and the 8.x release). In an All Apps organization vCenter and NSX arrive with the provider’s region instead',
             verify: packageVerify([
               'The association field between the NSX and vSphere accounts has moved between releases; GET an existing pair and match it. The 9.1 spec (VM Apps Org - Provisioning Service, "Create vSphere Cloud Account Async") lists associatedCloudAccountIds on the vSphere account, regions required, and a 202 RequestTracker answer.',
             ]),
@@ -889,7 +889,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         },
         notes: [
           'The association field has moved between releases: some take associatedCloudAccountIds on the NSX account, some on the vSphere one, some both. GET an existing pair in your system and match it.',
-          'In VCF Automation 9 with the all-apps organisation model, vCenter and NSX arrive through the provider’s region and are not created per tenant. This blueprint is for the VM Apps (Assembler) model.',
+          'In VCF Automation 9 with the all-apps organisation model, vCenter and NSX arrive through the provider’s region and are not created per tenant. This blueprint is for the VM Apps organization model.',
           `The create calls are asynchronous in the current API (202 with a RequestTracker; status INPROGRESS, FINISHED or FAILED; resources holds the account link) and the 9.1 spec marks apiVersion required. The workflow and scripts/apply.sh send apiVersion=${IAAS_API_VERSION} and handle both the tracker and the older synchronous answer; if your release lists another value, set iaasApiVersion in the configuration element (and edit the two paths in the script).`,
           'The regions field replaced regionIds in 8.x. If your version rejects it, GET an existing account and copy its shape.',
         ],
@@ -1069,6 +1069,8 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
       { id: 'principal_type', label: 'Grant access to', control: 'select', options: [{ value: 'group', label: 'Directory groups' }, { value: 'user', label: 'Individual users' }], default: 'group' },
       { id: 'admins', label: 'Administrators', control: 'text', default: 'vcfa-finance-admins@example.com' },
       { id: 'members', label: 'Members', control: 'text', default: 'vcfa-finance-users@example.com' },
+      { id: 'viewers', label: 'Viewers', control: 'text', default: '', placeholder: 'vcfa-finance-auditors@example.com', hint: 'Comma separated: see deployments, request nothing' },
+      { id: 'supervisors', label: 'Supervisors', control: 'text', default: '', placeholder: 'vcfa-finance-leads@example.com', hint: 'Comma separated: approve requests in the project (role-based approval)' },
       { id: 'zone_ids', label: 'Cloud zone ids', control: 'text', default: '<REQUIRED — GET /iaas/api/zones>', hint: 'Comma separated; the first is highest priority' },
       { id: 'max_instances', label: 'Max machines per zone', control: 'number', default: 50, min: 0, max: 100000, hint: '0 is unlimited' },
       { id: 'memory_gb', label: 'Memory limit per zone (GB)', control: 'number', default: 512, min: 0, max: 1000000, hint: '0 is unlimited' },
@@ -1084,6 +1086,8 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
       const type = str(values, 'principal_type', 'group');
       const admins = listOf(str(values, 'admins', ''));
       const members = listOf(str(values, 'members', ''));
+      const viewers = listOf(str(values, 'viewers', ''));
+      const supervisors = listOf(str(values, 'supervisors', ''));
       const zoneIds = listOf(str(values, 'zone_ids', ''));
       const maxInstances = num(values, 'max_instances', 50);
       const memoryGb = num(values, 'memory_gb', 512);
@@ -1135,7 +1139,9 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         description: '',
         administrators: admins.map(principal),
         members: members.map(principal),
-        viewers: [],
+        viewers: viewers.map(principal),
+        // The fourth project role in 9.x: approves requests where a policy names the role. VERIFY the field name by GET of a project with one.
+        ...(supervisors.length > 0 ? { supervisors: supervisors.map(principal) } : {}),
         zoneAssignmentConfigurations: zoneIds.map((zoneId, index) => ({
           zoneId,
           priority: index,
@@ -1187,7 +1193,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         scope: {
           what: `Everything members of ${members.join(', ') || '(nobody)'} deploy through project ${projectName}, in zones ${zoneIds.join(', ')}.`,
           decidedBy: [
-            `The ${type === 'group' ? 'directory group membership' : 'user list'} of administrators and members.`,
+            `The ${type === 'group' ? 'directory group membership' : 'user list'} of administrators and members${viewers.length > 0 ? ', viewers' : ''}${supervisors.length > 0 ? ' and supervisors' : ''}.`,
             'The cloud zones assigned, in priority order, and the quota on each.',
             'The catalogue items and templates shared to the project.',
             'Any policy (lease, approval, day-2) scoped to the project.',
@@ -1221,6 +1227,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
         notes: [
           'The machine naming template on a project is superseded by custom naming (see the naming blueprint) when both exist. Keep one, not both.',
           'The principal type values are user and group in 8.x. Some releases also accept email without type for users — GET an existing project to see yours.',
+          'Viewers see the project’s deployments and request nothing; supervisors approve requests where an approval policy uses role-based approval. A per-project content library is an All Apps organization feature in 9.1, not a VM Apps project field.',
           'Custom properties on the project are passed to every machine as properties, and can be read by extensibility actions and by naming templates as ${project.customProperties.<name>} in newer releases.',
         ],
         findings,
@@ -1452,7 +1459,10 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
       },
       { id: 'range_start', label: 'Static range start', control: 'text', default: '10.20.10.50', hint: 'IPv4 or IPv6, inside a network of the same family above', showWhen: { input: 'ipam', equals: ['internal'] } },
       { id: 'range_end', label: 'Static range end', control: 'text', default: '10.20.10.200', showWhen: { input: 'ipam', equals: ['internal'] } },
-      { id: 'security_groups', label: 'Security group ids', control: 'text', default: '', placeholder: 'from GET /iaas/api/security-groups' },
+      { id: 'ipam_integration', label: 'IPAM integration', control: 'text', default: 'infoblox', hint: 'The integration name (the integrations blueprint)', showWhen: { input: 'ipam', equals: ['external'] } },
+      { id: 'ipam_ranges', label: 'External IP ranges', control: 'text', default: 'app-10-range, app-11-range', hint: 'Comma separated, in the order of the networks above: the provider ranges each network takes addresses from', showWhen: { input: 'ipam', equals: ['external'] } },
+      { id: 'security_groups', label: 'Security group ids', control: 'text', default: '', placeholder: 'from GET /iaas/api/security-groups', hint: 'Applied to every machine placed through the profile' },
+      { id: 'load_balancers', label: 'Load balancer ids', control: 'text', default: '', placeholder: 'from GET /iaas/api/load-balancers', hint: 'Existing NSX load balancers templates may use' },
       { id: 'net_tags', label: 'Capability tags', control: 'text', default: 'net:app, site:dc1' },
     ],
     automation: (values                 , name        )             => {
@@ -1471,6 +1481,9 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
       const rangeStart = str(values, 'range_start', '');
       const rangeEnd = str(values, 'range_end', '');
       const sgs = listOf(str(values, 'security_groups', ''));
+      const lbs = listOf(str(values, 'load_balancers', ''));
+      const ipamIntegration = str(values, 'ipam_integration', 'infoblox');
+      const ipamRanges = ipam === 'external' ? listOf(str(values, 'ipam_ranges', '')) : [];
       const tags = tagsOf(str(values, 'net_tags', ''));
       const base = slugOf(name || profileName, 'network-profile');
 
@@ -1530,6 +1543,12 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           findings.push(warning('vcfa.network.range-outside', `The static range is not inside ${homeCidr}, the first existing ${rangeFamily === 6 ? 'IPv6 ' : ''}network.`, { source: SRC }));
         }
       }
+      if (ipam === 'external' && ipamRanges.length === 0) {
+        findings.push(error('vcfa.network.no-external-ranges', 'External IPAM was chosen and no provider IP range is named, so no network in the profile has anywhere to take addresses from.', { source: SRC }));
+      }
+      if (ipam === 'external' && ipamRanges.length > segments.length) {
+        findings.push(warning('vcfa.network.extra-ranges', `${ipamRanges.length} external ranges for ${segments.length} networks: the extra ones are not assigned.`, { source: SRC }));
+      }
       if (tags.length === 0) {
         findings.push(warning('vcfa.network.no-tags', 'No capability tags, so templates cannot choose this profile by constraint.', { source: SRC }));
       }
@@ -1550,6 +1569,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
             }
           : {}),
         securityGroupIds: sgs,
+        ...(lbs.length > 0 ? { loadBalancerIds: lbs } : {}),
         tags,
         customProperties: {
           onDemandNetworkIPAssignmentType: ipam === 'dhcp' ? 'dynamic' : 'static',
@@ -1568,6 +1588,44 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
               ipVersion: rangeFamily === 6 ? 'IPv6' : 'IPv4',
             }
           : undefined;
+
+      // External IPAM: each provider range (discovered through the integration)
+      // is assigned to the fabric network of the same position. VERIFY the
+      // external-network-ip-ranges fields on your release.
+      const host = hostVar('vcf-automation');
+      const externalRanges = ipamRanges.length > 0
+        ? [
+            '#!/usr/bin/env bash',
+            `# Assign the IP ranges of the ${ipamIntegration} IPAM integration to the profile's networks:`,
+            '# each range, looked up by name, gets the fabric network with the CIDR in the same position.',
+            '#',
+            '# Applies when run. With --dry-run it only prints what it would change.',
+            'set -euo pipefail',
+            ...authPreamble('vcf-automation'),
+            'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+            'DRY_RUN=0',
+            '[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1',
+            `API="https://\${${host}}/iaas/api"`,
+            `get() { curl -sS -f "\${API}$1" -H "${authHeader('vcf-automation')}" -H "Accept: application/json"; }`,
+            `RANGES=$(get "/external-network-ip-ranges?apiVersion=${IAAS_API_VERSION}&%24top=1000")`,
+            `NETWORKS=$(get "/fabric-networks?apiVersion=${IAAS_API_VERSION}&%24top=1000")`,
+            ...ipamRanges.slice(0, segments.length).flatMap((range, index) => {
+              const cidr = segments[index] .v4 ?? segments[index] .v6 ?? segments[index] .text;
+              return [
+                `RANGE_ID=$(jq -r --arg n ${JSON.stringify(range)} '[.content[]? | select(.name == $n) | .id] | if length == 1 then .[0] else empty end' <<<"\${RANGES}")`,
+                `NET_ID=$(jq -r --arg c ${JSON.stringify(cidr)} '[.content[]? | select(.cidr == $c or ((.ipv6Cidr // "") | ascii_downcase) == $c) | .id] | if length == 1 then .[0] else empty end' <<<"\${NETWORKS}")`,
+                `[[ -n "\${RANGE_ID}" && -n "\${NET_ID}" ]] || { echo ${JSON.stringify(`${range} or the network ${cidr} was not found exactly once — stopping`)} >&2; exit 1; }`,
+                `if (( DRY_RUN )); then echo "DRY RUN: would assign ${range} (\${RANGE_ID}) to ${cidr} (\${NET_ID})"; else`,
+                `  jq -n --arg id "\${NET_ID}" '{fabricNetworkIds: [$id]}' | curl -sS -f -X PATCH "\${API}/external-network-ip-ranges/\${RANGE_ID}?apiVersion=${IAAS_API_VERSION}" -H "${authHeader('vcf-automation')}" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- >/dev/null`,
+                `  echo "assigned ${range} to ${cidr}"`,
+                'fi',
+              ];
+            }),
+            '',
+            '# Undo: PATCH each range with fabricNetworkIds: [] — addresses already allocated stay allocated in the IPAM.',
+            '',
+          ].join('\n')
+        : undefined;
 
       // A dual-stack segment is one fabric network with both address families:
       // cidr and defaultGateway for IPv4, ipv6Cidr and defaultIpv6Gateway for IPv6.
@@ -1662,6 +1720,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
           [`scripts/${base}.json`]: json(profile),
           ...(range ? { [`scripts/${base}-ip-range.json`]: json(range) } : {}),
           'scripts/fabric-networks.json': json(fabric),
+          ...(externalRanges ? { 'scripts/external-ranges.sh': externalRanges } : {}),
           'scripts/apply.sh': fromScriptsDir(applyScript(
             'vcf-automation',
             [
@@ -1681,6 +1740,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
                   : []),
                 'Each fabric network needs its CIDR, gateway and DNS set before internal IPAM hands out addresses: scripts/fabric-networks.json lists the PATCH each one needs (not sent by the workflow or the script — the ids are looked up first).',
               ]),
+              ...(externalRanges ? [apiStep('External IPAM: assign the provider ranges', 'scripts/external-ranges.sh', ipamRanges.slice(0, segments.length).map((r, i) => `${r} → the network ${segments[i] .text} (PATCH /iaas/api/external-network-ip-ranges/{id})`), [`The ranges come from the ${ipamIntegration} integration (the integrations blueprint), once its data collection has run. VERIFY the external-network-ip-ranges fields on your release.`])] : []),
               apiStep('Or by script: network profile', 'scripts/apply.sh', [...(range ? [`\`scripts/${base}-ip-range.json\` → POST /iaas/api/network-ip-ranges`] : []), `\`scripts/${base}.json\` → POST /iaas/api/network-profiles`], ['Fill the fabric network ids from GET /iaas/api/fabric-networks first. The script is not idempotent; the workflow is.']),
             ]),
             auth: ['apply'],
@@ -1884,7 +1944,7 @@ mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
     label: 'A catalogue content source and who it is shared with',
     group: 'Catalogue',
     description:
-      'Templates imported from a repository branch into a project, a Service Broker content source that brings them into the catalogue, and a content-sharing policy that decides which groups see them. Sharing is where catalogues go wrong: an item shared to every project is an item every project can request.',
+      'Templates imported from a repository branch into a project, a catalog content source that brings them into the catalogue, and a content-sharing policy that decides which groups see them. Sharing is where catalogues go wrong: an item shared to every project is an item every project can request.',
     inputs: [
       { id: 'source_name', label: 'Content source name', control: 'text', default: 'platform-templates' },
       {
@@ -2509,6 +2569,414 @@ if (settings.importExample === true || String(settings.importExample) === "true"
           'How a constant is declared inside properties (const, or default with readOnly) has varied between releases. Export an existing constant group with GET /properties/api/property-groups and match it.',
           'Omitting projectId makes the group available organisation-wide in the releases that support sharing; in older ones a projectId is required.',
         ],
+        findings,
+      };
+    },
+  }),
+
+  // -------------------------------------------------------------------------
+  automationBlueprint({
+    id: 'vcfa_integration',
+    platform: PLATFORM,
+    label: 'An integration: IPAM, Ansible, Git or Active Directory',
+    group: 'Infrastructure',
+    description:
+      'An integration the VM Apps organization calls out to — Infoblox IPAM, Ansible, Ansible Automation Platform, GitHub, GitLab, Bitbucket or Active Directory — with its credential read from the configuration element or the environment, and what each kind needs per project: repositories as content sources, computer OUs.',
+    inputs: [
+      {
+        id: 'kind',
+        label: 'Kind',
+        control: 'select',
+        options: [
+          { value: 'infoblox', label: 'IPAM — Infoblox' },
+          { value: 'ansible', label: 'Ansible (open source control node)' },
+          { value: 'aap', label: 'Ansible Automation Platform' },
+          { value: 'github', label: 'GitHub' },
+          { value: 'gitlab', label: 'GitLab' },
+          { value: 'bitbucket', label: 'Bitbucket' },
+          { value: 'activedirectory', label: 'Active Directory' },
+        ],
+        default: 'gitlab',
+      },
+      { id: 'integration_name', label: 'Integration name', control: 'text', default: 'platform-git' },
+      { id: 'endpoint', label: 'Server', control: 'text', default: 'gitlab.example.com', hint: 'FQDN, or a URL; for Active Directory the domain controller or its load balancer' },
+      { id: 'username', label: 'Account', control: 'text', default: 'svc-vcfa', hint: 'The service account (Git: may be empty with a token)' },
+      { id: 'secret_env', label: 'Password or token from', control: 'text', default: 'INTEGRATION_SECRET', hint: 'The environment variable scripts/apply.sh reads; the workflow reads integrationSecret' },
+      { id: 'accept_self_signed', label: 'Accept a self-signed certificate', control: 'toggle', default: false },
+      { id: 'network_view', label: 'Infoblox network view', control: 'text', default: 'default', showWhen: { input: 'kind', equals: ['infoblox'] } },
+      { id: 'dns_view', label: 'Infoblox DNS view', control: 'text', default: 'default', showWhen: { input: 'kind', equals: ['infoblox'] } },
+      { id: 'running_environment', label: 'Running environment', control: 'text', default: 'On-premises extensibility', hint: 'Where the IPAM provider’s actions run: the extensibility integration name', showWhen: { input: 'kind', equals: ['infoblox'] } },
+      { id: 'inventory', label: 'Inventory file', control: 'text', default: '/etc/ansible/hosts', showWhen: { input: 'kind', equals: ['ansible'] } },
+      {
+        id: 'repos',
+        label: 'Repositories',
+        control: 'textarea',
+        default: 'finance-apps | platform/vcfa-templates | release | templates | blueprint',
+        hint: 'Project | Repository | Branch | Folder | Content (blueprint, abx or terraform)',
+        options: ['blueprint', 'abx', 'terraform'].map((c) => ({ value: c, label: c, group: 'Content' })),
+        help: 'Each row is a content source in the project (named, looked up by the workflow) that imports the folder on every commit to the branch.',
+        showWhen: { input: 'kind', equals: ['github', 'gitlab', 'bitbucket'] },
+      },
+      { id: 'base_dn', label: 'Base DN', control: 'text', default: 'DC=example,DC=com', showWhen: { input: 'kind', equals: ['activedirectory'] } },
+      { id: 'default_ou', label: 'Default computer OU', control: 'text', default: 'OU=VCF Automation,DC=example,DC=com', showWhen: { input: 'kind', equals: ['activedirectory'] } },
+      {
+        id: 'ad_projects',
+        label: 'Computer OU per project',
+        control: 'textarea',
+        default: 'finance-apps | OU=Finance',
+        hint: 'Project | Relative DN (under the default OU)',
+        showWhen: { input: 'kind', equals: ['activedirectory'] },
+      },
+    ],
+    automation: (values                 , name        )             => {
+      const kind = str(values, 'kind', 'gitlab');
+      const integrationName = str(values, 'integration_name', 'integration');
+      const endpoint = str(values, 'endpoint', '<REQUIRED — server>');
+      const user = str(values, 'username', '');
+      const secretEnv = str(values, 'secret_env', 'INTEGRATION_SECRET');
+      const selfSigned = bool(values, 'accept_self_signed', false);
+      const git = ['github', 'gitlab', 'bitbucket'].includes(kind);
+      const base = slugOf(name || integrationName, 'integration');
+      const rowsOf = (text        ) => text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => ` ${l} `.split(/(?<=\s)\|(?=\s)/).map((c) => c.trim()));
+      const repos = git ? rowsOf(str(values, 'repos', '')).map(([project = '', repository = '', branch = 'main', path = '', content = 'blueprint']) => ({ project, repository, branch, path, content })) : [];
+      const adProjects = kind === 'activedirectory' ? rowsOf(str(values, 'ad_projects', '')).map(([project = '', ou = '']) => ({ project, ou })) : [];
+      const url = /^https?:\/\//.test(endpoint) ? endpoint : `https://${endpoint}`;
+      const saas = /(^|\.)(github\.com|gitlab\.com|bitbucket\.org)$/i.test(endpoint.replace(/^https?:\/\//, '').replace(/\/.*$/, ''));
+
+      const findings            = [];
+      if (!/^[A-Z_][A-Z0-9_]*$/.test(secretEnv)) findings.push(error('vcfa.integration.secret-env', `"${secretEnv}" is not an environment variable name. The password or token is read from the environment, never written here.`, { source: SRC }));
+      if (selfSigned) findings.push(warning('vcfa.integration.self-signed', 'A self-signed certificate is accepted without checking who presented it.', { remediation: 'The integration carries a credential with write access. Trust the server’s CA instead.', source: SRC }));
+      if (kind === 'activedirectory' && !/^ldaps:\/\//i.test(endpoint) && !/:636$/.test(endpoint)) findings.push(warning('vcfa.integration.ldap-plain', 'Active Directory is reached without LDAPS, so the bind password crosses the network in the clear.', { remediation: 'Use ldaps://<dc>:636.', source: SRC }));
+      for (const r of repos) {
+        if (!r.project || !r.repository) findings.push(error('vcfa.integration.repo-row', `A repository row needs a project and a repository (${r.project} | ${r.repository}).`, { source: SRC }));
+        if (!['blueprint', 'abx', 'terraform'].includes(r.content)) findings.push(error('vcfa.integration.repo-content', `${r.repository}: the content is blueprint, abx or terraform, not ${r.content}.`, { source: SRC }));
+        if (!/^(release|releases?\/.+|main|master|prod(uction)?)$/i.test(r.branch)) findings.push(warning('vcfa.integration.branch', `${r.repository} imports from "${r.branch}", which does not look like a release branch: every commit there reaches the catalogue.`, { source: SRC }));
+      }
+      if (git && repos.length === 0) findings.push(warning('vcfa.integration.no-repos', 'The Git integration has no repository: nothing imports from it until one is added to a project.', { source: SRC }));
+
+      // integrationType per kind: VERIFY — GET /iaas/api/integrations on one made in the interface.
+      const integrationType                         = {
+        infoblox: 'ipam',
+        ansible: 'ansible',
+        aap: 'ansible.tower',
+        github: saas ? 'com.github.saas' : 'com.github.enterprise.onprem',
+        gitlab: saas ? 'com.gitlab.saas' : 'com.gitlab.enterprise.onprem',
+        bitbucket: 'com.bitbucket.onprem',
+        activedirectory: 'activedirectory',
+      };
+      const properties                          =
+        kind === 'infoblox'
+          ? { hostName: endpoint, providerId: '<REQUIRED — the Infoblox provider id (import the Infoblox package first; GET /iaas/api/integrations-ipam or the interface)>', faasProviderEndpointId: `<REQUIRED — id of the running environment "${str(values, 'running_environment', '')}">`, 'Infoblox.IPAM.NetworkView': str(values, 'network_view', 'default'), 'Infoblox.IPAM.DnsView': str(values, 'dns_view', 'default') }
+          : kind === 'ansible'
+            ? { hostName: endpoint, inventoryFile: str(values, 'inventory', '/etc/ansible/hosts') }
+            : kind === 'aap'
+              ? { hostName: endpoint }
+              : kind === 'activedirectory'
+                ? { server: /^ldaps?:\/\//i.test(endpoint) ? endpoint : `ldaps://${endpoint}:636`, baseDN: str(values, 'base_dn', ''), defaultOU: str(values, 'default_ou', '') }
+                : { url: saas ? `https://api.${endpoint.replace(/^https?:\/\//, '')}` : url };
+      const integration = {
+        name: integrationName,
+        description: '',
+        integrationType: integrationType[kind] ?? kind,
+        ...(user ? { privateKeyId: user } : {}),
+        privateKey: `<REQUIRED — injected from ${secretEnv} by apply.sh, or integrationSecret in the configuration element>`,
+        integrationProperties: { ...properties, acceptSelfSignedCertificate: selfSigned },
+        tags: [],
+      };
+      const typeId = kind === 'github' ? 'com.github' : kind === 'gitlab' ? 'com.gitlab' : 'com.bitbucket';
+      const sources = repos.map((r, i) => ({
+        file: `content-source-${i + 1}.json`,
+        project: r.project,
+        body: {
+          name: `${integrationName}-${slugOf(r.repository, 'repo')}-${r.content}`,
+          typeId,
+          projectId: `<REQUIRED — id of project ${r.project}>`,
+          description: `Imports ${r.content === 'blueprint' ? 'cloud templates' : r.content === 'abx' ? 'ABX actions' : 'Terraform configurations'} from ${r.repository}@${r.branch}/${r.path}.`,
+          syncEnabled: true,
+          config: { integrationId: '__INTEGRATION_ID__', repository: r.repository, branch: r.branch, path: r.path, contentType: r.content },
+        },
+      }));
+
+      const pkg = vcfaPackage({
+        thing: 'integration',
+        base,
+        folder: 'Integrations',
+        workflowName: `Create integration ${base}`,
+        description: `Creates the ${kind} integration ${integrationName} in a VCF Automation VM Apps organization${sources.length > 0 ? `, and ${sources.length} content source(s) importing from it` : ''}.`,
+        outputs: { integrationId: 'INTEGRATION_ID' },
+        payloads: { 'integration.json': integration, ...Object.fromEntries(sources.map((s) => [s.file, s.body])) },
+        settings: [
+          { name: 'integrationSecret', type: 'SecureString', description: `The password or token of ${user || 'the integration'}` },
+          ...(kind === 'infoblox' ? [{ name: 'providerId', type: 'string'         , value: '', description: 'The Infoblox IPAM provider id' }, { name: 'runningEnvironmentId', type: 'string'         , value: '', description: 'The id of the running environment the provider’s actions run in' }] : []),
+          { name: 'trackPolls', type: 'number', value: 120, description: 'How many times to poll the integration request before giving up' },
+          { name: 'trackSeconds', type: 'number', value: 5, description: 'Seconds between polls' },
+        ],
+        cap: 1 + sources.length,
+        script: [
+          stepsJs([
+            { key: 'INTEGRATION_ID', label: `${kind} integration "${integrationName}"`, resource: 'integration.json', list: '/iaas/api/integrations', style: 'iaas', create: '/iaas/api/integrations' },
+            ...sources.map((s) => ({ key: `SOURCE_${sources.indexOf(s) + 1}_ID`, label: `content source "${s.body.name}"`, resource: s.file, list: '/content/api/sources', style: 'page'         , create: '/content/api/sources' })),
+          ]),
+          `var SOURCES = ${JSON.stringify(sources.map((s) => ({ file: s.file, project: s.project })))};\n`,
+          String.raw`var I = bodies["integration.json"];
+I.privateKey = settings.integrationSecret ? String(settings.integrationSecret) : "<REQUIRED — integrationSecret in the configuration element>";
+if (settings.providerId) I.integrationProperties.providerId = String(settings.providerId);
+if (settings.runningEnvironmentId) I.integrationProperties.faasProviderEndpointId = String(settings.runningEnvironmentId);
+if (SOURCES.length > 0) {
+  var projects = mod.listAll(conn, "/iaas/api/projects", "iaas");
+  for (var s = 0; s < SOURCES.length; s++) {
+    var hits = [];
+    for (var p = 0; p < projects.length; p++) if (String(projects[p].name) === SOURCES[s].project) hits.push(projects[p]);
+    if (hits.length === 1) bodies[SOURCES[s].file].projectId = String(hits[0].id);
+    else bodies[SOURCES[s].file].projectId = "<REQUIRED — " + hits.length + " projects named " + SOURCES[s].project + ">";
+  }
+}
+mod.ensureAll(ctx, conn, STEPS, bodies, values, settings);
+`,
+        ].join(''),
+      });
+
+      const steps              = [
+        { method: 'POST', path: iaasPath('/iaas/api/integrations'), payload: `${base}.json`, captureAs: 'INTEGRATION_ID', secrets: { privateKey: secretEnv }, tracked: true },
+        ...sources.map((s) => ({ method: 'POST'         , path: '/content/api/sources', payload: `${base}-${s.file}` })),
+      ];
+      const adSteps = adProjects.map((p) => `Integrations → ${integrationName} → Projects → Add project: ${p.project}, relative DN ${p.ou}${/^OU=/i.test(p.ou) ? '' : ' (VERIFY: it should start OU=)'}`);
+
+      return {
+        platform: PLATFORM,
+        title: `${integrationName} — ${kind} integration${sources.length > 0 ? `, ${sources.length} repositor${sources.length === 1 ? 'y' : 'ies'}` : ''}`,
+        effect: 'reversible',
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow (or scripts/apply.sh) once; afterwards VCF Automation calls the integration on every request that uses it' },
+        scope: {
+          what: git ? `The repositories ${repos.map((r) => r.repository).join(', ') || '(none)'} imported into their projects on every commit.` : kind === 'infoblox' ? 'Address allocation for every network whose profile takes addresses from this IPAM.' : kind === 'activedirectory' ? 'A computer account for every machine deployed in the projects configured on it.' : 'Every template resource that names this integration as its account.',
+          decidedBy: ['The integration’s credential and what it may do on the far side.', git ? 'The branch and folder of each repository row.' : kind === 'activedirectory' ? 'The per-project OUs.' : 'The templates and profiles that refer to it.'],
+          ifWrong: git ? 'Unreviewed templates reach the catalogue at the next commit to the branch.' : kind === 'activedirectory' ? 'Computer accounts land in the wrong OU and pick up the wrong group policy.' : 'Deployments fail at request time with an integration error, or take addresses from the wrong range.',
+        },
+        guardrails: [
+          { rule: `The credential comes from ${secretEnv} or integrationSecret, never a file`, because: 'An integration credential usually has write access to IPAM, a repository or the directory.' },
+          { rule: selfSigned ? 'Self-signed certificate accepted — see the finding' : 'The server certificate must be trusted', because: 'The integration sends its credential to whatever answers at that name.' },
+          ...(git ? [{ rule: 'Each repository row names its branch and folder', because: 'A content source imports every commit to its branch.' }] : []),
+        ],
+        dryRun: [`Run the workflow Create integration ${base} with dryRun = true: it reads the integrations${sources.length > 0 ? ', projects and content sources' : ''} and logs what it would create, refusing a live run while a value is a placeholder.`, 'scripts/apply.sh --dry-run lists the payloads and the environment variable it needs.'],
+        undo: [`DELETE /iaas/api/integrations/{id}${sources.length > 0 ? ' after DELETE /content/api/sources/{id} for each content source' : ''}. Templates and profiles that refer to it fail until they are changed; nothing deployed is removed.`],
+        told: ['VCF Automation’s own audit log. The far side (IPAM, repository, directory) logs the service account’s use.'],
+        requires: [
+          `A service account on ${endpoint} with the rights the integration needs, and its secret in ${secretEnv} (script) or integrationSecret (workflow).`,
+          ...(kind === 'infoblox' ? ['The Infoblox IPAM provider package imported (Integrations → Add → IPAM → Manage IPAM providers) and a running environment for it.'] : []),
+          ...(kind === 'ansible' ? ['An Ansible control node reachable over SSH, with the inventory file.'] : []),
+        ],
+        files: {
+          ...pkg.files,
+          [`scripts/${base}.json`]: json(integration),
+          ...Object.fromEntries(sources.map((s) => [`scripts/${base}-${s.file}`, json(s.body)])),
+          'scripts/apply.sh': fromScriptsDir(chainScript(`Create the ${kind} integration ${integrationName}${sources.length > 0 ? ' and its content sources' : ''} in VCF Automation.`, steps, 'DELETE the content sources, then the integration, by the ids in created-ids.txt.')),
+          'IMPORT.md': importMd({
+            subject: `The ${kind} integration ${integrationName}.`,
+            steps: withPackageSteps(pkg, [
+              manualStep('The secret', [`Put the password or token in integrationSecret in the configuration element (workflow), or in ${secretEnv} in the environment (script). A live run refuses to send the placeholder.${kind === 'infoblox' ? ' Set providerId and runningEnvironmentId too: neither is found by name.' : ''}`]),
+              apiStep('Or by script', 'scripts/apply.sh', [`\`scripts/${base}.json\` → POST /iaas/api/integrations, with privateKey from ${secretEnv}`, ...sources.map((s) => `\`scripts/${base}-${s.file}\` → POST /content/api/sources (fill the project id first)`)], ['The script is not idempotent; the workflow is.']),
+              ...(adSteps.length > 0 ? [manualStep('Active Directory: the computer OU per project', ['The per-project OU of an Active Directory integration is not in the public 9.1 IaaS reference, so it is not sent. In the interface:', ...adSteps.map((s) => `- ${s}`)])] : []),
+            ]),
+            auth: ['apply'],
+            verify: packageVerify([
+              `integrationType ${integration.integrationType} and the integrationProperties keys (${Object.keys(properties).join(', ')}) are VERIFY — create one ${kind} integration in the interface and GET /iaas/api/integrations/{id} to compare.`,
+              ...(git ? ['Content sources: typeId com.github / com.gitlab / com.bitbucket with config.integrationId, repository, branch, path and contentType follow the 8.x content API; VERIFY on your release.'] : []),
+            ]),
+          }),
+        },
+        notes: ['Public cloud integrations and accounts are deprecated in VCF Automation 9.1 and are not offered here.'],
+        findings,
+      };
+    },
+  }),
+
+  // -------------------------------------------------------------------------
+  automationBlueprint({
+    id: 'vcfa_onboarding',
+    platform: PLATFORM,
+    label: 'An onboarding plan for existing machines',
+    group: 'Projects',
+    description:
+      'Bring machines that already run in vCenter under VCF Automation: a plan for one cloud account and project, the machines picked by name and tag, grouped into deployments, optionally with a cloud template attached — then run.',
+    inputs: [
+      { id: 'plan_name', label: 'Plan name', control: 'text', default: 'onboard-finance-legacy' },
+      { id: 'cloud_account', label: 'Cloud account', control: 'text', default: 'wld01-vcenter', hint: 'By name' },
+      { id: 'project', label: 'Project', control: 'text', default: 'finance-apps', hint: 'By name' },
+      { id: 'name_filter', label: 'Machine names matching', control: 'text', default: '^fin-', hint: 'A regular expression' },
+      { id: 'tag_filter', label: 'And tagged', control: 'text', default: '', placeholder: 'app:ledger', hint: 'key:value; empty for any' },
+      {
+        id: 'grouping',
+        label: 'Deployments',
+        control: 'select',
+        options: [
+          { value: 'per-machine', label: 'One per machine' },
+          { value: 'single', label: 'One for all of them' },
+          { value: 'by-tag', label: 'One per value of a tag' },
+          { value: 'by-prefix', label: 'One per name prefix (up to the first -)' },
+        ],
+        default: 'per-machine',
+      },
+      { id: 'group_tag', label: 'Tag key', control: 'text', default: 'app', showWhen: { input: 'grouping', equals: ['by-tag'] } },
+      { id: 'deployment_prefix', label: 'Deployment name prefix', control: 'text', default: 'onboarded-' },
+      {
+        id: 'template',
+        label: 'Cloud template',
+        control: 'select',
+        options: [
+          { value: 'none', label: 'None' },
+          { value: 'existing', label: 'Attach an existing template' },
+        ],
+        default: 'none',
+      },
+      { id: 'template_name', label: 'Template name', control: 'text', default: 'Standard Linux server', showWhen: { input: 'template', equals: ['existing'] } },
+      { id: 'max_machines', label: 'At most this many machines', control: 'number', default: 50, min: 1, max: 5000, hint: 'The run stops if the filter matches more' },
+    ],
+    automation: (values                 , name        )             => {
+      const planName = str(values, 'plan_name', 'onboarding');
+      const account = str(values, 'cloud_account', '');
+      const project = str(values, 'project', '');
+      const nameFilter = str(values, 'name_filter', '');
+      const tagFilter = str(values, 'tag_filter', '');
+      const grouping = str(values, 'grouping', 'per-machine');
+      const groupTag = str(values, 'group_tag', 'app');
+      const prefix = str(values, 'deployment_prefix', '');
+      const template = str(values, 'template', 'none') === 'existing' ? str(values, 'template_name', '') : '';
+      const max = Math.max(1, Math.round(num(values, 'max_machines', 50)));
+      const base = slugOf(name || planName, 'onboarding');
+
+      const findings            = [];
+      try {
+        new RegExp(nameFilter);
+      } catch {
+        findings.push(error('vcfa.onboarding.bad-filter', `${nameFilter} is not a valid regular expression.`, { source: SRC }));
+      }
+      if (!nameFilter && !tagFilter) findings.push(warning('vcfa.onboarding.everything', 'No name or tag filter: every unmanaged machine in the cloud account is onboarded, up to the limit.', { remediation: 'Onboarding the management VMs of the domain puts them one Delete away from a requester.', source: SRC }));
+      if (!account || !project) findings.push(error('vcfa.onboarding.missing', 'A cloud account and a project are both needed.', { source: SRC }));
+      if (grouping === 'by-tag' && !groupTag) findings.push(error('vcfa.onboarding.no-group-tag', 'Grouping by tag needs the tag key.', { source: SRC }));
+
+      const plan = { name: planName, description: `Machines matching ${nameFilter || 'anything'}${tagFilter ? ` tagged ${tagFilter}` : ''}.`, endpointId: '__ACCOUNT_ID__', projectId: '__PROJECT_ID__' };
+      const spec = { account, project, nameFilter, tagFilter, grouping, groupTag, prefix, template, max };
+
+      const pkg = vcfaPackage({
+        thing: 'onboarding',
+        base,
+        folder: 'Onboarding',
+        workflowName: `Run onboarding plan ${base}`,
+        description: `Creates the onboarding plan ${planName} for the cloud account ${account} and project ${project}, adds the matching machines grouped into deployments, and runs it.`,
+        outputs: { planLink: 'PLAN_LINK' },
+        payloads: { 'plan.json': plan },
+        settings: [],
+        cap: max + 2 + (grouping === 'per-machine' ? max : grouping === 'single' ? 1 : max),
+        script: [
+          `var SPEC = ${JSON.stringify(spec)};\n`,
+          String.raw`function one(list, what, label) {
+  var hits = [];
+  for (var i = 0; i < list.length; i++) if (String(list[i].name) === what) hits.push(list[i]);
+  if (hits.length !== 1) throw new Error(hits.length + " " + label + " named " + what + "; nothing was changed.");
+  return String(hits[0].id);
+}
+function items(body) {
+  if (!body) return [];
+  if (Object.prototype.toString.call(body) === "[object Array]") return body;
+  if (Object.prototype.toString.call(body.content) === "[object Array]") return body.content;
+  var out = [];
+  if (body.documents) for (var k in body.documents) if (body.documents.hasOwnProperty(k)) out.push(body.documents[k]);
+  return out;
+}
+function linkOf(r) { return r && (r.documentSelfLink || r.selfLink || (r.id ? String(r.id) : "")); }
+function tagValue(m, key) {
+  var tags = m.tags || [];
+  for (var i = 0; i < tags.length; i++) if (String(tags[i].key) === key) return String(tags[i].value);
+  if (m.customProperties && m.customProperties[key] !== undefined) return String(m.customProperties[key]);
+  return null;
+}
+var accountId = one(mod.listAll(conn, "/iaas/api/cloud-accounts", "iaas"), SPEC.account, "cloud accounts");
+var projectId = one(mod.listAll(conn, "/iaas/api/projects", "iaas"), SPEC.project, "projects");
+var P = bodies["plan.json"];
+P.endpointId = accountId;
+P.projectId = projectId;
+var api = conn.host + "/relocation";
+var plans = items(core.http("GET", api + "/onboarding/plan?expand=true", conn.auth, null, conn.safe).body);
+var planLink = "";
+for (var i = 0; i < plans.length; i++) if (String(plans[i].name) === P.name) planLink = linkOf(plans[i]);
+if (planLink) System.log("Exists, used as it is: onboarding plan " + P.name + " (" + planLink + ")");
+else planLink = core.act(ctx, "create onboarding plan " + P.name, function () { return linkOf(core.http("POST", api + "/onboarding/plan", conn.auth, P, conn.safe).body); }) || "";
+var machines = planLink ? items(core.http("POST", api + "/api/wo/query-unmanaged-machine", conn.auth, { planLink: planLink, expandFields: true }, conn.safe).body) : [];
+var pattern = SPEC.nameFilter ? new RegExp(SPEC.nameFilter) : null;
+var tagKey = SPEC.tagFilter ? SPEC.tagFilter.split(":")[0] : "";
+var tagVal = SPEC.tagFilter ? SPEC.tagFilter.split(":").slice(1).join(":") : "";
+var picked = [];
+for (var m = 0; m < machines.length; m++) {
+  var mc = machines[m];
+  if (pattern && !pattern.test(String(mc.name))) continue;
+  if (tagKey && tagValue(mc, tagKey) !== tagVal) continue;
+  picked.push(mc);
+}
+System.log(picked.length + " of " + machines.length + " unmanaged machines match.");
+if (picked.length > SPEC.max) throw new Error(picked.length + " machines match, more than the limit of " + SPEC.max + "; narrow the filter. Nothing more was changed.");
+var groups = {};
+var order = [];
+for (var g = 0; g < picked.length; g++) {
+  var n = String(picked[g].name);
+  var key = SPEC.grouping === "single" ? P.name : SPEC.grouping === "by-tag" ? (tagValue(picked[g], SPEC.groupTag) || "untagged") : SPEC.grouping === "by-prefix" ? n.split("-")[0] : n;
+  if (!groups[key]) { groups[key] = []; order.push(key); }
+  groups[key].push(picked[g]);
+}
+var templateLink = "";
+if (SPEC.template) {
+  var templates = mod.listAll(conn, "/blueprint/api/blueprints?name=" + encodeURIComponent(SPEC.template), "page");
+  templateLink = "/blueprint/api/blueprints/" + one(templates, SPEC.template, "cloud templates");
+}
+for (var d = 0; d < order.length; d++) {
+  var dep = { planLink: planLink, name: SPEC.prefix + order[d] };
+  if (templateLink) dep.blueprintLink = templateLink;
+  var depLink = core.act(ctx, "add deployment " + dep.name + " with " + groups[order[d]].length + " machine(s)", (function (body) { return function () { return linkOf(core.http("POST", api + "/onboarding/deployment", conn.auth, body, conn.safe).body); }; })(dep)) || "";
+  for (var r = 0; r < groups[order[d]].length; r++) {
+    var res = { planLink: planLink, deploymentLink: depLink, resourceLink: linkOf(groups[order[d]][r]), resourceName: String(groups[order[d]][r].name) };
+    core.act(ctx, "add machine " + res.resourceName + " to " + dep.name, (function (body) { return function () { return core.http("POST", api + "/onboarding/resource", conn.auth, body, conn.safe).statusCode; }; })(res));
+  }
+}
+if (order.length > 0) core.act(ctx, "run onboarding plan " + P.name, function () { return core.http("POST", api + "/api/wo/execute-plan", conn.auth, { planLink: planLink }, conn.safe).statusCode; });
+values.PLAN_LINK = planLink;
+`,
+        ].join(''),
+      });
+
+      return {
+        platform: PLATFORM,
+        title: `${planName} — machines ${nameFilter ? `matching ${nameFilter}` : 'of any name'}${tagFilter ? ` tagged ${tagFilter}` : ''} into ${project}`,
+        effect: 'reversible',
+        trigger: { kind: 'manual', detail: 'An administrator runs the workflow once per batch of machines to bring under management' },
+        scope: {
+          what: `Unmanaged machines in the cloud account ${account} whose name matches ${nameFilter || 'anything'}${tagFilter ? ` and tagged ${tagFilter}` : ''}, at most ${max}.`,
+          decidedBy: ['The cloud account and what its data collection has discovered.', `The name filter ${nameFilter || '(none)'}.`, `The tag filter ${tagFilter || '(none)'}.`, `The limit of ${max} machines.`],
+          ifWrong: 'Machines that are not the project’s become its deployments: their owners can then power them off, resize them or delete them from the catalogue.',
+        },
+        guardrails: [
+          { rule: `Stops if more than ${max} machines match`, because: 'A filter that matches the whole vCenter onboards the management plane into a tenant project.' },
+          { rule: 'Cloud account and project looked up by name, exactly once', because: 'Two accounts or projects of the same name stop the run rather than onboarding into the wrong one.' },
+          { rule: 'An existing plan of the same name is reused, not duplicated', because: 'A second plan would try to onboard the same machines twice.' },
+        ],
+        dryRun: [`Run the workflow Run onboarding plan ${base} with dryRun = true: it looks up the account and project and logs the plan it would create. (The machine list needs the plan, so a dry run against a new plan lists no machines — run it once against an existing plan of the same name to see the matches.)`],
+        undo: ['Unregister the machines (the Unregister day-2 action on each onboarded machine), which returns them to unmanaged and leaves them running. Do not delete an onboarded deployment: that deletes the machines.'],
+        told: ['The project members, who see the new deployments; VCF Automation’s audit log records the plan run.'],
+        requires: [`The cloud account ${account} with data collection complete.`, `The project ${project} with a cloud zone on that account.`, ...(template ? [`The cloud template "${template}" in the project.`] : [])],
+        files: {
+          ...pkg.files,
+          [`${base}-plan.json`]: json({ ...plan, filters: { name: nameFilter, tag: tagFilter }, grouping, deploymentPrefix: prefix, template: template || null, maxMachines: max }),
+          'IMPORT.md': importMd({
+            subject: `The onboarding plan ${planName}.`,
+            steps: withPackageSteps(pkg, [
+              manualStep('By hand, if the API differs on your release', [
+                `Resources → Onboarding → New onboarding plan: ${planName}, cloud account ${account}, project ${project}.`,
+                `Machines → Add machines: filter ${nameFilter || '(none)'}${tagFilter ? `, tag ${tagFilter}` : ''}; group them ${grouping.replace('-', ' ')}${template ? `; cloud template: select existing → ${template}` : ''}; Run.`,
+              ]),
+            ]),
+            auth: ['apply'],
+            verify: packageVerify(['Onboarding: /relocation/onboarding/plan, /relocation/onboarding/deployment, /relocation/onboarding/resource, /relocation/api/wo/query-unmanaged-machine and /relocation/api/wo/execute-plan, with planLink/deploymentLink/resourceLink bodies, follow the 8.x onboarding API; blueprintLink on a deployment and the machine tag shape are the least certain. VERIFY against the 9.1 VM Apps API reference; the manual steps above are the fallback.']),
+          }),
+        },
+        notes: ['Onboarded machines keep running untouched; only their management changes. The day-2 actions offered on them are those of the project’s day-2 policies.'],
         findings,
       };
     },

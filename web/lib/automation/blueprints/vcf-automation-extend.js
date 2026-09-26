@@ -9,7 +9,7 @@
  * that are not machines, and the "All Apps" side of VCF 9: Supervisor
  * namespaces, VKS clusters and Terraform run from inside a template.
  *
- * Orchestrator was vRealize Orchestrator, vRO. VKS was TKG, and Tanzu
+ * Orchestrator is the VCF Automation Orchestrator. VKS was TKG, and Tanzu
  * Kubernetes Grid Service before that. The payload shapes here follow the
  * APIs as they stood at VCF 9.x; where a field name or an apiVersion moves
  * between releases the file says so rather than guessing quietly.
@@ -20,355 +20,57 @@ import { error, info, warning,              } from '../../core/findings.js';
 import { automationBlueprint,                          } from '../from-automation.js';
 import { listOf, slugOf,                 } from '../automation.js';
 import { applyScript } from '../apply.js';
-import { apiStep, importBundle, importMd, kubeStep, manualStep, verifyFor, workflowId, workflowXml,                                                                            } from '../vcfa-import.js';
-import { packageNameOf, prologue, toPackage,                        } from '../vro/to-package.js';
+import { apiStep, importBundle, importMd, kubeStep, manualStep, verifyFor, workflowId,                                                           } from '../vcfa-import.js';
+import { packageNameOf, toPackage } from '../vro/to-package.js';
                                                    
                                                                    
-import { familyOf, overlapsAny } from '../../core/ip.js';
-
-const PLATFORM = 'vcf-automation'         ;
-const SRC = 'ArchToolKit';
-
-const json = (value         )         => `${JSON.stringify(value, null, 2)}\n`;
-const q = JSON.stringify;
-
-// ---------------------------------------------------------------------------
-// The Orchestrator packages
-//
-// Every automation here is one Orchestrator package on the shared core library
-// (src/automation/vro): the package's workflow is the central component that
-// does the job through the API, and the native files each blueprint already
-// wrote (.workflow, ABX zip, blueprint.yaml, JSON payloads, Kubernetes YAML)
-// stay beside it for anybody who imports by hand.
-
-/** A workflow or element name from free text: Orchestrator keeps the folder in categoryPath, so no "/". */
-const elementName = (text        )         => text.replace(/\//g, '-').trim() || 'Workflow';
-
-/**
- * A second workflow in a package that toPackage already built — the backing
- * workflow of a day-2 action, the lifecycle workflows of a custom resource.
- * Same folder, same settings and the same prologue as the package's main one,
- * so its id is the one a native .workflow of the same name and folder has.
- */
-function extraWorkflow(pkg                   , hasActions         , spec                                                                                                                  )                                                {
-  const artifact                      = {
-    name: spec.name,
-    category: pkg.categoryPath,
-    description: spec.description,
-    inputs: spec.inputs,
-    outputs: spec.outputs,
-    taskName: spec.name,
-    script: `${prologue({ packageName: pkg.packageName, categoryPath: pkg.categoryPath, config: { name: pkg.configName, description: '', attributes: [] }, actions: hasActions ? [{ name: 'x', description: '', resultType: 'Any', params: [], script: '' }] : [] })}${spec.script}`,
-  };
-  return { files: { [`${pkg.packageDir}/workflows/${pkg.categoryPath}/${spec.name}.xml`]: workflowXml(artifact) }, id: workflowId(artifact) };
-}
-
-/** The settings every package that talks to VCF Automation reads. */
-function vcfaSettings(org                        )                       {
-  return [
-    { name: 'vcfaHost', type: 'string', value: '', description: 'VCF Automation host (FQDN)' },
-    {
-      name: 'vcfaOrg',
-      type: 'string',
-      value: '',
-      description: org === 'all-apps' ? 'The All Apps organization name, as in its login URL' : 'The VM Apps organization name, as in its login URL',
-    },
-    { name: 'vcfaApiToken', type: 'SecureString', description: 'An API token of that organization, exchanged at /oauth/tenant/<org>/token' },
-  ];
-}
-
-/** The dryRun switch (off: it acts), the cap and the webhook, as every changing package has them. */
-function guardSettings(cap        , what        )                       {
-  return [
-    { name: 'dryRun', type: 'boolean', value: false, description: `Set to true to preview: nothing is ${what} while it is true` },
-    { name: 'cap', type: 'number', value: cap, description: 'The most changes one run may make' },
-    { name: 'webhook', type: 'SecureString', description: 'Optional: where the audit record is posted' },
-  ];
-}
-
-const pa = (name        , type        , description        ) => ({ name, type, description });
-
-/**
- * The actions the VCF Automation packages share, added to each package's own
- * module (an action lives in exactly one module, and a package carries its
- * module). Lists are read whole and matched here rather than with $filter,
- * whose dialect differs between the services.
- */
-function vcfaActions(packageName        )                 {
-  const head = `var core = System.getModule("vcf.automation.core");\nvar mod = System.getModule(${q(packageName)});\n`;
-  return [
-    {
-      name: 'listAll',
-      description:
-        'Every item of a VCF Automation list: /iaas/api paged with $top/$skip, the other services (blueprint, policy, form-service, abx) with page/size; content[] and totalElements, or a bare array. Throws rather than return a partial or unrecognised list.',
-      resultType: 'Any',
-      params: [pa('host', 'string', 'VCF Automation host'), pa('auth', 'Any', 'What core.loginVcfAutomation returned'), pa('path', 'string', 'e.g. /iaas/api/projects'), pa('safe', 'Any', 'http options, { redact: settings._secrets }')],
-      script: `${head}${String.raw`var p = String(path);
-var iaas = p.indexOf("/iaas/api/") === 0;
-var sep = p.indexOf("?") < 0 ? "?" : "&";
-var SIZE = 200;
-return core.pageAll(function (page) {
-  var query = iaas ? "%24top=" + SIZE + "&%24skip=" + (page * SIZE) : "page=" + page + "&size=" + SIZE;
-  var b = core.http("GET", "https://" + host + p + sep + query, auth, null, safe).body;
-  if (Object.prototype.toString.call(b) === "[object Array]") return { items: page === 0 ? b : [], total: null, more: false };
-  if (!b || typeof b !== "object" || Object.prototype.toString.call(b.content) !== "[object Array]") {
-    throw new Error("GET " + p + " did not answer with a list (content[]); VERIFY the response shape on your release. Nothing was changed after it.");
-  }
-  var total = b.totalElements !== undefined && b.totalElements !== null ? Number(b.totalElements) : null;
-  return { items: b.content, total: total, more: b.last === true ? false : (b.last === false ? true : null) };
-}, 0);`}`,
-    },
-    {
-      name: 'findOne',
-      description: 'The one item whose fields equal criteria, or null. Throws when more than one matches: a run never guesses which of two objects was meant.',
-      resultType: 'Any',
-      params: [pa('items', 'Any', 'What listAll returned'), pa('criteria', 'Any', 'Object of field to value'), pa('what', 'string', 'What is looked for, for the error')],
-      script: String.raw`var found = [];
-for (var i = 0; i < items.length; i++) {
-  var match = true;
-  for (var key in criteria) {
-    if (criteria.hasOwnProperty(key) && String(items[i][key]) !== String(criteria[key])) match = false;
-  }
-  if (match) found.push(items[i]);
-}
-if (found.length > 1) throw new Error("More than one " + what + " matches; refusing to guess which. Tidy them first.");
-return found.length === 1 ? found[0] : null;`,
-    },
-    {
-      name: 'projectIdOf',
-      description: 'The id of the VCF Automation project with this name (GET /iaas/api/projects). Throws when there is none, or more than one.',
-      resultType: 'string',
-      params: [pa('host', 'string', 'VCF Automation host'), pa('auth', 'Any', 'Bearer header'), pa('safe', 'Any', 'http options'), pa('projectName', 'string', 'Project name')],
-      script: `${head}${String.raw`if (!projectName) throw new Error("Set projectName in the configuration element: the project the objects belong to.");
-var project = mod.findOne(mod.listAll(host, auth, "/iaas/api/projects", safe), { name: String(projectName) }, "project named " + projectName);
-if (!project) throw new Error("No project named '" + projectName + "' in this organization.");
-return String(project.id);`}`,
-    },
-    {
-      name: 'vroEndpointLink',
-      description:
-        'The endpointLink a custom resource or resource action names its Orchestrator by: /resources/endpoints/<id> of the Orchestrator integration (GET /iaas/api/integrations, integrationType vro; KB 314899). With several, integrationName picks one. VERIFY the link form on your release against a resource action made in the interface.',
-      resultType: 'string',
-      params: [pa('host', 'string', 'VCF Automation host'), pa('auth', 'Any', 'Bearer header'), pa('safe', 'Any', 'http options'), pa('integrationName', 'string', 'Integration name, or empty when there is one')],
-      script: `${head}${String.raw`var all = mod.listAll(host, auth, "/iaas/api/integrations", safe);
-var vro = [];
-for (var i = 0; i < all.length; i++) {
-  if (String(all[i].integrationType).toLowerCase() === "vro" && (!integrationName || String(all[i].name) === String(integrationName))) vro.push(all[i]);
-}
-if (vro.length === 0) throw new Error("No Orchestrator integration" + (integrationName ? " named '" + integrationName + "'" : "") + " in this organization (Infrastructure > Integrations).");
-if (vro.length > 1) throw new Error(vro.length + " Orchestrator integrations: set vroIntegrationName in the configuration element to the one to use.");
-return "/resources/endpoints/" + vro[0].id;`}`,
-    },
-    {
-      name: 'ensureAbxAction',
-      description: 'The ABX action with this name in this project: left as it is when it exists, created through POST /abx/api/resources/actions (guarded by act) when not. Returns its id, or "" in a dry run.',
-      resultType: 'string',
-      params: [pa('ctx', 'Any', 'core.begin'), pa('host', 'string', 'VCF Automation host'), pa('auth', 'Any', 'Bearer header'), pa('safe', 'Any', 'http options'), pa('body', 'Any', 'The action: name, runtime, entrypoint, source, projectId, …')],
-      script: `${head}${String.raw`var found = mod.findOne(mod.listAll(host, auth, "/abx/api/resources/actions", safe), { name: body.name, projectId: body.projectId }, "ABX action named " + body.name);
-if (found) {
-  System.log("Exists, left as it is: ABX action \"" + body.name + "\" (" + found.id + "). Change its script in Extensibility > Library > Actions, or delete it and run again.");
-  return String(found.id);
-}
-var id = core.act(ctx, "create ABX action \"" + body.name + "\"", function () {
-  var r = core.http("POST", "https://" + host + "/abx/api/resources/actions", auth, body, safe);
-  if (!r.body || !r.body.id) throw new Error("POST /abx/api/resources/actions returned no id");
-  return String(r.body.id);
-});
-return id || "";`}`,
-    },
-    {
-      name: 'ensureTemplate',
-      description:
-        'A cloud template, as import-templates.sh does it: POST /blueprint/api/blueprint-validation (saves nothing), then create it or update the draft of the one with the same name in the project (left alone when its content is the same), then create the version unless it exists, released when template.release. Every write goes through act. Returns the template id, or "" when a dry run would create it.',
-      resultType: 'string',
-      params: [pa('ctx', 'Any', 'core.begin'), pa('host', 'string', 'VCF Automation host'), pa('auth', 'Any', 'Bearer header'), pa('safe', 'Any', 'http options'), pa('template', 'Any', '{ projectId, name, description, content, version, release, validate }')],
-      script: `${head}${String.raw`var api = "https://" + host + "/blueprint/api/";
-var t = template;
-var body = { name: String(t.name), description: String(t.description || ""), projectId: String(t.projectId), requestScopeOrg: false, content: String(t.content) };
-if (String(t.content).indexOf("<REQUIRED") >= 0) throw new Error("The template \"" + t.name + "\" still has a <REQUIRED …> placeholder; fill it (or the setting that fills it) first. Nothing was imported.");
-if (t.validate !== false) {
-  var v = core.http("POST", api + "blueprint-validation", auth, body, safe).body || {};
-  var messages = v.validationMessages || [];
-  for (var i = 0; i < messages.length; i++) System.log("Template \"" + t.name + "\": " + (messages[i].type || "INFO") + ": " + (messages[i].message || JSON.stringify(messages[i])));
-  if (v.valid === false) throw new Error("The template \"" + t.name + "\" is not valid (the log lists why); nothing was imported.");
-}
-var all = mod.listAll(host, auth, "/blueprint/api/blueprints", safe);
-var same = [];
-for (var j = 0; j < all.length; j++) {
-  if (String(all[j].name) === String(t.name) && (!all[j].projectId || String(all[j].projectId) === String(t.projectId))) same.push(all[j]);
-}
-if (same.length > 1) throw new Error("More than one template named \"" + t.name + "\" in the project; refusing to guess. Tidy them first.");
-var id = same.length === 1 ? String(same[0].id) : "";
-if (id) {
-  var current = core.http("GET", api + "blueprints/" + id, auth, null, safe).body || {};
-  if (String(current.content || "") === String(t.content)) {
-    System.log("Exists with the same content, left as it is: template \"" + t.name + "\" (" + id + ")");
-  } else {
-    core.act(ctx, "update the draft of template \"" + t.name + "\" (" + id + ")", function () {
-      core.http("PUT", api + "blueprints/" + id, auth, body, safe);
-      return true;
-    });
-  }
-} else {
-  id = core.act(ctx, "create template \"" + t.name + "\"", function () {
-    var r = core.http("POST", api + "blueprints", auth, body, safe);
-    if (!r.body || !r.body.id) throw new Error("POST /blueprint/api/blueprints returned no id");
-    return String(r.body.id);
-  }) || "";
-}
-var what = "create version " + t.version + " of template \"" + t.name + "\"" + (t.release ? " and release it to the catalog" : "");
-if (!id) {
-  core.act(ctx, what, function () { return true; });
-  return "";
-}
-var versions = mod.listAll(host, auth, "/blueprint/api/blueprints/" + id + "/versions", safe);
-for (var k = 0; k < versions.length; k++) {
-  if (String(versions[k].version) === String(t.version)) {
-    System.log("Version " + t.version + " of \"" + t.name + "\" exists; versions are immutable, so raise the version to publish a change.");
-    return id;
-  }
-}
-core.act(ctx, what, function () {
-  core.http("POST", api + "blueprints/" + id + "/versions", auth, { version: String(t.version), description: String(t.description || ""), changeLog: "Imported by the vcf.automation package", release: t.release === true }, safe);
-  return true;
-});
-return id;`}`,
-    },
-  ];
-}
-
-/** The body POST /abx/api/resources/actions takes (as import/abx/<action>/action.json), less source and projectId. */
-function abxBody(action             )                          {
-  return {
-    name: action.name,
-    description: action.description,
-    actionType: 'SCRIPT',
-    runtime: action.runtime,
-    entrypoint: 'handler',
-    inputs: action.inputs ?? {},
-    timeoutSeconds: action.timeoutSeconds,
-    memoryInMB: action.memoryInMB ?? 300,
-    dependencies: '',
-    shared: false,
-  };
-}
-
-/** The opening lines of a package workflow that logs in to VCF Automation. */
-const VCFA_LOGIN = String.raw`if (!settings.vcfaHost) throw new Error("Set vcfaHost in the configuration element " + SETTINGS_NAME + ".");
-if (!settings.vcfaApiToken) throw new Error("Set vcfaApiToken in the configuration element " + SETTINGS_NAME + ".");
-var host = String(settings.vcfaHost);
-var auth = core.loginVcfAutomation(host, settings.vcfaApiToken, settings.vcfaOrg || "");
-var SAFE = { redact: settings._secrets };`;
-
-/** What running any of the packages needs. */
-const PKG_REQUIRES = 'For the package: the Orchestrator of VCF Automation 9.1 (VM Apps organization; the Orchestrate tab of an All Apps organization) or VCF Operations orchestrator 9.1, with the vcf.automation core library imported and the endpoint certificates trusted.';
-
-/** What every package that logs in to VCF Automation cannot confirm about the login. */
-const VERIFY_LOGIN =
-  'The package logs in with core.loginVcfAutomation: an organization API token exchanged at POST /oauth/tenant/<org>/token (grant_type=refresh_token), as vrealize.it ("VCF Automation 9 API Access") documents for both organization types; the 9.0 TechDocs page "Get Your Access Token for the VCF Automation VM Apps API" shows /tm/oauth/tenant/<org>/token instead — VERIFY which your release answers.';
-
-/** A fallback script moved under scripts/: it still reads the payloads beside the README. */
-function underScripts(script        )         {
-  return script
-    .replace('# Apply the payloads beside this script to', '# Apply the payloads beside the README (one folder up) to')
-    .replace('set -euo pipefail\n', 'set -euo pipefail\n# The payloads are one folder up, beside the README.\ncd "$(dirname "$0")/.."\n');
-}
-
-/** The ABX step of importBundle, naming the PowerShell packager by its path too, as the by-hand route. */
-function abxStep(step                        )                         {
-  return step ? { heading: `Or by hand: ${step.heading}`, lines: [...step.lines, '', 'On Windows, `import/package-abx.ps1` builds the same zip as `import/package-abx.sh`.'] } : undefined;
-}
-
-/** A native-import step of importBundle, as the by-hand alternative to the package. */
-function orByHand(step                        )                         {
-  return step ? { heading: `Or by hand: ${step.heading}`, lines: step.lines } : undefined;
-}
-
-/** The package's import steps, with the extra workflows it holds named in the first. */
-function packageSteps(pkg                   , extra                                          = [])               {
-  return pkg.importSteps.map((step, index) =>
-    index === 0 && extra.length > 0
-      ? { heading: step.heading, lines: [...step.lines, '', `It also holds the workflow${extra.length > 1 ? 's' : ''} ${extra.map((w) => `**${w.name}** (id ${w.id})`).join(', ')} in ${pkg.categoryPath}.`] }
-      : step,
-  );
-}
-
-/** The payload POST /blueprint/api/blueprints takes: a cloud template is YAML inside JSON. */
-function templatePayload(name        , description        , yaml        )                          {
-  return {
-    name,
-    description: `${description}`,
-    projectId: '<REQUIRED — GET /iaas/api/projects and take the id>',
-    requestScopeOrg: false,
-    content: yaml,
-  };
-}
-
-/**
- * A kubectl script that runs a server-side dry run unless told otherwise.
- *
- * Server-side, because a client-side dry run only checks that the YAML parses;
- * the server checks the class exists, the VM class is bound to the namespace and
- * the admission webhooks agree — which is where these requests actually fail.
- */
-function kubectlScript(purpose        , files                   , undo        )         {
-  return [
-    '#!/usr/bin/env bash',
-    `# ${purpose}`,
-    '#',
-    '# Uses whatever kubectl context is current. Log in first with the VCF CLI or',
-    '# kubectl vsphere login, and check the context — that is the scope.',
-    '#',
-    '# Applies when run. With --dry-run it runs a server-side dry run only: the',
-    '# Supervisor validates the request and nothing is created.',
-    'set -euo pipefail',
-    '',
-    'command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }',
-    'echo "Context: $(kubectl config current-context)"',
-    '',
-    'MODE=()',
-    '[[ "${1:-}" == "--dry-run" ]] && MODE=(--dry-run=server)',
-    '',
-    ...files.map((file) => `kubectl apply "\${MODE[@]}" -f '${file}'`),
-    '',
-    'if [[ ${#MODE[@]} -gt 0 ]]; then',
-    '  echo "Server-side dry run only. Nothing was created. Run it without --dry-run to apply."',
-    'fi',
-    '',
-    `# Undo: ${undo}`,
-    '',
-  ].join('\n');
-}
-
-/** "vm (VC:VirtualMachine)" or "dryRun (boolean, default true)" as a workflow parameter. */
-function paramOf(text        )           {
-  const match = /^(\w+)\s*\(([^,)]+)/.exec(text.trim());
-  return { name: match?.[1] ?? text.trim(), type: (match?.[2] ?? 'string').trim(), description: text.trim() };
-}
-
-/** A Python ABX stub: dry run by default, and honest that the work is still to be written. */
-function abxStub(title        , what        )         {
-  const quoted = JSON.stringify(title);
-  return [
-    '"""',
-    title,
-    '',
-    ' as a stub: it imports and runs, reports in a dry run,',
-    `and refuses to pretend it did the work until the work is written. ${what}`,
-    '"""',
-    '',
-    '',
-    'def handler(context, inputs):',
-    '    if inputs.get("dryRun", True) is not False:',
-    `        print("DRY RUN:", ${quoted}, {k: v for k, v in inputs.items() if not k.startswith("__")})`,
-    '        return {"dryRun": True, **inputs}',
-    `    raise NotImplementedError(${quoted} + ": write the call here, then remove this line")`,
-    '',
-  ].join('\n');
-}
+import {
+  PLATFORM,
+  SRC,
+  json,
+  q,
+  elementName,
+  extraWorkflow,
+  vcfaSettings,
+  guardSettings,
+  pa,
+  vcfaActions,
+  abxBody,
+  VCFA_LOGIN,
+  PKG_REQUIRES,
+  VERIFY_LOGIN,
+  underScripts,
+  abxStep,
+  orByHand,
+  packageSteps,
+  templatePayload,
+  kubectlScript,
+  paramOf,
+  abxStub,
+  rowsOf,
+  yes,
+  lookupActions,
+  criteriaOf,
+} from './vcf-automation-extend-core.js';
+import { VKS_CLUSTER } from './vcf-automation-extend-vks.js';
+import { ORCHESTRATOR_ASSETS, ORCHESTRATOR_ENDPOINT, SECRETS } from './vcf-automation-extend-orchestrator.js';
+import { GENERIC_WORKFLOW_INPUTS, customRows, workflowExtras } from './vcf-automation-extend-workflow.js';
+import { CUSTOM_FORM, FORM_FIELD_HINT, formDefinition, parseFormFields } from './vcf-automation-extend-forms.js';
 
 // ---------------------------------------------------------------------------
 // Orchestrator workflow scaffolds
+
+/**
+ * A "From" cell of a resource action's input table as the binding stored on
+ * the runnable's input parameter. The serialised form is VERIFY: make one
+ * binding in the interface and GET the resource action to compare.
+ */
+function bindingOf(from        )                         {
+  if (from === 'resource') return { type: 'resource' };
+  if (from.startsWith('property:')) return { type: 'property', value: `\${properties.${from.slice('property:'.length)}}` };
+  if (from.startsWith('form:')) return { type: 'form', value: from.slice('form:'.length) };
+  return { type: 'constant', value: from.replace(/^const:/, '') };
+}
 
                         
                          
@@ -608,7 +310,7 @@ const WORKFLOW_TASKS                                         = {
     },
   },
   custom: {
-    label: 'Custom (empty)',
+    label: 'Custom — your own inputs, outputs and settings',
     about: 'An empty scaffold with the parts that are always missing already in place: dry run, deadline, configuration element, a failure path.',
     inputs: [{ name: 'target', type: 'string', description: 'Whatever the workflow acts on.' }],
     outputs: [{ name: 'result', type: 'string', description: 'What it did.' }],
@@ -634,6 +336,33 @@ const WORKFLOW_TASKS                                         = {
     },
   },
 };
+
+/** The custom task from the rows on the page: the same scaffold, with your parameters and settings. */
+function customTask(rows                               )               {
+  const first = rows.inputs[0]?.name;
+  const target = first ? first : '"(no input)"';
+  const reads = rows.attributes.map((a) => `var ${a.key} = setting(${JSON.stringify(a.key)});`);
+  return {
+    label: 'Custom',
+    about: 'A workflow of your own, with the parts that are always missing already in place: dry run, deadline, configuration element, a failure path.',
+    inputs: rows.inputs,
+    outputs: rows.outputs,
+    settings: rows.attributes.map((a) => ({ key: a.key, type: a.type, description: a.description, example: a.value })),
+    act: ['// TODO: the work. Call checkDeadline() between steps that can be slow.', ...reads, `System.log("acted on " + ${target});`],
+    wouldDo: `"DRY RUN: would act on " + ${target}`,
+    undo: 'Whatever reverses the work you add. Write it here before the workflow goes into a subscription or a schedule.',
+    scope: 'Whatever the workflow body touches — define it before release',
+    pkg: {
+      settings: rows.attributes.map((a)                     => (a.type === 'SecureString' ? { name: a.key, type: 'SecureString', description: a.description } : { name: a.key, type: a.type, value: a.type === 'number' ? Number(a.value) : a.type === 'boolean' ? /^(true|yes|1)$/i.test(a.value) : a.type === 'Array/string' ? a.value.split(',').map((v) => v.trim()).filter(Boolean) : a.value, description: a.description })),
+      body: [
+        '// TODO: the work. Look up what exists first (also in a dry run), then make',
+        '// each change inside core.act. Call checkDeadline() between slow steps.',
+        ...reads,
+        `core.act(ctx, "act on " + ${target}, function () { return true; });`,
+      ],
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Orchestrator action sources
@@ -746,7 +475,7 @@ const ACTION_SOURCES                                         = {
     },
   },
   custom: {
-    label: 'Custom (empty)',
+    label: 'Custom — your own list and inputs',
     defaultName: 'listOptions',
     field: 'choice',
     fieldLabel: 'Choice',
@@ -848,11 +577,13 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       { id: 'use_config', label: 'Read settings from the configuration element', control: 'toggle', default: true, hint: 'Off writes them into the script — see the finding' },
       { id: 'timeout_seconds', label: 'Give up after (seconds)', control: 'number', default: 300, min: 0, max: 3600, hint: '0 means no deadline' },
       { id: 'dry_run_input', label: 'Add a dryRun input', control: 'toggle', default: true },
+      ...GENERIC_WORKFLOW_INPUTS,
     ],
     automation: (values                 , name        )             => {
       const workflowName = str(values, 'workflow_name', 'Orchestrator workflow');
       const taskId = str(values, 'task', 'ad-computer');
-      const task = WORKFLOW_TASKS[taskId] ?? WORKFLOW_TASKS['custom'] ;
+      const custom = taskId === 'custom' ? customRows(values) : undefined;
+      const task = custom ? customTask(custom) : WORKFLOW_TASKS[taskId] ?? WORKFLOW_TASKS['custom'] ;
       const folder = str(values, 'folder', 'Automation');
       const configPath = str(values, 'config_path', 'Automation/Settings');
       const useConfig = bool(values, 'use_config', true);
@@ -865,7 +596,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
         return [parts.join('/') || 'Automation', last];
       })();
 
-      const findings            = [];
+      const findings            = [...(custom?.findings ?? [])];
       if (timeout === 0) {
         findings.push(
           warning('vcfa.vro.no-timeout', 'This workflow has no deadline, so a hung API call holds the workflow — and whatever deployment waits on it — until somebody cancels it.', {
@@ -929,7 +660,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
         ` * ${workflowName}`,
         ' *',
         ' * Scriptable task',
-        ' * (formerly vRealize Orchestrator).',
+        ' * VCF Automation Orchestrator.',
         ` * ${task.about}`,
         ' *',
         ` * Inputs:  ${inputNames.join(', ')}`,
@@ -1104,15 +835,20 @@ export const VCF_AUTOMATION_EXTEND                                 = [
         },
       });
 
+      const extras = workflowExtras(values, { base, name: packageWorkflowName, about: task.about, workflowId: pkg.workflowId, inputs: task.inputs, outputs: task.outputs, attributes: task.settings.map((s) => ({ key: s.key })) });
+      findings.push(...extras.findings);
+
       return {
         platform: PLATFORM,
         title: `${workflowName} — an Orchestrator workflow with a dry run`,
         effect: 'reversible',
-        trigger: {
-          kind: 'request',
-          detail: 'Whatever calls it: a subscription on a deployment event, a custom day-2 action, a catalogue item, or somebody running it from the client',
-          worstCase: 'once per machine per deployment, when it is wired to a subscription — every one of a 50-machine bulk request',
-        },
+        trigger: extras.trigger
+          ? { kind: str(values, 'schedule', 'none') !== 'none' && !bool(values, 'subscribe', false) ? 'schedule' : 'request', ...extras.trigger }
+          : {
+              kind: 'request',
+              detail: 'Whatever calls it: a subscription on a deployment event, a custom day-2 action, a catalogue item, or somebody running it from the client',
+              worstCase: 'once per machine per deployment, when it is wired to a subscription — every one of a 50-machine bulk request',
+            },
         scope: {
           what: `${task.scope}, for the objects named in each run’s inputs.`,
           decidedBy: [
@@ -1135,7 +871,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
           'Then wire it to a subscription with criteria narrowed to one test project before widening it.',
         ],
         undo: [task.undo, 'Orchestrator does not roll back a workflow. What it did stays done when the workflow fails half way through.'],
-        told: ['The workflow run’s logs and variables in the Orchestrator client, per run.', 'Forward Orchestrator logs to VCF Operations for Logs if anybody should notice it failing overnight.'],
+        told: ['The workflow run’s logs and variables in the Orchestrator client, per run.', 'Forward Orchestrator logs to VCF Operations for Logs if anybody should notice it failing overnight.', ...extras.told],
         requires: [
           PKG_REQUIRES,
           taskId === 'ad-computer' ? 'The Active Directory plugin with a configured AD server, whose account can create computers in the target OU.' : taskId === 'custom' ? 'Whatever your workflow calls.' : 'A REST host added with "Add a REST host", with its own authentication configured.',
@@ -1146,6 +882,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
           [`${base}.js`]: script,
           [`${base}-workflow.json`]: json(description),
           [`${base}-IMPORT.md`]: importSteps,
+          ...extras.files,
           ...imported.files,
           'IMPORT.md': importMd({
             subject: `The Orchestrator workflow "${workflowName}", as an Orchestrator package on the vcf.automation.core library (\`${pkg.packageDir}\`), and as the plain scriptable-task workflow it was (\`import/orchestrator/\`) for anybody who would rather build or import it by hand. Use one or the other: the package is the one that reads its settings, guards every change and writes an audit record.`,
@@ -1161,19 +898,22 @@ export const VCF_AUTOMATION_EXTEND                                 = [
                 : []),
               orByHand(imported.steps.orchestrator),
               manualStep('Run the plain workflow once', [hasDryRun ? 'Run it from the Orchestrator client with the inputs filled and dryRun left empty or true; read the Logs tab.' : 'Run it against a test object and read the Logs tab.']),
+              ...extras.steps,
             ],
-            auth: ['import'],
-            orgs: 'VCF Automation 9.1 / 9.1.1 (the Orchestrator of a VM Apps organization, or an external VCF Operations orchestrator) and Aria Automation 8.x',
+            auth: extras.steps.length > 0 ? ['import', 'apply'] : ['import'],
+            orgs: 'VCF Automation 9.1 / 9.1.1 (the Orchestrator of a VM Apps organization, or an external VCF Operations orchestrator)',
             verify: [
               ...verifyFor(imported),
               ...(taskId === 'ad-computer' ? ['The Active Directory plugin calls (ActiveDirectory.searchExactMatch, OU.createComputerAD) are as the plugin library workflows use them; VERIFY them against the plugin on your Orchestrator.'] : []),
               ...(taskId === 'dns-record' ? ['The DNS paths default to the Infoblox WAPI (GET record:a?name=, POST record:a {name, ipv4addr}; for an IPv6 address GET record:aaaa?name=, POST record:aaaa {name, ipv6addr}); VERIFY the WAPI version your grid runs, or set lookupPath/recordPath and lookupPathV6/recordPathV6 for your DNS API.'] : []),
               ...(taskId === 'backup-job' ? ['listPath and addPath are placeholders for a backup product REST API; VERIFY both against your product’s API reference before running the workflow.'] : []),
               'The package reads its settings from the configuration element in its own folder (see step 3), not from the path set on the page, which the plain workflow keeps using.',
+              ...extras.verify,
             ],
           }),
         },
         notes: [
+          ...extras.notes,
           'Orchestrator scripting is Rhino JavaScript (ES5 plus a little). Arrow functions, let and const may not parse depending on the runtime chosen for the task — the scaffold sticks to var and function.',
           'A scriptable task does not time out on its own. The deadline in the script is checked between steps; a single call that hangs is bounded by the REST host’s operation timeout, which the script sets.',
           'Export the package after every change. A workflow that only exists in one Orchestrator is lost with it.',
@@ -1201,12 +941,14 @@ export const VCF_AUTOMATION_EXTEND                                 = [
         default: 'ad-ous',
       },
       { id: 'action_name', label: 'Action name', control: 'text', default: '', placeholder: 'listADOUs', hint: 'Empty uses the usual name for what it lists' },
+      { id: 'action_inputs', label: 'Inputs', control: 'textarea', default: 'filter | string | Whatever narrows the list', hint: 'Input | Type | Description', help: 'The parameters the form passes; bind each to a form field (action:module/name(param=field) in a custom form).', showWhen: { input: 'source', equals: ['custom'] } },
       {
         id: 'return_type',
         label: 'Returns',
         control: 'select',
         options: [
           { value: 'Array/string', label: 'Array/string — a dropdown' },
+          { value: 'Array/Properties', label: 'Array/Properties — a dropdown of label and value pairs' },
           { value: 'string', label: 'string — a single default value' },
         ],
         default: 'Array/string',
@@ -1218,7 +960,11 @@ export const VCF_AUTOMATION_EXTEND                                 = [
     automation: (values                 , name        )             => {
       const module = str(values, 'module', 'com.company.infra');
       const sourceId = str(values, 'source', 'ad-ous');
-      const source = ACTION_SOURCES[sourceId] ?? ACTION_SOURCES['custom'] ;
+      const actionInputs = rowsOf(str(values, 'action_inputs', ''), 3)
+        .filter(([n = '']) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n))
+        .map(([n = '', type = '', description = '']) => ({ name: n, type: type || 'string', description: description || n }));
+      const presetSource = ACTION_SOURCES[sourceId] ?? ACTION_SOURCES['custom'] ;
+      const source = sourceId === 'custom' && actionInputs.length > 0 ? { ...presetSource, inputs: actionInputs } : presetSource;
       const actionName = str(values, 'action_name', source.defaultName).replace(/[^A-Za-z0-9_]/g, '');
       const returnType = str(values, 'return_type', 'Array/string');
       const configPath = str(values, 'config_path', 'Automation/Settings');
@@ -1228,7 +974,12 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       const parts = configPath.split('/');
       const element = parts.pop() ?? 'Settings';
       const category = parts.join('/') || 'Automation';
-      const dropdown = returnType === 'Array/string';
+      const pairs = returnType === 'Array/Properties';
+      const dropdown = returnType === 'Array/string' || pairs;
+      // Label and value pairs: each entry of result becomes a Properties { label, value }.
+      const returnLine = pairs
+        ? 'var pairs = []; for (var r = 0; r < result.length; r++) { var p = new Properties(); p.put("label", String(result[r])); p.put("value", String(result[r])); pairs.push(p); } return pairs;'
+        : dropdown ? 'return result;' : 'return result.length > 0 ? result[0] : "";';
 
       const findings            = [];
       if (!/^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/.test(module)) {
@@ -1293,7 +1044,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
         '  result = [];',
         '}',
         '',
-        dropdown ? 'return result;' : 'return result.length > 0 ? result[0] : "";',
+        returnLine,
         '',
       ].join('\n');
 
@@ -1357,7 +1108,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
           `  System.error(${q(`${packageName}/${actionName} failed: `)} + (e && e.message ? e.message : e));`,
           '  result = [];',
           '}',
-          dropdown ? 'return result;' : 'return result.length > 0 ? result[0] : "";',
+          returnLine,
         ].join('\n'),
       };
       const pkg = toPackage({
@@ -1429,14 +1180,14 @@ export const VCF_AUTOMATION_EXTEND                                 = [
               manualStep(`Or by hand: configuration element ${configPath}`, [`Only for the plain action under \`import/orchestrator/\`: Assets → Configurations: the element \`${element}\` in folder \`${category}\` must exist with the attributes the action reads (see \`${base}-action.json\`). The package brings its own, in ${categoryPath}.`]),
               orByHand(imported.steps.orchestrator),
               manualStep('Bind it to the request form', [
-                `Open the template’s custom form (Service Broker → Content & Policies → Content → the item → Customize form; VERIFY the menu on 9.x), select the field ${source.fieldLabel}, and set its values to come from an external source: the action ${packageName}/${actionName}, with its ${source.inputs[0]?.name ?? 'filter'} input bound. \`${base}-form-field.json\` shows the resulting schema; merge it by hand — it is a fragment of a form, not a whole one, so it is not imported as one.`,
+                `Open the template’s custom form (Design → Custom Forms, or Content & Policies → Content → the item → Customize form; VERIFY the menu on 9.1) — or build the whole form with "A custom request form for a catalog item", whose Values column takes action:${packageName}/${actionName} — select the field ${source.fieldLabel}, and set its values to come from an external source: the action ${packageName}/${actionName}, with its ${source.inputs[0]?.name ?? 'filter'} input bound. \`${base}-form-field.json\` shows the resulting schema; merge it by hand — it is a fragment of a form, not a whole one, so it is not imported as one.`,
                 ...(packageName !== module ? [`The package is ${packageName}, not ${module}: "${module}" is not a valid package name, and an action lives in its package’s module. The plain action under \`import/orchestrator/\` keeps ${module}.`] : []),
               ]),
             ],
             auth: ['import'],
             verify: [
               ...verifyFor(imported),
-              'Custom forms in 9.x: external value sources are documented for VM Apps organizations (the Service Broker lineage); an All Apps organization’s request forms are VERIFY.',
+              'Custom forms in 9.x: external value sources are documented for VM Apps organizations; an All Apps organization’s request forms are VERIFY.',
               ...(sourceId === 'ipam-vlans' ? ['vlanPath and the [{ id, name }] answer are a placeholder for your IPAM’s API; VERIFY both.'] : []),
             ],
           }),
@@ -1450,6 +1201,10 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       };
     },
   }),
+
+  ORCHESTRATOR_ENDPOINT,
+  ORCHESTRATOR_ASSETS,
+  CUSTOM_FORM,
 
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -1470,18 +1225,26 @@ export const VCF_AUTOMATION_EXTEND                                 = [
           { value: 'add-backup', label: 'Add to a backup job' },
           { value: 'change-owner', label: 'Change owner tag' },
           { value: 'snapshot-expiry', label: 'Snapshot, deleted automatically after N days' },
+          { value: 'generic', label: 'Anything — an existing workflow or ABX action, by name' },
         ],
         default: 'extend-disk',
       },
       {
         id: 'resource_type',
         label: 'On',
-        control: 'select',
+        control: 'combo',
         options: [
           { value: 'Cloud.vSphere.Machine', label: 'Cloud.vSphere.Machine' },
           { value: 'Deployment', label: 'Deployment' },
+          { value: 'Cloud.vSphere.Disk', label: 'Cloud.vSphere.Disk' },
+          { value: 'Cloud.NSX.Network', label: 'Cloud.NSX.Network' },
+          { value: 'Cloud.NSX.LoadBalancer', label: 'Cloud.NSX.LoadBalancer' },
+          { value: 'Cloud.SecurityGroup', label: 'Cloud.SecurityGroup' },
+          { value: 'Cloud.Ansible', label: 'Cloud.Ansible' },
+          { value: 'Custom.ADUser', label: 'Custom.ADUser (a custom resource type)' },
         ],
         default: 'Cloud.vSphere.Machine',
+        hint: 'Any resource type, including your Custom.* ones',
       },
       {
         id: 'backed_by',
@@ -1497,9 +1260,34 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       { id: 'max_disk_gb', label: 'Largest disk after extending (GB)', control: 'number', default: 500, min: 0, max: 62000, hint: '0 means no limit', showWhen: { input: 'operation', equals: ['extend-disk'] } },
       { id: 'expiry_days', label: 'Delete snapshot after (days)', control: 'number', default: 3, min: 1, max: 30, showWhen: { input: 'operation', equals: ['snapshot-expiry'] } },
       { id: 'require_approval', label: 'Require approval', control: 'toggle', default: true },
+      { id: 'runnable_name', label: 'Workflow or ABX action to run', control: 'text', default: 'Restart application service', hint: 'Exactly as named; it must exist', showWhen: { input: 'operation', equals: ['generic'] } },
+      {
+        id: 'generic_effect',
+        label: 'What it does can be',
+        control: 'select',
+        options: [
+          { value: 'reversible', label: 'Put back' },
+          { value: 'irreversible', label: 'Not put back' },
+        ],
+        default: 'reversible',
+        showWhen: { input: 'operation', equals: ['generic'] },
+      },
+      {
+        id: 'input_bindings',
+        label: 'Inputs of the workflow or action',
+        control: 'textarea',
+        default: 'vm | VC:VirtualMachine | resource\nserviceName | string | form:serviceName',
+        hint: 'Input | Type | From',
+        help: 'From: resource (the resource itself), property:<name> (one of its properties, e.g. property:address), form:<field> (a field of the form below), or const:<value>.',
+        showWhen: { input: 'operation', equals: ['generic'] },
+      },
+      { id: 'form_fields', label: 'Request form', control: 'textarea', default: 'serviceName | Service | string | yes | httpd | httpd, nginx, tomcat | - | General', hint: FORM_FIELD_HINT, showWhen: { input: 'operation', equals: ['generic'] } },
+      { id: 'criteria', label: 'Only offered where', control: 'textarea', default: '', placeholder: '${properties.osType} | eq | LINUX', hint: 'Property | Operator | Value', help: 'Conditions on the resource’s properties, all of which must hold, beside "only when powered on".' },
     ],
     automation: (values                 , name        )             => {
       const actionName = str(values, 'action_name', 'Custom action');
+      const generic = str(values, 'operation', 'extend-disk') === 'generic';
+      const runnableName = str(values, 'runnable_name', '');
       const operation = str(values, 'operation', 'extend-disk');
       const resourceType = str(values, 'resource_type', 'Cloud.vSphere.Machine');
       const backedBy = str(values, 'backed_by', 'vro');
@@ -1509,16 +1297,30 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       const approval = bool(values, 'require_approval', true);
       const base = slugOf(name || actionName, 'resource-action');
       const machine = resourceType === 'Cloud.vSphere.Machine';
-      const irreversible = operation === 'extend-disk' || operation === 'snapshot-expiry';
+      const irreversible = operation === 'extend-disk' || operation === 'snapshot-expiry' || (generic && str(values, 'generic_effect', 'reversible') === 'irreversible');
       const actionId = actionName.replace(/[^A-Za-z0-9]/g, '');
 
       const findings            = [];
+      const form = generic ? parseFormFields(str(values, 'form_fields', '')) : { fields: [], findings: [] };
+      findings.push(...form.findings);
+      const bindings = generic
+        ? rowsOf(str(values, 'input_bindings', ''), 3).map(([input = '', type = '', from = '']) => {
+            const m = /^(resource|property:.+|form:.+|const:.*)$/.exec(from);
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(input) || !m) findings.push(error('vcfa.day2.bad-binding', `"${input} | ${type} | ${from}" is not Input | Type | resource, property:<name>, form:<field> or const:<value>.`, { source: SRC }));
+            if (from.startsWith('form:') && !form.fields.some((field) => field.id === from.slice(5))) findings.push(error('vcfa.day2.unknown-form-field', `Input ${input} is taken from form field ${from.slice(5)}, which the form does not have.`, { source: SRC }));
+            return { input, type: type || 'string', from };
+          })
+        : [];
+      if (generic && !runnableName) findings.push(error('vcfa.day2.no-runnable', 'Name the workflow or ABX action the action runs.', { source: SRC }));
+      const extraCriteria = criteriaOf(str(values, 'criteria', ''), 'vcfa.day2', findings);
       if (irreversible && !approval) {
         findings.push(
           warning('vcfa.day2.destructive-no-approval', `${actionName} cannot be undone and nobody approves it.`, {
             remediation: operation === 'extend-disk'
               ? 'A disk extended by mistake cannot be shrunk; the fix is a new disk and a data copy. Put an approval policy on the action, or keep the size cap low.'
-              : 'The snapshot is deleted on a timer. Somebody should agree to that before the timer starts.',
+              : generic
+                ? 'Nothing this action does comes back. Put an approval policy on it.'
+                : 'The snapshot is deleted on a timer. Somebody should agree to that before the timer starts.',
             source: SRC,
           }),
         );
@@ -1579,12 +1381,20 @@ export const VCF_AUTOMATION_EXTEND                                 = [
           workflowInputs: ['vm (VC:VirtualMachine)', 'snapshotName (string)', 'memory (boolean)', `expiryDays (number, fixed at ${expiry})`, 'dryRun (boolean, default true)'],
           undo: `Before expiry: cancel the scheduled deletion in Orchestrator (Scheduled workflows). After ${expiry} days the snapshot is gone and cannot be recovered.`,
         },
+        generic: {
+          about: `Runs "${runnableName}" on the ${resourceType}, with the inputs bound as listed.`,
+          fields: generic ? (formDefinition(form.fields).schema                           ) : {},
+          workflowInputs: bindings.map((b) => `${b.input} (${b.type})`),
+          undo: irreversible ? `None: "${runnableName}" does something that cannot be put back.` : `Whatever reverses "${runnableName}" — run it again with the previous values, or its own undo workflow.`,
+        },
       };
       const op = OPS[operation] ?? OPS['change-owner'] ;
 
-      const criteria = poweredOnOnly && machine
-        ? { matchExpression: [{ key: '${properties.powerState}', operator: 'eq', value: 'ON' }] }
-        : null;
+      const powerCriterion                            = poweredOnOnly && machine ? [{ key: '${properties.powerState}', operator: 'eq', value: 'ON' }] : [];
+      const extraList = (extraCriteria?.matchExpression ?? [])                             ;
+      const extraExpressions = extraList.length === 1 && Array.isArray(extraList[0] .and) ? (extraList[0] .and                             ) : extraList;
+      const allCriteria = [...powerCriterion, ...extraExpressions];
+      const criteria = allCriteria.length === 0 ? null : allCriteria.length === 1 ? { matchExpression: allCriteria } : { matchExpression: [{ and: allCriteria }] };
 
       // The backing workflow or ABX action, generated so it can be imported first.
       const extendDisk = [
@@ -1614,7 +1424,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       // in both forms (the package and import/orchestrator), so both have one id.
       const categoryPath = `Automation/Day 2/${base}`;
       const backingName = elementName(actionName);
-      const backingWorkflow                                  = backedBy === 'vro'
+      const backingWorkflow                                  = backedBy === 'vro' && !generic
         ? {
             name: backingName,
             category: categoryPath,
@@ -1637,7 +1447,7 @@ export const VCF_AUTOMATION_EXTEND                                 = [
             ].join('\n'),
           }
         : undefined;
-      const backingAbx                          = backedBy === 'abx'
+      const backingAbx                          = backedBy === 'abx' && !generic
         ? { name: actionName, runtime: 'python', script: abxStub(actionName, op.about), description: `Backs the custom action "${actionName}".`, timeoutSeconds: 120 }
         : undefined;
       const imported = importBundle({ ...(backingWorkflow ? { vroWorkflows: [backingWorkflow] } : {}), ...(backingAbx ? { abx: [backingAbx] } : {}) });
@@ -1652,26 +1462,30 @@ export const VCF_AUTOMATION_EXTEND                                 = [
           ? {
               // The id the generated workflow imports with (import/orchestrator); change it if you back the action with your own.
               id: backingWorkflow ? workflowId(backingWorkflow) : '<REQUIRED — the workflow id, from the Orchestrator client>',
-              name: backingName,
+              name: generic ? runnableName : backingName,
               type: 'vro.workflow',
               endpointLink: '<REQUIRED — /resources/endpoints/{id} of the Orchestrator integration>',
-              inputParameters: op.workflowInputs.map((input) => ({ name: input.split(' ')[0], description: input })),
+              inputParameters: generic
+                ? bindings.map((b) => ({ name: b.input, type: b.type, description: `${b.input} (${b.type})`, binding: bindingOf(b.from) }))
+                : op.workflowInputs.map((input) => ({ name: input.split(' ')[0], description: input })),
             }
           : {
               id: '<REQUIRED — the ABX action id>',
-              name: actionName,
+              name: generic ? runnableName : actionName,
               type: 'abx.action',
               projectId: '<REQUIRED — the project that owns the ABX action>',
             },
-        _binding: machine
+        _binding: generic
+          ? 'The binding of each input is in runnableItem.inputParameters[].binding (resource, a resource property, a form field or a constant). VERIFY how your release serialises property binding: make one in the interface and GET it.'
+          : machine
           ? 'Bind the workflow input vm to the resource in the interface: Property binding → vm → "In request" / resource. Verify how your release serialises this before relying on the JSON.'
           : 'Bind the deployment id to the workflow input that takes it.',
         formDefinition: {
-          form: JSON.stringify({ layout: { pages: [{ id: 'page_general', sections: [{ id: 'section_1', fields: Object.keys(op.fields).map((id) => ({ id, display: 'textField' })) }] }] }, schema: op.fields }),
+          form: JSON.stringify(generic ? formDefinition(form.fields) : { layout: { pages: [{ id: 'page_general', sections: [{ id: 'section_1', fields: Object.keys(op.fields).map((id) => ({ id, display: 'textField' })) }] }] }, schema: op.fields }),
           styles: '',
         },
         ...(criteria ? { criteria } : {}),
-        status: 'DRAFT',
+        status: 'RELEASED',
       };
 
       const day2Line = {
@@ -1705,12 +1519,14 @@ export const VCF_AUTOMATION_EXTEND                                 = [
       // approval policy — each looked up first and left alone if it exists.
       const hasProject = backedBy === 'abx' || approval;
       const registerName = elementName(`Register ${actionName}`);
-      const pkgActions = vcfaActions(packageNameOf('vcfa', 'day2', base));
+      const pkgActions = [...vcfaActions(packageNameOf('vcfa', 'day2', base)), ...(generic ? lookupActions(packageNameOf('vcfa', 'day2', base)) : [])];
       const { _binding: _unusedBinding, ...resourceActionBody } = resourceAction;
       void _unusedBinding;
       const registerScript = [
         `var BACKED_BY = ${q(backedBy)};`,
         `var HAS_APPROVAL = ${approval};`,
+        `var GENERIC = ${generic};`,
+        `var RUNNABLE_NAME = ${q(runnableName)};`,
         'var ctx = core.begin(settings, dryRun);',
         VCFA_LOGIN,
         String.raw`var approvers = [];
@@ -1724,6 +1540,10 @@ var projectId = "";`,
         ...(hasProject ? ['projectId = mod.projectIdOf(host, auth, SAFE, settings.projectName);'] : []),
         String.raw`if (BACKED_BY === "vro") {
   action.runnableItem.endpointLink = mod.vroEndpointLink(host, auth, SAFE, settings.vroIntegrationName || "");
+  if (GENERIC) action.runnableItem.id = mod.workflowIdByName(settings.vroHost || host, auth, SAFE, RUNNABLE_NAME);
+} else if (GENERIC) {
+  action.runnableItem.id = mod.abxIdByName(host, auth, SAFE, RUNNABLE_NAME, projectId);
+  action.runnableItem.projectId = projectId;
 } else {
   var abx = JSON.parse(core.resource(RESOURCE_PATH, "abx-action.json"));
   abx.source = core.resource(RESOURCE_PATH, "abx-action.py");
@@ -1737,7 +1557,7 @@ if (existing) {
   System.log("Exists, left as it is: resource action " + action.name + " on " + action.resourceType + " (" + existing.id + ")");
   actionIdOut = String(existing.id);
 } else {
-  actionIdOut = core.act(ctx, "create resource action " + action.name + " on " + action.resourceType + ", as DRAFT", function () {
+  actionIdOut = core.act(ctx, "create resource action " + action.name + " on " + action.resourceType + ", released", function () {
     var r = core.http("POST", "https://" + host + "/form-service/api/custom/resource-actions", auth, action, SAFE);
     if (!r.body || !r.body.id) throw new Error("POST /form-service/api/custom/resource-actions returned no id");
     return String(r.body.id);
@@ -1756,7 +1576,7 @@ if (HAS_APPROVAL) {
   }
 }
 resourceActionId = ctx.dryRun ? "" : actionIdOut;
-summary = core.audit(ctx, { resourceActionId: resourceActionId, note: "Created as DRAFT: release it, and add it to a day-2 policy, before anybody is offered it." });
+summary = core.audit(ctx, { resourceActionId: resourceActionId, note: "Released. Nobody is offered it until a day-2 policy lists it." });
 core.notify(settings.webhook, summary);`,
       ].join('\n');
       const pkg = toPackage({
@@ -1765,7 +1585,7 @@ core.notify(settings.webhook, summary);`,
         categoryPath,
         workflow: {
           name: registerName,
-          description: `Registers "${actionName}" in VCF Automation: ${backedBy === 'abx' ? 'the ABX action, ' : ''}the resource action on ${resourceType} (as DRAFT)${approval ? ' and its approval policy' : ''}. What exists is left as it is. Set the dryRun input to true to preview without changing anything.`,
+          description: `Registers "${actionName}" in VCF Automation: ${backedBy === 'abx' ? 'the ABX action, ' : ''}the resource action on ${resourceType} (released)${approval ? ' and its approval policy' : ''}. What exists is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [
             { name: 'resourceActionId', type: 'string', description: 'The resource action id, empty in a dry run' },
@@ -1781,8 +1601,9 @@ core.notify(settings.webhook, summary);`,
             ...vcfaSettings('vm-apps'),
             ...(hasProject ? [{ name: 'projectName', type: 'string'         , value: '', description: `The project ${backedBy === 'abx' ? 'that owns the ABX action' : ''}${backedBy === 'abx' && approval ? ' and ' : ''}${approval ? 'the approval policy is scoped to' : ''}` }] : []),
             ...(backedBy === 'vro' ? [{ name: 'vroIntegrationName', type: 'string'         , value: '', description: 'The Orchestrator integration to run the workflow on; empty when there is only one' }] : []),
+            ...(generic && backedBy === 'vro' ? [{ name: 'vroHost', type: 'string'         , value: '', description: 'The Orchestrator host the workflow is looked up on, when it is not the VCF Automation host' }] : []),
             ...(approval ? [{ name: 'approvers', type: 'Array/string'         , value: [], description: 'USER:someone@example.com or GROUP:platform-leads@example.com, one per entry' }] : []),
-            ...guardSettings(1 + (approval ? 1 : 0) + (backedBy === 'abx' ? 1 : 0) + (backedBy === 'vro' ? 1 : 0), 'created or changed'),
+            ...guardSettings(1 + (approval ? 1 : 0) + (backedBy === 'abx' && !generic ? 1 : 0) + (backedBy === 'vro' ? 1 : 0), 'created or changed'),
           ],
         },
         resources: [
@@ -1850,7 +1671,7 @@ if (newKb === disk.capacityInKB) {
           what: `Any ${resourceType} in a project whose day-2 policy allows the action${criteria ? ', while powered on' : ''}.`,
           decidedBy: [
             `The resource type: ${resourceType}.`,
-            criteria ? 'The criteria: powerState == ON.' : 'No criteria — offered on every resource of the type.',
+            criteria ? `The criteria: ${allCriteria.map((c) => `${String(c.key)} ${String(c.operator)} ${JSON.stringify(c.value)}`).join(' and ')}.` : 'No criteria — offered on every resource of the type.',
             'The day-2 policy of the project, which must list the action for the requester’s role.',
             approval ? 'The approval policy, which holds the request until someone agrees.' : 'No approval — it runs when requested.',
           ],
@@ -1859,10 +1680,10 @@ if (newKb === disk.capacityInKB) {
             : 'The action is run on machines it should not be, one request at a time. Reversible, and visible in the request history.',
         },
         guardrails: [
-          ...(criteria ? [{ rule: 'Only offered when the machine is powered on', because: 'Hidden where it would fail, rather than failing where it is offered.' }] : []),
+          ...(criteria ? [{ rule: powerCriterion.length > 0 && extraExpressions.length === 0 ? 'Only offered when the machine is powered on' : 'Only offered where its criteria hold', because: 'Hidden where it would fail, rather than failing where it is offered.' }] : []),
           ...(approval ? [{ rule: 'Approval required before it runs', because: irreversible ? 'Nothing this action does can be put back, so a person agrees first.' : 'Somebody other than the requester sees it.' }] : []),
           ...(operation === 'extend-disk' && maxDisk > 0 ? [{ rule: `New size capped at ${maxDisk} GB on the form`, because: 'One extra zero on a disk size fills a datastore. Check the cap again in the workflow — a form constraint is not a server-side one.' }] : []),
-          { rule: 'Created as DRAFT, and only runnable once the day-2 policy lists it', because: 'A custom action is invisible to requesters until a policy allows it. That is the moment to decide who.' },
+          { rule: 'Only runnable once the day-2 policy lists it', because: 'A released custom action is still invisible to requesters until a policy allows it. That is the moment to decide who.' },
           { rule: 'The backing workflow takes dryRun, default true', because: 'The action passes false explicitly; anything else calling the workflow gets a report.' },
         ],
         dryRun: [
@@ -1874,7 +1695,7 @@ if (newKb === disk.capacityInKB) {
         told: ['The deployment’s History tab, per run, with the requester and the inputs.', approval ? 'The approvers, when it is requested.' : 'Nobody before it runs.'],
         requires: [
           PKG_REQUIRES,
-          backedBy === 'vro' ? 'The backing Orchestrator workflow — see "An Orchestrator workflow with a dry run" in this kit.' : 'The backing ABX action.',
+          generic ? `The ${backedBy === 'vro' ? 'Orchestrator workflow' : 'ABX action'} "${runnableName}", already imported${backedBy === 'abx' ? ' in the project' : ''}.` : backedBy === 'vro' ? 'The backing Orchestrator workflow — see "An Orchestrator workflow with a dry run" in this kit.' : 'The backing ABX action.',
           'The Orchestrator integration in VCF Automation, for its endpoint link.',
         ],
         files: {
@@ -1903,7 +1724,9 @@ if (newKb === disk.capacityInKB) {
                 `\`${base}.json\` → POST /form-service/api/custom/resource-actions`,
                 ...(approvalPolicy ? [`\`${base}-approval-policy.json\` → POST /policy/api/policies`] : []),
               ], [
-                backedBy === 'vro'
+                generic
+                  ? `Fill runnableItem.id with the id of "${runnableName}" (${backedBy === 'vro' ? 'the Orchestrator client shows it; fill endpointLink with the Orchestrator integration’s link too' : 'GET /abx/api/resources/actions; and projectId with the project'}).`
+                  : backedBy === 'vro'
                   ? 'runnableItem.id is already the id the generated workflow imports with. Fill endpointLink with the Orchestrator integration’s link first (VERIFY its /resources/endpoints/{id} form with GET /iaas/api/integrations).'
                   : 'Fill runnableItem.id with the action id create-abx-action.sh wrote to import/abx/created-ids.txt, and projectId with the project.',
                 ...(approvalPolicy ? ['Fill the approvers and the project in the approval policy first.'] : []),
@@ -1916,16 +1739,17 @@ if (newKb === disk.capacityInKB) {
               ...verifyFor(imported),
               'The resource action body (/form-service/api/custom/resource-actions) and the binding of the vm input to the resource: create one in the interface and GET it to compare.',
               VERIFY_LOGIN,
-              'Custom resource actions are a VM Apps organization feature (the Aria Automation lineage, /form-service/api); an All Apps organization has no /form-service custom actions — VERIFY on your release before pointing the package at one.',
+              'Custom resource actions are a VM Apps organization feature (/form-service/api); an All Apps organization has no /form-service custom actions — VERIFY on your release before pointing the package at one.',
+              ...(generic ? [`The workflow or ABX action is looked up by name ("${runnableName}") at register time: /vco/api/workflows?conditions=name=… for a workflow (VERIFY the organization token is accepted there), /abx/api/resources/actions for an ABX action. The binding field on each input parameter is VERIFY.`] : []),
               'endpointLink is /resources/endpoints/<Orchestrator integration id> (KB 314899: a resource action keeps the integration id it was made with); the list answer of GET /form-service/api/custom/resource-actions is VERIFY — the package refuses to act on a shape it does not recognise.',
-              ...(approval ? ['The approval policy body follows the Aria Automation API Programming Guide ("Create an Approval Policy", /policy/api/policies); it is scoped by projectId (terraform-provider-vra vra_policy_approval) instead of a scopeCriteria on the project name. The action id form <type>.custom.<name> in its actions is VERIFY.'] : []),
+              ...(approval ? ['The approval policy body follows the VCF Automation policy API ("Create an Approval Policy", /policy/api/policies); it is scoped by projectId (terraform-provider-vra vra_policy_approval) instead of a scopeCriteria on the project name. The action id form <type>.custom.<name> in its actions is VERIFY.'] : []),
             ],
           }),
         },
         notes: [
           'The form constraints (required, max) are checked in the browser. Check them again in the workflow — the API does not go through the form.',
           'Criteria keys use the resource’s properties as the deployment shows them. Open a machine, look at its properties, and copy the key from there if powerState does not match.',
-          'Created as DRAFT: change status to RELEASED once it has been run in a test project.',
+          'Created released, so it is ready the moment a day-2 policy lists it; allow it in a test project’s policy first.',
           ...(backedBy === 'vro' ? ['The backing workflow has one id in both forms, so the resource action finds it either way — and importing import/orchestrator after the package replaces the package’s guarded version with the plain one. Use one route.'] : []),
         ],
         findings,
@@ -1943,7 +1767,27 @@ if (newKb === disk.capacityInKB) {
       'Who may do what to a deployment after it exists, per project and role: power, snapshot, resize, delete. With the approval policy for the actions that cannot be undone, because a day-2 policy says who may press the button and nothing about whether somebody should look first.',
     inputs: [
       { id: 'policy_name', label: 'Policy name', control: 'text', default: 'Members — standard day-2 actions' },
-      { id: 'project', label: 'Project', control: 'text', default: 'Application Team A' },
+      {
+        id: 'org_type',
+        label: 'Organization',
+        control: 'select',
+        options: [
+          { value: 'vm-apps', label: 'VM Apps organization' },
+          { value: 'all-apps', label: 'All Apps organization (9.1)' },
+        ],
+        default: 'vm-apps',
+      },
+      {
+        id: 'scope',
+        label: 'Applies to',
+        control: 'select',
+        options: [
+          { value: 'project', label: 'One project' },
+          { value: 'organization', label: 'The whole organization' },
+        ],
+        default: 'project',
+      },
+      { id: 'project', label: 'Project', control: 'text', default: 'Application Team A', showWhen: { input: 'scope', equals: ['project'] } },
       {
         id: 'role',
         label: 'For',
@@ -1970,6 +1814,16 @@ if (newKb === disk.capacityInKB) {
       { id: 'allow_delete', label: 'Also allow delete', control: 'toggle', default: true },
       { id: 'delete_approval', label: 'Delete needs approval', control: 'toggle', default: true, showWhen: { input: 'allow_delete', equals: ['true'] } },
       { id: 'extra_actions', label: 'Other actions', control: 'textarea', default: '', placeholder: 'Cloud.vSphere.Machine.custom.ExtendDisk', hint: 'Custom actions, one per line' },
+      { id: 'extra_authorities', label: 'Also for', control: 'text', default: '', placeholder: 'GROUP:app-ops@example.com, USER:lead@example.com', hint: 'Comma-separated USER:, GROUP: or ROLE: entries, beside the role above' },
+      {
+        id: 'criteria',
+        label: 'Only deployments where',
+        control: 'textarea',
+        default: '',
+        placeholder: 'catalogItemName | eq | Linux server',
+        hint: 'Property | Operator | Value',
+        help: 'Deployment criteria, all of which must hold: a deployment property (catalogItemName, blueprintId, ownedBy, projectId, or a custom property) and an operator eq, notEq, hasAny, in or notIn. Empty: every deployment in scope.',
+      },
       {
         id: 'enforcement',
         label: 'Enforcement',
@@ -1983,8 +1837,11 @@ if (newKb === disk.capacityInKB) {
     ],
     automation: (values                 , name        )             => {
       const policyName = str(values, 'policy_name', 'Day-2 policy');
-      const project = str(values, 'project', '');
+      const orgType = str(values, 'org_type', 'vm-apps') === 'all-apps' ? 'all-apps' : 'vm-apps';
+      const projectScope = str(values, 'scope', 'project') !== 'organization';
+      const project = projectScope ? str(values, 'project', '') : '';
       const role = str(values, 'role', 'member');
+      const extraAuthorities = listOf(str(values, 'extra_authorities', ''));
       const actionSet = str(values, 'action_set', 'standard');
       const allowResize = bool(values, 'allow_resize', true);
       const resizeApproval = allowResize && bool(values, 'resize_approval', true);
@@ -2002,14 +1859,26 @@ if (newKb === disk.capacityInKB) {
       ];
 
       const findings            = [];
-      if (!project) {
+      if (projectScope && !project) {
         findings.push(
-          error('vcfa.day2.no-project', 'The policy has no project, so it applies to every project in the organisation.', {
-            remediation: 'Scope day-2 policies to a project. An organisation-wide one is a decision about every team’s deployments at once.',
+          error('vcfa.day2.no-project', 'The policy is meant for one project, and no project is set.', {
+            remediation: 'Name the project, or choose "The whole organization" deliberately.',
             source: SRC,
           }),
         );
       }
+      if (!projectScope) {
+        findings.push(
+          warning('vcfa.day2.org-wide', 'The policy applies to every project in the organization.', {
+            remediation: 'An organization-wide day-2 policy is a decision about every team’s deployments at once. Make it SOFT so a project’s own HARD policy can tighten it, and keep delete behind approval.',
+            source: SRC,
+          }),
+        );
+      }
+      for (const authority of extraAuthorities) {
+        if (!/^(USER|GROUP|ROLE):\S+$/.test(authority)) findings.push(error('vcfa.day2.bad-authority', `"${authority}" is not USER:…, GROUP:… or ROLE:….`, { source: SRC }));
+      }
+      const criteria = criteriaOf(str(values, 'criteria', ''), 'vcfa.day2', findings);
       if (allowDelete && !deleteApproval && role === 'member') {
         findings.push(
           warning('vcfa.day2.member-delete', 'Project members may delete deployments, and nobody approves it.', {
@@ -2046,20 +1915,22 @@ if (newKb === disk.capacityInKB) {
       // (projectId; terraform-provider-vra vra_policy_day2_action). The package
       // workflow fills it from the project name; by hand, fill it before sending.
       const projectRef = '<REQUIRED — the project id: GET /iaas/api/projects>';
+      const scopeFields = projectScope ? { projectId: projectRef } : {};
       const policy = {
         name: policyName,
-        description: `Day-2 actions for project ${role}s in ${project || '(no project)'}.`,
+        description: `Day-2 actions for project ${role}s in ${projectScope ? project || '(no project)' : 'every project of the organization'}.`,
         typeId: 'com.vmware.policy.deployment.action',
         enforcementType: enforcement,
         definition: {
           allowedActions: [
             {
-              authorities: [`ROLE:${role}`],
+              authorities: [`ROLE:${role}`, ...extraAuthorities],
               actions,
             },
           ],
         },
-        projectId: projectRef,
+        ...(criteria ? { criteria } : {}),
+        ...scopeFields,
       };
 
       const approvalActions = [...(deleteApproval ? ['Deployment.Delete'] : []), ...(resizeApproval ? ['Cloud.vSphere.Machine.Resize'] : [])];
@@ -2077,7 +1948,8 @@ if (newKb === disk.capacityInKB) {
               autoApprovalExpiry: 2, // days, then rejected
               actions: approvalActions,
             },
-            projectId: projectRef,
+            ...(criteria ? { criteria } : {}),
+            ...scopeFields,
           }
         : undefined;
 
@@ -2090,11 +1962,12 @@ if (newKb === disk.capacityInKB) {
         categoryPath: `Automation/Policies/${base}`,
         workflow: {
           name: applyName,
-          description: `Creates in VCF Automation the day-2 actions policy "${policyName}"${approvalPolicy ? ' and the approval policy for delete and resize' : ''}, scoped to the project in the configuration element. A policy of the same name and type is left as it is. Set the dryRun input to true to preview without changing anything.`,
+          description: `Creates in VCF Automation the day-2 actions policy "${policyName}"${approvalPolicy ? ' and the approval policy for delete and resize' : ''}, ${projectScope ? 'scoped to the project in the configuration element' : 'for the whole organization'}. A policy of the same name and type is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [{ name: 'summary', type: 'string', description: 'The audit record, JSON' }],
           script: [
             `var HAS_APPROVAL = ${Boolean(approvalPolicy)};`,
+            `var PROJECT_SCOPE = ${projectScope};`,
             'var ctx = core.begin(settings, dryRun);',
             VCFA_LOGIN,
             String.raw`var approvers = [];
@@ -2103,13 +1976,14 @@ if (HAS_APPROVAL) {
   for (var a = 0; a < configured.length; a++) if (configured[a] && String(configured[a]).indexOf("<") < 0) approvers.push(String(configured[a]));
   if (approvers.length === 0) throw new Error("Set approvers in the configuration element (USER:… or GROUP:…): an approval policy nobody can answer rejects every request.");
 }
-var projectId = mod.projectIdOf(host, auth, SAFE, settings.projectName);
+var projectId = PROJECT_SCOPE ? mod.projectIdOf(host, auth, SAFE, settings.projectName) : "";
+var where = PROJECT_SCOPE ? "in project " + settings.projectName : "for the whole organization";
 var existing = mod.listAll(host, auth, "/policy/api/policies", SAFE);
 var files = HAS_APPROVAL ? ["policy.json", "approval-policy.json"] : ["policy.json"];
 var ids = [];
 for (var f = 0; f < files.length; f++) {
   var policy = JSON.parse(core.resource(RESOURCE_PATH, files[f]));
-  policy.projectId = projectId;
+  if (PROJECT_SCOPE) policy.projectId = projectId;
   if (policy.typeId === "com.vmware.policy.approval") policy.definition.approvers = approvers;
   var same = mod.findOne(existing, { name: policy.name, typeId: policy.typeId }, policy.typeId + " policy named " + policy.name);
   if (same) {
@@ -2117,13 +1991,13 @@ for (var f = 0; f < files.length; f++) {
     ids.push(String(same.id));
     continue;
   }
-  var id = core.act(ctx, "create " + policy.typeId + " policy \"" + policy.name + "\" in project " + settings.projectName, function () {
+  var id = core.act(ctx, "create " + policy.typeId + " policy \"" + policy.name + "\" " + where, function () {
     var r = core.http("POST", "https://" + host + "/policy/api/policies", auth, policy, SAFE);
     return r.body && r.body.id ? String(r.body.id) : "";
   });
   if (id) ids.push(id);
 }
-summary = core.audit(ctx, { project: String(settings.projectName), projectId: projectId, policyIds: ids });
+summary = core.audit(ctx, { project: PROJECT_SCOPE ? String(settings.projectName) : "(organization)", projectId: projectId, policyIds: ids });
 core.notify(settings.webhook, summary);`,
           ].join('\n'),
         },
@@ -2132,8 +2006,8 @@ core.notify(settings.webhook, summary);`,
           name: 'Settings',
           description: `Settings of the ${applyName} workflow. Fill vcfaApiToken${approvalPolicy ? ' and approvers' : ''} after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
-            ...vcfaSettings('vm-apps'),
-            { name: 'projectName', type: 'string', value: project, description: 'The project the policies are scoped to' },
+            ...vcfaSettings(orgType),
+            ...(projectScope ? [{ name: 'projectName', type: 'string'         , value: project, description: 'The project the policies are scoped to' }] : []),
             ...(approvalPolicy ? [{ name: 'approvers', type: 'Array/string'         , value: [], description: 'Who approves delete and resize: USER:someone@example.com or GROUP:platform-leads@example.com, one per entry' }] : []),
             ...guardSettings(approvalPolicy ? 2 : 1, 'created'),
           ],
@@ -2149,15 +2023,17 @@ core.notify(settings.webhook, summary);`,
         scope: {
           what: `Day-2 actions on deployments in ${project || 'every project'}, for users with the project ${role} role.`,
           decidedBy: [
-            `The scope criteria: project == ${project || '(none — the organisation)'}.`,
-            `The authority: project ${role}s. Membership is whatever the project’s member list, and the groups in it, say today.`,
+            projectScope ? `The project: ${project || '(none set)'}.` : 'The organization: every project in it.',
+            ...(criteria ? ['The deployment criteria, all of which must hold.'] : []),
+            `The authority: project ${role}s${extraAuthorities.length > 0 ? `, and ${extraAuthorities.join(', ')}` : ''}. Membership is whatever the project’s member list, and the groups in it, say today.`,
             'Other day-2 policies on the same project: allowed actions from all matching policies are combined, and hard beats soft.',
             'Custom actions still need their own criteria to be offered.',
           ],
           ifWrong: 'People can delete, resize or revert machines they should only have been able to power on — and delete takes the disks with it.',
         },
         guardrails: [
-          { rule: `Scoped to the project ${project || '(none)'}`, because: 'An unscoped day-2 policy is a decision about every team’s deployments.' },
+          ...(projectScope ? [{ rule: `Scoped to the project ${project || '(none)'}`, because: 'An unscoped day-2 policy is a decision about every team’s deployments.' }] : []),
+          ...(criteria ? [{ rule: 'Narrowed by deployment criteria', because: 'Only the deployments that match get these actions; the rest keep whatever other policies give them.' }] : []),
           ...(deleteApproval ? [{ rule: 'Delete needs approval', because: 'Delete is the one action here with no way back, and a requester deleting the wrong deployment is a common afternoon.' }] : []),
           ...(resizeApproval ? [{ rule: 'Resize needs approval', because: 'Resize is how the template’s size limits are got round after the fact.' }] : []),
           { rule: 'Actions listed explicitly', because: 'A policy that allows "*" allows every custom action anybody adds later, without anybody deciding it.' },
@@ -2169,7 +2045,7 @@ core.notify(settings.webhook, summary);`,
         ],
         undo: ['DELETE /policy/api/policies/{id}. Actions already run stay run — a deleted deployment is not restored by removing the policy that allowed it.'],
         told: ['The deployment History tab records who ran what.', approvalPolicy ? 'The approvers, for delete and resize requests.' : 'Nobody in advance.'],
-        requires: [PKG_REQUIRES, `The project ${project || '(set one)'}.`, 'Custom actions listed here must exist and be released.'],
+        requires: [PKG_REQUIRES, projectScope ? `The project ${project || '(set one)'}.` : 'An organization administrator token (organization-wide policies).', 'Custom actions listed here must exist and be released.'],
         files: {
           ...policyPkg.files,
           [`${base}.json`]: json(policy),
@@ -2189,7 +2065,7 @@ core.notify(settings.webhook, summary);`,
             steps: [
               ...packageSteps(policyPkg),
               apiStep('Or by hand: the day-2 policy', 'scripts/apply.sh', [`\`${base}.json\` → POST /policy/api/policies`, ...(approvalPolicy ? [`\`${base}-approval.json\` → POST /policy/api/policies`] : [])], [
-                `Fill projectId (GET /iaas/api/projects)${approvalPolicy ? ' and the approvers' : ''} first. Custom actions it lists must exist first (the "custom day-2 action" blueprint). By hand in the interface: Service Broker → Content & Policies → Policies → New policy → Day 2 actions policy on a VM Apps organization; Manage and Govern → Policies → Definitions → New Policy → Day 2 Actions Policy on a 9.1 All Apps organization.`,
+                `${projectScope ? 'Fill projectId (GET /iaas/api/projects)' : 'Organization-wide, so there is no projectId to fill'}${approvalPolicy ? `${projectScope ? ' and' : '; fill'} the approvers` : ''} first. Custom actions it lists must exist first (the "custom day-2 action" blueprint). By hand in the interface: Content & Policies → Policies → New policy → Day 2 actions policy on a VM Apps organization (VERIFY the menu on 9.1); Manage and Govern → Policies → Definitions → New Policy → Day 2 Actions Policy on a 9.1 All Apps organization.`,
               ]),
             ],
             auth: ['apply'],
@@ -2197,7 +2073,10 @@ core.notify(settings.webhook, summary);`,
               `The authority form ROLE:${role}: create one in the interface and GET /policy/api/policies/{id} to compare (terraform-provider-vra documents USER:, GROUP: and ROLE: prefixes, not the role names).`,
               'Project scope is projectId, as the policy API and terraform-provider-vra have it; the scopeCriteria on a project name this file used to carry is gone.',
               VERIFY_LOGIN,
-              'The package targets the /policy/api of a VM Apps organization (and Aria Automation 8.x). 9.1 All Apps organizations have day-2 policies too (Manage and Govern → Policies), documented in the interface only — the API there is VERIFY.',
+              orgType === 'all-apps'
+                ? 'All Apps organization: 9.1 documents Day 2 Action policies there in the interface (Manage and Govern → Policies); the package sends the same /policy/api body with the All Apps organization token, which is VERIFY — if it is refused, create the policy in the interface with the actions and authorities in the JSON.'
+                : 'The package targets the /policy/api of a VM Apps organization. 9.1 All Apps organizations have day-2 policies too (choose All Apps on the page); their API is VERIFY.',
+              ...(criteria ? ['The criteria object ({ matchExpression: [...] }, several rows under and) and the operator names follow the policy API of earlier releases; VERIFY by adding criteria in the interface and comparing the GET.'] : []),
             ],
           }),
         },
@@ -2222,10 +2101,22 @@ core.notify(settings.webhook, summary);`,
       {
         id: 'type_name',
         label: 'Type',
-        control: 'select',
+        control: 'combo',
         options: Object.entries(CUSTOM_TYPES).map(([value, type]) => ({ value, label: `${value} — ${type.label}` })),
         default: 'Custom.ADUser',
+        hint: 'One of these, or your own Custom.Name',
       },
+      { id: 'display_name', label: 'Display name', control: 'text', default: '', placeholder: 'Firewall rule', hint: 'Empty: from the type name' },
+      {
+        id: 'properties',
+        label: 'Properties',
+        control: 'textarea',
+        default: '',
+        placeholder: 'ruleName | string | Rule name | yes',
+        hint: 'Property | Type | Title | Required',
+        help: 'Type: string, integer, number or boolean. Empty uses the built-in properties of the three listed types; your own type needs at least one.',
+      },
+      { id: 'external_type', label: 'Orchestrator inventory type', control: 'text', default: '', placeholder: 'DynamicTypes:Firewall.Rule', hint: 'What the create workflow returns; empty uses the listed type’s' },
       {
         id: 'backed_by',
         label: 'Backed by',
@@ -2238,17 +2129,68 @@ core.notify(settings.webhook, summary);`,
       },
       { id: 'has_update', label: 'Has an update workflow', control: 'toggle', default: true },
       { id: 'has_delete', label: 'Has a delete workflow', control: 'toggle', default: true, hint: 'Off leaves orphans — see the finding' },
+      {
+        id: 'runnables',
+        label: 'Lifecycle',
+        control: 'select',
+        options: [
+          { value: 'scaffold', label: 'Generate the create, update and delete scaffolds' },
+          { value: 'existing', label: 'Use workflows or ABX actions that exist, by name' },
+        ],
+        default: 'scaffold',
+      },
+      { id: 'create_name', label: 'Create runs', control: 'text', default: '', placeholder: 'Create AD user', hint: 'Empty: "Create <display name>"', showWhen: { input: 'runnables', equals: ['existing'] } },
+      { id: 'update_name', label: 'Update runs', control: 'text', default: '', placeholder: 'Update AD user', showWhen: { input: 'runnables', equals: ['existing'] } },
+      { id: 'delete_name', label: 'Delete runs', control: 'text', default: '', placeholder: 'Delete AD user', showWhen: { input: 'runnables', equals: ['existing'] } },
+      {
+        id: 'additional_actions',
+        label: 'Day-2 actions on it',
+        control: 'textarea',
+        default: '',
+        placeholder: 'Reset password | Reset AD user password',
+        hint: 'Action name | Workflow or ABX action',
+        help: 'Resource actions on the type, each running an existing workflow (or ABX action, when backed by ABX) by name. A day-2 policy still has to allow them.',
+      },
     ],
     automation: (values                 , name        )             => {
-      const typeName = str(values, 'type_name', 'Custom.ADUser');
-      const type = CUSTOM_TYPES[typeName] ?? CUSTOM_TYPES['Custom.ADUser'] ;
+      const typeName = str(values, 'type_name', 'Custom.ADUser').trim();
+      const preset = CUSTOM_TYPES[typeName];
+      const propertyRows = rowsOf(str(values, 'properties', ''), 4);
+      const findings            = [];
+      if (!/^Custom\.[A-Za-z][A-Za-z0-9]*$/.test(typeName)) findings.push(error('vcfa.custom.bad-type-name', `"${typeName}" is not Custom.<Name> (letters and digits).`, { source: SRC }));
+      const rowProps                                                                                      = {};
+      for (const [key = '', ptype = '', title = '', req = ''] of propertyRows) {
+        const kind = (ptype || 'string').toLowerCase();
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !['string', 'integer', 'number', 'boolean'].includes(kind)) {
+          findings.push(error('vcfa.custom.bad-property', `"${key} | ${ptype}" is not Property | string, integer, number or boolean.`, { source: SRC }));
+          continue;
+        }
+        rowProps[key] = { type: kind, title: title || key, example: '', required: yes(req) };
+      }
+      const displayName = str(values, 'display_name', '') || preset?.label || typeName.replace(/^Custom\./, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+      const type                                               = {
+        label: displayName,
+        externalType: str(values, 'external_type', '') || preset?.externalType || '<REQUIRED — a Dynamic Types type, e.g. DynamicTypes:Namespace.Type, or use ABX backing>',
+        properties: propertyRows.length > 0 ? rowProps : preset?.properties ?? {},
+        what: preset?.what ?? `${displayName} objects`,
+        deleteMeans: preset?.deleteMeans ?? `Deleting it removes the real ${displayName.toLowerCase()}; check what else depends on it before wiring delete to deployment deletion.`,
+        required: propertyRows.length > 0 ? Object.entries(rowProps).filter(([, p]) => p.required).map(([k]) => k) : Object.keys(preset?.properties ?? {}).slice(0, 2),
+      };
+      if (Object.keys(type.properties).length === 0) findings.push(error('vcfa.custom.no-properties', `${typeName} has no properties: give it at least one in the table.`, { source: SRC }));
+      const existingRunnables = str(values, 'runnables', 'scaffold') === 'existing';
+      const runnableNames                         = {
+        Create: str(values, 'create_name', '') || `Create ${type.label}`,
+        Update: str(values, 'update_name', '') || `Update ${type.label}`,
+        Delete: str(values, 'delete_name', '') || `Delete ${type.label}`,
+      };
+      const additional = rowsOf(str(values, 'additional_actions', ''), 2).map(([actionLabel = '', runs = '']) => ({ actionLabel, runs }));
+      for (const a of additional) if (!a.actionLabel || !a.runs) findings.push(error('vcfa.custom.bad-action', `"${a.actionLabel} | ${a.runs}" needs an action name and the workflow or ABX action it runs.`, { source: SRC }));
       const backedBy = str(values, 'backed_by', 'vro');
       const hasUpdate = bool(values, 'has_update', true);
       const hasDelete = bool(values, 'has_delete', true);
       const base = slugOf(name || typeName, 'custom-resource');
       const short = typeName.replace(/^Custom\./, '');
 
-      const findings            = [];
       if (!hasDelete) {
         findings.push(
           warning('vcfa.custom.no-delete', `${typeName} has no delete workflow, so deleting a deployment leaves the ${type.label} behind.`, {
@@ -2268,7 +2210,7 @@ core.notify(settings.webhook, summary);`,
 
       // The lifecycle workflows (or ABX actions), generated so the type can point at real ids.
       const objectType = backedBy === 'vro' && !type.externalType.startsWith('<') ? type.externalType : 'Properties';
-      const props             = Object.entries(type.properties).map(([key, p]) => ({ name: key, type: p.type === 'integer' ? 'number' : 'string', description: p.title }));
+      const props             = Object.entries(type.properties).map(([key, p]) => ({ name: key, type: p.type === 'integer' || p.type === 'number' ? 'number' : p.type === 'boolean' ? 'boolean' : 'string', description: p.title }));
       const dryRunParam           = { name: 'dryRun', type: 'boolean', description: 'Anything but false is a dry run. Bind it to false in the type’s lifecycle actions.' };
       const verbs = ['Create', ...(hasUpdate ? ['Update'] : []), ...(hasDelete ? ['Delete'] : [])];
       const lifecycleWorkflow = (verb        )                      => ({
@@ -2297,8 +2239,8 @@ core.notify(settings.webhook, summary);`,
           '',
         ].join('\n'),
       });
-      const workflows = backedBy === 'vro' ? verbs.map(lifecycleWorkflow) : [];
-      const abxActions                = backedBy === 'abx'
+      const workflows = backedBy === 'vro' && !existingRunnables ? verbs.map(lifecycleWorkflow) : [];
+      const abxActions                = backedBy === 'abx' && !existingRunnables
         ? verbs.map((verb) => ({
             name: `${verb} ${type.label}`,
             runtime: 'python'         ,
@@ -2309,13 +2251,13 @@ core.notify(settings.webhook, summary);`,
         : [];
       const workflowIdFor = (verb        ) => {
         const found = workflows.find((candidate) => candidate.name === `${verb} ${type.label}`);
-        return found ? workflowId(found) : `<REQUIRED — id of the "${verb} ${type.label}" workflow>`;
+        return found ? workflowId(found) : `<REQUIRED — id of the "${runnableNames[verb]}" workflow>`;
       };
 
       const runnable = (verb        ) =>
         backedBy === 'vro'
-          ? { id: workflowIdFor(verb), name: `${verb} ${type.label}`, type: 'vro.workflow', endpointLink: '<REQUIRED — /resources/endpoints/{id} of the Orchestrator integration>' }
-          : { id: `<REQUIRED — id of the "${verb} ${type.label}" ABX action>`, name: `${verb} ${type.label}`, type: 'abx.action', projectId: '<REQUIRED — project owning the action>' };
+          ? { id: workflowIdFor(verb), name: runnableNames[verb] , type: 'vro.workflow', endpointLink: '<REQUIRED — /resources/endpoints/{id} of the Orchestrator integration>' }
+          : { id: `<REQUIRED — id of the "${runnableNames[verb]}" ABX action>`, name: runnableNames[verb] , type: 'abx.action', projectId: '<REQUIRED — project owning the action>' };
 
       const resourceType = {
         displayName: type.label,
@@ -2323,7 +2265,7 @@ core.notify(settings.webhook, summary);`,
         resourceType: typeName,
         ...(backedBy === 'vro' ? { externalType: type.externalType } : {}),
         schemaType: backedBy === 'vro' ? 'VRO_INVENTORY' : 'ABX_USER_DEFINED',
-        status: 'DRAFT',
+        status: 'RELEASED',
         mainActions: {
           create: runnable('Create'),
           ...(hasUpdate ? { update: runnable('Update') } : {}),
@@ -2331,7 +2273,7 @@ core.notify(settings.webhook, summary);`,
         },
         properties: {
           properties: Object.fromEntries(Object.entries(type.properties).map(([key, p]) => [key, { type: p.type, title: p.title }])),
-          required: Object.keys(type.properties).slice(0, 2),
+          required: type.required,
         },
         _comment: 'Field names follow the custom resource API at VCF 9.x. Verify against GET /form-service/api/custom/resource-types for one created in the interface before relying on the JSON.',
       };
@@ -2344,7 +2286,7 @@ core.notify(settings.webhook, summary);`,
         `# Deleting this deployment runs the ${hasDelete ? 'delete workflow, which removes the real object' : 'NO delete workflow — the real object is left behind'}.`,
         'formatVersion: 1',
         'inputs:',
-        ...inputs.flatMap(([key, p]) => [`  ${key}:`, `    type: ${p.type === 'integer' ? 'integer' : 'string'}`, `    title: ${p.title}`, `    default: ${p.type === 'integer' ? p.example : JSON.stringify(p.example)}`]),
+        ...inputs.flatMap(([key, p]) => [`  ${key}:`, `    type: ${p.type}`, `    title: ${JSON.stringify(p.title)}`, ...(p.example ? [`    default: ${p.type === 'integer' ? p.example : JSON.stringify(p.example)}`] : [])]),
         'resources:',
         `  ${short.charAt(0).toLowerCase()}${short.slice(1)}:`,
         `    type: ${typeName}`,
@@ -2403,6 +2345,18 @@ core.notify(settings.webhook, summary);`,
       // exists. The lifecycle workflows keep their names and folder, so their
       // ids are the ones mainActions already names.
       const customPkgName = packageNameOf('vcfa', 'custom', short);
+      // Day-2 actions on the type, each running an existing runnable by name.
+      const extraActions = additional.map((a) => ({
+        name: a.actionLabel.replace(/[^A-Za-z0-9]/g, ''),
+        displayName: a.actionLabel,
+        description: `Runs "${a.runs}" on ${typeName}.`,
+        provider: backedBy === 'vro' ? 'vro-workflow' : 'abx',
+        resourceType: typeName,
+        runnableItem: backedBy === 'vro'
+          ? { id: `<REQUIRED — id of the "${a.runs}" workflow>`, name: a.runs, type: 'vro.workflow', endpointLink: '<REQUIRED — /resources/endpoints/{id} of the Orchestrator integration>' }
+          : { id: `<REQUIRED — id of the "${a.runs}" ABX action>`, name: a.runs, type: 'abx.action', projectId: '<REQUIRED — project owning the action>' },
+        status: 'RELEASED',
+      }));
       const registerName = elementName(`Register ${typeName}`);
       const templateName = `${type.label} request`;
       const { _comment: _unusedComment, ...resourceTypeBody } = resourceType;
@@ -2413,7 +2367,7 @@ core.notify(settings.webhook, summary);`,
         categoryPath: `Automation/Custom resources/${short}`,
         workflow: {
           name: registerName,
-          description: `Registers ${typeName} in VCF Automation: ${backedBy === 'abx' ? 'its ABX actions, ' : ''}the custom resource type (as DRAFT), and the cloud template "${templateName}" with its version 1.0.0. What exists is left as it is. Set the dryRun input to true to preview without changing anything.`,
+          description: `Registers ${typeName} in VCF Automation: ${backedBy === 'abx' ? 'its ABX actions, ' : ''}the custom resource type (released), and the cloud template "${templateName}" with its version 1.0.0. What exists is left as it is. Set the dryRun input to true to preview without changing anything.`,
           inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: report what would be created and change nothing' }],
           outputs: [
             { name: 'resourceTypeId', type: 'string', description: 'The custom resource type id, empty in a dry run that would create it' },
@@ -2421,6 +2375,8 @@ core.notify(settings.webhook, summary);`,
           ],
           script: [
             `var BACKED_BY = ${q(backedBy)};`,
+            `var EXISTING = ${existingRunnables};`,
+            `var HAS_EXTRA = ${additional.length > 0};`,
             `var TEMPLATE_NAME = ${q(templateName)};`,
             `var TEMPLATE_DESCRIPTION = ${q(`Requests one ${typeName}.`)};`,
             'var ctx = core.begin(settings, dryRun);',
@@ -2428,8 +2384,15 @@ core.notify(settings.webhook, summary);`,
             String.raw`var projectId = mod.projectIdOf(host, auth, SAFE, settings.projectName);
 var type = JSON.parse(core.resource(RESOURCE_PATH, "resource-type.json"));
 var verb;
-if (BACKED_BY === "vro") {
-  var link = mod.vroEndpointLink(host, auth, SAFE, settings.vroIntegrationName || "");
+var link = BACKED_BY === "vro" ? mod.vroEndpointLink(host, auth, SAFE, settings.vroIntegrationName || "") : "";
+/** The runnable of an existing workflow or ABX action, by its name. */
+function runnableNamed(runName) {
+  if (BACKED_BY === "vro") return { id: mod.workflowIdByName(settings.vroHost || host, auth, SAFE, runName), name: runName, type: "vro.workflow", endpointLink: link };
+  return { id: mod.abxIdByName(host, auth, SAFE, runName, projectId), name: runName, type: "abx.action", projectId: projectId };
+}
+if (EXISTING) {
+  for (verb in type.mainActions) if (type.mainActions.hasOwnProperty(verb)) type.mainActions[verb] = runnableNamed(type.mainActions[verb].name);
+} else if (BACKED_BY === "vro") {
   for (verb in type.mainActions) if (type.mainActions.hasOwnProperty(verb)) type.mainActions[verb].endpointLink = link;
 } else {
   for (verb in type.mainActions) {
@@ -2447,33 +2410,50 @@ if (found) {
   System.log("Exists, left as it is: custom resource type " + type.resourceType + " (" + found.id + ")");
   typeId = String(found.id);
 } else {
-  typeId = core.act(ctx, "create custom resource type " + type.resourceType + ", as DRAFT", function () {
+  typeId = core.act(ctx, "create custom resource type " + type.resourceType + ", released", function () {
     var r = core.http("POST", "https://" + host + "/form-service/api/custom/resource-types", auth, type, SAFE);
     if (!r.body || !r.body.id) throw new Error("POST /form-service/api/custom/resource-types returned no id");
     return String(r.body.id);
   }) || "";
 }
+if (HAS_EXTRA) {
+  var extra = JSON.parse(core.resource(RESOURCE_PATH, "extra-actions.json"));
+  var actionsNow = mod.listAll(host, auth, "/form-service/api/custom/resource-actions", SAFE);
+  for (var e = 0; e < extra.length; e++) {
+    var ra = extra[e];
+    if (mod.findOne(actionsNow, { name: ra.name, resourceType: ra.resourceType }, "resource action " + ra.name)) {
+      System.log("Exists, left as it is: resource action " + ra.displayName + " on " + ra.resourceType);
+      continue;
+    }
+    ra.runnableItem = runnableNamed(ra.runnableItem.name);
+    core.act(ctx, "create resource action " + ra.displayName + " on " + ra.resourceType + ", released", function () {
+      return core.http("POST", "https://" + host + "/form-service/api/custom/resource-actions", auth, ra, SAFE);
+    });
+  }
+}
 // The template names the type, so it validates only once the type exists.
 mod.ensureTemplate(ctx, host, auth, SAFE, { projectId: projectId, name: TEMPLATE_NAME, description: TEMPLATE_DESCRIPTION, content: core.resource(RESOURCE_PATH, "template.yaml"), version: "1.0.0", release: false, validate: Boolean(found) || !ctx.dryRun });
 resourceTypeId = typeId;
-summary = core.audit(ctx, { resourceTypeId: typeId, note: "The type is DRAFT: release it once the lifecycle workflows are written and tested." });
+summary = core.audit(ctx, { resourceTypeId: typeId, note: "Released: templates can use it. Generated lifecycle scaffolds refuse to act until their step is written." });
 core.notify(settings.webhook, summary);`,
           ].join('\n'),
         },
-        actions: vcfaActions(customPkgName),
+        actions: [...vcfaActions(customPkgName), ...(existingRunnables || additional.length > 0 ? lookupActions(customPkgName) : [])],
         config: {
           name: 'Settings',
-          description: `Settings of the ${registerName} workflow${backedBy === 'vro' ? ' and of the lifecycle workflows' : ''}. Fill vcfaApiToken after import; set dryRun to true to preview instead of changing anything.`,
+          description: `Settings of the ${registerName} workflow${backedBy === 'vro' && !existingRunnables ? ' and of the lifecycle workflows' : ''}. Fill vcfaApiToken after import; set dryRun to true to preview instead of changing anything.`,
           attributes: [
             ...vcfaSettings('vm-apps'),
             { name: 'projectName', type: 'string', value: '', description: `The project the template${backedBy === 'abx' ? ' and the ABX actions' : ''} belong to` },
             ...(backedBy === 'vro' ? [{ name: 'vroIntegrationName', type: 'string'         , value: '', description: 'The Orchestrator integration the lifecycle workflows run on; empty when there is only one' }] : []),
-            ...guardSettings(3 + (backedBy === 'abx' ? verbs.length : 0), 'created'),
+            ...((existingRunnables || additional.length > 0) && backedBy === 'vro' ? [{ name: 'vroHost', type: 'string'         , value: '', description: 'The Orchestrator host workflows are looked up on, when it is not the VCF Automation host' }] : []),
+            ...guardSettings(3 + (backedBy === 'abx' && !existingRunnables ? verbs.length : 0) + additional.length, 'created'),
           ],
         },
         resources: [
           { name: 'resource-type.json', content: json(resourceTypeBody) },
           { name: 'template.yaml', content: yaml, mimeType: 'application/x-yaml' },
+          ...(additional.length > 0 ? [{ name: 'extra-actions.json', content: json(extraActions) }] : []),
           ...abxActions.flatMap((action, index) => {
             const key = verbs[index] .toLowerCase();
             return [{ name: `abx-${key}.json`, content: json(abxBody(action)) }, { name: `abx-${key}.py`, content: action.script, mimeType: 'text/x-python' }];
@@ -2520,7 +2500,7 @@ core.notify(settings.webhook, summary);`,
             : `Objects are created with no way to remove them from VCF Automation. Every deleted deployment leaves an orphaned ${type.label}.`,
         },
         guardrails: [
-          { rule: 'Created as DRAFT', because: 'The type cannot be used in a template until it is released, which is after the workflows have been tested.' },
+          { rule: 'Lifecycle scaffolds refuse until written', because: 'The type is released so templates can use it; a generated create or delete that has not been written throws rather than pretending it worked.' },
           ...(hasDelete ? [{ rule: 'Delete succeeds when the object is already gone', because: 'A delete that throws on "not found" makes the deployment undeletable, which is worse than the orphan.' }] : []),
           { rule: 'Create is idempotent', because: 'A create that timed out is retried, and a non-idempotent one makes two.' },
           { rule: 'The workflows take dryRun, default true', because: 'The type passes false; anybody running the workflow by hand gets a report.' },
@@ -2548,6 +2528,7 @@ core.notify(settings.webhook, summary);`,
           [`${base}-template.yaml`]: yaml,
           [`${base}-template.json`]: json(templatePayload(`${type.label} request`, `Requests one ${typeName}.`, yaml)),
           [`${base}-lifecycle.js`]: lifecycle,
+          ...(additional.length > 0 ? { [`${base}-extra-actions.json`]: json(extraActions) } : {}),
           'scripts/apply.sh': underScripts(
             applyScript(
               'vcf-automation',
@@ -2568,7 +2549,10 @@ core.notify(settings.webhook, summary);`,
                 `\`${base}-resource-type.json\` → POST /form-service/api/custom/resource-types`,
                 `\`${base}-template.json\` → POST /blueprint/api/blueprints (only once its projectId is filled; otherwise let it fail and use the next step)`,
               ], [
-                backedBy === 'vro'
+                ...(additional.length > 0 ? [`The day-2 actions in \`${base}-extra-actions.json\` are POSTed one by one to /form-service/api/custom/resource-actions, with each runnableItem id filled.`] : []),
+                existingRunnables
+                  ? `Fill each mainActions id with the id of the ${backedBy === 'vro' ? 'workflow' : 'ABX action'} it names (${Object.values(runnableNames).join(', ')}).`
+                  : backedBy === 'vro'
                   ? 'The workflow ids in mainActions are already the ids the generated workflows import with. Fill endpointLink with the Orchestrator integration’s link first.'
                   : 'Fill each mainActions id with the ids create-abx-action.sh wrote to import/abx/created-ids.txt, and the project.',
                 'By hand: Design → Custom Resources → New, with the same properties and lifecycle actions; bind dryRun = false on each lifecycle action.',
@@ -2581,7 +2565,8 @@ core.notify(settings.webhook, summary);`,
               'The custom resource type body: create one in the interface and GET /form-service/api/custom/resource-types to compare before relying on the JSON (KB 314899 confirms the path, the list, and the endpointLink of each runnable).',
               'Custom resource types are a VM Apps organization feature (/form-service/api); an All Apps organization has none — VERIFY on your release.',
               VERIFY_LOGIN,
-              'Whether a template validates against a DRAFT type: if the package stops at the template, release the type (Design → Custom Resources) and run it again — the type is then left as it is.',
+              ...(existingRunnables || additional.length > 0 ? ['Existing workflows are found by exact name through /vco/api/workflows?conditions=name=… (VERIFY the organization token there), ABX actions through /abx/api/resources/actions in the project.', 'VCF Automation custom resource types have create, update and delete lifecycle actions only; there is no read action — the create output is the state it keeps.'] : []),
+              'If the package stops at the template because the type is not yet visible to the validator, run it again: the type is then left as it is.',
             ],
           }),
         },
@@ -2594,6 +2579,8 @@ core.notify(settings.webhook, summary);`,
       };
     },
   }),
+
+  SECRETS,
 
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -2866,449 +2853,7 @@ core.notify(settings.webhook, summary);`,
   }),
 
   // -------------------------------------------------------------------------
-  automationBlueprint({
-    id: 'vcfa_vks_cluster',
-    platform: PLATFORM,
-    label: 'A VKS Kubernetes cluster',
-    group: 'Modern apps',
-    description:
-      'A vSphere Kubernetes Service cluster (formerly TKG) as a Cluster API Cluster with a topology class: control plane count, worker pools with VM class and replicas, storage class and Kubernetes release. Emitted as YAML for kubectl in a Supervisor namespace and as a CCI cloud template for self-service.',
-    inputs: [
-      { id: 'cluster_name', label: 'Cluster name', control: 'text', default: 'team-a-prod-01' },
-      { id: 'namespace', label: 'Supervisor namespace', control: 'text', default: 'team-a-prod' },
-      {
-        id: 'environment',
-        label: 'Environment',
-        control: 'select',
-        options: [
-          { value: 'production', label: 'Production' },
-          { value: 'non-production', label: 'Non-production' },
-        ],
-        default: 'production',
-      },
-      {
-        id: 'cluster_class',
-        label: 'Cluster class',
-        control: 'combo',
-        options: [
-          { value: 'builtin-generic-v3.1.0', label: 'builtin-generic-v3.1.0' },
-          { value: 'builtin-generic-v3.2.0', label: 'builtin-generic-v3.2.0' },
-          { value: 'tanzukubernetescluster', label: 'tanzukubernetescluster (older)' },
-        ],
-        default: 'builtin-generic-v3.1.0',
-        hint: 'Check with kubectl get clusterclass -A',
-      },
-      { id: 'k8s_version', label: 'Kubernetes release', control: 'text', default: 'v1.32.0+vmware.6-fips', hint: 'Check with kubectl get kr — must be a release the Supervisor offers' },
-      {
-        id: 'control_plane',
-        label: 'Control plane nodes',
-        control: 'select',
-        options: [
-          { value: '3', label: '3 — survives a node failure' },
-          { value: '1', label: '1 — development only' },
-        ],
-        default: '3',
-      },
-      {
-        id: 'cp_vm_class',
-        label: 'Control plane VM class',
-        control: 'combo',
-        options: [
-          { value: 'guaranteed-medium', label: 'guaranteed-medium' },
-          { value: 'guaranteed-large', label: 'guaranteed-large' },
-          { value: 'best-effort-medium', label: 'best-effort-medium' },
-        ],
-        default: 'guaranteed-medium',
-      },
-      {
-        id: 'worker_vm_class',
-        label: 'Worker VM class',
-        control: 'combo',
-        options: [
-          { value: 'guaranteed-medium', label: 'guaranteed-medium' },
-          { value: 'guaranteed-large', label: 'guaranteed-large' },
-          { value: 'guaranteed-xlarge', label: 'guaranteed-xlarge' },
-          { value: 'best-effort-medium', label: 'best-effort-medium' },
-          { value: 'best-effort-large', label: 'best-effort-large' },
-        ],
-        default: 'guaranteed-large',
-      },
-      { id: 'worker_replicas', label: 'Workers per pool', control: 'number', default: 3, min: 0, max: 150 },
-      { id: 'worker_pools', label: 'Worker pools', control: 'text', default: 'np-general', hint: 'Comma-separated; each gets the class and count above' },
-      { id: 'storage_class', label: 'Storage class', control: 'text', default: 'vsan-default-storage-policy' },
-      { id: 'pod_cidr', label: 'Pod CIDR', control: 'text', default: '192.168.0.0/16', hint: 'IPv4: VKS pod networks are not dual-stack' },
-      { id: 'service_cidr', label: 'Service CIDR', control: 'text', default: '10.96.0.0/12', hint: 'IPv4: VKS service networks are not dual-stack' },
-    ],
-    automation: (values                 , name        )             => {
-      const clusterName = str(values, 'cluster_name', 'cluster').toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      const namespace = str(values, 'namespace', '');
-      const production = str(values, 'environment', 'production') === 'production';
-      const clusterClass = str(values, 'cluster_class', 'builtin-generic-v3.1.0');
-      const version = str(values, 'k8s_version', '');
-      const cpCount = Number(str(values, 'control_plane', '3'));
-      const cpClass = str(values, 'cp_vm_class', 'guaranteed-medium');
-      const workerClass = str(values, 'worker_vm_class', 'guaranteed-large');
-      const replicas = num(values, 'worker_replicas', 3);
-      const pools = listOf(str(values, 'worker_pools', 'np-general'));
-      const storageClass = str(values, 'storage_class', '');
-      const podCidr = str(values, 'pod_cidr', '192.168.0.0/16');
-      const serviceCidr = str(values, 'service_cidr', '10.96.0.0/12');
-      const base = slugOf(name || clusterName, 'vks-cluster');
-      const legacyClass = clusterClass === 'tanzukubernetescluster';
-
-      const findings            = [];
-      if (production && cpCount === 1) {
-        findings.push(
-          warning('vcfa.vks.single-control-plane', 'A production cluster with one control plane node loses its API server, and etcd, with that one VM.', {
-            remediation: 'Three control plane nodes. The cost is two VMs; the saving is not rebuilding a cluster from backup.',
-            source: SRC,
-          }),
-        );
-      }
-      if (production && (workerClass.startsWith('best-effort') || cpClass.startsWith('best-effort'))) {
-        findings.push(
-          warning('vcfa.vks.best-effort-prod', 'Production nodes on a best-effort VM class have no CPU or memory reservation.', {
-            remediation: 'Under contention the nodes are squeezed first, and Kubernetes sees it as nodes going NotReady. Use guaranteed classes in production.',
-            source: SRC,
-          }),
-        );
-      }
-      if (production && replicas < 2) {
-        findings.push(
-          warning('vcfa.vks.single-worker', `${replicas} worker per pool means any node drain — including an upgrade — takes the workload down.`, {
-            remediation: 'At least two workers per pool, three if pod disruption budgets are in use.',
-            source: SRC,
-          }),
-        );
-      }
-      if (!namespace) {
-        findings.push(error('vcfa.vks.no-namespace', 'A VKS cluster lives in a Supervisor namespace, and none is set.', { source: SRC }));
-      }
-      if (!version) {
-        findings.push(error('vcfa.vks.no-version', 'No Kubernetes release is set.', { remediation: 'kubectl get kr lists the releases this Supervisor offers.', source: SRC }));
-      }
-      if (legacyClass) {
-        findings.push(
-          info('vcfa.vks.legacy-class', 'tanzukubernetescluster is the older ClusterClass. Newer VKS releases ship builtin-generic classes and move new features there.', {
-            source: SRC,
-          }),
-        );
-      }
-      // Pod and service networks: one IPv4 block each. A second (IPv6) block in
-      // cidrBlocks is how Cluster API asks for dual-stack, which VKS clusters on
-      // a Supervisor do not offer; the cluster would be refused or come up broken.
-      for (const [what, value] of [['Pod', podCidr], ['Service', serviceCidr]]         ) {
-        const blocks = listOf(value);
-        if (blocks.some((b) => familyOf(b) === 6)) {
-          findings.push(
-            error('vcfa.vks.ipv6', `${what} CIDR ${value}: VKS clusters on vSphere Supervisor do not support IPv6 or dual-stack pod and service networks.`, {
-              remediation: 'Use one IPv4 block. VERIFY: IPv6 and dual-stack in the release notes of your VKS version and its Antrea before planning around them.',
-              source: SRC,
-            }),
-          );
-        } else if (blocks.length !== 1 || familyOf(blocks[0] ) !== 4 || !blocks[0] .includes('/')) {
-          findings.push(error('vcfa.vks.bad-cidr', `${what} CIDR "${value}" is not one IPv4 CIDR.`, { source: SRC }));
-        }
-      }
-      if (familyOf(podCidr) === 4 && familyOf(serviceCidr) === 4 && overlapsAny(podCidr, serviceCidr)) {
-        findings.push(error('vcfa.vks.cidr-overlap', `The pod CIDR ${podCidr} overlaps the service CIDR ${serviceCidr}.`, { remediation: 'Pods and services need separate ranges, and neither may overlap the Supervisor workload network or anything the pods must reach.', source: SRC }));
-      }
-
-      const variables = [
-        '    variables:',
-        '      # VERIFY variable names against the class:',
-        `      #   kubectl get clusterclass ${clusterClass} -n <namespace> -o yaml`,
-        '      # builtin-generic-v3.x and tanzukubernetescluster name these differently.',
-        '      - name: vmClass',
-        `        value: ${cpClass}`,
-        '      - name: storageClass',
-        `        value: ${storageClass || '<REQUIRED>'}`,
-        ...(legacyClass ? ['      - name: defaultStorageClass', `        value: ${storageClass || '<REQUIRED>'}`] : []),
-      ];
-
-      const cluster = [
-        `# VKS cluster ${clusterName}`,
-        '# Apply in the Supervisor namespace with kubectl.',
-        '#',
-        `# Class ${clusterClass}: confirm it exists with  kubectl get clusterclass -A`,
-        `# Release ${version}: confirm it is offered with kubectl get kr`,
-        'apiVersion: cluster.x-k8s.io/v1beta1',
-        'kind: Cluster',
-        'metadata:',
-        `  name: ${clusterName}`,
-        `  namespace: ${namespace || '<REQUIRED>'}`,
-        '  labels:',
-        `    environment: ${production ? 'production' : 'non-production'}`,
-        '    managed-by: vcf-automation',
-        'spec:',
-        '  clusterNetwork:',
-        '    services:',
-        `      cidrBlocks: ["${serviceCidr}"]`,
-        '    pods:',
-        `      cidrBlocks: ["${podCidr}"]`,
-        '    serviceDomain: cluster.local',
-        '  topology:',
-        `    class: ${clusterClass}`,
-        ...(legacyClass ? [] : ['    # builtin classes live in a shared namespace; VERIFY with kubectl get clusterclass -A', '    classNamespace: vmware-system-vks-public']),
-        `    version: ${version || '<REQUIRED>'}`,
-        '    controlPlane:',
-        `      replicas: ${cpCount}`,
-        '    workers:',
-        '      machineDeployments:',
-        ...pools.flatMap((pool) => [
-          `        - class: node-pool`,
-          `          name: ${pool}`,
-          `          replicas: ${replicas}`,
-          '          variables:',
-          '            overrides:',
-          '              - name: vmClass',
-          `                value: ${workerClass}`,
-        ]),
-        ...variables,
-        '',
-      ].join('\n');
-
-      const template = [
-        `# VKS cluster ${clusterName}, as a CCI cloud template for the All Apps catalogue.`,
-        '# The Cluster manifest is the same one as the YAML',
-        '# beside this file; the template adds constrained inputs.',
-        'formatVersion: 2',
-        'inputs:',
-        '  name:',
-        '    type: string',
-        '    pattern: "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$"',
-        `    default: ${clusterName}`,
-        '  workers:',
-        '    type: integer',
-        `    minimum: ${production ? 2 : 1}`,
-        '    maximum: 10',
-        `    default: ${replicas}`,
-        'resources:',
-        '  # The namespace the cluster goes in. A CCI.Supervisor.Resource names its',
-        '  # namespace by binding to a CCI.Supervisor.Namespace resource of the same',
-        '  # template (VMware, "CCI in templates"); existing: true refers to one that',
-        '  # is already there instead of requesting a new one (VERIFY on your release).',
-        '  namespace:',
-        '    type: CCI.Supervisor.Namespace',
-        '    properties:',
-        `      name: ${namespace || '<REQUIRED — the Supervisor namespace>'}`,
-        '      existing: true',
-        '  cluster:',
-        '    type: CCI.Supervisor.Resource',
-        '    properties:',
-        `      context: \${resource.namespace.id}`,
-        '      manifest:',
-        '        apiVersion: cluster.x-k8s.io/v1beta1',
-        '        kind: Cluster',
-        '        metadata:',
-        "          name: '${input.name}'",
-        '        spec:',
-        '          clusterNetwork:',
-        `            services: { cidrBlocks: ["${serviceCidr}"] }`,
-        `            pods: { cidrBlocks: ["${podCidr}"] }`,
-        '            serviceDomain: cluster.local',
-        '          topology:',
-        `            class: ${clusterClass}`,
-        ...(legacyClass ? [] : ['            classNamespace: vmware-system-vks-public']),
-        `            version: ${version || '<REQUIRED>'}`,
-        `            controlPlane: { replicas: ${cpCount} }`,
-        '            workers:',
-        '              machineDeployments:',
-        ...pools.flatMap((pool) => [
-          '                - class: node-pool',
-          `                  name: ${pool}`,
-          "                  replicas: '${input.workers}'",
-          '                  variables:',
-          `                    overrides: [{ name: vmClass, value: ${workerClass} }]`,
-        ]),
-        '            variables:',
-        `              - { name: vmClass, value: ${cpClass} }`,
-        `              - { name: storageClass, value: ${storageClass || '<REQUIRED>'} }`,
-        '      # VERIFY the wait conditions against a template made in the All Apps designer.',
-        '      wait:',
-        '        conditions:',
-        '          - type: Ready',
-        '            status: "True"',
-        '',
-      ].join('\n');
-
-      // The same Cluster as the YAML beside it, as the JSON the Kubernetes API takes.
-      const clusterObject = {
-        apiVersion: 'cluster.x-k8s.io/v1beta1',
-        kind: 'Cluster',
-        metadata: { name: clusterName, namespace: namespace || '<REQUIRED>', labels: { environment: production ? 'production' : 'non-production', 'managed-by': 'vcf-automation' } },
-        spec: {
-          clusterNetwork: { services: { cidrBlocks: [serviceCidr] }, pods: { cidrBlocks: [podCidr] }, serviceDomain: 'cluster.local' },
-          topology: {
-            class: clusterClass,
-            ...(legacyClass ? {} : { classNamespace: 'vmware-system-vks-public' }),
-            version: version || '<REQUIRED>',
-            controlPlane: { replicas: cpCount },
-            workers: { machineDeployments: pools.map((pool) => ({ class: 'node-pool', name: pool, replicas, variables: { overrides: [{ name: 'vmClass', value: workerClass }] } })) },
-            variables: [
-              { name: 'vmClass', value: cpClass },
-              { name: 'storageClass', value: storageClass || '<REQUIRED>' },
-              ...(legacyClass ? [{ name: 'defaultStorageClass', value: storageClass || '<REQUIRED>' }] : []),
-            ],
-          },
-        },
-      };
-
-      // The package: the Cluster created in the Supervisor namespace through the
-      // Kubernetes API, after the API server has validated it with a server-side
-      // dry run (?dryRun=All, which persists nothing). A cluster of that name is
-      // left as it is.
-      const vksPkgName = packageNameOf('vcfa', 'vks', base);
-      const vksWorkflow = elementName(`Create VKS cluster ${clusterName}`);
-      const vksPkg = toPackage({
-        packageName: vksPkgName,
-        description: `Creates the VKS cluster ${clusterName} in a Supervisor namespace.`,
-        categoryPath: `Automation/VKS/${base}`,
-        workflow: {
-          name: vksWorkflow,
-          description: `Creates the VKS cluster ${clusterName} (${cpCount} control plane, ${pools.length} pool(s) of ${replicas} ${workerClass}) in the Supervisor namespace set in the configuration element: validated first by the API server (server-side dry run), then created. A cluster of that name is left as it is. Set the dryRun input to true to preview without changing anything.`,
-          inputs: [{ name: 'dryRun', type: 'boolean', description: 'true: validate on the server and change nothing' }],
-          outputs: [
-            { name: 'clusterName', type: 'string', description: 'The cluster, empty in a dry run that would create it' },
-            { name: 'summary', type: 'string', description: 'The audit record, JSON' },
-          ],
-          script: [
-            'var ctx = core.begin(settings, dryRun);',
-            String.raw`if (!settings.supervisorHost || !settings.supervisorUsername || !settings.supervisorPassword) throw new Error("Set supervisorHost, supervisorUsername and supervisorPassword in the configuration element " + SETTINGS_NAME + ".");
-if (!settings.namespace) throw new Error("Set namespace in the configuration element: the Supervisor namespace the cluster goes in.");
-var host = String(settings.supervisorHost);
-var ns = String(settings.namespace);
-var cluster = JSON.parse(core.resource(RESOURCE_PATH, "cluster.json"));
-cluster.metadata.namespace = ns;
-if (JSON.stringify(cluster).indexOf("<REQUIRED") >= 0) throw new Error("cluster.json still has a <REQUIRED> value (Kubernetes release or storage class); set it on the page and import the package again.");
-var auth = mod.loginSupervisor(host, settings.supervisorUsername, settings.supervisorPassword);
-var SAFE = { redact: settings._secrets };
-var api = "https://" + host + "/apis/cluster.x-k8s.io/v1beta1/namespaces/" + encodeURIComponent(ns) + "/clusters";
-var name = String(cluster.metadata.name);
-var found = core.http("GET", api + "/" + encodeURIComponent(name), auth, null, { redact: settings._secrets, allow: [404] });
-var created = "";
-if (found.statusCode === 200) {
-  var topology = (found.body && found.body.spec && found.body.spec.topology) || {};
-  System.log("Exists, left as it is: cluster " + name + " in " + ns + " (" + (topology.version || "?") + "). Change it with kubectl, or delete it and run again.");
-  created = name;
-} else {
-  // The API server checks the ClusterClass, the release, the VM classes and
-  // the admission webhooks, and persists nothing.
-  core.http("POST", api + "?dryRun=All", auth, cluster, SAFE);
-  System.log("Server-side dry run passed: the Supervisor accepts cluster " + name + " in " + ns + ".");
-  created = core.act(ctx, "create VKS cluster " + name + " in " + ns, function () {
-    core.http("POST", api, auth, cluster, SAFE);
-    return name;
-  }) || "";
-}
-clusterName = created;
-summary = core.audit(ctx, { clusterName: created, namespace: ns, note: "kubectl get cluster " + name + " -n " + ns + " shows its progress." });
-core.notify(settings.webhook, summary);`,
-          ].join('\n'),
-        },
-        actions: [
-          {
-            name: 'loginSupervisor',
-            description:
-              'A Supervisor: POST https://<supervisor>/wcp/login with Basic authorization answers { session_id }, the token kubectl vsphere login keeps. Returns { Authorization: "Bearer <session_id>" }. VERIFY on your release: the exchange follows the kubectl-vsphere plugin, not a published API reference.',
-            resultType: 'Any',
-            params: [pa('host', 'string', 'Supervisor control plane address'), pa('username', 'string', 'A vSphere SSO account that may edit the namespace'), pa('password', 'string', 'From a SecureString attribute')],
-            script: String.raw`var core = System.getModule("vcf.automation.core");
-var r = core.http("POST", "https://" + host + "/wcp/login", { "Authorization": "Basic " + core.base64(String(username) + ":" + String(password)) }, null, { redact: [password] });
-if (!r.body || !r.body.session_id) throw new Error("The Supervisor at " + host + " returned no session.");
-return { "Authorization": "Bearer " + r.body.session_id };`,
-          },
-        ],
-        config: {
-          name: 'Settings',
-          description: `Settings of the ${vksWorkflow} workflow. Fill supervisorPassword after import; set dryRun to true to preview instead of changing anything.`,
-          attributes: [
-            { name: 'supervisorHost', type: 'string', value: '', description: 'The Supervisor control plane address (as in kubectl vsphere login --server)' },
-            { name: 'supervisorUsername', type: 'string', value: '', description: 'A vSphere SSO account with edit rights on the namespace' },
-            { name: 'supervisorPassword', type: 'SecureString', description: 'Its password' },
-            { name: 'namespace', type: 'string', value: namespace, description: 'The Supervisor namespace the cluster goes in' },
-            ...guardSettings(1, 'created'),
-          ],
-        },
-        resources: [{ name: 'cluster.json', content: json(clusterObject) }],
-      });
-
-      const nodes = cpCount + replicas * pools.length;
-      const imported = importBundle({
-        templates: [{ name: `VKS cluster (${clusterClass})`, description: `A VKS cluster with ${cpCount} control plane nodes.`, yaml: template, org: 'all-apps' }],
-      });
-
-      return {
-        platform: PLATFORM,
-        title: `VKS cluster ${clusterName} — ${cpCount} control plane, ${pools.length} pool(s) of ${replicas} ${workerClass}`,
-        effect: 'reversible',
-        trigger: { kind: 'request', detail: `kubectl apply in ${namespace || 'the namespace'}, or a request of the CCI template from the All Apps catalogue`, worstCase: `once per request — ${nodes} VMs each time` },
-        scope: {
-          what: `${nodes} VMs (${cpCount} control plane, ${replicas * pools.length} workers) in the Supervisor namespace ${namespace || '(none)'}.`,
-          decidedBy: [
-            `The namespace ${namespace || '(none)'} — its limits, VM classes and storage classes bound what can be built.`,
-            `The ClusterClass ${clusterClass}, which decides what "control plane" and "node-pool" mean.`,
-            `The Kubernetes release ${version || '(none)'}, which picks the node image.`,
-            'Who can create Cluster objects in the namespace — namespace editors.',
-          ],
-          ifWrong: 'A cluster larger than the namespace can hold sits half-built with machines Pending; one on the wrong release has to be upgraded in place or rebuilt.',
-        },
-        guardrails: [
-          { rule: 'Bounded by the namespace limits and VM classes', because: 'The namespace is the quota. A cluster request cannot exceed what the namespace class allows.' },
-          ...(cpCount === 3 ? [{ rule: 'Three control plane nodes', because: 'etcd needs a quorum. One node is one VM failure from a lost cluster.' }] : []),
-          ...(!workerClass.startsWith('best-effort') ? [{ rule: `Workers on ${workerClass}`, because: 'Guaranteed classes reserve CPU and memory, so node pressure comes from pods rather than from the host.' }] : []),
-          { rule: 'Server-side dry run before creating', because: 'The Supervisor checks the class, release and VM class binding. It is the fastest way to find a typo in any of them.' },
-        ],
-        dryRun: [
-          `Run the package workflow ${vksWorkflow} with the dryRun input set to true: it sends the Cluster to the Supervisor as a server-side dry run only (?dryRun=All — validated, not persisted), logs "DRY RUN: would create …" and creates nothing.`,
-          'Run scripts/apply-kubectl.sh --dry-run: kubectl apply --dry-run=server validates the Cluster against the ClusterClass and the namespace.',
-          `kubectl get clusterclass -A and kubectl get kr, and check ${clusterClass} and ${version} are both listed.`,
-        ],
-        undo: [
-          'kubectl delete cluster <name> -n <namespace>, or delete the deployment. The VMs and their disks are removed; persistent volumes follow their reclaim policy.',
-          'Anything running in the cluster is gone with it. Back up workloads (Velero or equivalent) before deleting.',
-        ],
-        told: ['kubectl get cluster and kubectl describe cluster in the namespace show progress and failures.', 'The deployment History tab for catalogue requests.'],
-        requires: [
-          PKG_REQUIRES,
-          `The Supervisor namespace ${namespace || '(set one)'} with ${cpClass} and ${workerClass} VM classes and the storage class ${storageClass || '(set one)'} bound to it.`,
-          'kubectl and the VCF CLI (or kubectl vsphere plugin) logged in to the Supervisor.',
-          'For the template: an All Apps organisation in VCF Automation.',
-        ],
-        files: {
-          [`${base}-cluster.yaml`]: cluster,
-          [`${base}-cci-template.yaml`]: template,
-          [`${base}-cci-template.json`]: json(templatePayload(`VKS cluster (${clusterClass})`, `A VKS cluster with ${cpCount} control plane nodes.`, template)),
-          ...vksPkg.files,
-          'scripts/apply-kubectl.sh': underScripts(kubectlScript(`Create VKS cluster ${clusterName} in ${namespace || 'the namespace'}.`, [`${base}-cluster.yaml`], `kubectl delete cluster ${clusterName} -n ${namespace || '<namespace>'} — deletes every node.`)),
-          'scripts/apply.sh': underScripts(applyScript('vcf-automation', [{ method: 'POST', path: '/blueprint/api/blueprints', payload: `${base}-cci-template.json` }], 'DELETE /blueprint/api/blueprints/{id}. Clusters already requested are not deleted.')),
-          ...imported.files,
-          'IMPORT.md': importMd({
-            subject: `The VKS cluster ${clusterName}: created in the Supervisor namespace by the Orchestrator package (\`${vksPkg.packageDir}\`, workflow **${vksWorkflow}**, server-side dry run first), and as a blueprint for the All Apps catalog and a Cluster manifest for kubectl.`,
-            orgs: 'VCF Automation 9.1 / 9.1.1 All Apps organizations (and a Supervisor namespace, for the package and the kubectl route)',
-            steps: [
-              ...packageSteps(vksPkg),
-              imported.steps.templates,
-              kubeStep('Or create it directly in the namespace', 'scripts/apply-kubectl.sh', [`${base}-cluster.yaml`], [`It uses \`kubectl apply\`, which suits a Supervisor namespace context (${namespace || 'set one'}); against the VCF Automation endpoint use \`kubectl create -f ${base}-cluster.yaml\`.`], { expectContext: false }),
-            ],
-            auth: ['import', 'kube'],
-            verify: [
-              ...verifyFor(imported),
-              'The template binds the cluster to a CCI.Supervisor.Namespace resource with `context: ${resource.namespace.id}`, the form VMware’s "CCI in templates" blog shows (it said `${cci.namespace.id}` before, which is not a binding); `existing: true` on the namespace is from community examples — compare with a template made in the All Apps blueprint designer.',
-              'The package logs in to the Supervisor at /wcp/login (Basic authorization, answering { session_id }) as the kubectl-vsphere plugin does; that exchange is not in a published API reference — VERIFY it on your release. Through VCF Automation, a Supervisor namespace is reached with a VCF CLI context whose proxy path is not documented, so the package does not go that way.',
-              'Cluster API cluster.x-k8s.io/v1beta1 and the builtin-generic ClusterClass in vmware-system-vks-public are what VKS 3.x ships; the class variable names are VERIFY (kubectl get clusterclass <class> -n vmware-system-vks-public -o yaml).',
-            ],
-          }),
-        },
-        notes: [
-          'The ClusterClass name and its variables change between VKS releases. The file uses the names at the time of writing; kubectl get clusterclass <name> -o yaml shows what yours expects.',
-          'The Kubernetes release string must match one the Supervisor offers exactly. kubectl get kr lists them, with READY and COMPATIBLE columns — both must be True.',
-          'CCI.Supervisor.Resource wraps any Supervisor object. Its context binding has changed between releases; check it against a template created in the All Apps catalogue editor.',
-        ],
-        findings,
-      };
-    },
-  }),
+  VKS_CLUSTER,
 
   // -------------------------------------------------------------------------
   automationBlueprint({
@@ -3543,7 +3088,7 @@ core.notify(settings.webhook, summary);`,
             auth: ['import'],
             verify: [
               ...verifyFor(imported),
-              'Cloud.Terraform.Configuration property names (terraformVersion, providers[].name and cloudZone, variables, configurationSource.repositoryId, commitId, sourceDirectory) match published examples (Kovarus, "Using HashiCorp Terraform Resources with vRealize Automation Cloud"); the Terraform runtime integration is documented for 9.1 VM Apps organizations (TechDocs 9.1, "VCF Automation Terraform runtime with no internet access").',
+              'Cloud.Terraform.Configuration property names (terraformVersion, providers[].name and cloudZone, variables, configurationSource.repositoryId, commitId, sourceDirectory) match published examples (Kovarus, on Terraform resources in cloud templates); the Terraform runtime integration is documented for 9.1 VM Apps organizations (TechDocs 9.1, "VCF Automation Terraform runtime with no internet access").',
               'repositoryId is the id of the Git integration (GET /iaas/api/integrations), which is what the package fills in; VERIFY by adding a Terraform resource in the designer once and comparing.',
               VERIFY_LOGIN,
             ],

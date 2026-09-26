@@ -26,7 +26,8 @@ import { automationBlueprint, type AutomationBlueprint } from '../from-automatio
 import { listOf, slugOf, type Automation } from '../automation.ts';
 import { authHeader, authPreamble, readScript, scheduledEnv } from '../apply.ts';
 import { importGuide, type ImportStepSpec } from './vcf-networks-logs.ts';
-import { isIp, isIpv6 } from '../../core/ip.ts';
+import { isIp, isIpv6, splitHostPort } from '../../core/ip.ts';
+import { json, needPrivate, parseArgs, sq } from './vcf-fleet-91-common.ts';
 
 const PLATFORM = 'vcf-fleet' as const;
 const SRC = 'ArchToolKit';
@@ -48,11 +49,6 @@ function fleetImport(intro: string, steps: readonly (ImportStepSpec | undefined)
 /** The step for a read-only script run on a schedule. */
 function cronStep(script: string): ImportStepSpec {
   return { heading: 'Run it once, then schedule it', lines: [`Run \`./${script}\` by hand and compare with the VCF Operations interface, then install the line in crontab.txt with \`crontab -e\`.`] };
-}
-
-/** Single-quote a value for bash. */
-function sq(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Password-managed appliance types, as the password accounts query names them. */
@@ -89,7 +85,22 @@ const CERT_APPLIANCES = [
   { value: 'VCF_SERVICES_RUNTIME', label: 'VCF management services runtime' },
   { value: 'VCF_OPS_HCX', label: 'HCX' },
   { value: 'AVI_LOAD_BALANCER', label: 'Avi Load Balancer' },
-  { value: 'SUPERVISOR', label: 'Supervisor' },
+  { value: 'SUPERVISOR', label: 'Supervisor (9.1.1)' },
+  { value: 'NSXT_EDGE', label: 'NSX Edge (9.1.1, VERIFY)' },
+  { value: 'VCF_OPS_NETWORK_COLLECTOR', label: 'VCF Operations for networks collector (9.1.1, VERIFY)' },
+  { value: 'STS', label: 'Security Token Service (9.1.1, VERIFY)' },
+  { value: 'VSAN', label: 'vSAN (9.1.1, VERIFY)' },
+];
+
+/** Management components the fleet lifecycle service upgrades (VERIFY the type names per release). */
+const LCM_COMPONENTS = [
+  { value: 'VCF_OPERATIONS', label: 'VCF Operations (with the cloud proxies)' },
+  { value: 'IDENTITY_BROKER', label: 'VCF Identity Broker' },
+  { value: 'VCF_AUTOMATION', label: 'VCF Automation' },
+  { value: 'VCF_OPS_NETWORK', label: 'VCF Operations for networks' },
+  { value: 'VCF_SERVICES_RUNTIME', label: 'VCF management services runtime' },
+  { value: 'LICENSE_SERVER', label: 'License server' },
+  { value: 'VCF_OPS_HCX', label: 'HCX' },
 ];
 
 /** The private header file authPreamble('vcf-fleet') writes, as a bash expansion. */
@@ -227,22 +238,6 @@ function waitRequest(): string[] {
   ];
 }
 
-/** Refuse a secret file anyone but its owner can read. */
-function needPrivate(): string[] {
-  return [
-    '# A file holding a secret must be readable by its owner only.',
-    'need_private() {',
-    '  local f="$1" m',
-    '  [[ -r "$f" ]] || { echo "Cannot read $f" >&2; exit 2; }',
-    '  m=$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f")',
-    '  if [[ "$m" != "600" && "$m" != "400" ]]; then',
-    '    echo "Refusing: $f is mode $m. It holds a secret; chmod 600 it first." >&2',
-    '    exit 2',
-    '  fi',
-    '}',
-  ];
-}
-
 /**
  * Posts the PROBLEMS array to a webhook. The body goes on stdin (a long problem
  * list would pass the 128 KB limit on one argument), curl -f makes an HTTP error
@@ -256,23 +251,6 @@ function notify(webhook: string, source: string): string[] {
     `    | curl -sS -f -o /dev/null -X POST ${sq(webhook)} -H "Content-Type: application/json" --data-binary @-; then`,
     `  echo "WARNING: could not post the problems to ${webhook.replace(/["`$\\]/g, '')}; nobody was told but this log." >&2`,
     'fi',
-  ];
-}
-
-/** Parse --dry-run and friends without the `[[ ]] &&` trap under set -e. */
-function parseArgs(extra: readonly string[] = []): string[] {
-  return [
-    'DRY_RUN=0',
-    'ARGS=()',
-    'while (( $# > 0 )); do',
-    '  case "$1" in',
-    '    --dry-run) DRY_RUN=1 ;;',
-    ...extra.map((line) => `    ${line}`),
-    '    *) ARGS+=("$1") ;;',
-    '  esac',
-    '  shift',
-    'done',
-    'set -- "${ARGS[@]+"${ARGS[@]}"}"',
   ];
 }
 
@@ -292,8 +270,6 @@ function head(title: string, usage: readonly string[]): string[] {
   ];
 }
 
-const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
-
 const cron = (base: string, schedule: string, script: string, args = ''): string =>
   [
     `# ${base}: the script logs in for itself from the API token file (mode 600,`,
@@ -301,6 +277,479 @@ const cron = (base: string, schedule: string, script: string, args = ''): string
     `${schedule} cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-fleet')} ./${script}${args ? ` ${args}` : ''} >> /var/log/vcf-automation/${base}.log 2>&1`,
     '',
   ].join('\n');
+
+/** What passwordAccountOps needs from the rotate blueprint's inputs. */
+interface AccountOpsSpec {
+  readonly appliance: string;
+  readonly label: string;
+  readonly credType: string;
+  readonly fqdns: readonly string[];
+  readonly users: readonly string[];
+  readonly filter: Record<string, string>;
+  readonly max: number;
+  readonly rotateDays: number;
+  readonly findings: Finding[];
+}
+
+/**
+ * Remediate and scheduled auto-rotation, the two other things the fleet
+ * password page does to an account. Both select accounts exactly as the
+ * rotation does (one appliance type, FQDN and user filters, a cap).
+ */
+function passwordAccountOps(mode: string, spec: AccountOpsSpec): Automation {
+  const remediate = mode === 'remediate';
+  const findings = [...spec.findings];
+  if (!remediate && spec.rotateDays < 14) findings.push(warning('fleet91.rotate.schedule-short', `Rotating every ${spec.rotateDays} days: every integration that stores one of these passwords has to be updated that often.`, { source: SRC }));
+  if (!remediate && spec.rotateDays > 90) findings.push(warning('fleet91.rotate.schedule-long', `Rotating every ${spec.rotateDays} days is longer than most password policies allow; accounts may expire first.`, { source: SRC }));
+  if (remediate) findings.push(info('fleet91.rotate.remediate', 'Remediate changes nothing on the component: it records the password the component already has, after someone changed it outside VCF Operations, so VCF can manage the account again.', { source: SRC }));
+
+  const select = [
+    `MAX=${spec.max}`,
+    'PROBLEMS=()',
+    `FQDNS=${sq(JSON.stringify(spec.fqdns))}`,
+    `USERS=${sq(JSON.stringify(spec.users))}`,
+    `FILTER=${sq(JSON.stringify(spec.filter))}`,
+    'query_all "${FM}/password-management/accounts/query" "$FILTER" vcfPasswordAccounts passwordAccountKey \\',
+    '  | jq -c --argjson f "$FQDNS" --argjson u "$USERS" \'[ .[]',
+    '      | select(($f | length) == 0 or (.applianceFqdn as $x | $f | index($x)))',
+    '      | select(($u | length) == 0 or (.userName as $x | $u | index($x))) ]\' > selected.json',
+    'COUNT=$(jq length selected.json)',
+    'echo "Selected ${COUNT} account(s):"',
+    'jq -r \'.[] | "  \\(.applianceFqdn)\\t\\(.userName)\\t\\(.status)\\t\\(.credentialType // "-")"\' selected.json',
+    'if (( COUNT == 0 )); then echo "Nothing matched the filter." >&2; exit 1; fi',
+    'if (( COUNT > MAX )); then echo "Refusing: ${COUNT} accounts is above the cap of ${MAX}." >&2; exit 1; fi',
+  ];
+
+  const script = remediate
+    ? [
+        ...head(`Remediate ${spec.label} ${spec.credType} accounts: record the password each one already has.`, [
+          'Needs REMEDIATE_FILE: a mode-600 TSV, applianceFqdn <TAB> userName <TAB> actualPassword.',
+          '  ./remediate-passwords.sh            remediate, one account at a time',
+          '  ./remediate-passwords.sh --dry-run  list what would be remediated',
+        ]),
+        ...waitRequest(),
+        ...needPrivate(),
+        ...parseArgs(),
+        ': "${REMEDIATE_FILE:?set REMEDIATE_FILE to the mode-600 TSV of the passwords the components have now}"',
+        'need_private "$REMEDIATE_FILE"',
+        '# VERIFY: the remediate operation path of the 9.1 fleet password API. Override with',
+        '# REMEDIATE_PATH (use {key} for the passwordAccountKey).',
+        'REMEDIATE_PATH="${REMEDIATE_PATH:-${FM}/password-management/accounts/{key}/password?action=remediate}"',
+        ...select,
+        'if (( DRY_RUN )); then echo "DRY RUN: would remediate the accounts above that have a line in REMEDIATE_FILE. Nothing was changed."; exit 0; fi',
+        'ROWS=$(jq -r \'.[] | [.passwordAccountKey, .applianceFqdn, .userName] | @tsv\' selected.json)',
+        'while IFS=$\'\\t\' read -r KEY FQDN ACCT; do',
+        '  [[ -n "$KEY" ]] || continue',
+        '  P=""',
+        '  while IFS=$\'\\t\' read -r F U C; do if [[ "$F" == "$FQDN" && "$U" == "$ACCT" ]]; then P="$C"; break; fi; done < "$REMEDIATE_FILE"',
+        '  if [[ -z "$P" ]]; then PROBLEMS+=("${FQDN} ${ACCT}: no line in REMEDIATE_FILE, skipped"); continue; fi',
+        '  refresh_token',
+        '  # The password goes on stdin, never as an argument.',
+        '  REQ=$(P="$P" jq -n \'{password: env.P}\' | api PUT "${REMEDIATE_PATH//\\{key\\}/$KEY}" --data-binary @- | jq -r \'.requestId // empty\') || REQ=""',
+        '  if [[ -z "$REQ" ]]; then PROBLEMS+=("${FQDN} ${ACCT}: remediation refused or no requestId"); break; fi',
+        '  wait_request "$REQ" || { PROBLEMS+=("${FQDN} ${ACCT}: remediation request ${REQ} did not complete"); break; }',
+        'done <<<"$ROWS"',
+        'if (( ${#PROBLEMS[@]} > 0 )); then printf "%s\\n" "${PROBLEMS[@]}" >&2; exit 1; fi',
+        'echo "Remediated. Run the password report to see the accounts ACTIVE again."',
+        '',
+      ]
+    : [
+        ...head(`Turn on auto-rotation every ${spec.rotateDays} days for ${spec.label} ${spec.credType} accounts.`, [
+          '  ./auto-rotate.sh            set the schedule on each selected account',
+          '  ./auto-rotate.sh --dry-run  list the accounts and their current schedule',
+        ]),
+        ...parseArgs(),
+        `DAYS=${spec.rotateDays}`,
+        '# VERIFY: the auto-rotate policy path of the 9.1 fleet password API. Override with',
+        '# AUTOROTATE_PATH (use {key} for the passwordAccountKey).',
+        'AUTOROTATE_PATH="${AUTOROTATE_PATH:-${FM}/password-management/accounts/{key}/auto-rotate-policy}"',
+        ...select,
+        'jq -r \'.[] | "  \\(.applianceFqdn) \\(.userName): auto-rotate \\(.autoRotatePolicy.enabled // .autoRotateEnabled // "unknown") every \\(.autoRotatePolicy.frequencyInDays // "?") days"\' selected.json',
+        'if (( DRY_RUN )); then echo "DRY RUN: would set auto-rotation every ${DAYS} days on the accounts above. Nothing was changed."; exit 0; fi',
+        'STAMP=$(date +%Y%m%d-%H%M%S)',
+        'jq \'[.[] | {passwordAccountKey, applianceFqdn, userName, autoRotatePolicy}]\' selected.json > "auto-rotate-before-${STAMP}.json"',
+        'for KEY in $(jq -r \'.[].passwordAccountKey\' selected.json); do',
+        '  refresh_token',
+        '  if ! api PUT "${AUTOROTATE_PATH//\\{key\\}/$KEY}" --data "$(jq -n --argjson d "$DAYS" \'{enabled: true, frequencyInDays: $d}\')" >/dev/null; then',
+        '    PROBLEMS+=("${KEY}: the auto-rotate policy was refused"); break',
+        '  fi',
+        '  echo "  ${KEY}: every ${DAYS} days"',
+        'done',
+        'if (( ${#PROBLEMS[@]} > 0 )); then printf "%s\\n" "${PROBLEMS[@]}" >&2; exit 1; fi',
+        'echo "Auto-rotation on. The previous settings are in auto-rotate-before-${STAMP}.json."',
+        '',
+      ];
+
+  const file = remediate ? 'remediate-passwords.sh' : 'auto-rotate.sh';
+  return {
+    platform: PLATFORM,
+    title: remediate ? `Remediate ${spec.label} ${spec.credType} passwords` : `Auto-rotate ${spec.label} ${spec.credType} passwords every ${spec.rotateDays} days`,
+    effect: 'reversible',
+    trigger: { kind: 'manual', detail: remediate ? 'Run by hand after a password was changed outside VCF Operations and the account shows as disconnected.' : 'Run once; VCF Operations then rotates on its own schedule.', worstCase: remediate ? `once per run, at most ${spec.max} accounts` : `every ${spec.rotateDays} days, every selected account, from then on` },
+    scope: {
+      what: `${spec.label} accounts of credential type ${spec.credType}${spec.fqdns.length ? ` on ${spec.fqdns.join(', ')}` : ' on every appliance of that type'}${spec.users.length ? `, named ${spec.users.join(', ')}` : ''}.`,
+      decidedBy: [`POST /password-management/accounts/query with appliance ${spec.appliance}, credentialType ${spec.credType}.`, spec.fqdns.length ? `Filtered to ${spec.fqdns.join(', ')}.` : 'No FQDN filter.', `Refused above ${spec.max} accounts.`],
+      ifWrong: remediate ? 'VCF Operations records a password the component does not have; its next rotation of that account fails and has to be remediated again.' : 'Integrations that store these passwords break at every rotation until they read them from VCF Operations or a vault.',
+    },
+    guardrails: [
+      { rule: 'One appliance type per run, with a cap on accounts', because: 'A filter that went wrong should stop, not change the fleet.' },
+      ...(remediate ? [{ rule: 'Passwords come from a mode-600 file and go to the API on stdin', because: 'The file holds every password in the run.' }] : [{ rule: 'Saves each account’s previous auto-rotate policy first', because: 'That file is the undo.' }]),
+      { rule: 'Applies when run; --dry-run lists the accounts', because: 'The selection can be read before anything changes.' },
+    ],
+    dryRun: [`${file} --dry-run lists the accounts and changes nothing.`],
+    undo: remediate ? ['Remediate again with the right password.'] : ['PUT each policy in auto-rotate-before-<time>.json back, or set enabled: false.'],
+    told: ['The exit code.', 'VCF Operations records each change under its password management tasks.'],
+    requires: ['An API client with vcf_password.manage — see fleet91_api_clients.', 'jq and bash 4.'],
+    files: {
+      [file]: script.join('\n'),
+      'IMPORT.md': fleetImport('Nothing is uploaded as a file: the accounts are read from the fleet at run time.', [{ heading: remediate ? 'Remediate' : 'Schedule', lines: [`\`./${file}\` (add \`--dry-run\` first). In the interface: Fleet management > Passwords > the account > ${remediate ? 'Remediate' : 'Auto-rotate'}.`] }], [`VERIFY: ${remediate ? 'REMEDIATE_PATH and its body {password}' : 'AUTOROTATE_PATH and its body {enabled, frequencyInDays}'} on your 9.1 build; both can be overridden without editing the script.`]),
+    },
+    notes: [remediate ? 'Remediate is the fleet counterpart of the SDDC Manager REMEDIATE operation: VCF learns the password, the component is not touched.' : 'Scheduled auto-rotation (9.1.1 covers the vCenter SSO administrator and the SDDC Manager root, admin@local and vcf accounts too). Rotated passwords are only in VCF Operations: fetch them through the API or the interface when an integration needs one.'],
+    findings,
+  };
+}
+
+/** Certificate auto-renewal (9.1.1): VCF Operations renews before expiry by itself. */
+function certAutoRenew(values: BlueprintValues, name: string): Automation {
+  const appliance = str(values, 'appliance', 'VCENTER');
+  const days = num(values, 'renew_days', 30);
+  const ca = str(values, 'renew_ca', 'VMCA');
+  const base = slugOf(name || 'cert-auto-renew', 'cert-auto-renew');
+  const findings: Finding[] = [];
+  if (days < 14) findings.push(warning('fleet91.cert.renew-late', `Renewing ${days} days before expiry leaves little time when a renewal fails.`, { source: SRC }));
+  if (ca === 'MSCA') findings.push(info('fleet91.cert.renew-msca', 'Auto-renewal with the Microsoft CA needs the CA configured first (action "msca" writes configure-msca.sh).', { source: SRC }));
+  const body = { enabled: true, renewBeforeDays: days, caType: ca, appliances: [appliance] };
+  const script = [
+    ...head(`Turn on certificate auto-renewal for ${appliance}: ${ca}, ${days} days before expiry (9.1.1).`, ['Applies when run. With --dry-run it prints the current setting and the body.']),
+    ...parseArgs(),
+    '# VERIFY: the auto-renewal settings path of the 9.1.1 certificate API. Override with AUTO_RENEW_PATH.',
+    'AUTO_RENEW_PATH="${AUTO_RENEW_PATH:-${FM}/certificate-management/auto-renewal}"',
+    'CODE=$(api_status "$AUTO_RENEW_PATH")',
+    'if [[ "$CODE" != "200" ]]; then',
+    '  echo "The auto-renewal endpoint answered HTTP ${CODE}. Set AUTO_RENEW_PATH from the API reference for your release, or turn it on by hand:" >&2',
+    '  echo "  VCF Operations > Fleet management > Certificates > Settings > Auto-renew: on, the CA, and the days before expiry." >&2',
+    '  exit 3',
+    'fi',
+    'STAMP=$(date +%Y%m%d-%H%M%S)',
+    'api GET "$AUTO_RENEW_PATH" > "auto-renew-before-${STAMP}.json"',
+    'echo "Now:"; jq . "auto-renew-before-${STAMP}.json"',
+    'if (( DRY_RUN )); then echo "DRY RUN: would PUT ${AUTO_RENEW_PATH}:"; jq . auto-renew.json; exit 0; fi',
+    'api PUT "$AUTO_RENEW_PATH" --data @auto-renew.json | jq .',
+    '',
+  ].join('\n');
+  return {
+    platform: PLATFORM,
+    title: `Certificate auto-renewal for ${appliance} (${ca}, ${days} days before expiry)`,
+    effect: 'reversible',
+    trigger: { kind: 'manual', detail: 'Run once; VCF Operations then renews on its own.', worstCase: 'every certificate of the type, each time one comes within the window' },
+    scope: { what: `Every ${appliance} TLS certificate VCF Operations manages, from now on.`, decidedBy: ['The appliance type in auto-renew.json.', 'Which certificates VCF Operations manages for that type.'], ifWrong: 'Certificates renew, and services restart, on appliances nobody planned a window for.' },
+    guardrails: [
+      { rule: 'Refuses unless the endpoint answers, and saves the current setting first', because: 'auto-renew-before-<time>.json is the undo.' },
+      { rule: 'Applies when run; --dry-run shows the current setting and the body', because: 'Automatic renewal restarts services on a schedule nobody chose.' },
+    ],
+    dryRun: ['auto-renew.sh --dry-run prints the current setting and what it would send.'],
+    undo: ['PUT auto-renew-before-<time>.json back, or set enabled: false.'],
+    told: ['VCF Operations raises certificate alarms and records every renewal under its certificate management tasks.'],
+    requires: ['An API client with vcf_certificates.manage — see fleet91_api_clients.', 'VCF 9.1.1 or later.', 'jq and bash 4.'],
+    files: {
+      'auto-renew.json': json(body),
+      'auto-renew.sh': script,
+      'IMPORT.md': fleetImport('auto-renew.json is the body auto-renew.sh sends.', [{ heading: 'Turn it on', lines: ['`./auto-renew.sh --dry-run`, then `./auto-renew.sh`.'] }], ['VERIFY: AUTO_RENEW_PATH and the body fields (enabled, renewBeforeDays, caType, appliances) on your 9.1.1 build.']),
+    },
+    notes: [`${base}: keep certificate-report.sh (action "report") on its daily schedule — it is the check that renewal is actually happening.`],
+    findings,
+  };
+}
+
+/** License override on one asset, or connected mode — the license server API is VERIFY. */
+function licenseChange(mode: string, values: BlueprintValues, name: string): Automation {
+  const asset = str(values, 'override_asset', '');
+  const assetType = str(values, 'asset_type', 'ESX_HOST');
+  const license = str(values, 'license_name', '');
+  const override = mode === 'override';
+  const base = slugOf(name || `license-${mode}`, 'license');
+  const findings: Finding[] = [];
+  if (override && (!asset || /[,\s]/.test(asset))) findings.push(error('fleet91.license.one-asset', 'Give exactly one ESX host or vSAN cluster.', { source: SRC }));
+  if (override && !license) findings.push(error('fleet91.license.no-license', 'Name the license to assign.', { source: SRC }));
+  if (override) findings.push(info('fleet91.license.override', 'An override on the asset takes priority over the license assigned at vCenter level (new in 9.1). Nothing else shows that this asset differs; the script writes the change record line.', { source: SRC }));
+  if (!override) findings.push(info('fleet91.license.connected', 'Connected, automated mode sends usage to Broadcom every 24 hours and downloads and applies the updated license file with nobody involved. VCF Operations must reach the Business Services console through the proxy it is configured with.', { source: SRC }));
+  const body = override ? { assetName: asset, assetType, licenseName: license } : { mode: 'CONNECTED', automaticLicenseUpdate: true };
+  const script = [
+    ...head(override ? `Assign license "${license}" to ${assetType === 'ESX_HOST' ? 'ESX host' : 'vSAN cluster'} ${asset}, overriding its vCenter license.` : 'Put licensing in connected mode with automatic license download.', [
+      'Applies when run; --dry-run shows the current state and what it would send.',
+      'The license server API is not in the public reference at the time of writing:',
+      'LICENSE_API must answer before anything is sent; otherwise the script prints the',
+      'interface steps and stops.',
+    ]),
+    ...parseArgs(),
+    '# VERIFY: the license server API base of your release.',
+    'LICENSE_API="${LICENSE_API:-${FM}/licensing}"',
+    'CODE=$(api_status "${LICENSE_API}/licenses")',
+    'if [[ "$CODE" != "200" ]]; then',
+    '  echo "The licensing API ${LICENSE_API} answered HTTP ${CODE}. Set LICENSE_API from the API reference, or do it by hand:" >&2',
+    ...(override
+      ? [
+          `  echo "  VCF Operations > Manage > Licensing: select ${asset.replace(/["`$\\]/g, '')}, Assign license, choose ${license.replace(/["`$\\]/g, '')}." >&2`,
+        ]
+      : ['  echo "  VCF Operations > Licenses & Registration: Register, choose Connected and turn on automatic license updates." >&2']),
+    '  exit 3',
+    'fi',
+    'STAMP=$(date +%Y%m%d-%H%M%S)',
+    ...(override
+      ? [
+          `ASSET=${sq(asset)}`,
+          `LICENSE=${sq(license)}`,
+          'LID=$(api GET "${LICENSE_API}/licenses" | jq -r --arg n "$LICENSE" \'[(.licenses // .elements // .)[]? | select((.name // .displayName) == $n)] | if length == 1 then .[0].id else empty end\')',
+          '[[ -n "$LID" ]] || { echo "Refusing: no single license named ${LICENSE}." >&2; exit 1; }',
+          `ASSETS=$(api GET "\${LICENSE_API}/assets?type=${assetType}" | jq -c --arg n "$ASSET" '[(.assets // .elements // .)[]? | select((.name // .fqdn // "" | ascii_downcase) == ($n | ascii_downcase))]')`,
+          'if [[ "$(jq length <<<"$ASSETS")" != "1" ]]; then echo "Refusing: expected one asset named ${ASSET}, found $(jq length <<<"$ASSETS")." >&2; exit 1; fi',
+          'AID=$(jq -r \'.[0].id\' <<<"$ASSETS")',
+          'jq \'.[0]\' <<<"$ASSETS" > "license-before-${STAMP}.json"',
+          'echo "Now: $(jq -r \'.[0] | "\\(.name // .fqdn) licensed by \\(.license.name // .licenseName // "its vCenter")"\' <<<"$ASSETS")"',
+          'if (( DRY_RUN )); then echo "DRY RUN: would assign license ${LID} to asset ${AID}. Nothing was changed."; exit 0; fi',
+          'api PUT "${LICENSE_API}/assets/${AID}/license-assignment" --data "$(jq -n --arg l "$LID" \'{licenseId: $l, override: true}\')" | jq .',
+          'echo "$(date -u +%FT%TZ) license override: ${ASSET} -> ${LICENSE} (before: license-before-${STAMP}.json)" >> license-changes.log',
+        ]
+      : [
+          'api GET "${LICENSE_API}/registration" > "registration-before-${STAMP}.json" || { echo "Could not read the registration state." >&2; exit 1; }',
+          'echo "Now:"; jq . "registration-before-${STAMP}.json"',
+          'if (( DRY_RUN )); then echo "DRY RUN: would PUT ${LICENSE_API}/registration:"; jq . license-mode.json; exit 0; fi',
+          'api PUT "${LICENSE_API}/registration" --data @license-mode.json | jq .',
+        ]),
+    '',
+  ].join('\n');
+  return {
+    platform: PLATFORM,
+    title: override ? `License override: ${asset} -> ${license}` : 'Licensing in connected mode with automatic download',
+    effect: 'reversible',
+    trigger: { kind: 'manual', detail: override ? 'Run by hand when one host or cluster needs a license other than its vCenter’s.' : 'Run once; the license file is then refreshed every 24 hours.', worstCase: override ? 'once per run, one asset' : 'every 24 hours, the license file of the whole VCF Operations instance' },
+    scope: {
+      what: override ? `The ${assetType === 'ESX_HOST' ? 'ESX host' : 'vSAN cluster'} ${asset}, and nothing else.` : 'The registration of this VCF Operations instance and its license server.',
+      decidedBy: override ? ['The license named, matched exactly; refused unless exactly one.', 'The asset named, matched by name; refused unless exactly one.'] : ['GET and PUT of the registration state.'],
+      ifWrong: override ? 'The asset is licensed differently from what the vCenter assignment says, which nobody sees until a compliance report.' : 'Usage data leaves the site every 24 hours; in a site that must stay disconnected that is a policy breach.',
+    },
+    guardrails: [
+      { rule: 'Refuses unless the licensing API answers; prints the interface steps otherwise', because: 'The license server API is not public yet; a guessed path must not be sent a change.' },
+      ...(override ? [{ rule: 'Exactly one license and one asset, matched by name', because: 'A loose match would relicense the wrong host.' }] : []),
+      { rule: 'Saves the current state first; applies when run, --dry-run previews', because: 'That file is the undo.' },
+    ],
+    dryRun: [`${override ? 'license-override.sh' : 'license-connected.sh'} --dry-run shows the current state and what it would send.`],
+    undo: [override ? 'Remove the override on the asset (Manage > Licensing > the asset > Remove override) — it falls back to its vCenter license; license-before-<time>.json shows what it had.' : 'PUT registration-before-<time>.json back, or switch to disconnected mode in Licenses & Registration.'],
+    told: [override ? 'license-changes.log beside the script, and the change record.' : 'VCF Operations records the registration change.'],
+    requires: ['An API client with licensing management rights — see fleet91_api_clients.', 'jq and bash 4.'],
+    files: {
+      [override ? 'license-override.sh' : 'license-connected.sh']: script,
+      [override ? 'license-override.json' : 'license-mode.json']: json(body),
+      'IMPORT.md': fleetImport(override ? 'license-override.json records the assignment; license-override.sh resolves the ids and sends it.' : 'license-mode.json is the registration body license-connected.sh sends.', [{ heading: override ? 'Assign' : 'Register', lines: [`\`./${override ? 'license-override.sh' : 'license-connected.sh'}\` (add \`--dry-run\` first).`] }], ['VERIFY: LICENSE_API and the paths under it (/licenses, /assets, /assets/{id}/license-assignment, /registration) — not in the public reference at the time of writing.']),
+    },
+    notes: [`${base}: the license server is mandatory in 9.1 (one per VCF Operations instance); 9.1.0 is IPv4 only, 9.1.1 adds IPv6.`],
+    findings,
+  };
+}
+
+/** IAM settings and on-demand AD lookup (9.1.1) for the VCF Identity Broker. */
+function identitySettings(task: string, values: BlueprintValues, name: string): Automation {
+  const settings = task === 'iam_settings';
+  const access = num(values, 'access_minutes', 30);
+  const refresh = num(values, 'refresh_hours', 8);
+  const idle = num(values, 'idle_minutes', 30);
+  const entities = listOf(str(values, 'entities', 'USER,GROUP,API_CLIENT'));
+  const directory = str(values, 'directory', '');
+  const lookupOn = str(values, 'lookup', 'on') === 'on';
+  const base = slugOf(name || `identity-${task}`, 'identity');
+  const findings: Finding[] = [];
+  if (settings && access > 60) findings.push(warning('fleet91.identity.long-access', `A ${access}-minute access token outlives most sessions; a stolen one stays useful that long.`, { source: SRC }));
+  if (settings && refresh * 60 < access) findings.push(error('fleet91.identity.refresh-short', 'The refresh token must outlive the access token.', { source: SRC }));
+  if (settings && !entities.includes('GROUP')) findings.push(warning('fleet91.identity.no-groups', 'Without groups every role is assigned person by person, which nobody keeps up to date.', { source: SRC }));
+  if (!settings && !directory) findings.push(error('fleet91.identity.no-directory', 'Name the directory.', { source: SRC }));
+  if (!settings && lookupOn) findings.push(info('fleet91.identity.lookup', 'On-demand lookup finds AD users and groups at login rather than after a sync (9.1.1). Group membership is then read live: removing someone from the AD group removes their VCF role at their next login.', { source: SRC }));
+  const body = settings
+    ? { accessTokenTtlMinutes: access, refreshTokenTtlHours: refresh, idleSessionTimeoutMinutes: idle, enabledEntityTypes: entities }
+    : { onDemandLookupEnabled: lookupOn };
+  const file = settings ? 'iam-settings.json' : 'directory-lookup.json';
+  const script = [
+    ...head(settings ? 'Set the VCF Identity Broker IAM settings: token lifetimes and entity enablement.' : `Turn on-demand AD lookup ${lookupOn ? 'on' : 'off'} for directory ${directory} (9.1.1).`, ['Saves the current settings first. Applies when run; --dry-run previews.']),
+    ...parseArgs(),
+    'REALM=$(api GET "${FM}/iam/ssorealms" | jq -r \'.ssoRealms[0].id // empty\')',
+    '[[ -n "$REALM" ]] || { echo "No SSO realm found." >&2; exit 1; }',
+    ...(settings
+      ? ['# VERIFY: the IAM settings path. Override with IAM_SETTINGS_PATH.', 'TARGET="${IAM_SETTINGS_PATH:-${FM}/iam/ssorealms/${REALM}/settings}"']
+      : [
+          `DIRECTORY=${sq(directory)}`,
+          'DIRS=$(api GET "${FM}/iam/ssorealms/${REALM}/directories" | jq -c \'(.directories // .elements // .) | if type == "array" then . else error("unrecognised directories response") end\')',
+          'DID=$(jq -r --arg d "$DIRECTORY" \'[.[] | select((.name // "") == $d or ((.domains // []) | index($d)))] | if length == 1 then .[0].id else empty end\' <<<"$DIRS")',
+          '[[ -n "$DID" ]] || { echo "Refusing: no single directory named ${DIRECTORY}." >&2; exit 1; }',
+          '# VERIFY: on-demand lookup is a property of the directory (PATCH). Override with DIRECTORY_PATH.',
+          'TARGET="${DIRECTORY_PATH:-${FM}/iam/ssorealms/${REALM}/directories/${DID}}"',
+        ]),
+    'CODE=$(api_status "$TARGET")',
+    'if [[ "$CODE" != "200" ]]; then',
+    '  echo "${TARGET} answered HTTP ${CODE}. Set the path from the API reference, or change it by hand:" >&2',
+    `  echo "  VCF Operations > Identity & Access > ${settings ? 'Settings (token lifetimes, entities)' : 'Identity providers > the directory > On-demand lookup'}." >&2`,
+    '  exit 3',
+    'fi',
+    'STAMP=$(date +%Y%m%d-%H%M%S)',
+    'api GET "$TARGET" > "before-${STAMP}.json"',
+    'if (( DRY_RUN )); then echo "DRY RUN: now:"; jq . "before-${STAMP}.json"; echo "would ' + (settings ? 'PUT' : 'PATCH') + ' ${TARGET}:"; jq . ' + file + '; exit 0; fi',
+    `api ${settings ? 'PUT' : 'PATCH'} "$TARGET" --data @${file} | jq .`,
+    'echo "Done. Undo: send before-${STAMP}.json back to ${TARGET}."',
+    '',
+  ].join('\n');
+  return {
+    platform: PLATFORM,
+    title: settings ? `IAM settings: access token ${access} min, refresh ${refresh} h, idle ${idle} min` : `On-demand AD lookup ${lookupOn ? 'on' : 'off'} for ${directory}`,
+    effect: 'reversible',
+    trigger: { kind: 'manual', detail: 'Run by hand with a change record: it decides how every login in the fleet behaves.', worstCase: 'once per run' },
+    scope: {
+      what: settings ? 'Every session and token the VCF Identity Broker issues in this SSO realm.' : `Logins of users and groups from ${directory}.`,
+      decidedBy: ['GET /iam/ssorealms — the first SSO realm.', ...(settings ? [] : [`The directory named ${directory}, matched exactly.`])],
+      ifWrong: settings ? 'Tokens that expire under running automations, or sessions that never time out.' : 'Users who should not reach VCF find their AD groups mapped at login.',
+    },
+    guardrails: [
+      { rule: 'Refuses unless the endpoint answers, and saves the current settings first', because: 'before-<time>.json is the undo.' },
+      { rule: 'Applies when run; --dry-run shows the current settings and the body', because: 'Identity changes are reviewed before they are made.' },
+    ],
+    dryRun: ['identity.sh --dry-run prints the current settings and what it would send.'],
+    undo: ['Send before-<time>.json back to the same path.'],
+    told: ['VCF Operations audits identity changes under Identity and access.'],
+    requires: ['An API client with identity.management.manage — see fleet91_api_clients.', ...(settings ? [] : ['VCF 9.1.1 or later and an AD or LDAP directory on the identity broker.']), 'jq and bash 4.'],
+    files: {
+      [file]: json(body),
+      'identity.sh': script,
+      'IMPORT.md': fleetImport(`${file} is the body identity.sh sends.`, [{ heading: 'Apply', lines: ['`./identity.sh --dry-run`, then `./identity.sh`.'] }], [`VERIFY: ${settings ? 'the IAM settings path and field names (accessTokenTtlMinutes, refreshTokenTtlHours, idleSessionTimeoutMinutes, enabledEntityTypes)' : 'the directories path and the onDemandLookupEnabled field'} on your build; the path can be overridden without editing the script.`]),
+    },
+    notes: [`${base}: vCenter role sync is the "sync" task of this blueprint (drift check and re-push of the roles VCF provisions into vCenter).`],
+    findings,
+  };
+}
+
+/** Enable vSphere Configuration Profiles on a cluster, or schedule assessments. */
+function configProfiles(mode: string, values: BlueprintValues, name: string, vcAuth: readonly string[], clusters: readonly string[], findings: Finding[], detect: string): Automation {
+  const vcenter = str(values, 'vcenter', '');
+  const cluster = clusters[0] ?? '<REQUIRED — cluster>';
+  const base = slugOf(name || `config-${mode}`, 'config');
+  const webhook = str(values, 'webhook', '');
+  if (mode === 'profile') {
+    const fromHost = str(values, 'profile_source', 'host') === 'host';
+    const refHost = str(values, 'reference_host', '');
+    const out = [...findings];
+    if (clusters.length > 1) out.push(error('fleet91.drift.profile-one', 'Enable configuration profiles on one cluster per run.', { source: SRC }));
+    if (fromHost && !refHost) out.push(error('fleet91.drift.no-reference', 'Name the reference host whose configuration becomes the desired state.', { source: SRC }));
+    out.push(warning('fleet91.drift.profile-oneway', 'Moving a cluster to vSphere Configuration Profiles cannot be undone: it stays profile-managed. The cluster must already use a vLCM image.', { source: SRC }));
+    const t = (action: string, body = '') => `vc POST "/api/esx/settings/clusters/\${ID}/enablement/configuration/transition?action=${action}&vmw-task=true"${body}`;
+    const script = [
+      '#!/usr/bin/env bash',
+      `# Enable vSphere Configuration Profiles on ${cluster} (${vcenter}).`,
+      '#',
+      '#   ./enable-profile.sh             check eligibility, import, validate, precheck, enable',
+      '#   ./enable-profile.sh --dry-run   everything but enable; then cancel the transition',
+      'set -euo pipefail',
+      'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+      ...needPrivate(),
+      ...parseArgs(),
+      ...vcAuth,
+      `C=${sq(cluster)}`,
+      'ID=$(cluster_id "$C")',
+      '[[ -n "$ID" ]] || { echo "No cluster ${C} on ${VC}." >&2; exit 1; }',
+      'if vc GET "/api/esx/settings/clusters/${ID}/enablement/configuration" | jq -e \'.enabled == true\' >/dev/null 2>&1; then echo "${C} already uses configuration profiles."; exit 0; fi',
+      'cancel() { vc POST "/api/esx/settings/clusters/${ID}/enablement/configuration/transition?action=cancel" >/dev/null 2>&1 || true; }',
+      `T=$(${t('checkEligibility')} | jq -r .)`,
+      'wait_task "$T" > eligibility.json || { echo "Refusing: the eligibility check did not complete." >&2; exit 1; }',
+      'jq -e \'(.status // "") | test("ELIGIBLE|OK|SUCCESS"; "i")\' eligibility.json >/dev/null || { echo "Refusing: ${C} is not eligible:" >&2; jq . eligibility.json >&2; exit 1; }',
+      ...(fromHost
+        ? [
+            `REF=${sq(refHost)}`,
+            'HOST_ID=$(vc GET "/api/vcenter/host?names=${REF}" | jq -r --arg n "$REF" \'[.[] | select(.name == $n)] | if length == 1 then .[0].host else empty end\')',
+            '[[ -n "$HOST_ID" ]] || { echo "Refusing: no host ${REF} on ${VC}." >&2; exit 1; }',
+            `T=$(${t('importFromHost', ' --data "$(jq -n --arg h "$HOST_ID" \'{host: $h}\')"')} | jq -r .)`,
+          ]
+        : ['[[ -s desired-config.json ]] || { echo "Put the desired configuration in desired-config.json first." >&2; exit 2; }', `T=$(${t('importFromFile', ' --data "$(jq -n --rawfile c desired-config.json \'{config: $c}\')"')} | jq -r .)`]),
+      'wait_task "$T" >/dev/null || { cancel; echo "The import did not complete; the transition was cancelled." >&2; exit 1; }',
+      `T=$(${t('validateConfig')} | jq -r .)`,
+      'wait_task "$T" > validation.json || { cancel; echo "Validation did not complete; cancelled." >&2; exit 1; }',
+      `T=$(${t('precheck')} | jq -r .)`,
+      'wait_task "$T" > precheck.json || { cancel; echo "The precheck did not complete; cancelled." >&2; exit 1; }',
+      'echo "Eligibility, validation and precheck passed (eligibility.json, validation.json, precheck.json)."',
+      'if (( DRY_RUN )); then cancel; echo "DRY RUN: cancelled the transition before enabling. Nothing was changed."; exit 0; fi',
+      `T=$(${t('enable')} | jq -r .)`,
+      'wait_task "$T" | jq .',
+      'echo "${C} now uses vSphere Configuration Profiles. Run detect-drift (mode detect) on it from now on."',
+      '',
+    ].join('\n');
+    return {
+      platform: PLATFORM,
+      title: `Enable vSphere Configuration Profiles on ${cluster}`,
+      effect: 'irreversible',
+      trigger: { kind: 'manual', detail: 'Run by hand in a change window.', worstCase: 'once per cluster' },
+      scope: { what: `Cluster ${cluster} on ${vcenter}: every host is then configured from one desired configuration.`, decidedBy: ['GET /api/vcenter/cluster?names=…, matched exactly.', fromHost ? `The configuration of reference host ${refHost}.` : 'desired-config.json.'], ifWrong: 'The reference host’s quirks become every host’s desired state, and the first remediation applies them everywhere.' },
+      guardrails: [
+        { rule: 'Eligibility, validation and precheck must all pass before enable', because: 'Enable is one-way; everything that can be checked is checked before it.' },
+        { rule: 'Any failure cancels the transition', because: 'A half-started transition blocks other cluster operations.' },
+        { rule: '--dry-run runs every check and then cancels', because: 'The checks can be read before the cluster is committed.' },
+      ],
+      dryRun: ['enable-profile.sh --dry-run checks, imports, validates and prechecks, then cancels the transition.'],
+      undo: ['None: a cluster cannot go back from configuration profiles to host profiles. Fix the desired configuration instead (export, edit, import, remediate).'],
+      told: ['vCenter records every transition task.'],
+      requires: ['A cluster managed by a vLCM image, on vCenter and ESX 8.0 U1 or later.', 'A vCenter account with the configuration privileges, its password in a mode-600 file.', 'jq and bash 4.'],
+      files: {
+        'enable-profile.sh': script,
+        ...(fromHost ? {} : { 'desired-config.json': json({ note: 'Replace with the exported desired configuration (GET …/configuration?action=exportConfig from a profile-managed cluster).' }) }),
+        'IMPORT.md': fleetImport('enable-profile.sh drives the vCenter configuration-profile transition API.', [{ heading: 'Enable', lines: ['`./enable-profile.sh --dry-run`, read the three result files, then `./enable-profile.sh`.'] }], ['VERIFY: the transition actions (checkEligibility, importFromHost, importFromFile, validateConfig, precheck, enable, cancel) and bodies under /api/esx/settings/clusters/{cluster}/enablement/configuration/transition on your vCenter 9.1 build.']),
+      },
+      notes: ['Configuration management in VCF Operations 9.1 reads the same profile: once enabled, drift shows under Fleet management > Configuration drifts.'],
+      findings: out,
+    };
+  }
+
+  // assess: a VCF Operations assessment schedule, and the cron check that does not depend on it.
+  const at = str(values, 'assess_time', '06:30');
+  const out = [...findings];
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) out.push(error('fleet91.drift.assess-time', `"${at}" is not HH:MM.`, { source: SRC }));
+  const [hh = '06', mm = '30'] = at.split(':');
+  const schedule = { name: `Drift assessment ${clusters.join(', ')}`, enabled: true, recurrence: { type: 'DAILY', time: at }, targets: clusters.map((c) => ({ vcenter: vcenter, cluster: c })), notify: webhook ? { webhook } : undefined };
+  const scheduleScript = [
+    ...head(`Schedule a daily configuration assessment of ${clusters.join(', ')} in VCF Operations.`, ['Applies when run; --dry-run previews. If the endpoint does not answer, it prints the interface steps.']),
+    ...parseArgs(),
+    '# VERIFY: the assessment schedule path of VCF Operations 9.1 configuration management.',
+    'ASSESS_PATH="${ASSESS_PATH:-${FM}/configuration-management/assessment-schedules}"',
+    'CODE=$(api_status "$ASSESS_PATH")',
+    'if [[ "$CODE" != "200" ]]; then',
+    '  echo "${ASSESS_PATH} answered HTTP ${CODE}. Set ASSESS_PATH from the API reference, or schedule it by hand:" >&2',
+    '  echo "  VCF Operations > Fleet management > Configuration > Assessments > Schedule: daily, the clusters, enabled." >&2',
+    '  echo "The cron line in crontab.txt runs detect-drift.sh daily either way." >&2',
+    '  exit 3',
+    'fi',
+    `NAME=${sq(schedule.name)}`,
+    'if api GET "$ASSESS_PATH" | jq -e --arg n "$NAME" \'any((.schedules // .elements // .)[]?; .name == $n)\' >/dev/null; then echo "A schedule named ${NAME} exists; nothing to do."; exit 0; fi',
+    'if (( DRY_RUN )); then echo "DRY RUN: would POST ${ASSESS_PATH}:"; jq . assessment-schedule.json; exit 0; fi',
+    'api POST "$ASSESS_PATH" --data @assessment-schedule.json | jq .',
+    '',
+  ].join('\n');
+  return {
+    platform: PLATFORM,
+    title: `Scheduled configuration assessment of ${clusters.length} cluster(s), daily at ${at}`,
+    effect: 'reversible',
+    trigger: { kind: 'schedule', detail: `Daily at ${at}: VCF Operations’ own schedule, and the cron check beside it.`, worstCase: 'once a day per cluster' },
+    scope: { what: `The configuration profile compliance of ${clusters.join(', ')}. Assessing changes nothing on the hosts.`, decidedBy: ['The clusters named, on ' + vcenter + '.'], ifWrong: 'Nothing changes on the hosts; a wrong cluster is simply not assessed.' },
+    guardrails: [
+      { rule: 'Creates the schedule enabled, once — refuses a duplicate name', because: 'Two schedules double every report.' },
+      { rule: 'Refuses unless the endpoint answers; the cron check runs either way', because: 'An assessment nobody schedules is drift nobody sees.' },
+    ],
+    dryRun: ['schedule-assessment.sh --dry-run prints the body. detect-drift.sh only reads.'],
+    undo: ['Delete the schedule in VCF Operations (or DELETE it at ASSESS_PATH/{id}); remove the crontab line.'],
+    told: [...(webhook ? [`${webhook}, from detect-drift.sh, when a cluster has drifted.`] : []), 'VCF Operations shows each assessment under Fleet management > Configuration drifts.'],
+    requires: ['An API client with configuration management rights — see fleet91_api_clients.', 'Clusters managed by vSphere Configuration Profiles (mode "profile").', 'jq and bash 4.'],
+    files: {
+      'assessment-schedule.json': json(schedule),
+      'detect-drift.sh': detect,
+      'schedule-assessment.sh': scheduleScript,
+      'crontab.txt': [`# ${base}: daily drift check, independent of the VCF Operations schedule. vCenter login from the mode-600 password file.`, `${Number(mm)} ${Number(hh)} * * * cd /opt/vcf-automation/${base} && VCENTER_USER=svc-drift@vsphere.local VCENTER_PASSWORD_FILE=/etc/vcf-automation/vcenter-password ./detect-drift.sh >> /var/log/vcf-automation/${base}.log 2>&1`, ''].join('\n'),
+      'IMPORT.md': fleetImport('assessment-schedule.json is the schedule body; detect-drift.sh is what crontab.txt runs.', [{ heading: 'Schedule', lines: ['`./schedule-assessment.sh --dry-run`, then `./schedule-assessment.sh`.'] }, { heading: 'And the independent check', lines: ['Install crontab.txt with `crontab -e`; it runs detect-drift.sh daily, whether or not the VCF Operations schedule runs.'] }], ['VERIFY: ASSESS_PATH and the schedule body (name, enabled, recurrence, targets) on your 9.1 build.']),
+    },
+    notes: ['The cron check is kept on purpose: it is what notices when the VCF Operations schedule itself stopped running.'],
+    findings: out,
+  };
+}
 
 export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
   // -------------------------------------------------------------------------
@@ -587,8 +1036,19 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
     label: 'Rotate or update component passwords across the fleet (VCF 9.1)',
     group: 'Credentials (9.1 fleet)',
     description:
-      'Query the password accounts VCF Operations manages — by appliance type, credential type, FQDN and status — and change them one at a time through the fleet password API, following each request to the end. One appliance type per run, a cap on accounts, and passwords that are either generated or read from a mode-600 file, never passed on a command line.',
+      'Query the password accounts VCF Operations manages — by appliance type, credential type, FQDN and status — and change them one at a time through the fleet password API, following each request to the end. One appliance type per run, a cap on accounts, and passwords that are generated, read from a mode-600 file, or read from and written back to HashiCorp Vault — never passed on a command line. Remediate (record the password a component already has) and scheduled auto-rotation select accounts the same way.',
     inputs: [
+      {
+        id: 'mode',
+        label: 'Do',
+        control: 'select',
+        options: [
+          { value: 'rotate', label: 'Change the passwords now (rotate or update)' },
+          { value: 'remediate', label: 'Remediate: tell VCF Operations the password the component already has' },
+          { value: 'schedule', label: 'Turn on scheduled auto-rotation' },
+        ],
+        default: 'rotate',
+      },
       { id: 'appliance', label: 'Appliance type', control: 'select', options: PW_APPLIANCES, default: 'ESX', hint: 'One type per run' },
       {
         id: 'credential_type',
@@ -623,10 +1083,14 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         options: [
           { value: 'generate', label: 'Generate one per account, written to a mode-600 file' },
           { value: 'file', label: 'Read from the fourth column of the mode-600 file' },
+          { value: 'vault', label: 'HashiCorp Vault: read the current password, generate, write the new one back' },
         ],
         default: 'generate',
+        showWhen: { input: 'mode', equals: ['rotate'] },
       },
-      { id: 'length', label: 'Generated length', control: 'number', default: 20, min: 12, max: 64, showWhen: { input: 'source', equals: ['generate'] } },
+      { id: 'length', label: 'Generated length', control: 'number', default: 20, min: 12, max: 64, showWhen: { input: 'source', notEquals: ['file'] } },
+      { id: 'vault_path', label: 'Vault KV path', control: 'text', default: 'secret/vcf/passwords', hint: 'Each account at <path>/<fqdn>/<user>, field password (KV v2 keeps the old version)', showWhen: { input: 'source', equals: ['vault'] } },
+      { id: 'rotate_days', label: 'Rotate automatically every (days)', control: 'number', default: 30, min: 1, max: 365, showWhen: { input: 'mode', equals: ['schedule'] } },
       { id: 'webhook', label: 'Report to', control: 'text', default: 'https://runbooks.example.com/hooks/vcf-credentials' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
@@ -636,7 +1100,12 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       const users = listOf(str(values, 'usernames', ''));
       const status = str(values, 'status', '');
       const max = num(values, 'max_accounts', 10);
+      const mode = str(values, 'mode', 'rotate');
       const source = str(values, 'source', 'generate');
+      // A vault source generates like 'generate' does; only the file source brings its own.
+      const generates = source !== 'file';
+      const vaultPath = str(values, 'vault_path', 'secret/vcf/passwords').replace(/\/+$/, '');
+      const rotateDays = num(values, 'rotate_days', 30);
       const length = num(values, 'length', 20);
       const webhook = str(values, 'webhook', '');
       const base = slugOf(name || `rotate-${appliance}`, 'rotate');
@@ -662,9 +1131,9 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           '  applianceFqdn <TAB> userName <TAB> currentPassword' + (source === 'file' ? ' <TAB> newPassword' : ''),
           'The fleet API needs the current password to change it. Accounts that',
           'match the query but have no line in the file are skipped and listed.',
-          source === 'generate' ? 'Each new password is generated here and written to new-passwords-<time>.tsv' : 'New passwords are the fourth column of ROTATION_FILE. Each account is',
-          source === 'generate' ? '(mode 600) marked PENDING BEFORE it is sent, then marked DONE, FAILED,' : 'written to rotation-state-<time>.tsv marked PENDING before it is sent, then',
-          source === 'generate' ? 'REFUSED or UNKNOWN. Move DONE lines into your vault; resolve the rest first.' : 'marked DONE, FAILED, REFUSED or UNKNOWN.',
+          generates ? 'Each new password is generated here and written to new-passwords-<time>.tsv' : 'New passwords are the fourth column of ROTATION_FILE. Each account is',
+          generates ? '(mode 600) marked PENDING BEFORE it is sent, then marked DONE, FAILED,' : 'written to rotation-state-<time>.tsv marked PENDING before it is sent, then',
+          generates ? 'REFUSED or UNKNOWN. Move DONE lines into your vault; resolve the rest first.' : 'marked DONE, FAILED, REFUSED or UNKNOWN.',
           '',
           '  ./rotate-passwords.sh             change them, one at a time',
           '  ./rotate-passwords.sh --dry-run   list what would change, change nothing',
@@ -672,8 +1141,13 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         ...waitRequest(),
         ...needPrivate(),
         ...parseArgs(),
-        ': "${ROTATION_FILE:?set ROTATION_FILE to the mode-600 TSV of current passwords}"',
-        'need_private "$ROTATION_FILE"',
+        ...(source === 'vault'
+          ? [
+              ': "${VAULT_ADDR:?set VAULT_ADDR (and VAULT_TOKEN or a vault login) for the HashiCorp Vault holding the passwords}"',
+              'command -v vault >/dev/null || { echo "the vault CLI is required" >&2; exit 2; }',
+              `VAULT_PATH=${sq(vaultPath)}`,
+            ]
+          : [': "${ROTATION_FILE:?set ROTATION_FILE to the mode-600 TSV of current passwords}"', 'need_private "$ROTATION_FILE"']),
         `MAX=${max}`,
         `LEN=${length}`,
         'PROBLEMS=()',
@@ -693,6 +1167,20 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'jq -r \'.[] | "  \\(.applianceFqdn)\\t\\(.userName)\\t\\(.status)\\t\\(.credentialType // "-")"\' selected.json',
         'if (( COUNT == 0 )); then echo "Nothing matched the filter, so nothing was rotated. Check the names against the query." >&2; exit 1; fi',
         'if (( COUNT > MAX )); then echo "Refusing: ${COUNT} accounts is above the cap of ${MAX}. Narrow the filter or raise the cap on purpose." >&2; exit 1; fi',
+        ...(source === 'vault'
+          ? [
+              '# The current passwords, from Vault, into a mode-600 file that is removed at exit.',
+              '# Each value is held in a variable and written with printf (a builtin): never an argument.',
+              'ROTATION_FILE=$(umask 077; mktemp "${TMPDIR:-/tmp}/rotation.XXXXXX")',
+              `trap 'rm -f "${FLEET_HDR}" "$ROTATION_FILE"' EXIT`,
+              'VROWS=$(jq -r \'.[] | [.applianceFqdn, .userName] | @tsv\' selected.json)',
+              'while IFS=$\'\\t\' read -r F U; do',
+              '  [[ -n "$F" ]] || continue',
+              '  if C=$(vault kv get -field=password "${VAULT_PATH}/${F}/${U}" 2>/dev/null); then printf \'%s\\t%s\\t%s\\n\' "$F" "$U" "$C" >> "$ROTATION_FILE"; fi',
+              'done <<<"$VROWS"',
+              'vault_store() { printf \'%s\' "$NEW" | vault kv patch "${VAULT_PATH}/${FQDN}/${ACCT}" password=- >/dev/null; }',
+            ]
+          : []),
         '',
         '# Which selected accounts have a line in the file (checked without printing any password).',
         'declare -A HAVE=()',
@@ -706,7 +1194,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'fi',
         'if [[ -n "$MISSING" ]]; then for k in $MISSING; do PROBLEMS+=("${k/|/ }: no line in ROTATION_FILE, not rotated"); done; fi',
         '',
-        ...(source === 'generate'
+        ...(generates
           ? [
               'gen_password() {',
               '  local p',
@@ -724,7 +1212,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '# afterwards. If the request times out, the proxy answers 504, or this',
         '# script is killed, the line stays PENDING or UNKNOWN — and the password',
         '# that may now be in effect is still written down.',
-        ...(source === 'generate'
+        ...(generates
           ? [
               'OUT="new-passwords-$(date +%Y%m%d-%H%M%S).tsv"',
               'NEW_AT="${OUT}"',
@@ -733,7 +1221,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               'OUT="rotation-state-$(date +%Y%m%d-%H%M%S).tsv"',
               'NEW_AT="column 4 of ${ROTATION_FILE}"',
             ]),
-        '( umask 077; printf \'# applianceFqdn\\tuserName\\t%s\\tstate\\tnote — PENDING, UNKNOWN and FAILED lines may be in effect\\n\' ' + (source === 'generate' ? "'newPassword'" : "'(new password: ROTATION_FILE)'") + ' > "$OUT" )',
+        '( umask 077; printf \'# applianceFqdn\\tuserName\\t%s\\tstate\\tnote — PENDING, UNKNOWN and FAILED lines may be in effect\\n\' ' + (generates ? "'newPassword'" : "'(new password: ROTATION_FILE)'") + ' > "$OUT" )',
         'need_private "$OUT"',
         'LOG="rotation-$(date +%Y%m%d-%H%M%S).log"',
         '',
@@ -767,14 +1255,14 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '    if [[ "$F" == "$FQDN" && "$U" == "$ACCT" ]]; then CUR="$C"; NEW="${N:-}"; break; fi',
         '  done < "$ROTATION_FILE"',
         '  [[ -n "$CUR" ]] || continue',
-        ...(source === 'generate'
+        ...(generates
           ? ['  NEW=$(gen_password)']
           : ['  if [[ -z "$NEW" ]]; then PROBLEMS+=("${FQDN} ${ACCT}: no new password in column 4"); continue; fi']),
         '  refresh_token || { PROBLEMS+=("${FQDN} ${ACCT}: could not renew the access token; nothing sent"); break; }',
         '',
         '  # Written down first. If this fails, nothing is sent.',
         '  LINE=$(( $(wc -l < "$OUT") + 1 ))',
-        ...(source === 'generate'
+        ...(generates
           ? ['  if ! printf \'%s\\t%s\\t%s\\t%s\\t%s\\n\' "$FQDN" "$ACCT" "$NEW" PENDING "sent $(date -u +%FT%TZ)" >> "$OUT"; then']
           : ['  if ! printf \'%s\\t%s\\t%s\\t%s\\t%s\\n\' "$FQDN" "$ACCT" "-" PENDING "sent $(date -u +%FT%TZ)" >> "$OUT"; then']),
         '    PROBLEMS+=("${FQDN} ${ACCT}: could not write the ledger; nothing sent"); break',
@@ -797,7 +1285,9 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '    echo "${FQDN} ${ACCT}: request ${REQ}"',
         '    wait_request "$REQ" && RC=0 || RC=$?',
         '    case "$RC" in',
-        '      0) record DONE "request ${REQ}" ;;',
+        ...(source === 'vault'
+          ? ['      0) record DONE "request ${REQ}"', '         vault_store || PROBLEMS+=("${FQDN} ${ACCT}: changed, but Vault could not be updated — the new password is in ${OUT}; put it in Vault by hand") ;;']
+          : ['      0) record DONE "request ${REQ}" ;;']),
         '      1) record FAILED "request ${REQ} reported failed — may still have changed (9.1.1 known issue)"',
         '         PROBLEMS+=("${FQDN} ${ACCT}: request ${REQ} reported failed; the new password is kept in ${NEW_AT} — check which one works. Stopping here.")',
         '         break ;;',
@@ -820,7 +1310,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
         'echo "Record (no passwords): ${LOG}"',
         'echo "Ledger: ${OUT} (mode 600) — $(awk -F\'\\t\' \'NR > 1 { n[$4]++ } END { for (s in n) printf "%s %d  ", s, n[s] }\' "$OUT")"',
-        ...(source === 'generate'
+        ...(generates
           ? ['echo "New passwords: ${OUT}. Move every DONE line into the vault now; resolve any FAILED, UNKNOWN or PENDING line by trying it before you delete the file."']
           : []),
         'if (( ${#PROBLEMS[@]} > 0 )); then',
@@ -830,6 +1320,8 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'fi',
         '',
       ].join('\n');
+
+      if (mode !== 'rotate') return passwordAccountOps(mode, { appliance, label, credType, fqdns, users, filter: { ...filter, appliance }, max, rotateDays, findings });
 
       return {
         platform: PLATFORM,
@@ -853,7 +1345,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { rule: 'Refuses a password file that is not mode 600 or 400', because: 'The file holds every current password in the run.' },
           { rule: 'Passwords go to the API on stdin, never as an argument', because: 'Arguments are visible to every user on the machine in the process list.' },
           { rule: 'One account at a time, and stops at the first request that does not complete', because: 'A second failure on top of the first buries the one you need to fix.' },
-          ...(source === 'generate'
+          ...(generates
             ? [{ rule: 'Each new password is written to the mode-600 file, marked PENDING, before its request is sent, and only then marked DONE, FAILED, REFUSED or UNKNOWN', because: 'A timeout or a proxy 504 after the change went through would otherwise leave an account with a password nobody has — a lockout.' }]
             : [{ rule: 'Each account is marked PENDING in rotation-state-<time>.tsv before its request is sent, then DONE, FAILED, REFUSED or UNKNOWN', because: 'After a timeout or a proxy 504 you need to know which accounts may be on the new password.' }]),
           { rule: 'Refuses to act on a partial account list: every page is read, and a response it does not recognise stops the run', because: 'Rotating from page one of a larger list leaves accounts behind while the run reports success.' },
@@ -861,11 +1353,11 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         dryRun: ['Run rotate-passwords.sh with --dry-run. It lists every account it would change and every account it would skip, and sends nothing.'],
         undo: [
           'Run again with a ROTATION_FILE whose third column is the new password and fourth column the old one (source "file").',
-          source === 'generate' ? 'The generated passwords are in new-passwords-<time>.tsv, each written before it was sent. A line marked PENDING, UNKNOWN or FAILED may or may not be in effect — try the new password, then the old one.' : 'The previous passwords are the third column of your ROTATION_FILE; rotation-state-<time>.tsv says which accounts were DONE, and which are UNKNOWN or FAILED and need trying both ways.',
+          generates ? 'The generated passwords are in new-passwords-<time>.tsv, each written before it was sent. A line marked PENDING, UNKNOWN or FAILED may or may not be in effect — try the new password, then the old one.' : 'The previous passwords are the third column of your ROTATION_FILE; rotation-state-<time>.tsv says which accounts were DONE, and which are UNKNOWN or FAILED and need trying both ways.',
           'A password history in the policy may refuse the old password; lower it temporarily if you must put one back.',
         ],
         told: [webhook ? `${webhook}, when a change is refused or does not complete.` : 'The exit code only.', 'rotation-<time>.log beside the script, without passwords.', 'VCF Operations records each request under its password management tasks (all local account operations are audited in 9.1.1).'],
-        requires: ['An API client with vcf_password.manage — see fleet91_api_clients.', 'The current passwords, from your vault, in a mode-600 file.', 'jq, bash 4' + (source === 'generate' ? ' and openssl.' : '.')],
+        requires: ['An API client with vcf_password.manage — see fleet91_api_clients.', source === 'vault' ? `HashiCorp Vault (VAULT_ADDR, a token or login) with each account at ${vaultPath}/<fqdn>/<user>, field password, and the vault CLI.` : 'The current passwords, from your vault, in a mode-600 file.', 'jq, bash 4' + (generates ? ' and openssl.' : '.')],
         files: {
           'rotate-passwords.sh': rotate,
           'IMPORT.md': fleetImport('Nothing is uploaded as a file: the rotation request names accounts read from the fleet at run time.', [{ heading: 'Rotate', lines: ['`./rotate-passwords.sh` (add `--dry-run` first to list the accounts without changing them).'] }]),
@@ -873,6 +1365,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         notes: [
           'Confirmed: POST /password-management/accounts/query and PUT /password-management/accounts/{passwordAccountKey}/password {currentPassword, newPassword} returning a requestId, followed at /suite-api/api/workflows/requests/{requestId} (davidwzhang.com part 3; VCF Operations API reference).',
           'VERIFY: credentialType values other than SSH. The reference documents pageSize (default 10) but no maximum; the script asks for 1000 per page and keeps paging until an empty page or pageInfo.totalCount, and stops rather than rotate from a partial list.',
+          ...(source === 'vault' ? ['Third-party vault: the script reads each current password from HashiCorp Vault KV and, once a change is DONE, writes the new one back with vault kv patch (value on stdin). KV v2 keeps the previous version, which is the undo. VCF Operations 9.1 has no built-in external vault connector; this is the script-side integration.'] : []),
           'Generated passwords use A-Z, a-z, 0-9 and #%+=@^_~.,- . If an appliance refuses a character, the request fails and the run stops there.',
           '9.1.1 known issue: an update can be marked failed although the component changed, when an integration credential is orphaned. Check the component before retrying.',
         ],
@@ -899,17 +1392,24 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { value: 'external', label: 'Replace: CSR, signed by an external CA, then install' },
           { value: 'msca', label: 'Replace: through an integrated Microsoft CA' },
           { value: 'vmca', label: 'Replace: with a VMCA-signed certificate (9.1.1)' },
+          { value: 'openssl', label: 'Replace: CSR signed here by an OpenSSL CA, then install' },
+          { value: 'autorenew', label: 'Turn on auto-renewal (9.1.1)' },
         ],
         default: 'report',
       },
+      { id: 'include_ca', label: 'Also report CA (root and intermediate) certificates', control: 'toggle', default: true, showWhen: { input: 'action', equals: ['report'] } },
       { id: 'within_days', label: 'Report certificates expiring within (days)', control: 'number', default: 60, min: 1, max: 730 },
       { id: 'appliance', label: 'Appliance type', control: 'select', options: CERT_APPLIANCES, default: 'VCENTER', showWhen: { input: 'action', notEquals: ['report'] } },
-      { id: 'fqdn', label: 'Appliance FQDN', control: 'text', default: 'vcenter-mgmt.example.com', hint: 'One appliance per run', showWhen: { input: 'action', notEquals: ['report'] } },
-      { id: 'country', label: 'CSR country', control: 'text', default: 'GB', showWhen: { input: 'action', equals: ['external', 'msca'] } },
-      { id: 'state', label: 'CSR state', control: 'text', default: 'London', showWhen: { input: 'action', equals: ['external', 'msca'] } },
-      { id: 'locality', label: 'CSR locality', control: 'text', default: 'London', showWhen: { input: 'action', equals: ['external', 'msca'] } },
-      { id: 'org', label: 'CSR organisation', control: 'text', default: 'Example Ltd', showWhen: { input: 'action', equals: ['external', 'msca'] } },
-      { id: 'org_unit', label: 'CSR organisational unit', control: 'text', default: 'Infrastructure', showWhen: { input: 'action', equals: ['external', 'msca'] } },
+      { id: 'fqdn', label: 'Appliance FQDNs', control: 'text', default: 'vcenter-mgmt.example.com', hint: 'Comma separated; one at a time unless the cap below is raised', showWhen: { input: 'action', notEquals: ['report', 'autorenew'] } },
+      { id: 'max_appliances', label: 'Replace at most (appliances per run)', control: 'number', default: 1, min: 1, max: 50, showWhen: { input: 'action', notEquals: ['report', 'autorenew'] } },
+      { id: 'renew_days', label: 'Renew when fewer days are left than', control: 'number', default: 30, min: 7, max: 180, showWhen: { input: 'action', equals: ['autorenew'] } },
+      { id: 'renew_ca', label: 'Renew with', control: 'select', options: [{ value: 'VMCA', label: 'VMCA' }, { value: 'MSCA', label: 'The integrated Microsoft CA' }], default: 'VMCA', showWhen: { input: 'action', equals: ['autorenew'] } },
+      { id: 'openssl_days', label: 'Certificate lifetime (days)', control: 'number', default: 397, min: 30, max: 825, showWhen: { input: 'action', equals: ['openssl'] } },
+      { id: 'country', label: 'CSR country', control: 'text', default: 'GB', showWhen: { input: 'action', equals: ['external', 'msca', 'openssl'] } },
+      { id: 'state', label: 'CSR state', control: 'text', default: 'London', showWhen: { input: 'action', equals: ['external', 'msca', 'openssl'] } },
+      { id: 'locality', label: 'CSR locality', control: 'text', default: 'London', showWhen: { input: 'action', equals: ['external', 'msca', 'openssl'] } },
+      { id: 'org', label: 'CSR organisation', control: 'text', default: 'Example Ltd', showWhen: { input: 'action', equals: ['external', 'msca', 'openssl'] } },
+      { id: 'org_unit', label: 'CSR organisational unit', control: 'text', default: 'Infrastructure', showWhen: { input: 'action', equals: ['external', 'msca', 'openssl'] } },
       {
         id: 'key_size',
         label: 'Key size',
@@ -920,7 +1420,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { value: 'KEY_4096', label: 'RSA 4096 (VERIFY)' },
         ],
         default: 'KEY_2048',
-        showWhen: { input: 'action', equals: ['external', 'msca'] },
+        showWhen: { input: 'action', equals: ['external', 'msca', 'openssl'] },
       },
       { id: 'msca_url', label: 'Microsoft CA URL', control: 'text', default: 'https://ca.example.com/certsrv', showWhen: { input: 'action', equals: ['msca'] } },
       { id: 'msca_template', label: 'Certificate template', control: 'text', default: 'VMware', showWhen: { input: 'action', equals: ['msca'] } },
@@ -931,17 +1431,25 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       const action = str(values, 'action', 'report');
       const within = num(values, 'within_days', 60);
       const appliance = str(values, 'appliance', 'VCENTER');
-      const fqdn = str(values, 'fqdn', '');
+      const fqdnList = listOf(str(values, 'fqdn', ''));
+      const fqdn = fqdnList[0] ?? '';
+      const maxAppliances = num(values, 'max_appliances', 1);
+      const includeCa = bool(values, 'include_ca', true);
       const country = str(values, 'country', 'GB');
       const webhook = str(values, 'webhook', '');
       const base = slugOf(name || 'certificates', 'certificates');
+      if (action === 'autorenew') return certAutoRenew(values, name);
       const replacing = action !== 'report';
-      const caType = action === 'external' ? 'EXTERNAL_CA' : action === 'msca' ? 'MSCA' : 'VMCA';
+      const caType = action === 'external' || action === 'openssl' ? 'EXTERNAL_CA' : action === 'msca' ? 'MSCA' : 'VMCA';
+      const bringsChain = action === 'external' || action === 'openssl';
 
       const findings: Finding[] = [];
       if (within < 30) findings.push(warning('fleet91.cert.window', `${within} days is less than an enterprise CA usually takes to sign and a change board to approve.`, { remediation: 'Report at 60 days; 9.1.1 raises its own expiry alarms at 30.', source: SRC }));
-      if (replacing && (!fqdn || /[,\s]/.test(fqdn))) findings.push(error('fleet91.cert.one-appliance', 'Give exactly one appliance FQDN. Replacement is one appliance per run.', { source: SRC }));
-      if (action === 'external' || action === 'msca') {
+      if (replacing && fqdnList.length === 0) findings.push(error('fleet91.cert.one-appliance', 'Give at least one appliance FQDN.', { source: SRC }));
+      if (replacing && fqdnList.length > maxAppliances) findings.push(error('fleet91.cert.too-many', `${fqdnList.length} appliances listed, above the cap of ${maxAppliances} per run.`, { remediation: 'Raise the cap on purpose, or replace in smaller batches: services restart on every appliance.', source: SRC }));
+      if (replacing && fqdnList.length > 1) findings.push(info('fleet91.cert.bulk', `replace-all.sh replaces ${fqdnList.length} appliances one after another and stops at the first that does not complete.`, { source: SRC }));
+      if (action === 'openssl') findings.push(warning('fleet91.cert.openssl-ca', 'An OpenSSL CA on a workstation is only as safe as its key file. Keep the key offline, mode 600, passphrase-protected, and its root in the trust stores of every client.', { source: SRC }));
+      if (action === 'external' || action === 'msca' || action === 'openssl') {
         if (!/^[A-Za-z]{2}$/.test(country)) findings.push(error('fleet91.cert.country', `CSR country "${country}" is not a two-letter code; CSR generation will be refused.`, { source: SRC }));
       }
       if (action === 'vmca') findings.push(info('fleet91.cert.vmca', 'Replacing with a VMCA-signed certificate is new in 9.1.1. Clients that trusted your enterprise CA will need the VMCA root instead.', { source: SRC }));
@@ -963,6 +1471,19 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '  | select(.status == "EXPIRED" or (.daysToExpire | type) != "number" or .daysToExpire <= $w)',
         '  | "\\(.appliance)\\t\\(.applianceFqdn)\\t\\(.daysToExpire // "?") days\\t\\(.status)\\tissued by \\(.issuedBy // "?")\\tkey \\(.certificateResourceKey)"\' certificates.json)',
         'while IFS= read -r line; do if [[ -n "$line" ]]; then PROBLEMS+=("$line"); fi; done <<<"$EXPIRING"',
+        ...(includeCa
+          ? [
+              '# Roots and intermediates: a leaf is only as good as the chain under it.',
+              '# VERIFY: the category name of CA certificates in the query (CA_CERT here).',
+              'if CA_JSON=$(query_all "${FM}/certificate-management/certificates/query" \'{"category":"CA_CERT"}\' vcfCertificateModels certificateResourceKey); then',
+              '  CA_EXPIRING=$(jq -r --argjson w "$WITHIN" \'.[] | select(.status == "EXPIRED" or (.daysToExpire | type) != "number" or .daysToExpire <= $w) | "CA \\(.issuedTo // .appliance)\\t\\(.daysToExpire // "?") days\\t\\(.status)\\tkey \\(.certificateResourceKey)"\' <<<"$CA_JSON")',
+              '  while IFS= read -r line; do if [[ -n "$line" ]]; then PROBLEMS+=("$line"); fi; done <<<"$CA_EXPIRING"',
+              '  echo "$(jq length <<<"$CA_JSON") CA certificate(s) checked."',
+              'else',
+              '  PROBLEMS+=("CA certificates could not be read; root and intermediate expiry is unchecked")',
+              'fi',
+            ]
+          : []),
         'if (( ${#PROBLEMS[@]} == 0 )); then echo "No certificate expires within ${WITHIN} days."; exit 0; fi',
         'printf "%s\\n" "${PROBLEMS[@]}" >&2',
         ...notify(webhook, 'vcf-fleet-certificates'),
@@ -986,7 +1507,13 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
 
       const replace = [
         ...head(`Replace the ${appliance} certificate on ${fqdn || '<one appliance>'} (${caType}).`, [
-          ...(action === 'external'
+          ...(action === 'openssl'
+            ? [
+                '  ./replace-certificate.sh csr                    generate the CSR, save <fqdn>.csr (--dry-run previews)',
+                '  ./replace-certificate.sh sign                   sign it with CA_CERT_FILE / CA_KEY_FILE into <fqdn>.chain.pem',
+                '  ./replace-certificate.sh install                install <fqdn>.chain.pem (--dry-run previews)',
+              ]
+            : action === 'external'
             ? [
                 '  ./replace-certificate.sh csr                    generate the CSR, save <fqdn>.csr (--dry-run previews)',
                 '  (have <fqdn>.csr signed by your CA; build chain.pem: leaf, intermediates, root)',
@@ -1000,14 +1527,19 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
                 ]
               : ['  ./replace-certificate.sh install               replace with a VMCA-signed certificate (9.1.1)']),
           '',
-          'One appliance per run: it refuses unless the query matches exactly one',
-          'TLS certificate. Services on the appliance restart during the install.',
+          'One appliance per run (--fqdn <name> picks another from the list): it refuses',
+          'unless the query matches exactly one TLS certificate. Services on the',
+          'appliance restart during the install.',
         ]),
         ...waitRequest(),
-        ...parseArgs(),
-        'STEP="${1:?csr or install}"',
+        ...needPrivate(),
+        ...parseArgs(['--fqdn) shift; FQDN_ARG="${1:-}" ;;']),
+        `STEP="\${1:?${action === 'openssl' ? 'csr, sign or install' : 'csr or install'}}"`,
         `APPLIANCE=${appliance}`,
-        `FQDN=${sq(fqdn)}`,
+        `ALLOWED=${sq(JSON.stringify(fqdnList))}`,
+        'FQDN="${FQDN_ARG:-}"',
+        `[[ -n "$FQDN" ]] || FQDN=${sq(fqdn)}`,
+        'jq -e --arg f "$FQDN" \'index($f)\' <<<"$ALLOWED" >/dev/null || { echo "Refusing: ${FQDN} is not in this run\'s list." >&2; exit 1; }',
         '',
         '# Filtered by the server, every page read, and filtered again here: a filter',
         '# field the server ignored must not widen the match.',
@@ -1036,13 +1568,35 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               '    wait_request "$REQ" 40 || exit 1',
               '    api GET "${FM}/certificate-management/csrs?commonName=${FQDN}" | jq -r \'[.. | objects | select(has("csr")) | .csr][0] // empty\' > "${FQDN}.csr"',
               '    [[ -s "${FQDN}.csr" ]] || { echo "The CSR was generated but could not be read back. Download it from VCF Operations." >&2; exit 1; }',
-              `    echo "CSR written to \${FQDN}.csr.${action === 'external' ? ' Have it signed, build chain.pem, then run install.' : ' Now run install.'}"`,
+              `    echo "CSR written to \${FQDN}.csr.${action === 'external' ? ' Have it signed, build <fqdn>.chain.pem (leaf, intermediates, root), then run install.' : action === 'openssl' ? ' Now run sign.' : ' Now run install.'}"`,
               '    ;;',
             ]),
-        '  install)',
-        ...(action === 'external'
+        ...(action === 'openssl'
           ? [
-              '    CHAIN="${2:?the PEM chain file: leaf, intermediates, root}"',
+              '  sign)',
+              '    : "${CA_CERT_FILE:?set CA_CERT_FILE to the CA certificate (PEM, with any intermediates above it)}"',
+              '    : "${CA_KEY_FILE:?set CA_KEY_FILE to the CA private key, mode 600}"',
+              '    need_private "$CA_KEY_FILE"',
+              '    [[ -s "${FQDN}.csr" ]] || { echo "No ${FQDN}.csr: run csr first." >&2; exit 2; }',
+              '    # Subject alternative names from the certificate being replaced, as the CSR carries them.',
+              '    EXT=$(umask 077; mktemp)',
+              '    printf \'subjectAltName=%s\\nextendedKeyUsage=serverAuth\\nkeyUsage=digitalSignature,keyEncipherment\\n\' "$(jq -r --arg f "$FQDN" \'(.[0].subjectAlternativeNames // [$f]) | (if type == "array" then . else [.] end) | map(if test("^[0-9.:]+$") then "IP:" + . else "DNS:" + . end) | join(",")\' <<<"$MATCH")" > "$EXT"',
+              '    if (( DRY_RUN )); then echo "DRY RUN: would sign ${FQDN}.csr with ${CA_CERT_FILE}:"; cat "$EXT"; rm -f "$EXT"; exit 0; fi',
+              '    # A passphrase-protected key asks for its passphrase on the terminal (or CA_KEY_PASS_FILE, mode 600).',
+              '    PASSIN=(); if [[ -n "${CA_KEY_PASS_FILE:-}" ]]; then need_private "$CA_KEY_PASS_FILE"; PASSIN=(-passin "file:${CA_KEY_PASS_FILE}"); fi',
+              `    openssl x509 -req -in "\${FQDN}.csr" -CA "$CA_CERT_FILE" -CAkey "$CA_KEY_FILE" \${PASSIN[@]+"\${PASSIN[@]}"} -CAcreateserial -days ${num(values, 'openssl_days', 397)} -sha256 -extfile "$EXT" -out "\${FQDN}.crt"`,
+              '    rm -f "$EXT"',
+              '    cat "${FQDN}.crt" "$CA_CERT_FILE" > "${FQDN}.chain.pem"',
+              '    openssl verify -CAfile "$CA_CERT_FILE" "${FQDN}.crt"',
+              '    echo "Signed: ${FQDN}.chain.pem. Now run install."',
+              '    ;;',
+            ]
+          : []),
+        '  install)',
+        ...(bringsChain
+          ? [
+              '    CHAIN="${2:-${FQDN}.chain.pem}"',
+              '    [[ -s "$CHAIN" ]] || { echo "No chain file ${CHAIN}: give the PEM chain (leaf, intermediates, root)." >&2; exit 2; }',
               '    grep -q "BEGIN CERTIFICATE" "$CHAIN" || { echo "$CHAIN is not a PEM chain." >&2; exit 2; }',
               '    command -v openssl >/dev/null && openssl x509 -in "$CHAIN" -noout -subject -enddate',
               '    if (( DRY_RUN )); then echo "DRY RUN: would PUT ${FM}/certificate-management/certificates/${KEY} with caType EXTERNAL_CA and ${CHAIN}."; exit 0; fi',
@@ -1098,6 +1652,20 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       if (replacing) {
         files['replace-certificate.sh'] = replace;
         if (action !== 'vmca') files['csr-spec.json'] = json(csrSpec);
+        if (fqdnList.length > 1) {
+          const steps = action === 'vmca' || action === 'msca' ? (action === 'msca' ? ['csr', 'install'] : ['install']) : action === 'openssl' ? ['csr', 'sign', 'install'] : ['csr'];
+          files['replace-all.sh'] = [
+            '#!/usr/bin/env bash',
+            `# Replace the ${appliance} certificate on ${fqdnList.length} appliances, one at a time: ${steps.join(', then ')} for each.`,
+            '# Stops at the first appliance that does not complete. --dry-run is passed through.',
+            action === 'external' ? '# External CA: this generates every CSR; have them signed, then run install per appliance with its <fqdn>.chain.pem.' : '#',
+            'set -euo pipefail',
+            `for F in ${fqdnList.map(sq).join(' ')}; do`,
+            ...steps.map((step) => `  ./replace-certificate.sh --fqdn "$F" ${step} "$@" || { echo "Stopped at \${F} (${step})." >&2; exit 1; }`),
+            'done',
+            '',
+          ].join('\n');
+        }
         if (action === 'msca') files['configure-msca.sh'] = configureMsca;
       }
       files['IMPORT.md'] = fleetImport(
@@ -1113,11 +1681,11 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
 
       return {
         platform: PLATFORM,
-        title: replacing ? `Replace the ${appliance} certificate on ${fqdn} (${caType})` : `Report fleet certificates expiring within ${within} days`,
+        title: replacing ? `Replace the ${appliance} certificate on ${fqdnList.length > 1 ? `${fqdnList.length} appliances` : fqdn} (${action === 'openssl' ? 'OpenSSL CA' : caType})` : `Report fleet certificates expiring within ${within} days`,
         effect: replacing ? 'reversible' : 'read',
         trigger: replacing ? { kind: 'manual', detail: 'Run by hand, in a change window, after the report names the appliance.', worstCase: 'once per run, one appliance' } : { kind: 'schedule', detail: 'Daily, from a scheduler outside VCF Operations.', worstCase: 'once a day, for every certificate inside the window until it is replaced' },
         scope: {
-          what: replacing ? `The TLS certificate of ${appliance} ${fqdn} — exactly one, or the script refuses.` : 'Every TLS certificate VCF Operations manages across the fleet. Reads only.',
+          what: replacing ? `The TLS certificate of ${appliance} ${fqdnList.join(', ')} — exactly one per appliance, or the script refuses.` : 'Every TLS certificate VCF Operations manages across the fleet. Reads only.',
           decidedBy: replacing
             ? [`POST /certificate-management/certificates/query {appliance: ${appliance}, applianceFqdn: ${fqdn}, category: TLS_CERT}.`, 'Refused unless exactly one certificate matches.']
             : ['POST /certificate-management/certificates/query {category: TLS_CERT}, every page.', `Reported when daysToExpire is ${within} or less, the status is EXPIRED, or the expiry cannot be read.`],
@@ -1127,7 +1695,9 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           ? [
               { rule: 'One appliance per run; refuses unless exactly one certificate matches', because: 'A loose match would replace certificates on appliances nobody put in the change record.' },
               { rule: 'Every step is its own run; --dry-run previews any of them', because: 'CSR generation and installation are separate decisions, often days apart.' },
-              ...(action === 'external' ? [{ rule: 'Refuses an install file that is not a PEM chain', because: 'Installing a DER file or a key by mistake fails half way on the appliance.' }] : []),
+              { rule: `At most ${maxAppliances} appliance(s) per run, and only the FQDNs listed`, because: 'Services restart on every appliance whose certificate is replaced.' },
+              ...(action === 'openssl' ? [{ rule: 'The CA key file must be mode 600; its passphrase is typed or read from a mode-600 file', because: 'Whoever has the key can issue certificates every client here trusts.' }] : []),
+              ...(bringsChain ? [{ rule: 'Refuses an install file that is not a PEM chain', because: 'Installing a DER file or a key by mistake fails half way on the appliance.' }] : []),
               ...(action === 'msca' ? [{ rule: 'The CA password is read from a mode-600 file and sent on stdin; the dry run masks it', because: 'The CA service account can issue certificates for anything the template allows.' }] : []),
             ]
           : [],
@@ -1424,7 +1994,7 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
     label: 'Identity provider, custom roles and group access (VCF 9.1)',
     group: 'Identity and access (9.1)',
     description:
-      'The VCF Identity Broker is where every login in the fleet now starts. Configure its OIDC identity provider (generic OIDC, Symantec, Entra ID or Okta), create a custom VCF role from component roles, give a directory group a VCF role without wiping the roles it already has, or check and re-push the roles VCF provisions into vCenter.',
+      'The VCF Identity Broker is where every login in the fleet now starts. Configure its OIDC identity provider (generic OIDC, Symantec, Entra ID or Okta), create a custom VCF role from component roles, give a directory group a VCF role without wiping the roles it already has, check and re-push the roles VCF provisions into vCenter, set the IAM token lifetimes and which entities can hold roles, or (9.1.1) turn on-demand AD lookup on for a directory.',
     inputs: [
       {
         id: 'task',
@@ -1434,7 +2004,9 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
           { value: 'oidc', label: 'Configure an OIDC identity provider' },
           { value: 'role', label: 'Create a custom VCF role' },
           { value: 'group', label: 'Give a directory group a VCF role' },
-          { value: 'sync', label: 'Check and re-push component (vCenter) roles' },
+          { value: 'sync', label: 'vCenter role sync: check and re-push component roles' },
+          { value: 'iam_settings', label: 'IAM settings: token lifetimes and entity enablement' },
+          { value: 'ad_lookup', label: 'On-demand AD lookup for a directory (9.1.1)' },
         ],
         default: 'group',
       },
@@ -1482,9 +2054,16 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         showWhen: { input: 'task', equals: ['group'] },
       },
       { id: 'instance_id', label: 'VCF instance id', control: 'text', default: '<REQUIRED — vcfInstanceId from GET /iam/ssorealms>', showWhen: { input: 'scope_type', equals: ['VCF_INSTANCE'] } },
+      { id: 'access_minutes', label: 'Access token lifetime (minutes)', control: 'number', default: 30, min: 5, max: 240, showWhen: { input: 'task', equals: ['iam_settings'] } },
+      { id: 'refresh_hours', label: 'Refresh token lifetime (hours)', control: 'number', default: 8, min: 1, max: 720, showWhen: { input: 'task', equals: ['iam_settings'] } },
+      { id: 'idle_minutes', label: 'Idle session timeout (minutes)', control: 'number', default: 30, min: 5, max: 480, showWhen: { input: 'task', equals: ['iam_settings'] } },
+      { id: 'entities', label: 'Entities that can hold VCF roles', control: 'checklist', options: [{ value: 'USER', label: 'Users' }, { value: 'GROUP', label: 'Groups' }, { value: 'API_CLIENT', label: 'API clients' }], default: 'USER,GROUP,API_CLIENT', showWhen: { input: 'task', equals: ['iam_settings'] } },
+      { id: 'directory', label: 'Directory (domain)', control: 'text', default: 'example.com', showWhen: { input: 'task', equals: ['ad_lookup'] } },
+      { id: 'lookup', label: 'On-demand lookup', control: 'select', options: [{ value: 'on', label: 'On: find users and groups at login' }, { value: 'off', label: 'Off: only synced users and groups' }], default: 'on', showWhen: { input: 'task', equals: ['ad_lookup'] } },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
       const task = str(values, 'task', 'group');
+      if (task === 'iam_settings' || task === 'ad_lookup') return identitySettings(task, values, name);
       const idpType = str(values, 'idp_type', 'ENTRA_ID');
       const roleName = str(values, str(values, 'task', 'group') === 'role' ? 'new_role' : 'role_name', 'vcf_viewer');
       const group = str(values, 'group_name', '');
@@ -2040,16 +2619,31 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet91_licensing',
     platform: PLATFORM,
-    label: 'License usage report and license server notes (VCF 9.1)',
+    label: 'License usage, per-asset override and connected mode (VCF 9.1)',
     group: 'Licensing (9.1)',
     description:
-      'In 9.1 licenses live in a license server appliance beside VCF Operations, and in connected mode the license file is refreshed every 24 hours. This writes a read-only usage report as CSV — and exits non-zero when anything reports expired, over-used or non-compliant — plus the steps for the parts that stay in the interface: registration, connected mode, and overriding the license on one host or cluster.',
+      'In 9.1 licenses live in a license server appliance beside VCF Operations, and in connected mode the license file is refreshed every 24 hours. This writes a read-only usage report as CSV — and exits non-zero when anything reports expired, over-used or non-compliant — — and applies the rest: overriding the license of one ESX host or vSAN cluster, and connected mode with automatic license download. The license server API is not public yet, so those scripts refuse and print the interface steps when it does not answer.',
     inputs: [
-      { id: 'csv', label: 'CSV file', control: 'text', default: 'license-usage.csv' },
-      { id: 'override_asset', label: 'Asset to override (for the steps)', control: 'text', default: 'esx-lab-01.example.com', hint: 'One ESX host or vSAN cluster that needs a different license from its vCenter' },
+      {
+        id: 'mode',
+        label: 'Do',
+        control: 'select',
+        options: [
+          { value: 'report', label: 'Report license usage as CSV' },
+          { value: 'override', label: 'Override the license of one ESX host or vSAN cluster' },
+          { value: 'connected', label: 'Connected mode with automatic license download' },
+        ],
+        default: 'report',
+      },
+      { id: 'csv', label: 'CSV file', control: 'text', default: 'license-usage.csv', showWhen: { input: 'mode', equals: ['report'] } },
+      { id: 'override_asset', label: 'Asset to override', control: 'text', default: 'esx-lab-01.example.com', hint: 'One ESX host or vSAN cluster that needs a different license from its vCenter', showWhen: { input: 'mode', equals: ['override', 'report'] } },
+      { id: 'asset_type', label: 'Asset type', control: 'select', options: [{ value: 'ESX_HOST', label: 'ESX host' }, { value: 'VSAN_CLUSTER', label: 'vSAN cluster' }], default: 'ESX_HOST', showWhen: { input: 'mode', equals: ['override'] } },
+      { id: 'license_name', label: 'License to assign', control: 'text', default: 'VMware vSphere Foundation — lab', hint: 'As Licenses lists it', showWhen: { input: 'mode', equals: ['override'] } },
       { id: 'webhook', label: 'Report to', control: 'text', default: 'https://runbooks.example.com/hooks/vcf-licensing' },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
+      const licenseMode = str(values, 'mode', 'report');
+      if (licenseMode !== 'report') return licenseChange(licenseMode, values, name);
       const csv = str(values, 'csv', 'license-usage.csv');
       const asset = str(values, 'override_asset', '');
       const webhook = str(values, 'webhook', '');
@@ -2158,10 +2752,10 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet91_config_drift',
     platform: PLATFORM,
-    label: 'Configuration drift on vSphere Configuration Profile clusters (VCF 9.1)',
+    label: 'Configuration profiles: enable, assess on a schedule, detect and remediate drift (VCF 9.1)',
     group: 'Configuration (9.1)',
     description:
-      'Clusters managed by vSphere Configuration Profiles have a desired configuration, and VCF Operations shows where hosts have drifted from it. Detect runs the compliance check on each cluster and exits non-zero on drift. Remediate is separate: one cluster per run, precheck first, the current configuration exported as the undo, and applied only if the precheck passed (--dry-run stops before applying). The 9.1.1 VMware Salt for VCF Components status comes with both.',
+      'Clusters managed by vSphere Configuration Profiles have a desired configuration, and VCF Operations shows where hosts have drifted from it. Detect runs the compliance check on each cluster and exits non-zero on drift. Remediate is separate: one cluster per run, precheck first, the current configuration exported as the undo, and applied only if the precheck passed (--dry-run stops before applying). Enable moves a cluster onto vSphere Configuration Profiles from a reference host or a file (checked, validated and prechecked first), and assess schedules a daily configuration assessment in VCF Operations with an independent cron check beside it. The 9.1.1 VMware Salt for VCF Components status comes with detect and remediate.',
     inputs: [
       {
         id: 'mode',
@@ -2170,12 +2764,17 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         options: [
           { value: 'detect', label: 'Detect drift (read-only report)' },
           { value: 'remediate', label: 'Remediate one cluster' },
+          { value: 'profile', label: 'Enable vSphere Configuration Profiles on one cluster' },
+          { value: 'assess', label: 'Scheduled assessment: VCF Operations schedule plus the cron check' },
         ],
         default: 'detect',
       },
       { id: 'vcenter', label: 'vCenter', control: 'text', default: 'vcenter-wld01.example.com' },
-      { id: 'clusters', label: 'Clusters', control: 'text', default: 'wld01-cl01, wld01-cl02', hint: 'Comma separated', showWhen: { input: 'mode', equals: ['detect'] } },
-      { id: 'cluster', label: 'Cluster', control: 'text', default: 'wld01-cl01', hint: 'Exactly one', showWhen: { input: 'mode', equals: ['remediate'] } },
+      { id: 'clusters', label: 'Clusters', control: 'text', default: 'wld01-cl01, wld01-cl02', hint: 'Comma separated', showWhen: { input: 'mode', equals: ['detect', 'assess'] } },
+      { id: 'cluster', label: 'Cluster', control: 'text', default: 'wld01-cl01', hint: 'Exactly one', showWhen: { input: 'mode', equals: ['remediate', 'profile'] } },
+      { id: 'profile_source', label: 'Desired configuration from', control: 'select', options: [{ value: 'host', label: 'A reference host in the cluster' }, { value: 'file', label: 'A configuration file (desired-config.json)' }], default: 'host', showWhen: { input: 'mode', equals: ['profile'] } },
+      { id: 'reference_host', label: 'Reference host', control: 'text', default: 'esx05.example.com', showWhen: { input: 'profile_source', equals: ['host'] } },
+      { id: 'assess_time', label: 'Assess daily at (HH:MM)', control: 'text', default: '06:30', showWhen: { input: 'mode', equals: ['assess'] } },
       { id: 'timeout_minutes', label: 'Give up after (minutes)', control: 'number', default: 90, min: 5, max: 600 },
       { id: 'webhook', label: 'Report to', control: 'text', default: 'https://runbooks.example.com/hooks/vcf-drift' },
     ],
@@ -2183,7 +2782,8 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       const mode = str(values, 'mode', 'detect');
       const vcenter = str(values, 'vcenter', '');
       const remediate = str(values, 'mode', 'detect') === 'remediate';
-      const clusters = listOf(str(values, remediate ? 'cluster' : 'clusters', ''));
+      const oneCluster = remediate || mode === 'profile';
+      const clusters = listOf(str(values, oneCluster ? 'cluster' : 'clusters', ''));
       const timeout = num(values, 'timeout_minutes', 90);
       const webhook = str(values, 'webhook', '');
       const base = slugOf(name || `drift-${mode}`, 'drift');
@@ -2272,6 +2872,8 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         'exit 1',
         '',
       ].join('\n');
+
+      if (mode === 'profile' || mode === 'assess') return configProfiles(mode, values, name, vcAuth, clusters, findings, detect);
 
       const cluster = clusters[0] ?? '<REQUIRED — cluster>';
       const remediateScript = [
@@ -2395,33 +2997,64 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
   automationBlueprint({
     id: 'fleet91_lifecycle',
     platform: PLATFORM,
-    label: 'Lifecycle and backup of the management components (VCF 9.1)',
+    label: 'Lifecycle, enhanced precheck, depot and backup (VCF 9.1)',
     group: 'Lifecycle (9.1)',
     description:
-      'The fleet lifecycle service upgrades and backs up the management components — VCF Operations, the identity broker, VCF Automation, the management services — per VCF instance. This lists what is installed, checks the last backup is recent, configures the SFTP backup schedule, and builds and prechecks an upgrade plan. Applying the plan is gated behind a change reference, a passed precheck and a backup newer than the limit.',
+      'The fleet lifecycle service upgrades and backs up the management components — VCF Operations, the identity broker, VCF Automation, VCF Operations for networks, HCX, the management services — and, in 9.1, the VCF instances and standalone ESX hosts. This lists what is installed, checks the last backup is recent, configures the SFTP backup schedule and the depot (online or offline, through a proxy), and builds an upgrade plan for the components, domain or hosts chosen and runs its enhanced precheck, exported as JSON and CSV. Applying the plan is gated behind a change reference, a passed precheck and a backup newer than the limit.',
     inputs: [
       {
         id: 'part',
         label: 'Generate',
         control: 'select',
         options: [
-          { value: 'all', label: 'Inventory, backup check, backup schedule and upgrade plan' },
+          { value: 'all', label: 'Inventory, backup check, backup schedule, depot and upgrade plan' },
           { value: 'backup', label: 'Inventory, backup check and backup schedule' },
           { value: 'upgrade', label: 'Inventory, backup check and upgrade plan' },
+          { value: 'precheck', label: 'Enhanced precheck and its export only (changes no component)' },
+          { value: 'depot', label: 'Depot: online or offline, with proxy' },
         ],
         default: 'all',
       },
       { id: 'lcm_host', label: 'Fleet lifecycle host', control: 'text', default: 'fleet-lcm.example.com', hint: 'The VCF management services runtime FQDN' },
       { id: 'backup_hours', label: 'Last backup must be newer than (hours)', control: 'number', default: 24, min: 1, max: 720 },
-      { id: 'sftp_host', label: 'SFTP server', control: 'text', default: 'sftp.example.com', showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'sftp_port', label: 'SFTP port', control: 'number', default: 22, min: 1, max: 65535, showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'sftp_user', label: 'SFTP user', control: 'text', default: 'svc-vcf-backup', showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'sftp_dir', label: 'Directory', control: 'text', default: '/backups/vcf/management', showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'sftp_fingerprint', label: 'SSH host key fingerprint', control: 'text', default: '', hint: 'SHA256:… from ssh-keygen -lf', showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'days', label: 'Full backup on', control: 'text', default: 'MON, TUE, WED, THU, FRI, SAT, SUN', showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'start', label: 'At (UTC, HH:MM)', control: 'text', default: '02:00', showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'max_backups', label: 'Keep backups', control: 'number', default: 14, min: 1, max: 100, showWhen: { input: 'part', notEquals: ['upgrade'] } },
-      { id: 'target_version', label: 'Target VCF version', control: 'text', default: '9.1.1.0', showWhen: { input: 'part', notEquals: ['backup'] } },
+      { id: 'sftp_host', label: 'SFTP server', control: 'text', default: 'sftp.example.com', hint: 'FQDN, IPv4 or IPv6', showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'sftp_port', label: 'SFTP port', control: 'number', default: 22, min: 1, max: 65535, showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'sftp_user', label: 'SFTP user', control: 'text', default: 'svc-vcf-backup', showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'sftp_dir', label: 'Directory', control: 'text', default: '/backups/vcf/management', showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'sftp_fingerprint', label: 'SSH host key fingerprint', control: 'text', default: '', hint: 'SHA256:… from ssh-keygen -lf', showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'days', label: 'Full backup on', control: 'text', default: 'MON, TUE, WED, THU, FRI, SAT, SUN', showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'start', label: 'At (UTC, HH:MM)', control: 'text', default: '02:00', showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'max_backups', label: 'Keep backups', control: 'number', default: 14, min: 1, max: 100, showWhen: { input: 'part', equals: ['all', 'backup'] } },
+      { id: 'target_version', label: 'Target VCF version', control: 'text', default: '9.1.1.0', showWhen: { input: 'part', equals: ['all', 'upgrade', 'precheck'] } },
+      {
+        id: 'scope',
+        label: 'Upgrade or precheck',
+        control: 'select',
+        options: [
+          { value: 'MANAGEMENT', label: 'Management components (the ones ticked below)' },
+          { value: 'VCF_INSTANCE', label: 'A VCF instance: SDDC Manager, then a domain’s vCenter, NSX and hosts' },
+          { value: 'HOSTS', label: 'Selected ESX hosts of a domain' },
+          { value: 'STANDALONE_HOSTS', label: 'Standalone ESX hosts (not in a VCF instance)' },
+        ],
+        default: 'MANAGEMENT',
+        showWhen: { input: 'part', equals: ['all', 'upgrade', 'precheck'] },
+      },
+      { id: 'components', label: 'Management components', control: 'checklist', options: LCM_COMPONENTS, default: 'VCF_OPERATIONS,IDENTITY_BROKER,VCF_AUTOMATION,VCF_OPS_NETWORK,VCF_SERVICES_RUNTIME', showWhen: { input: 'scope', equals: ['MANAGEMENT'] } },
+      { id: 'domain', label: 'Workload domain', control: 'text', default: 'wld01', showWhen: { input: 'scope', equals: ['VCF_INSTANCE', 'HOSTS'] } },
+      { id: 'hosts', label: 'ESX hosts', control: 'text', default: 'esx05.example.com, esx06.example.com', hint: 'Comma separated FQDNs', showWhen: { input: 'scope', equals: ['HOSTS', 'STANDALONE_HOSTS'] } },
+      {
+        id: 'depot_mode',
+        label: 'Depot',
+        control: 'select',
+        options: [
+          { value: 'ONLINE', label: 'Online: the Broadcom depot, with a download token' },
+          { value: 'OFFLINE', label: 'Offline: an internal depot web server' },
+        ],
+        default: 'ONLINE',
+        showWhen: { input: 'part', equals: ['all', 'depot'] },
+      },
+      { id: 'depot_url', label: 'Offline depot URL', control: 'text', default: 'https://depot.example.com/PROD', showWhen: { input: 'depot_mode', equals: ['OFFLINE'] } },
+      { id: 'depot_proxy', label: 'Proxy to reach the depot', control: 'text', default: '', hint: 'http://proxy.example.com:3128 or http://[2001:db8::3128]:3128 — empty for none', showWhen: { input: 'part', equals: ['all', 'depot'] } },
     ],
     automation: (values: BlueprintValues, name: string): Automation => {
       const part = str(values, 'part', 'all');
@@ -2431,15 +3064,31 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
       const days = listOf(str(values, 'days', '')).map((day) => day.slice(0, 3).toUpperCase());
       const start = str(values, 'start', '02:00');
       const target = str(values, 'target_version', '9.1.1.0');
-      const doBackup = part !== 'upgrade';
-      const doUpgrade = part !== 'backup';
+      const doBackup = part === 'all' || part === 'backup';
+      const doUpgrade = part === 'all' || part === 'upgrade';
+      const doPrecheck = doUpgrade || part === 'precheck';
+      const doDepot = part === 'all' || part === 'depot';
+      const scope = str(values, 'scope', 'MANAGEMENT');
+      const components = listOf(str(values, 'components', ''));
+      const lcmDomain = str(values, 'domain', '');
+      const lcmHosts = listOf(str(values, 'hosts', ''));
+      const depotMode = str(values, 'depot_mode', 'ONLINE');
+      const depotUrl = str(values, 'depot_url', '');
+      const depotProxy = str(values, 'depot_proxy', '');
       const base = slugOf(name || 'fleet-lifecycle', 'fleet-lifecycle');
 
       const findings: Finding[] = [];
+      if (doPrecheck && scope === 'MANAGEMENT' && components.length === 0) findings.push(error('fleet91.lcm.no-components', 'Tick at least one management component to upgrade or precheck.', { source: SRC }));
+      if (doPrecheck && (scope === 'VCF_INSTANCE' || scope === 'HOSTS') && !lcmDomain) findings.push(error('fleet91.lcm.no-domain', 'Name the workload domain.', { source: SRC }));
+      if (doPrecheck && (scope === 'HOSTS' || scope === 'STANDALONE_HOSTS') && lcmHosts.length === 0) findings.push(error('fleet91.lcm.no-hosts', 'List the ESX hosts.', { source: SRC }));
+      if (doPrecheck && scope === 'VCF_INSTANCE') findings.push(info('fleet91.lcm.instance-order', 'A VCF instance upgrades in a fixed order: SDDC Manager, then per domain NSX, vCenter and the ESX hosts. The plan follows it; the management domain goes first.', { source: SRC }));
+      if (doPrecheck && scope === 'STANDALONE_HOSTS') findings.push(info('fleet91.lcm.standalone', 'Standalone ESX hosts are upgraded from a vLCM image in VCF Operations fleet lifecycle (9.1). VERIFY the scope type on your build.', { source: SRC }));
+      if (doDepot && depotMode === 'OFFLINE' && !/^https:\/\//.test(depotUrl)) findings.push(warning('fleet91.lcm.depot-http', `The offline depot "${depotUrl}" is not https. Bundles are signed, but the depot credentials and metadata travel in the clear.`, { source: SRC }));
+      if (doDepot && depotProxy && /@/.test(depotProxy)) findings.push(error('fleet91.lcm.proxy-creds', 'Do not put proxy credentials in the URL; set DEPOT_PROXY_PASSWORD_FILE instead.', { source: SRC }));
       if (doBackup && !fingerprint) findings.push(warning('fleet91.lcm.fingerprint', 'No SSH host key fingerprint: the backup target is trusted on first use.', { remediation: 'ssh-keygen -lf the SFTP server’s host key and paste the SHA256 value.', source: SRC }));
       if (doBackup && !/^([01]\d|2[0-3]):[0-5]\d$/.test(start)) findings.push(error('fleet91.lcm.start', `"${start}" is not HH:MM.`, { source: SRC }));
       if (doBackup && days.some((day) => !['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].includes(day))) findings.push(error('fleet91.lcm.days', 'Backup days must be MON to SUN.', { source: SRC }));
-      if (doUpgrade && !/^\d+\.\d+\.\d+\.\d+$/.test(target)) findings.push(error('fleet91.lcm.version', `"${target}" is not a four-part VCF version such as 9.1.1.0.`, { source: SRC }));
+      if (doPrecheck && !/^\d+\.\d+\.\d+\.\d+$/.test(target)) findings.push(error('fleet91.lcm.version', `"${target}" is not a four-part VCF version such as 9.1.1.0.`, { source: SRC }));
       if (backupHours > 48) findings.push(warning('fleet91.lcm.stale-backup', `Allowing a ${backupHours}-hour-old backup before an upgrade means restoring would lose up to ${Math.round(backupHours / 24)} days of configuration.`, { source: SRC }));
 
       const backupSpec = {
@@ -2458,13 +3107,25 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '#   ./fleet-lifecycle.sh inventory                        components and versions (read)',
         `#   ./fleet-lifecycle.sh backup-status                    exit 1 if a backup is older than ${backupHours}h (read)`,
         ...(doBackup ? ['#   ./fleet-lifecycle.sh backup-config [--dry-run]        set the SFTP schedule from backup-config.json'] : []),
-        ...(doUpgrade
+        ...(doDepot
           ? [
-              `#   ./fleet-lifecycle.sh plan [--dry-run]                 create an upgrade plan to ${target}`,
-              '#   ./fleet-lifecycle.sh precheck <planId>                run and show the plan precheck',
-              '#   ./fleet-lifecycle.sh apply <planId> --change <ref> [--dry-run]',
+              '#   ./fleet-lifecycle.sh depot-status                     the depot and its last sync (read)',
+              `#   ./fleet-lifecycle.sh depot-config [--dry-run]         set the ${depotMode.toLowerCase()} depot from depot-config.json`,
             ]
           : []),
+        ...(doPrecheck
+          ? [
+              `#   ./fleet-lifecycle.sh plan [--dry-run]                 create an upgrade plan to ${target} (${scope})`,
+              '#   ./fleet-lifecycle.sh precheck <planId>                run the enhanced precheck, export it',
+              '#   ./fleet-lifecycle.sh check                            plan + enhanced precheck + export in one run',
+            ]
+          : []),
+        ...(doUpgrade ? ['#   ./fleet-lifecycle.sh apply <planId> --change <ref> [--dry-run]'] : []),
+        '#',
+        '# The enhanced precheck replaces the SDDC Manager upgrade prechecks, which',
+        '# VCF 9.1 deprecates: it runs from fleet lifecycle, for the management',
+        '# components and for each VCF instance, and its result is exported to',
+        '# precheck-<plan>-<time>.json and .csv beside this script.',
         '#',
         '# Authentication, as the Fleet LCM API reference documents it: an OpsToken from',
         '# VCF Operations, exchanged at /suite-api/api/auth/token/exchange for a Fleet LCM',
@@ -2476,6 +3137,12 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         `LCM_HOST="\${FLEET_LCM_HOST:-${lcmHost}}"`,
         `BACKUP_HOURS=${backupHours}`,
         `TARGET=${sq(target)}`,
+        `SCOPE=${scope}`,
+        `COMPONENTS=${sq(JSON.stringify(scope === 'MANAGEMENT' ? components : []))}`,
+        `LCM_DOMAIN=${sq(scope === 'VCF_INSTANCE' || scope === 'HOSTS' ? lcmDomain : '')}`,
+        `LCM_HOSTS=${sq(JSON.stringify(scope === 'HOSTS' || scope === 'STANDALONE_HOSTS' ? lcmHosts : []))}`,
+        '# VERIFY: the depot configuration path of the 9.1 fleet lifecycle / fleet depot service.',
+        'DEPOT_PATH="${DEPOT_PATH:-/depot-configuration}"',
         ...needPrivate(),
         ...parseArgs(['--change) shift; CHANGE="${1:-}" ;;']),
         'CHANGE="${CHANGE:-}"',
@@ -2566,6 +3233,64 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '      end\' <<<"$1"',
         '}',
         '',
+        ...(doPrecheck
+          ? [
+              '# An upgrade plan for the scope chosen: management components by type, a VCF',
+              '# instance by its domain, or named ESX hosts (in a domain, or standalone).',
+              '# VERIFY: the scope and componentsFilter fields of the 9.1 plan spec.',
+              'make_plan() {',
+              '  local body',
+              '  body=$(jq -n --arg v "$TARGET" --arg scope "$SCOPE" --argjson comps "$COMPONENTS" --arg dom "$LCM_DOMAIN" --argjson hosts "$LCM_HOSTS" \\',
+              '    \'{spec: {desiredSoftware: {version: $v, components: []}, componentsFilter: $comps,',
+              '            scope: ({type: $scope} + (if $dom != "" then {domainNames: [$dom]} else {} end) + (if ($hosts | length) > 0 then {hostFqdns: $hosts} else {} end))}}\')',
+              '  if (( DRY_RUN )); then echo "DRY RUN: would POST /fleet-lcm/v1/upgrade-plans:"; jq . <<<"$body"; exit 0; fi',
+              '  PLAN=$(lcm POST /upgrade-plans --data "$body")',
+              '  PLAN_ID=$(jq -r \'.id // .planId // empty\' <<<"$PLAN")',
+              '  [[ -n "$PLAN_ID" ]] || { echo "The plan was sent but no plan id came back; check Fleet management > Lifecycle." >&2; exit 1; }',
+              '  echo "Plan ${PLAN_ID}:"',
+              '  jq -r \'(.components | if type == "object" then .elements elif type == "array" then . else [] end)[]? | "  \\(.type // .componentType)\\t\\(.fqdn // .name)\\t\\(.version) -> \\(.targetVersion)\\t\\(.status // "")"\' <<<"$PLAN"',
+              '}',
+              '# The enhanced precheck: run it, wait, export the full result as JSON and CSV,',
+              '# and list every component that did not pass. Changes no component.',
+              'run_precheck() {',
+              '  local id="$1" r t stamp out',
+              '  r=$(lcm POST "/upgrade-plans/${id}?action=precheck" --data \'{"precheckType":"ENHANCED"}\')',
+              '  t=$(jq -r \'.taskId // .executions[-1].taskId // .id // empty\' <<<"$r")',
+              '  if [[ -n "$t" ]]; then',
+              '    wait_lcm_task "$t" || PROBLEMS+=("precheck task ${t} did not succeed")',
+              '  else',
+              '    echo "No precheck task id came back; reading the plan as it stands."',
+              '  fi',
+              '  stamp=$(date +%Y%m%d-%H%M%S)',
+              '  out="precheck-${id}-${stamp}"',
+              '  # VERIFY: the precheck results path; the plan itself is exported when it is absent.',
+              '  if ! lcm GET "/upgrade-plans/${id}/precheck-results" > "${out}.json" 2>/dev/null; then lcm GET "/upgrade-plans/${id}" > "${out}.json"; fi',
+              '  jq -r \'[.. | objects | select(has("status") and (has("name") or has("checkName") or has("description")))]',
+              '         | (["component","check","status","message"] | @csv),',
+              '           (.[] | [(.componentType // .type // ""), (.name // .checkName // .description // ""), .status, (.message // .errorMessage // "")] | @csv)\' "${out}.json" > "${out}.csv"',
+              '  echo "Enhanced precheck exported to ${out}.json and ${out}.csv"',
+              '  PLAN_JSON=$(lcm GET "/upgrade-plans/${id}")',
+              '  jq -r \'(.components | if type == "object" then .elements elif type == "array" then . else [] end)[]? | "  \\(.type // .componentType)\\t\\(.fqdn // .name)\\t\\(.version) -> \\(.targetVersion)\\tprecheck \\(.precheck.status // "not run")"\' <<<"$PLAN_JSON"',
+              '  BLOCKERS=$(plan_blockers "$PLAN_JSON")',
+              '  while IFS= read -r line; do if [[ -n "$line" ]]; then PROBLEMS+=("not ready: ${line}"); fi; done <<<"$BLOCKERS"',
+              '  if [[ -z "$BLOCKERS" ]]; then echo "Every component in the plan passed its precheck."; fi',
+              '}',
+            ]
+          : []),
+        ...(doDepot
+          ? [
+              '# The depot endpoint has to answer before anything is sent to it.',
+              'depot_probe() {',
+              '  local code',
+              '  code=$(curl -sS -o /dev/null -w \'%{http_code}\' "https://${LCM_HOST}/fleet-lcm/v1${DEPOT_PATH}" -H "@${LCM_HDR}" -H "Accept: application/json" || true)',
+              '  if [[ "$code" != "200" ]]; then',
+              '    echo "The depot endpoint ${DEPOT_PATH} answered HTTP ${code}. Set DEPOT_PATH from the API reference for your release, or configure it by hand:" >&2',
+              '    echo "  VCF Operations > Fleet management > Lifecycle > Settings > Depot: choose Online (download token) or Offline (URL), and the proxy." >&2',
+              '    exit 3',
+              '  fi',
+              '}',
+            ]
+          : []),
         'lcm_login',
         'case "$CMD" in',
         '  inventory)',
@@ -2594,33 +3319,57 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
               '    ;;',
             ]
           : []),
-        ...(doUpgrade
+        ...(doDepot
+          ? [
+              '  depot-status)',
+              '    depot_probe',
+              '    lcm GET "$DEPOT_PATH" | jq \'del(.. | .password? // empty, .downloadToken? // empty)\'',
+              '    ;;',
+              '  depot-config)',
+              '    depot_probe',
+              '    grep -q "<REQUIRED" depot-config.json && { echo "depot-config.json still has <REQUIRED> values." >&2; exit 1; }',
+              ...(depotMode === 'ONLINE'
+                ? [
+                    '    : "${DEPOT_TOKEN_FILE:?set DEPOT_TOKEN_FILE to a mode-600 file holding the Broadcom download token}"',
+                    '    need_private "$DEPOT_TOKEN_FILE"',
+                  ]
+                : ['    DEPOT_TOKEN_FILE=/dev/null']),
+              '    if [[ -n "${DEPOT_PROXY_PASSWORD_FILE:-}" ]]; then need_private "$DEPOT_PROXY_PASSWORD_FILE"; else DEPOT_PROXY_PASSWORD_FILE=/dev/null; fi',
+              '    STAMP=$(date +%Y%m%d-%H%M%S)',
+              '    lcm GET "$DEPOT_PATH" | jq \'del(.. | .password? // empty, .downloadToken? // empty)\' > "depot-before-${STAMP}.json"',
+              '    depot_body() {',
+              '      jq --arg mask "$1" --rawfile t "$DEPOT_TOKEN_FILE" --rawfile pp "$DEPOT_PROXY_PASSWORD_FILE" \\',
+              '        \'def s($x): if $mask == "mask" then "********" else ($x | rtrimstr("\\n")) end;',
+              '         (if .depotType == "ONLINE" then .online.downloadToken = s($t) else . end)',
+              '         | (if (.proxy.host // "") != "" and ($pp | length) > 0 then .proxy.password = s($pp) else . end)\' depot-config.json',
+              '    }',
+              '    if (( DRY_RUN )); then echo "DRY RUN: would PUT ${DEPOT_PATH}:"; depot_body mask; exit 0; fi',
+              '    R=$(depot_body send | lcm PUT "$DEPOT_PATH" --data-binary @-)',
+              '    T=$(jq -r \'.taskId // .id // empty\' <<<"$R" 2>/dev/null || true)',
+              '    [[ -z "$T" ]] || wait_lcm_task "$T" || PROBLEMS+=("depot configuration task ${T} did not succeed")',
+              '    echo "Depot configured. The previous settings (without secrets) are in depot-before-${STAMP}.json."',
+              '    ;;',
+            ]
+          : []),
+        ...(doPrecheck
           ? [
               '  plan)',
-              '    BODY=$(jq -n --arg v "$TARGET" \'{spec: {desiredSoftware: {version: $v, components: []}, componentsFilter: []}}\')',
-              '    if (( DRY_RUN )); then echo "DRY RUN: would POST /fleet-lcm/v1/upgrade-plans:"; jq . <<<"$BODY"; exit 0; fi',
-              '    PLAN=$(lcm POST /upgrade-plans --data "$BODY")',
-              '    PLAN_ID=$(jq -r \'.id // .planId // empty\' <<<"$PLAN")',
-              '    [[ -n "$PLAN_ID" ]] || { echo "The plan was sent but no plan id came back; check Fleet management > Lifecycle." >&2; exit 1; }',
-              '    echo "Plan ${PLAN_ID}:"',
-              '    jq -r \'.components.elements[]? | "  \\(.type)\\t\\(.fqdn)\\t\\(.version) -> \\(.targetVersion)\\t\\(.status)"\' <<<"$PLAN"',
-              '    echo "Next: ./fleet-lifecycle.sh precheck <planId>"',
+              '    make_plan',
+              '    echo "Next: ./fleet-lifecycle.sh precheck ${PLAN_ID}"',
               '    ;;',
               '  precheck)',
               '    PLAN_ID="${2:?plan id}"',
-              '    R=$(lcm POST "/upgrade-plans/${PLAN_ID}?action=precheck" --data \'{}\')',
-              '    T=$(jq -r \'.taskId // .executions[-1].taskId // .id // empty\' <<<"$R")',
-              '    if [[ -n "$T" ]]; then',
-              '      wait_lcm_task "$T" || PROBLEMS+=("precheck task ${T} did not succeed")',
-              '    else',
-              '      echo "No precheck task id came back; reading the plan as it stands."',
-              '    fi',
-              '    PLAN_JSON=$(lcm GET "/upgrade-plans/${PLAN_ID}")',
-              '    jq -r \'(.components | if type == "object" then .elements elif type == "array" then . else [] end)[]? | "  \\(.type // .componentType)\\t\\(.fqdn // .name)\\t\\(.version) -> \\(.targetVersion)\\tprecheck \\(.precheck.status // "not run")"\' <<<"$PLAN_JSON"',
-              '    BLOCKERS=$(plan_blockers "$PLAN_JSON")',
-              '    while IFS= read -r line; do if [[ -n "$line" ]]; then PROBLEMS+=("not ready: ${line}"); fi; done <<<"$BLOCKERS"',
-              '    if [[ -z "$BLOCKERS" ]]; then echo "Every component in the plan passed its precheck."; fi',
+              '    run_precheck "$PLAN_ID"',
               '    ;;',
+              '  check)',
+              '    if (( DRY_RUN )); then make_plan; exit 0; fi',
+              '    make_plan',
+              '    run_precheck "$PLAN_ID"',
+              '    ;;',
+            ]
+          : []),
+        ...(doUpgrade
+          ? [
               '  apply)',
               '    PLAN_ID="${2:?plan id}"',
               '    # Guardrails. Each fails closed: what cannot be read counts as not passed.',
@@ -2674,39 +3423,69 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
         '',
       ].join('\n');
 
+      const proxy = (() => {
+        if (!depotProxy) return undefined;
+        const { host, port } = splitHostPort(depotProxy.replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, ''));
+        return { host, port: port ?? 3128, username: '' };
+      })();
+      const depotSpec = {
+        depotType: depotMode,
+        ...(depotMode === 'ONLINE' ? { online: { enabled: true } } : { offline: { enabled: true, url: depotUrl } }),
+        ...(proxy ? { proxy } : {}),
+      };
+
+      const cronLines = [
+        `# ${base}: the script logs in from the password file (mode 600); no password or token is in these lines.`,
+        `0 8 * * * cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh backup-status >> /var/log/vcf-automation/${base}.log 2>&1`,
+        ...(part === 'precheck' ? [`30 5 * * 1 cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh check >> /var/log/vcf-automation/${base}.log 2>&1`] : []),
+        '',
+      ];
       const files: Record<string, string> = {
         'fleet-lifecycle.sh': script,
         'restore-notes.txt': restore,
-        'crontab.txt': [`# ${base}: backup freshness every morning. The script logs in from the password`, '# file (mode 600); no password or token is in this line.', `0 8 * * * cd /opt/vcf-automation/${base} && ${scheduledEnv('vcf-operations', 'svc-fleet-lcm')} FLEET_LCM_HOST=${lcmHost || 'fleet-lcm.example.com'} ./fleet-lifecycle.sh backup-status >> /var/log/vcf-automation/${base}.log 2>&1`, ''].join('\n'),
+        'crontab.txt': cronLines.join('\n'),
       };
       if (doBackup) files['backup-config.json'] = json(backupSpec);
+      if (doDepot) files['depot-config.json'] = json(depotSpec);
+      const scopeText = scope === 'MANAGEMENT' ? `management components ${components.join(', ') || 'none'}` : scope === 'VCF_INSTANCE' ? `the VCF instance of domain ${lcmDomain}` : scope === 'HOSTS' ? `ESX hosts ${lcmHosts.join(', ')} of ${lcmDomain}` : `standalone ESX hosts ${lcmHosts.join(', ')}`;
       files['IMPORT.md'] = fleetImport(
-        doBackup
-          ? 'backup-config.json is the PATCH /fleet-lcm/v1/sddc-lcms/{id} body (backupConfigSpec) without its two secrets: fleet-lifecycle.sh adds the SFTP password and the encryption passphrase from their mode-600 files in memory, then sends it to each VCF instance.'
-          : 'Nothing is imported: the script drives the fleet lifecycle API.',
         [
+          doBackup ? 'backup-config.json is the PATCH /fleet-lcm/v1/sddc-lcms/{id} body (backupConfigSpec) without its two secrets: fleet-lifecycle.sh adds the SFTP password and the encryption passphrase from their mode-600 files in memory, then sends it to each VCF instance.' : '',
+          doDepot ? `depot-config.json is the depot body (${depotMode.toLowerCase()}${proxy ? ', with proxy' : ''}) without its secrets: the download token (DEPOT_TOKEN_FILE) and proxy password (DEPOT_PROXY_PASSWORD_FILE) are added in memory.` : '',
+        ].filter(Boolean).join(' ') || 'Nothing is imported: the script drives the fleet lifecycle API.',
+        [
+          doDepot ? { heading: 'Set the depot', lines: ['`./fleet-lifecycle.sh depot-config` (add `--dry-run` first). In the interface: Fleet management > Lifecycle > Settings > Depot.'] } : undefined,
           doBackup ? { heading: 'Set the backup schedule', lines: ['Replace the <REQUIRED> SSH host-key fingerprint in backup-config.json, then `./fleet-lifecycle.sh backup-config` (add `--dry-run` first to preview). In the interface: Fleet management > Lifecycle > the instance > Backup settings.'] } : undefined,
-          { heading: 'Check backups every morning', lines: ['Install the line in crontab.txt with `crontab -e`; it runs `fleet-lifecycle.sh backup-status`.'] },
-          doUpgrade ? { heading: 'Upgrade', lines: ['`./fleet-lifecycle.sh` with the upgrade commands its header lists, `--dry-run` first to preview; the apply step needs `--change <ref>`.'] } : undefined,
+          { heading: 'Check backups every morning', lines: [`Install the line${part === 'precheck' ? 's' : ''} in crontab.txt with \`crontab -e\`; ${part === 'precheck' ? 'they run `backup-status` daily and the enhanced precheck (`check`) every Monday' : 'it runs `fleet-lifecycle.sh backup-status`'}.`] },
+          doPrecheck ? { heading: 'Enhanced precheck', lines: [`\`./fleet-lifecycle.sh check\` builds a plan for ${scopeText} and runs the enhanced precheck, exporting precheck-<plan>-<time>.json and .csv.`] } : undefined,
+          doUpgrade ? { heading: 'Upgrade', lines: ['`./fleet-lifecycle.sh apply <planId> --change <ref>` (`--dry-run` first): it refuses unless the precheck passed and every component has a recent backup.'] } : undefined,
         ],
-        ['The backupConfigSpec field names follow the 9.1 fleet lifecycle API as the script cites it; the restore body is not public (restore-notes.txt).'],
+        ['The backupConfigSpec field names follow the 9.1 fleet lifecycle API as the script cites it; the restore body is not public (restore-notes.txt).', ...(doPrecheck ? ['VERIFY: the plan scope fields (scope.type, domainNames, hostFqdns), componentsFilter, the precheckType ENHANCED body and the /precheck-results export path.'] : []), ...(doDepot ? ['VERIFY: DEPOT_PATH and the depot body (depotType, online, offline.url, proxy); the script refuses and prints the interface path when the endpoint does not answer.'] : [])],
       );
+
+      const partTitle: Record<string, string> = {
+        all: `Fleet lifecycle: backup, depot and upgrade of ${scopeText} to ${target}`,
+        backup: 'Fleet lifecycle of the management components, with scheduled SFTP backup',
+        upgrade: `Fleet lifecycle: upgrade ${scopeText} to ${target}`,
+        precheck: `Enhanced precheck of ${scopeText} for ${target}`,
+        depot: `Fleet lifecycle depot: ${depotMode.toLowerCase()}${proxy ? ' through a proxy' : ''}`,
+      };
 
       return {
         platform: PLATFORM,
-        title: `Fleet lifecycle of the management components${doUpgrade ? ` — upgrade to ${target}` : ''}${doBackup ? ', with scheduled SFTP backup' : ''}`,
-        effect: doUpgrade ? 'irreversible' : 'reversible',
-        trigger: { kind: 'manual', detail: `By hand for the backup schedule${doUpgrade ? ' and each upgrade' : ''}; the backup check runs daily from cron.`, worstCase: doUpgrade ? 'once per plan, every component in it' : 'once per run' },
+        title: partTitle[part] ?? partTitle.all!,
+        effect: doUpgrade ? 'irreversible' : part === 'precheck' ? 'read' : 'reversible',
+        trigger: part === 'precheck' ? { kind: 'schedule', detail: 'Weekly before an upgrade window, and by hand the week of it.', worstCase: 'once a week: one plan and one precheck' } : { kind: 'manual', detail: `By hand for the ${[doBackup ? 'backup schedule' : '', doDepot ? 'depot' : '', doUpgrade ? 'each upgrade' : ''].filter(Boolean).join(', ') || 'settings'}; the backup check runs daily from cron.`, worstCase: doUpgrade ? 'once per plan, every component in it' : 'once per run' },
         scope: {
-          what: `The management components the fleet lifecycle service manages${doBackup ? ' (backup: every registered VCF instance)' : ''}${doUpgrade ? `; the upgrade: every component in the plan to ${target}` : ''}.`,
-          decidedBy: ['GET /fleet-lcm/v1/sddc-lcms — every VCF instance registered with the fleet lifecycle service.', ...(doUpgrade ? ['The upgrade plan: components the service finds eligible for the target version, shown by plan and precheck before apply.'] : [])],
-          ifWrong: doUpgrade ? 'A management component upgraded out of step with the others, or half upgraded; the way back is a restore from the backup taken before.' : 'Backups going to the wrong place, or none at all, found only on the day one is needed.',
+          what: `${doPrecheck ? `The upgrade plan for ${scopeText}` : 'The management components the fleet lifecycle service manages'}${doBackup ? ' (backup: every registered VCF instance)' : ''}${doDepot ? '; the fleet depot setting' : ''}.`,
+          decidedBy: ['GET /fleet-lcm/v1/sddc-lcms — every VCF instance registered with the fleet lifecycle service.', ...(doPrecheck ? [`The plan scope ${scope}${scope === 'MANAGEMENT' ? ` limited to ${components.join(', ')}` : ''}: components the service finds eligible for ${target}, shown by plan and precheck before apply.`] : [])],
+          ifWrong: doUpgrade ? 'A management component upgraded out of step with the others, or half upgraded; the way back is a restore from the backup taken before.' : part === 'precheck' ? 'A plan is left in fleet lifecycle; it changes nothing until applied.' : 'Backups or bundles going to or from the wrong place, found only on the day one is needed.',
         },
         guardrails: [
           ...(doUpgrade
             ? [
                 { rule: 'apply needs a change reference (--change)', because: 'An upgrade of the management plane is a change; the reference ties the run to its approval.' },
-                { rule: 'apply refuses unless every component in the plan has passed its precheck', because: 'A failed precheck is the upgrade failing early, cheaply; applying past it fails late and expensively.' },
+                { rule: 'apply refuses unless every component in the plan has passed its enhanced precheck', because: 'A failed precheck is the upgrade failing early, cheaply; applying past it fails late and expensively.' },
                 { rule: `apply refuses unless every component has a backup newer than ${backupHours} hours`, because: 'The only undo of an upgrade is a restore, and a restore is only as recent as the backup.' },
               ]
             : []),
@@ -2716,17 +3495,28 @@ export const VCF_FLEET_91: readonly AutomationBlueprint[] = [
                 { rule: 'Refuses a backup configuration with <REQUIRED> values', because: 'A missing host key fingerprint means trusting whatever answers on first use.' },
               ]
             : []),
-          { rule: 'Acting commands apply when run; --dry-run previews', because: 'Every acting command can print what it would send first.' },
+          ...(doDepot
+            ? [
+                { rule: 'Refuses unless the depot endpoint answers, and saves the current depot settings first', because: 'A wrong depot silently stops every bundle download until the next upgrade finds it.' },
+                { rule: 'The download token and proxy password come from mode-600 files; the dry run masks them', because: 'The token downloads entitled software for the whole site ID.' },
+              ]
+            : []),
+          ...(part === 'precheck' ? [] : [{ rule: 'Acting commands apply when run; --dry-run previews', because: 'Every acting command can print what it would send first.' }]),
         ],
-        dryRun: ['inventory, backup-status and precheck read (a precheck changes no component).', 'backup-config, plan and apply print what they would send when given --dry-run.'],
-        undo: [...(doBackup ? ['Backup schedule: PATCH the previous settings back, or disable fullSchedule.'] : []), ...(doUpgrade ? ['An upgrade cannot be rolled back in place. Restore each component from the backup taken before apply (restore-notes.txt).'] : [])],
-        told: ['VCF Operations shows fleet lifecycle tasks under Fleet management > Lifecycle.', 'The change record named with --change.'],
-        requires: ['A VCF Operations account with fleet lifecycle rights for the OpsToken, its password in a mode-600 file (VCFOPS_USER, VCFOPS_PASSWORD_FILE).', 'The fleet lifecycle host (FLEET_LCM_HOST).', ...(doBackup ? ['An SFTP server with space for the management components, its password and a backup passphrase in mode-600 files.'] : []), 'jq, curl and bash 4.'],
+        dryRun: ['inventory, backup-status, depot-status and precheck read (a precheck changes no component).', 'backup-config, depot-config, plan, check and apply print what they would send when given --dry-run.'],
+        undo: [
+          ...(doBackup ? ['Backup schedule: PATCH the previous settings back, or disable fullSchedule.'] : []),
+          ...(doDepot ? ['Depot: PUT depot-before-<time>.json back (with its token or password added again).'] : []),
+          ...(doUpgrade ? ['An upgrade cannot be rolled back in place. Restore each component from the backup taken before apply (restore-notes.txt).'] : []),
+          ...(part === 'precheck' ? ['Nothing to undo: delete the plan in Fleet management > Lifecycle if it is not wanted.'] : []),
+        ],
+        told: ['VCF Operations shows fleet lifecycle tasks under Fleet management > Lifecycle.', ...(doUpgrade ? ['The change record named with --change.'] : []), ...(doPrecheck ? ['precheck-<plan>-<time>.json and .csv beside the script.'] : [])],
+        requires: ['A VCF Operations account with fleet lifecycle rights for the OpsToken, its password in a mode-600 file (VCFOPS_USER, VCFOPS_PASSWORD_FILE).', 'The fleet lifecycle host (FLEET_LCM_HOST).', ...(doBackup ? ['An SFTP server with space for the management components, its password and a backup passphrase in mode-600 files.'] : []), ...(doDepot && depotMode === 'ONLINE' ? ['A Broadcom download token in a mode-600 file (DEPOT_TOKEN_FILE).'] : []), 'jq, curl and bash 4.'],
         files,
         notes: [
           'Confirmed (developer.broadcom.com, VCF Fleet LCM Service APIs): base /fleet-lcm/v1 on the fleet lifecycle host; authentication by POST /suite-api/api/auth/token/exchange {"serviceKeys":["fleet-lcm"]} with an OpsToken, returning jwtToken; GET /components; GET /sddc-lcms; PATCH /sddc-lcms/{id} with backupConfigSpec (williamlam.com, July 2026); GET /sddc-lcms/{id}/backups; POST /upgrade-plans, ?action=precheck and ?action=apply; GET /tasks/{id}. The reference says these APIs may change in future releases.',
           'VERIFY: the format of backups[].points (read here as ISO 8601 or epoch); the list keys of /components and /sddc-lcms; the body of a restore; the precheck status values (only SUCCEEDED, SUCCESSFUL, COMPLETED or PASSED count as a pass — any other, or none, blocks apply); that backups[].componentType uses the same names as the plan’s component type (apply refuses a plan component type with no backup listed).',
-          'Workload domains are still upgraded through SDDC Manager: see the SDDC Manager precheck blueprint in this kit.',
+          'VCF 9.1 deprecates the SDDC Manager upgrade prechecks (/v1/system/prechecks). The enhanced precheck here is their replacement, for the management components and for each VCF instance; fleet_upgrade_precheck builds this same precheck for one workload domain.',
         ],
         findings,
       };

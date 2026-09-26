@@ -10,7 +10,7 @@
  */
 
 import { el, replace } from './dom.ts';
-import type { BlueprintInput } from '../kit/blueprint.ts';
+import type { BlueprintInput, SelectOption } from '../kit/blueprint.ts';
 
 // --- deciding which editor a field gets ---------------------------------------
 
@@ -31,6 +31,21 @@ interface TableShape {
   readonly columns: readonly string[];
   /** The CSV header line is part of the value. */
   readonly headerInValue: boolean;
+  /**
+   * Cells are separated only by a pipe with a space either side, so a cell may
+   * hold a bare "|" (a metric key such as cpu|usage_average).
+   */
+  readonly spaced?: boolean;
+  /** Per column, the values its dropdown offers; undefined for a text cell. */
+  readonly choices?: readonly (readonly SelectOption[] | undefined)[];
+}
+
+const columnName = (hintPart: string): string => hintPart.replace(/\s*(\(|—).*$/, '').trim();
+
+/** The cells of a row: on "|", or in a spaced table only on " | ". */
+function splitCells(line: string, shape: Pick<TableShape, 'separator' | 'spaced'>): string[] {
+  if (shape.separator === ',') return line.split(',');
+  return shape.spaced ? ` ${line} `.split(/(?<=\s)\|(?=\s)/) : line.split('|');
 }
 
 /** Rows of columns: a " | " table whose hint names the columns, or a CSV whose first line does. */
@@ -41,9 +56,20 @@ export function tableShape(input: BlueprintInput): TableShape | undefined {
   if (/^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)+$/i.test(first)) return { separator: ',', columns: first.split(','), headerInValue: true };
   const hint = input.hint ?? '';
   const named = hint.split('|').map((h) => h.trim()).filter(Boolean);
+  // A textarea that brings options is a grid by declaration: its cells split on
+  // " | " only, and an option whose group names a column is offered in that
+  // column's dropdown. Textareas without options are read as before.
+  if ((input.options?.length ?? 0) > 0 && named.length >= 2 && hint.includes(' | ')) {
+    const columns = named.map(columnName);
+    const choices = columns.map((column) => {
+      const offered = (input.options ?? []).filter((option) => option.group === column);
+      return offered.length > 0 ? offered : undefined;
+    });
+    return { separator: ' | ', columns, headerInValue: false, spaced: true, choices };
+  }
   // A table only when the hint names every column and the rows use the same separator: SPL and scripts that happen to contain a pipe stay text.
   if (named.length >= 2 && hint.includes(' | ') && lines.length > 0 && lines.every((l) => l.split('|').length === named.length) && !first.startsWith('|')) {
-    return { separator: ' | ', columns: named.map((n) => n.replace(/\s*(\(|—).*$/, '').trim()), headerInValue: false };
+    return { separator: ' | ', columns: named.map(columnName), headerInValue: false };
   }
   return undefined;
 }
@@ -123,9 +149,12 @@ export function tableEditor(shape: TableShape, value: string, onChange: () => vo
   const lines = value.split('\n');
   const comments = lines.filter((l) => l.trim().startsWith('#'));
   const split = (line: string): string[] => {
-    const cells = shape.separator === ',' ? line.split(',') : line.split('|');
+    const cells = splitCells(line, shape);
     return shape.columns.map((_, i) => (cells[i] ?? '').trim());
   };
+  // What would end a cell is taken out of it: a comma in a CSV, a pipe in a
+  // table — or, in a spaced table, only a pipe with spaces round it.
+  const clean = (cell: string): string => (shape.separator === ',' ? cell.replace(/[,\n]/g, ' ') : shape.spaced ? cell.replace(/\n/g, ' ').replace(/\s+\|\s+/g, '|') : cell.replace(/[|\n]/g, ' ')).trim();
   let rows = lines.map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map(split);
   if (shape.headerInValue) rows = rows.slice(1);
   let asText = false;
@@ -136,7 +165,7 @@ export function tableEditor(shape: TableShape, value: string, onChange: () => vo
 
   const serialize = (): string => {
     const kept = rows.filter((r) => r.some((c) => c.trim() !== ''));
-    const joined = kept.map((r) => r.map((c) => c.replace(shape.separator === ',' ? /[,\n]/g : /[|\n]/g, ' ').trim()).join(shape.separator));
+    const joined = kept.map((r) => r.map(clean).join(shape.separator));
     return [...comments, ...(shape.headerInValue ? [shape.columns.join(',')] : []), ...joined].join('\n');
   };
   const commit = (): void => {
@@ -177,7 +206,25 @@ export function tableEditor(shape: TableShape, value: string, onChange: () => vo
     rows.forEach((row, r) => {
       const tr = el('tr');
       row.forEach((cell, c) => {
-        const inp = el('input', { attrs: { type: 'text', 'aria-label': `${shape.columns[c]} row ${r + 1}` } }) as HTMLInputElement;
+        const label = `${shape.columns[c]} row ${r + 1}`;
+        const offered = shape.choices?.[c];
+        if (offered) {
+          // A dropdown; a value it does not offer (typed as text) stays, so nothing is lost.
+          const select = el('select', { attrs: { 'aria-label': label } }) as HTMLSelectElement;
+          const options = offered.some((o) => o.value === cell) ? offered : [{ value: cell, label: cell || '—' }, ...offered];
+          for (const option of options) {
+            const opt = el('option', { text: option.label, attrs: { value: option.value } }) as HTMLOptionElement;
+            if (option.value === cell) opt.selected = true;
+            select.appendChild(opt);
+          }
+          select.addEventListener('change', () => {
+            rows[r]![c] = select.value;
+            commit();
+          });
+          tr.appendChild(el('td', {}, select));
+          return;
+        }
+        const inp = el('input', { attrs: { type: 'text', 'aria-label': label } }) as HTMLInputElement;
         inp.value = cell;
         inp.addEventListener('input', () => {
           rows[r]![c] = inp.value;

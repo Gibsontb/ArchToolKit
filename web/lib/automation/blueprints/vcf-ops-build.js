@@ -4,10 +4,12 @@
  *
  * The other VCF Operations blueprints write what an automation stands on — the
  * alert, the policy, the schedule. This set writes what a person opens: the
- * dashboard, the view behind it, the report built from the views. And the
- * three ways VCF Operations is extended in 9.1: a management pack someone else
- * wrote, one built in Management Pack Builder (which now reads Prometheus), and
- * the orchestrator's Python and PowerShell workflows.
+ * dashboard, the view behind it, the report built from the views and
+ * dashboards. And the ways VCF Operations is extended in 9.1: a management pack
+ * someone else wrote, one built in Management Pack Builder (which now reads
+ * Prometheus), the orchestrator's Python and PowerShell workflows, application
+ * monitoring with Telegraf through a cloud proxy, and HCX, checked and taken
+ * through its lifecycle.
  *
  * Dashboards come out in the same JSON the VCF Ops content page reads — a
  * `dashboards` array, widgets placed by `gridsterCoords` on a 12-column grid —
@@ -26,7 +28,8 @@ import { authHeader, authPreamble, readScript } from '../apply.js';
 import { networksPreamble, networksScheduledEnv } from './vcf-networks-logs.js';
 import { authFileVar, workDirLines } from './vcf-operations-content.js';
 import { CSV_COLUMNS } from '../../migration/portfolio.js';
-import { familyOf, overlapsAny } from '../../core/ip.js';
+import { familyOf, formatHostPort, isIp, isIpv6, overlapsAny, splitHostPort } from '../../core/ip.js';
+import { Entries, Settings, WIDGET_TYPES, catalogueHelp, metricKeyProblem, parseKind, settingProblems, widgetType,                                                   } from './vcf-ops-widgets.js';
 import {
   CONTENT_ZIP,
   DASHBOARD_OWNER_PLACEHOLDER,
@@ -85,6 +88,14 @@ const viewIdOf = (name        )         => stableId(`view:${name}`);
 const CONTENT_IMPORT_NOTE =
   'Content import: POST /suite-api/api/content/operations/import (multipart contentFile) answers 202 with the new operation’s id; GET on the same path is the last import, with state NOT_INITIALIZED, INITIALIZED, RUNNING, FAILED, FINISHED or UNKNOWN and operationSummaries[] (imported, skipped, failed). The reference says "If the force option is set to true, content will be overwritten. By default the flag is true", so the script sends force=false unless --overwrite. The importer checks for the instance’s own <number>L.v1 marker file, which the script copies from the backup export it takes first.';
 
+/** IMPORT.md's opening and sources for the dashboard and view, in VCF 9.1 names only. */
+const IMPORT_INTRO = ['Each step says which file goes where, in the order they depend on each other. Menu paths are VCF Operations 9.1, with the 8.x path in brackets where it differs.'];
+const CONTENT_SOURCES                    = [
+  'Broadcom TechDocs, VCF Operations 9.0: "Importing Content" (Content Management) and "Widget Definitions List".',
+  'Real exports: github.com/notoriousbdg (VMware’s own 8.x content: Views.zip, Dashboard.zip) and github.com/sentania-labs/vcf-content-factory-bundles (VCF Operations 9: Views.zip, Reports.zip, Dashboard.zip, content-zip installer).',
+  'VCF Operations API reference: /api/content/operations/{export,import}.',
+];
+
 /** Export the same kind of content from the target, as the reference layout. */
 function exportReferenceScript(contentType        )         {
   return readScript(PLATFORM, `Export existing ${contentType} content as the reference layout for an import.`, [
@@ -108,47 +119,657 @@ function exportReferenceScript(contentType        )         {
 // Dashboards and views: the templates
 // ---------------------------------------------------------------------------
 
-                  
-                        
-                         
-                     
-                     
-                     
-                     
-                                           
- 
+/** A column's transformation, as the attributes-selector writes it (`transformations` list). */
+                                                                                                                        
 
                       
                        
                          
                               
+                                       
+                                 
+                               
+                               
+                                                                            
+                         
+                                                                                                 
+                          
+                                                                                             
+                                                                                              
+                                                     
+                          
+                                                                    
+                                
  
+
+                                                                                     
 
                         
                         
+                                                                                       
                         
-                                                           
+                                      
                                           
+                                                                                         
                           
  
 
-const TEMPLATES = [
-  { value: 'capacity', label: 'Cluster capacity overview' },
-  { value: 'tier1', label: 'Tier 1 application health' },
-  { value: 'tags', label: 'Tag compliance' },
-  { value: 'reclaim', label: 'Reclamation' },
-  { value: 'certs', label: 'Fleet certificate expiry' },
-]         ;
+/** One condition of a SubjectType filter (the JSON in its filter= attribute). */
+                            
+                                                
+                       
+                             
+                                  
+ 
 
-const templateName = (value        )         => TEMPLATES.find((t) => t.value === value)?.label ?? 'Cluster capacity overview';
+/** Everything about a view that is not its columns. */
+                       
+                               
+                                        
+                                                                                                                                                              
+                                                    
+                                     
+                                                                                                                                                                      
+                            
+                                             
+                        
+                            
+                                                            
+                                                                                                                                                                                                                      
+                                                                                                          
+                                               
+                        
+ 
 
-const KIND_OPTIONS = [
-  { value: 'VirtualMachine', label: 'Virtual machine' },
-  { value: 'HostSystem', label: 'ESXi host' },
-  { value: 'ClusterComputeResource', label: 'Cluster' },
-  { value: 'Datastore', label: 'Datastore' },
-  { value: 'VirtualCenter', label: 'vCenter' },
+/** The placeholder an image view carries until embed-image.sh writes the picture in. */
+const IMAGE_PLACEHOLDER = '<REQUIRED: IMAGE_BASE64 set by embed-image.sh>';
+
+/**
+ * A standard dashboard, as the rows of the widget grid it starts from.
+ *
+ * Picking a template shows its own grid, filled in; the rows are then the
+ * user's to change. A template with a view names it after itself, and the view
+ * blueprint writes that view under the same name, so the id matches.
+ */
+                             
+                         
+                         
+                                                        
+                         
+                                                                       
+                                                                                        
+                                                                             
+                            
+ 
+
+const about = (text        )                                                   => ['TextDisplay', 'About this dashboard', `text=${text}`, '1,1,12,2', 'no', ''];
+
+const DASHBOARD_TEMPLATES                               = [
+  {
+    value: 'capacity',
+    label: 'Cluster capacity overview',
+    about: 'What capacity each cluster has left, how long it lasts, and which cluster runs out first.',
+    hasView: true,
+    rows: [
+      about('Cluster capacity: what is left, how long it lasts, and which cluster runs out first. Select a cluster on the left.'),
+      ['ResourceList', 'Clusters', 'kinds=cluster; columns=OnlineCapacityAnalytics|capacityRemainingPercentage,OnlineCapacityAnalytics|timeRemaining', '1,3,4,6', 'yes', ''],
+      ['Scoreboard', 'Capacity remaining', 'kind=cluster; metrics=OnlineCapacityAnalytics|capacityRemainingPercentage,OnlineCapacityAnalytics|timeRemaining; labels=Capacity remaining %,Time remaining (days)', '5,3,4,6', 'no', 'Clusters'],
+      ['ParetoAnalysis', 'Least time remaining', 'kind=cluster; metric=OnlineCapacityAnalytics|timeRemaining; top=10; order=lowest; label=Time remaining (days)', '9,3,4,6', 'yes', ''],
+      ['View', 'Cluster capacity', 'view=Cluster capacity overview', '1,9,12,6', 'no', 'Clusters'],
+      ['Heatmap', 'CPU demand by cluster', 'kind=host; groupby=cluster; sizeby=cpu|demandmhz; colorby=cpu|demandPct; values=0,70,90; colors=#8ABF5B,#EACC58,#E4695E', '1,15,6,6', 'yes', ''],
+      ['HealthChart', 'CPU demand trend', 'kind=cluster; metric=cpu|demandPct; mode=self; thresholds=70,85,95; period=last7Days', '7,15,6,6', 'no', 'Clusters'],
+    ],
+  },
+  {
+    value: 'tier1',
+    label: 'Tier 1 application health',
+    about: 'Every VM in the Tier 1 custom group, its health, its performance right now and its alerts.',
+    hasView: true,
+    rows: [
+      about('Tier 1 applications: every VM in the custom group "Tier 1 Applications". Select one on the left; everything else follows it.'),
+      ['ResourceList', 'Tier 1 VMs', 'kinds=vm; group=Tier 1 Applications; grouptype=Environment', '1,3,4,8', 'yes', ''],
+      ['HealthChart', 'Health, last 24 hours', 'kind=vm; metric=badge|health; mode=self; period=last24Hour', '5,3,8,4', 'no', 'Tier 1 VMs'],
+      ['Scoreboard', 'Right now', 'kind=vm; metrics=cpu|readyPct,mem|guest_usage,virtualDisk|totalLatency; labels=CPU ready %,Guest memory %,Disk latency (ms)', '5,7,4,4', 'no', 'Tier 1 VMs'],
+      ['ProblemAlertsList', 'Top alerts', 'badge=all; objects=self; limit=5', '9,7,4,4', 'no', 'Tier 1 VMs'],
+      ['View', 'Tier 1 detail', 'view=Tier 1 application health', '1,11,12,6', 'no', 'Tier 1 VMs'],
+    ],
+  },
+  {
+    value: 'tags',
+    label: 'Tag compliance',
+    about: 'VMs missing a required vSphere tag category, by cluster.',
+    hasView: true,
+    rows: [
+      about('Tag compliance: VMs missing any of the required tag categories (Owner, Environment, CostCentre). An untagged VM is one no automation can scope correctly.'),
+      ['ResourceList', 'Clusters', 'kinds=cluster', '1,3,4,6', 'yes', ''],
+      ['View', 'VMs and their tags', 'view=Tag compliance; first=yes', '5,3,8,6', 'no', 'Clusters'],
+      ['PropertyList', 'The selected VM', 'kind=vm; props=summary|tag,summary|parentCluster,summary|runtime|powerState; labels=vSphere tags,Cluster,Power state', '1,9,6,5', 'no', 'VMs and their tags'],
+      ['AlertList', 'Compliance alerts', 'kinds=vm; types=compliance,configuration; world=yes', '7,9,6,5', 'no', ''],
+    ],
+  },
+  {
+    value: 'reclaim',
+    label: 'Reclamation',
+    about: 'Powered-off VMs, idle VMs and snapshot space, largest first.',
+    hasView: true,
+    rows: [
+      about('Reclamation: powered-off VMs, idle VMs and snapshot space, largest first. Review here; reclaim with the scheduled reclamation automation, not by hand from this page.'),
+      ['ParetoAnalysis', 'Largest snapshots', 'kind=vm; metric=diskspace|snapshot; top=10; order=highest; label=Snapshot space (GB)', '1,3,4,6', 'yes', ''],
+      ['ParetoAnalysis', 'Most idle', 'kind=vm; metric=cpu|usage_average; top=10; order=lowest; label=CPU usage %', '5,3,4,6', 'yes', ''],
+      ['Scoreboard', 'Reclaimable by cluster', 'kind=cluster; metrics=OnlineCapacityAnalytics|reclaimableCapacity; labels=Reclaimable capacity; names=yes', '9,3,4,6', 'yes', ''],
+      ['View', 'Reclamation candidates', 'view=Reclamation', '1,9,12,8', 'yes', ''],
+    ],
+  },
+  {
+    value: 'certs',
+    label: 'Fleet certificate expiry',
+    about: 'Certificate alerts across the fleet, and the vCenter certificates that expire first.',
+    hasView: true,
+    rows: [
+      about('Fleet certificates: expiry is tracked in Fleet Management > Certificates in VCF 9.1. This dashboard shows the alerts raised from it; renew with the fleet certificate automation.'),
+      ['AlertList', 'Certificate and configuration alerts', 'kinds=vcenter,host; types=configuration,availability; world=yes', '1,3,12,6', 'no', ''],
+      ['View', 'vCenter certificate expiry', 'view=Fleet certificate expiry', '1,9,12,6', 'yes', ''],
+    ],
+  },
+  {
+    value: 'host_health',
+    label: 'ESX host health',
+    about: 'Every ESX host, its health, its top alerts, its CPU and memory, and where it sits.',
+    hasView: true,
+    rows: [
+      about('ESX host health: select a host on the left to see its health, top alerts and load. The heat map shows every host by cluster.'),
+      ['ResourceList', 'Hosts', 'kinds=host; columns=badge|health,cpu|usage_average,mem|usage_average', '1,3,5,8', 'yes', ''],
+      ['ScoreboardHealth', 'Health of the selected host', 'badge=health', '6,3,3,4', 'no', 'Hosts'],
+      ['ProblemAlertsList', 'Top alerts on the host', 'badge=health; objects=selfChildren; limit=10', '9,3,4,4', 'no', 'Hosts'],
+      ['MetricChart', 'CPU and memory', 'kind=host; metrics=cpu|usage_average,mem|usage_average; labels=CPU %,Memory %', '6,7,7,4', 'no', 'Hosts'],
+      ['Heatmap', 'Host health by cluster', 'kind=host; groupby=cluster; colorby=badge|health; values=0,25,75,100; colors=#E4695E,#ED891F,#EACC58,#8ABF5B', '1,11,6,6', 'yes', ''],
+      ['ResourceRelationshipAdvanced', 'Where it sits', 'depth=2,1', '7,11,6,6', 'no', 'Hosts'],
+      ['View', 'Hosts in detail', 'view=ESX host health', '1,17,12,6', 'yes', ''],
+    ],
+  },
+  {
+    value: 'vm_perf',
+    label: 'VM performance',
+    about: 'CPU ready, memory, disk latency and network for any VM, with the worst ones ranked.',
+    hasView: true,
+    rows: [
+      ['ParetoAnalysis', 'Highest CPU ready', 'kind=vm; metric=cpu|readyPct; top=10; order=highest; label=CPU ready %; thresholds=2.5,5,10', '1,1,4,6', 'yes', ''],
+      ['ResourceList', 'VMs', 'kinds=vm; columns=cpu|readyPct,mem|guest_usage,virtualDisk|totalLatency', '5,1,8,6', 'yes', ''],
+      ['MetricChart', 'CPU ready and usage', 'kind=vm; metrics=cpu|readyPct,cpu|usage_average; labels=CPU ready %,CPU usage %', '1,7,6,5', 'no', 'VMs'],
+      ['SparklineChart', 'Disk and network', 'kind=vm; metrics=virtualDisk|totalLatency,disk|read_average,net|received_average; labels=Disk latency (ms),Disk read (KBps),Network receive (KBps)', '7,7,6,5', 'no', 'VMs'],
+      ['Scoreboard', 'Right now', 'kind=vm; metrics=cpu|readyPct,mem|guest_usage,virtualDisk|totalLatency; labels=CPU ready %,Guest memory %,Disk latency (ms); sparkline=yes; period=last24Hour', '1,12,6,4', 'no', 'VMs'],
+      ['ProblemAlertsList', 'Top alerts on the VM', 'badge=all; objects=self; limit=5', '7,12,6,4', 'no', 'VMs'],
+      ['View', 'All VMs', 'view=VM performance', '1,16,12,6', 'yes', ''],
+    ],
+  },
+  {
+    value: 'datastore',
+    label: 'Datastore and vSAN capacity',
+    about: 'The fullest datastores, their growth, their time remaining, and vSAN cluster capacity.',
+    hasView: true,
+    rows: [
+      ['ParetoAnalysis', 'Fullest datastores', 'kind=datastore; metric=capacity|usedSpacePct; top=10; order=highest; label=Used space %; thresholds=75,85,95', '1,1,4,6', 'yes', ''],
+      ['ResourceList', 'Datastores', 'kinds=datastore; columns=capacity|usedSpacePct,OnlineCapacityAnalytics|timeRemaining', '5,1,8,6', 'yes', ''],
+      ['HealthChart', 'Used space trend', 'kind=datastore; metric=capacity|usedSpacePct; mode=self; period=last30Days; thresholds=75,85,95', '1,7,6,5', 'no', 'Datastores'],
+      ['Scoreboard', 'Time and capacity remaining', 'kind=datastore; metrics=OnlineCapacityAnalytics|timeRemaining,OnlineCapacityAnalytics|capacityRemainingPercentage; labels=Time remaining (days),Capacity remaining %', '7,7,6,5', 'no', 'Datastores'],
+      ['Heatmap', 'vSAN clusters by capacity remaining', 'kind=vsan-cluster; colorby=OnlineCapacityAnalytics|capacityRemainingPercentage; values=0,10,20,100; colors=#E4695E,#ED891F,#EACC58,#8ABF5B', '1,12,6,6', 'yes', ''],
+      ['View', 'Every datastore', 'view=Datastore and vSAN capacity', '7,12,6,6', 'yes', ''],
+    ],
+  },
+  {
+    value: 'nsx',
+    label: 'NSX health',
+    about: 'NSX Managers, transport nodes, their health and alerts.',
+    hasView: false,
+    rows: [
+      about('NSX health: select an NSX Manager to see its transport nodes, then a node to see its health and where it connects.'),
+      ['ResourceList', 'NSX Managers', 'kinds=nsx-manager', '1,3,4,5', 'yes', ''],
+      ['ResourceList', 'Transport nodes', 'kinds=nsx-node; columns=badge|health', '5,3,4,5', 'no', 'NSX Managers'],
+      ['ProblemAlertsList', 'Top NSX alerts', 'badge=all; objects=selfChildren; limit=10; pin=nsx-world', '9,3,4,5', 'yes', ''],
+      ['HealthChart', 'Transport node health', 'kind=nsx-node; metric=badge|health; mode=self; period=last24Hour', '1,8,6,5', 'no', 'Transport nodes'],
+      ['ResourceRelationshipAdvanced', 'Where it connects', 'kinds=nsx-node,host; depth=1,2', '7,8,6,5', 'no', 'Transport nodes'],
+      ['AlertList', 'NSX alerts', 'kinds=nsx-node,nsx-manager; world=yes', '1,13,12,5', 'no', ''],
+    ],
+  },
+  {
+    value: 'vks',
+    label: 'VKS and Kubernetes',
+    about: 'Supervisor namespaces, the VKS clusters in them, their load and their alerts.',
+    hasView: true,
+    rows: [
+      ['ResourceList', 'Supervisor namespaces', 'kinds=namespace', '1,1,4,6', 'yes', ''],
+      ['ResourceList', 'VKS clusters', 'kinds=vks', '5,1,4,6', 'no', 'Supervisor namespaces'],
+      ['ScoreboardHealth', 'Namespace health', 'badge=health', '9,1,4,3', 'no', 'Supervisor namespaces'],
+      ['ProblemAlertsList', 'Top alerts', 'badge=all; objects=selfChildren; limit=5', '9,4,4,3', 'no', 'Supervisor namespaces'],
+      ['MetricChart', 'Namespace CPU and memory', 'kind=namespace; metrics=cpu|usagemhz_average,mem|usage_average; labels=CPU (MHz),Memory %', '1,7,6,5', 'no', 'Supervisor namespaces'],
+      ['ResourceRelationshipAdvanced', 'What runs in it', 'depth=0,2', '7,7,6,5', 'no', 'VKS clusters'],
+      ['View', 'Every VKS cluster', 'view=VKS and Kubernetes', '1,12,12,6', 'yes', ''],
+    ],
+  },
+  {
+    value: 'alerts',
+    label: 'Alerts overview',
+    about: 'Alert volume, health, the top alerts and every critical or immediate alert, with the object behind it.',
+    hasView: false,
+    rows: [
+      ['IntSummaryAlertVolume', 'Alert volume', '', '1,1,4,4', 'yes', ''],
+      ['IntSummaryHealth', 'Health of the environment', 'badge=yes', '5,1,4,4', 'yes', ''],
+      ['ProblemAlertsList', 'Top health alerts', 'badge=health; objects=selfChildren; limit=10', '9,1,4,4', 'yes', ''],
+      ['AlertList', 'Critical and immediate alerts', 'criticality=critical,immediate; status=active; world=yes', '1,5,12,6', 'no', ''],
+      ['ResourceRelationshipAdvanced', 'Object behind the alert', 'depth=2,1; first=yes', '1,11,6,6', 'no', 'Critical and immediate alerts'],
+      ['MetricPicker', 'Its metrics', '', '7,11,6,6', 'no', 'Object behind the alert'],
+    ],
+  },
+  {
+    value: 'cost',
+    label: 'Cost overview',
+    about: 'What each cluster costs, its CPU and memory rates, and the most expensive VMs and clusters.',
+    hasView: true,
+    rows: [
+      about('Cost: the monthly cost of each cluster and VM as VCF Operations calculates it from the cost drivers. Select a cluster to see its VMs.'),
+      ['ResourceList', 'Clusters', 'kinds=cluster; columns=cost|totalCost,cost|cpuBaseRate,cost|memoryBaseRate', '1,3,6,6', 'yes', ''],
+      ['Scoreboard', 'Cluster cost this month', 'kind=cluster; metrics=cost|totalCost,cost|totalCpuCost,cost|totalMemoryCost; labels=Total,CPU,Memory; decimals=0', '7,3,6,6', 'no', 'Clusters'],
+      ['ParetoAnalysis', 'Most expensive VMs', 'kind=vm; metric=cost|monthlyTotalCost; top=15; order=highest; label=Monthly total cost', '1,9,6,6', 'yes', ''],
+      ['ParetoAnalysis', 'Most expensive clusters', 'kind=cluster; metric=cost|totalCost; top=10; order=highest; label=Monthly total cost', '7,9,6,6', 'yes', ''],
+      ['View', 'VM cost', 'view=Cost overview', '1,15,12,6', 'no', 'Clusters'],
+    ],
+  },
+  {
+    value: 'compliance',
+    label: 'Compliance',
+    about: 'Compliance alerts from the benchmarks enabled in policy, the objects behind them, and risk by host.',
+    hasView: false,
+    rows: [
+      about('Compliance: alerts raised by the compliance benchmarks enabled in the active policy. Select an alert to see the object it is on.'),
+      ['AlertList', 'Compliance alerts', 'types=compliance; criticality=warning,immediate,critical; world=yes', '1,3,12,6', 'no', ''],
+      ['ResourceRelationshipAdvanced', 'Object behind the alert', 'depth=2,1; first=yes', '1,9,6,6', 'no', 'Compliance alerts'],
+      ['ProblemAlertsList', 'Top risk alerts', 'badge=risk; objects=selfChildren; limit=10', '7,9,6,6', 'yes', ''],
+      ['Heatmap', 'Hosts by risk', 'kind=host; groupby=cluster; colorby=badge|risk; values=0,25,75,100; colors=#8ABF5B,#EACC58,#ED891F,#E4695E', '1,15,12,6', 'yes', ''],
+    ],
+  },
+  {
+    value: 'home',
+    label: 'Environment summary',
+    about: 'Health, alert volume, capacity and time remaining for the whole environment, with the top alerts.',
+    hasView: false,
+    rows: [
+      ['IntSummaryHealth', 'Health', 'badge=yes', '1,1,3,4', 'yes', ''],
+      ['IntSummaryAlertVolume', 'Alert volume', '', '4,1,3,4', 'yes', ''],
+      ['IntSummaryCapacity', 'Capacity remaining', '', '7,1,3,4', 'yes', ''],
+      ['IntSummaryTimeRemaining', 'Time remaining', '', '10,1,3,4', 'yes', ''],
+      ['Skittles', 'Environment overview', 'kinds=vcenter,cluster,host,vm,datastore', '1,5,6,5', 'yes', ''],
+      ['ProblemAlertsList', 'Top alerts', 'badge=all; objects=selfChildren; limit=10', '7,5,6,5', 'yes', ''],
+      ['Heatmap', 'Clusters by capacity remaining', 'kind=cluster; colorby=OnlineCapacityAnalytics|capacityRemainingPercentage; values=0,5,10,80; colors=#DE3F30,#ED891F,#ECC33E,#74B43B,#8D8B8D', '1,10,6,6', 'yes', ''],
+      ['RecommendedActions', 'Recommended actions', '', '7,10,6,6', 'no', ''],
+    ],
+  },
+  {
+    value: 'custom',
+    label: 'My own widgets',
+    about: '',
+    hasView: false,
+    rows: [
+      ['ResourceList', 'Objects', 'kinds=cluster', '1,1,4,6', 'yes', ''],
+      ['MetricChart', 'Trend', 'kind=cluster; metrics=cpu|usage_average,mem|usage_average; labels=CPU %,Memory %', 'auto', 'no', 'Objects'],
+      ['PropertyList', 'Details', 'kind=cluster; metrics=OnlineCapacityAnalytics|timeRemaining,summary|number_running_vms; labels=Time remaining (days),Running VMs', 'auto', 'no', 'Objects'],
+    ],
+  },
 ];
+
+/** The templates with a view of their own: the view blueprint's starting points. */
+const TEMPLATES = DASHBOARD_TEMPLATES.filter((t) => t.hasView).map((t) => ({ value: t.value, label: t.label }));
+
+const templateOf = (value        )                    => DASHBOARD_TEMPLATES.find((t) => t.value === value) ?? DASHBOARD_TEMPLATES[0] ;
+const templateName = (value        )         => templateOf(value).label;
+
+/**
+ * Object types for a view's or a report's subject, grouped by the adapter that
+ * owns them. The value is the vSphere adapter's kind as it stands, or
+ * "Adapter/Kind" for any other adapter (as the dashboard grid writes kinds).
+ * `seen` marks the ones found as a SubjectType or column kind in a real export
+ * (brockpeterson/operations_dashboards, sentania-labs/vcf-content-factory);
+ * the rest are the adapters' documented kinds and are said to be unverified
+ * when chosen. The field is a combo: any other kind can be typed.
+ */
+const KINDS                                                                                                                 = [
+  { value: 'VirtualMachine', label: 'Virtual machine', group: 'vSphere', seen: true },
+  { value: 'HostSystem', label: 'ESX host', group: 'vSphere', seen: true },
+  { value: 'ClusterComputeResource', label: 'Cluster', group: 'vSphere', seen: true },
+  { value: 'Datastore', label: 'Datastore', group: 'vSphere', seen: true },
+  { value: 'StoragePod', label: 'Datastore cluster', group: 'vSphere' },
+  { value: 'Datacenter', label: 'Datacenter', group: 'vSphere', seen: true },
+  { value: 'VMwareAdapter Instance', label: 'vCenter', group: 'vSphere', seen: true },
+  { value: 'vSphere World', label: 'vSphere World', group: 'vSphere', seen: true },
+  { value: 'ResourcePool', label: 'Resource pool', group: 'vSphere' },
+  { value: 'VmwareDistributedVirtualSwitch', label: 'Distributed switch', group: 'vSphere', seen: true },
+  { value: 'DistributedVirtualPortgroup', label: 'Distributed port group', group: 'vSphere' },
+  { value: 'Namespace', label: 'Supervisor namespace', group: 'Kubernetes and VKS' },
+  { value: 'GuestCluster', label: 'VKS cluster', group: 'Kubernetes and VKS' },
+  { value: 'KubernetesAdapter/K8S-Namespace', label: 'Kubernetes namespace', group: 'Kubernetes and VKS' },
+  { value: 'VirtualAndPhysicalSANAdapter/VirtualSANDCCluster', label: 'vSAN cluster', group: 'vSAN' },
+  { value: 'VirtualAndPhysicalSANAdapter/VirtualSANDiskGroup', label: 'vSAN disk group', group: 'vSAN' },
+  { value: 'VirtualAndPhysicalSANAdapter/vSAN World', label: 'vSAN World', group: 'vSAN' },
+  { value: 'NSXTAdapter/NSXTAdapterInstance', label: 'NSX Manager', group: 'NSX' },
+  { value: 'NSXTAdapter/TransportNode', label: 'NSX transport node', group: 'NSX' },
+  { value: 'NSXTAdapter/LogicalSwitch', label: 'NSX segment', group: 'NSX' },
+  { value: 'NSXTAdapter/LogicalRouter', label: 'NSX gateway (tier-0 / tier-1)', group: 'NSX' },
+  { value: 'NSXTAdapter/EdgeCluster', label: 'NSX Edge cluster', group: 'NSX' },
+  { value: 'NSXTAdapter/NSXT World', label: 'NSX World', group: 'NSX' },
+  { value: 'VcfAdapter/VCFWorld', label: 'VCF World', group: 'VCF' },
+  { value: 'VMWARE_INFRA_HEALTH/CERTIFICATE', label: 'Certificate (infrastructure health)', group: 'VCF', seen: true },
+  { value: 'VMWARE_INFRA_HEALTH/LicenseUsage', label: 'License usage', group: 'VCF', seen: true },
+  { value: 'APPOSUCP/linux', label: 'Linux OS (application monitoring)', group: 'Application monitoring', seen: true },
+  { value: 'APPOSUCP/win', label: 'Windows OS (application monitoring)', group: 'Application monitoring', seen: true },
+];
+
+const KIND_OPTIONS = KINDS.map((kind) => ({ value: kind.value, label: kind.label, group: kind.group }));
+
+/** A kind as typed, with the vSphere adapter as the default. */
+function kindRef(text        )          {
+  return parseKind(text) ?? { adapterKind: 'VMWARE', resourceKind: 'VirtualMachine' };
+}
+
+const kindText = (kind         )         => (kind.adapterKind === 'VMWARE' ? kind.resourceKind : `${kind.adapterKind}/${kind.resourceKind}`);
+const sameKind = (a         , b         )          => a.adapterKind === b.adapterKind && a.resourceKind === b.resourceKind;
+const kindLabel = (kind         )         => KINDS.find((k) => sameKind(kindRef(k.value), kind))?.label ?? kindText(kind);
+
+/** preferredUnitId values seen in real view exports (brockpeterson, sentania-labs); any other is passed through. */
+const VIEW_UNITS                                                                = [
+  { value: 'auto', label: 'auto' },
+  { value: 'percent', label: 'percent' },
+  { value: 'gb', label: 'GB' },
+  { value: 'tb', label: 'TB' },
+  { value: 'ghz', label: 'GHz' },
+  { value: 'mhz', label: 'MHz' },
+  { value: 'msec', label: 'ms' },
+  { value: 'hr', label: 'hours' },
+  { value: 'day', label: 'days' },
+  { value: 'week', label: 'weeks' },
+  { value: 'mbps', label: 'Mbps' },
+  { value: 'kbps', label: 'KBps' },
+  { value: 'wh', label: 'Wh' },
+  { value: 'currency', label: 'currency' },
+  { value: 'currencymonth', label: 'currency per month' },
+  { value: 'vcpus', label: 'vCPUs' },
+  { value: '7004', label: 'count' },
+  { value: 'none', label: 'no unit' },
+];
+
+/** SubjectType filter conditions: the first four are in real exports; CONTAINS and LESS_THAN are the editor's and are said to be unverified. */
+const FILTER_CONDITIONS                    = ['EQUALS', 'NOT_EQUALS', 'GREATER_THAN', 'NOT_CONTAINS', 'CONTAINS', 'LESS_THAN'];
+
+const TRANSFORMS                                      = {
+  current: 'CURRENT',
+  avg: 'AVG',
+  average: 'AVG',
+  max: 'MAX',
+  maximum: 'MAX',
+  min: 'MIN',
+  minimum: 'MIN',
+  sum: 'SUM',
+  forecast: 'FORECAST',
+  first: 'FIRST',
+  last: 'LAST',
+  timestamp: 'TIMESTAMP',
+};
+
+/**
+ * The column grid: Attribute key | Label | Transformation | Unit | Kind. The
+ * key may start ancestor(Kind) or descendant(Kind) to read it from a related
+ * object; the transformation may be "property", or "percentile 99". A row
+ * written the old way (key | label | property) still reads.
+ */
+export function parseViewColumns(text        , percentile        )                                                {
+  const columns               = [];
+  const problems           = [];
+  for (const line of text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) {
+    const [rawKey = '', label = '', transformText = '', unit = '', kindCell = ''] = cellsOf(line);
+    let key = rawKey;
+    let related                       ;
+    const rel = /^(ancestor|descendant)\s*\(([^)]+)\)\s+(.+)$/i.exec(rawKey);
+    if (rel) {
+      related = { relation: rel[1] .toUpperCase()                             , kind: kindRef(rel[2] ) };
+      key = rel[3] .trim();
+    }
+    if (!key) {
+      problems.push(`"${line}" has no attribute key.`);
+      continue;
+    }
+    const name = label || key;
+    const t = transformText.trim().toLowerCase();
+    let property = false;
+    let transform            = 'CURRENT';
+    let pct                    ;
+    const pm = /^(?:percentile|p)\s*(\d+)?(?:th)?$/.exec(t);
+    if (t === '' || t === 'current') transform = 'CURRENT';
+    else if (t === 'property') property = true;
+    else if (pm && t !== 'p') {
+      transform = 'PERCENTILE';
+      pct = pm[1] ? Number(pm[1]) : percentile;
+      if (!Number.isInteger(pct) || pct < 1 || pct > 99) problems.push(`Column "${name}": percentile ${pct} is not a whole number from 1 to 99.`);
+    } else if (TRANSFORMS[t]) {
+      transform = TRANSFORMS[t] ;
+      // A timestamp is shown for a property holding a time (config|createDate).
+      if (transform === 'TIMESTAMP') property = true;
+    } else {
+      problems.push(`Column "${name}": "${transformText}" is not a transformation (current, avg, max, min, sum, percentile, forecast, first, last, timestamp, or property).`);
+    }
+    const unitValue = unit.trim();
+    if (unitValue && !VIEW_UNITS.some((u) => u.value === unitValue.toLowerCase()) && !/^\d+$/.test(unitValue)) {
+      problems.push(`Column "${name}": "${unitValue}" is not a unit id (${VIEW_UNITS.map((u) => u.value).join(', ')}).`);
+    }
+    columns.push({
+      key,
+      label: name,
+      ...(property ? { property: true } : {}),
+      ...(transform !== 'CURRENT' ? { transform } : {}),
+      ...(pct !== undefined ? { percentile: pct } : {}),
+      ...(unitValue ? { unit: unitValue.toLowerCase() } : {}),
+      ...(kindCell.trim() ? { kind: kindRef(kindCell) } : {}),
+      ...(related ? { related } : {}),
+    });
+  }
+  return { columns, problems };
+}
+
+/** The application services Telegraf monitors here, and whether each needs an account. */
+const TELEGRAF_PLUGINS                                                                                           = [
+  { value: 'apache', label: 'Apache HTTPD', account: false },
+  { value: 'nginx', label: 'NGINX', account: false },
+  { value: 'mysql', label: 'MySQL / MariaDB', account: true },
+  { value: 'postgres', label: 'PostgreSQL', account: true },
+  { value: 'mssql', label: 'Microsoft SQL Server', account: true },
+  { value: 'iis', label: 'Microsoft IIS', account: false },
+  { value: 'ping', label: 'Ping (reachability and latency)', account: false },
+  { value: 'custom', label: 'Custom script', account: false },
+];
+
+                       
+                          
+                          
+                                                      
+                               
+ 
+
+/** The plugin grid: Plugin | Target | Settings (key=value; …) | Credential (environment prefix). */
+export function parseTelegrafRows(text        )                                              {
+  const rows                = [];
+  const problems           = [];
+  for (const line of text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) {
+    const [pluginCell = '', target = '', settingsCell = '', credential = ''] = cellsOf(line);
+    const plugin = pluginCell.toLowerCase().replace(/^postgresql$/, 'postgres').replace(/^(sqlserver|sql server)$/, 'mssql').replace(/^script$/, 'custom');
+    const known = TELEGRAF_PLUGINS.find((p) => p.value === plugin);
+    if (!known) {
+      problems.push(`"${line}": "${pluginCell}" is not one of ${TELEGRAF_PLUGINS.map((p) => p.value).join(', ')}.`);
+      continue;
+    }
+    if (!target) {
+      problems.push(`"${line}": a ${known.label} row needs a target.`);
+      continue;
+    }
+    const settings                         = {};
+    for (const pair of settingsCell.split(';').map((p) => p.trim()).filter(Boolean)) {
+      const at = pair.indexOf('=');
+      if (at <= 0) problems.push(`"${line}": setting "${pair}" is not key=value.`);
+      else settings[pair.slice(0, at).trim()] = pair.slice(at + 1).trim();
+    }
+    if (Object.keys(settings).some((key) => /pass|secret|token/i.test(key))) problems.push(`"${line}": a secret goes in the environment (the Credential cell), not in Settings.`);
+    const cred = credential.trim().toUpperCase();
+    if (cred && !/^[A-Z][A-Z0-9_]*$/.test(cred)) problems.push(`"${line}": "${credential}" is not an environment variable prefix (MYSQL).`);
+    if (known.account && !cred) problems.push(`"${line}": ${known.label} needs an account: name its environment prefix in the Credential cell (MYSQL reads MYSQL_PASSWORD).`);
+    if (plugin === 'custom' && !target.startsWith('/') && !/^[A-Za-z]:\\/.test(target)) problems.push(`"${line}": a custom script is given by its full path.`);
+    if ((plugin === 'apache' || plugin === 'nginx') && /^http:\/\//i.test(target) === false && /^https?:/i.test(target) === false && /\s/.test(target)) problems.push(`"${line}": "${target}" is not a host or URL.`);
+    rows.push({ plugin, target, settings, ...(cred ? { credential: cred } : {}) });
+  }
+  return { rows, problems };
+}
+
+/** host or host:port or [v6]:port, as host and port. */
+function hostPort(target        , port        )                                                   {
+  const split = splitHostPort(target.replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, ''));
+  const host = split.host || target;
+  const p = split.port ?? port;
+  return { host, port: p, hostPort: formatHostPort(host, p) };
+}
+
+/** One open-source Telegraf input, as TOML. Accounts are ${PREFIX_USER} / ${PREFIX_PASSWORD}. */
+function telegrafInput(row             , interval        )           {
+  const s = row.settings;
+  const user = s.user ?? (row.credential ? `\${${row.credential}_USER}` : '');
+  const pass = row.credential ? `\${${row.credential}_PASSWORD}` : '';
+  const q = (text        )         => JSON.stringify(text);
+  const url = (defaultPath        )         => (/^https?:\/\//i.test(row.target) ? row.target : `http://${hostPort(row.target, 80).hostPort}${s.status_path ?? defaultPath}`);
+  switch (row.plugin) {
+    case 'apache':
+      return ['[[inputs.apache]]', `  urls = [${q(url('/server-status?auto'))}]`, `  interval = "${interval}s"`];
+    case 'nginx':
+      return ['[[inputs.nginx]]', `  urls = [${q(url('/nginx_status'))}]`, `  interval = "${interval}s"`];
+    case 'mysql': {
+      const hp = hostPort(row.target, 3306);
+      return ['[[inputs.mysql]]', `  servers = [${q(`${user}:${pass}@tcp(${hp.hostPort})/?tls=${s.tls ?? 'preferred'}`)}]`, '  gather_process_list = true', `  interval = "${interval}s"`];
+    }
+    case 'postgres': {
+      const hp = hostPort(row.target, 5432);
+      return ['[[inputs.postgresql]]', `  address = ${q(`host=${hp.host} port=${hp.port} user=${user} password=${pass} dbname=${s.dbname ?? 'postgres'} sslmode=${s.sslmode ?? 'require'}`)}`, `  interval = "${interval}s"`];
+    }
+    case 'mssql': {
+      const hp = hostPort(row.target, Number(s.port ?? 1433));
+      return ['[[inputs.sqlserver]]', `  servers = [${q(`Server=${hp.host};Port=${hp.port};User Id=${user};Password=${pass};app name=telegraf;log=1;`)}]`, '  database_type = "SQLServer"', `  interval = "${interval}s"`];
+    }
+    case 'iis':
+      return [
+        '[[inputs.win_perf_counters]]',
+        `  interval = "${interval}s"`,
+        '  [[inputs.win_perf_counters.object]]',
+        '    ObjectName = "Web Service"',
+        '    Instances = ["*"]',
+        '    Counters = ["Current Connections", "Bytes Received/sec", "Bytes Sent/sec", "Get Requests/sec", "Post Requests/sec"]',
+        '    Measurement = "win_websvc"',
+        '  [[inputs.win_perf_counters.object]]',
+        '    ObjectName = "APP_POOL_WAS"',
+        '    Instances = ["*"]',
+        '    Counters = ["Current Application Pool State", "Total Worker Process Failures"]',
+        '    Measurement = "win_apppool"',
+      ];
+    case 'ping': {
+      const host = row.target.replace(/^\[|\]$/g, '');
+      return ['[[inputs.ping]]', `  urls = [${q(host)}]`, `  count = ${Number(s.count ?? 3) || 3}`, ...(isIpv6(host) ? ['  ipv6 = true'] : []), `  interval = "${interval}s"`];
+    }
+    default:
+      return ['[[inputs.exec]]', `  commands = [${q(row.target)}]`, `  timeout = "${s.timeout ?? '30s'}"`, `  data_format = "${s.data_format ?? 'influx'}"`, `  interval = "${interval}s"`];
+  }
+}
+
+/** One report section: a view or a dashboard, by name or by id. */
+                         
+                                      
+                        
+                      
+                         
+                               
+                             
+ 
+
+/** The report content grid: Type | Name | Orientation | Colour list cells. A bare line is a view name. */
+export function parseReportContent(text        , orientation        )                                                {
+  const rows                  = [];
+  const problems           = [];
+  for (const line of text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) {
+    const cells = line.includes(' | ') ? cellsOf(line) : ['view', line];
+    const [typeCell = '', nameCell = '', orientCell = '', colorCell = ''] = cells;
+    const type = /^dash/i.test(typeCell) ? 'Dashboard' : /^view/i.test(typeCell) ? 'View' : undefined;
+    if (!type || !nameCell) {
+      problems.push(`"${line}" is not Type | Name | Orientation | Colour list cells, with type view or dashboard.`);
+      continue;
+    }
+    const byId = /^id:/i.test(nameCell);
+    const id = byId ? nameCell.slice(3).trim() : type === 'View' ? viewIdOf(nameCell) : stableId(`dashboard:${nameCell}`);
+    const orient = orientCell ? (/^p/i.test(orientCell) ? 'Portrait' : /^l/i.test(orientCell) ? 'Landscape' : '') : orientation;
+    if (!orient) problems.push(`"${line}": orientation "${orientCell}" is not Landscape or Portrait.`);
+    if (byId && !/^[0-9a-f-]{8,}$/i.test(id)) problems.push(`"${line}": "${id}" does not look like a content id.`);
+    rows.push({ type, name: byId ? id : nameCell, id, byId, orientation: orient || orientation, colorize: !/^(no|n|false|off)$/i.test(colorCell) });
+  }
+  return { rows, problems };
+}
+
+/**
+ * embed-image.sh: writes a picture, as base64, over the placeholder an image
+ * view carries, in every copy of the view in the download (the bare XML, the
+ * view zip and the content package, each a zip or a folder of the same name).
+ */
+function embedImageScript()         {
+  return [
+    '#!/usr/bin/env bash',
+    '# Write a picture into the image view, as base64, in every copy of the view in',
+    `# this folder: import/view.xml, import/view.zip and ${CONTENT_ZIP}.`,
+    '# Run it once, before import-view.sh, which refuses while the placeholder is there.',
+    '#',
+    '#   ./embed-image.sh picture.png',
+    'set -euo pipefail',
+    'IMG="${1:?usage: ./embed-image.sh picture.png}"',
+    '[[ -f "$IMG" ]] || { echo "No such file: $IMG" >&2; exit 2; }',
+    'case "$(printf \'%s\' "${IMG##*.}" | tr \'[:upper:]\' \'[:lower:]\')" in png|jpg|jpeg|gif) ;; *) echo "Give a PNG, JPEG or GIF." >&2; exit 2 ;; esac',
+    'SIZE=$(wc -c < "$IMG")',
+    '(( SIZE <= 2097152 )) || { echo "The picture is ${SIZE} bytes. Keep it under 2 MB: every dashboard and report that shows the view carries it." >&2; exit 2; }',
+    'for tool in base64 awk zip unzip; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 2; }; done',
+    'HERE=$(cd "$(dirname "$0")" && pwd)',
+    'WORK=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/image.XXXXXX")',
+    "trap 'rm -rf \"$WORK\"' EXIT",
+    'base64 < "$IMG" | tr -d \'\\n\\r\' > "$WORK/b64"',
+    `PLACEHOLDER='${xml(IMAGE_PLACEHOLDER)}'`,
+    '# put FILE: the placeholder in FILE replaced by the picture (read from a file, so',
+    '# the base64 is never an argument).',
+    'put() {',
+    '  awk -v f="$WORK/b64" -v p="$PLACEHOLDER" \'BEGIN { getline b < f } { while ((i = index($0, p)) > 0) $0 = substr($0, 1, i - 1) b substr($0, i + length(p)); print }\' "$1" > "$1.new"',
+    '  mv "$1.new" "$1"',
+    '}',
+    '# inzip ZIP INNER: the same, inside ZIP — a zip, or the folder of the same name.',
+    'inzip() {',
+    '  local zip="$1" inner="$2" dir',
+    '  if [[ -d "$zip" ]]; then put "$zip/$inner"; return; fi',
+    '  [[ -f "$zip" ]] || { echo "Missing $zip — run this from the unzipped download." >&2; exit 2; }',
+    '  dir=$(mktemp -d "$WORK/z.XXXXXX")',
+    '  unzip -q "$zip" -d "$dir"',
+    '  put "$dir/$inner"',
+    '  (cd "$dir" && zip -qr - .) > "$zip"',
+    '}',
+    'put "$HERE/import/view.xml"',
+    'inzip "$HERE/import/view.zip" content.xml',
+    `PKG="$HERE/${CONTENT_ZIP}"`,
+    'if [[ -d "$PKG" ]]; then',
+    '  inzip "$PKG/views.zip" content.xml',
+    'else',
+    '  [[ -f "$PKG" ]] || { echo "Missing $PKG — run this from the unzipped download." >&2; exit 2; }',
+    '  D=$(mktemp -d "$WORK/p.XXXXXX")',
+    '  unzip -q "$PKG" -d "$D"',
+    '  inzip "$D/views.zip" content.xml',
+    '  (cd "$D" && zip -qr - .) > "$PKG"',
+    'fi',
+    'if grep -q "IMAGE_BASE64" "$HERE/import/view.xml"; then echo "The placeholder is still in import/view.xml." >&2; exit 1; fi',
+    'echo "The picture is in the view. Next: ./import-view.sh --dry-run, then ./import-view.sh."',
+    '',
+  ].join('\n');
+}
 
 /**
  * The view behind each dashboard template.
@@ -203,11 +824,84 @@ function viewTemplate(template        , tagCategories                   )       
     case 'certs':
       return {
         name: templateName(template),
-        kind: 'VirtualCenter',
+        // The infrastructure-health adapter's certificate objects, with the
+        // CERTIFICATE_INFO properties a real export lists (brockpeterson,
+        // "vCenter Certs (from VIH)"), soonest expiry first.
+        kind: 'VMWARE_INFRA_HEALTH/CERTIFICATE',
         presentation: 'list',
         columns: [
-          { key: 'summary|version', label: 'Version', property: true },
-          { key: '<REQUIRED — the certificate-expiry property or metric key in your release; VERIFY on an object’s property list>', label: 'Days to certificate expiry', property: true },
+          { key: 'CERTIFICATE_INFO|NO_OF_DAYS_TO_EXPIRE', label: 'Days to expiry', property: true, sort: true },
+          { key: 'CERTIFICATE_INFO|APP_HOST', label: 'Appliance host', property: true },
+          { key: 'CERTIFICATE_INFO|APPLIANCE_TYPE', label: 'Appliance type', property: true },
+          { key: 'CERTIFICATE_INFO|CERTIFICATE_TYPE', label: 'Certificate type', property: true },
+          { key: 'CERTIFICATE_INFO|END_DATE', label: 'Expires', property: true },
+        ],
+        filter: 'none',
+      };
+    case 'host_health':
+      return {
+        name: templateName(template),
+        kind: 'HostSystem',
+        presentation: 'list',
+        columns: [
+          { key: 'badge|health', label: 'Health' },
+          { key: 'cpu|usage_average', label: 'CPU usage %' },
+          { key: 'mem|usage_average', label: 'Memory usage %' },
+          { key: 'cpu|capacity_contentionPct', label: 'CPU contention %' },
+          { key: 'summary|number_running_vms', label: 'Running VMs' },
+          { key: 'summary|parentCluster', label: 'Cluster', property: true },
+        ],
+        filter: 'none',
+      };
+    case 'vm_perf':
+      return {
+        name: templateName(template),
+        kind: 'VirtualMachine',
+        presentation: 'list',
+        columns: [
+          { key: 'cpu|readyPct', label: 'CPU ready %' },
+          { key: 'cpu|usage_average', label: 'CPU usage %' },
+          { key: 'mem|guest_usage', label: 'Guest memory %' },
+          { key: 'virtualDisk|totalLatency', label: 'Disk latency (ms)' },
+          { key: 'net|usage_average', label: 'Network (KBps)' },
+          { key: 'summary|parentHost', label: 'Host', property: true },
+        ],
+        filter: 'none',
+      };
+    case 'datastore':
+      return {
+        name: templateName(template),
+        kind: 'Datastore',
+        presentation: 'list',
+        columns: [
+          { key: 'capacity|usedSpacePct', label: 'Used space %' },
+          { key: 'OnlineCapacityAnalytics|capacityRemainingPercentage', label: 'Capacity remaining %' },
+          { key: 'OnlineCapacityAnalytics|timeRemaining', label: 'Time remaining (days)' },
+          { key: 'summary|type', label: 'Type', property: true },
+        ],
+        filter: 'none',
+      };
+    case 'vks':
+      return {
+        name: templateName(template),
+        kind: 'GuestCluster',
+        presentation: 'list',
+        columns: [
+          { key: 'badge|health', label: 'Health' },
+          { key: 'cpu|usagemhz_average', label: 'CPU (MHz)' },
+          { key: 'mem|usage_average', label: 'Memory %' },
+        ],
+        filter: 'none',
+      };
+    case 'cost':
+      return {
+        name: templateName(template),
+        kind: 'VirtualMachine',
+        presentation: 'list',
+        columns: [
+          { key: 'cost|monthlyTotalCost', label: 'Monthly total cost' },
+          { key: 'cost|monthlyProjectedCost', label: 'Projected cost this month' },
+          { key: 'summary|parentCluster', label: 'Cluster', property: true },
         ],
         filter: 'none',
       };
@@ -228,154 +922,486 @@ function viewTemplate(template        , tagCategories                   )       
   }
 }
 
-function widgetsFor(template        , viewName        , groupName        , tagCategories                   )           {
-  const viewId = viewIdOf(viewName);
-  const kind = (resourceKind        ) => ({ adapterKind: 'VMWARE', resourceKind });
-  const about = (text        )         => ({ type: 'TextDisplay', title: 'About this dashboard', x: 1, y: 1, w: 12, h: 2, config: { text } });
-  switch (template) {
-    case 'tier1':
-      return [
-        about(`Tier 1 applications: every VM in the custom group "${groupName}". Select one on the left; everything else follows it.`),
-        { type: 'ResourceList', title: 'Tier 1 VMs', x: 1, y: 3, w: 4, h: 8, config: { selfProvider: true, customGroup: groupName, resourceKinds: [kind('VirtualMachine')] } },
-        { type: 'HealthChart', title: 'Health, last 24 hours', x: 5, y: 3, w: 8, h: 4, config: { metric: 'badge|health', period: 'LAST_24_HOURS' } },
-        { type: 'Scoreboard', title: 'Right now', x: 5, y: 7, w: 8, h: 4, config: { metrics: ['cpu|readyPct', 'mem|guest_usage', 'virtualDisk|totalLatency'] } },
-        { type: 'View', title: 'Tier 1 detail', x: 1, y: 11, w: 12, h: 6, config: { viewDefinitionId: viewId } },
-      ];
-    case 'tags':
-      return [
-        about(`Tag compliance: VMs missing any of the required tag categories (${tagCategories.join(', ') || 'none set'}). An untagged VM is one no automation can scope correctly.`),
-        { type: 'Scoreboard', title: 'VMs missing a required tag', x: 1, y: 3, w: 4, h: 4, config: { selfProvider: true, resourceKinds: [kind('VirtualMachine')], metrics: ['summary|tag'] } },
-        { type: 'Heatmap', title: 'Untagged VMs by cluster', x: 5, y: 3, w: 8, h: 4, config: { groupBy: 'ClusterComputeResource', colorBy: 'summary|tag' } },
-        { type: 'View', title: 'VMs and their tags', x: 1, y: 7, w: 12, h: 8, config: { viewDefinitionId: viewId } },
-      ];
-    case 'reclaim':
-      return [
-        about('Reclamation: powered-off VMs, idle VMs and snapshot space, largest first. Review here; reclaim with the scheduled reclamation automation, not by hand from this page.'),
-        { type: 'TopN', title: 'Largest snapshots', x: 1, y: 3, w: 4, h: 6, config: { metric: 'diskspace|snapshot', topN: 10, order: 'DESCENDING', resourceKinds: [kind('VirtualMachine')] } },
-        { type: 'TopN', title: 'Most idle', x: 5, y: 3, w: 4, h: 6, config: { metric: 'cpu|usage_average', topN: 10, order: 'ASCENDING', resourceKinds: [kind('VirtualMachine')] } },
-        { type: 'Scoreboard', title: 'Reclaimable', x: 9, y: 3, w: 4, h: 6, config: { metrics: ['OnlineCapacityAnalytics|reclaimableCapacity'] } },
-        { type: 'View', title: 'Reclamation candidates', x: 1, y: 9, w: 12, h: 8, config: { viewDefinitionId: viewId } },
-      ];
-    case 'certs':
-      return [
-        about('Fleet certificates: expiry is tracked in Fleet Management > Certificates in VCF 9.1. This dashboard shows the alerts raised from it; renew with the fleet certificate automation.'),
-        { type: 'AlertList', title: 'Certificate alerts', x: 1, y: 3, w: 12, h: 6, config: { alertNameContains: 'certificate', status: 'ACTIVE' } },
-        { type: 'View', title: 'vCenter certificate expiry', x: 1, y: 9, w: 12, h: 6, config: { viewDefinitionId: viewId } },
-      ];
-    default:
-      return [
-        about('Cluster capacity: what is left, how long it lasts, and which cluster runs out first. Select a cluster on the left.'),
-        { type: 'ResourceList', title: 'Clusters', x: 1, y: 3, w: 4, h: 6, config: { selfProvider: true, resourceKinds: [kind('ClusterComputeResource')] } },
-        { type: 'Scoreboard', title: 'Capacity remaining', x: 5, y: 3, w: 4, h: 6, config: { metrics: ['OnlineCapacityAnalytics|capacityRemainingPercentage', 'OnlineCapacityAnalytics|timeRemaining'] } },
-        { type: 'TopN', title: 'Least time remaining', x: 9, y: 3, w: 4, h: 6, config: { metric: 'OnlineCapacityAnalytics|timeRemaining', topN: 10, order: 'ASCENDING', resourceKinds: [kind('ClusterComputeResource')] } },
-        { type: 'View', title: 'Cluster capacity', x: 1, y: 9, w: 12, h: 6, config: { viewDefinitionId: viewId } },
-        { type: 'Heatmap', title: 'CPU demand by cluster', x: 1, y: 15, w: 6, h: 6, config: { groupBy: 'ClusterComputeResource', sizeBy: 'cpu|demandmhz', colorBy: 'cpu|demandPct' } },
-        { type: 'HealthChart', title: 'CPU demand trend', x: 7, y: 15, w: 6, h: 6, config: { metric: 'cpu|demandPct', period: 'LAST_7_DAYS' } },
-      ];
-  }
+// ---------------------------------------------------------------------------
+// Dashboards: the widget grid, its checks and its layout
+// ---------------------------------------------------------------------------
+
+/** The widget grid's columns, as the page's grid editor reads them from the hint. */
+const GRID_HINT = 'Type | Title | Settings (key=value; …) | Position (x,y,w,h — or w,h or auto) | Provider (yes/no) | Receives from (a widget title)';
+
+/** The grid's dropdowns: an option's group is the column it belongs to. */
+const GRID_OPTIONS = [
+  ...WIDGET_TYPES.map((type) => ({ value: type.type, label: `${type.label}${type.label === type.type ? '' : ` (${type.type})`}${type.deprecated ? ' — deprecated' : ''}${type.verified ? '' : ' — unverified'}`, group: 'Type' })),
+  { value: 'yes', label: 'Yes', group: 'Provider' },
+  { value: 'no', label: 'No', group: 'Provider' },
+];
+
+const GRID_COLUMNS = 12;
+
+/** One row of the widget grid, as typed. */
+                            
+                         
+                            
+                                        
+                         
+                              
+                            
+                                
+                            
+ 
+
+                                                 
+                            
+                     
+                     
+                     
+                     
+ 
+
+/**
+ * Cells of a " | " row. Metric keys hold a bare "|" themselves, so only a pipe
+ * with a space either side separates cells (as the grid editor writes them).
+ */
+function cellsOf(line        )           {
+  // Lookarounds, so "a | | b" (an empty cell) splits into three: the spaces are not used up.
+  return ` ${line} `.split(/(?<=\s)\|(?=\s)/).map((cell) => cell.trim());
 }
 
-/** Extra widgets, one per line: "Type | Title | x,y,w,h". */
-function extraWidgets(text        )                                       {
-  const widgets           = [];
-  const bad           = [];
-  for (const line of text.split('\n').map((l) => l.trim()).filter(Boolean)) {
-    const [type = '', title = '', coords = ''] = line.split('|').map((part) => part.trim());
-    const [x, y, w, h] = coords.split(',').map((n) => Number(n.trim()));
-    if (!type || ![x, y, w, h].every((n) => Number.isInteger(n) && (n          ) > 0)) {
-      bad.push(line);
-      continue;
-    }
-    widgets.push({ type, title: title || type, x: x , y: y , w: w , h: h , config: {} });
-  }
-  return { widgets, bad };
+export function parseWidgetRows(text        )              {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line, index) => {
+      const [typeName = '', title = '', settings = '', position = '', provider = '', receives = ''] = cellsOf(line);
+      return { index, typeName, type: widgetType(typeName), title, settings: new Settings(settings), position: position || 'auto', providerText: provider, receives };
+    });
 }
 
-function overlaps(a        , b        )          {
+function overlaps(a                                                , b                                                )          {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
+/** x,y,w,h; w,h (placed automatically at that size); or auto (placed at the type's own size). */
+function positionOf(row           , type            )                                                                                                            {
+  const text = row.position.trim().toLowerCase();
+  if (type.type === 'Section') {
+    const parts = text === 'auto' ? [] : text.split(',').map((n) => Number(n.trim()));
+    if (parts.length === 4 && Number.isInteger(parts[1]) && parts[1]  > 0) return { fixed: { x: 1, y: parts[1] , w: GRID_COLUMNS, h: 1 } };
+    return { size: { w: GRID_COLUMNS, h: 1 } };
+  }
+  if (text === 'auto' || text === '') return { size: type.size };
+  const parts = text.split(',').map((n) => Number(n.trim()));
+  if (!parts.every((n) => Number.isInteger(n) && n > 0)) return { bad: `"${row.position}" is not x,y,w,h, w,h or auto with positive whole numbers` };
+  if (parts.length === 4) return { fixed: { x: parts[0] , y: parts[1] , w: parts[2] , h: parts[3]  } };
+  if (parts.length === 2) return { size: { w: parts[0] , h: parts[1]  } };
+  return { bad: `"${row.position}" is not x,y,w,h, w,h or auto` };
+}
+
+/**
+ * Lay the widgets out on the 12-column grid: the fixed ones where they say,
+ * then each automatic one, in row order, in the first gap it fits — top row
+ * first, left to right — which is how the dashboard editor fills a gap.
+ */
+export function layoutWidgets(rows                      )                                                                              {
+  const placed                 = [];
+  const problems                                        = [];
+  const pending                                                                         = [];
+  for (const row of rows) {
+    if (!row.type) continue;
+    const position = positionOf(row, row.type);
+    if (position.bad) problems.push({ row, message: position.bad });
+    else if (position.fixed) placed.push({ ...row, type: row.type, ...position.fixed });
+    else if (position.size) {
+      if (position.size.w > GRID_COLUMNS) problems.push({ row, message: `is ${position.size.w} wide, more than the ${GRID_COLUMNS} columns there are` });
+      else pending.push({ row, type: row.type, size: position.size });
+    }
+  }
+  for (const { row, type, size } of pending) {
+    const bottom = placed.reduce((max, widget) => Math.max(max, widget.y + widget.h), 1);
+    let spot                                      ;
+    for (let y = 1; y <= bottom && !spot; y += 1) {
+      for (let x = 1; x + size.w - 1 <= GRID_COLUMNS && !spot; x += 1) {
+        const rect = { x, y, w: size.w, h: size.h };
+        if (!placed.some((widget) => overlaps(widget, rect))) spot = { x, y };
+      }
+    }
+    placed.push({ ...row, type, x: spot?.x ?? 1, y: spot?.y ?? bottom, w: size.w, h: size.h });
+  }
+  placed.sort((a, b) => a.index - b.index);
+  return { placed, problems };
+}
+
+/** The sender each widget receives from, by row index, following "Receives from" titles. */
+function senderIndex(rows                      )                      {
+  const byTitle = new Map(rows.map((row) => [row.title.toLowerCase(), row.index]));
+  const out = new Map                ();
+  for (const row of rows) {
+    if (!row.receives) continue;
+    const sender = byTitle.get(row.receives.toLowerCase());
+    if (sender !== undefined) out.set(row.index, sender);
+  }
+  return out;
+}
+
+/** Rows caught in a loop of "Receives from": each drives the next until it drives itself. */
+export function interactionCycles(rows                      )             {
+  const senders = senderIndex(rows);
+  const cycles             = [];
+  const reported = new Set        ();
+  for (const row of rows) {
+    const path           = [];
+    let current                     = row.index;
+    while (current !== undefined && !path.includes(current)) {
+      path.push(current);
+      current = senders.get(current);
+    }
+    if (current === undefined) continue;
+    const loop = path.slice(path.indexOf(current));
+    if (loop.some((index) => reported.has(index))) continue;
+    for (const index of loop) reported.add(index);
+    cycles.push(loop.map((index) => rows[index] .title));
+  }
+  return cycles;
+}
+
+const PROVIDER_YES = /^(yes|y|true|on|1)$/i;
+const PROVIDER_NO = /^(no|n|false|off|0|)$/i;
+
+/**
+ * Every check on the widget grid, as findings: rows that do not parse, types
+ * the catalogue does not have, settings a type needs and does not get, bad
+ * metric keys, positions off the grid or on top of each other, and
+ * interactions that name no widget, name one that cannot send, or go round in
+ * a loop.
+ */
+export function checkWidgetRows(rows                      , placed                         , layoutProblems                                                )            {
+  const findings            = [];
+  const name = (row           )         => `"${row.title || `row ${row.index + 1}`}"`;
+  if (rows.length === 0) findings.push(error('vcfops.dashboard.no-widgets', 'The widget grid is empty, so the dashboard would be a blank page.', { source: SRC }));
+
+  const titles = new Map                ();
+  for (const row of rows) {
+    if (!row.title) findings.push(error('vcfops.dashboard.no-title', `Row ${row.index + 1} (${row.typeName || 'no type'}) has no title.`, { remediation: 'Every widget needs a title: it is what "Receives from" and navigations name.', source: SRC }));
+    else titles.set(row.title.toLowerCase(), (titles.get(row.title.toLowerCase()) ?? 0) + 1);
+  }
+  const dupes = [...titles.entries()].filter(([, count]) => count > 1).map(([title]) => title);
+  if (dupes.length > 0) findings.push(error('vcfops.dashboard.duplicate-title', `More than one widget is titled ${dupes.map((t) => `"${t}"`).join(', ')}.`, { remediation: '"Receives from" finds a widget by its title, so titles must be unique.', source: SRC }));
+
+  for (const row of rows) {
+    if (!row.type) {
+      findings.push(
+        error('vcfops.dashboard.unknown-type', `${name(row)}: "${row.typeName}" is not a VCF Operations widget type.`, {
+          remediation: `Use one of: ${WIDGET_TYPES.map((t) => t.type).join(', ')} (or its name in the widget list, such as Top-N or Object List).`,
+          source: SRC,
+        }),
+      );
+      continue;
+    }
+    const provider = PROVIDER_YES.test(row.providerText);
+    if (!provider && !PROVIDER_NO.test(row.providerText)) findings.push(error('vcfops.dashboard.bad-provider', `${name(row)}: Provider is "${row.providerText}", not yes or no.`, { source: SRC }));
+    const { errors, warnings } = settingProblems(row.type, row.settings, provider);
+    if (errors.length > 0) findings.push(error('vcfops.dashboard.bad-setting', `${name(row)} (${row.type.label}): ${errors.join('; ')}.`, { remediation: `A ${row.type.label} takes ${row.type.settings.map((s) => `${s.key}${s.required ? '*' : ''} (${s.help})`).join('; ') || 'no settings'}.`, source: SRC }));
+    if (warnings.length > 0) findings.push(warning('vcfops.dashboard.setting-ignored', `${name(row)}: ${warnings.join('; ')}.`, { source: SRC }));
+    if (!row.type.verified) {
+      findings.push(
+        warning('vcfops.dashboard.unverified-widget', `${name(row)}: no real export of a ${row.type.label} widget was found, so its config (${row.type.type}) is what the product documentation implies.`, {
+          remediation: `${row.type.note ?? ''} Open the widget after import and save it once; export it to see the config your release writes. Source: ${row.type.source}.`.trim(),
+          source: SRC,
+        }),
+      );
+    }
+    if (row.type.deprecated) findings.push(warning('vcfops.dashboard.deprecated-widget', `${name(row)}: ${row.type.label} is deprecated in VCF Operations 9 and will be removed.`, { source: SRC }));
+    if (provider && row.receives) {
+      findings.push(error('vcfops.dashboard.provider-receives', `${name(row)} provides for itself and also receives from "${row.receives}".`, { remediation: 'A self-providing widget ignores what it is sent. Set Provider to no, or clear Receives from.', source: SRC }));
+    }
+    if (!provider && !row.receives && row.type.needsSubject && !(row.type.type === 'AlertList' && row.settings.yes('world', false))) {
+      findings.push(warning('vcfops.dashboard.no-subject', `${name(row)} neither provides for itself nor receives from another widget, so it opens empty.`, { remediation: 'Set Provider to yes, or name the widget whose selection drives it in Receives from.', source: SRC }));
+    }
+  }
+
+  // Interactions.
+  const byTitle = new Map(rows.map((row) => [row.title.toLowerCase(), row]));
+  for (const row of rows) {
+    if (!row.receives) continue;
+    const sender = byTitle.get(row.receives.toLowerCase());
+    if (!sender) findings.push(error('vcfops.dashboard.unknown-sender', `${name(row)} receives from "${row.receives}", which is not a widget on this dashboard.`, { remediation: 'Receives from takes the title of another widget in the grid, exactly as written there.', source: SRC }));
+    else if (sender === row) findings.push(error('vcfops.dashboard.interaction-cycle', `${name(row)} receives from itself.`, { source: SRC }));
+    else if (sender.type && !sender.type.provides) findings.push(error('vcfops.dashboard.sender-cannot-provide', `${name(row)} receives from "${sender.title}", a ${sender.type.label}, which cannot send a selection.`, { remediation: `Widgets that send: ${WIDGET_TYPES.filter((t) => t.provides).map((t) => t.label).join(', ')}.`, source: SRC }));
+  }
+  for (const loop of interactionCycles(rows).filter((cycle) => cycle.length > 1)) {
+    findings.push(error('vcfops.dashboard.interaction-cycle', `The interactions go round in a loop: ${[...loop, loop[0]].map((t) => `"${t}"`).join(' → ')}.`, { remediation: 'Each widget should be driven from one direction; break the loop at the widget that should start it (Provider yes).', source: SRC }));
+  }
+
+  // Layout.
+  for (const { row, message } of layoutProblems) findings.push(error('vcfops.dashboard.bad-position', `${name(row)}: ${message}.`, { source: SRC }));
+  const offGrid = placed.filter((widget) => widget.x + widget.w - 1 > GRID_COLUMNS);
+  if (offGrid.length > 0) {
+    findings.push(error('vcfops.dashboard.off-grid', `${offGrid.map((w) => `"${w.title}"`).join(', ')} run${offGrid.length === 1 ? 's' : ''} past column ${GRID_COLUMNS}.`, { remediation: `x + w − 1 must be ${GRID_COLUMNS} or less on a ${GRID_COLUMNS}-column dashboard.`, source: SRC }));
+  }
+  const clashes           = [];
+  for (let i = 0; i < placed.length; i += 1) {
+    for (let j = i + 1; j < placed.length; j += 1) {
+      if (overlaps(placed[i] , placed[j] )) clashes.push(`"${placed[i] .title}" and "${placed[j] .title}"`);
+    }
+  }
+  if (clashes.length > 0) {
+    findings.push(
+      error('vcfops.dashboard.overlap', `Widgets overlap on the grid: ${clashes.join('; ')}.`, {
+        remediation: 'Gridster pushes overlapping widgets down on import, so the dashboard you open is not the one you wrote. Move them so no two rectangles share a cell, or set one to auto.',
+        source: SRC,
+      }),
+    );
+  }
+  return findings;
+}
+
+/** "Widget title -> Dashboard name", one per line. */
+function parseNavigations(text        )                                               {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line) => {
+      const [from = '', to = ''] = line.split(/\s*(?:->|→)\s*/);
+      return { from: from.trim(), to: to.trim(), line };
+    });
+}
+
+/** The dashboard time state the exports carry (permDashboardTime_dashboard_<id>), for the ranges seen in them. */
+const TIME_RANGES                                   = {
+  last6Hour: 'o%3AdateRange%3Ds%253Alast6Hour%5EdateRangeText%3Ds%253A6H',
+  last24Hour: 'o%3AdateRange%3Ds%253Alast24Hour%5EdateRangeText%3Ds%253A24H',
+  last7Days: 'o%3AdateRange%3Ds%253Alast7Days%5EdateRangeText%3Ds%253A7D',
+};
+
 /** A property whose value is text rather than a number, for isStringAttribute. */
 function isStringProperty(column            )          {
-  return column.property === true && !/num_|memoryKB|corecount|number_|Count$|capacity/i.test(column.key);
+  return column.property === true && !/num_|memoryKB|corecount|number_|Count$|capacity|DAYS_TO|_days$/i.test(column.key);
+}
+
+/** The options a view gets when nothing else is said: what the templates and the old blueprint wrote. */
+function defaultViewOptions(view              )              {
+  return {
+    description: ` Filter: ${view.filter}.`,
+    subjects: [kindRef(view.kind)],
+    relation: 'both',
+    usages: ['dashboard', 'report', 'details'],
+    time: { mode: 'relative', unit: view.presentation === 'list' || view.presentation === 'summary' ? 'HOURS' : 'DAYS', count: view.presentation === 'list' || view.presentation === 'summary' ? 24 : 30 },
+    pageSize: 50,
+    topN: -1,
+    chart: 'bar-chart',
+    buckets: { mode: 'discrete', ranges: [], count: 10, min: 0, max: 100 },
+    trend: { historical: true, line: true, forecastDays: 0 },
+    filter: [],
+    text: '',
+  };
+}
+
+const P = (name        , value                           )         => `<Property name="${name}" value="${xml(String(value))}"/>`;
+
+/**
+ * One column as an attributes-selector item, in the order a real export writes
+ * the properties: objectType, attributeKey, preferredUnitId, isStringAttribute,
+ * the kind binding, rollUpType, rollUpCount, percentile / forecastDays, the
+ * transformations list, sortCriteria, isProperty, displayName, then the related
+ * object when the column reads one (brockpeterson and sentania-labs exports).
+ */
+function viewItem(view              , opts             , column            )           {
+  const pad = '                                        ';
+  if (column.timeSegment) {
+    // The "Interval Breakdown" pseudo-column: exactly the nine properties of the
+    // export it was read from (sentania-labs, "VCF Licensing Overtime").
+    return [
+      '                                <Item>',
+      '                                    <Value>',
+      ...[P('objectType', 'RESOURCE'), P('attributeKey', 'Interval Breakdown'), P('rollUpCount', 0), P('sortCriteria', false), P('isTimeSegment', true), P('breakdownBy', column.timeSegment), P('startingOnUnit', 'WEEKS'), P('startingOnCount', 1), P('displayName', column.label)].map((line) => `${pad}${line}`),
+      '                                    </Value>',
+      '                                </Item>',
+    ];
+  }
+  const multi = opts.subjects.length > 1;
+  // A column bound to one kind reads only rows of that kind; on a view with
+  // several kinds an unbound column resolves against each (sentania-labs,
+  // view_multi_subject_column_binding). A related column carries the related
+  // object's kind, and the row's kind as relatedResourceKind.
+  const binding                      = column.related ? column.related.kind : column.kind ?? (multi ? undefined : opts.subjects[0]);
+  const distributionProperty = view.presentation === 'distribution' && column.property;
+  const transforms           =
+    view.presentation === 'trend'
+      ? [...(opts.trend.historical ? ['NONE'] : []), ...(opts.trend.line ? ['TREND'] : []), ...(opts.trend.forecastDays > 0 ? ['FORECAST'] : [])]
+      : [column.transform ?? 'CURRENT'];
+  const lines = [
+    P('objectType', 'RESOURCE'),
+    P('attributeKey', column.key),
+    ...(column.unit ? [P('preferredUnitId', column.unit)] : []),
+    P('isStringAttribute', isStringProperty(column)),
+    ...(binding ? [P('adapterKind', binding.adapterKind), P('resourceKind', binding.resourceKind)] : []),
+    ...(column.property ? [] : [P('rollUpType', 'NONE')]),
+    P('rollUpCount', 0),
+    ...(column.transform === 'PERCENTILE' ? [P('percentile', column.percentile ?? 95)] : []),
+    ...((view.presentation === 'trend' && opts.trend.forecastDays > 0) || column.transform === 'FORECAST' ? [P('forecastDays', opts.trend.forecastDays > 0 ? opts.trend.forecastDays : 30)] : []),
+    // A property on a distribution is bucketed as it stands: the working
+    // export carries no transformations for it (sentania-labs, DEF-012).
+    ...(distributionProperty ? [] : ['<Property name="transformations">', '    <List>', ...(transforms.length > 0 ? transforms : ['NONE']).map((t) => `        <Item value="${t}"/>`), '    </List>', '</Property>']),
+    ...(column.sort ? [P('sortCriteria', true)] : []),
+    P('isProperty', column.property === true),
+    P('displayName', column.label),
+    ...(column.related && opts.subjects[0] ? [P('relatedAdapterKind', opts.subjects[0].adapterKind), P('relatedResourceKind', opts.subjects[0].resourceKind), P('relatedRelationType', column.related.relation)] : []),
+  ];
+  return ['                                <Item>', '                                    <Value>', ...lines.map((line) => `${pad}${line}`), '                                    </Value>', '                                </Item>'];
+}
+
+/** The SubjectType filter= JSON: OR of AND groups; here one AND group. */
+function subjectFilterJson(conditions                             )         {
+  if (conditions.length === 0) return '';
+  return JSON.stringify([
+    conditions.map((c) => ({
+      condition: c.condition,
+      transform: 'CURRENT',
+      metricKey: c.key,
+      metricValue: { isStringMetric: typeof c.value === 'string', value: c.value },
+      filterType: c.filterType,
+    })),
+  ]);
 }
 
 /**
  * The view as content.xml — the shape of a Views → Export: ViewDef with Title,
  * Description, SubjectType, Usage, and Controls holding a time-interval selector
  * and an attributes selector whose items are the columns, then DataProviders and
- * Presentation (notoriousbdg and sentania-labs exports; see vcfops-import.ts).
+ * Presentation. Every element and property here is one a real export carries
+ * (notoriousbdg, brockpeterson/operations_dashboards, sentania-labs; see
+ * vcfops-import.ts); where the form is not in any export seen, the blueprint
+ * says VERIFY.
+ *
+ *   list / summary   list-view provider, Presentation list or summary, pagination
+ *   trend            trend-view provider, Presentation line-chart
+ *   distribution     distribution-view provider, a buckets-control, Presentation
+ *                    bar-chart, pie-chart or donut-chart
+ *   text             no subject and no provider: Presentation text holding HTML
+ *   image            no subject: Presentation image holding the picture as base64
  */
-function viewXml(view              , description        )         {
+function viewXml(view              , opts             )         {
   const id = viewIdOf(view.name);
-  const items = view.columns.flatMap((column) => [
-    '                                <Item>',
-    '                                    <Value>',
-    '                                        <Property name="objectType" value="RESOURCE"/>',
-    `                                        <Property name="attributeKey" value="${xml(column.key)}"/>`,
-    `                                        <Property name="isStringAttribute" value="${isStringProperty(column)}"/>`,
-    '                                        <Property name="adapterKind" value="VMWARE"/>',
-    `                                        <Property name="resourceKind" value="${xml(view.kind)}"/>`,
-    ...(column.property ? [] : ['                                        <Property name="rollUpType" value="NONE"/>']),
-    '                                        <Property name="rollUpCount" value="0"/>',
-    '                                        <Property name="transformations">',
-    '                                            <List>',
-    '                                                <Item value="CURRENT"/>',
-    '                                            </List>',
-    '                                        </Property>',
-    `                                        <Property name="isProperty" value="${column.property ? 'true' : 'false'}"/>`,
-    `                                        <Property name="displayName" value="${xml(column.label)}"/>`,
-    '                                    </Value>',
-    '                                </Item>',
+  const i = (n        , line        )         => `${' '.repeat(n)}${line}`;
+  const filter = subjectFilterJson(opts.filter);
+  const filterAttr = filter ? ` filter="${xml(filter)}"` : '';
+  const usages = [...opts.usages.filter((u) => ['dashboard', 'report', 'details'].includes(u) && !((view.presentation === 'text' || view.presentation === 'image') && u === 'details')), 'content'];
+  const subjects = view.presentation === 'text' || view.presentation === 'image' ? [] : opts.subjects.flatMap((kind) => [
+    ...(opts.relation === 'self' ? [] : [i(12, `<SubjectType adapterKind="${xml(kind.adapterKind)}"${filterAttr} resourceKind="${xml(kind.resourceKind)}" type="descendant"/>`)]),
+    ...(opts.relation === 'descendant' ? [] : [i(12, `<SubjectType adapterKind="${xml(kind.adapterKind)}"${filterAttr} resourceKind="${xml(kind.resourceKind)}" type="self"/>`)]),
   ]);
-  return [
+  const time = [
+    i(16, '<Control id="time-interval-selector_id_1" type="time-interval-selector" visible="false">'),
+    i(20, P('advancedTimeMode', opts.time.mode !== 'relative')),
+    i(20, P('unit', opts.time.unit)),
+    i(20, P('count', opts.time.count)),
+    // PREVIOUS / NOW is the one advanced range seen in an export (sentania-labs,
+    // FB-011); startDate / endDate for a fixed range is not (VERIFY, in the notes).
+    ...(opts.time.mode === 'advanced' ? [i(20, P('startPeriod', 'PREVIOUS')), i(20, P('endPeriod', 'NOW'))] : []),
+    ...(opts.time.mode === 'absolute' ? [i(20, P('startDate', opts.time.from ?? 0)), i(20, P('endDate', opts.time.to ?? 0))] : []),
+    i(16, '</Control>'),
+  ];
+  const head = [
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<Content>',
     '    <Views>',
-    `        <ViewDef id="${id}">`,
-    `            <Title>${xml(view.name)}</Title>`,
-    `            <Description>${xml(description)}</Description>`,
-    `            <SubjectType adapterKind="VMWARE" resourceKind="${xml(view.kind)}" type="descendant"/>`,
-    `            <SubjectType adapterKind="VMWARE" resourceKind="${xml(view.kind)}" type="self"/>`,
-    '            <Usage>dashboard</Usage>',
-    '            <Usage>report</Usage>',
-    '            <Usage>details</Usage>',
-    '            <Usage>content</Usage>',
-    '            <Controls>',
-    '                <Control id="time-interval-selector_id_1" type="time-interval-selector" visible="false">',
-    '                    <Property name="advancedTimeMode" value="false"/>',
-    `                    <Property name="unit" value="${view.presentation === 'list' ? 'HOURS' : 'DAYS'}"/>`,
-    `                    <Property name="count" value="${view.presentation === 'list' ? 24 : 30}"/>`,
-    '                </Control>',
-    '                <Control id="attributes-selector_id_1" type="attributes-selector" visible="false">',
-    '                    <Property name="attributeInfos">',
-    '                        <List>',
-    ...items,
-    '                        </List>',
-    '                    </Property>',
-    '                </Control>',
-    ...(view.presentation === 'list'
+    i(8, `<ViewDef id="${id}">`),
+    i(12, `<Title>${xml(view.name)}</Title>`),
+    i(12, `<Description>${xml(opts.description)}</Description>`),
+    ...subjects,
+    ...usages.map((u) => i(12, `<Usage>${u}</Usage>`)),
+  ];
+  const tail = ['        </ViewDef>', '    </Views>', '</Content>', ''];
+
+  if (view.presentation === 'text') {
+    return [...head, i(12, '<Controls>'), ...time, i(12, '</Controls>'), i(12, '<Presentation type="text">'), i(16, '<Properties>'), i(20, P('text', opts.text)), i(16, '</Properties>'), i(12, '</Presentation>'), ...tail].join('\n');
+  }
+  if (view.presentation === 'image') {
+    return [...head, i(12, '<Presentation type="image">'), i(16, '<DataBinding>'), i(20, `<Source>${xml(IMAGE_PLACEHOLDER)}</Source>`), i(16, '</DataBinding>'), i(12, '</Presentation>'), ...tail].join('\n');
+  }
+
+  const numeric = view.columns.map((column, index) => ({ column, index })).filter(({ column }) => !column.property && !column.timeSegment).map(({ index }) => index);
+  const summary =
+    (view.presentation === 'list' || view.presentation === 'summary') && opts.summary
       ? [
-          '                <Control id="pagination-control_id_1" type="pagination-control" visible="true">',
-          '                    <Property name="start" value="0"/>',
-          '                    <Property name="size" value="50"/>',
-          '                </Control>',
+          i(20, '<Property name="summaryInfos">'),
+          i(24, '<List>'),
+          i(28, '<Item>'),
+          i(32, '<Value>'),
+          i(36, P('displayName', opts.summary === 'SUM' ? 'Total' : opts.summary === 'AVG' ? 'Average' : opts.summary === 'MIN' ? 'Lowest' : opts.summary === 'MAX' ? 'Highest' : 'Count')),
+          i(36, P('aggregation', opts.summary)),
+          i(36, '<Property name="attributeIndexes">'),
+          i(40, '<List>'),
+          ...numeric.map((index) => i(44, `<Item value="${index}"/>`)),
+          i(40, '</List>'),
+          i(36, '</Property>'),
+          i(32, '</Value>'),
+          i(28, '</Item>'),
+          i(24, '</List>'),
+          i(20, '</Property>'),
         ]
-      : []),
-    '                <Control id="metadata_id_1" type="metadata" visible="false">',
-    '                    <Property name="maxPointsCount" value="5000"/>',
-    '                    <Property name="hideObjectNameColumn" value="false"/>',
-    '                    <Property name="listTopResultSize" value="-1"/>',
-    '                </Control>',
-    '            </Controls>',
-    '            <DataProviders>',
-    `                <DataProvider dataType="${view.presentation}-view" id="${view.presentation}-view_id_1"/>`,
-    '            </DataProviders>',
-    `            <Presentation type="${view.presentation}"/>`,
-    '        </ViewDef>',
-    '    </Views>',
-    '</Content>',
-    '',
+      : [];
+  const attributes = [
+    i(16, '<Control id="attributes-selector_id_1" type="attributes-selector" visible="false">'),
+    i(20, '<Property name="attributeInfos">'),
+    i(24, '<List>'),
+    ...view.columns.flatMap((column) => viewItem(view, opts, column)),
+    i(24, '</List>'),
+    i(20, '</Property>'),
+    ...summary,
+    i(16, '</Control>'),
+  ];
+  const b = opts.buckets;
+  const buckets =
+    view.presentation !== 'distribution'
+      ? []
+      : b.mode === 'discrete'
+        ? [i(16, '<Control id="buckets-control_id_1" type="buckets-control" visible="false">'), i(20, P('dynamicCalcFunction', 'DISCRETE')), i(20, P('isDynamic', true)), i(20, P('isSum', false)), i(16, '</Control>')]
+        : b.mode === 'ranges'
+          ? [
+              i(16, '<Control id="buckets-control_id_1" type="buckets-control" visible="false">'),
+              i(20, P('maxValue', 0)),
+              i(20, P('minValue', 0)),
+              i(20, P('dynamicCalcFunction', 'SIMPLEMAXMIN')),
+              i(20, '<Property name="bucketInfos">'),
+              i(24, '<List>'),
+              ...b.ranges.flatMap((range) => [i(28, '<Item>'), i(32, '<Value>'), i(36, P('startValue', range.start)), i(36, P('endValue', range.end)), i(36, P('bucketColor', range.color)), i(32, '</Value>'), i(28, '</Item>')]),
+              i(24, '</List>'),
+              i(20, '</Property>'),
+              i(20, P('isDynamic', false)),
+              i(20, P('isSum', false)),
+              i(16, '</Control>'),
+            ]
+          : [i(16, '<Control id="buckets-control_id_1" type="buckets-control" visible="false">'), i(20, P('isDynamic', false)), i(20, P('minValue', b.min)), i(20, P('maxValue', b.max)), i(20, P('bucketCount', b.count)), i(20, P('isSum', false)), i(16, '</Control>')];
+  const pagination =
+    view.presentation === 'distribution'
+      ? []
+      : [i(16, '<Control id="pagination-control_id_1" type="pagination-control" visible="true">'), i(20, P('start', 0)), i(20, P('size', opts.pageSize)), i(16, '</Control>')];
+  const metadata = [
+    i(16, '<Control id="metadata_id_1" type="metadata" visible="false">'),
+    i(20, P('maxPointsCount', 5000)),
+    i(20, P('hideObjectNameColumn', false)),
+    i(20, P('listTopResultSize', opts.topN > 0 ? opts.topN : -1)),
+    i(16, '</Control>'),
+  ];
+  const dataType = view.presentation === 'trend' ? 'trend-view' : view.presentation === 'distribution' ? 'distribution-view' : 'list-view';
+  const presentation = view.presentation === 'trend' ? 'line-chart' : view.presentation === 'distribution' ? opts.chart : view.presentation;
+  return [
+    ...head,
+    i(12, '<Controls>'),
+    ...time,
+    ...attributes,
+    ...buckets,
+    ...pagination,
+    ...metadata,
+    i(12, '</Controls>'),
+    i(12, '<DataProviders>'),
+    i(16, `<DataProvider dataType="${dataType}" id="${dataType}_id_1"/>`),
+    i(12, '</DataProviders>'),
+    i(12, `<Presentation type="${presentation}"/>`),
+    ...tail,
   ].join('\n');
 }
 
@@ -391,90 +1417,225 @@ export const VCF_OPS_BUILD                                 = [
     label: 'A dashboard, as importable JSON',
     group: 'Dashboards and reports',
     description:
-      'A dashboard written as the JSON a dashboard export holds — widgets laid out by gridsterCoords on a 12-column grid, the first list driving the rest — from one of five templates. The layout is checked for overlaps before it is imported, and the file reads back on the VCF Ops content page like any exported dashboard.',
+      'A dashboard built widget by widget — any of the widgets VCF Operations 9 offers, each with its own settings, placed on the 12-column grid or flowed into it, and wired so one widget’s selection drives another — starting from one of the standard dashboards. It is written as the JSON a dashboard export holds, checked for missing settings, bad metric keys, overlaps and interaction loops before anything is built, and reads back on the VCF Ops content page like any exported dashboard.',
     inputs: [
-      { id: 'template', label: 'Template', control: 'select', options: TEMPLATES.map((t) => ({ value: t.value, label: t.label })), default: 'capacity' },
+      { id: 'template', label: 'Start from', control: 'select', options: DASHBOARD_TEMPLATES.map((t) => ({ value: t.value, label: t.label })), default: 'capacity', hint: 'Fills the widget grid below; change any row after' },
+      ...DASHBOARD_TEMPLATES.map((t) => ({
+        id: `widgets_${t.value}`,
+        label: 'Widgets',
+        control: 'textarea'         ,
+        default: t.rows.map((row) => row.join(' | ')).join('\n'),
+        hint: GRID_HINT,
+        help: catalogueHelp(),
+        options: GRID_OPTIONS,
+        showWhen: { input: 'template', equals: [t.value] },
+      })),
       { id: 'dashboard_name', label: 'Dashboard name', control: 'text', default: '', placeholder: 'Defaults to the template name' },
-      { id: 'group_name', label: 'Tier 1 custom group', control: 'text', default: 'Tier 1 Applications', showWhen: { input: 'template', equals: ['tier1'] } },
-      { id: 'tag_categories', label: 'Required tag categories', control: 'text', default: 'Owner, Environment, CostCentre', showWhen: { input: 'template', equals: ['tags'] } },
-      { id: 'shared', label: 'Share with all users', control: 'toggle', default: true },
-      { id: 'extra', label: 'Extra widgets', control: 'textarea', default: '', hint: 'One per line: Type | Title | x,y,w,h — x is 1 to 12' },
+      { id: 'folder', label: 'Folder', control: 'text', default: '', placeholder: 'None', hint: 'Where it sits in the dashboard list' },
+      { id: 'description', label: 'Description', control: 'text', default: '', placeholder: 'Defaults to what the template shows' },
+      {
+        id: 'sharing',
+        label: 'Shared with',
+        control: 'select',
+        options: [
+          { value: 'everyone', label: 'Everyone' },
+          { value: 'groups', label: 'Named user groups' },
+          { value: 'private', label: 'Only the importing user' },
+        ],
+        default: 'everyone',
+      },
+      { id: 'share_groups', label: 'User groups', control: 'text', default: 'VCF Operations Admins', hint: 'Comma separated; Group@SOURCE for a group from an identity source', showWhen: { input: 'sharing', equals: ['groups'] } },
+      {
+        id: 'refresh',
+        label: 'Widgets refresh every',
+        control: 'select',
+        options: [
+          { value: '60', label: '1 minute' },
+          { value: '120', label: '2 minutes' },
+          { value: '300', label: '5 minutes' },
+          { value: '600', label: '10 minutes' },
+          { value: '900', label: '15 minutes' },
+          { value: '1800', label: '30 minutes' },
+          { value: '3600', label: '1 hour' },
+        ],
+        default: '300',
+        hint: 'refresh= on a row overrides it',
+      },
+      { id: 'refresh_content', label: 'Widgets refresh their data', control: 'toggle', default: true },
+      {
+        id: 'time_range',
+        label: 'Dashboard time range',
+        control: 'select',
+        options: [
+          { value: 'none', label: 'Each widget’s own' },
+          { value: 'last6Hour', label: 'Last 6 hours' },
+          { value: 'last24Hour', label: 'Last 24 hours' },
+          { value: 'last7Days', label: 'Last 7 days' },
+        ],
+        default: 'none',
+      },
+      { id: 'home_tab', label: 'Open it as the home tab', control: 'toggle', default: false },
+      { id: 'locked', label: 'Lock it against editing', control: 'toggle', default: false },
+      { id: 'autoswitch', label: 'Switch to the next dashboard automatically', control: 'toggle', default: false },
+      { id: 'autoswitch_delay', label: 'Switch after (seconds)', control: 'number', default: 300, min: 5, max: 3600, showWhen: { input: 'autoswitch', equals: ['true'] } },
+      { id: 'navigations', label: 'Open another dashboard from a widget', control: 'textarea', default: '', placeholder: 'Clusters -> ESX host health', hint: 'One per line: widget title -> dashboard name' },
       { id: 'max_widgets', label: 'Warn above (widgets)', control: 'number', default: 10, min: 1, max: 40, hint: 'Every widget is a query on every refresh' },
     ],
     automation: (values                 , name        )             => {
-      const template = str(values, 'template', 'capacity');
-      const dashName = str(values, 'dashboard_name', templateName(template));
-      const groupName = str(values, 'group_name', 'Tier 1 Applications');
-      const tags = listOf(str(values, 'tag_categories', ''));
-      const shared = bool(values, 'shared', true);
+      const template = templateOf(str(values, 'template', 'capacity'));
+      const baseName = str(values, 'dashboard_name', template.label);
+      const folder = str(values, 'folder', '').replace(/^\/+|\/+$/g, '');
+      // The folder is the leading segment of the name, and namePath mirrors it:
+      // namePath alone does not put a dashboard in a folder (CF render.py,
+      // matching the vROpsTOP and tkopton bundles).
+      const dashName = folder ? `${folder}/${baseName}` : baseName;
+      const description = str(values, 'description', template.about);
+      const sharing = str(values, 'sharing', 'everyone');
+      const shareGroups = listOf(str(values, 'share_groups', ''));
+      const shared = sharing !== 'private';
+      const refresh = num(values, 'refresh', 300);
+      const refreshContent = bool(values, 'refresh_content', true);
+      const timeRange = str(values, 'time_range', 'none');
+      const homeTab = bool(values, 'home_tab', false);
+      const locked = bool(values, 'locked', false);
+      const autoswitch = bool(values, 'autoswitch', false);
+      const autoswitchDelay = num(values, 'autoswitch_delay', 300);
       const maxWidgets = num(values, 'max_widgets', 10);
-      const viewName = templateName(template);
+      const rowsText = str(values, `widgets_${template.value}`, template.rows.map((row) => row.join(' | ')).join('\n'));
 
-      const extra = extraWidgets(str(values, 'extra', ''));
-      const widgets = [...widgetsFor(template, viewName, groupName, tags), ...extra.widgets];
-
-      const findings            = [];
-      for (const line of extra.bad) {
-        findings.push(error('vcfops.dashboard.bad-widget', `"${line}" is not Type | Title | x,y,w,h with four positive whole numbers.`, { source: SRC }));
+      const rows = parseWidgetRows(rowsText);
+      const { placed, problems } = layoutWidgets(rows);
+      const findings            = checkWidgetRows(rows, placed, problems);
+      if (placed.length > maxWidgets) {
+        findings.push(
+          warning('vcfops.dashboard.too-many', `${placed.length} widgets, more than the ${maxWidgets} you set as a limit.`, {
+            remediation: 'Each widget queries on every refresh, for every viewer. Split it into two dashboards and open one from the other (a navigation).',
+            source: SRC,
+          }),
+        );
       }
-      const clashes           = [];
-      for (let i = 0; i < widgets.length; i += 1) {
-        for (let j = i + 1; j < widgets.length; j += 1) {
-          if (overlaps(widgets[i] , widgets[j] )) clashes.push(`"${widgets[i] .title}" and "${widgets[j] .title}"`);
+      if (sharing === 'groups' && shareGroups.length === 0) findings.push(error('vcfops.dashboard.no-groups', 'Shared with named user groups, but no group is named.', { source: SRC }));
+      const groups = shareGroups.map((group) => {
+        const at = group.lastIndexOf('@');
+        return at > 0 ? { name: group.slice(0, at).trim(), source: group.slice(at + 1).trim().toUpperCase() } : { name: group, source: 'LOCAL' };
+      });
+      if (sharing === 'groups' && groups.some((group) => group.source !== 'LOCAL')) {
+        findings.push(
+          warning('vcfops.dashboard.group-source', `${groups.filter((g) => g.source !== 'LOCAL').map((g) => `${g.name}@${g.source}`).join(', ')}: only sourceType LOCAL has been seen in a dashboardsharings file.`, {
+            remediation: 'Share one dashboard with that group in the interface, export it (export-reference.sh) and compare its dashboardsharings entry before importing.',
+            source: SRC,
+          }),
+        );
+      }
+
+      const dashId = stableId(`dashboard:${baseName}`);
+      const ids = new Map(placed.map((widget) => [widget.index, stableId(`widget:${baseName}:${widget.index}:${widget.title}`)]));
+      const byTitle = new Map(placed.map((widget) => [widget.title.toLowerCase(), widget]));
+      const entries = new Entries();
+      const viewNames = new Set        ();
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      // Sections hold the widgets below them, down to the next section.
+      const sections = placed.filter((widget) => widget.type.type === 'Section').sort((a, b) => a.y - b.y);
+      const sectionMembers = (section              )           => {
+        const next = sections.find((other) => other.y > section.y);
+        return placed.filter((widget) => widget.type.type !== 'Section' && widget.y > section.y && (!next || widget.y < next.y)).map((widget) => ids.get(widget.index) );
+      };
+
+      const widgetsJson = placed.map((widget) => {
+        const selfProvider = PROVIDER_YES.test(widget.providerText) && !widget.receives;
+        const rowRefresh = widget.settings.get('refresh');
+        const ctx                = {
+          id: ids.get(widget.index) ,
+          title: widget.title,
+          selfProvider,
+          refreshInterval: /^\d+$/.test(rowRefresh) ? Number(rowRefresh) : refresh,
+          refreshContent: /^off$/i.test(rowRefresh) ? false : refreshContent,
+          s: widget.settings,
+          entries,
+          viewId: (view) => {
+            if (uuid.test(view)) return view;
+            viewNames.add(view);
+            return viewIdOf(view);
+          },
+        };
+        const config = widget.type.build(ctx);
+        if (widget.type.type === 'Section') config['widgets'] = sectionMembers(widget);
+        return {
+          id: ctx.id,
+          type: widget.type.type,
+          title: widget.title,
+          collapsed: widget.type.type === 'Section' ? widget.settings.yes('collapsed', false) : false,
+          gridsterCoords: { x: widget.x, y: widget.y, w: widget.w, h: widget.h },
+          config,
+        };
+      });
+
+      // "Receives from" becomes a widget interaction: resourceId, or metricId from a Metric Picker (BP exports).
+      const interactions = placed
+        .filter((widget) => widget.receives && byTitle.get(widget.receives.toLowerCase()) && byTitle.get(widget.receives.toLowerCase()) !== widget)
+        .map((widget) => {
+          const sender = byTitle.get(widget.receives.toLowerCase()) ;
+          return { type: sender.type.type === 'MetricPicker' ? 'metricId' : 'resourceId', widgetIdProvider: ids.get(sender.index) , widgetIdReceiver: ids.get(widget.index)  };
+        });
+
+      // Navigations: {<sending widget id>: [{id: <dashboard id>, widgets: []}]}, as the
+      // notoriousbdg showback and content-factory exports carry them. The target's id is
+      // the one this blueprint derives from its name.
+      const navigations                                                       = {};
+      const navTargets           = [];
+      for (const nav of parseNavigations(str(values, 'navigations', ''))) {
+        const from = byTitle.get(nav.from.toLowerCase());
+        if (!nav.from || !nav.to) {
+          findings.push(error('vcfops.dashboard.bad-navigation', `"${nav.line}" is not widget title -> dashboard name.`, { source: SRC }));
+        } else if (!from) {
+          findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" starts from "${nav.from}", which is not a widget on this dashboard.`, { source: SRC }));
+        } else if (!from.type.provides) {
+          findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" starts from a ${from.type.label}, which cannot send a selection.`, { source: SRC }));
+        } else if (nav.to.toLowerCase() === baseName.toLowerCase()) {
+          findings.push(error('vcfops.dashboard.bad-navigation', `The navigation "${nav.line}" opens this dashboard itself.`, { source: SRC }));
+        } else {
+          const list = (navigations[ids.get(from.index) ] ??= []);
+          list.push({ id: stableId(`dashboard:${nav.to}`), widgets: [] });
+          navTargets.push(nav.to);
         }
       }
-      if (clashes.length > 0) {
+      if (navTargets.length > 0) {
         findings.push(
-          error('vcfops.dashboard.overlap', `Widgets overlap on the grid: ${clashes.join('; ')}.`, {
-            remediation: 'Gridster pushes overlapping widgets down on import, so the dashboard you open is not the one you wrote. Move them so no two rectangles share a cell.',
+          info('vcfops.dashboard.navigation-target', `Navigations open ${[...new Set(navTargets)].map((t) => `"${t}"`).join(', ')} by the id this blueprint gives a dashboard of that name.`, {
+            remediation: 'Generate and import those dashboards here too. A dashboard built by hand has another id: re-point the navigation in the dashboard editor.',
             source: SRC,
           }),
         );
       }
-      const offGrid = widgets.filter((widget) => widget.x + widget.w - 1 > 12);
-      if (offGrid.length > 0) {
-        findings.push(error('vcfops.dashboard.off-grid', `${offGrid.map((w) => `"${w.title}"`).join(', ')} run${offGrid.length === 1 ? 's' : ''} past column 12.`, { remediation: 'x + w − 1 must be 12 or less on a 12-column dashboard.', source: SRC }));
-      }
-      if (widgets.length > maxWidgets) {
+      for (const view of viewNames) {
+        const fromTemplate = TEMPLATES.find((t) => t.label === view);
         findings.push(
-          warning('vcfops.dashboard.too-many', `${widgets.length} widgets, more than the ${maxWidgets} you set as a limit.`, {
-            remediation: 'Each widget queries on every refresh, for every viewer. Split it into two dashboards linked by a navigation widget.',
+          info('vcfops.dashboard.needs-view', `The View widget shows the view "${view}", id ${viewIdOf(view)}.`, {
+            remediation: fromTemplate
+              ? `Generate "A view for dashboards and reports" starting from "${fromTemplate.label}" and import it before the dashboard.`
+              : `Generate "A view for dashboards and reports" with "My own columns" and the view name "${view}", and import it before the dashboard — or give the view’s UUID in view=.`,
             source: SRC,
           }),
         );
-      }
-      if (template === 'tags' && tags.length === 0) {
-        findings.push(warning('vcfops.dashboard.no-tags', 'No tag categories are required, so the tag compliance dashboard has nothing to test.', { source: SRC }));
       }
 
-      const ids = widgets.map((widget, index) => stableId(`widget:${dashName}:${index}:${widget.title}`));
-      const provider = widgets.findIndex((widget) => widget.config['selfProvider'] === true);
-      const dashId = stableId(`dashboard:${dashName}`);
-      // Written as a Dashboards → Export writes it (notoriousbdg and sentania-labs
-      // exports): {entries, dashboards, uuid}; flags as objects ({selfProvider:
-      // {selfProvider: true}}); widgets wired by widgetInteractions.
-      const widgetConfig = (widget        , index        )                          => {
-        const { selfProvider, ...rest } = widget.config;
-        const common = { title: widget.title, refreshInterval: 300, refreshContent: { refreshContent: true }, selfProvider: { selfProvider: selfProvider === true || index === provider } };
-        return widget.type === 'View'
-          ? { ...common, ...rest, isUpdatedView: true, chartViewItems: [], selectFirstRow: { selectFirstRow: false }, traversalSpecId: '', resource: null }
-          : { ...common, ...rest };
-      };
       const dashboard = {
-        entries: { resourceKind: [], resource: [] },
+        entries: entries.toJson(),
         dashboards: [
           {
             id: dashId,
             name: dashName,
-            namePath: '',
-            description: `from the "${viewName}" template.`,
+            namePath: folder,
+            description,
             shared,
             temporary: false,
             hidden: false,
-            homeTab: false,
+            homeTab,
             disabled: false,
-            locked: false,
-            autoswitchEnabled: false,
+            locked,
+            autoswitchEnabled: autoswitch,
+            ...(autoswitch ? { autoswitchDelay } : {}),
             columnCount: 1,
             columnProportion: '1',
             gridsterMaxColumns: 12,
@@ -485,59 +1646,61 @@ export const VCF_OPS_BUILD                                 = [
             importComplete: true,
             userId: DASHBOARD_OWNER_PLACEHOLDER,
             lastUpdateUserId: DASHBOARD_OWNER_PLACEHOLDER,
-            states: [],
-            dashboardNavigations: {},
-            // Selecting an object in the first list drives every other widget.
-            widgetInteractions:
-              provider >= 0
-                ? ids.filter((_, index) => index !== provider && widgets[index] .type !== 'TextDisplay').map((receiver) => ({ type: 'resourceId', widgetIdProvider: ids[provider], widgetIdReceiver: receiver }))
-                : [],
-            widgets: widgets.map((widget, index) => ({
-              id: ids[index],
-              type: widget.type,
-              title: widget.title,
-              collapsed: false,
-              gridsterCoords: { x: widget.x, y: widget.y, w: widget.w, h: widget.h },
-              config: widgetConfig(widget, index),
-            })),
+            states: TIME_RANGES[timeRange] ? [{ key: `permDashboardTime_dashboard_${dashId}`, value: TIME_RANGES[timeRange] }] : [],
+            dashboardNavigations: navigations,
+            widgetInteractions: interactions,
+            widgets: widgetsJson,
           },
         ],
-        uuid: stableId(`dashboard-export:${dashName}`),
+        uuid: stableId(`dashboard-export:${baseName}`),
       };
       const dashboardJson = `${JSON.stringify(dashboard, null, 2)}\n`;
 
-      const hasView = widgets.some((widget) => widget.type === 'View');
+      // Sharing: the content import files dashboardsharings/<owner> as a list of
+      // {groupName, sourceType, dashboards} (content-factory packager and a real
+      // export; "Everyone"/LOCAL is the only group seen).
+      const everyone = '[{groupName: "Everyone", sourceType: "LOCAL", dashboards: [.dashboards[] | {dashboardId: .id}]}]';
+      let script = contentImportScript({ what: `the dashboard "${dashName}"`, contentType: 'DASHBOARDS', needles: [`"name": ${JSON.stringify(dashName)}`, `"name":${JSON.stringify(dashName)}`, dashId], dashboard: { shared } });
+      if (sharing === 'groups' && groups.length > 0) {
+        const list = `[${groups.map((g) => `{groupName: ${JSON.stringify(g.name)}, sourceType: ${JSON.stringify(g.source)}, dashboards: [.dashboards[] | {dashboardId: .id}]}`).join(', ')}]`;
+        script = script.replace(everyone, sq(list));
+      }
+
+      const viewList = [...viewNames];
+      const orderedTypes = [...new Set(placed.map((widget) => widget.type.label))];
       return {
         platform: PLATFORM,
-        title: `Dashboard "${dashName}" — ${widgets.length} widgets`,
+        title: `Dashboard "${dashName}" — ${placed.length} widgets`,
         effect: 'reversible',
         trigger: { kind: 'manual', detail: 'Imported once by a person; it changes when someone edits it in the interface and re-exports it.', worstCase: 'once per import' },
         scope: {
-          what: `One dashboard, "${dashName}", ${shared ? 'shared with every user' : 'visible to the importing user'}.`,
+          what: `One dashboard, "${dashName}" (${orderedTypes.join(', ') || 'no widgets'}), ${sharing === 'everyone' ? 'shared with every user' : sharing === 'groups' ? `shared with ${groups.map((g) => g.name).join(', ')}` : 'visible to the importing user'}.`,
           decidedBy: [
             'The dashboard id, derived from its name: importing it again replaces this dashboard and nothing else.',
-            ...(template === 'tier1' ? [`The custom group "${groupName}" decides which VMs the list shows.`] : []),
-            hasView ? `The view "${viewName}" (id ${viewIdOf(viewName)}) must exist, from "A view for dashboards and reports".` : 'No view.',
+            ...placed.filter((w) => w.settings.has('group')).map((w) => `The custom group "${w.settings.get('group')}" decides which objects "${w.title}" lists.`),
+            ...(viewList.length > 0 ? viewList.map((view) => `The view "${view}" (id ${viewIdOf(view)}) must exist, from "A view for dashboards and reports".`) : ['No generated view.']),
           ],
           ifWrong: 'With --overwrite, a dashboard with the same name or id that somebody edited by hand is replaced by this one; their version is in the pre-import-backup zip the script took first. Without --overwrite the script refuses.',
         },
         guardrails: [
-          { rule: 'Overlapping or off-grid widgets are an error before anything is built', because: 'Gridster rearranges an overlapping layout on import, and the dashboard people open is not the one that was reviewed.' },
+          { rule: 'Every widget row is checked before anything is built: its type, the settings that type needs, metric keys, its place on the grid, and what it receives from', because: 'A widget with a missing setting or a misspelt metric imports cleanly and opens empty, which reads as "no problems".' },
+          { rule: 'Overlapping or off-grid widgets, and interactions that name no widget or go round in a loop, are errors', because: 'Gridster rearranges an overlapping layout on import, and a loop of interactions leaves every widget in it waiting for another.' },
           { rule: 'import-dashboard.sh stops while any payload holds <REQUIRED>', because: 'A dashboard imported with a placeholder view id shows an empty widget, which reads as "no problems".' },
-          { rule: '--dry-run builds and lists the zip and sends nothing', because: 'The content-zip layout comes from real exports rather than a published specification; a --dry-run first is for comparing it with an export-reference.sh export.' },
           { rule: 'When it imports, the script first exports the existing DASHBOARDS content to pre-import-backup-<time>.zip and refuses to import when a dashboard with the same name or id is already there, unless --overwrite is given', because: 'The import API overwrites by default (force defaults to true), and somebody’s hand-edited copy would be gone with no copy kept.' },
           { rule: 'The import is sent with force=false unless --overwrite', because: 'Without it the API replaces whatever matches, which is the documented default.' },
           { rule: 'The script follows the import by the id its POST returned and exits 1 unless it reaches FINISHED with nothing failed or skipped, or when it times out', because: 'Reading the "last import" status can show an earlier import, and a FAILED import that exits 0 is taken as done.' },
+          { rule: '--dry-run (opt-in) builds and lists the zip and sends nothing', because: 'The content-zip layout comes from real exports rather than a published specification; a --dry-run is for comparing it with an export-reference.sh export.' },
         ],
         dryRun: [
-          'Run import-dashboard.sh --dry-run first: it builds the content zip and lists it.',
+          'import-dashboard.sh imports when run. To look first, run it with --dry-run: it builds the content zip and lists it.',
           'Drop import/dashboard.zip on the VCF Ops content page first — it reads it as an export and shows the layout and any findings.',
           'Or import it by hand: Dashboards > Manage > Import, which takes import/dashboard.zip.',
         ],
         undo: ['Delete the dashboard under Dashboards > Manage. If --overwrite replaced one, put the previous version back by importing the pre-import-backup-<time>.zip the script wrote (POST /suite-api/api/content/operations/import) — the import API itself has no undo.'],
-        told: ['Nobody. The dashboard appears in the list for the users it is shared with.'],
+        told: [sharing === 'private' ? 'Nobody. The dashboard appears in the importing user’s list.' : 'Nobody. The dashboard appears in the list for the users it is shared with.'],
         requires: [
-          ...(hasView ? [`The view "${viewName}", generated by "A view for dashboards and reports" with the same template, imported first.`] : []),
+          ...viewList.map((view) => `The view "${view}", generated by "A view for dashboards and reports", imported first.`),
+          ...(navTargets.length > 0 ? [`The dashboards it opens (${[...new Set(navTargets)].join(', ')}), generated here too.`] : []),
           'zip, unzip, jq and curl on the machine running the script.',
           'An account allowed to import content (Content admin or Administrator).',
         ],
@@ -546,30 +1709,42 @@ export const VCF_OPS_BUILD                                 = [
           'import/dashboard.zip/dashboard/resources/resources.properties': '',
           'import/dashboard.json': dashboardJson,
           ...contentPackage({}, {}),
-          'import-dashboard.sh': contentImportScript({ what: `the dashboard "${dashName}"`, contentType: 'DASHBOARDS', needles: [`"name": ${JSON.stringify(dashName)}`, `"name":${JSON.stringify(dashName)}`, dashId], dashboard: { shared } }),
+          'import-dashboard.sh': script,
           'export-reference.sh': exportReferenceScript('DASHBOARDS'),
           'IMPORT.md': importMd({
             title: `the dashboard "${dashName}"`,
             steps: [
-              ...(hasView
-                ? [{ heading: `First, the view "${viewName}"`, files: [], how: [`Generate "A view for dashboards and reports" with the "${viewName}" template and import its import/view.zip first. The View widget refers to view id ${viewIdOf(viewName)}; without it the widget opens empty.`] }]
-                : []),
+              ...viewList.map((view) => ({
+                heading: `First, the view "${view}"`,
+                files: [],
+                how: [
+                  TEMPLATES.some((t) => t.label === view)
+                    ? `Generate "A view for dashboards and reports" starting from "${view}" and import its import/view.zip first.`
+                    : `Generate "A view for dashboards and reports" with "My own columns", named "${view}", and import its import/view.zip first.`,
+                  `The View widget refers to view id ${viewIdOf(view)}; without it the widget opens empty.`,
+                ],
+              })),
               {
                 heading: 'The dashboard',
                 files: ['import/dashboard.zip'],
-                how: ['Dashboards → Manage → ⋯ → Import (8.x: Dashboards → Actions → Manage Dashboards → Import Dashboards), and choose import/dashboard.zip — a zip holding dashboard/dashboard.json, as a dashboard export is.', 'The dashboard is created as the user who imports it, then shared if the shared flag is set.'],
-                verify: ['import/dashboard.json is the same dashboard as a bare file. Import dialogs have taken the .json on its own in 8.x; if yours asks for a zip, use import/dashboard.zip.', 'widget config keys other than viewDefinitionId, selfProvider and refresh are a starting point: open each widget after import and save it once if it shows unconfigured.'],
+                how: ['Dashboards → Manage → ⋯ → Import (8.x: Dashboards → Actions → Manage Dashboards → Import Dashboards), and choose import/dashboard.zip — a zip holding dashboard/dashboard.json, as a dashboard export is.', `The dashboard is created as the user who imports it, then ${sharing === 'private' ? 'kept private to them' : 'shared as set'}.`],
+                verify: [
+                  'import/dashboard.json is the same dashboard as a bare file. Import dialogs have taken the .json on its own in 8.x; if yours asks for a zip, use import/dashboard.zip.',
+                  ...(placed.some((w) => !w.type.verified) ? [`widgets of a type no export was found for (${[...new Set(placed.filter((w) => !w.type.verified).map((w) => w.type.label))].join(', ')}): open each after import and save it once.`] : []),
+                ],
               },
               contentStep('DASHBOARDS', 'import-dashboard.sh'),
             ],
-            sources: FORMAT_SOURCES,
+            intro: IMPORT_INTRO,
+            sources: [...CONTENT_SOURCES, 'Widget configs: real dashboard exports — github.com/sentania-labs/vcf-content-factory (a VCF Operations 9 renderer and a live-export survey), github.com/brockpeterson/operations_dashboards and github.com/notoriousbdg (VMware’s own 8.x dashboards).'],
           }),
         },
         notes: [
           CONTENT_IMPORT_NOTE,
-          'The {entries, dashboards[], uuid} shape, widgets[] with gridsterCoords and widgetInteractions are as real exports have them, and the VCF Ops content page parses the same file. Widget config keys beyond viewDefinitionId (metrics, topN, groupBy and so on) are a starting point: VERIFY them against a widget of the same type exported from your release, and edit the widget in the interface after import if it opens unconfigured.',
-          'gridsterCoords are 1-based: x runs 1 to 12, y from 1 downwards.',
-          'widgetInteractions wires the first self-providing list to every other widget. That is the usual "select one, see its detail" shape; a widget that should not follow the selection can be unwired in the dashboard editor.',
+          'The {entries, dashboards[], uuid} shape, widgets[] with gridsterCoords, widgetInteractions and dashboardNavigations are as real exports have them, and the VCF Ops content page parses the same file. entries lists the object types and objects the widgets refer to by resourceKind:id:N and resource:id:N; the importer resolves them by key and name on the target.',
+          'Each widget’s config is the shape a real export of that type carries (the catalogue in vcf-ops-widgets.ts says which export). A type no export was found for is marked unverified and raises a warning.',
+          'gridsterCoords are 1-based: x runs 1 to 12, y from 1 downwards. Rows marked auto (or w,h) are placed in the first gap they fit, top row first.',
+          'A widget with Provider yes picks its own objects (selfProvider), pinned to the world object of its adapter where it needs one; a widget with Receives from follows that widget’s selection.',
         ],
         findings,
       };
@@ -583,19 +1758,34 @@ export const VCF_OPS_BUILD                                 = [
     label: 'A view for dashboards and reports',
     group: 'Dashboards and reports',
     description:
-      'A list, trend or distribution view — an object type, its columns as metrics and properties (tag properties included), and a filter — written as content XML, so it can be used by a dashboard’s View widget and by a report. The id is derived from the name, so the dashboard template of the same name already points at it.',
+      'Any view VCF Operations 9.1 builds — list, summary, trend, distribution (bar, pie or donut), text or image — over one or several object types, run on the object itself or on its children and descendants. Each column is a metric or property with its own transformation (current, average, max, min, sum, percentile, forecast, first, last) and unit, or a value read from a related object; with the time range, sort, top-N, a summary row, a breakdown by period, property or relationship, a subject filter, trend and forecast settings, bucketed distributions and where the view may be shown. Written as content XML and imported, so a dashboard’s View widget and a report can use it; the id is derived from the name, so the dashboard template of the same name already points at it.',
     inputs: [
       { id: 'template', label: 'Start from', control: 'select', options: [...TEMPLATES.map((t) => ({ value: t.value, label: t.label })), { value: 'custom', label: 'My own columns' }], default: 'capacity' },
       { id: 'view_name', label: 'View name', control: 'text', default: 'VM right-sizing', showWhen: { input: 'template', equals: ['custom'] } },
-      { id: 'kind', label: 'Object type', control: 'select', options: KIND_OPTIONS, default: 'VirtualMachine', showWhen: { input: 'template', equals: ['custom'] } },
+      { id: 'kind', label: 'Object type', control: 'combo', options: KIND_OPTIONS, default: 'VirtualMachine', hint: 'Or Adapter/Kind for one not listed', showWhen: { input: 'template', equals: ['custom'] } },
+      { id: 'more_kinds', label: 'More object types', control: 'text', default: '', placeholder: 'None', hint: 'Comma separated, for a view over several types; a column reads every type unless its Kind cell names one', showWhen: { input: 'template', equals: ['custom'] } },
+      {
+        id: 'subject_relation',
+        label: 'Runs on',
+        control: 'select',
+        options: [
+          { value: 'both', label: 'The object itself, and the children and descendants of what it is run on' },
+          { value: 'descendant', label: 'Only the children and descendants of what it is run on' },
+          { value: 'self', label: 'Only the object itself' },
+        ],
+        default: 'both',
+      },
       {
         id: 'presentation',
         label: 'Presentation',
         control: 'select',
         options: [
           { value: 'list', label: 'List' },
+          { value: 'summary', label: 'Summary' },
           { value: 'trend', label: 'Trend' },
           { value: 'distribution', label: 'Distribution' },
+          { value: 'text', label: 'Text' },
+          { value: 'image', label: 'Image' },
         ],
         default: 'list',
         showWhen: { input: 'template', equals: ['custom'] },
@@ -604,37 +1794,178 @@ export const VCF_OPS_BUILD                                 = [
         id: 'columns',
         label: 'Columns',
         control: 'textarea',
-        default: 'cpu|usage_average | CPU usage %\nmem|guest_usage | Guest memory %\nconfig|hardware|num_Cpu | vCPU | property',
-        hint: 'One per line: key | label, and "| property" for a property rather than a metric',
+        default: 'cpu|usage_average | CPU usage % (average) | avg | percent\ncpu|readyPct | CPU ready % (95th percentile) | percentile | percent\nmem|guest_usage | Guest memory % | current | percent\nconfig|hardware|num_Cpu | vCPU | property | 7004\nancestor(ClusterComputeResource) cpu|demandPct | Cluster CPU demand % | current | percent',
+        hint: 'Attribute key | Label | Transformation | Unit | Kind (several object types only)',
+        help: 'One column per row. The key is a metric or property key (keys keep their own |, cells are split on " | "). Put ancestor(Kind) or descendant(Kind) before the key to read it from a related object. Transformation is current, avg, max, min, sum, percentile (or "percentile 99"), forecast, first, last, timestamp, or property for a property.',
+        options: [
+          ...['current', 'avg', 'max', 'min', 'sum', 'percentile', 'forecast', 'first', 'last', 'timestamp', 'property'].map((value) => ({ value, label: value, group: 'Transformation' })),
+          ...VIEW_UNITS.map((unit) => ({ ...unit, group: 'Unit' })),
+          ...KIND_OPTIONS.map((kind) => ({ value: kind.value, label: kind.label, group: 'Kind' })),
+        ],
         showWhen: { input: 'template', equals: ['custom'] },
       },
-      { id: 'filter', label: 'Filter', control: 'text', default: 'none', showWhen: { input: 'template', equals: ['custom'] } },
+      { id: 'percentile', label: 'Percentile for "percentile" columns', control: 'number', default: 95, min: 1, max: 99, showWhen: { input: 'template', equals: ['custom'] } },
+      { id: 'text_body', label: 'Text (HTML allowed)', control: 'textarea', default: '<b>How to read this dashboard</b><br>Select a cluster on the left.', showWhen: { input: 'presentation', equals: ['text'] } },
+      {
+        id: 'distribution_chart',
+        label: 'Chart',
+        control: 'select',
+        options: [
+          { value: 'bar-chart', label: 'Bar' },
+          { value: 'pie-chart', label: 'Pie' },
+          { value: 'donut-chart', label: 'Donut' },
+        ],
+        default: 'bar-chart',
+        showWhen: { input: 'presentation', equals: ['distribution'] },
+      },
+      {
+        id: 'buckets',
+        label: 'Buckets',
+        control: 'select',
+        options: [
+          { value: 'discrete', label: 'One per distinct value (for a property: version, model, state)' },
+          { value: 'ranges', label: 'Ranges I give' },
+          { value: 'equal', label: 'Equal-width buckets between a minimum and a maximum' },
+        ],
+        default: 'discrete',
+        showWhen: { input: 'presentation', equals: ['distribution'] },
+      },
+      { id: 'bucket_ranges', label: 'Ranges', control: 'text', default: '0-2, 2-5, 5-100', hint: 'start-end, comma separated; coloured green to red in order', showWhen: { input: 'buckets', equals: ['ranges'] } },
+      { id: 'bucket_count', label: 'Buckets', control: 'number', default: 10, min: 1, max: 50, showWhen: { input: 'buckets', equals: ['equal'] } },
+      { id: 'bucket_min', label: 'From', control: 'number', default: 0, min: -1000000000, max: 1000000000, showWhen: { input: 'buckets', equals: ['equal'] } },
+      { id: 'bucket_max', label: 'To', control: 'number', default: 100, min: -1000000000, max: 1000000000, showWhen: { input: 'buckets', equals: ['equal'] } },
+      { id: 'trend_historical', label: 'Draw the historical data', control: 'toggle', default: true, showWhen: { input: 'presentation', equals: ['trend'] } },
+      { id: 'trend_line', label: 'Draw a trend line', control: 'toggle', default: true, showWhen: { input: 'presentation', equals: ['trend'] } },
+      { id: 'forecast_days', label: 'Forecast ahead (days)', control: 'number', default: 0, min: 0, max: 365, hint: '0 for no forecast', showWhen: { input: 'presentation', equals: ['trend'] } },
+      {
+        id: 'breakdown',
+        label: 'Break down by',
+        control: 'select',
+        options: [
+          { value: 'none', label: 'Nothing: one row per object' },
+          { value: 'time', label: 'Period: one row per object per period' },
+          { value: 'property', label: 'A property of the object' },
+          { value: 'relationship', label: 'A related object (its parent cluster, host, …)' },
+        ],
+        default: 'none',
+        showWhen: { input: 'template', equals: ['custom'] },
+      },
+      {
+        id: 'breakdown_unit',
+        label: 'Period',
+        control: 'select',
+        options: [
+          { value: 'HOURS', label: 'Hour' },
+          { value: 'DAYS', label: 'Day' },
+          { value: 'WEEKS', label: 'Week' },
+          { value: 'MONTHS', label: 'Month' },
+        ],
+        default: 'DAYS',
+        showWhen: { input: 'breakdown', equals: ['time'] },
+      },
+      { id: 'breakdown_property', label: 'Property', control: 'text', default: 'summary|parentCluster', showWhen: { input: 'breakdown', equals: ['property'] } },
+      { id: 'breakdown_kind', label: 'Related object type', control: 'combo', options: KIND_OPTIONS, default: 'ClusterComputeResource', showWhen: { input: 'breakdown', equals: ['relationship'] } },
+      { id: 'breakdown_key', label: 'Its metric or property', control: 'text', default: 'badge|health', showWhen: { input: 'breakdown', equals: ['relationship'] } },
+      {
+        id: 'summary_row',
+        label: 'Summary row',
+        control: 'select',
+        options: [
+          { value: 'none', label: 'None' },
+          { value: 'SUM', label: 'Total' },
+          { value: 'AVG', label: 'Average' },
+          { value: 'MIN', label: 'Lowest' },
+          { value: 'MAX', label: 'Highest' },
+          { value: 'COUNT', label: 'Count' },
+        ],
+        default: 'none',
+        hint: 'List and summary views; a summary view uses Total when this is None',
+      },
+      { id: 'sort_column', label: 'Sort by column', control: 'text', default: '', placeholder: 'Unsorted', hint: 'A column label or key' },
+      {
+        id: 'sort_order',
+        label: 'Sort order',
+        control: 'select',
+        options: [
+          { value: 'descending', label: 'Highest first' },
+          { value: 'ascending', label: 'Lowest first' },
+        ],
+        default: 'descending',
+        showWhen: { input: 'sort_column', notEquals: [''] },
+      },
+      { id: 'top_n', label: 'Show only the top (rows)', control: 'number', default: 0, min: 0, max: 10000, hint: '0 for every row' },
+      { id: 'page_size', label: 'Rows per page', control: 'number', default: 50, min: 5, max: 1000 },
+      {
+        id: 'time_mode',
+        label: 'Time range',
+        control: 'select',
+        options: [
+          { value: 'relative', label: 'The last N units' },
+          { value: 'advanced', label: 'From the start of the previous N units to now' },
+          { value: 'absolute', label: 'Between two dates' },
+        ],
+        default: 'relative',
+      },
+      { id: 'time_count', label: 'N', control: 'number', default: 24, min: 1, max: 1000, showWhen: { input: 'time_mode', notEquals: ['absolute'] } },
+      {
+        id: 'time_unit',
+        label: 'Units',
+        control: 'select',
+        options: [
+          { value: 'default', label: 'The view’s own (24 hours for a list, 30 days for a trend)' },
+          { value: 'MINUTES', label: 'Minutes' },
+          { value: 'HOURS', label: 'Hours' },
+          { value: 'DAYS', label: 'Days' },
+          { value: 'WEEKS', label: 'Weeks' },
+          { value: 'MONTHS', label: 'Months' },
+          { value: 'YEARS', label: 'Years' },
+        ],
+        default: 'default',
+        showWhen: { input: 'time_mode', notEquals: ['absolute'] },
+      },
+      { id: 'time_from', label: 'From (YYYY-MM-DD)', control: 'text', default: '2026-01-01', showWhen: { input: 'time_mode', equals: ['absolute'] } },
+      { id: 'time_to', label: 'To (YYYY-MM-DD)', control: 'text', default: '2026-06-30', showWhen: { input: 'time_mode', equals: ['absolute'] } },
+      {
+        id: 'subject_filter',
+        label: 'Only objects where',
+        control: 'textarea',
+        default: '',
+        hint: 'Type | Key | Condition | Value',
+        help: 'All rows must hold. Type is metrics or properties; a number compares as a number, anything else as text.',
+        options: [
+          { value: 'properties', label: 'properties', group: 'Type' },
+          { value: 'metrics', label: 'metrics', group: 'Type' },
+          ...FILTER_CONDITIONS.map((c) => ({ value: c, label: c, group: 'Condition' })),
+        ],
+      },
+      {
+        id: 'visibility',
+        label: 'Show it in',
+        control: 'checklist',
+        options: [
+          { value: 'dashboard', label: 'Dashboards (the View widget)' },
+          { value: 'report', label: 'Reports' },
+          { value: 'details', label: 'Object details (Details tab)' },
+        ],
+        default: 'dashboard, report, details',
+      },
       { id: 'tag_categories', label: 'Tag categories to show', control: 'text', default: 'Owner, Environment', hint: 'Adds the vSphere tag property as a column' },
       { id: 'include_tags', label: 'Include tag columns', control: 'toggle', default: false },
     ],
     automation: (values                 , name        )             => {
       const template = str(values, 'template', 'capacity');
+      const custom = template === 'custom';
       const tags = listOf(str(values, 'tag_categories', ''));
       const includeTags = bool(values, 'include_tags', false);
+      const findings            = [];
+      const presentation = (custom ? str(values, 'presentation', 'list') : 'list')                ;
+      const percentile = num(values, 'percentile', 95);
+
       let view              ;
-      if (template === 'custom') {
-        const columns = str(values, 'columns', '')
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line)             => {
-            // Metric keys contain "|" themselves, so fields are separated by " | ".
-            const [key = '', label = '', flag = ''] = line.split(/\s+\|\s+/).map((part) => part.trim());
-            return { key, label: label || key, property: flag.toLowerCase() === 'property' };
-          })
-          .filter((column) => column.key);
-        view = {
-          name: str(values, 'view_name', 'Custom view'),
-          kind: str(values, 'kind', 'VirtualMachine'),
-          presentation: str(values, 'presentation', 'list')                                ,
-          columns,
-          filter: str(values, 'filter', 'none'),
-        };
+      if (custom) {
+        const parsed = parseViewColumns(str(values, 'columns', ''), percentile);
+        for (const problem of parsed.problems) findings.push(error('vcfops.view.bad-column', problem, { source: SRC }));
+        view = { name: str(values, 'view_name', 'Custom view'), kind: str(values, 'kind', 'VirtualMachine'), presentation, columns: parsed.columns, filter: 'none' };
       } else {
         view = viewTemplate(template, tags);
       }
@@ -642,36 +1973,187 @@ export const VCF_OPS_BUILD                                 = [
         view = { ...view, columns: [...view.columns, ...tags.map((category) => ({ key: 'summary|tag', label: `Tag: ${category}`, property: true }))] };
       }
 
-      const findings            = [];
-      if (view.columns.length === 0) findings.push(error('vcfops.view.no-columns', 'A view with no columns shows the object names and nothing else.', { source: SRC }));
-      if (view.presentation === 'trend' && view.columns.some((column) => column.property)) {
+      // Breakdown: a first column the rows are grouped under.
+      const breakdown = custom ? str(values, 'breakdown', 'none') : 'none';
+      if (breakdown === 'time') view = { ...view, columns: [{ key: 'Interval Breakdown', label: 'Period', timeSegment: str(values, 'breakdown_unit', 'DAYS') }, ...view.columns] };
+      if (breakdown === 'property') {
+        const key = str(values, 'breakdown_property', 'summary|parentCluster');
+        view = { ...view, columns: [{ key, label: key.split('|').pop() ?? key, property: true, sort: true }, ...view.columns.filter((c) => c.key !== key)] };
+      }
+      if (breakdown === 'relationship') {
+        const kind = kindRef(str(values, 'breakdown_kind', 'ClusterComputeResource'));
+        const key = str(values, 'breakdown_key', 'badge|health');
+        view = { ...view, columns: [{ key, label: `${kindLabel(kind)}: ${key}`, related: { relation: 'ANCESTOR', kind }, sort: true, property: !/^(badge|cpu|mem|disk|net|virtualDisk|diskspace|capacity|OnlineCapacityAnalytics|cost|guestfilesystem|sys)\|/.test(key) }, ...view.columns] };
+      }
+
+      // Sort.
+      const sortColumn = str(values, 'sort_column', '').trim();
+      const sortOrder = str(values, 'sort_order', 'descending');
+      if (sortColumn) {
+        const index = view.columns.findIndex((c) => c.label.toLowerCase() === sortColumn.toLowerCase() || c.key === sortColumn);
+        if (index < 0) findings.push(error('vcfops.view.sort-column', `Sort by "${sortColumn}": no column has that label or key.`, { remediation: `Columns: ${view.columns.map((c) => c.label).join(', ')}.`, source: SRC }));
+        else view = { ...view, columns: view.columns.map((c, i) => ({ ...c, sort: i === index })) };
+      }
+
+      // Subjects.
+      const subjects = [kindRef(view.kind), ...(custom ? listOf(str(values, 'more_kinds', '')).map(kindRef) : [])].filter((kind, index, all) => all.findIndex((other) => sameKind(other, kind)) === index);
+      const relation = str(values, 'subject_relation', 'both')                           ;
+
+      // Time.
+      const timeMode = str(values, 'time_mode', 'relative')                               ;
+      const timeUnit = str(values, 'time_unit', 'default');
+      const defaults = defaultViewOptions(view);
+      const dateOf = (text        )                     => (/^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`)) ? Date.parse(`${text}T00:00:00Z`) : undefined);
+      const from = dateOf(str(values, 'time_from', ''));
+      const to = dateOf(str(values, 'time_to', ''));
+      if (timeMode === 'absolute') {
+        if (from === undefined || to === undefined) findings.push(error('vcfops.view.bad-date', 'The time range needs two dates written YYYY-MM-DD.', { source: SRC }));
+        else if (from >= to) findings.push(error('vcfops.view.bad-range', 'The time range ends before it starts.', { source: SRC }));
+        findings.push(warning('vcfops.view.absolute-range', 'No exported view with a fixed date range was found, so the dates are written as startDate / endDate (milliseconds) with advancedTimeMode on.', { remediation: 'VERIFY after import: open the view, Time Settings, and check the dates; set them there if the editor shows a relative range.', source: SRC }));
+      }
+      const time =
+        timeMode === 'absolute'
+          ? { mode: timeMode, unit: 'DAYS', count: from !== undefined && to !== undefined && to > from ? Math.ceil((to - from) / 86400000) : 1, from, to: to !== undefined ? to + 86399999 : undefined }
+          : { mode: timeMode, unit: timeUnit === 'default' ? defaults.time.unit : timeUnit, count: timeUnit === 'default' ? defaults.time.count : num(values, 'time_count', 24) };
+
+      // Distribution buckets.
+      const bucketMode = str(values, 'buckets', 'discrete')                                  ;
+      const palette = ['8ABF5B', 'EACC58', 'ED891F', 'E4695E', 'DE3F30', '6870C4', '4ECAC2', '7D7DDE'];
+      const ranges = str(values, 'bucket_ranges', '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part, index) => {
+          const m = /^(-?\d+(?:\.\d+)?)\s*(?:-|to|–)\s*(-?\d+(?:\.\d+)?)$/.exec(part);
+          return m ? { start: Number(m[1]), end: Number(m[2]), color: palette[index % palette.length]  } : undefined;
+        });
+      const summaryRow = str(values, 'summary_row', 'none');
+      const opts              = {
+        ...defaults,
+        description: '',
+        subjects,
+        relation,
+        usages: listOf(str(values, 'visibility', '')),
+        time,
+        pageSize: num(values, 'page_size', 50),
+        topN: num(values, 'top_n', 0),
+        summary: summaryRow !== 'none' ? summaryRow : presentation === 'summary' ? 'SUM' : undefined,
+        chart: str(values, 'distribution_chart', 'bar-chart')                        ,
+        buckets: { mode: bucketMode, ranges: ranges.filter((r)                                                     => r !== undefined), count: num(values, 'bucket_count', 10), min: num(values, 'bucket_min', 0), max: num(values, 'bucket_max', 100) },
+        trend: { historical: bool(values, 'trend_historical', true), line: bool(values, 'trend_line', true), forecastDays: num(values, 'forecast_days', 0) },
+        filter: [],
+        text: str(values, 'text_body', ''),
+      };
+
+      // Subject filter rows.
+      const filter                     = [];
+      for (const line of str(values, 'subject_filter', '').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) {
+        const [type = '', key = '', condition = '', value = ''] = cellsOf(line);
+        const filterType = type.toLowerCase().startsWith('metric') ? 'metrics' : type.toLowerCase().startsWith('propert') ? 'properties' : undefined;
+        const cond = condition.toUpperCase().replace(/\s+/g, '_');
+        if (!filterType || !key || !FILTER_CONDITIONS.includes(cond) || value === '') {
+          findings.push(error('vcfops.view.bad-filter', `"${line}" is not Type | Key | Condition | Value (type metrics or properties; condition ${FILTER_CONDITIONS.join(', ')}).`, { source: SRC }));
+          continue;
+        }
+        filter.push({ filterType, key, condition: cond, value: /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value });
+      }
+      const finalOpts              = { ...opts, filter };
+
+      // What the view is, in words, for the description the editor shows.
+      const words = [
+        view.filter && view.filter !== 'none' ? `Shows: ${view.filter}.` : '',
+        filter.length > 0 ? `Only objects where ${filter.map((c) => `${c.key} ${c.condition.toLowerCase().replace(/_/g, ' ')} ${c.value}`).join(' and ')}.` : '',
+        view.columns.some((c) => c.sort) ? `Sorted by ${view.columns.find((c) => c.sort) .label}, ${sortOrder === 'ascending' ? 'lowest' : 'highest'} first.` : '',
+        finalOpts.topN > 0 ? `Top ${finalOpts.topN}.` : '',
+      ].filter(Boolean);
+      const described              = { ...finalOpts, description: words.length > 0 ? words.join(' ') : custom ? '' : ` Filter: ${view.filter}.` };
+
+      // Findings.
+      const data = view.columns.filter((c) => !c.timeSegment);
+      if (presentation !== 'text' && presentation !== 'image' && data.length === 0) findings.push(error('vcfops.view.no-columns', 'A view with no columns shows the object names and nothing else.', { source: SRC }));
+      for (const column of data) {
+        const problem = column.key.startsWith('<REQUIRED') ? undefined : metricKeyProblem(column.key);
+        if (problem) findings.push(error('vcfops.view.bad-key', `Column "${column.label}": the key "${column.key}" ${problem}.`, { source: SRC }));
+        if (column.kind && !subjects.some((kind) => sameKind(kind, column.kind ))) {
+          findings.push(error('vcfops.view.column-kind', `Column "${column.label}" is bound to ${kindText(column.kind)}, which is not one of the view’s object types (${subjects.map(kindText).join(', ')}).`, { remediation: 'Add the type under More object types, or clear the Kind cell.', source: SRC }));
+        }
+      }
+      if (presentation === 'trend' && data.some((column) => column.property)) {
         findings.push(warning('vcfops.view.trend-property', 'A trend view over a property draws a flat line: properties are not time series.', { remediation: 'Use metrics in a trend view; put properties in a list.', source: SRC }));
       }
-      if (view.presentation === 'distribution' && view.columns.length > 1) {
-        findings.push(warning('vcfops.view.distribution-columns', 'A distribution view plots one value; only the first column is used.', { source: SRC }));
+      if (presentation === 'trend' && data.some((c) => c.transform && c.transform !== 'CURRENT')) {
+        findings.push(info('vcfops.view.trend-transform', 'A trend view draws the history, trend line and forecast set below for every column; the per-column transformations are not used.', { source: SRC }));
       }
-      if (view.columns.some((column) => column.key === 'summary|tag')) {
+      if (presentation === 'trend' && !finalOpts.trend.historical && !finalOpts.trend.line && finalOpts.trend.forecastDays === 0) {
+        findings.push(error('vcfops.view.trend-empty', 'The trend view draws neither the history, a trend line nor a forecast.', { source: SRC }));
+      }
+      if (presentation === 'distribution' && data.length > 1) findings.push(warning('vcfops.view.distribution-columns', 'A distribution view plots one value; only the first column is used.', { source: SRC }));
+      if (presentation === 'distribution' && data[0]?.property && bucketMode !== 'discrete') {
+        findings.push(warning('vcfops.view.distribution-property', `"${data[0].label}" is a property, bucketed as numbers, so the chart opens with "No data to display".`, { remediation: 'Use "One per distinct value" buckets for a property (the fix for the same fault in sentania-labs DEF-012).', source: SRC }));
+      }
+      if (presentation === 'distribution' && bucketMode === 'ranges' && (finalOpts.buckets.ranges.length === 0 || ranges.some((r) => r === undefined))) {
+        findings.push(error('vcfops.view.bad-ranges', `"${str(values, 'bucket_ranges', '')}" is not a list of start-end ranges.`, { source: SRC }));
+      }
+      if (presentation === 'distribution' && bucketMode === 'equal' && finalOpts.buckets.min >= finalOpts.buckets.max) findings.push(error('vcfops.view.bad-buckets', 'The buckets end before they start.', { source: SRC }));
+      if (presentation !== 'trend' && data.some((c) => c.transform === 'FORECAST')) {
+        findings.push(warning('vcfops.view.forecast-column', 'Forecast is written on a list column with forecastDays; the exports seen use it only in trend views.', { remediation: 'VERIFY the column in the editor after import, or make the view a trend with a forecast.', source: SRC }));
+      }
+      const aggregating = data.some((c) => c.transform && !['CURRENT', 'TIMESTAMP'].includes(c.transform));
+      if (aggregating && timeMode === 'relative' && timeUnit === 'default' && (presentation === 'list' || presentation === 'summary')) {
+        findings.push(info('vcfops.view.window', 'Averages, maximums and percentiles are taken over the view’s time range, 24 hours here.', { remediation: 'Set the time range to the window you mean, such as 30 days for right-sizing.', source: SRC }));
+      }
+      if (finalOpts.usages.filter((u) => ['dashboard', 'report', 'details'].includes(u)).length === 0) {
+        findings.push(error('vcfops.view.invisible', 'The view is shown nowhere: tick dashboards, reports or object details.', { source: SRC }));
+      }
+      if (presentation === 'text' && !finalOpts.text.trim()) findings.push(error('vcfops.view.no-text', 'A text view with no text.', { source: SRC }));
+      if (presentation === 'image') {
+        findings.push(warning('vcfops.view.image', 'The picture is not in the XML yet: run embed-image.sh <picture.png> before importing; import-view.sh refuses until then.', { source: SRC }));
+      }
+      if (finalOpts.topN > 0 && presentation !== 'list' && presentation !== 'summary') findings.push(info('vcfops.view.top-n', 'Top-N applies to list and summary views.', { source: SRC }));
+      if (subjects.length > 1 && data.every((c) => !c.kind)) {
+        findings.push(info('vcfops.view.multi-subject', 'Every column reads every object type; a key one type does not have shows a dash on its rows.', { remediation: 'Name the type in a column’s Kind cell to show it only on that type’s rows.', source: SRC }));
+      }
+      for (const kind of [...subjects, ...data.flatMap((c) => (c.related ? [c.related.kind] : []))]) {
+        if (!KINDS.some((k) => k.seen && sameKind(kindRef(k.value), kind))) {
+          findings.push(info('vcfops.view.kind-unverified', `${kindText(kind)} is not a kind seen in an exported view.`, { remediation: 'VERIFY the adapter and object type keys on an object’s details (or GET /suite-api/api/adapterkinds/{adapterKind}/resourcekinds).', source: SRC }));
+        }
+      }
+      if (data.some((column) => column.key === 'summary|tag')) {
         findings.push(info('vcfops.view.tag-property', 'Tag columns use the property summary|tag, which holds every tag on the object as one string.', { remediation: 'VERIFY the key and the value format on a tagged VM’s property list. A per-category column needs a filter on that string, not a separate key.', source: SRC }));
       }
-      if (view.columns.some((column) => column.key.startsWith('<REQUIRED'))) {
+      if (data.some((column) => column.key.startsWith('<REQUIRED'))) {
         findings.push(warning('vcfops.view.required-key', 'A column key is still <REQUIRED>, so the import script will refuse to run.', { remediation: 'Find the key on an object’s metric or property list in your release and put it in the XML.', source: SRC }));
       }
 
-      const content = viewXml(view, ` Filter: ${view.filter}.`);
-
+      const content = viewXml(view, described);
+      const kindsText = subjects.map(kindText).join(', ');
+      const presentationLabel = presentation === 'distribution' ? `${finalOpts.chart.replace('-chart', '')} distribution` : presentation;
+      const embed = presentation === 'image' ? { 'embed-image.sh': embedImageScript() } : {};
+      const verify = [
+        ...(presentation === 'summary' ? ['a summary view is written as a list-view provider with Presentation "summary" and a summaryInfos aggregation; no summary view was in the exports read. Open it in the editor after import and check it draws.'] : []),
+        ...(presentation === 'image' ? ['the picture is written as one line of base64 in <Source>; the exports wrap it at 76 characters. If the editor shows no picture, re-add it there.'] : []),
+        ...(breakdown === 'property' || breakdown === 'relationship' ? ['the view editor’s Group By setting is in no export read, so the breakdown is written as the first column, sorted. Set Group By on that column in the editor if you want grouped rows.'] : []),
+        ...(sortColumn ? [`exports carry which column sorts (sortCriteria) but not the direction; check it sorts ${sortOrder === 'ascending' ? 'lowest' : 'highest'} first, and flip it in the editor if not.`] : []),
+        ...(finalOpts.topN > 0 ? [`top ${finalOpts.topN} is written as listTopResultSize (every export has -1, "all"); check the view shows ${finalOpts.topN} rows.`] : []),
+      ];
       return {
         platform: PLATFORM,
-        title: `View "${view.name}" — ${view.presentation} of ${view.kind}, ${view.columns.length} columns`,
+        title: `View "${view.name}" — ${presentationLabel} of ${kindsText}, ${data.length} columns`,
         effect: 'reversible',
         trigger: { kind: 'manual', detail: 'Imported once; used whenever a dashboard widget or a report renders it.', worstCase: 'every dashboard refresh that shows it' },
         scope: {
-          what: `One view definition, id ${viewIdOf(view.name)}, over ${view.kind} objects.`,
-          decidedBy: [`Object type ${view.kind}.`, `Filter: ${view.filter}.`, 'Whatever object the dashboard or report runs it against — the view itself has no fixed scope.'],
+          what: `One view definition, id ${viewIdOf(view.name)}, over ${kindsText} objects${relation === 'descendant' ? ' below the object it is run on' : relation === 'self' ? ' — only the object it is run on' : ''}.`,
+          decidedBy: [
+            `Object types ${kindsText}; ${relation === 'both' ? 'it runs on one of them, or lists them below any object' : relation === 'descendant' ? 'it lists them below the object it is run on' : 'it runs only on one of them'}.`,
+            filter.length > 0 ? `Filter: ${described.description}` : `Filter: ${view.filter}.`,
+            'Whatever object the dashboard or report runs it against — the view itself has no fixed scope.',
+          ],
           ifWrong: 'With --overwrite, a view with the same name or id is replaced, and a report or dashboard that used the old columns now shows the new ones; the old view is in the pre-import-backup zip. Without --overwrite the script refuses.',
         },
         guardrails: [
           { rule: 'The id comes from the name', because: 'Re-importing an edited view replaces it rather than creating a second one with the same title, which is how estates end up with four "VM Inventory" views.' },
-          { rule: 'import-view.sh stops while the XML holds <REQUIRED>', because: 'A view with a placeholder column key imports cleanly and shows an empty column forever.' },
+          { rule: 'Every column key, transformation, unit, filter row and bucket range is checked before anything is written', because: 'A misspelt key or a property bucketed as a number imports cleanly and shows an empty column or "No data to display" forever.' },
+          { rule: 'import-view.sh stops while the XML holds <REQUIRED>', because: 'A view with a placeholder column key, or an image view with no picture, imports cleanly and shows nothing.' },
           { rule: '--dry-run builds and lists the zip and sends nothing', because: 'The content-zip layout comes from real exports rather than a published specification; a --dry-run first is for comparing it with an export-reference.sh export.' },
           { rule: 'When it imports, the script first exports the existing VIEW_DEFINITIONS content to pre-import-backup-<time>.zip and refuses to import when a view with the same name or id is already there, unless --overwrite is given', because: 'The import API overwrites by default (force defaults to true), and somebody’s hand-edited copy would be gone with no copy kept.' },
           { rule: 'The import is sent with force=false unless --overwrite', because: 'Without it the API replaces whatever matches, which is the documented default.' },
@@ -680,53 +2162,105 @@ export const VCF_OPS_BUILD                                 = [
         dryRun: ['Run import-view.sh --dry-run first: it builds the content package, lists it and sends nothing.', 'Drop import/view.zip on the VCF Ops content page: it reads ViewDef content and lists the view with its subject type.'],
         undo: ['Delete the view under Views > Manage. Delete any dashboard widget or report section that uses it first, or they show an error.', 'If --overwrite replaced a view, import the pre-import-backup-<time>.zip the script wrote to put the previous one back.'],
         told: ['Nobody. It is a definition.'],
-        requires: ['zip, unzip, jq and curl.', 'An account allowed to import content.'],
+        requires: ['zip, unzip, jq and curl.', 'An account allowed to import content.', ...(presentation === 'image' ? ['The picture (PNG or JPEG) beside the scripts, and base64.'] : [])],
         files: {
           'import/view.zip/content.xml': content,
           'import/view.xml': content,
           ...contentPackage({ 'views.zip/content.xml': content }, { views: 1 }),
           'import-view.sh': contentImportScript({ what: `the view "${view.name}"`, contentType: 'VIEW_DEFINITIONS', needles: [`<Title>${xml(view.name)}</Title>`, viewIdOf(view.name)] }),
+          ...embed,
           'export-reference.sh': exportReferenceScript('VIEW_DEFINITIONS'),
           'IMPORT.md': importMd({
             title: `the view "${view.name}"`,
             steps: [
+              ...(presentation === 'image'
+                ? [{ heading: 'First, the picture', files: ['embed-image.sh'], how: ['./embed-image.sh picture.png — writes the picture into import/view.xml, import/view.zip and the content package, as base64. Run it once; import-view.sh refuses while the placeholder is there.'] }]
+                : []),
               {
                 heading: 'The view',
                 files: ['import/view.zip'],
-                how: ['Views → Manage → ⋯ → Import (8.x: Dashboards → Views → Import), and choose import/view.zip — a zip holding content.xml, as a view export is.', `The view keeps id ${viewIdOf(view.name)}, which is the id the dashboard and report blueprints refer to.`],
-                verify: [
-                  'import/view.xml is the same content.xml as a bare file, for dialogs that take the XML on its own.',
-                  ...(view.presentation === 'list' ? [] : [`a ${view.presentation} view is written with DataProvider dataType "${view.presentation}-view" and Presentation type "${view.presentation}"; only the list form is confirmed from a real export. Open the view in the editor after import and check it draws.`]),
-                  ...(view.filter && view.filter !== 'none' ? [`the filter ("${view.filter}") is in the description only: set it in the view editor after import.`] : []),
-                ],
+                how: ['Views → Manage → ⋯ → Import, and choose import/view.zip — a zip holding content.xml, as a view export is.', `The view keeps id ${viewIdOf(view.name)}, which is the id the dashboard and report blueprints refer to.`],
+                verify: ['import/view.xml is the same content.xml as a bare file, for dialogs that take the XML on its own.', ...verify],
               },
               contentStep('VIEW_DEFINITIONS', 'import-view.sh'),
             ],
-            sources: FORMAT_SOURCES,
+            intro: IMPORT_INTRO,
+            sources: CONTENT_SOURCES,
           }),
         },
         notes: [
           CONTENT_IMPORT_NOTE,
           'DASHBOARDS, VIEW_DEFINITIONS and REPORT_DEFINITIONS are in the contentTypes enum of POST /content/operations/export in the VCF Operations API reference; the backup export uses scope CUSTOM with just that type.',
-          'The attributes-selector items follow a real export; for a column type not seen there, build one column in the view editor, export it, and compare its <Item> block.',
+          'Element and property names are the ones real exports carry: list-view / trend-view / distribution-view providers; Presentation list, line-chart, bar-chart, pie-chart, donut-chart, text and image; per-column transformations CURRENT, AVG, MAX, MIN, SUM, PERCENTILE (with percentile), FORECAST (with forecastDays), FIRST, LAST and TIMESTAMP; preferredUnitId; sortCriteria; relatedRelationType; the Interval Breakdown column; summaryInfos; buckets-control DISCRETE and SIMPLEMAXMIN; the SubjectType filter JSON (brockpeterson/operations_dashboards, sentania-labs/vcf-content-factory working_views.xml and view_column_wire_format.md).',
+          ...verify.map((line) => `VERIFY: ${line}`),
         ],
         findings,
       };
     },
   }),
-
   // -------------------------------------------------------------------------
   automationBlueprint({
     id: 'vcfops_report',
     platform: PLATFORM,
-    label: 'A report from views, on a schedule',
+    label: 'A report from views and dashboards, on a schedule',
     group: 'Dashboards and reports',
     description:
-      'A report definition made of named views, in PDF, CSV or both, imported as content, and then scheduled with POST /reportdefinitions/{id}/schedules to a team address. The views are referred to by the same name-derived ids the view blueprint writes.',
+      'A report definition made of views and dashboards in the order given, each in landscape or portrait, with or without a cover page, a table of contents and a page footer, in PDF, CSV or both — imported as content — and then scheduled daily, weekly or monthly (every N days, weeks or months, on the weekdays or the day of the month chosen) with POST /reportdefinitions/{id}/schedules: run against one object or a custom group, and mailed to a team address through the outbound email instance named. Views and dashboards are referred to by the same name-derived ids the view and dashboard blueprints write.',
     inputs: [
       { id: 'report_name', label: 'Report name', control: 'text', default: 'Monthly capacity and reclamation' },
-      { id: 'views', label: 'Views, in order', control: 'textarea', default: 'Cluster capacity overview\nReclamation', hint: 'One view name per line, as generated by the view blueprint' },
-      { id: 'kind', label: 'Run against', control: 'select', options: KIND_OPTIONS, default: 'ClusterComputeResource' },
+      {
+        id: 'content',
+        label: 'Content, in order',
+        control: 'textarea',
+        default: 'view | Cluster capacity overview | Landscape | yes\nview | Reclamation | Landscape | yes\ndashboard | Cluster capacity overview | Landscape | ',
+        hint: 'Type | Name | Orientation | Colour list cells',
+        help: 'One section per row: a view or a dashboard by name, as the view and dashboard blueprints write them (or id:<uuid> for one made by hand). Orientation left empty takes the report’s own. "Colour list cells" applies the view’s thresholds to its cells in the PDF.',
+        options: [
+          { value: 'view', label: 'View', group: 'Type' },
+          { value: 'dashboard', label: 'Dashboard', group: 'Type' },
+          { value: 'Landscape', label: 'Landscape', group: 'Orientation' },
+          { value: 'Portrait', label: 'Portrait', group: 'Orientation' },
+          { value: 'yes', label: 'Yes', group: 'Colour list cells' },
+          { value: 'no', label: 'No', group: 'Colour list cells' },
+        ],
+      },
+      { id: 'kind', label: 'Object type it reports on', control: 'combo', options: KIND_OPTIONS, default: 'ClusterComputeResource', hint: 'Or Adapter/Kind' },
+      {
+        id: 'subject_relation',
+        label: 'Runs on',
+        control: 'select',
+        options: [
+          { value: 'both', label: 'That type, or anything above it (a datacenter, vCenter, the world)' },
+          { value: 'descendant', label: 'Only objects above that type' },
+          { value: 'self', label: 'Only objects of that type' },
+        ],
+        default: 'both',
+      },
+      {
+        id: 'subject_mode',
+        label: 'Scheduled for',
+        control: 'select',
+        options: [
+          { value: 'object', label: 'One object, by name' },
+          { value: 'group', label: 'A custom group, by name' },
+        ],
+        default: 'object',
+      },
+      { id: 'subject_name', label: 'Object or group name', control: 'text', default: 'vSphere World' },
+      { id: 'cover_page', label: 'Cover page', control: 'toggle', default: true },
+      { id: 'toc', label: 'Table of contents', control: 'toggle', default: true },
+      { id: 'footer', label: 'Page footer (page numbers, date)', control: 'toggle', default: true },
+      {
+        id: 'orientation',
+        label: 'Orientation',
+        control: 'select',
+        options: [
+          { value: 'Landscape', label: 'Landscape' },
+          { value: 'Portrait', label: 'Portrait' },
+        ],
+        default: 'Landscape',
+        hint: 'For sections that do not set their own',
+      },
       {
         id: 'formats',
         label: 'Formats',
@@ -743,34 +2277,88 @@ export const VCF_OPS_BUILD                                 = [
         label: 'How often',
         control: 'select',
         options: [
+          { value: 'daily', label: 'Daily' },
           { value: 'weekly', label: 'Weekly' },
           { value: 'monthly', label: 'Monthly' },
         ],
         default: 'monthly',
       },
-      { id: 'recipients', label: 'Send to', control: 'text', default: 'platform-team@example.com' },
-      { id: 'start_hour', label: 'Hour (GMT)', control: 'number', default: 7, min: 0, max: 23 },
+      { id: 'every', label: 'Every (days, weeks or months)', control: 'number', default: 1, min: 1, max: 99, hint: '2 for every other week' },
+      {
+        id: 'weekdays',
+        label: 'On',
+        control: 'checklist',
+        options: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'].map((day) => ({ value: day, label: day.charAt(0) + day.slice(1).toLowerCase() })),
+        default: 'MONDAY',
+        showWhen: { input: 'cadence', equals: ['weekly'] },
+      },
+      { id: 'day_of_month', label: 'Day of the month', control: 'number', default: 1, min: 1, max: 31, showWhen: { input: 'cadence', equals: ['monthly'] } },
+      { id: 'start_time', label: 'At (HH:MM, GMT)', control: 'text', default: '07:00', hint: 'Schedules made through the API run in GMT' },
+      { id: 'start_date', label: 'Starting (YYYY-MM-DD)', control: 'text', default: '', placeholder: 'The day it is scheduled' },
+      { id: 'email_instance', label: 'Outbound email instance', control: 'text', default: '', placeholder: 'The default one', hint: 'Its name under Outbound Settings' },
+      { id: 'recipients', label: 'Send to', control: 'text', default: 'platform-team@example.com', hint: 'Comma separated' },
     ],
     automation: (values                 , name        )             => {
       const reportName = str(values, 'report_name', 'Report');
-      const views = str(values, 'views', '').split('\n').map((line) => line.trim()).filter(Boolean);
-      const kind = str(values, 'kind', 'ClusterComputeResource');
+      const kind = kindRef(str(values, 'kind', 'ClusterComputeResource'));
+      const relation = str(values, 'subject_relation', 'both');
+      const subjectMode = str(values, 'subject_mode', 'object');
+      const subjectName = str(values, 'subject_name', 'vSphere World').trim();
+      const cover = bool(values, 'cover_page', true);
+      const toc = bool(values, 'toc', true);
+      const footer = bool(values, 'footer', true);
+      const orientation = str(values, 'orientation', 'Landscape');
       const formats = str(values, 'formats', 'both');
       const cadence = str(values, 'cadence', 'monthly');
+      const every = Math.max(1, num(values, 'every', 1));
+      const weekdays = listOf(str(values, 'weekdays', '')).map((day) => day.toUpperCase());
+      const dayOfMonth = num(values, 'day_of_month', 1);
+      const startTime = str(values, 'start_time', '07:00').trim();
+      const startDate = str(values, 'start_date', '').trim();
+      const emailInstance = str(values, 'email_instance', '').trim();
       const recipients = listOf(str(values, 'recipients', ''));
-      const hour = num(values, 'start_hour', 7);
       const base = slugOf(name || reportName, 'report');
       const reportId = stableId(`report:${reportName}`);
+      const time = /^(\d{1,2}):(\d{2})$/.exec(startTime);
 
       const findings            = [];
-      if (views.length === 0) findings.push(error('vcfops.report.no-views', 'A report with no views is a cover page.', { source: SRC }));
+      const sections = parseReportContent(str(values, 'content', ''), orientation);
+      for (const problem of sections.problems) findings.push(error('vcfops.report.bad-section', problem, { source: SRC }));
+      const views = sections.rows.filter((row) => row.type === 'View');
+      const dashboards = sections.rows.filter((row) => row.type === 'Dashboard');
+      if (sections.rows.length === 0) findings.push(error('vcfops.report.no-views', 'A report with no views or dashboards is a cover page.', { source: SRC }));
       if (recipients.length === 0) findings.push(error('vcfops.report.no-recipient', 'No recipients, so the schedule generates a report nobody receives.', { source: SRC }));
-      if (views.length > 8) findings.push(warning('vcfops.report.long', `${views.length} views in one report.`, { remediation: 'Nobody reads past page ten. Split it by audience.', source: SRC }));
+      const badAddress = recipients.filter((address) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address));
+      if (badAddress.length > 0) findings.push(error('vcfops.report.bad-address', `${badAddress.join(', ')} ${badAddress.length === 1 ? 'is not an email address' : 'are not email addresses'}.`, { source: SRC }));
+      if (sections.rows.length > 8) findings.push(warning('vcfops.report.long', `${sections.rows.length} sections in one report.`, { remediation: 'Nobody reads past page ten. Split it by audience.', source: SRC }));
+      if (!time || Number(time[1]) > 23 || Number(time[2]) > 59) findings.push(error('vcfops.report.bad-time', `"${startTime}" is not a 24-hour HH:MM time.`, { source: SRC }));
+      if (startDate && (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || Number.isNaN(Date.parse(`${startDate}T00:00:00Z`)))) findings.push(error('vcfops.report.bad-date', `"${startDate}" is not a YYYY-MM-DD date.`, { source: SRC }));
+      if (cadence === 'weekly' && weekdays.length === 0) findings.push(error('vcfops.report.no-day', 'A weekly schedule with no day never runs.', { source: SRC }));
+      if (cadence === 'monthly' && dayOfMonth > 28) {
+        findings.push(warning('vcfops.report.short-month', `Day ${dayOfMonth} does not exist in every month.`, { remediation: 'Use day 28 or earlier, or VERIFY on your release whether a short month runs it on its last day or skips it.', source: SRC }));
+      }
+      if (cadence === 'daily' && every === 1) findings.push(info('vcfops.report.daily', 'A report every day is read for a week and then filtered. Weekly is usually the useful rhythm.', { source: SRC }));
+      if (!subjectName) findings.push(error('vcfops.report.no-subject', 'The schedule needs an object or group to run the report for.', { source: SRC }));
+      if (dashboards.length > 0 && formats === 'csv') {
+        findings.push(warning('vcfops.report.csv-dashboard', 'A dashboard section has no CSV form: a CSV-only report leaves it out.', { remediation: 'Add PDF, or drop the dashboard section.', source: SRC }));
+      }
+      if (dashboards.length > 0) {
+        findings.push(info('vcfops.report.dashboard', 'A dashboard section prints the dashboard as it stands; a widget that waits for a selection in another prints empty.', { remediation: 'Give dashboards that go in reports self-providing widgets.', source: SRC }));
+      }
+      if (sections.rows.some((row) => !row.byId)) {
+        findings.push(info('vcfops.report.derived-ids', 'Views and dashboards are referred to by the ids their blueprints derive from their names; one made by hand has its own id.', { remediation: 'For one made by hand, export it (Content Management) and write id:<its id> in the Name cell.', source: SRC }));
+      }
 
       const formatList = formats === 'both' ? ['PDF', 'CSV'] : [formats.toUpperCase()];
-      // As a Reports → Export writes it (sentania-labs, VCF Operations 9): ReportDef
-      // with isTenant, Title, Description, SubjectType, Sections of
-      // ContentType/ContentKey (a view section's key is the view id) and Settings.
+      // As a Reports → Export writes it (sentania-labs reports_api_surface and a
+      // VCF Operations 9 export): ReportDef with isTenant, Title, Description,
+      // SubjectType, Sections of ContentType / ContentKey (a view section's key
+      // is the view id, a dashboard section's the dashboard id), per-section
+      // ContentOrientation and ContentFormatting, then Settings.
+      const subjectTypes = [
+        ...(relation === 'self' ? [] : [`            <SubjectType adapterKind="${xml(kind.adapterKind)}" resourceKind="${xml(kind.resourceKind)}" type="descendant"/>`]),
+        ...(relation === 'descendant' ? [] : [`            <SubjectType adapterKind="${xml(kind.adapterKind)}" resourceKind="${xml(kind.resourceKind)}" type="self"/>`]),
+      ];
       const reportXml = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<Content>',
@@ -778,27 +2366,22 @@ export const VCF_OPS_BUILD                                 = [
         `        <ReportDef id="${reportId}">`,
         '            <isTenant>false</isTenant>',
         `            <Title>${xml(reportName)}</Title>`,
-        `            <Description>: ${xml(views.join(', '))}.</Description>`,
-        `            <SubjectType adapterKind="VMWARE" resourceKind="${xml(kind)}" type="self"/>`,
+        `            <Description>${xml(`${sections.rows.map((row) => row.name).join(', ')}.`)}</Description>`,
+        ...subjectTypes,
         '            <Sections>',
-        '                <Section>',
-        '                    <ContentType>CoverPage</ContentType>',
-        '                    <ContentKey>COVER_PAGE</ContentKey>',
-        '                </Section>',
-        '                <Section>',
-        '                    <ContentType>TableOfContents</ContentType>',
-        '                    <ContentKey>TABLE_OF_CONTENTS</ContentKey>',
-        '                </Section>',
-        ...views.flatMap((view) => [
+        ...(cover ? ['                <Section>', '                    <ContentType>CoverPage</ContentType>', '                    <ContentKey>COVER_PAGE</ContentKey>', '                </Section>'] : []),
+        ...(toc ? ['                <Section>', '                    <ContentType>TableOfContents</ContentType>', '                    <ContentKey>TABLE_OF_CONTENTS</ContentKey>', '                </Section>'] : []),
+        ...sections.rows.flatMap((row) => [
           '                <Section>',
-          '                    <ContentType>View</ContentType>',
-          `                    <ContentKey>${viewIdOf(view)}</ContentKey>`,
-          '                    <ContentOrientation>Landscape</ContentOrientation>',
+          `                    <ContentType>${row.type}</ContentType>`,
+          `                    <ContentKey>${xml(row.id)}</ContentKey>`,
+          `                    <ContentOrientation>${row.orientation}</ContentOrientation>`,
+          ...(row.type === 'View' ? ['                    <ContentFormatting>', `                        <ColorizeListView>${row.colorize}</ColorizeListView>`, '                    </ContentFormatting>'] : []),
           '                </Section>',
         ]),
         '            </Sections>',
         '            <Settings>',
-        '                <ShowPageFooter>true</ShowPageFooter>',
+        `                <ShowPageFooter>${footer}</ShowPageFooter>`,
         ...formatList.map((format) => `                <OutputFormat>${format.toLowerCase()}</OutputFormat>`),
         '            </Settings>',
         '        </ReportDef>',
@@ -807,69 +2390,104 @@ export const VCF_OPS_BUILD                                 = [
         '',
       ].join('\n');
 
+      // Fields as the schedule API takes them (the same body "Email a capacity
+      // report on a schedule" sends). No network-share path: publishing reports to
+      // a share was removed in 9.1.
       const schedule = {
-        reportDefinitionId: '<set by schedule-report.sh>',
-        resourceId: ['<set by schedule-report.sh from RESOURCE_ID>'],
-        reportScheduleType: cadence === 'weekly' ? 'WEEKLY' : 'MONTHLY',
-        recurrence: 1,
-        ...(cadence === 'weekly' ? { daysOfTheWeek: ['MONDAY'] } : {}),
-        dayOfTheMonth: 1,
-        startDate: '<REQUIRED — the first date it may run, e.g. 2026-10-01; check the format against GET of an existing schedule>',
-        startHour: hour,
-        startMinute: 0,
+        reportDefinitionId: '<set by schedule-report.sh from the report name>',
+        resourceId: [`<set by schedule-report.sh from the ${subjectMode === 'group' ? 'custom group' : 'object'} name>`],
+        reportScheduleType: cadence === 'daily' ? 'DAILY' : cadence === 'weekly' ? 'WEEKLY' : 'MONTHLY',
+        recurrence: every,
+        ...(cadence === 'weekly' ? { daysOfTheWeek: weekdays } : {}),
+        ...(cadence === 'monthly' ? { dayOfTheMonth: dayOfMonth } : {}),
+        startDate: startDate || '<set by schedule-report.sh: today>',
+        startHour: time ? Number(time[1]) : 7,
+        startMinute: time ? Number(time[2]) : 0,
         emailAddresses: recipients,
-        relativePath: [],
+        ...(emailInstance ? { emailPluginId: `<set by schedule-report.sh from the outbound instance "${emailInstance}">` } : {}),
       };
 
+      const api = `https://\${VCFOPS_HOST}/suite-api/api`;
       const scheduleScript = [
         '#!/usr/bin/env bash',
-        `# Schedule the report "${reportName}" once it has been imported.`,
+        `# Schedule the report "${reportName}" once it has been imported: ${cadence}, for`,
+        `# the ${subjectMode === 'group' ? 'custom group' : 'object'} "${subjectName}", mailed to ${recipients.join(', ') || 'nobody'}.`,
         '#',
-        '# Schedules made through the API run in GMT. It posts the schedule when run;',
-        '# --dry-run only prints the body. Not idempotent: a second run makes a second schedule.',
+        '# The report, the object or group and the email instance are looked up by name.',
+        '# It posts the schedule when run; --dry-run prints the body and sends nothing.',
+        '# A schedule for the same object already on the report is reported and not',
+        '# duplicated; --again adds one anyway. Schedules made through the API run in GMT.',
         'set -euo pipefail',
         '',
         ...authPreamble(PLATFORM),
-        `: "\${RESOURCE_ID:?set RESOURCE_ID to the id of the ${kind} to run it for: GET /suite-api/api/resources?resourceKind=${kind}&name=...}"`,
         'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+        'DRY_RUN=0; AGAIN=0',
+        'for arg in "$@"; do',
+        '  case "$arg" in',
+        '    --dry-run) DRY_RUN=1 ;;',
+        '    --again) AGAIN=1 ;;',
+        '    *) echo "Unknown argument $arg. Use --dry-run to preview, --again to add a second schedule." >&2; exit 2 ;;',
+        '  esac',
+        'done',
+        'HERE=$(cd "$(dirname "$0")" && pwd)',
+        `get() { curl -sS -f -G "${api}/$1" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" "\${@:2}"; }`,
         '',
-        '# Find the imported definition by name rather than trusting the id in the XML:',
-        '# an import may assign its own.',
-        `DEF_ID=$(curl -sS -f -G "https://\${VCFOPS_HOST}/suite-api/api/reportdefinitions" --data-urlencode 'name=${sq(reportName)}' -H "${authHeader(PLATFORM)}" -H "Accept: application/json" \\`,
-        `  | jq -r --arg n '${sq(reportName)}' '[.reportDefinitions[]? | select(.name == $n) | .id] | if length == 1 then .[0] else empty end')`,
+        '# The imported definition, by name rather than by the id in the XML: an import',
+        '# may assign its own.',
+        `DEF_ID=$(get reportdefinitions --data-urlencode 'name=${sq(reportName)}' | jq -r --arg n '${sq(reportName)}' '[.reportDefinitions[]? | select(.name == $n) | .id] | if length == 1 then .[0] else empty end')`,
         `[[ -n "$DEF_ID" ]] || { echo "Expected exactly one report definition named '${sq(reportName)}'. Import it first, or remove the duplicate." >&2; exit 2; }`,
         '',
-        `body=$(jq --arg d "$DEF_ID" --arg r "$RESOURCE_ID" '.reportDefinitionId = $d | .resourceId = [$r]' ${base}-schedule.json)`,
-        'if grep -q "<REQUIRED" <<<"$body"; then',
-        `  echo "${base}-schedule.json still has a <REQUIRED> value in it. Fill it in first." >&2`,
-        '  exit 2',
+        subjectMode === 'group'
+          ? `SUBJECT_ID=$(get resources/groups --data-urlencode pageSize=10000 | jq -r --arg n '${sq(subjectName)}' '[.groups[]? | select(.resourceKey.name == $n) | .id] | if length == 1 then .[0] else empty end')`
+          : `SUBJECT_ID=$(get resources --data-urlencode 'name=${sq(subjectName)}' --data-urlencode pageSize=1000 | jq -r --arg n '${sq(subjectName)}' '[.resourceList[]? | select(.resourceKey.name == $n) | .identifier] | if length == 1 then .[0] else empty end')`,
+        `[[ -n "$SUBJECT_ID" ]] || { echo "Expected exactly one ${subjectMode === 'group' ? 'custom group' : 'object'} named '${sq(subjectName)}'." >&2; exit 2; }`,
+        ...(emailInstance
+          ? [
+              `PLUGIN=$(get alertplugins | jq -c --arg n '${sq(emailInstance)}' '[(.notificationPluginInstances[]?, .pluginInstances[]?) | select(.name == $n)] | .[0] // empty')`,
+              `[[ -n "$PLUGIN" ]] || { echo "No outbound instance named '${sq(emailInstance)}'. Create it with \\"An outbound plugin instance\\" first." >&2; exit 2; }`,
+              'PLUGIN_ID=$(jq -r \'.pluginId\' <<<"$PLUGIN")',
+              'if [[ "$(jq -r \'.pluginTypeId // ""\' <<<"$PLUGIN")" != "StandardEmailPlugin" ]]; then echo "The outbound instance is not a Standard Email plugin; reports go by email." >&2; exit 2; fi',
+              'if [[ "$(jq -r \'.enabled // true\' <<<"$PLUGIN")" == "false" ]]; then echo "The outbound instance is disabled; enable it (and send its test) first." >&2; exit 2; fi',
+            ]
+          : ['PLUGIN_ID=""']),
+        startDate ? `START='${sq(startDate)}'` : 'START=$(date -u +%Y-%m-%d)',
+        '',
+        'if (( ! AGAIN )) && get "reportdefinitions/${DEF_ID}/schedules" | jq -e --arg r "$SUBJECT_ID" \'[.. | objects | select((.resourceId? // []) | index($r))] | length > 0\' >/dev/null; then',
+        `  echo "The report already has a schedule for '${sq(subjectName)}'. Nothing was changed; run with --again to add another." >&2`,
+        '  exit 1',
         'fi',
-        'path="/suite-api/api/reportdefinitions/${DEF_ID}/schedules"',
-        'if [[ "${1:-}" == "--dry-run" ]]; then',
-        '  echo "DRY RUN: would POST to https://${VCFOPS_HOST}${path}:"',
+        `body=$(jq --arg d "$DEF_ID" --arg r "$SUBJECT_ID" --arg p "$PLUGIN_ID" --arg s "$START" '.reportDefinitionId = $d | .resourceId = [$r] | .startDate = $s | (if $p != "" then .emailPluginId = $p else del(.emailPluginId) end)' "$HERE/${base}-schedule.json")`,
+        'if grep -q "<REQUIRED" <<<"$body"; then echo "The schedule still has a <REQUIRED> value in it." >&2; exit 2; fi',
+        'if (( DRY_RUN )); then',
+        `  echo "DRY RUN: would POST to ${api}/reportdefinitions/\${DEF_ID}/schedules:"`,
         '  echo "$body"',
         '  echo "Dry run: nothing was changed. Run it without --dry-run to apply."',
         '  exit 0',
         'fi',
-        `echo "$body" | curl -sS -f -X POST "https://\${VCFOPS_HOST}\${path}" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data @-`,
-        'echo',
-        '# Undo: GET ${path}, then DELETE ${path}/{scheduleId}.',
+        `echo "$body" | curl -sS -f -X POST "${api}/reportdefinitions/\${DEF_ID}/schedules" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data @- | jq -c '{id: (.id // .scheduleId // null)}'`,
+        '# Undo: GET .../reportdefinitions/${DEF_ID}/schedules, then DELETE .../schedules/{scheduleId}.',
         '',
       ].join('\n');
 
+      const period = cadence === 'daily' ? 'day' : cadence === 'weekly' ? 'week' : 'month';
+      const whenText = `${every > 1 ? `every ${every} ${period}s` : `every ${period}`}${cadence === 'weekly' ? ` on ${weekdays.map((day) => day.charAt(0) + day.slice(1).toLowerCase()).join(', ')}` : ''}${cadence === 'monthly' ? ` on day ${dayOfMonth}` : ''}, at ${startTime} GMT`;
+      const sectionNames = sections.rows.map((row) => `${row.type === 'Dashboard' ? 'dashboard ' : ''}${row.name}`);
+
       return {
         platform: PLATFORM,
-        title: `Report "${reportName}" — ${views.length} views, ${formatList.join(' and ')}, ${cadence}`,
+        title: `Report "${reportName}" — ${views.length} views${dashboards.length > 0 ? `, ${dashboards.length} dashboards` : ''}, ${formatList.join(' and ')}, ${cadence}`,
         effect: 'reversible',
-        trigger: { kind: 'schedule', detail: `${cadence === 'weekly' ? 'Every Monday' : 'The first of each month'} at ${String(hour).padStart(2, '0')}:00 GMT — API schedules run in GMT`, worstCase: cadence === 'weekly' ? 'once a week' : 'once a month' },
+        trigger: { kind: 'schedule', detail: `${whenText} — schedules made through the API run in GMT`, worstCase: cadence === 'weekly' ? `on each of ${weekdays.length} day(s) a week` : `once a ${period}` },
         scope: {
-          what: `The report definition "${reportName}", run for one ${kind} (RESOURCE_ID), mailed to ${recipients.join(', ') || 'nobody'}.`,
-          decidedBy: ['The views in it, in order.', `The object in RESOURCE_ID — one per schedule; the views run against its descendants.`, 'The mail plugin that sends it.'],
-          ifWrong: 'A report about the wrong object that looks plausible, mailed monthly and acted on.',
+          what: `The report definition "${reportName}", run for the ${subjectMode === 'group' ? 'custom group' : 'object'} "${subjectName}", mailed to ${recipients.join(', ') || 'nobody'}${emailInstance ? ` through the outbound instance "${emailInstance}"` : ''}.`,
+          decidedBy: [`The sections in it, in order: ${sectionNames.join(', ') || 'none'}.`, `The ${subjectMode === 'group' ? 'custom group' : 'object'} "${subjectName}" — one per schedule; the views run against its ${kindLabel(kind)} ${relation === 'self' ? 'self' : 'descendants'}.`, `The email instance that sends it: ${emailInstance || 'the default one'}.`],
+          ifWrong: 'A report about the wrong object that looks plausible, mailed on schedule and acted on.',
         },
         guardrails: [
-          { rule: 'schedule-report.sh refuses unless exactly one definition has this name', because: 'Scheduling the older of two same-named reports sends last year’s columns to people who will not notice.' },
-          { rule: 'Both scripts stop on <REQUIRED>', because: 'A schedule with a placeholder start date is rejected at best and misfires at worst.' },
+          { rule: 'schedule-report.sh refuses unless exactly one definition, and exactly one object or group, has the name given', because: 'Scheduling the older of two same-named reports, or the wrong same-named cluster, sends plausible numbers about the wrong thing to people who will not notice.' },
+          { rule: 'It refuses when the report already has a schedule for that object, unless --again', because: 'The schedule API is not idempotent: a second run mails everything twice.' },
+          { rule: 'The email instance must be a Standard Email instance and enabled', because: 'A schedule on a disabled or non-email instance runs and delivers nothing, and nobody is told.' },
+          { rule: 'Every section row, the time, the date and the addresses are checked before anything is written', because: 'A report section naming a view that does not exist does not import, and a bad address is a bounce nobody reads.' },
           { rule: '--dry-run previews the import and the schedule without sending them', because: 'The content-zip layout comes from real exports rather than a published specification; compare it with an export-reference.sh export before sending.' },
           { rule: 'When it imports, the script first exports the existing REPORT_DEFINITIONS content to pre-import-backup-<time>.zip and refuses to import when a report with the same name or id is already there, unless --overwrite is given', because: 'The import API overwrites by default (force defaults to true), and somebody’s hand-edited copy would be gone with no copy kept.' },
           { rule: 'The import is sent with force=false unless --overwrite', because: 'Without it the API replaces whatever matches, which is the documented default.' },
@@ -881,10 +2499,11 @@ export const VCF_OPS_BUILD                                 = [
           'Delete the report definition under Reports > Manage.',
           'If --overwrite replaced a report definition, import the pre-import-backup-<time>.zip the script wrote to put the previous one back.',
         ],
-        told: recipients.length > 0 ? [`${recipients.join(', ')}, ${cadence}.`] : ['Nobody.'],
+        told: recipients.length > 0 ? [`${recipients.join(', ')}, ${whenText}.`] : ['Nobody.'],
         requires: [
-          `The views (${views.join(', ') || 'none'}) imported first, from "A view for dashboards and reports" with the same names.`,
-          'An outbound mail plugin that works: send a test from it first.',
+          ...(views.length > 0 ? [`The views (${views.map((row) => row.name).join(', ')}) imported first, from "A view for dashboards and reports" with the same names.`] : []),
+          ...(dashboards.length > 0 ? [`The dashboards (${dashboards.map((row) => row.name).join(', ')}) imported first, from "A dashboard, as importable JSON" with the same names.`] : []),
+          `A Standard Email outbound instance that works${emailInstance ? ` ("${emailInstance}")` : ''}: send a test from it first.`,
           'zip, unzip, jq and curl.',
         ],
         files: {
@@ -897,23 +2516,29 @@ export const VCF_OPS_BUILD                                 = [
           'export-reference.sh': exportReferenceScript('REPORT_DEFINITIONS'),
           'IMPORT.md': importMd({
             title: `the report "${reportName}"`,
+            intro: IMPORT_INTRO,
             steps: [
               {
-                heading: 'First, its views',
+                heading: 'First, what it is made of',
                 files: [],
-                how: [`Import the views it is made of before the report: ${views.join(', ') || '(none)'} — each from "A view for dashboards and reports" with the same name, import/view.zip. A report section refers to its view by id, and a report whose views are missing does not import.`],
+                how: [
+                  ...(views.length > 0 ? [`The views, each from "A view for dashboards and reports" with the same name (import/view.zip): ${views.map((row) => row.name).join(', ')}.`] : []),
+                  ...(dashboards.length > 0 ? [`The dashboards, each from "A dashboard, as importable JSON" with the same name (import/dashboard.zip): ${dashboards.map((row) => row.name).join(', ')}.`] : []),
+                  'A report section refers to its view or dashboard by id, and a report whose content is missing does not import.',
+                ],
               },
               {
                 heading: 'The report definition',
                 files: ['import/report.zip'],
-                how: ['Reports → Manage → ⋯ → Import (8.x: Dashboards → Reports → Import), and choose import/report.zip — a zip holding content.xml, as a report export is.', 'If a view it names already exists and the dialog asks, choose to overwrite only if the view here is the newer one.'],
-                verify: ['import/report.xml is the same content.xml as a bare file, for dialogs that take the XML on its own.'],
+                how: ['Reports → Manage → ⋯ → Import, and choose import/report.zip — a zip holding content.xml, as a report export is.', 'If a view it names already exists and the dialog asks, choose to overwrite only if the view here is the newer one.'],
+                verify: ['import/report.xml is the same content.xml as a bare file, for dialogs that take the XML on its own.', ...(dashboards.length > 0 ? ['a dashboard section is written as ContentType Dashboard with the dashboard id (sentania-labs reports_api_surface); open the report after import and check the dashboard page renders.'] : [])],
               },
               contentStep('REPORT_DEFINITIONS', 'import-report.sh'),
               {
                 heading: 'Then the schedule',
                 files: [`${base}-schedule.json`, 'schedule-report.sh'],
-                how: [`RESOURCE_ID=<id of the ${kind}> ./schedule-report.sh (add --dry-run first to preview) — POST /suite-api/api/reportdefinitions/{id}/schedules. Or in the interface: the report's Schedule action.`],
+                how: ['./schedule-report.sh (add --dry-run first to preview) — POST /suite-api/api/reportdefinitions/{id}/schedules, with the report, the object or group and the email instance found by name. Or in the interface: the report’s Schedule action.'],
+                verify: ['recurrence, daysOfTheWeek, dayOfTheMonth and emailPluginId against GET of a schedule made in the interface; read the schedule back in the interface after applying it.'],
               },
             ],
             sources: FORMAT_SOURCES,
@@ -921,8 +2546,9 @@ export const VCF_OPS_BUILD                                 = [
         },
         notes: [
           CONTENT_IMPORT_NOTE,
-          'Formats are set on the report definition, not the schedule. The schedule body is the one used by "Email a capacity report on a schedule".',
-          'VERIFY: GET /suite-api/api/reportdefinitions filtering by name, and the reportDefinitions[] response key, against your release; the script refuses rather than guesses if either differs.',
+          'Formats, the cover page, the table of contents, the footer and each section’s orientation are set on the report definition; the cadence, the object, the recipients and the email instance on the schedule.',
+          'Publishing a generated report to a network share was removed in VCF Operations 9.1; reports go by email only, so no share path is written.',
+          'VERIFY: GET /suite-api/api/reportdefinitions filtering by name, the reportDefinitions[] response key, and the emailPluginId field of a schedule, against your release; the script refuses rather than guesses if the lookups differ.',
         ],
         findings,
       };
@@ -1041,7 +2667,7 @@ export const VCF_OPS_BUILD                                 = [
         '#',
         '# CASA is the appliance admin API, not the public suite API: it takes basic',
         '# auth as the local admin, and the paths below are the ones used since',
-        '# vROps 8 — VERIFY them on 9.1 before relying on this. The public suite API',
+        '# the 8.x releases — VERIFY them on 9.1 before relying on this. The public suite API',
         '# lists installed solutions but has no install call.',
         'set -euo pipefail',
         '',
@@ -1160,7 +2786,7 @@ export const VCF_OPS_BUILD                                 = [
           }),
         },
         notes: [
-          'CONFIRMED: GET /suite-api/api/solutions and /solutions/{id}/adapterkinds are in the 9.1 API reference; they list, they do not install. VERIFY: the CASA upload/install/status paths and the pak_id and cluster_pak_install_status fields come from vROps 8.x usage and are not in the public reference.',
+          'CONFIRMED: GET /suite-api/api/solutions and /solutions/{id}/adapterkinds are in the 9.1 API reference; they list, they do not install. VERIFY: the CASA upload/install/status paths and the pak_id and cluster_pak_install_status fields come from 8.x usage and are not in the public reference.',
           'CONFIRMED: GET /solutions returns solution[] with id, name, version and adapterKindKeys. VERIFY: the manifest.txt field names (version, vcops_minimum_version, adapter_kinds) on your pak, and releaseName in GET /versions/current; the precheck prints what it found, and a manifest with no adapter kinds fails it.',
           `Run it as install.sh${mode === 'upgrade' ? ' --upgrade' : ''} with CHANGE_TICKET set; add --dry-run to run only the precheck.`,
           'In VCF 9.x the supported route is also the interface: Administration > Integrations > Repository > Add. If the CASA calls are refused, use that and keep precheck.sh as the gate.',
@@ -1756,6 +3382,561 @@ export const VCF_OPS_BUILD                                 = [
         notes: [
           'CONFIRMED in the 9.1 release notes: an HCX management pack for VCF Operations (password rotation for local users, certificate rotation, log bundle collection), and HCX Manager lifecycle through VCF Operations.',
           'POST /hybridity/api/sessions and the x-hm-authorization header are the long-standing HCX login. VERIFY: /hybridity/api/appliance/version and /hybridity/api/interconnect/serviceMesh and their field names on your HCX release — the script reports a problem rather than passing if they differ.',
+        ],
+        findings,
+      };
+    },
+  }),
+
+  // -------------------------------------------------------------------------
+  automationBlueprint({
+    id: 'vcfops_app_monitoring',
+    platform: PLATFORM,
+    label: 'Application monitoring with Telegraf',
+    group: 'Extend',
+    description:
+      'Application and OS monitoring through a cloud proxy, with Telegraf: the product-managed agent installed on vCenter VMs (named, or every member of a custom group) and its application services activated through the suite API, or open-source Telegraf onboarded to the cloud proxy on any Linux machine with the cloud proxy’s own helper. Each plugin row — Apache, MySQL, PostgreSQL, SQL Server, IIS, NGINX, ping or a custom script — has its target and settings; database credentials come from the environment at apply time and never reach a file here. Everything it sets up is enabled and collecting when the script ends.',
+    inputs: [
+      { id: 'cloud_proxy', label: 'Cloud proxy', control: 'text', default: 'cp01.example.com', hint: 'Its name as listed under cloud proxies (or its FQDN / IP for open-source Telegraf)' },
+      {
+        id: 'agent',
+        label: 'Telegraf',
+        control: 'select',
+        options: [
+          { value: 'product', label: 'Product-managed: installed on vCenter VMs by VCF Operations' },
+          { value: 'opensource', label: 'Open-source Telegraf, onboarded to the cloud proxy (Linux; any machine)' },
+        ],
+        default: 'product',
+      },
+      {
+        id: 'target_mode',
+        label: 'On',
+        control: 'select',
+        options: [
+          { value: 'vms', label: 'The VMs named below' },
+          { value: 'group', label: 'Every VM in a custom group' },
+        ],
+        default: 'vms',
+        showWhen: { input: 'agent', equals: ['product'] },
+      },
+      { id: 'vms', label: 'VMs or machines', control: 'textarea', default: 'app-web01\napp-db01', hint: 'One per line; for open-source Telegraf, the machines the script is run on' },
+      { id: 'group', label: 'Custom group', control: 'text', default: 'Tier 1 Applications', showWhen: { input: 'target_mode', equals: ['group'] } },
+      {
+        id: 'plugins',
+        label: 'Plugins',
+        control: 'textarea',
+        default: 'mysql | app-db01.example.com:3306 | user=svc-telegraf | MYSQL\napache | app-web01.example.com | status_path=/server-status?auto | \nping | 2001:db8::1 | count=3 | ',
+        hint: 'Plugin | Target | Settings | Credential',
+        help: 'Target: host, host:port, [IPv6]:port, a URL, or for a custom script its full path. Settings: key=value; … (apache status_path, nginx status_path, mysql user and tls, postgres user dbname sslmode, mssql user port, ping count, custom timeout and data_format). Credential: the prefix of the environment variables that hold the account — MYSQL reads MYSQL_PASSWORD (and MYSQL_USER when no user= is given).',
+        options: [
+          ...TELEGRAF_PLUGINS.map((plugin) => ({ value: plugin.value, label: plugin.label, group: 'Plugin' })),
+        ],
+      },
+      { id: 'interval', label: 'Collect every (seconds)', control: 'number', default: 300, min: 10, max: 3600 },
+      { id: 'os_metrics', label: 'Also collect OS metrics (CPU, memory, disk, network)', control: 'toggle', default: true },
+    ],
+    automation: (values                 , name        )             => {
+      const proxy = str(values, 'cloud_proxy', '').trim();
+      const agent = str(values, 'agent', 'product');
+      const mode = agent === 'product' ? str(values, 'target_mode', 'vms') : 'vms';
+      const vms = str(values, 'vms', '').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+      const group = str(values, 'group', '').trim();
+      const interval = num(values, 'interval', 300);
+      const osMetrics = bool(values, 'os_metrics', true);
+      const base = slugOf(name || 'app-monitoring', 'app-monitoring');
+
+      const findings            = [];
+      const rows = parseTelegrafRows(str(values, 'plugins', ''));
+      for (const problem of rows.problems) findings.push(error('vcfops.telegraf.bad-row', problem, { source: SRC }));
+      if (rows.rows.length === 0 && !osMetrics) findings.push(error('vcfops.telegraf.nothing', 'No plugin and no OS metrics: nothing would be collected.', { source: SRC }));
+      if (!proxy) findings.push(error('vcfops.telegraf.no-proxy', 'Name the cloud proxy the agents report to.', { source: SRC }));
+      if (mode === 'vms' && vms.length === 0) findings.push(error('vcfops.telegraf.no-targets', 'Name at least one VM or machine.', { source: SRC }));
+      if (mode === 'group' && !group) findings.push(error('vcfops.telegraf.no-group', 'Name the custom group.', { source: SRC }));
+      if (interval < 60) findings.push(warning('vcfops.telegraf.interval', `Every ${interval} seconds is more often than VCF Operations stores points (every 5 minutes by default).`, { remediation: 'Use 60 seconds or more; the extra samples cost the cloud proxy and the database and are averaged away.', source: SRC }));
+      if (agent === 'opensource' && rows.rows.some((row) => row.plugin === 'iis')) {
+        findings.push(error('vcfops.telegraf.iis-linux', 'IIS is Windows, and the open-source onboarding here is the Linux helper.', { remediation: 'Use the product-managed agent for Windows VMs, or onboard the Windows server with the cloud proxy’s telegraf-utils.ps1 (IMPORT.md says how).', source: SRC }));
+      }
+      if (mode === 'group' && rows.rows.some((row) => !['ping', 'custom'].includes(row.plugin) && !/localhost|127\.0\.0\.1|\[::1\]/.test(row.target))) {
+        findings.push(info('vcfops.telegraf.group-targets', 'Plugin targets are fixed hosts, but the group may hold many VMs: each VM’s agent would monitor the same target.', { remediation: 'For per-VM services write the target as localhost (the service on the VM itself).', source: SRC }));
+      }
+      if (proxy && isIpv6(proxy)) findings.push(info('vcfops.telegraf.ipv6', 'The cloud proxy is addressed by IPv6: the agents need an IPv6 route to it on 443, 4505 and 4506.', { source: SRC }));
+
+      // Open-source Telegraf input configuration, per plugin; credentials as ${VAR}.
+      const toml = [
+        `# Telegraf inputs for VCF Operations application monitoring (cloud proxy ${proxy}).`,
+        '# Secrets are ${VARIABLES} from the telegraf service environment, never literals.',
+        '',
+        '[agent]',
+        `  interval = "${interval}s"`,
+        '',
+        ...(osMetrics ? ['[[inputs.cpu]]', '  percpu = false', '  totalcpu = true', '[[inputs.mem]]', '[[inputs.disk]]', '  ignore_fs = ["tmpfs", "devtmpfs", "overlay"]', '[[inputs.diskio]]', '[[inputs.net]]', '[[inputs.system]]', ''] : []),
+        ...rows.rows.flatMap((row) => [...telegrafInput(row, interval), '']),
+      ].join('\n');
+
+      const envNeeded = [...new Set(rows.rows.flatMap((row) => (row.credential ? [`${row.credential}_PASSWORD`, ...(row.settings.user ? [] : [`${row.credential}_USER`])] : [])))];
+
+      // Product-managed: the suite API calls (VERIFY), each checked, with the UI as the fallback.
+      const services = rows.rows.map((row) => ({
+        serviceName: row.plugin === 'custom' ? 'script' : row.plugin === 'mssql' ? 'mssql' : row.plugin,
+        target: row.target,
+        settings: row.settings,
+        credential: row.credential ?? '',
+      }));
+      const productScript = [
+        '#!/usr/bin/env bash',
+        `# Product-managed Telegraf through cloud proxy ${proxy}: install the agent on`,
+        `# ${mode === 'group' ? `every VM in the custom group "${group}"` : `${vms.length} VM(s)`}, then activate the application services.`,
+        '#',
+        '# Applies when run; --dry-run lists the VMs and the bodies and sends nothing.',
+        `# Credentials: ${envNeeded.join(', ') || 'none'} from the environment, sent in the body on stdin.`,
+        '#',
+        '# VERIFY: /suite-api/api/applications/agents and .../agents/services are the',
+        '# application-monitoring calls of the suite API as used from 8.x; the script checks',
+        '# every answer and, if a path is not there on your release, stops and says how to',
+        '# do it in the interface (Operate > Workloads > Applications > Manage Telegraf Agents).',
+        'set -euo pipefail',
+        '',
+        ...authPreamble(PLATFORM),
+        'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+        ...envNeeded.map((v) => `: "\${${v}:?set ${v} (from your secret store) for the plugin that needs it}"`),
+        'DRY_RUN=0; [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1',
+        `API="https://\${VCFOPS_HOST}/suite-api/api"`,
+        `get() { curl -sS -f -G "$API/$1" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" "\${@:2}"; }`,
+        '# send METHOD PATH: body on stdin; prints the HTTP code, the answer in $WORK/out.json.',
+        'WORK=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/apm.XXXXXX")',
+        `trap 'rm -rf "$WORK" "\${${authHeader(PLATFORM).slice(3, -1)}:-}"' EXIT`,
+        `send() { curl -sS -o "$WORK/out.json" -w '%{http_code}' -X "$1" "$API/$2" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- || echo 000; }`,
+        'manual() {',
+        '  echo "The suite API did not take the call (HTTP $1). Do it in the interface instead:" >&2',
+        '  echo "  Operate > Workloads > Applications > Manage Telegraf Agents: select the VMs, Install, and choose the cloud proxy;" >&2',
+        '  echo "  then, per VM, Configure each application service below with its target and account." >&2',
+        '  exit 1',
+        '}',
+        '',
+        `PROXY_ID=$(get collectors | jq -r --arg n '${sq(proxy)}' '[(.collector // .collectors // [])[] | select(.name == $n or .hostName == $n) | .id] | .[0] // empty')`,
+        `[[ -n "$PROXY_ID" ]] || { echo "No cloud proxy named '${sq(proxy)}'. Cloud proxies:" >&2; get collectors | jq -r '(.collector // .collectors // [])[] | "  " + .name' >&2; exit 2; }`,
+        ...(mode === 'group'
+          ? [
+              `GROUP_ID=$(get resources/groups --data-urlencode pageSize=10000 | jq -r --arg n '${sq(group)}' '[.groups[]? | select(.resourceKey.name == $n) | .id] | if length == 1 then .[0] else empty end')`,
+              `[[ -n "$GROUP_ID" ]] || { echo "Expected exactly one custom group named '${sq(group)}'." >&2; exit 2; }`,
+              'VM_IDS=$(get "resources/groups/${GROUP_ID}/members" --data-urlencode pageSize=10000 | jq -c \'[.resourceList[]? | select(.resourceKey.resourceKindKey == "VirtualMachine") | .identifier]\')',
+            ]
+          : [
+              'VM_IDS=[]',
+              `for vm in ${vms.map((vm) => `'${sq(vm)}'`).join(' ')}; do`,
+              '  id=$(get resources --data-urlencode resourceKind=VirtualMachine --data-urlencode "name=$vm" | jq -r --arg n "$vm" \'[.resourceList[]? | select(.resourceKey.name == $n) | .identifier] | if length == 1 then .[0] else empty end\')',
+              '  [[ -n "$id" ]] || { echo "Expected exactly one VM named $vm." >&2; exit 2; }',
+              '  VM_IDS=$(jq -c --arg i "$id" \'. + [$i]\' <<<"$VM_IDS")',
+              'done',
+            ]),
+        'N=$(jq length <<<"$VM_IDS")',
+        '(( N > 0 )) || { echo "No VMs to monitor." >&2; exit 2; }',
+        'echo "${N} VM(s), cloud proxy ${PROXY_ID}."',
+        '',
+        '# 1. The agent. VERIFY: body fields.',
+        'jq -n --arg p "$PROXY_ID" --argjson v "$VM_IDS" \'{collectorId: $p, vmIds: $v}\' > "$WORK/install.json"',
+        'if (( DRY_RUN )); then echo "DRY RUN: would POST applications/agents:"; jq . "$WORK/install.json"; else',
+        '  code=$(send POST applications/agents < "$WORK/install.json")',
+        '  [[ "$code" == 2* ]] || manual "$code"',
+        '  TASK=$(jq -r \'.taskId // .id // empty\' "$WORK/out.json")',
+        '  for _ in $(seq 1 90); do',
+        '    [[ -n "$TASK" ]] || break',
+        '    s=$(get "applications/agents/${TASK}/status" | jq -r \'.status // .state // "UNKNOWN"\') || s=UNKNOWN',
+        '    case "$s" in SUCCESS|SUCCEEDED|COMPLETED|FINISHED) echo "Agents installed."; break ;; FAILED|ERROR) echo "The agent install failed; see Manage Telegraf Agents." >&2; exit 1 ;; esac',
+        '    sleep 20',
+        '  done',
+        'fi',
+        '',
+        '# 2. The application services, activated on every VM, with the account from the',
+        '#    environment (jq env.*, so no secret is an argument). VERIFY: body fields.',
+        `jq -n --argjson v "$VM_IDS" --argjson s '${sq(JSON.stringify(services))}' --argjson i ${interval} '`,
+        '  {resourceIds: $v, services: [$s[] | {serviceName, isActivated: true, collectionInterval: $i,',
+        '     configuration: (.settings + {target: .target}',
+        '       + (if .credential != "" then {username: (.settings.user // env[.credential + "_USER"]), password: env[.credential + "_PASSWORD"]} else {} end))}]}\' > "$WORK/services.json"',
+        'if (( DRY_RUN )); then echo "DRY RUN: would POST applications/agents/services for:"; jq -r \'.services[] | "  \\(.serviceName) \\(.configuration.target)"\' "$WORK/services.json"; echo "Dry run: nothing was changed."; exit 0; fi',
+        'code=$(send POST applications/agents/services < "$WORK/services.json")',
+        '[[ "$code" == 2* ]] || manual "$code"',
+        'echo "Application services activated. Objects appear under Operate > Workloads > Applications within two collection cycles."',
+        '# Undo: Manage Telegraf Agents > Uninstall on the VMs (or DELETE applications/agents with the same body).',
+        '',
+      ].join('\n');
+
+      const onboardScript = [
+        '#!/usr/bin/env bash',
+        `# Onboard open-source Telegraf on this machine to cloud proxy ${proxy}, with the`,
+        '# inputs in telegraf.d/. Run as root on each machine, with telegraf installed from',
+        '# the InfluxData repository.',
+        '#',
+        '# It takes a VCF Operations token (from the identity broker, with the API token in',
+        '# VCF_API_TOKEN_FILE, mode 600), fetches the cloud proxy’s helper and runs it in',
+        '# opensource mode (which writes the output to the cloud proxy, port 443 in 9.1),',
+        '# installs the inputs, puts the plugin accounts in a root-only environment file for',
+        '# the service, tests the configuration and restarts telegraf. --dry-run tests only.',
+        '#',
+        '# The helper takes the token as an argument (-t): the token is short-lived and is',
+        '# fetched for this run only; run it where other users cannot read the process list.',
+        'set -euo pipefail',
+        `PROXY='${sq(proxy)}'`,
+        ': "${VCFOPS_HOST:?set VCFOPS_HOST, the VCF Operations FQDN or IP}"',
+        ': "${VCF_IDB_HOST:?set VCF_IDB_HOST to the VCF Identity Broker}"',
+        ': "${VCF_API_TOKEN_FILE:?set VCF_API_TOKEN_FILE to a mode-600 file holding the identity broker API token}"',
+        ...envNeeded.map((v) => `: "\${${v}:?set ${v} (from your secret store) for the plugin that needs it}"`),
+        '(( EUID == 0 )) || { echo "Run as root." >&2; exit 2; }',
+        'for tool in curl jq telegraf systemctl; do command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 2; }; done',
+        'DRY_RUN=0; [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1',
+        'HERE=$(cd "$(dirname "$0")" && pwd)',
+        'WORK=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/otel.XXXXXX")',
+        "trap 'rm -rf \"$WORK\"' EXIT",
+        '',
+        '# Test the inputs first, with the accounts in this environment.',
+        'cp "$HERE/telegraf.d/vcfops-inputs.conf" "$WORK/"',
+        'telegraf --config-directory "$WORK" --test --test-wait 10 >/dev/null || { echo "telegraf --test failed on the inputs; nothing was changed." >&2; exit 1; }',
+        'if (( DRY_RUN )); then echo "DRY RUN: the inputs test clean. Nothing was changed."; exit 0; fi',
+        '',
+        '# A bearer token from the identity broker (the API token goes in the form on stdin).',
+        "TOKEN=$( { printf 'grant_type=urn:custom:vcf:params:oauth:grant-type:api-token&api_token='; jq -jRr @uri < \"$VCF_API_TOKEN_FILE\"; } |",
+        '  curl -sS -f -X POST "https://${VCF_IDB_HOST}/acs/t/CUSTOMER/token" -H "Content-Type: application/x-www-form-urlencoded" --data-binary @- | jq -r .access_token)',
+        '[[ -n "$TOKEN" && "$TOKEN" != null ]] || { echo "No token from the identity broker." >&2; exit 1; }',
+        '',
+        '# The helper, from the cloud proxy. VERIFY the path on your release (9.1 names the',
+        '# Linux helper open_source_telegraf_monitor.sh; earlier releases telegraf-utils.sh).',
+        'HELPER=""',
+        'for p in downloads/salt/open_source_telegraf_monitor.sh downloads/salt/telegraf-utils.sh; do',
+        '  if curl -sS -f -k "https://${PROXY}/${p}" -o "$WORK/helper.sh"; then HELPER="$WORK/helper.sh"; break; fi',
+        'done',
+        '[[ -n "$HELPER" ]] || { echo "Could not fetch the helper from the cloud proxy. Download it from Operate > Workloads > Applications > Manage Telegraf Agents and run: helper opensource -c <proxy> -t <token> -v <ops> -d /etc/telegraf/telegraf.d -e $(command -v telegraf)" >&2; exit 1; }',
+        'chmod 700 "$HELPER"',
+        'bash "$HELPER" opensource -c "$PROXY" -t "$TOKEN" -v "$VCFOPS_HOST" -d /etc/telegraf/telegraf.d -e "$(command -v telegraf)"',
+        'unset TOKEN',
+        '',
+        'install -m 644 "$HERE/telegraf.d/vcfops-inputs.conf" /etc/telegraf/telegraf.d/vcfops-inputs.conf',
+        '# The plugin accounts, for the service only: root-owned, mode 600.',
+        'umask 077',
+        ': > /etc/telegraf/vcfops.env',
+        ...envNeeded.map((v) => `printf '%s=%s\\n' ${v} "$${v}" >> /etc/telegraf/vcfops.env`),
+        'mkdir -p /etc/systemd/system/telegraf.service.d',
+        "printf '[Service]\\nEnvironmentFile=/etc/telegraf/vcfops.env\\n' > /etc/systemd/system/telegraf.service.d/vcfops.conf",
+        'systemctl daemon-reload',
+        'systemctl enable telegraf',
+        'systemctl restart telegraf',
+        'sleep 5',
+        'systemctl is-active --quiet telegraf || { echo "telegraf did not start: journalctl -u telegraf" >&2; exit 1; }',
+        'echo "Onboarded. The machine appears under Operate > Workloads > Applications within two collection cycles."',
+        '# Undo: remove /etc/telegraf/telegraf.d/vcfops-inputs.conf, the helper-written output file and',
+        '# /etc/telegraf/vcfops.env and the drop-in, then systemctl restart telegraf.',
+        '',
+      ].join('\n');
+
+      const script = agent === 'product' ? productScript : onboardScript;
+      const scriptName = agent === 'product' ? 'apply-app-monitoring.sh' : 'onboard-telegraf.sh';
+      const where = mode === 'group' ? `every VM in the custom group "${group}"` : vms.join(', ') || 'no machine';
+
+      return {
+        platform: PLATFORM,
+        title: `Application monitoring — ${rows.rows.map((r) => r.plugin).join(', ') || 'OS only'} on ${where}, via ${proxy || '?'}`,
+        effect: 'reversible',
+        trigger: { kind: 'manual', detail: `Run once${agent === 'opensource' ? ' on each machine' : ''}; the agents then collect every ${interval} seconds.`, worstCase: `every ${interval} seconds per plugin per machine, for as long as the agent runs` },
+        scope: {
+          what: `${agent === 'product' ? 'The product-managed Telegraf agent' : 'Open-source Telegraf'} on ${where}, reporting to cloud proxy ${proxy}, with ${rows.rows.length} plugin(s)${osMetrics ? ' and OS metrics' : ''}.`,
+          decidedBy: [mode === 'group' ? `The members of "${group}" when it runs — a VM added to the group later is not included until it is run again.` : 'The machines named.', 'The plugin targets, which are fixed hosts and URLs.'],
+          ifWrong: 'Agents on machines nobody meant to monitor: licence use, cloud proxy load, and a database login attempted from each.',
+        },
+        guardrails: [
+          { rule: 'Every VM, the group and the cloud proxy are found by exact name, and the script stops on none or more than one', because: 'An agent pushed to the wrong VM of the same name runs a database login against a system nobody approved.' },
+          { rule: 'Database accounts come from the environment and are sent on stdin or kept in a root-only file for the service', because: 'A monitoring password in a config file in a repository is the one every scanner finds.' },
+          { rule: agent === 'product' ? 'Each suite API answer is checked; a missing call stops the script with the interface steps' : 'The inputs are tested with telegraf --test before anything is changed', because: agent === 'product' ? 'An install that half worked and reports success leaves VMs unmonitored with nothing to say so.' : 'A telegraf that fails to parse its configuration stops collecting everything, not just the new input.' },
+          { rule: '--dry-run lists what would be done and sends nothing', because: 'The agent install touches every VM in scope.' },
+        ],
+        dryRun: [`${scriptName} --dry-run ${agent === 'product' ? 'resolves the VMs and prints the bodies' : 'tests the inputs with telegraf --test'} and changes nothing.`],
+        undo: [agent === 'product' ? 'Operate > Workloads > Applications > Manage Telegraf Agents: select the VMs and Uninstall.' : 'Remove the inputs file, the helper-written output file, /etc/telegraf/vcfops.env and the drop-in, and restart telegraf (the last lines of the script list them).'],
+        told: ['Nobody; the machines appear under Operate > Workloads > Applications, and a failing agent raises an agent-health alert.'],
+        requires: [
+          `Cloud proxy ${proxy}, reachable from the machines on 443, 4505 and 4506 (8443 is deprecated in 9.1).`,
+          agent === 'product' ? 'VMware Tools running on each VM, and a vCenter account on the adapter allowed to run guest operations.' : 'telegraf from the InfluxData repository on each machine, and an identity broker API token.',
+          ...(envNeeded.length > 0 ? [`${envNeeded.join(', ')} set from your secret store when the script runs.`] : []),
+          'jq and curl.',
+        ],
+        files: {
+          [scriptName]: script,
+          'telegraf.d/vcfops-inputs.conf': `${toml}\n`,
+          'IMPORT.md': nothingToImportMd('application monitoring with Telegraf', [
+            agent === 'product'
+              ? `${scriptName}: run it once from any host that reaches VCF Operations (--dry-run first). It installs the product-managed agent on ${where} through cloud proxy ${proxy} and activates the services.`
+              : `${scriptName}: copy the folder to each machine and run it as root (--dry-run first). It onboards the machine’s open-source Telegraf to cloud proxy ${proxy} with the cloud proxy’s helper and installs telegraf.d/vcfops-inputs.conf.`,
+            'telegraf.d/vcfops-inputs.conf is the open-source Telegraf input configuration for the same plugins — the reference for what each one collects, and what the open-source route installs.',
+            'Windows servers with open-source Telegraf: download telegraf-utils.ps1 from the cloud proxy (Manage Telegraf Agents), run it with opensource -c <proxy> -t <token> -v <VCF Operations> -d <telegraf.d> -e <telegraf.exe>, then copy the inputs file in and restart the Telegraf service.',
+          ]),
+        },
+        notes: [
+          'CONFIRMED (VCF 9.1 docs): product-managed Telegraf is installed from Operate > Workloads > Applications > Manage Telegraf Agents, cloud proxies in an HA collector group share the agents, port 443 replaces 8443; open-source Telegraf is onboarded with the cloud proxy’s helper in opensource mode (-c proxy, -t token, -v VCF Operations, -d config dir, -e telegraf binary), with a token from the identity broker in 9.1.',
+          'VERIFY: /suite-api/api/applications/agents, /agents/{task}/status and /agents/services and their body fields are not in the 9.1 public reference as read; the script checks every answer and stops with the interface steps if one is refused.',
+          'VERIFY: the helper’s path on the cloud proxy (the script tries downloads/salt/open_source_telegraf_monitor.sh, then telegraf-utils.sh).',
+        ],
+        findings,
+      };
+    },
+  }),
+
+  // -------------------------------------------------------------------------
+  automationBlueprint({
+    id: 'vcfops_hcx_lifecycle',
+    platform: PLATFORM,
+    label: 'HCX lifecycle through VCF Operations',
+    group: 'Extend',
+    description:
+      'HCX Manager deployed, upgraded and brought under monitoring from VCF Operations fleet lifecycle, as 9.1 does it: an inventory of the HCX instances fleet lifecycle knows; an upgrade plan to a target version with the enhanced precheck, applied only with a change reference, a passed precheck and a recent backup; or a new HCX Manager (Cloud or Connector) deployed from a spec with its passwords read from files. Afterwards the HCX account is added to the HCX management pack so its password and certificate rotation run from VCF Operations.',
+    inputs: [
+      {
+        id: 'action',
+        label: 'Do',
+        control: 'select',
+        options: [
+          { value: 'upgrade', label: 'Upgrade HCX to a target version' },
+          { value: 'deploy', label: 'Deploy a new HCX Manager' },
+          { value: 'inventory', label: 'List the HCX instances and their versions' },
+        ],
+        default: 'upgrade',
+      },
+      { id: 'lcm_host', label: 'Fleet lifecycle host', control: 'text', default: 'fleet-lcm.example.com', hint: 'Where /fleet-lcm/v1 answers (often the VCF Operations FQDN)' },
+      { id: 'hcx_fqdn', label: 'HCX Manager FQDN', control: 'text', default: 'hcx-mgr01.example.com' },
+      { id: 'target_version', label: 'Target version', control: 'text', default: '9.1.0', showWhen: { input: 'action', equals: ['upgrade'] } },
+      { id: 'backup_hours', label: 'Refuse unless backed up within (hours)', control: 'number', default: 24, min: 1, max: 720, showWhen: { input: 'action', equals: ['upgrade'] } },
+      {
+        id: 'role',
+        label: 'Role',
+        control: 'select',
+        options: [
+          { value: 'CLOUD', label: 'HCX Cloud (the destination side)' },
+          { value: 'CONNECTOR', label: 'HCX Connector (the source side)' },
+        ],
+        default: 'CLOUD',
+        showWhen: { input: 'action', equals: ['deploy'] },
+      },
+      { id: 'vcenter', label: 'vCenter', control: 'text', default: 'vcenter-mgmt.example.com', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'cluster', label: 'Cluster', control: 'text', default: 'mgmt-cluster01', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'datastore', label: 'Datastore', control: 'text', default: 'mgmt-vsan01', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'portgroup', label: 'Management port group', control: 'text', default: 'mgmt-vm-pg', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'ip', label: 'IPv4 address / prefix', control: 'text', default: '10.0.10.40/24', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'gateway', label: 'IPv4 gateway', control: 'text', default: '10.0.10.1', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'ipv6', label: 'IPv6 address / prefix', control: 'text', default: '', placeholder: 'None', hint: 'Dual stack when given', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'ipv6_gateway', label: 'IPv6 gateway', control: 'text', default: '', placeholder: 'None', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'dns', label: 'DNS servers', control: 'text', default: '10.0.0.53', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'ntp', label: 'NTP servers', control: 'text', default: 'ntp.example.com', showWhen: { input: 'action', equals: ['deploy'] } },
+      { id: 'add_account', label: 'Add the HCX account to the HCX management pack afterwards', control: 'toggle', default: true },
+      { id: 'collector_group', label: 'Collector group for the account', control: 'text', default: '', placeholder: 'The default', showWhen: { input: 'add_account', equals: ['true'] } },
+    ],
+    automation: (values                 , name        )             => {
+      const action = str(values, 'action', 'upgrade');
+      const lcmHost = str(values, 'lcm_host', '').trim();
+      const hcx = str(values, 'hcx_fqdn', '').trim();
+      const target = str(values, 'target_version', '').trim();
+      const backupHours = num(values, 'backup_hours', 24);
+      const role = str(values, 'role', 'CLOUD');
+      const ip = str(values, 'ip', '').trim();
+      const gateway = str(values, 'gateway', '').trim();
+      const ipv6 = str(values, 'ipv6', '').trim();
+      const ipv6Gateway = str(values, 'ipv6_gateway', '').trim();
+      const dns = listOf(str(values, 'dns', ''));
+      const ntp = listOf(str(values, 'ntp', ''));
+      const addAccount = bool(values, 'add_account', true);
+      const collectorGroup = str(values, 'collector_group', '').trim();
+      const base = slugOf(name || 'hcx-lifecycle', 'hcx-lifecycle');
+
+      const findings            = [];
+      if (!hcx) findings.push(error('vcfops.hcxlcm.no-fqdn', 'Name the HCX Manager.', { source: SRC }));
+      if (!lcmHost) findings.push(error('vcfops.hcxlcm.no-lcm', 'Name the fleet lifecycle host.', { source: SRC }));
+      if (action === 'upgrade' && !/^\d+\.\d+(\.\d+){0,2}$/.test(target)) findings.push(error('vcfops.hcxlcm.bad-version', `"${target}" is not a version (9.1.0).`, { source: SRC }));
+      if (action === 'deploy') {
+        const [addr = '', prefix = ''] = ip.split('/');
+        if (!isIp(addr) || familyOf(addr) !== 4 || !/^\d{1,2}$/.test(prefix) || Number(prefix) > 32) findings.push(error('vcfops.hcxlcm.bad-ip', `"${ip}" is not an IPv4 address with a prefix (10.0.10.40/24).`, { source: SRC }));
+        if (!isIp(gateway) || familyOf(gateway) !== 4) findings.push(error('vcfops.hcxlcm.bad-gateway', `"${gateway}" is not an IPv4 gateway.`, { source: SRC }));
+        if (ipv6) {
+          const [a6 = '', p6 = ''] = ipv6.split('/');
+          if (!isIpv6(a6) || !/^\d{1,3}$/.test(p6) || Number(p6) > 128) findings.push(error('vcfops.hcxlcm.bad-ipv6', `"${ipv6}" is not an IPv6 address with a prefix (2001:db8::40/64).`, { source: SRC }));
+          if (!ipv6Gateway || !isIpv6(ipv6Gateway)) findings.push(error('vcfops.hcxlcm.bad-ipv6-gateway', 'A dual-stack HCX Manager needs an IPv6 gateway.', { source: SRC }));
+        }
+        if (dns.length === 0) findings.push(error('vcfops.hcxlcm.no-dns', 'HCX Manager needs a DNS server: it is reached and it registers by name.', { source: SRC }));
+        if (ntp.length === 0) findings.push(warning('vcfops.hcxlcm.no-ntp', 'No NTP server: HCX pairing and certificates fail on clock skew.', { source: SRC }));
+      }
+      if (action === 'upgrade') findings.push(info('vcfops.hcxlcm.window', 'Do not upgrade HCX inside a migration wave: replication and network extension restart.', { source: SRC }));
+
+      const [addr4 = '', prefix4 = '24'] = ip.split('/');
+      const [addr6 = '', prefix6 = '64'] = ipv6.split('/');
+      const deploySpec = {
+        componentType: 'HCX',
+        // VERIFY: the deploy body fields of the fleet lifecycle component deployment.
+        spec: {
+          role,
+          fqdn: hcx,
+          vcenter: str(values, 'vcenter', ''),
+          placement: { cluster: str(values, 'cluster', ''), datastore: str(values, 'datastore', ''), network: str(values, 'portgroup', '') },
+          network: {
+            ipv4: { address: addr4, prefixLength: Number(prefix4), gateway },
+            ...(ipv6 ? { ipv6: { address: addr6, prefixLength: Number(prefix6), gateway: ipv6Gateway } } : {}),
+            dnsServers: dns,
+            ntpServers: ntp,
+          },
+          adminPassword: '<set by hcx-lifecycle.sh from HCX_ADMIN_PASSWORD_FILE>',
+          rootPassword: '<set by hcx-lifecycle.sh from HCX_ROOT_PASSWORD_FILE>',
+        },
+      };
+
+      const script = [
+        '#!/usr/bin/env bash',
+        `# HCX lifecycle through VCF Operations fleet lifecycle: ${action} for ${hcx}.`,
+        '#',
+        '#   ./hcx-lifecycle.sh                              ' + (action === 'inventory' ? 'list the HCX instances (read)' : action === 'upgrade' ? `plan, enhanced precheck, apply to ${target}` : 'deploy HCX Manager from hcx-deploy.json'),
+        '#   ./hcx-lifecycle.sh --dry-run                    read and check only',
+        '#   CHANGE=<ref> is required to change anything.',
+        '#',
+        '# The Fleet LCM token comes from exchanging the VCF Operations token at',
+        '# /suite-api/api/auth/token/exchange (serviceKeys fleet-lcm), and goes to curl from',
+        '# a private header file, never as an argument.',
+        'set -euo pipefail',
+        '',
+        ...authPreamble(PLATFORM),
+        'command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }',
+        `LCM_HOST="\${FLEET_LCM_HOST:-${sq(lcmHost)}}"`,
+        `HCX_FQDN='${sq(hcx)}'`,
+        'DRY_RUN=0; [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1',
+        'HERE=$(cd "$(dirname "$0")" && pwd)',
+        'LCM_HDR=$(umask 077; mktemp "${TMPDIR:-/tmp}/lcm.XXXXXX")',
+        `trap 'rm -f "$LCM_HDR" "\${${authHeader(PLATFORM).slice(3, -1)}:-}"' EXIT`,
+        't=$(curl -sS -f -X POST "https://${VCFOPS_HOST}/suite-api/api/auth/token/exchange" \\',
+        `  -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" \\`,
+        '  --data \'{"serviceKeys":["fleet-lcm"]}\' | jq -r \'.jwtToken // empty\') || t=""',
+        '[[ -n "$t" ]] || { echo "Could not get a Fleet LCM token." >&2; exit 1; }',
+        "printf 'Authorization: Bearer %s\\n' \"$t\" > \"$LCM_HDR\"; unset t",
+        'lcm() { local m="$1" p="$2"; shift 2; curl -sS -f -X "$m" "https://${LCM_HOST}/fleet-lcm/v1${p}" -H "@${LCM_HDR}" -H "Accept: application/json" -H "Content-Type: application/json" "$@"; }',
+        'wait_task() {',
+        '  local s="UNKNOWN"',
+        '  for _ in $(seq 1 540); do',
+        '    s=$(lcm GET "/tasks/$1" | jq -r \'.status // "UNKNOWN"\') || s=UNKNOWN',
+        '    case "$s" in SUCCEEDED) echo "  task $1: SUCCEEDED"; return 0 ;; FAILED|CANCELLED|CANCELED) echo "  task $1: $s" >&2; return 1 ;; esac',
+        '    sleep 20',
+        '  done',
+        '  echo "  task $1: still $s after three hours" >&2; return 1',
+        '}',
+        'need_change() { [[ -n "${CHANGE:-}" ]] || { echo "Set CHANGE to the change reference to go on." >&2; exit 2; }; }',
+        '',
+        '# The HCX instances fleet lifecycle knows.',
+        "HCXS=$(lcm GET /components | jq -c '[(.elements // .components // .)[]? | select(((.type // .componentType // \"\") | ascii_upcase) | test(\"HCX\"))]')",
+        'jq -r \'.[] | "  \\(.fqdn // .name)\\t\\(.version)\\t\\(.status // "")"\' <<<"$HCXS"',
+        ...(action === 'upgrade'
+          ? [
+              'jq -e --arg f "$HCX_FQDN" \'[.[] | select((.fqdn // .name) == $f)] | length == 1\' <<<"$HCXS" >/dev/null || { echo "Fleet lifecycle does not list ${HCX_FQDN} as an HCX component." >&2; exit 2; }',
+              '',
+              `# The newest backup of that HCX Manager must be under ${backupHours} hours old.`,
+              "AGE=$(lcm GET /sddc-lcms | jq -r '(if type == \"array\" then . else (.elements // .sddcLcms // []) end)[] | (.id // .sddcLcmId)' | while read -r id; do lcm GET \"/sddc-lcms/${id}/backups?pageSize=100\" | jq -r --arg f \"$HCX_FQDN\" '.backups[]? | select(((.componentType // \"\") | ascii_upcase | test(\"HCX\")) and ((.name // .fqdn // \"\") == $f)) | (.points // [] | map(tostring | sub(\"\\\\.[0-9]+\"; \"\") | (try fromdateiso8601 catch (try tonumber catch null))) | map(select(. != null)) | max) | select(. != null) | ((now - (if . > 100000000000 then . / 1000 else . end)) / 3600 | floor)'; done | sort -n | head -n 1)",
+              `if [[ -z "$AGE" ]] || (( AGE > ${backupHours} )); then echo "Refusing: no backup of \${HCX_FQDN} in the last ${backupHours}h (newest: \${AGE:-none}h). Back it up from fleet lifecycle first." >&2; exit 1; fi`,
+              'echo "Backup: ${AGE}h old."',
+              '',
+              `BODY=$(jq -n --arg v '${sq(target)}' --arg f "$HCX_FQDN" '{spec: {desiredSoftware: {version: $v, components: []}, componentsFilter: ["HCX"], scope: {type: "MANAGEMENT", componentFqdns: [$f]}}}')`,
+              'if (( DRY_RUN )); then echo "DRY RUN: would POST /fleet-lcm/v1/upgrade-plans:"; jq . <<<"$BODY"; exit 0; fi',
+              'PLAN=$(lcm POST /upgrade-plans --data "$BODY")',
+              "PLAN_ID=$(jq -r '.id // .planId // empty' <<<\"$PLAN\")",
+              '[[ -n "$PLAN_ID" ]] || { echo "No plan id came back." >&2; exit 1; }',
+              "T=$(lcm POST \"/upgrade-plans/${PLAN_ID}?action=precheck\" --data '{\"precheckType\":\"ENHANCED\"}' | jq -r '.taskId // .id // empty')",
+              '[[ -z "$T" ]] || wait_task "$T" || { echo "The enhanced precheck did not succeed." >&2; exit 1; }',
+              'lcm GET "/upgrade-plans/${PLAN_ID}" > "precheck-${PLAN_ID}.json"',
+              "BAD=$(jq -r '[(.components | if type == \"object\" then .elements else . end)[]? | select(((.precheck.status // \"\") | ascii_upcase | test(\"^(SUCCEEDED|SUCCESSFUL|COMPLETED|PASSED)$\")) | not)] | length' \"precheck-${PLAN_ID}.json\")",
+              '[[ "$BAD" == 0 ]] || { echo "Refusing: ${BAD} component(s) did not pass the precheck; see precheck-${PLAN_ID}.json." >&2; exit 1; }',
+              'need_change',
+              'echo "Change ${CHANGE}: applying plan ${PLAN_ID}."',
+              "T=$(lcm POST \"/upgrade-plans/${PLAN_ID}?action=apply\" --data '{}' | jq -r '.taskId // .id // empty')",
+              '[[ -n "$T" ]] || { echo "No task id returned; follow the plan in Fleet management > Lifecycle." >&2; exit 1; }',
+              'wait_task "$T"',
+            ]
+          : []),
+        ...(action === 'deploy'
+          ? [
+              'if jq -e --arg f "$HCX_FQDN" \'[.[] | select((.fqdn // .name) == $f)] | length > 0\' <<<"$HCXS" >/dev/null; then echo "${HCX_FQDN} is already managed by fleet lifecycle; nothing to deploy." >&2; exit 1; fi',
+              ': "${HCX_ADMIN_PASSWORD_FILE:?set HCX_ADMIN_PASSWORD_FILE to a mode-600 file holding the HCX admin password}"',
+              ': "${HCX_ROOT_PASSWORD_FILE:?set HCX_ROOT_PASSWORD_FILE to a mode-600 file holding the HCX root password}"',
+              'if getent hosts "$HCX_FQDN" >/dev/null 2>&1; then echo "DNS: ${HCX_FQDN} resolves."; else echo "Refusing: ${HCX_FQDN} does not resolve; add its forward and reverse records first." >&2; exit 1; fi',
+              'if (( DRY_RUN )); then echo "DRY RUN: would POST /fleet-lcm/v1/components with hcx-deploy.json and the passwords from their files. Nothing was changed."; exit 0; fi',
+              'need_change',
+              'BODY=$(jq --rawfile a "$HCX_ADMIN_PASSWORD_FILE" --rawfile r "$HCX_ROOT_PASSWORD_FILE" \'.spec.adminPassword = ($a | rtrimstr("\\n")) | .spec.rootPassword = ($r | rtrimstr("\\n"))\' "$HERE/hcx-deploy.json")',
+              '# VERIFY: the deployment path. If it is refused, deploy from Fleet management >',
+              '# Lifecycle > Components > HCX > Deploy with the values in hcx-deploy.json.',
+              'R=$(lcm POST /components --data-binary @- <<<"$BODY") || { echo "The deployment was refused; deploy from Fleet management > Lifecycle > Components > HCX with hcx-deploy.json." >&2; exit 1; }',
+              'unset BODY',
+              "T=$(jq -r '.taskId // .id // empty' <<<\"$R\")",
+              '[[ -n "$T" ]] || { echo "No task id returned; follow it in Fleet management > Lifecycle." >&2; exit 1; }',
+              'echo "Change ${CHANGE}: deploying ${HCX_FQDN}."',
+              'wait_task "$T"',
+            ]
+          : []),
+        ...(addAccount && action !== 'inventory'
+          ? [
+              '',
+              '# The HCX management pack account, so password and certificate rotation and log',
+              '# bundles run from VCF Operations. The credential is one already under',
+              '# Integrations > Credentials, named in HCX_CREDENTIAL_ID. VERIFY: adapter kind HCXAdapter.',
+              ': "${HCX_CREDENTIAL_ID:?set HCX_CREDENTIAL_ID to the id of the HCX credential under Integrations > Credentials}"',
+              `OPS="https://\${VCFOPS_HOST}/suite-api/api"`,
+              `if curl -sS -f -G "$OPS/adapters" --data-urlencode adapterKindKey=HCXAdapter -H "${authHeader(PLATFORM)}" -H "Accept: application/json" | jq -e --arg f "$HCX_FQDN" '[.adapterInstancesInfoDto[]? | select(any(.resourceKey.resourceIdentifiers[]?; .value == $f))] | length > 0' >/dev/null; then`,
+              '  echo "The HCX management pack already has an account for ${HCX_FQDN}."',
+              'else',
+              `  ACCOUNT=$(jq -n --arg f "$HCX_FQDN" --arg c "$HCX_CREDENTIAL_ID" --arg g '${sq(collectorGroup)}' '{name: $f, adapterKindKey: "HCXAdapter", resourceIdentifiers: [{name: "HCX_HOST", value: $f}], credential: {id: $c}} + (if $g != "" then {collectorGroupName: $g} else {} end)')`,
+              `  ID=$(curl -sS -f -X POST "$OPS/adapters" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" -H "Content-Type: application/json" --data-binary @- <<<"$ACCOUNT" | jq -r '.id // empty') || ID=""`,
+              '  [[ -n "$ID" ]] || { echo "The account was not created: add it under Integrations > Accounts > HCX." >&2; exit 1; }',
+              `  curl -sS -f -X PUT "$OPS/adapters/\${ID}/monitoringstate/start" -H "${authHeader(PLATFORM)}" -H "Accept: application/json" >/dev/null`,
+              '  echo "HCX account ${ID} created and collecting."',
+              'fi',
+            ]
+          : []),
+        '',
+      ].join('\n');
+
+      return {
+        platform: PLATFORM,
+        title: `HCX lifecycle — ${action === 'upgrade' ? `upgrade ${hcx} to ${target}` : action === 'deploy' ? `deploy ${hcx} (${role === 'CLOUD' ? 'Cloud' : 'Connector'})` : 'inventory'}`,
+        effect: action === 'inventory' ? 'read' : action === 'deploy' ? 'reversible' : 'irreversible',
+        trigger: { kind: 'manual', detail: action === 'inventory' ? 'Whenever someone wants the list.' : 'Once, in a change window outside any migration wave.', worstCase: 'as often as someone runs it' },
+        scope: {
+          what: action === 'inventory' ? 'Every HCX instance fleet lifecycle lists. Reads only.' : `The HCX Manager ${hcx}${addAccount ? ', and its account in the HCX management pack' : ''}.`,
+          decidedBy: ['The FQDN given, matched exactly against what fleet lifecycle lists.', ...(action === 'upgrade' ? ['The upgrade plan, limited to HCX and that FQDN.'] : [])],
+          ifWrong: action === 'upgrade' ? 'An HCX upgrade during a migration wave restarts replication and network extension; running migrations fail.' : 'A second HCX Manager on the network, or one attached to the wrong vCenter.',
+        },
+        guardrails: [
+          { rule: 'Nothing changes without CHANGE set to a change reference', because: 'An HCX upgrade or deployment should be on the change calendar where the migration team sees it.' },
+          ...(action === 'upgrade'
+            ? [
+                { rule: `The upgrade is refused unless the HCX Manager was backed up within ${backupHours} hours and every component in the plan passed the enhanced precheck`, because: 'An HCX upgrade has no rollback other than the backup.' },
+              ]
+            : []),
+          ...(action === 'deploy' ? [{ rule: 'The deployment is refused when the FQDN is already managed or does not resolve; passwords come from mode-600 files and are sent on stdin', because: 'HCX registers by name, and a password in a spec file ends up in the change record.' }] : []),
+          { rule: '--dry-run reads and checks and changes nothing', because: 'The plan and the spec are worth reading before HCX restarts.' },
+        ],
+        dryRun: ['./hcx-lifecycle.sh --dry-run'],
+        undo:
+          action === 'upgrade'
+            ? ['There is no downgrade. Restore the HCX Manager from the fleet lifecycle backup taken before the upgrade.']
+            : action === 'deploy'
+              ? ['Remove the HCX Manager from Fleet management > Lifecycle > Components, then delete its VM; remove the HCX account under Integrations > Accounts.']
+              : ['Nothing to undo.'],
+        told: ['Whoever runs it; the task is recorded in Fleet management > Lifecycle > Tasks.'],
+        requires: [
+          'VCF Operations 9.1 with fleet lifecycle managing the management components.',
+          ...(action === 'upgrade' ? [`The HCX ${target} bundle in the depot (Fleet management > Lifecycle > Depot).`] : []),
+          ...(action === 'deploy' ? ['Forward and reverse DNS for the HCX Manager, and the HCX bundle in the depot.'] : []),
+          ...(addAccount ? ['The HCX management pack installed ("Install or upgrade a management pack") and an HCX credential under Integrations > Credentials (HCX_CREDENTIAL_ID).'] : []),
+          'jq and curl.',
+        ],
+        files: {
+          'hcx-lifecycle.sh': script,
+          ...(action === 'deploy' ? { 'hcx-deploy.json': `${JSON.stringify(deploySpec, null, 2)}\n` } : {}),
+          'IMPORT.md': nothingToImportMd(`HCX lifecycle (${action})`, [
+            `hcx-lifecycle.sh: run from a host that reaches VCF Operations and ${lcmHost}, with VCFOPS_HOST and a token (or VCFOPS_PASSWORD_FILE), --dry-run first, then with CHANGE=<ref>.`,
+            ...(action === 'deploy' ? ['hcx-deploy.json is the deployment spec; the passwords are added from HCX_ADMIN_PASSWORD_FILE and HCX_ROOT_PASSWORD_FILE at run time. If the API refuses it, the same values go into Fleet management > Lifecycle > Components > HCX > Deploy.'] : []),
+            'For a readiness check before a migration wave, use "VCF Operations HCX: migration readiness report".',
+          ]),
+        },
+        notes: [
+          'CONFIRMED in the 9.1 release notes: HCX Manager lifecycle through VCF Operations fleet lifecycle, and the HCX management pack (password and certificate rotation, log bundles).',
+          'Fleet LCM token exchange, /components, /upgrade-plans (?action=precheck with ENHANCED, ?action=apply), /tasks and /sddc-lcms/{id}/backups are the calls "Lifecycle, enhanced precheck, depot and backup" uses.',
+          'VERIFY: the componentFqdns scope field, the POST /components deployment body, and the HCXAdapter adapter kind and HCX_HOST identifier on your release.',
         ],
         findings,
       };
