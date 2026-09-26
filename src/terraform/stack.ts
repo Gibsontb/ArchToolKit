@@ -370,7 +370,10 @@ export function buildStack(
         continue;
       }
       if (block.kind === 'provider') {
-        const key = block.labels[0] ?? 'provider';
+        // An aliased block (provider "aws" { alias = "dr" … }) is a second
+        // configuration of the same provider, not a conflicting one.
+        const alias = /^\s*alias\s*=\s*"([^"]+)"/m.exec(block.text)?.[1];
+        const key = alias ? `${block.labels[0] ?? 'provider'}.${alias}` : (block.labels[0] ?? 'provider');
         const seen = providerBlocks.get(key);
         if (!seen) providerBlocks.set(key, { text: block.text.trim(), from: item.label });
         else if (seen.text !== block.text.trim()) {
