@@ -61,9 +61,12 @@ function portMatches(m           , port        )          {
 /** The non-x86 type from the origin (decisive), if any. */
 function fromOrigin(w          , osText        )                           {
   switch (w.origin) {
-    case 'power': return /\b(ibm ?i|os\/?400|i5\/os)\b/i.test(osText) ? 'ibm-i' : 'aix';
-    case 'sparc': return 'solaris-sparc';
-    case 'itanium':
+    case 'power':
+      // Linux on Power is scored like any Linux server.
+      if (/linux/i.test(osText)) return undefined;
+      return /\b(ibm ?i|os\/?400|i5\/os)\b/i.test(osText) ? 'ibm-i' : 'aix';
+    case 'sparc': return /linux/i.test(osText) ? undefined : 'solaris-sparc';
+    case 'itanium': return /openvms/i.test(osText) ? undefined : 'hp-ux';
     case 'pa-risc': return 'hp-ux';
     case 'mainframe': return 'mainframe';
     default: break;
@@ -82,18 +85,26 @@ function genericFor(w          )               {
 function score(d          , w          , f                )                                             {
   const evidence           = [];
   const hit = new Set        ();
+  if (d.os && OS_CATALOG[w.os]?.kind !== d.os) return { confidence: 0, evidence };
   const software = [...(w.facts?.software ?? []), ...(f.software ?? [])];
-  const services = [...(w.facts?.services ?? []), ...(f.services ?? [])];
   const ports = [...(w.facts?.listening ?? []), ...(f.listening ?? [])];
+  // Listening process names count as services (a collector may see the process, not the service).
+  const services = [...(w.facts?.services ?? []), ...(f.services ?? []), ...ports.map((p) => p.process ?? '').filter((p) => p !== '')];
+  const matched = d.ports ? ports.filter((p) => d.ports .some((m) => portMatches(m, p.port))).map((p) => p.port) : [];
 
-  const sw = software.find((s) => d.software?.some((r) => r.test(s)));
-  if (sw) { hit.add('software'); evidence.push(`software "${sw}"`); }
-  const svc = services.find((s) => d.services?.some((r) => r.test(s)));
-  if (svc) { hit.add('software'); evidence.push(`service "${svc}"`); }
+  const softwareOk = d.softwareNeed === 'sharedPrinters>0' ? (f.sharedPrinters ?? 0) > 0
+    : d.softwareNeed === 'shares>10' ? (f.shares ?? 0) > 10
+      : d.softwareNeed === 'ports' ? matched.length > 0 : true;
+  if (softwareOk) {
+    const sw = software.find((s) => d.software?.some((r) => r.test(s)));
+    if (sw) { hit.add('software'); evidence.push(`software "${sw}"`); }
+    const svc = services.find((s) => d.services?.some((r) => r.test(s)));
+    if (svc) { hit.add('software'); evidence.push(`service "${svc}"`); }
+  }
 
   if (d.ports) {
-    const matched = ports.filter((p) => d.ports .some((m) => portMatches(m, p.port))).map((p) => p.port);
-    const extraOk = d.portsNeed === 'sessions>2' ? (f.sessions ?? 0) > 2 : d.portsNeed === 'shares>10' ? (f.shares ?? 0) > 10 : true;
+    const extraOk = d.portsNeed === 'sessions>2' ? (f.sessions ?? 0) > 2 : d.portsNeed === 'shares>10' ? (f.shares ?? 0) > 10
+      : d.softwareNeed === 'sharedPrinters>0' ? (f.sharedPrinters ?? 0) > 0 : true;
     if (matched.length > 0 && extraOk) {
       hit.add('ports');
       evidence.push(`listening on ${[...new Set(matched)].sort((a, b) => a - b).join(', ')}${d.portsNeed ? ` (${d.portsNeed})` : ''}`);
