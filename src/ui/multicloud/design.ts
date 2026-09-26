@@ -1,17 +1,414 @@
 /**
- * STUB — Landing zones (`#landing-zones`) on Multi-Cloud Migration & Utilities (`multicloud.html`).
+ * Landing zones (`#landing-zones`) on Multi-Cloud Migration & Utilities
+ * (addendum A.5.2, A.10.15).
  *
- * Mounted by the page shell (WP-14) through `mount(root, ctx)`; WP-UI-B
- * replaces this body with the real pane and keeps the export.
+ * One card per platform the plan lands on, each with:
+ * - the landing-zone design (the base Screen 7 card): region, name prefix,
+ *   the account / subscription / project / compartment, the networks, subnet
+ *   size, zones, bastion and log retention, and the carved subnets
+ *   (`designPlan` → `foundationPlansFor`);
+ * - the landing-zone mode: **shared** (this page's landing zone, which app
+ *   stacks read through `var.landing_zone`) or **included** (each app stack
+ *   builds its own); kept in `plan.execution.landingZones`;
+ * - connectivity and identity as the design places them per platform;
+ * - backup and DR, and the relocate target where one is used;
+ * - governance: tag enforcement and the required tags, the security baseline
+ *   policies, and budgets;
+ * - Generate landing zone (<platform>), which downloads `terraform/<p>/` in
+ *   landing-zone scope and marks the landing zone generated.
+ *
+ * Above the cards: the estate-wide Connectivity and Identity cards (WP-UI-A's
+ * `mountConnectivity` / `mountIdentity` from requirements.ts when present)
+ * and the estate-wide governance settings (frameworks, baseline, keys).
  */
 
-import { stubPane } from '../pane-stub.ts';
+import { el, append, clear, downloadFile } from '../dom.ts';
+import { card, findingsList } from '../components.ts';
+import { renderBlueprintForm } from '../blueprint-form.ts';
 import type { PaneContext } from '../plan-shell.ts';
+import type { BlueprintInput, BlueprintValues, SelectOption } from '../../kit/blueprint.ts';
+import type { Finding } from '../../core/findings.ts';
+import { zip } from '../../kit/archive.ts';
+import { foundationPlansFor, landingZoneSettings } from '../../multicloud/plan/design/index.ts';
+import { terraformFiles } from '../../multicloud/plan/generate/terraform.ts';
+import {
+  BASTION_OPTIONS, CONNECTION_OPTIONS, DEFAULT_LANDING_ZONE, FRAMEWORK_OPTIONS, KEY_MANAGEMENT_OPTIONS, LANDING_ZONE_MODE_OPTIONS,
+  LOG_RETENTION_OPTIONS, NETWORK_BASE, PLATFORM_LABELS, SECURITY_BASELINE_OPTIONS, SUBNET_PREFIX_OPTIONS, ZONE_COUNT_OPTIONS,
+  AD_STRATEGY_OPTIONS, CLOUD_SIGN_IN_OPTIONS, DNS_STRATEGY_OPTIONS, defaultExecution, overrideKey, slugName,
+} from '../../multicloud/plan/options.ts';
+import type { Framework, KeyManagement, Plan, Platform, PlatformDesign, SecurityBaseline } from '../../multicloud/plan/types.ts';
+import { planModel } from './plan-model.ts';
+import { fill, note, rowsTable, subhead, twoColumns, watchPlan } from './pane-kit.ts';
+import { projectDate } from './project.ts';
+
+// ---------------------------------------------------------------------------
+// The settings, as blueprint inputs
+// ---------------------------------------------------------------------------
+
+const SCOPE_LABEL: Readonly<Record<Platform, string>> = {
+  aws: 'AWS account id',
+  azure: 'Subscription id',
+  google: 'Project id',
+  oci: 'Compartment OCID',
+  vmware: 'vSphere folder',
+};
+const REGION_LABEL: Readonly<Record<Platform, string>> = {
+  aws: 'Region', azure: 'Region', google: 'Region', oci: 'Region', vmware: 'vCenter (FQDN)',
+};
+const POLICY_ENGINE: Readonly<Record<Platform, string>> = {
+  aws: 'AWS Organizations tag policy and AWS Config managed rules',
+  azure: 'Azure Policy: the built-in "require a tag" / "inherit a tag" and the framework initiatives',
+  google: 'Google Cloud organization policies (where the organization is in scope)',
+  oci: 'OCI tag defaults, Cloud Guard targets and security zones',
+  vmware: 'vCenter tags and VCF Operations compliance (no Terraform governance item)',
+};
+
+const YES_NO: readonly SelectOption[] = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
+export const TAG_MODE_OPTIONS: readonly SelectOption[] = [
+  { value: 'enforce', label: 'Enforce: deny resources without the required tags' },
+  { value: 'inherit', label: 'Default: inherit the tags from the scope, do not deny' },
+  { value: 'off', label: 'Off' },
+];
+export const BASELINE_POLICY_OPTIONS: readonly SelectOption[] = [
+  { value: 'on', label: 'On: the baseline and the frameworks\' policy sets' },
+  { value: 'off', label: 'Off' },
+];
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'JPY', 'NZD', 'SEK', 'SGD', 'INR'];
+const ALERTS = ['50', '75', '80', '90', '100', '110'];
+export const DEFAULT_TAGS = ['owner |  | yes', 'cost-centre |  | yes', 'environment |  | yes', 'application |  | yes', 'data-classification | internal | no'].join('\n');
+
+/** The governance card's override keys for a platform. */
+export const governanceKey = (p: Platform, field: 'tags-mode' | 'tags' | 'baseline' | 'budgets'): string => overrideKey(p, 'governance', field);
+
+const opts = (list: readonly { value: string; label: string }[]): SelectOption[] => list.map((o) => ({ value: o.value, label: o.label }));
+
+/** The landing-zone card's inputs for one platform, with their defaults. */
+export function landingZoneInputs(plan: Plan, pd: PlatformDesign): { inputs: BlueprintInput[]; defaults: Record<string, string> } {
+  const p = pd.platform;
+  const lz = (field: string) => overrideKey(p, 'lz', field);
+  const net = (name: string, field: string) => overrideKey(p, `network-${name}`, field);
+  const defaultPrefix = `${slugName(plan.name) || 'plan'}-${{ aws: 'aws', azure: 'az', google: 'gcp', oci: 'oci', vmware: 'vcf' }[p]}`;
+  const inputs: BlueprintInput[] = [
+    { id: `${p}:region:primary`, label: REGION_LABEL[p], control: 'text', placeholder: pd.region, hint: p === 'vmware' ? 'The workload domain vCenter' : 'Primary region' },
+    ...(p === 'vmware' ? [] : [{ id: `${p}:region:dr`, label: 'DR region', control: 'text' as const, placeholder: 'None', hint: 'Blank: no DR region' }]),
+    { id: lz('prefix'), label: 'Name prefix', control: 'text', placeholder: defaultPrefix, hint: `Blank: ${defaultPrefix}` },
+    { id: lz('scope'), label: SCOPE_LABEL[p], control: 'text', placeholder: 'Blank: a variable', hint: 'Blank: asked for as a variable' },
+  ];
+  const defaults: Record<string, string> = {
+    [`${p}:region:primary`]: '', [`${p}:region:dr`]: '', [lz('prefix')]: '', [lz('scope')]: '',
+  };
+  if (p === 'vmware') {
+    for (const [field, label] of [['datacenter', 'Datacenter'], ['cluster', 'Cluster'], ['datastore', 'Datastore'], ['storage-policy', 'vSAN storage policy'], ['folder', 'VM folder']] as const) {
+      inputs.push({ id: lz(field), label, control: 'text', hint: 'Blank: the generated default' });
+      defaults[lz(field)] = '';
+    }
+  }
+  inputs.push(
+    { id: lz('subnet-size'), label: 'Subnet size per tier', control: 'select', options: opts(SUBNET_PREFIX_OPTIONS) },
+    { id: lz('zones-prod'), label: 'Zones (production)', control: 'select', options: opts(ZONE_COUNT_OPTIONS) },
+    { id: lz('zones-nonprod'), label: 'Zones (non-production)', control: 'select', options: opts(ZONE_COUNT_OPTIONS) },
+  );
+  defaults[lz('subnet-size')] = DEFAULT_LANDING_ZONE.subnetPrefix;
+  defaults[lz('zones-prod')] = String(DEFAULT_LANDING_ZONE.zonesProd);
+  defaults[lz('zones-nonprod')] = String(DEFAULT_LANDING_ZONE.zonesNonprod);
+  if (p !== 'vmware') {
+    inputs.push(
+      { id: lz('bastion'), label: 'Bastion', control: 'select', options: opts(BASTION_OPTIONS) },
+      { id: lz('log-retention'), label: 'Log retention', control: 'select', options: opts(LOG_RETENTION_OPTIONS), hint: 'Flow logs and central logging are always on' },
+    );
+    defaults[lz('bastion')] = DEFAULT_LANDING_ZONE.bastion;
+    defaults[lz('log-retention')] = String(DEFAULT_LANDING_ZONE.logRetentionDays);
+  }
+  const names = pd.networks.length > 0 ? pd.networks.map((n) => n.name) : ['prod'];
+  names.forEach((name) => {
+    const base = NETWORK_BASE[p] + (name === 'nonprod' ? 1 : 0);
+    inputs.push(
+      { id: net(name, 'cidr'), label: `${name === 'prod' ? 'Production' : 'Non-production'} network (IPv4)`, control: 'text', placeholder: `10.${base}.0.0/16`, hint: `Blank: 10.${base}.0.0/16` },
+      { id: net(name, 'ipv6'), label: `${name === 'prod' ? 'Production' : 'Non-production'} network: IPv6 (dual stack)`, control: 'select', options: YES_NO },
+    );
+    defaults[net(name, 'cidr')] = '';
+    defaults[net(name, 'ipv6')] = 'yes';
+  });
+  return { inputs, defaults };
+}
+
+/** The per-platform governance card's inputs. */
+export function governanceInputs(p: Platform): { inputs: BlueprintInput[]; defaults: Record<string, string> } {
+  return {
+    inputs: [
+      { id: governanceKey(p, 'tags-mode'), label: 'Tag enforcement', control: 'select', options: TAG_MODE_OPTIONS },
+      {
+        id: governanceKey(p, 'tags'), label: 'Tags', control: 'textarea', hint: 'Tag | Default value | Required',
+        options: YES_NO.map((o) => ({ ...o, group: 'Required' })),
+        help: 'Every resource carries these. A default value is applied where the platform can default a tag.',
+      },
+      { id: governanceKey(p, 'baseline'), label: 'Security baseline policies', control: 'select', options: BASELINE_POLICY_OPTIONS },
+      {
+        id: governanceKey(p, 'budgets'), label: 'Budgets', control: 'textarea', hint: 'Scope | Monthly amount | Currency | Alert at %',
+        options: [...CURRENCIES.map((c) => ({ value: c, label: c, group: 'Currency' })), ...ALERTS.map((a) => ({ value: a, label: `${a}%`, group: 'Alert at %' }))],
+        help: 'Your own amounts; a scope is the landing zone, an environment or an application.',
+      },
+    ],
+    defaults: { [governanceKey(p, 'tags-mode')]: 'enforce', [governanceKey(p, 'tags')]: DEFAULT_TAGS, [governanceKey(p, 'baseline')]: 'on', [governanceKey(p, 'budgets')]: '' },
+  };
+}
+
+/** The estate-wide governance inputs (these are requirements, shared by every platform). */
+const ESTATE_GOVERNANCE: readonly BlueprintInput[] = [
+  { id: 'frameworks', label: 'Compliance frameworks', control: 'checklist', options: opts(FRAMEWORK_OPTIONS), hint: 'Select the policy sets' },
+  { id: 'securityBaseline', label: 'Security baseline', control: 'select', options: opts(SECURITY_BASELINE_OPTIONS) },
+  { id: 'keys', label: 'Key management', control: 'select', options: opts(KEY_MANAGEMENT_OPTIONS) },
+];
+
+/** The landing-zone mode of a platform: shared when it is designed here. */
+export function landingZoneMode(plan: Plan, p: Platform): 'shared' | 'included' {
+  return plan.execution?.landingZones?.[p] ? 'shared' : 'included';
+}
+
+/** A plan with a platform's landing-zone mode set. */
+export function withLandingZoneMode(plan: Plan, p: Platform, mode: 'shared' | 'included'): Plan {
+  const execution = plan.execution ?? defaultExecution();
+  const landingZones = { ...execution.landingZones };
+  if (mode === 'shared') landingZones[p] = landingZones[p] ?? 'designed';
+  else delete landingZones[p];
+  return { ...plan, execution: { ...execution, landingZones } };
+}
+
+/** A plan with one landing-zone card value set (the regions, the mode, or an override). */
+export function withLandingZoneValue(plan: Plan, id: string, value: string, defaults: Readonly<Record<string, string>>): Plan {
+  const region = /^(aws|azure|google|oci|vmware):region:(primary|dr)$/.exec(id);
+  if (region) {
+    const p = region[1] as Platform;
+    const current = plan.requirements.regions[p] ?? { primary: '' };
+    const next = region[2] === 'primary' ? { ...current, primary: value.trim() } : { primary: current.primary, ...(value.trim() ? { dr: value.trim() } : {}) };
+    return { ...plan, requirements: { ...plan.requirements, regions: { ...plan.requirements.regions, [p]: next } } };
+  }
+  const mode = /^(aws|azure|google|oci|vmware):lz-mode$/.exec(id);
+  if (mode) return withLandingZoneMode(plan, mode[1] as Platform, value === 'shared' ? 'shared' : 'included');
+  const overrides = { ...plan.designOverrides };
+  if (value.trim() === '' || value === defaults[id]) delete overrides[id];
+  else overrides[id] = value;
+  return { ...plan, designOverrides: overrides };
+}
+
+// ---------------------------------------------------------------------------
+// The pane
+// ---------------------------------------------------------------------------
 
 export function mount(root: HTMLElement, ctx: PaneContext): void {
-  stubPane(root, ctx, {
-    title: "Landing zones",
-    does: "One card per platform in use: networks, connectivity (the sites grid), identity, backup and DR, monitoring, governance (policies, budgets, tag defaults) and the relocate target with the VCF Sizing handoff. Generates the landing-zone projects.",
-    owner: "WP-UI-B",
+  const top = el('div', { class: 'stack' });
+  const cards = el('div', { class: 'stack', attrs: { 'data-control': 'landing-zones' } });
+  append(root, el('div', { class: 'stack' }, top, cards));
+  /** Per platform, the parts that follow the plan without redrawing the form. */
+  let refreshers: (() => void)[] = [];
+  let drawnPlatforms = '';
+
+  const draw = (): void => {
+    refreshers = [];
+    clear(top);
+    clear(cards);
+    const plan = ctx.session.plan();
+    const model = planModel(plan);
+    drawnPlatforms = model.design.platforms.map((d) => d.platform).join(',');
+    append(top, intro(plan, model.design.platforms.length, model.failure));
+    append(top, estateFoundations(ctx));
+    append(top, estateGovernance(ctx));
+    for (const pd of model.design.platforms) append(cards, platformCard(ctx, pd, (r) => refreshers.push(r)));
+    const other = model.design.findings.filter((f) => !model.design.platforms.some((d) => belongsTo(f, d.platform)));
+    if (other.length > 0) append(cards, card('Design findings', findingsList(other)));
+  };
+  const refresh = (): boolean => {
+    const model = planModel(ctx.session.plan());
+    if (model.design.platforms.map((d) => d.platform).join(',') !== drawnPlatforms) return true;
+    for (const r of refreshers) r();
+    return false;
+  };
+  draw();
+  watchPlan(ctx, draw, refresh);
+}
+
+function intro(plan: Plan, count: number, failure?: string): HTMLElement {
+  return card(
+    'Landing zones',
+    el('p', { text: 'One landing zone per platform the plan lands on: its networks, connectivity, identity, backup and governance. A shared landing zone is built once here; the application stacks read it through var.landing_zone.' }),
+    failure ? el('div', { class: 'tip warn' }, el('strong', { text: 'The plan could not be decided: ' }), el('span', { text: failure })) : null,
+    count === 0 && !failure
+      ? el('div', { class: 'empty', attrs: { 'data-control': 'no-platforms' } }, 'No platform is in use yet. Place the applications on Application Migration first.', ' ', el('a', { text: 'Open Application Migration →', attrs: { href: 'migration.html#applications' } }))
+      : note(`${count} platform${count === 1 ? '' : 's'} in use for ${plan.name}.`),
+  );
+}
+
+const belongsTo = (f: Finding, p: Platform): boolean => (f.path ?? '').startsWith(`${p}:`) || f.message.startsWith(`${p} `) || f.message.startsWith(`${p}:`) || f.message.startsWith(PLATFORM_LABELS[p]);
+
+/** The estate-wide Connectivity and Identity cards: WP-UI-A's when requirements.ts exports them, else a summary. */
+function estateFoundations(ctx: PaneContext): HTMLElement {
+  const holder = el('div', { class: 'stack', attrs: { 'data-control': 'estate-foundations' } });
+  void import('./requirements.ts').then((mod) => {
+    const m = mod as unknown as Record<string, unknown>;
+    const connectivity = m['mountConnectivity'];
+    const identity = m['mountIdentity'];
+    if (typeof connectivity === 'function' && typeof identity === 'function') {
+      clear(holder);
+      const c = el('div', { attrs: { 'data-control': 'connectivity-card' } });
+      const i = el('div', { attrs: { 'data-control': 'identity-card' } });
+      append(holder, c, i);
+      (connectivity as (root: HTMLElement, ctx: PaneContext) => void)(c, ctx);
+      (identity as (root: HTMLElement, ctx: PaneContext) => void)(i, ctx);
+      return;
+    }
+    fill(holder, foundationsSummary(ctx.session.plan()));
+  }, () => fill(holder, foundationsSummary(ctx.session.plan())));
+  return holder;
+}
+
+/** Read-only Connectivity and Identity, until the editable cards are in. */
+function foundationsSummary(plan: Plan): HTMLElement {
+  const req = plan.requirements;
+  const label = (list: readonly { value: string; label: string }[], v: string) => list.find((o) => o.value === v)?.label ?? v;
+  return card(
+    'Connectivity and identity',
+    el('p', { class: 'section-note', attrs: { 'data-control': 'foundations-placeholder' }, text: 'The editable Connectivity and Identity cards are being built (WP-UI-A). Until then they are shown here as the plan holds them.' }),
+    subhead('Sites'),
+    req.sites.length === 0
+      ? note('No sites: the landing zones have no hybrid connectivity.')
+      : rowsTable(['Site', 'VPN peer', 'BGP ASN', 'CIDRs', 'Bandwidth', 'Circuit'], req.sites.map((s) => [s.name, s.vpnPeer ?? '', s.bgpAsn ?? '', s.cidrs.join(' '), s.bandwidth, s.circuit])),
+    note(`Connection: ${label(CONNECTION_OPTIONS, req.connection)}.`),
+    subhead('Identity'),
+    rowsTable(['Setting', 'Value'], [
+      ['Active Directory', label(AD_STRATEGY_OPTIONS, req.identity.adStrategy)],
+      ['Domain', req.identity.domain ?? ''],
+      ['Cloud sign-in', label(CLOUD_SIGN_IN_OPTIONS, req.identity.cloudSignIn)],
+      ['DNS', label(DNS_STRATEGY_OPTIONS, req.identity.dns)],
+    ]),
+  );
+}
+
+/** Frameworks, baseline and key management: requirements every landing zone follows. */
+function estateGovernance(ctx: PaneContext): HTMLElement {
+  const values = (): BlueprintValues => {
+    const r = ctx.session.plan().requirements;
+    return { frameworks: r.frameworks.join(', '), securityBaseline: r.securityBaseline, keys: r.keys };
+  };
+  const set = (id: string, v: string): void => {
+    ctx.session.update((p) => {
+      const req = p.requirements;
+      if (id === 'frameworks') return { ...p, requirements: { ...req, frameworks: v.split(',').map((x) => x.trim()).filter(Boolean) as Framework[] } };
+      if (id === 'securityBaseline') return { ...p, requirements: { ...req, securityBaseline: v as SecurityBaseline } };
+      if (id === 'keys') return { ...p, requirements: { ...req, keys: v as KeyManagement } };
+      return p;
+    });
+  };
+  return card(
+    'Governance: every platform',
+    note('The frameworks select the policy sets each landing zone assigns; the baseline and key management apply everywhere.'),
+    ...renderBlueprintForm({ inputs: ESTATE_GOVERNANCE }, { values, set }),
+  );
+}
+
+function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () => void) => void): HTMLElement {
+  const p = pd.platform;
+  const plan = ctx.session.plan();
+  const lz = landingZoneInputs(plan, pd);
+  const gov = governanceInputs(p);
+  const defaults = { ...lz.defaults, ...gov.defaults };
+  const values = (): BlueprintValues => {
+    const current = ctx.session.plan();
+    const out: Record<string, string> = {};
+    for (const [id, d] of Object.entries(defaults)) out[id] = current.designOverrides[id] ?? d;
+    out[`${p}:region:primary`] = current.requirements.regions[p]?.primary ?? '';
+    out[`${p}:region:dr`] = current.requirements.regions[p]?.dr ?? '';
+    out[`${p}:lz-mode`] = landingZoneMode(current, p);
+    return out;
+  };
+  const binding = { values, set: (id: string, v: string) => ctx.session.update((cur) => withLandingZoneValue(cur, id, v, defaults)) };
+  const modeInput: BlueprintInput = {
+    id: `${p}:lz-mode`, label: 'Landing-zone mode for the app stacks', control: 'select', options: opts(LANDING_ZONE_MODE_OPTIONS),
+    help: 'Shared: this landing zone is built once, and every app stack on the platform reads it (var.landing_zone). Included: each app stack builds its own.',
+  };
+
+  const state = el('p', { class: 'small', attrs: { 'data-control': `lz-state-${p}` } });
+  const subnets = el('div', { attrs: { 'data-control': `subnets-${p}` } });
+  const foundation = el('div');
+  const placement = el('div');
+  const findings = el('div', { style: { overflowWrap: 'anywhere', wordBreak: 'break-word' } });
+  const generated = el('div', { attrs: { 'data-control': `lz-generated-${p}` }, style: { overflowWrap: 'anywhere', wordBreak: 'break-word' } });
+
+  const refresh = (): void => {
+    const cur = ctx.session.plan();
+    const model = planModel(cur);
+    const d = model.design.platforms.find((x) => x.platform === p) ?? pd;
+    const lzState = cur.execution?.landingZones?.[p];
+    state.textContent = lzState
+      ? `Shared landing zone: ${lzState === 'generated' ? 'generated' : 'designed, not generated yet'}.`
+      : 'Included: each app stack on this platform builds its own landing zone.';
+    const rows = d.networks.flatMap((n) => n.subnets.map((s) => [n.name, s.tier, s.zone || '—', s.cidr, s.ipv6Cidr ?? (n.ipv6 ? 'allocated by the platform' : '')]));
+    fill(subnets, rows.length === 0 ? note('No networks are carved for this platform (see the findings).') : rowsTable(['Network', 'Tier', 'Zone', 'IPv4', 'IPv6'], rows));
+    const fps = foundationPlansFor(d, p, cur);
+    fill(foundation, fps.length === 0 ? null : note(`Foundation: ${fps.map((f) => `${f.name} (${f.cidr}${f.ipv6 ? ', dual stack' : ''}, ${f.subnets.length} subnets)`).join('; ')}. Region ${d.region}${d.drRegion ? `, DR ${d.drRegion}` : ''}.`));
+    fill(
+      placement,
+      subhead('Connectivity'),
+      d.connectivity.length === 0
+        ? note('No site connects to this platform.')
+        : rowsTable(['Site', 'Method', 'BGP ASN (cloud side)'], d.connectivity.map((c) => [c.site, CONNECTION_OPTIONS.find((o) => o.value === c.method)?.label ?? c.method, String(c.cloudAsn)])),
+      subhead('Identity'),
+      note(`${AD_STRATEGY_OPTIONS.find((o) => o.value === d.identity.strategy)?.label ?? d.identity.strategy}${d.identity.dcNames.length ? `: ${d.identity.dcNames.join(', ')}` : ''}.`),
+      subhead('Backup and DR'),
+      rowsTable(['Tier', 'Frequency', 'Retention (days)', 'Copy to DR', 'Immutable'], d.backup.tiers.map((t) => [t.tier, t.frequency, String(t.retentionDays), t.copyToDr ? 'Yes' : 'No', t.immutable ? 'Yes' : 'No'])),
+      d.relocate ? el('div', {}, subhead('Relocate target'), note(`${d.relocate.service}: ${d.relocate.nodes} hosts (a naive sum; size it in VCF Sizing).`), el('a', { class: 'btn btn-small', text: 'Open VCF Sizing →', attrs: { href: 'vcf-sizing.html' } })) : null,
+    );
+    const mine = [...landingZoneSettings(cur, p).findings, ...model.design.findings.filter((f) => belongsTo(f, p))];
+    fill(findings, mine.length === 0 ? null : findingsList(mine));
+  };
+  refresh();
+  onRefresh(refresh);
+
+  const generate = el('button', {
+    class: 'btn btn-primary',
+    text: `Generate landing zone (${PLATFORM_LABELS[p]})`,
+    attrs: { type: 'button', 'data-control': `generate-lz-${p}` },
+    on: {
+      click: () => {
+        void (async () => {
+          const cur = ctx.session.plan();
+          const model = planModel(cur);
+          const d = model.design.platforms.find((x) => x.platform === p);
+          if (!d) return;
+          const tf = terraformFiles({ ...cur, decision: model.decision }, model.decision, { platforms: [d], findings: [] }, { scope: 'landing-zone' });
+          const folder = `${slugName(cur.name) || 'plan'}-landing-zone-${p}`;
+          const files = Object.fromEntries(Object.entries(tf.files).map(([k, v]) => [`${folder}/${k}`, v]));
+          if (Object.keys(files).length === 0) {
+            fill(generated, findingsList([...tf.findings, { code: 'lz.nothing', severity: 'warning', message: 'Nothing to generate for this platform.' }]));
+            return;
+          }
+          downloadFile(`${folder}.zip`, await zip(files, projectDate(cur)), 'application/zip');
+          const errors = tf.findings.filter((f) => f.severity === 'error').length;
+          fill(generated, note(`${Object.keys(files).length} files in ${folder}.zip${errors ? `, with ${errors} error finding${errors === 1 ? '' : 's'}` : ''}.`), tf.findings.length ? findingsList(tf.findings) : null);
+          ctx.session.update((x) => {
+            const execution = x.execution ?? defaultExecution();
+            return { ...x, execution: { ...execution, landingZones: { ...execution.landingZones, [p]: 'generated' } } };
+          }, { immediate: true });
+        })();
+      },
+    },
   });
+
+  return el(
+    'section',
+    { class: 'card', attrs: { 'data-platform': p } },
+    el('div', { class: 'card-title' }, el('h2', { text: PLATFORM_LABELS[p] })),
+    ...renderBlueprintForm({ inputs: [modeInput] }, binding),
+    state,
+    subhead('Landing zone'),
+    twoColumns(renderBlueprintForm({ inputs: lz.inputs }, binding)),
+    foundation,
+    subnets,
+    placement,
+    subhead('Governance'),
+    note(`Enforced with ${POLICY_ENGINE[p]}.`),
+    ...renderBlueprintForm({ inputs: gov.inputs }, binding),
+    findings,
+    el('div', { class: 'btn-row', style: { marginTop: 'var(--space-4)' } }, generate),
+    generated,
+  );
 }
