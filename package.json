@@ -36,6 +36,9 @@
     "ansible:validate": "node tools/validate-ansible-blueprints.mjs",
     "ansible:rules": "node tools/discover-module-rules.mjs",
     "network:validate": "node tools/validate-network-blueprints.mjs",
+    "splunk:validate": "node tools/validate-splunk-blueprints.mjs",
+    "splunk:specs": "node tools/fetch-splunk-specs.mjs",
+    "splunk:versions": "node tools/check-splunk-versions.mjs",
     "vcf:workbook": "node tools/fetch-vcf-workbook.mjs",
     "vcf:schema": "node tools/check-vcf-installer-schema.mjs",
     "verify:schemas": "node tools/verify-foundation-schemas.mjs"

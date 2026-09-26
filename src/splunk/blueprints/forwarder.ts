@@ -19,6 +19,28 @@ import { familyOf, formatHostPort, parseCidrAny, splitHostPort } from '../../cor
 import { parseIPv6 } from '../../core/net-calc.ts';
 
 /**
+ * A monitor input that reads one level of subdirectories and no deeper.
+ *
+ * inputs.conf has no depth setting, and `*` in a path matches one segment
+ * only, so `/var/log/app/*.log` never sees `/var/log/app/node1/x.log`. The
+ * stanza watches the directory recursively instead, and an allow list with
+ * the file pattern in it bounds the depth. A path with a wildcard before its
+ * last segment, or `...`, already says how deep it goes: null.
+ */
+export function oneLevelDown(path: string): { path: string; whitelist: string } | null {
+  const clean = path.replace(/\/+$/, '');
+  if (clean.includes('...')) return null;
+  const cut = clean.lastIndexOf('/');
+  const dir = clean.slice(0, cut);
+  const last = clean.slice(cut + 1);
+  if (cut <= 0 || /[*]/.test(dir)) return null;
+  const re = (s: string): string => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  // A last segment with a wildcard is the file pattern; without one, the path is the directory.
+  const [base, file] = last.includes('*') ? [dir, last.split('*').map(re).join('[^/]*')] : [clean, '[^/]+'];
+  return { path: base, whitelist: `^${re(base)}/(?:[^/]+/)?${file}$` };
+}
+
+/**
  * splunkd's IPv6 switch, the same for server.conf [general] and the network
  * input stanzas: no (the default), yes (both families) or only.
  */
@@ -214,12 +236,21 @@ export const FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
         ],
         files: {
           'default/inputs.conf': [
-            ...paths.flatMap((path) => [
+            ...paths.flatMap((given) => {
+              const bound = recursive === 'one' ? oneLevelDown(given) : null;
+              const path = bound?.path ?? given;
+              return [
               `[monitor://${path}]`,
               'disabled = 0',
               ...(index ? [`index = ${index}`] : ['# No index set — everything lands in main.']),
               ...(sourcetype ? [`sourcetype = ${sourcetype}`] : []),
-              ...(recursive === 'none' ? ['recursive = false'] : recursive === 'one' ? ['recursive = true', 'host_segment = 0'] : ['recursive = true']),
+              ...(recursive === 'none'
+                ? ['recursive = false']
+                : recursive === 'one'
+                  ? bound
+                    ? ['# One level of subdirectories: Splunk has no depth setting, so the allow list bounds it.', 'recursive = true', `whitelist = ${bound.whitelist}`]
+                    : ['# The path’s own wildcards decide how deep this reads.', 'recursive = true']
+                  : ['recursive = true']),
               ...(excludes.length > 0 ? [`blacklist = (${excludes.join('|')})`] : []),
               ...(str(values, 'follow_tail', 'beginning') === 'tail' ? ['followTail = 1'] : []),
               ...(ignoreOlder > 0 ? [`ignoreOlderThan = ${ignoreOlder}d`] : []),
@@ -229,7 +260,8 @@ export const FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
               '# files with identical first lines; wrong for files that get renamed.',
               '# crcSalt = <SOURCE>',
               '',
-            ]),
+              ];
+            }),
           ],
           'metadata/default.meta': defaultMeta(),
         },
@@ -400,10 +432,16 @@ export const FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
                   `index = ${index}`,
                   `sourcetype = ${sourcetype}`,
                   'connection_host = ip',
-                  '# Keep the syslog priority rather than stripping it — it carries',
-                  '# the facility and severity, which are often the only structure.',
-                  'no_priority_stripping = false',
-                  'no_appending_timestamp = false',
+                  // UDP-only settings: a TCP input leaves the message as it came.
+                  ...(protocol === 'udp'
+                    ? [
+                        '# Keep the syslog priority rather than stripping it — it carries',
+                        '# the facility and severity, which are often the only structure.',
+                        'no_priority_stripping = true',
+                        '# Keep the device’s own header rather than prepending the receive time.',
+                        'no_appending_timestamp = true',
+                      ]
+                    : []),
                   ...(protocol === 'udp' ? [`queueSize = ${str(values, 'queue_size', '10MB')}`, '_rcvbuf = 16777216'] : ['queueSize = ' + str(values, 'queue_size', '10MB')]),
                   ...(listenV6 !== 'no' ? [`# ${listenV6 === 'yes' ? 'IPv4 and IPv6 on one port' : 'IPv6 only'}; the default (no) hears IPv4 only.`, `listenOnIPv6 = ${listenV6}`] : []),
                   ...(accept.list.length > 0 ? ['# Who may send; IPv6 networks are written like IPv4 ones.', `acceptFrom = ${accept.list.join(', ')}`] : []),
@@ -612,7 +650,6 @@ export const FORWARDER_BLUEPRINTS: readonly SplunkBlueprint[] = [
                   '# The server list maintains itself as peers come and go.',
                 ]
               : [`server = ${indexers.join(', ')}`]),
-            'autoLB = true',
             `autoLBFrequency = ${num(values, 'auto_lb_seconds', 30)}`,
             '# Without this, a forwarder sending one large file stays on one',
             '# indexer for the whole file and the load looks uneven.',

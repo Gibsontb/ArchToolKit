@@ -20,6 +20,13 @@
 
 import { warning,              } from '../core/findings.js';
 
+/**
+ * The releases the page writes for: Splunk Enterprise 10.4 and Splunk Cloud
+ * Platform 10.5. tools/check-splunk-versions.mjs compares them with Splunk's
+ * latest (update-splunk.bat runs it).
+ */
+export const SPLUNK_TARGETS = { enterprise: '10.4', cloud: '10.5' }         ;
+
 /** Which Splunk tier the generated app is deployed to. */
                         
                  
@@ -162,6 +169,13 @@ export function appConf(app           , description        )           {
     '',
     '[package]',
     `id = ${app.app}`,
+    '# Not on Splunkbase, so there is nothing to check for.',
+    'check_for_updates = false',
+    '',
+    // The app's identity for installation; AppInspect asks for it.
+    '[id]',
+    `name = ${app.app}`,
+    'version = 1.0.0',
   ];
 }
 

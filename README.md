@@ -308,6 +308,27 @@ change list, which also writes the whole device's configuration merged.
 `update-network.bat` updates the vendor collections, revalidates everything,
 rebuilds, runs the tests, and asks before it commits.
 
+## Splunk
+
+Deployable Splunk apps, conf snippets and scripts for Splunk Enterprise 10.4,
+Splunk Cloud Platform 10.5 (ACS), forwarders and ingest, grouped by the tier
+each one goes on. Every setting is checked against Splunk's own `.conf.spec`
+files, and every app against Splunk AppInspect:
+
+    npm run splunk:specs        the Splunk Enterprise .conf.spec settings, from
+                                Splunk's published spec files (cached in
+                                src/splunk/conf-spec-data.ts)
+    npm run splunk:versions     is Splunk Enterprise or Cloud newer than the
+                                page's target (flagged, never failed)
+    npm run splunk:validate     every blueprint, every choice: builds, every
+                                .conf parses (no key set twice), every setting
+                                is in the spec, no credential in any file, and
+                                each app inspected with Splunk AppInspect in WSL
+
+`update-splunk.bat` updates AppInspect, refreshes the spec settings, checks
+the versions, revalidates, rebuilds, runs the tests, and asks before it
+commits.
+
 ## Data Editor
 
 Open a JSON or YAML file, edit it as a form or as text, and have it checked
@@ -452,12 +473,26 @@ usable on its own; nothing requires starting at the beginning.
 
 ## Spec builder inputs
 
-The form covers the fields a form can express. Structured and rarely-used parts
-of `SddcSpec` — resource pools, root CA chains, explicit IP pool ranges and
-per-component FQDN overrides — are reached by pasting a specification into the
-import panel, which validates it the same way. Credentials are deliberately not
-collected in the browser: the builder emits `<REQUIRED>` placeholders and reports
-them, and VCF 9.1 can generate complex passwords during installation.
+The form covers every field of the VCF 9.1 / 9.1.1 installer's `SddcSpec`, for
+all eight deployment scenarios (new fleet, a new instance in an existing fleet,
+converge, deferred components, VVF and VCF management services on VVF): sizing
+presets, every existing component with its thumbprint, custom vDS switches with
+LACP and teaming, VPC and TEP modes, per-network settings, IP pools, resource
+pools, root CA chains and every FQDN override. Passwords are optional: leave
+them and the builder emits `<REQUIRED>` placeholders and reports them, or let the
+installer generate the ones VCF 9.1 can. Nothing secret is saved with the
+settings.
+
+## Keeping VCF sizing and the spec builder current
+
+    npm run vcf:workbook   appliance sizes from Broadcom's Planning and Preparation
+                           Workbook(s), read into src/vcf/workbook-data.ts, which
+                           the sizing reads directly
+    npm run vcf:schema     the spec builder's schema against the published VCF
+                           Installer API; lists any field or value it lacks
+
+`update-vcf.bat` runs both, rebuilds, runs the tests (which fail if a workbook
+table the sizing relies on moved) and asks before it commits.
 
 ## A caution on VCF output
 

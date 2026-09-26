@@ -69,7 +69,6 @@ function alertLines(title: string, options: { throttleFields: string; throttle: 
     'counttype = number of events',
     'relation = greater than',
     'quantity = 0',
-    'alert_type = custom',
     'alert.track = 1',
     `alert.severity = ${options.severity}`,
     ...(perResult
@@ -704,7 +703,7 @@ export const SEARCH_HEAD_MORE_BLUEPRINTS: readonly SplunkBlueprint[] = [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_kvstore' },
       { id: 'collection', label: 'Collection', control: 'text', default: 'asset_inventory' },
       { id: 'lookup_name', label: 'Lookup definition', control: 'text', default: 'asset_inventory_lookup' },
-      { id: 'fields', label: 'Fields', control: 'textarea', default: 'asset_id | string\nhost | string\nip | cidr\nowner | string\ncriticality | number\nlast_seen | time', hint: 'name | string, number, bool, time, cidr or array' },
+      { id: 'fields', label: 'Fields', control: 'textarea', default: 'asset_id | string\nhost | string\nip | string\nowner | string\ncriticality | number\nlast_seen | time', hint: 'name | string, number, bool, time, cidr or array' },
       { id: 'key_field', label: 'Key (one record per)', control: 'text', default: 'asset_id', hint: 'Becomes _key, so an update replaces the record rather than adding one' },
       { id: 'accelerated', label: 'Accelerated fields', control: 'text', default: 'host, ip', hint: 'What lookups match on — each becomes an index in the KV store' },
       { id: 'enforce_types', label: 'Enforce field types', control: 'toggle', default: true },
@@ -758,6 +757,14 @@ export const SEARCH_HEAD_MORE_BLUEPRINTS: readonly SplunkBlueprint[] = [
       if (fields.length === 0) findings.push(error('splunk.kvstore-no-fields', 'The collection has no fields.', { source: 'ArchToolKit' }));
       for (const f of fields) {
         if (!types.has(f.type)) findings.push(error('splunk.kvstore-bad-type', `Field ${f.name} has type "${f.type}". The KV store accepts number, bool, string, time, cidr and array.`, { source: 'ArchToolKit' }));
+        else if (f.type === 'cidr' || f.type === 'array') {
+          findings.push(
+            warning('splunk.kvstore-type-not-in-spec', `Field ${f.name} has type "${f.type}", which collections.conf.spec does not list (number, bool, string and time), and which Splunk AppInspect — the vetting a Splunk Cloud private app goes through — rejects.`, {
+              remediation: f.type === 'cidr' ? 'Store the address as a string: matching an address against networks is the lookup definition’s job (match_type = CIDR(field) in transforms.conf).' : 'Store the list as a string, or as a multivalue field written by the search.',
+              source: 'collections.conf.spec (Splunk Enterprise 10.4); Splunk AppInspect check_collections_conf_for_specified_name_field_type',
+            }),
+          );
+        }
       }
       if (keyField && !names.includes(keyField)) findings.push(error('splunk.kvstore-key-not-a-field', `The key "${keyField}" is not one of the collection's fields.`, { source: 'ArchToolKit' }));
       for (const a of accelerated) {
@@ -1547,7 +1554,6 @@ echo`
                 'counttype = number of events',
                 'relation = greater than',
                 'quantity = 0',
-                'alert_type = custom',
                 '',
                 '# Enterprise Security correlation search metadata. The annotations are what',
                 '# put this rule on the ATT&CK matrix and into the tactic count.',
@@ -1595,7 +1601,6 @@ echo`
             'counttype = number of events',
             'relation = greater than',
             'quantity = 0',
-            'alert_type = custom',
             '',
             'action.correlationsearch.enabled = 1',
             `action.correlationsearch.label = ${incidentTitle}`,

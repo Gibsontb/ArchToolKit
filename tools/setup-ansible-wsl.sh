@@ -40,5 +40,9 @@ if [ ! -x "$VENV/bin/kubeconform" ]; then
   curl -fsSL "https://github.com/yannh/kubeconform/releases/download/$KC/kubeconform-linux-amd64.tar.gz" | tar -xz -C "$VENV/bin" kubeconform
 fi
 
+# The Splunk page's apps are checked with Splunk's own app vetting tool
+# (npm run splunk:validate): Splunk AppInspect.
+"$VENV/bin/pip" install -q --upgrade splunk-appinspect
+
 "$VENV/bin/ansible" --version | head -1
 echo "Ansible is in $VENV"

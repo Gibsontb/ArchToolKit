@@ -301,8 +301,7 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
               ? ['counttype = number of events', 'relation = greater than', 'quantity = 0']
               : condition === 'count_gt'
                 ? ['counttype = number of events', 'relation = greater than', `quantity = ${num(values, 'threshold', 5)}`]
-                : [`alert_condition = ${str(values, 'custom_condition', '')}`]),
-            'alert_type = custom',
+                : ['counttype = custom', `alert_condition = ${str(values, 'custom_condition', '')}`]),
             'alert.track = 1',
             `alert.severity = ${str(values, 'severity', '4')}`,
             'alert.digest_mode = 1',
@@ -954,7 +953,6 @@ export const SEARCH_HEAD_BLUEPRINTS: readonly SplunkBlueprint[] = [
             'counttype = number of events',
             'relation = greater than',
             'quantity = 0',
-            'alert_type = custom',
             'alert.track = 1',
             `alert.severity = ${riskScore >= 60 ? '5' : riskScore >= 40 ? '4' : '3'}`,
             '',
