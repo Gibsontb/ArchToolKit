@@ -1,5 +1,5 @@
 /**
- * The VCF Operations (formerly Aria Operations) content viewer.
+ * The VCF Operations (formerly vROps) content viewer.
  *
  * Drop whatever the appliance gave you — the content package, the JSON
  * inventories a script pulled from the suite API, or both — and get the thing
@@ -221,7 +221,7 @@ function panesFor(content             )         {
             'Symptom definitions',
             browser({
               items: [...content.symptoms].sort((a, b) => a.name.localeCompare(b.name)),
-              note: 'A dynamic threshold is one Aria works out for itself from the object’s own history; a static one is a number somebody typed.',
+              note: 'A dynamic threshold is one VCF Operations works out for itself from the object’s own history; a static one is a number somebody typed.',
               search: (symptom) => `${symptom.name} ${symptom.id} ${symptom.adapterKind} ${symptom.resourceKind} ${symptom.key ?? ''}`,
               filters: [
                 { label: 'Used by no alert', keep: (symptom) => !used.has(symptom.id) },
@@ -457,7 +457,7 @@ export function mountAriaPage(root             )       {
     el('strong', { text: 'Drop the export here. ' }),
     el('span', {
       class: 'muted',
-      text: 'The content package (.zip) from VCF Operations (or Aria Operations 8.x), the dashboards folder from it, or the JSON inventories pulled from the suite API — in any combination, in any order.',
+      text: 'The content package (.zip) from VCF Operations 9.x (or vROps 8.x), the dashboards folder from it, or the JSON inventories pulled from the suite API — in any combination, in any order.',
     }),
     el('span', { class: 'estate-actions' }, el('button', { class: 'btn btn-small', text: 'Choose files…', on: { click: () => input.click() } }), input),
     status,
@@ -504,7 +504,7 @@ export function mountAriaPage(root             )       {
             el('li', { text: 'Which custom groups are still on the default policy, and are therefore doing nothing.' }),
             el('li', { text: 'Which dashboards are private copies of a shared one, and which reports have never been scheduled.' }),
           ),
-          el('p', { class: 'tip', text: 'Everything is read in this browser. Nothing is uploaded and nothing is kept — close the tab and it is gone. An Aria export carries estate names, thresholds and email addresses, so keep the file out of a repository and out of a ticket.' }),
+          el('p', { class: 'tip', text: 'Everything is read in this browser. Nothing is uploaded and nothing is kept — close the tab and it is gone. An Operations export carries estate names, thresholds and email addresses, so keep the file out of a repository and out of a ticket.' }),
           el(
             'p',
             { class: 'muted' },

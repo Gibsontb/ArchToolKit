@@ -1,5 +1,5 @@
 /**
- * Reading whatever Aria Operations gave you.
+ * Reading whatever VCF Operations gave you.
  *
  * There is no single export. People arrive with some mixture of:
  *
@@ -379,7 +379,7 @@ function contentFromRecords(name: string, kind: string, records: readonly Json[]
         sources: [source(name, 'Policies', rows.length)],
       };
     default:
-      throw new AriaError(`${name} is JSON the toolkit does not recognise. It reads Aria Operations alert, symptom, recommendation, policy, group, super metric, notification and report exports.`);
+      throw new AriaError(`${name} is JSON the toolkit does not recognise. It reads VCF Operations alert, symptom, recommendation, policy, group, super metric, notification and report exports.`);
   }
 }
 
@@ -632,7 +632,7 @@ async function readPackage(name: string, zip: ZipArchive): Promise<AriaContent> 
   }
 
   if (content.sources.length === 0) {
-    throw new AriaError(`${name} is a zip, but not one the toolkit recognises. Export the content package from Aria Operations, or the dashboards folder from it.`);
+    throw new AriaError(`${name} is a zip, but not one the toolkit recognises. Export the content package from VCF Operations, or the dashboards folder from it.`);
   }
   return content;
 }
@@ -695,7 +695,7 @@ export async function readAriaFile(name: string, data: Uint8Array | ArrayBuffer)
     }
   }
 
-  throw new AriaError(`${name} is not an Aria Operations export the toolkit recognises.`);
+  throw new AriaError(`${name} is not a VCF Operations export the toolkit recognises.`);
 }
 
 /** Read several dropped files into one set of content. */

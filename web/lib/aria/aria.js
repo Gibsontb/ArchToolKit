@@ -1,5 +1,5 @@
 /**
- * Aria Operations content, as something you can read.
+ * VCF Operations content, as something you can read.
  *
  * vROps 8.x and VCF Operations 9.x will export what is configured in them —
  * alert and symptom definitions, recommendations, policies, custom groups,
@@ -58,7 +58,7 @@
                         
                              
                           
-                                                                  
+                                                                            
                                   
                                   
  
@@ -149,7 +149,7 @@
                         
                          
      
-                                                                                
+                                                                                         
                                             
     
                                                                            
@@ -165,7 +165,7 @@
                               
  
 
-/** Aria lays dashboards out on twelve columns, whatever the column count says. */
+/** VCF Operations lays dashboards out on twelve columns, whatever the column count says. */
 export const DASHBOARD_COLUMNS = 12;
 
 /** The height of the grid a dashboard occupies, in rows. */
@@ -382,14 +382,14 @@ export function highestSeverity(values                         )               {
 }
 
 /**
- * What an object's severity means when Aria says AUTO.
+ * What an object's severity means when VCF Operations says AUTO.
  *
  * AUTO does not mean "no severity" — it means the alert takes the severity of
  * whichever symptom fired, which is worth saying on the page because a column
  * full of AUTO otherwise reads as missing data.
  */
 export const SEVERITY_MEANING                                         = {
-  critical: 'Critical — the highest severity Aria raises.',
+  critical: 'Critical — the highest severity VCF Operations raises.',
   immediate: 'Immediate — below critical, above warning.',
   warning: 'Warning.',
   info: 'Information only.',

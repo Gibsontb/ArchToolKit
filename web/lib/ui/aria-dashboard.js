@@ -20,7 +20,7 @@ import { card } from './components.js';
 import { dashboardSheet } from '../aria/contact-sheet.js';
 import { DASHBOARD_COLUMNS, dashboardRows, widgetFamily,                                     } from '../aria/aria.js';
 
-/** Row height in pixels. Aria's rows are short; this reads at a glance. */
+/** Row height in pixels. Its rows are short; this reads at a glance. */
 const ROW = 22;
 
 /** What each widget family is called on the drawing's key. */

@@ -104,7 +104,7 @@ export function dashboardSheet(dashboards: readonly Dashboard[], views: readonly
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aria Operations dashboards</title>
+<title>VCF Operations dashboards</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -139,7 +139,7 @@ export function dashboardSheet(dashboards: readonly Dashboard[], views: readonly
 </style>
 </head>
 <body>
-<h1>Aria Operations dashboards</h1>
+<h1>VCF Operations dashboards</h1>
 <p class="lede">${ordered.length} dashboard${ordered.length === 1 ? '' : 's'}, drawn from the content export as they were arranged: twelve columns, every widget in its own place. The widgets are labelled boxes rather than live charts — the data is not in an export, only the layout is. Drawn ${made} by ArchToolKit.</p>
 <div class="warn"><strong>This file describes a production estate.</strong> Dashboard and widget names, and the views they show, come straight from the appliance. Treat it like the export it was made from: not in a repository, not attached to a ticket.</div>
 <div class="keys">${key}</div>

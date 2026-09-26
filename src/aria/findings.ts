@@ -23,7 +23,7 @@
 import { error, info, warning, type Finding } from '../core/findings.ts';
 import { countBy, type AlertDefinition, type AriaContent, type NotificationRule } from './aria.ts';
 
-/** Aria's own words for severity, as the notification rule filters spell them. */
+/** VCF Operations' own words for severity, as the notification rule filters spell them. */
 function criticalityOf(alert: AlertDefinition): string {
   return alert.severity === 'unknown' ? 'AUTO' : alert.severity.toUpperCase();
 }
@@ -428,7 +428,7 @@ export function ariaFindings(content: AriaContent): Finding[] {
 
   findings.push(
     info('aria.privacy', 'These files stay on this machine. Nothing here is uploaded, and the toolkit makes no network calls.', {
-      remediation: 'An Aria export contains estate names, email addresses and alerting thresholds — keep it out of a repository and out of a ticket attachment.',
+      remediation: 'An Operations export contains estate names, email addresses and alerting thresholds — keep it out of a repository and out of a ticket attachment.',
       source: 'ArchToolKit',
     }),
   );
