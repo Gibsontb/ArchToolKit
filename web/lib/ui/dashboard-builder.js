@@ -229,6 +229,8 @@ function mountBuilder(context                  )              {
   let findings                     = [];
   let store                         ;
   let message                                            = { text: '', tone: '' };
+  /** The widget last removed, so Undo can put it back exactly. */
+  let lastRemoved                                                          = null;
   let search = '';
 
   const gridKey = ()         => `widgets_${template}`;
@@ -423,6 +425,7 @@ function mountBuilder(context                  )              {
     replace(
       status,
       message.text ? el('div', { class: `dbb-message ${message.tone === 'bad' ? 'is-bad' : message.tone === 'ok' ? 'is-ok' : ''}`, text: message.text }) : null,
+      lastRemoved ? el('button', { class: 'btn btn-small', text: 'Undo', attrs: { type: 'button', 'data-control': 'dashboard-undo-remove', title: 'Put the removed widget back' }, on: { click: () => undoRemove() } }) : null,
       el('span', { class: `dbb-count${errors ? ' is-bad' : ''}`, text: parts.filter(Boolean).join(' · ') }),
       store ? el('span', { class: 'pill', text: `Loaded: ${String(store.dashboard['name'] ?? '')}`, attrs: { title: `From ${store.file}. What the builder does not edit is written back as exported.` } }) : null,
     );
@@ -615,8 +618,14 @@ function mountBuilder(context                  )              {
           loaded && store?.kept[row.source] ? el('span', { class: 'dbb-badge', text: 'kept', attrs: { title: 'Parts of this widget are kept exactly as exported' } }) : null,
         ),
         el('div', { class: 'dbb-resize', attrs: { 'aria-hidden': 'true', title: 'Drag to resize' } }),
+        el('button', {
+          class: 'dbb-widget-remove',
+          text: '×',
+          attrs: { type: 'button', title: 'Remove this widget', 'aria-label': `Remove ${row.title || 'this widget'}`, 'data-control': 'dashboard-widget-remove' },
+          on: { click: (event       ) => { event.stopPropagation(); removeWidget(index); } },
+        }),
       );
-      node.addEventListener('pointerdown', (event) => startDrag(event                , index, box, (event.target               ).classList.contains('dbb-resize') ? 'resize' : 'move'));
+      node.addEventListener('pointerdown', (event) => (event.target               ).classList.contains('dbb-widget-remove') ? undefined : startDrag(event                , index, box, (event.target               ).classList.contains('dbb-resize') ? 'resize' : 'move'));
       node.addEventListener('keydown', (event) => onKey(event                 , index, box));
       node.addEventListener('focus', () => {
         if (selected !== index) select_(index, false);
@@ -649,7 +658,7 @@ function mountBuilder(context                  )              {
       event.preventDefault();
       select_(index);
       (inspector.querySelector('input, select, textarea')                      )?.focus();
-    } else if (event.key === 'Delete') {
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
       removeWidget(index);
     }
@@ -707,8 +716,30 @@ function mountBuilder(context                  )              {
     const gone = rows[index];
     if (!gone) return;
     rows.splice(index, 1);
-    for (const row of rows) if (gone.title && row.receives.toLowerCase() === gone.title.toLowerCase()) row.receives = '';
+    const receivers           = [];
+    rows.forEach((row, i) => {
+      if (gone.title && row.receives.toLowerCase() === gone.title.toLowerCase()) {
+        row.receives = '';
+        receivers.push(i);
+      }
+    });
+    lastRemoved = { row: gone, index, receivers };
+    message = { text: `Removed "${gone.title || '(no title)'}".`, tone: '' };
     selected = Math.min(index, rows.length - 1);
+    commit();
+  }
+
+  function undoRemove()       {
+    const undo = lastRemoved;
+    if (!undo) return;
+    lastRemoved = null;
+    for (const i of undo.receivers) {
+      const row = rows[i];
+      if (row) row.receives = undo.row.title;
+    }
+    rows.splice(Math.min(undo.index, rows.length), 0, undo.row);
+    message = { text: `Put back "${undo.row.title || '(no title)'}".`, tone: 'ok' };
+    selected = Math.min(undo.index, rows.length - 1);
     commit();
   }
 
@@ -721,7 +752,7 @@ function mountBuilder(context                  )              {
         inspector,
         el('div', { class: 'card-title' }, el('h2', { text: 'Widget' })),
         el('p', { class: 'muted', text: rows.length ? 'Select a widget on the layout to edit it: its settings, where it sits, and what drives it.' : 'Add a widget from the list.' }),
-        el('p', { class: 'muted small', text: 'Keyboard: Tab to a widget, arrow keys move it, Shift and arrow keys resize it, Enter edits it, Delete removes it.' }),
+        el('p', { class: 'muted small', text: 'Keyboard: Tab to a widget, arrow keys move it, Shift and arrow keys resize it, Enter edits it, Delete removes it (× on the widget does too; Undo puts it back).' }),
       );
       return;
     }

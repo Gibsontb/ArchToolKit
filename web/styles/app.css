@@ -2704,13 +2704,17 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .dbb-widget.is-overlap { border-color: var(--danger); background-image: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--danger) 14%, transparent) 6px 12px); }
 .dbb-widget.has-error { border-left: 4px solid var(--danger); }
 .dbb-widget.has-warning { border-left: 4px solid var(--warn); }
-.dbb-widget-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 0.5rem; }
+.dbb-widget-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 1.5rem; }
 .dbb-widget-type { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dbb-widget-badges { position: absolute; right: 0.9rem; bottom: 0.2rem; display: flex; gap: 0.2rem; }
 .dbb-badge { font-size: 0.62rem; padding: 0 0.3rem; border-radius: 999px; background: var(--bg-raised); border: 1px solid var(--border-strong); color: var(--text-muted); }
 .dbb-badge.is-bad { color: var(--danger); border-color: var(--danger); }
 .dbb-badge.is-warn { color: var(--warn); border-color: var(--warn); }
 .dbb-resize { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%); }
+.dbb-widget-remove { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; padding: 0; line-height: 18px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-muted); font-size: 14px; cursor: pointer; opacity: 0.55; }
+.dbb-widget:hover .dbb-widget-remove, .dbb-widget.is-selected .dbb-widget-remove, .dbb-widget-remove:focus-visible { opacity: 1; }
+.dbb-widget-remove:hover { color: var(--danger, #c0392b); border-color: currentColor; }
+@media (hover: none) { .dbb-widget-remove { opacity: 1; } }
 .dbb-empty { position: absolute; inset: 2rem 1rem auto; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 .dbb-offgrid { display: flex; flex-direction: column; gap: 0.2rem; margin-top: var(--space-2); }
 .dbb-offgrid:empty { display: none; }
