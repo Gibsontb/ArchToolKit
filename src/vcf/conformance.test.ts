@@ -44,7 +44,7 @@ describe('conformance: what the real specs reveal', () => {
   });
 
   it('confirms VLAN ids are accepted as strings', () => {
-    const mgmt = ONE_NODE_VSAN_ESA.networkSpecs.find((n) => n.networkType === 'MANAGEMENT');
+    const mgmt = ONE_NODE_VSAN_ESA.networkSpecs!.find((n) => n.networkType === 'MANAGEMENT');
     expect(typeof mgmt?.vlanId).toBe('string');
     // And our validator must not reject that.
     expect(validateSddcSpec(ONE_NODE_VSAN_ESA).map((f) => f.code)).not.toContain(
@@ -55,7 +55,7 @@ describe('conformance: what the real specs reveal', () => {
   it('confirms the two different range shapes coexist in one document', () => {
     const tepRange =
       ONE_NODE_VSAN_ESA.nsxtSpec?.ipAddressPoolSpec?.subnets?.[0]?.ipAddressPoolRanges?.[0];
-    const vmotion = ONE_NODE_VSAN_ESA.networkSpecs.find((n) => n.networkType === 'VMOTION');
+    const vmotion = ONE_NODE_VSAN_ESA.networkSpecs!.find((n) => n.networkType === 'VMOTION');
     expect(Object.keys(tepRange as object).sort()).toEqual(['end', 'start']);
     expect(Object.keys(vmotion?.includeIpAddressRanges?.[0] as object).sort()).toEqual([
       'endIpAddress',

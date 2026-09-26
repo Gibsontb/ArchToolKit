@@ -172,28 +172,28 @@ describe('buildSddcSpec — hosts and naming', () => {
     const { spec } = buildSddcSpec(basePlan({ domainSuffix: 'VCF.LAB' }));
     expect(spec.vcenterSpec.vcenterHostname).toBe('vcf-m01-vc01.vcf.lab');
     expect(spec.nsxtSpec?.vipFqdn).toBe('vcf-m01-nsx.vcf.lab');
-    expect(spec.dnsSpec.subdomain).toBe('vcf.lab');
+    expect(spec.dnsSpec!.subdomain).toBe('vcf.lab');
   });
 
   it('caps nameservers at the documented maximum of two', () => {
     const { spec } = buildSddcSpec(
       basePlan({ dnsServers: ['10.0.0.1', '10.0.0.2', '10.0.0.3'] }),
     );
-    expect(spec.dnsSpec.nameservers).toHaveLength(2);
+    expect(spec.dnsSpec!.nameservers).toHaveLength(2);
   });
 });
 
 describe('buildSddcSpec — networks', () => {
   it('always includes a MANAGEMENT and VM_MANAGEMENT network', () => {
     const { spec } = buildSddcSpec(basePlan());
-    const types = spec.networkSpecs.map((n) => n.networkType);
+    const types = spec.networkSpecs!.map((n) => n.networkType);
     expect(types).toContain('MANAGEMENT');
     expect(types).toContain('VM_MANAGEMENT');
   });
 
   it('derives the gateway as the first usable address when not supplied', () => {
     const { spec } = buildSddcSpec(basePlan());
-    const mgmt = spec.networkSpecs.find((n) => n.networkType === 'MANAGEMENT');
+    const mgmt = spec.networkSpecs!.find((n) => n.networkType === 'MANAGEMENT');
     expect(mgmt?.gateway).toBe('172.30.0.1');
   });
 
@@ -201,13 +201,13 @@ describe('buildSddcSpec — networks', () => {
     const { spec } = buildSddcSpec(
       basePlan({ management: { cidr: '172.30.0.0/24', vlanId: 30, gateway: '172.30.0.254' } }),
     );
-    const mgmt = spec.networkSpecs.find((n) => n.networkType === 'MANAGEMENT');
+    const mgmt = spec.networkSpecs!.find((n) => n.networkType === 'MANAGEMENT');
     expect(mgmt?.gateway).toBe('172.30.0.254');
   });
 
   it('allocates one vMotion and one vSAN address per host', () => {
     const { spec } = buildSddcSpec(basePlan({ hostCount: 4 }));
-    const vmotion = spec.networkSpecs.find((n) => n.networkType === 'VMOTION');
+    const vmotion = spec.networkSpecs!.find((n) => n.networkType === 'VMOTION');
     const range = vmotion?.includeIpAddressRanges?.[0];
     expect(range?.startIpAddress).toBe('172.30.40.10');
     expect(range?.endIpAddress).toBe('172.30.40.13');
@@ -215,7 +215,7 @@ describe('buildSddcSpec — networks', () => {
 
   it('omits the vSAN network when using external storage', () => {
     const { spec } = buildSddcSpec(basePlan({ storage: 'nfs', nfs: { cidr: '172.30.70.0/24', vlanId: 70 } }));
-    const types = spec.networkSpecs.map((n) => n.networkType);
+    const types = spec.networkSpecs!.map((n) => n.networkType);
     expect(types).not.toContain('VSAN');
     expect(types).toContain('NFS');
   });
@@ -224,13 +224,13 @@ describe('buildSddcSpec — networks', () => {
     const { spec } = buildSddcSpec(
       basePlan({ fleetManagement: { cidr: '172.30.80.0/24', vlanId: 80 } }),
     );
-    expect(spec.networkSpecs.map((n) => n.networkType)).toContain('FLEET_MANAGEMENT');
+    expect(spec.networkSpecs!.map((n) => n.networkType)).toContain('FLEET_MANAGEMENT');
   });
 
   it('sets jumbo frames on vMotion and vSAN by default', () => {
     const { spec } = buildSddcSpec(basePlan());
-    const vmotion = spec.networkSpecs.find((n) => n.networkType === 'VMOTION');
-    const vsan = spec.networkSpecs.find((n) => n.networkType === 'VSAN');
+    const vmotion = spec.networkSpecs!.find((n) => n.networkType === 'VMOTION');
+    const vsan = spec.networkSpecs!.find((n) => n.networkType === 'VSAN');
     expect(vmotion?.mtu).toBe(9000);
     expect(vsan?.mtu).toBe(9000);
   });
@@ -472,7 +472,7 @@ describe('redactSpec', () => {
     const { spec } = buildSddcSpec(basePlan());
     const redacted = redactSpec(spec);
     expect(redacted.sddcId).toBe('vcf-m01');
-    expect(redacted.networkSpecs).toHaveLength(spec.networkSpecs.length);
+    expect(redacted.networkSpecs).toHaveLength(spec.networkSpecs!.length);
   });
 });
 
@@ -524,7 +524,7 @@ describe('validateSddcSpec — networks', () => {
     const { spec } = buildSddcSpec(basePlan());
     const broken: SddcSpec = {
       ...spec,
-      networkSpecs: spec.networkSpecs.map((n) =>
+      networkSpecs: spec.networkSpecs!.map((n) =>
         n.networkType === 'MANAGEMENT' ? { ...n, gateway: '10.99.99.1' } : n,
       ),
     };
@@ -535,7 +535,7 @@ describe('validateSddcSpec — networks', () => {
     const { spec } = buildSddcSpec(basePlan());
     const broken: SddcSpec = {
       ...spec,
-      networkSpecs: spec.networkSpecs.map((n) =>
+      networkSpecs: spec.networkSpecs!.map((n) =>
         n.networkType === 'VMOTION' ? { ...n, subnet: '172.30.0.0/24' } : n,
       ),
     };
@@ -546,7 +546,7 @@ describe('validateSddcSpec — networks', () => {
     const { spec } = buildSddcSpec(basePlan());
     const broken: SddcSpec = {
       ...spec,
-      networkSpecs: spec.networkSpecs.map((n) =>
+      networkSpecs: spec.networkSpecs!.map((n) =>
         n.networkType === 'MANAGEMENT' ? { ...n, vlanId: 5000 } : n,
       ),
     };
@@ -557,7 +557,7 @@ describe('validateSddcSpec — networks', () => {
     const { spec } = buildSddcSpec(basePlan());
     const asString: SddcSpec = {
       ...spec,
-      networkSpecs: spec.networkSpecs.map((n) => ({ ...n, vlanId: String(n.vlanId) })),
+      networkSpecs: spec.networkSpecs!.map((n) => ({ ...n, vlanId: String(n.vlanId) })),
     };
     expect(codes(validateSddcSpec(asString))).not.toContain('vcf.spec.invalid-vlan');
   });
@@ -723,7 +723,7 @@ describe('buildSddcSpec — dual stack', () => {
         vmotion: { cidr: '172.30.40.0/24', vlanId: 40, ipv6Cidr: '2001:db8:40::/64' },
       }),
     );
-    const v6 = spec.networkSpecs.filter((n) => n.ipAddressVersion === 'IPv6');
+    const v6 = spec.networkSpecs!.filter((n) => n.ipAddressVersion === 'IPv6');
     // MANAGEMENT, VMOTION, and VM_MANAGEMENT — the last shares the management
     // network's configuration when no separate plan is given, exactly as it
     // does for IPv4.
@@ -742,7 +742,7 @@ describe('buildSddcSpec — dual stack', () => {
         management: { cidr: '172.30.0.0/24', vlanId: 30, ipv6Cidr: '2001:db8:30::/64' },
       }),
     );
-    const mgmt = spec.networkSpecs.filter((n) => n.networkType === 'MANAGEMENT');
+    const mgmt = spec.networkSpecs!.filter((n) => n.networkType === 'MANAGEMENT');
     expect(mgmt).toHaveLength(2);
     expect(mgmt.some((n) => n.ipAddressVersion === 'IPv4')).toBe(true);
     expect(mgmt.some((n) => n.ipAddressVersion === 'IPv6')).toBe(true);
@@ -880,7 +880,7 @@ describe('buildSddcSpec — per-traffic teaming', () => {
         },
       }),
     );
-    const vsan = spec.networkSpecs.find((n) => n.networkType === 'VSAN');
+    const vsan = spec.networkSpecs!.find((n) => n.networkType === 'VSAN');
     // The networkSpecs enum is lowercase, unlike the uppercase NSX one.
     expect(vsan?.teamingPolicy).toBe('failover_explicit');
     expect(vsan?.activeUplinks).toEqual(['uplink1']);

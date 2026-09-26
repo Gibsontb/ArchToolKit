@@ -48,7 +48,7 @@ describe('VCF Management Network Models', () => {
 describe('management network model: placement follows the model', () => {
   it('shares the Instance-level network by default', () => {
     const { spec } = buildSddcSpec(basePlan());
-    expect(spec.networkSpecs.map((n) => n.networkType)).not.toContain('FLEET_MANAGEMENT');
+    expect(spec.networkSpecs!.map((n) => n.networkType)).not.toContain('FLEET_MANAGEMENT');
     // Pool comes out of the management subnet.
     expect(JSON.stringify(spec.vspClusterSpec?.ipv4Pool)).toContain('172.30.0.');
   });
@@ -57,7 +57,7 @@ describe('management network model: placement follows the model', () => {
     const { spec } = buildSddcSpec(
       basePlan({ managementNetworkModel: 'dedicated-vlan', fleetManagement: fleet }),
     );
-    expect(spec.networkSpecs.map((n) => n.networkType)).toContain('FLEET_MANAGEMENT');
+    expect(spec.networkSpecs!.map((n) => n.networkType)).toContain('FLEET_MANAGEMENT');
     expect(JSON.stringify(spec.vspClusterSpec?.ipv4Pool)).toContain('172.30.80.');
   });
 

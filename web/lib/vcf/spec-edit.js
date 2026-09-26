@@ -26,6 +26,32 @@
  */
 
 import { EVC_MODES } from './spec-types.js';
+import { INTERNAL_CLUSTER_CIDRS_V4, INTERNAL_CLUSTER_CIDRS_V6 } from './sizing-data.js';
+import {
+  COLLECTOR_SIZES,
+  DOCUMENTED_SIZES,
+  ESXI_CERTS_MODES,
+  HOST_SWITCH_MODES,
+  IP_ADDRESS_VERSIONS,
+  IP_ASSIGNMENT_MODES,
+  LACP_MODES,
+  LACP_TIMEOUT_MODES,
+  LAG_LOAD_BALANCING_MODES,
+  NETWORK_TEAMING_POLICIES,
+  NETWORK_TYPES,
+  NSX_MANAGER_SIZES,
+  NSX_TEAMING_POLICIES,
+  OPS_NODE_TYPES,
+  OPS_SIZES,
+  RESOURCE_POOL_TYPES,
+  TRANSPORT_TYPES,
+  VCENTER_STORAGE_SIZES,
+  VCENTER_VM_SIZES,
+  VPC_TYPES,
+  VSP_SIZES,
+  VTEP_TYPES,
+  WORKFLOW_TYPES,
+} from './spec-validate.js';
 import { labelFor as genericLabel, pathPattern,           } from '../editor/doc.js';
 
 export {
@@ -52,45 +78,71 @@ export {
 // Answer sets
 // ---------------------------------------------------------------------------
 
-const SIZES_OPS = ['xsmall', 'small', 'medium', 'large', 'xlarge'];
+const UPLINKS = ['uplink1', 'uplink2', 'uplink3', 'uplink4'];
 
 /**
- * Fields with a fixed set of answers, by path pattern. Every value here is the
- * VCF 9.1 Installer API's own enumeration (see spec-types.ts), so a dropdown
- * cannot offer something the installer would refuse.
+ * Fields with a fixed set of answers, by path pattern. Every enumeration here
+ * is the VCF 9.1 Installer API's own, taken from the same lists the validator
+ * checks against (spec-validate.ts), so a dropdown cannot offer something the
+ * validator or the installer would refuse. Every key is a real schema path;
+ * spec-validate-full.test.ts holds them to `schemaPaths()`.
+ *
+ * Where the API publishes no enum (vidbSpec.size, vcfAutomationSpec.size) the
+ * list is the sizes the 9.1 documentation gives. The data store kind has no
+ * enum: it is chosen by which of vsanSpec, nfsDatastoreSpec or
+ * vmfsDatastoreSpec is present.
  */
 export const CHOICES                                              = {
-  workflowType: ['VCF', 'VCF_COMPLETE', 'VCF_EXTEND', 'VVF', 'VCF_BOOTSTRAP'],
+  workflowType: WORKFLOW_TYPES,
   version: ['9.1.0.0', '9.1.0.400', '9.1.1.0'],
-  'networkSpecs[].networkType': ['MANAGEMENT', 'VM_MANAGEMENT', 'VMOTION', 'VSAN', 'NFS', 'FLEET_MANAGEMENT'],
-  'networkSpecs[].ipAddressVersion': ['IPv4', 'IPv6'],
-  'networkSpecs[].assignmentMode': ['STATIC', 'DHCP', 'SLAAC'],
-  'networkSpecs[].teamingPolicy': [
-    'loadbalance_loadbased',
-    'loadbalance_srcid',
-    'loadbalance_srcmac',
-    'loadbalance_ip',
-    'failover_explicit',
-  ],
-  'networkSpecs[].activeUplinks[]': ['uplink1', 'uplink2', 'uplink3', 'uplink4'],
-  'networkSpecs[].standbyUplinks[]': ['uplink1', 'uplink2', 'uplink3', 'uplink4'],
-  'vcenterSpec.vmSize': ['tiny', 'small', 'medium', 'large', 'xlarge'],
-  'vcenterSpec.storageSize': ['lstorage', 'xlstorage'],
-  'nsxtSpec.nsxtManagerSize': ['medium', 'large', 'xlarge'],
-  'vcfOperationsSpec.applianceSize': SIZES_OPS,
-  'vcfOperationsSpec.nodes[].type': ['master', 'replica', 'data'],
-  'vcfOperationsCollectorSpec.applianceSize': ['small', 'standard'],
-  'vspClusterSpec.size': ['small', 'small_ha', 'medium', 'large'],
-  'vcfAutomationSpec.size': ['small', 'medium', 'large'],
-  'clusterSpec.clusterEvcMode': [...EVC_MODES],
-  'dvsSpecs[].nsxtSwitchConfig.transportZones[].transportType': ['OVERLAY', 'VLAN'],
-  'dvsSpecs[].nsxTeamings[].policy': ['LOADBALANCE_SRCID', 'LOADBALANCE_SRC_MAC', 'FAILOVER_ORDER'],
-  'dvsSpecs[].nsxTeamings[].activeUplinks[]': ['uplink1', 'uplink2', 'uplink3', 'uplink4'],
-  'dvsSpecs[].nsxTeamings[].standByUplinks[]': ['uplink1', 'uplink2', 'uplink3', 'uplink4'],
-  'dvsSpecs[].vmnicsToUplinks[].uplink': ['uplink1', 'uplink2', 'uplink3', 'uplink4'],
-  'dvsSpecs[].networks[]': ['MANAGEMENT', 'VM_MANAGEMENT', 'VMOTION', 'VSAN', 'NFS', 'FLEET_MANAGEMENT'],
-  'hostSpecs[].credentials.username': ['root'],
+
+  // networks
+  'networkSpecs[].networkType': NETWORK_TYPES,
+  'networkSpecs[].ipAddressVersion': IP_ADDRESS_VERSIONS,
+  // Was keyed 'networkSpecs[].assignmentMode', a field the schema does not have.
+  'networkSpecs[].ipAddressAssignmentMode': IP_ASSIGNMENT_MODES,
+  'networkSpecs[].teamingPolicy': NETWORK_TEAMING_POLICIES,
+  'networkSpecs[].activeUplinks[]': UPLINKS,
+  'networkSpecs[].standbyUplinks[]': UPLINKS,
+
+  // vCenter and cluster
+  'vcenterSpec.vmSize': VCENTER_VM_SIZES,
+  'vcenterSpec.storageSize': VCENTER_STORAGE_SIZES,
   'vcenterSpec.ssoDomain': ['vsphere.local'],
+  'clusterSpec.clusterEvcMode': [...EVC_MODES],
+  'clusterSpec.resourcePoolSpecs[].type': RESOURCE_POOL_TYPES,
+  'hostSpecs[].credentials.username': ['root'],
+  'securitySpec.esxiCertsMode': ESXI_CERTS_MODES,
+
+  // switches
+  'dvsSpecs[].networks[]': NETWORK_TYPES,
+  'dvsSpecs[].vmnicsToUplinks[].uplink': UPLINKS,
+  'dvsSpecs[].nsxtSwitchConfig.transportZones[].transportType': TRANSPORT_TYPES,
+  'dvsSpecs[].nsxtSwitchConfig.hostSwitchOperationalMode': HOST_SWITCH_MODES,
+  'dvsSpecs[].nsxTeamings[].policy': NSX_TEAMING_POLICIES,
+  'dvsSpecs[].nsxTeamings[].activeUplinks[]': UPLINKS,
+  'dvsSpecs[].nsxTeamings[].standByUplinks[]': UPLINKS,
+  'dvsSpecs[].lagSpecs[].lacpMode': LACP_MODES,
+  'dvsSpecs[].lagSpecs[].lacpTimeoutMode': LACP_TIMEOUT_MODES,
+  'dvsSpecs[].lagSpecs[].loadBalancingMode': LAG_LOAD_BALANCING_MODES,
+
+  // NSX
+  'nsxtSpec.nsxtManagerSize': NSX_MANAGER_SIZES,
+  'nsxtSpec.vpcSpec.vpcNetworkConfigurationType': VPC_TYPES,
+  'nsxtSpec.overlayVtepSpec.vtepType': VTEP_TYPES,
+
+  // appliance sizes
+  'vcfOperationsSpec.applianceSize': OPS_SIZES,
+  'vcfOperationsSpec.nodes[].type': OPS_NODE_TYPES,
+  'vcfOperationsCollectorSpec.applianceSize': COLLECTOR_SIZES,
+  'vspClusterSpec.size': VSP_SIZES,
+  'vcfAutomationSpec.size': DOCUMENTED_SIZES,
+  'vidbSpec.size': DOCUMENTED_SIZES,
+
+  // internal cluster networks
+  'vspClusterSpec.internalClusterCidrIpv4': INTERNAL_CLUSTER_CIDRS_V4,
+  'vspClusterSpec.internalClusterCidrIpv6': INTERNAL_CLUSTER_CIDRS_V6,
+  'vcfAutomationSpec.internalClusterCidr': INTERNAL_CLUSTER_CIDRS_V4,
 };
 
 export function choicesFor(path      )                                {
@@ -128,6 +180,50 @@ export const VCF_LABELS                                   = {
   ipv4Pool: 'IPv4 pool',
   sslThumbprint: 'SSL thumbprint',
   sshThumbprint: 'SSH thumbprint',
+  // Where the generic rule reads badly.
+  vcenterHostname: 'vCenter FQDN',
+  rootVcenterPassword: 'vCenter root password',
+  vcfManagementComponentsInfrastructureSpec: 'VCF management component networks',
+  xRegionNetwork: 'Cross-region network',
+  localRegionNetwork: 'Local-region network',
+  lagSpecs: 'LAGs (LACP)',
+  nsxTeamings: 'NSX uplink teaming',
+  standByUplinks: 'Standby uplinks',
+  nsxtSwitchConfig: 'NSX switch configuration',
+  hostSwitchOperationalMode: 'Host switch mode',
+  overlayVtepSpec: 'Overlay TEPs',
+  vtepType: 'TEP type',
+  privateTgwIpBlockCidr: 'Private transit gateway IP block CIDR',
+  dtgwSpec: 'Distributed transit gateway',
+  vpcNetworkConfigurationType: 'VPC type',
+  esxiCertsMode: 'ESX certificate mode',
+  rootCaCerts: 'Root CA certificates',
+  certChain: 'Certificate chain',
+  esaConfig: 'vSAN ESA',
+  // The wizard's wording. Setting it true lets vSAN ESA claim disks that are
+  // not on the HCL; "Skip automatic disk claim" says the opposite.
+  skipHclAutoDiskClaim: 'Allow auto-claim of HCL-incompatible disks',
+  vsanDedup: 'vSAN deduplication and compression',
+  nasVolume: 'NAS volume',
+  enableBindToVmknic: 'Bind to VMkernel adapter',
+  dataInTransitConfig: 'Data-in-transit encryption',
+  rekeyInterval: 'Rekey interval (minutes)',
+  cpuReservationMhz: 'CPU reservation (MHz)',
+  memoryReservationMb: 'Memory reservation (MB)',
+  saltSpec: 'Salt',
+  saltRaasSpec: 'Salt RaaS',
+  fleetDepotSpec: 'Fleet depot',
+  ipAddressPoolSpec: 'Host TEP IP pool',
+  transportVlanId: 'Host TEP VLAN',
+  portGroupKey: 'Port group name',
+  useExistingDeployment: 'Existing deployment',
+  skipNsxOverlayOverManagementNetwork: 'Skip NSX overlay on management network',
+  enableEdgeClusterSync: 'Sync Edge clusters (resets Edge passwords)',
+  ignoreUnavailableNsxtCluster: 'Ignore unavailable NSX cluster',
+  failuresToTolerate: 'Failures to tolerate (FTT)',
+  platformFqdn: 'Platform FQDN',
+  loadBalancerFqdn: 'Load balancer FQDN',
+  vmnicsToUplinks: 'vmnic to uplink mapping',
 };
 
 export function labelFor(key        )         {

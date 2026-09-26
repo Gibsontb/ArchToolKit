@@ -42,7 +42,7 @@ const errorCodes = (findings: readonly Finding[]): string[] =>
   findings.filter((f) => f.severity === 'error').map((f) => f.code);
 const codes = (findings: readonly Finding[]): string[] => findings.map((f) => f.code);
 const v6Of = (spec: SddcSpec, type: string): SddcNetworkSpec | undefined =>
-  spec.networkSpecs.find((n) => n.networkType === type && n.ipAddressVersion === 'IPv6');
+  spec.networkSpecs!.find((n) => n.networkType === type && n.ipAddressVersion === 'IPv6');
 
 describe('VCF dual stack — the validator accepts the builder’s own output', () => {
   it('raises no error on a dual-stack spec that the IPv4-only spec does not raise', () => {
@@ -57,7 +57,7 @@ describe('VCF dual stack — the validator accepts the builder’s own output', 
   it('still flags the same networkType twice in the same family', () => {
     const { spec } = buildSddcSpec(dualPlan());
     const mgmtV6 = v6Of(spec, 'MANAGEMENT')!;
-    const doubled = { ...spec, networkSpecs: [...spec.networkSpecs, { ...mgmtV6 }] };
+    const doubled = { ...spec, networkSpecs: [...spec.networkSpecs!, { ...mgmtV6 }] };
     expect(codes(validateSddcSpec(doubled))).toContain('vcf.spec.duplicate-network-type');
   });
 });
@@ -81,7 +81,7 @@ describe('VCF dual stack — emitted IPv6 syntax', () => {
 
   it('hands vMotion and vSAN hosts the same host numbers as IPv4', () => {
     const { spec } = buildSddcSpec(dualPlan());
-    const v4vmotion = spec.networkSpecs.find((n) => n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv4');
+    const v4vmotion = spec.networkSpecs!.find((n) => n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv4');
     expect(v4vmotion?.includeIpAddressRanges).toEqual([{ startIpAddress: '172.30.40.10', endIpAddress: '172.30.40.13' }]);
     expect(v6Of(spec, 'VMOTION')?.includeIpAddressRanges).toEqual([
       { startIpAddress: '2001:db8:40::a', endIpAddress: '2001:db8:40::d' },
@@ -98,7 +98,7 @@ describe('VCF dual stack — emitted IPv6 syntax', () => {
     expect(v6Of(spec, 'VMOTION')?.ipAddressAssignmentMode).toBe('SLAAC');
     expect(v6Of(spec, 'VMOTION')?.includeIpAddressRanges).toBeUndefined();
     // SLAAC is IPv6 only, so the IPv4 twin stays static.
-    const v4 = spec.networkSpecs.find((n) => n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv4');
+    const v4 = spec.networkSpecs!.find((n) => n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv4');
     expect(v4?.ipAddressAssignmentMode).toBe('STATIC');
   });
 
@@ -150,7 +150,7 @@ describe('VCF dual stack — IPv4 output is unchanged', () => {
   it('emits the same IPv4 networks and pools with or without dual stack', () => {
     const v4 = buildSddcSpec(basePlan()).spec;
     const dual = buildSddcSpec(dualPlan()).spec;
-    expect(dual.networkSpecs.filter((n) => n.ipAddressVersion === 'IPv4')).toEqual(v4.networkSpecs);
+    expect(dual.networkSpecs!.filter((n) => n.ipAddressVersion === 'IPv4')).toEqual(v4.networkSpecs);
     expect(dual.vspClusterSpec?.ipv4Pool).toEqual(v4.vspClusterSpec?.ipv4Pool);
     expect(dual.nsxtSpec?.ipAddressPoolSpec).toEqual(v4.nsxtSpec?.ipAddressPoolSpec);
     expect(dual.vcfAutomationSpec?.ipPool).toEqual(v4.vcfAutomationSpec?.ipPool);
@@ -158,7 +158,7 @@ describe('VCF dual stack — IPv4 output is unchanged', () => {
 
   it('emits no IPv6 when prefixes are set but dual stack is off, and says so', () => {
     const { spec, findings } = buildSddcSpec(dualPlan({ dualStack: false }));
-    expect(spec.networkSpecs.some((n) => n.ipAddressVersion === 'IPv6')).toBe(false);
+    expect(spec.networkSpecs!.some((n) => n.ipAddressVersion === 'IPv6')).toBe(false);
     expect(spec.vspClusterSpec?.ipv6Pool).toBeUndefined();
     expect(codes(findings)).toContain('vcf.build.ipv6-without-dual-stack');
   });
@@ -221,7 +221,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('rejects an IPv6 subnet on an IPv4 entry', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) =>
+    const nets = spec.networkSpecs!.map((n) =>
       n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv4' ? { ...n, subnet: '2001:db8:99::/64' } : n,
     );
     expect(errorCodes(validateSddcSpec(withNetworks(spec, nets)))).toContain('vcf.spec.subnet-version-mismatch');
@@ -229,7 +229,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('rejects an IPv4 gateway on an IPv6 entry', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) =>
+    const nets = spec.networkSpecs!.map((n) =>
       n.networkType === 'MANAGEMENT' && n.ipAddressVersion === 'IPv6' ? { ...n, gateway: '172.30.0.1' } : n,
     );
     expect(errorCodes(validateSddcSpec(withNetworks(spec, nets)))).toContain('vcf.spec.gateway-version-mismatch');
@@ -237,7 +237,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('rejects an IPv6 gateway outside its prefix', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) =>
+    const nets = spec.networkSpecs!.map((n) =>
       n.networkType === 'MANAGEMENT' && n.ipAddressVersion === 'IPv6' ? { ...n, gateway: '2001:db8:31::1' } : n,
     );
     expect(errorCodes(validateSddcSpec(withNetworks(spec, nets)))).toContain('vcf.spec.gateway-outside-subnet');
@@ -245,7 +245,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('rejects an IPv4 range on an IPv6 entry', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) =>
+    const nets = spec.networkSpecs!.map((n) =>
       n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv6'
         ? { ...n, includeIpAddressRanges: [{ startIpAddress: '172.30.40.10', endIpAddress: '172.30.40.13' }] }
         : n,
@@ -255,7 +255,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('rejects SLAAC on IPv4 and on anything but a /64', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) => {
+    const nets = spec.networkSpecs!.map((n) => {
       if (n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv4') return { ...n, ipAddressAssignmentMode: 'SLAAC' as const };
       if (n.networkType === 'VSAN' && n.ipAddressVersion === 'IPv6') {
         return { ...n, subnet: '2001:db8:50::/80', ipAddressAssignmentMode: 'SLAAC' as const, includeIpAddressRanges: [] };
@@ -269,7 +269,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('checks overlap within a family only', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) =>
+    const nets = spec.networkSpecs!.map((n) =>
       n.networkType === 'VMOTION' && n.ipAddressVersion === 'IPv6'
         ? { ...n, subnet: '2001:db8:30::/64', includeIpAddressRanges: [] }
         : n,
@@ -281,7 +281,7 @@ describe('VCF validator — families never mix in one entry', () => {
 
   it('sizes the IPv6 management prefix separately', () => {
     const spec = base();
-    const nets = spec.networkSpecs.map((n) =>
+    const nets = spec.networkSpecs!.map((n) =>
       n.networkType === 'MANAGEMENT' && n.ipAddressVersion === 'IPv6'
         ? { ...n, subnet: '2001:db8:30::/124', gateway: '2001:db8:30::1' }
         : n,

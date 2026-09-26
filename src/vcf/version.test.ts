@@ -114,7 +114,8 @@ describe('deferred components: the worked example supersedes the summary table',
 
   it('records the disagreement rather than hiding it', () => {
     const rule = scenarioRule('deferred-components');
-    expect(rule.supersedesTable).toHaveLength(2);
+    // vCenter, Operations, and (since the Automation note was added) VCF Automation.
+    expect(rule.supersedesTable).toHaveLength(3);
 
     const { findings } = buildSddcSpec(basePlan({ scenario: 'deferred-components' }));
     expect(findings.map((f) => f.code)).toContain('vcf.build.scenario-table-superseded');

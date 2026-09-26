@@ -631,7 +631,10 @@ export type WorkflowType = 'VCF' | 'VCF_COMPLETE' | 'VCF_EXTEND' | 'VVF' | 'VCF_
 /**
  * The VCF Installer bring-up document.
  *
- * Required: sddcId, vcenterSpec, networkSpecs, dnsSpec.
+ * The schema marks sddcId, vcenterSpec, networkSpecs and dnsSpec required, but
+ * Broadcom's own minimal examples (deferred components, VCF management services
+ * for VVF) omit networkSpecs, dnsSpec and hostSpecs, so they are optional here
+ * and every consumer must tolerate their absence.
  */
 /**
  * Declared as a type alias rather than an interface on purpose.
@@ -646,8 +649,10 @@ export type SddcSpec = {
   /** 3-20 chars, alphanumeric and hyphens. */
   sddcId: string;
   vcenterSpec: SddcVcenterSpec;
-  networkSpecs: SddcNetworkSpec[];
-  dnsSpec: DnsSpec;
+  /** Required by the schema; absent from a minimal document. */
+  networkSpecs?: SddcNetworkSpec[];
+  /** Required by the schema; absent from a minimal document. */
+  dnsSpec?: DnsSpec;
 
   workflowType?: WorkflowType;
   /** 1-300 chars. */

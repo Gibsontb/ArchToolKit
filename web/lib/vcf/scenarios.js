@@ -75,6 +75,13 @@
 
      
                                                                            
+                                                                              
+                                                                     
+     
+                                                                                 
+
+     
+                                                                           
                                             
      
                                        
@@ -124,12 +131,13 @@ export const SCENARIO_RULES                          = [
     licenseServer: 'true',
     identityBroker: 'either',
     notes: ['conditional-on-existing-operations', 'identity-broker-primary-only'],
+    conditionalPresence: ['licenseServer'],
   },
   {
     scenario: 'deferred-components',
     label: 'Deploy deferred components',
     workflowType: 'VCF_COMPLETE',
-    // These two are deliberately the inverse of the summary table. See
+    // These three are deliberately the inverse of the summary table. See
     // supersedesTable below.
     operationsExisting: 'false',
     vcenterExisting: 'true',
@@ -153,6 +161,13 @@ export const SCENARIO_RULES                          = [
         reason:
           'VCF Operations is one of the components being deployed now, so it is new. Broadcom\u2019s worked example sets it to false. The summary table appears to have these two columns transposed for this row.',
       },
+      {
+        column: 'vcfAutomationSpec.useExistingDeployment',
+        tableValue: 'true',
+        used: 'false',
+        reason:
+          'VCF Automation is deferred to this run, so it is deployed new: all three worked examples for this workflow carry a full vcfAutomationSpec (platform FQDN, IP pool, node prefix) and no useExistingDeployment.',
+      },
     ],
   },
   {
@@ -167,6 +182,7 @@ export const SCENARIO_RULES                          = [
     licenseServer: 'true',
     identityBroker: 'true',
     notes: ['conditional-on-existing-operations'],
+    conditionalPresence: ['licenseServer', 'identityBroker'],
   },
   {
     scenario: 'converge-to-vcf-instance',
@@ -180,6 +196,7 @@ export const SCENARIO_RULES                          = [
     licenseServer: 'true',
     identityBroker: 'true',
     notes: ['conditional-on-existing-operations'],
+    conditionalPresence: ['licenseServer', 'identityBroker'],
   },
   {
     scenario: 'new-vvf',
@@ -206,6 +223,7 @@ export const SCENARIO_RULES                          = [
     licenseServer: 'true',
     identityBroker: 'na',
     notes: ['conditional-on-existing-operations', 'vvf-management-services-optional'],
+    conditionalPresence: ['licenseServer'],
   },
   {
     scenario: 'vvf-management-services',
@@ -222,14 +240,16 @@ export const SCENARIO_RULES                          = [
 ];
 
 /**
- * Whether a component appears in the document at all.
+ * Whether NSX or VCF Automation appears in the document at all.
  *
- * On a `useExistingDeployment` column, `na` means the component is absent only
- * when the scenario has no such component to begin with — which, for NSX and
- * VCF Automation, means the vSphere Foundation scenarios.
+ * On a `useExistingDeployment` column, `na` means only that the flag is moot;
+ * the component is absent when the scenario has no such component to begin
+ * with, which for NSX and VCF Automation means the vSphere Foundation rows.
+ * That includes "VCF management services and License Server for vSphere
+ * Foundation", whose cells read `false` rather than `n/a`: Broadcom's example
+ * for that row carries neither block.
  */
-export function componentTakesPart(rule              , cell              )          {
-  if (cell !== 'na') return true;
+export function componentTakesPart(rule              , _cell              )          {
   return rule.workflowType !== 'VVF';
 }
 

@@ -114,7 +114,7 @@ describe('inventory to sizing to spec, end to end', () => {
       vmotion: { cidr: '172.30.40.0/24', vlanId: 40 },
       vsan: { cidr: '172.30.50.0/24', vlanId: 50 },
       hostTep: { cidr: '172.30.60.0/23', vlanId: 60 },
-      existing: { vcenter: { fqdn: 'vcenter.vcf.lab', sslThumbprint: 'AA:BB' } },
+      existing: { vcenter: { fqdn: 'vcenter.vcf.lab', sslThumbprint: 'AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:BB' } },
       ...carried,
       hostCount: carried.hostCount ?? 6,
       storage: carried.storage ?? 'vsan-esa',

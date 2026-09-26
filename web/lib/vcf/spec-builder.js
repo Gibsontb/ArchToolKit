@@ -18,6 +18,7 @@ import {
   formatIPv4,
   allocateRange,
   usableRange,
+  prefixToMask,
             
 } from '../core/net.js';
 import { familyOf, isIp, containsAny } from '../core/ip.js';
@@ -59,6 +60,18 @@ import { PLACEHOLDER_SECRET } from './spec-types.js';
            
            
                                             
+                                     
+                    
+                             
+                    
+           
+                  
+                  
+              
+                
+                   
+          
+                     
                          
 import {
   MANAGEMENT_NETWORK_MODELS,
@@ -101,7 +114,183 @@ export { PLACEHOLDER_SECRET };
                                     
                                      
                                                         
+     
+                                                                              
+                                                                             
+                                                     
+     
+                                  
+     
+                                                                           
+                                                               
+     
+                                         
+                                                                          
+                                           
  
+
+/** Uplink teaming for the NSX host switch (`dvsSpecs[].nsxTeamings[0]`). */
+                                 
+                                   
+                                          
+                                                                   
+                                             
+                                              
+ 
+
+/** LACP link aggregation for one switch. Every field has a default. */
+                           
+                                                     
+                         
+                   
+                                 
+                        
+                                          
+                      
+                                                        
+                                           
+                                                            
+ 
+
+/**
+ * One distributed switch of a custom layout (the wizard's "Custom Switch
+ * Configuration"). Nothing is split or inferred: the vmnic mapping is used as
+ * written.
+ */
+                                
+                                                     
+                         
+                                                   
+                                             
+     
+                                                                               
+                                  
+     
+                                                                
+                      
+                        
+                                                                                    
+                         
+                                                                             
+                                                     
+                                                                                     
+                                         
+                                     
+                                            
+                                       
+                       
+                           
+ 
+
+/**
+ * Broadcom's four fleet sizing models (VCF 9.1 "VCF Fleet Sizing Models").
+ */
+                                                                          
+
+                                   
+                         
+                       
+                                                              
+                                        
+                                      
+                                            
+                                                
+                                           
+                                  
+                                                                       
+                                   
+                                               
+                                  
+ 
+
+/**
+ * The sizing table, first instance and additional instance.
+ *
+ * HA-Small's VCF management services size is rendered in the published table
+ * as "Medium (3 control plane + 3 workers)", identical to HA-Medium; the API's
+ * own `small_ha` value exists for exactly this model, so it is used. VERIFY.
+ */
+export const SIZE_PRESETS                                                 = {
+  simple: {
+    label: 'Simple',
+    ha: false,
+    vspSize: 'small',
+    vcenterSize: 'small',
+    vcenterSizeAdditional: 'small',
+    nsxManagerSize: 'medium',
+    nsxManagerCount: 1,
+    opsSize: 'small',
+    opsNodeCount: 1,
+    collectorSize: 'small',
+    automationSize: 'small',
+  },
+  'ha-small': {
+    label: 'HA-Small',
+    ha: true,
+    vspSize: 'small_ha',
+    vcenterSize: 'medium',
+    vcenterSizeAdditional: 'small',
+    nsxManagerSize: 'medium',
+    nsxManagerCount: 3,
+    opsSize: 'small',
+    opsNodeCount: 2,
+    collectorSize: 'small',
+    automationSize: 'medium',
+  },
+  'ha-medium': {
+    label: 'HA-Medium',
+    ha: true,
+    vspSize: 'medium',
+    vcenterSize: 'medium',
+    vcenterSizeAdditional: 'medium',
+    nsxManagerSize: 'medium',
+    nsxManagerCount: 3,
+    opsSize: 'medium',
+    opsNodeCount: 3,
+    collectorSize: 'standard',
+    automationSize: 'medium',
+  },
+  'ha-large': {
+    label: 'HA-Large',
+    ha: true,
+    vspSize: 'large',
+    vcenterSize: 'large',
+    vcenterSizeAdditional: 'large',
+    nsxManagerSize: 'large',
+    nsxManagerCount: 3,
+    opsSize: 'large',
+    opsNodeCount: 3,
+    collectorSize: 'standard',
+    automationSize: 'large',
+  },
+};
+
+/** Components whose `version` can be pinned. */
+                                
+             
+         
+                 
+                        
+                
+               
+                
+                    
+                   
+              
+             
+                
+                       
+          
+               
+
+/** The fleet and lifecycle service blocks that take a free-text size. */
+                            
+              
+             
+                
+                       
+          
+               
 
 /**
  * Flexible IP pool specification.
@@ -134,6 +323,11 @@ export { PLACEHOLDER_SECRET };
                         
                                                               
                                   
+     
+                                                                             
+                                                   
+     
+                                         
  
 
 /**
@@ -216,7 +410,12 @@ export { PLACEHOLDER_SECRET };
                                   
                                        
                                
-                                                        
+     
+                                                                             
+                                                                          
+                                                                             
+                            
+     
                                           
                                          
                                              
@@ -266,10 +465,31 @@ export { PLACEHOLDER_SECRET };
     
 
                                                                               
+     
+                                                                               
+                                                                            
+                       
+     
+                                   
+                                                                          
                                      
                                        
+                                                          
+                                                   
                                             
+                                                                       
+                                   
                                                                         
+                                                                                                                 
+                                    
+     
+                                                                    
+                                                                            
+                                          
+     
+                                     
+                                                               
+                                                
                                                                
                                    
 
@@ -278,10 +498,39 @@ export { PLACEHOLDER_SECRET };
                                    
                              
                            
-                                                                     
+                                                                 
+                           
+     
+                                                                          
+                                                                         
+     
+                                                  
+                                                                                
+                                       
+                                                                                
+                                                                                     
 
                                                                               
+     
+                                                                     
+                                                                      
+     
                                                                                 
+     
+                                                                              
+                                                                                  
+     
+                                                         
+                                                 
+                                
+                                                  
+                                                                                                              
+                                                         
+     
+                                                                                 
+                                      
+     
+                                           
                    
                           
                                  
@@ -356,21 +605,81 @@ export { PLACEHOLDER_SECRET };
                                                                   
                                                
                                            
+     
+                                                                             
+                                                                               
+                                                                          
+     
+                                                         
+                                                                                 
+                                                             
+     
+                                                                              
+                                                                      
+     
+                                          
                                  
+                                                                                                 
                                         
+                                                                                                
+                                                  
+                                                                
+                                         
+                                                                                     
+                            
+
+                                                                                   
+                               
+                                     
+                                                                             
+                                       
+
+                                                                                  
+     
+                                                                              
+                                                                           
+                                                            
+                                                                       
+     
+                                              
+     
+                                                                             
+                                                                                      
+     
+                                              
+                                                                    
+                                                                  
+                                                             
+                                                                           
+                       
+                                               
 
                                                                               
                        
                                          
                                      
                                              
+                                                                               
                                             
                                             
+                                               
+                                                        
+                                           
+                                                                               
+                                                    
                                     
     
 
                                                                               
                                               
+     
+                                                                              
+                                                                           
+                                                                               
+                                                                                
+                                                       
+     
+                                           
  
 
                               
@@ -415,6 +724,9 @@ function networkSpec(
     standbyUplinks: plan.standbyUplinks ?? [],
     ...(plan.mtu !== undefined ? { mtu: plan.mtu } : {}),
     ...extras,
+    ...(plan.portGroupName ? { portGroupKey: plan.portGroupName } : {}),
+    ...(plan.ipRanges?.length ? { includeIpAddressRanges: plan.ipRanges.map((r) => ({ ...r })) } : {}),
+    ...(plan.ipAddresses?.length ? { includeIpAddress: [...plan.ipAddresses] } : {}),
   };
   return spec;
 }
@@ -447,6 +759,8 @@ function networkSpecV6(
     standbyUplinks: plan.standbyUplinks ?? [],
     ...(plan.mtu !== undefined ? { mtu: plan.mtu } : {}),
     ...extras,
+    // The IPv6 twin shares the VLAN, so it shares a named port group too.
+    ...(plan.portGroupName ? { portGroupKey: plan.portGroupName } : {}),
   };
 }
 
@@ -628,13 +942,37 @@ function checkNetworkPlan(label        , path        , plan                     
   }
 }
 
+function buildLag(lacp          , prefix        )          {
+  return {
+    name: (lacp.name ?? `${prefix}-lag01`).slice(0, 16),
+    uplinksCount: lacp.uplinksCount ?? 2,
+    lacpMode: lacp.lacpMode ?? 'ACTIVE',
+    lacpTimeoutMode: lacp.lacpTimeoutMode ?? 'FAST',
+    loadBalancingMode: lacp.loadBalancingMode ?? 'SOURCE_AND_DESTINATION_IP',
+  };
+}
+
+/** NSX teaming for a switch whose uplinks are `uplinks`. */
+function buildTeaming(teaming                            , uplinks          )              {
+  const standby = teaming?.standByUplinks ? [...teaming.standByUplinks] : null;
+  const active = teaming?.activeUplinks
+    ? [...teaming.activeUplinks]
+    : uplinks.filter((u) => !standby?.includes(u));
+  return {
+    policy: teaming?.policy ?? 'LOADBALANCE_SRCID',
+    activeUplinks: active,
+    standByUplinks: standby,
+  };
+}
+
 /**
  * vDS layout.
  *
  * The 9.1 installer offers Default (one switch), Storage Traffic Separation
  * (two), NSX Traffic Separation (two), Storage and NSX Separation (three), and
- * Custom. Each switch needs its own uplinks, so the available vmnics are split
- * across them.
+ * Custom. Each predefined profile's switch needs its own uplinks, so the
+ * available vmnics are split across them. A custom layout is used exactly as
+ * the plan writes it.
  */
 function buildDvsSpecs(plan                , findings           )            {
   const profile = plan.dvsProfile ?? 'default';
@@ -645,24 +983,19 @@ function buildDvsSpecs(plan                , findings           )            {
   const toUplinks = (nics          )                  =>
     nics.map((id, i) => ({ id, uplink: `uplink${i + 1}` }));
 
-  const overlayConfig = {
-    transportZones: [
-      { name: `${prefix}-overlay-tz`, transportType: 'OVERLAY'          },
-      { name: `${prefix}-vlan-tz`, transportType: 'VLAN'          },
-    ],
-  };
-
-  const lagSpecs                   = plan.lacp
-    ? [{ name: plan.lacp.name ?? `${prefix}-lag01`.slice(0, 16), ...plan.lacp }]
-    : null;
-
-  const teamings = [
-    {
-      policy: 'LOADBALANCE_SRCID'         ,
-      activeUplinks: toUplinks(vmnics).map((u) => u.uplink),
-      standByUplinks: null,
-    },
+  const defaultZones                  = [
+    { name: `${prefix}-overlay-tz`, transportType: 'OVERLAY' },
+    { name: `${prefix}-vlan-tz`, transportType: 'VLAN' },
   ];
+  const switchConfig = (
+    zones                                      ,
+    mode                                                           ,
+    ipAssignmentType         ,
+  )                   => ({
+    transportZones: (zones ?? defaultZones).map((z) => ({ ...z })),
+    ...(mode ? { hostSwitchOperationalMode: mode } : {}),
+    ...(ipAssignmentType ? { ipAssignmentType } : {}),
+  });
 
   const storageNetworks                = [];
   if (plan.storage === 'vsan-esa' || plan.storage === 'vsan-osa') storageNetworks.push('VSAN');
@@ -671,12 +1004,100 @@ function buildDvsSpecs(plan                , findings           )            {
   const coreNetworks                = ['MANAGEMENT', 'VM_MANAGEMENT', 'VMOTION'];
   if (plan.fleetManagement) coreNetworks.push('FLEET_MANAGEMENT');
 
-  const needed                             = {
+  // --- custom ---------------------------------------------------------------
+  if (plan.dvsSwitches?.length) {
+    if (plan.dvsProfile !== undefined && profile !== 'custom') {
+      findings.push(
+        info(
+          'vcf.build.custom-dvs-overrides-profile',
+          `dvsSwitches is set, so the "${profile}" profile is ignored and the switches are emitted as written.`,
+          { path: 'dvsSwitches' },
+        ),
+      );
+    }
+    if (!plan.dvsSwitches.some((d) => d.nsx)) {
+      findings.push(
+        warning(
+          'vcf.build.custom-dvs-no-nsx',
+          'No custom switch is marked for NSX, so no host switch carries the NSX transport zones.',
+          {
+            path: 'dvsSwitches',
+            remediation: 'Set nsx: true on the switch that should carry the NSX transport zones.',
+          },
+        ),
+      );
+    }
+    const used = new Map                ();
+    const switches = plan.dvsSwitches.map((d, i)          => {
+      const mapping                  = d.vmnicsToUplinks.map((m, j) =>
+        typeof m === 'string' ? { id: m, uplink: `uplink${j + 1}` } : { id: m.id, uplink: m.uplink },
+      );
+      for (const m of mapping) used.set(m.id, (used.get(m.id) ?? 0) + 1);
+      if (mapping.length === 0) {
+        findings.push(
+          error('vcf.build.custom-dvs-no-vmnics', `Custom switch ${i + 1} has no vmnics.`, {
+            path: `dvsSwitches[${i}].vmnicsToUplinks`,
+          }),
+        );
+      }
+      const uplinks = mapping.map((m) => m.uplink);
+      const lacp = d.lacp ?? (d.nsx ? plan.lacp : undefined);
+      return {
+        dvsName: d.name ?? `${prefix}-vds${pad(i + 1)}`,
+        ...(d.networks?.length ? { networks: [...d.networks] } : {}),
+        mtu: d.mtu ?? mtu,
+        ...(d.nsx
+          ? {
+              nsxtSwitchConfig: switchConfig(
+                d.transportZones,
+                d.hostSwitchOperationalMode ?? plan.hostSwitchOperationalMode,
+                d.ipAssignmentType,
+              ),
+            }
+          : {}),
+        vmnicsToUplinks: mapping,
+        ...(d.nsx ? { nsxTeamings: [buildTeaming(d.nsxTeaming ?? plan.nsxTeaming, uplinks)] } : {}),
+        ...(lacp ? { lagSpecs: [buildLag(lacp, prefix)] } : {}),
+      };
+    });
+    // A vmnic belongs to one switch only.
+    const shared = [...used].filter(([, n]) => n > 1).map(([id]) => id);
+    if (shared.length > 0) {
+      findings.push(
+        error('vcf.build.custom-dvs-shared-vmnic', `vmnic(s) ${shared.join(', ')} are mapped to more than one switch.`, {
+          path: 'dvsSwitches',
+        }),
+      );
+    }
+    return switches;
+  }
+
+  if (profile === 'custom') {
+    // The custom profile must not quietly become the default single switch.
+    findings.push(
+      error(
+        'vcf.build.custom-dvs-missing',
+        'The custom vDS profile was chosen but no switches were defined, so no dvsSpecs are emitted.',
+        {
+          path: 'dvsSwitches',
+          remediation:
+            'Define each switch with its networks and explicit vmnic-to-uplink mapping, or pick a predefined profile.',
+          source: 'VCF 9.1 vDS profiles',
+        },
+      ),
+    );
+    return [];
+  }
+
+  // --- predefined profiles ----------------------------------------------------
+  const lagSpecs                   = plan.lacp ? [buildLag(plan.lacp, prefix)] : null;
+  const overlayConfig = switchConfig(undefined, plan.hostSwitchOperationalMode);
+
+  const needed                                                = {
     default: 1,
     'storage-separation': 2,
     'nsx-separation': 2,
     'storage-and-nsx-separation': 3,
-    custom: 1,
   };
   const switchCount = needed[profile];
 
@@ -698,31 +1119,26 @@ function buildDvsSpecs(plan                , findings           )            {
   const slice = (index        )           =>
     vmnics.slice(index * chunk, index === switchCount - 1 ? undefined : (index + 1) * chunk);
 
-  if (profile === 'default' || profile === 'custom') {
-    return [
-      {
-        dvsName: `${prefix}-vds01`,
-        networks: [...coreNetworks, ...storageNetworks],
-        mtu,
-        nsxtSwitchConfig: overlayConfig,
-        vmnicsToUplinks: toUplinks(vmnics),
-        nsxTeamings: teamings,
-        lagSpecs,
-      },
-    ];
+  const nsxSwitch = (name        , nics          , networks                )          => {
+    const uplinks = toUplinks(nics);
+    return {
+      dvsName: name,
+      ...(networks ? { networks } : {}),
+      mtu,
+      nsxtSwitchConfig: overlayConfig,
+      vmnicsToUplinks: uplinks,
+      nsxTeamings: [buildTeaming(plan.nsxTeaming, uplinks.map((u) => u.uplink))],
+      lagSpecs,
+    };
+  };
+
+  if (profile === 'default') {
+    return [nsxSwitch(`${prefix}-vds01`, vmnics, [...coreNetworks, ...storageNetworks])];
   }
 
   if (profile === 'storage-separation') {
     return [
-      {
-        dvsName: `${prefix}-vds01`,
-        networks: coreNetworks,
-        mtu,
-        nsxtSwitchConfig: overlayConfig,
-        vmnicsToUplinks: toUplinks(slice(0)),
-        nsxTeamings: teamings,
-        lagSpecs,
-      },
+      nsxSwitch(`${prefix}-vds01`, slice(0), coreNetworks),
       {
         dvsName: `${prefix}-vds02-storage`,
         networks: storageNetworks,
@@ -740,14 +1156,7 @@ function buildDvsSpecs(plan                , findings           )            {
         mtu,
         vmnicsToUplinks: toUplinks(slice(0)),
       },
-      {
-        dvsName: `${prefix}-vds02-nsx`,
-        mtu,
-        nsxtSwitchConfig: overlayConfig,
-        vmnicsToUplinks: toUplinks(slice(1)),
-        nsxTeamings: teamings,
-        lagSpecs,
-      },
+      nsxSwitch(`${prefix}-vds02-nsx`, slice(1)),
     ];
   }
 
@@ -764,14 +1173,7 @@ function buildDvsSpecs(plan                , findings           )            {
       mtu,
       vmnicsToUplinks: toUplinks(slice(1)),
     },
-    {
-      dvsName: `${prefix}-vds03-nsx`,
-      mtu,
-      nsxtSwitchConfig: overlayConfig,
-      vmnicsToUplinks: toUplinks(slice(2)),
-      nsxTeamings: teamings,
-      lagSpecs,
-    },
+    nsxSwitch(`${prefix}-vds03-nsx`, slice(2)),
   ];
 }
 
@@ -901,18 +1303,87 @@ export const VCF_MANAGEMENT_NETWORK_MODELS = MANAGEMENT_NETWORK_MODELS;
 export const DEPLOYMENT_SCENARIOS = SCENARIO_RULES;
 
 /**
+ * Top-level keys a minimal document keeps, per scenario.
+ *
+ * Broadcom's worked examples for these workflows carry the component blocks
+ * and the existing vCenter (and SDDC Manager), and nothing of the bring-up:
+ * no hosts, networks, switches, NSX, datastore or cluster.
+ *
+ *  - deferred components: the three "Deploy Deferred Components" pages;
+ *  - VCF management services for VVF: domainSpec-example-VMSPonVVF.json;
+ *  - converge: domainSpec-sfo-m01-example03.json.
+ */
+const MINIMAL_KEYS                                                                                = {
+  deferred: [
+    'sddcId',
+    'workflowType',
+    'vcfInstanceName',
+    'version',
+    'ceipEnabled',
+    'vcenterSpec',
+    'sddcManagerSpec',
+    'vcfOperationsSpec',
+    'vcfOperationsCollectorSpec',
+    'licenseServerSpec',
+    'vcfAutomationSpec',
+    'vcfManagementComponentsInfrastructureSpec',
+    'securitySpec',
+  ],
+  'vvf-services': [
+    'sddcId',
+    'workflowType',
+    'vcfInstanceName',
+    'version',
+    'ceipEnabled',
+    'skipEsxThumbprintValidation',
+    'vcenterSpec',
+    'vcfOperationsSpec',
+    'vspClusterSpec',
+    'licenseServerSpec',
+    'vcfManagementComponentsInfrastructureSpec',
+    'securitySpec',
+  ],
+  converge: [
+    'sddcId',
+    'workflowType',
+    'vcfInstanceName',
+    'version',
+    'ceipEnabled',
+    'managementPoolName',
+    'vcenterSpec',
+    'nsxtSpec',
+    'sddcManagerSpec',
+    'vspClusterSpec',
+    'vidbSpec',
+    'vcfOperationsSpec',
+    'vcfOperationsCollectorSpec',
+    'vcfAutomationSpec',
+    'licenseServerSpec',
+    'vcfManagementComponentsInfrastructureSpec',
+    'securitySpec',
+  ],
+};
+
+/** The first key of a dotted path: `vcenterSpec` for `vcenterSpec.rootVcenterPassword`. */
+const topKey = (path        )         => path.split(/[.[]/)[0] ?? path;
+
+/**
  * Build a complete VCF 9.1 SddcSpec from a deployment plan.
  */
 export function buildSddcSpec(plan                )              {
   const findings            = [];
   const placeholders           = [];
+  const autoGenerated           = [];
   const domain = plan.domainSuffix.toLowerCase();
   const prefix = plan.namePrefix ?? plan.sddcId;
-  const ha = plan.profile === 'ha';
-  const secondary = plan.instanceRole === 'secondary';
+  const preset = plan.sizePreset ? SIZE_PRESETS[plan.sizePreset] : undefined;
+  const ha = preset ? preset.ha : plan.profile === 'ha';
   // Several documented defaults move between patch releases, so they are
   // resolved against the version actually being deployed.
   const targetVersion = plan.version ?? DEFAULT_VCF_VERSION;
+  const versions = plan.componentVersions ?? {};
+  const versionOf = (key                    )                       =>
+    versions[key] ? { version: versions[key] } : {};
 
   // --- deployment scenario -------------------------------------------------
   // Broadcom's decision table fixes workflowType and which components take part
@@ -921,6 +1392,22 @@ export function buildSddcSpec(plan                )              {
   // deciding for itself and drifting out of agreement with the others.
   const scenario                     = plan.scenario ?? deriveScenario(plan);
   const rule = scenarioRule(scenario);
+  const workflowType               = plan.workflowType ?? rule.workflowType;
+  // A further instance joins an existing fleet: its VCF Operations is the
+  // fleet's, and it declares no fleetFqdn.
+  const secondary = plan.instanceRole === 'secondary' || workflowType === 'VCF_EXTEND';
+
+  // Broadcom's samples for these runs carry only the component blocks.
+  const shape                     =
+    plan.documentShape ??
+    (scenario === 'deferred-components' || scenario === 'vvf-management-services' ? 'minimal' : 'full');
+  const minimal = shape === 'minimal';
+  const minimalKind                                           =
+    scenario === 'deferred-components'
+      ? 'deferred'
+      : scenario === 'vvf-management-services'
+        ? 'vvf-services'
+        : 'converge';
 
   // Where the fleet-level components live is a named model, so a spec can state
   // which one it represents instead of landing in one by accident.
@@ -933,7 +1420,20 @@ export function buildSddcSpec(plan                )              {
     cell                                     ,
     requested                     ,
     column        ,
+    conditional = false,
   )          => {
+    // The * footnote: required only when the existing VCF Operations does not
+    // already have the component, so leaving it out is a legitimate choice.
+    if (conditional && requested === false) {
+      findings.push(
+        info(
+          'vcf.build.scenario-conditional-omitted',
+          `${column} is left out. "${rule.label}" requires it only when the existing VCF Operations does not already have one.`,
+          { path: column, source: 'VCF 9.1 Deployment — Use a JSON Specification File' },
+        ),
+      );
+      return false;
+    }
     const { value, conflict } = resolveFlag(cell, requested, true);
     if (conflict) {
       findings.push(
@@ -998,18 +1498,44 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
-  const includeNsx = componentTakesPart(rule, rule.nsxExisting);
+  const conditional = (column                                    )          =>
+    rule.conditionalPresence?.includes(column) ?? false;
+
+  // Neither the deferred-components run nor VCF management services for VVF
+  // touches NSX: Broadcom's examples carry no nsxtSpec.
+  const includeNsx = componentTakesPart(rule, rule.nsxExisting) && !(minimal && minimalKind !== 'converge');
   const includeManagementServices = includes(
     rule.managementServices,
     plan.includeManagementServices,
     'includeManagementServices',
   );
-  const includeLicenseServer = includes(rule.licenseServer, undefined, 'licenseServerSpec');
+  const includeLicenseServer = includes(
+    rule.licenseServer,
+    plan.includeLicenseServer,
+    'licenseServerSpec',
+    conditional('licenseServer'),
+  );
+  const brokerRequested =
+    plan.identityBrokerModel === 'embedded'
+      ? false
+      : plan.identityBrokerModel === 'instance'
+        ? true
+        : plan.includeIdentityBroker;
   const includeIdentityBroker = includes(
     rule.identityBroker,
-    plan.includeIdentityBroker,
+    brokerRequested,
     'includeIdentityBroker',
+    conditional('identityBroker'),
   );
+  if (plan.identityBrokerModel === 'embedded') {
+    findings.push(
+      info(
+        'vcf.build.identity-broker-embedded',
+        'Embedded identity broker model: the broker runs as a vCenter service, one per instance, so no vidbSpec is emitted. Broadcom positions it for lab and proof-of-concept use.',
+        { path: 'vidbSpec', source: 'VCF 9.1 Design Library — Identity Broker Detailed Design' },
+      ),
+    );
+  }
 
   if (rule.workflowType === 'VVF' && !includeManagementServices) {
     findings.push(
@@ -1036,12 +1562,20 @@ export function buildSddcSpec(plan                )              {
         `${override.column} is set to ${override.used}, not the ${override.tableValue} in Broadcom's summary table. ${override.reason}`,
         {
           path: override.column,
-          source: 'VCF 9.1 Deployment — Deploy Deferred Components on NSX Overlay Segments',
+          source: 'VCF 9.1 Deployment — Deploy Deferred Components',
         },
       ),
     );
   }
-
+  if (minimal) {
+    findings.push(
+      info(
+        'vcf.build.minimal-document',
+        `Emitted as a minimal document: only the component blocks${scenario === 'vvf-management-services' ? ' and the existing vCenter' : ' and the existing vCenter and SDDC Manager'}, as Broadcom's worked example for "${rule.label}" does. VERIFY: the schema marks networkSpecs and dnsSpec required, but Broadcom's own examples for this workflow omit them.`,
+        { source: 'VCF 9.1 Deployment — Broadcom sample specifications' },
+      ),
+    );
+  }
 
                                                                     
 
@@ -1049,12 +1583,70 @@ export function buildSddcSpec(plan                )              {
   const name = (key         , shortName        )         =>
     plan.fqdnOverrides?.[key] ?? fqdn(shortName, domain);
 
+  /** An existing component's own FQDN wins over any generated name. */
+  const existingName = (component                               , key         , shortName        )         =>
+    component?.fqdn ? component.fqdn.toLowerCase() : name(key, shortName);
+
   const secret = (key        , path        )         => {
     const value = plan.passwords?.[key];
     if (value) return value;
     placeholders.push(path);
     return PLACEHOLDER_SECRET;
   };
+
+  /**
+   * A secret the API auto-generates when blank. With autoGeneratePasswords it
+   * is left blank rather than carrying a placeholder; `allowed` is false where
+   * the value must be the existing component's real password.
+   */
+  const generatable = (key        , path        , allowed = true)         => {
+    const value = plan.passwords?.[key];
+    if (value) return value;
+    if (plan.autoGeneratePasswords && allowed) {
+      autoGenerated.push(path);
+      return '';
+    }
+    placeholders.push(path);
+    return PLACEHOLDER_SECRET;
+  };
+
+  /** An existing component's thumbprint, or a placeholder the validator flags. */
+  const thumbprint = (component                               , path        )         => {
+    if (component?.sslThumbprint) return component.sslThumbprint;
+    placeholders.push(path);
+    return PLACEHOLDER_SECRET;
+  };
+
+  // --- which components are reused ------------------------------------------
+  // A row whose cell is fixed at true reuses the component whether or not the
+  // plan named it; the missing FQDN or thumbprint is then reported rather than
+  // silently replaced by a newly generated component.
+  const existing                                          = plan.existing ?? {};
+  const vcenterExisting = existing.vcenter !== undefined || rule.vcenterExisting === 'true';
+  const nsxExisting = existing.nsx !== undefined || rule.nsxExisting === 'true';
+  const opsExisting = existing.operations !== undefined || rule.operationsExisting === 'true' || secondary;
+  const automationExisting = existing.automation !== undefined || rule.automationExisting === 'true';
+  const sddcManagerExisting = existing.sddcManager !== undefined || scenario === 'deferred-components';
+  const licenseExisting = existing.licenseServer !== undefined;
+  const collectorExisting = existing.collector !== undefined;
+  const vspExisting = existing.managementServices !== undefined;
+
+  const reportImplied = (component        , supplied                               , reused         )       => {
+    if (!reused || supplied?.fqdn) return;
+    findings.push(
+      warning(
+        'vcf.build.existing-component-not-supplied',
+        `"${rule.label}" reuses the existing ${component}, but the plan does not name it, so a generated FQDN and a placeholder thumbprint are emitted.`,
+        {
+          path: `existing.${component}`,
+          remediation: `Supply existing.${component}.fqdn and its SHA256 SSL thumbprint.`,
+          source: 'VCF 9.1 Deployment — Use a JSON Specification File',
+        },
+      ),
+    );
+  };
+  // vCenter, NSX and Automation are already reported by the row check above.
+  if (secondary && !existing.operations) reportImplied('operations', existing.operations, true);
 
   // --- hosts ---------------------------------------------------------------
   // Explicit host detail wins; otherwise names are generated from the base.
@@ -1079,7 +1671,7 @@ export function buildSddcSpec(plan                )              {
 
   // Thumbprints are only omittable when validation is explicitly skipped.
   const missingThumbprints = hostSpecs.filter((h) => !h.sslThumbprint && !h.sshThumbprint).length;
-  if (missingThumbprints > 0) {
+  if (missingThumbprints > 0 && !minimal) {
     findings.push(
       info(
         'vcf.build.hosts-without-thumbprints',
@@ -1118,6 +1710,14 @@ export function buildSddcSpec(plan                )              {
   checkNetworkPlan('NFS', 'nfs', plan.nfs, findings);
   checkNetworkPlan('Fleet management', 'fleetManagement', plan.fleetManagement, findings);
 
+  /** Host VMkernel range at a fixed offset, one address per host. */
+  const hostRange = (cidrText        , offset        )                        => {
+    const cidr = parseCidr(cidrText);
+    if (!cidr) return undefined;
+    const range = allocateRange(cidr, offset, Math.max(plan.hostCount, 1));
+    return range ? [{ startIpAddress: formatIPv4(range.start), endIpAddress: formatIPv4(range.end) }] : [];
+  };
+
   const mgmt = networkSpec('MANAGEMENT', plan.management, {
     portGroupKey: `${prefix}-pg-mgmt`,
   });
@@ -1125,42 +1725,30 @@ export function buildSddcSpec(plan                )              {
 
   // VM management commonly shares the management VLAN; the installer still
   // wants it declared as its own network with its own port group.
-  const vmMgmtPlan = plan.vmManagement ?? plan.management;
-  const vmMgmt = networkSpec('VM_MANAGEMENT', vmMgmtPlan, {
+  // Sharing the management network's addressing does not share its port group.
+  const vmMgmtOwnPlan              = plan.vmManagement ?? {
+    ...plan.management,
+    portGroupName: undefined,
+    ipRanges: undefined,
+    ipAddresses: undefined,
+  };
+  const vmMgmt = networkSpec('VM_MANAGEMENT', vmMgmtOwnPlan, {
     portGroupKey: `${prefix}-pg-vm-mgmt`,
   });
   if (vmMgmt) networkSpecs.push(vmMgmt);
 
-  const vmotionCidr = parseCidr(plan.vmotion.cidr);
+  const vmotionRange = hostRange(plan.vmotion.cidr, 9);
   const vmotion = networkSpec('VMOTION', { mtu: DEFAULT_MTU, ...plan.vmotion }, {
     portGroupKey: `${prefix}-pg-vmotion`,
-    ...(vmotionCidr
-      ? {
-          includeIpAddressRanges: (() => {
-            const range = allocateRange(vmotionCidr, 9, Math.max(plan.hostCount, 1));
-            return range
-              ? [{ startIpAddress: formatIPv4(range.start), endIpAddress: formatIPv4(range.end) }]
-              : [];
-          })(),
-        }
-      : {}),
+    ...(vmotionRange ? { includeIpAddressRanges: vmotionRange } : {}),
   });
   if (vmotion) networkSpecs.push(vmotion);
 
   if (plan.vsan && (plan.storage === 'vsan-esa' || plan.storage === 'vsan-osa')) {
-    const vsanCidr = parseCidr(plan.vsan.cidr);
+    const vsanRange = hostRange(plan.vsan.cidr, 1);
     const vsan = networkSpec('VSAN', { mtu: DEFAULT_MTU, ...plan.vsan }, {
       portGroupKey: `${prefix}-pg-vsan`,
-      ...(vsanCidr
-        ? {
-            includeIpAddressRanges: (() => {
-              const range = allocateRange(vsanCidr, 1, Math.max(plan.hostCount, 1));
-              return range
-                ? [{ startIpAddress: formatIPv4(range.start), endIpAddress: formatIPv4(range.end) }]
-                : [];
-            })(),
-          }
-        : {}),
+      ...(vsanRange ? { includeIpAddressRanges: vsanRange } : {}),
     });
     if (vsan) networkSpecs.push(vsan);
   }
@@ -1170,6 +1758,16 @@ export function buildSddcSpec(plan                )              {
       portGroupKey: `${prefix}-pg-nfs`,
     });
     if (nfs) networkSpecs.push(nfs);
+  } else if (plan.storage === 'nfs' && !existing.datastoreName && !minimal) {
+    // NFS principal storage needs its own VMkernel network; without one the
+    // hosts cannot mount the datastore.
+    findings.push(
+      error('vcf.build.nfs-network-missing', 'NFS principal storage is selected but no NFS network was planned, so networkSpecs has no NFS entry.', {
+        path: 'nfs',
+        remediation: 'Add the NFS network: its CIDR and VLAN (and MTU, default 9000).',
+        source: 'VCF Installer API — SddcNetworkSpec',
+      }),
+    );
   }
 
   if (plan.fleetManagement) {
@@ -1185,7 +1783,7 @@ export function buildSddcSpec(plan                )              {
   if (plan.dualStack) {
     const v6Candidates                                           = [
       ['MANAGEMENT', plan.management],
-      ['VM_MANAGEMENT', vmMgmtPlan],
+      ['VM_MANAGEMENT', vmMgmtOwnPlan],
       ['VMOTION', plan.vmotion],
       ['VSAN', plan.vsan],
       ['NFS', plan.nfs],
@@ -1280,12 +1878,39 @@ export function buildSddcSpec(plan                )              {
   }
 
   // --- NSX -----------------------------------------------------------------
+  // VLAN-backed VPC and TEP-less are the same deployment seen from two sides:
+  // NO_IP disables VTEP creation, which is what enables a VLAN-backed VPC.
+  const vlanBackedVpc = plan.vpcNetworkConfigurationType === 'VLAN_BACKED_VPC';
+  const tepLess = plan.tepLess === true || vlanBackedVpc;
+  if (plan.tepLess && plan.vpcNetworkConfigurationType === 'FULL_STACK_VPC') {
+    findings.push(
+      warning(
+        'vcf.build.tepless-full-stack-vpc',
+        'TEP-less (vtepType NO_IP) creates no host overlay VTEPs, which is the VLAN-backed VPC configuration, but the VPC type is FULL_STACK_VPC.',
+        {
+          path: 'vpcNetworkConfigurationType',
+          remediation: 'Use VLAN_BACKED_VPC with TEP-less, or keep TEPs for a full-stack VPC.',
+          source: 'VCF Installer API — OverlayVtepSpec',
+        },
+      ),
+    );
+  }
+  if (tepLess && compareVcfVersion(targetVersion, '9.1.1.0') < 0) {
+    findings.push(
+      warning(
+        'vcf.build.tepless-before-9-1-1',
+        `VLAN-backed VPC and TEP-less deployment are VCF 9.1.1 features, but the target version is ${targetVersion}.`,
+        { path: 'version', source: 'VCF 9.1.1 release notes' },
+      ),
+    );
+  }
+
   // The installer's host TEP pool is IPv4 only (see spec-validate), so IPv6
   // for it is refused here rather than emitted into a pool that rejects it.
   const tepV6 = [plan.hostTep.cidr, plan.hostTep.gateway, plan.hostTep.ipv6Cidr, plan.hostTep.ipv6Gateway].filter(
     (v)              => typeof v === 'string' && familyOf(v) === 6,
   );
-  if (tepV6.length > 0 && !plan.tepLess) {
+  if (tepV6.length > 0 && !tepLess) {
     findings.push(
       error(
         'vcf.build.tep-ipv6-unsupported',
@@ -1299,61 +1924,130 @@ export function buildSddcSpec(plan                )              {
       ),
     );
   }
+  const tepMode = plan.tepMode ?? 'static';
   const tepCidr = parseCidr(plan.hostTep.cidr);
   const tepCount = plan.tepPool?.count ?? plan.hostCount * (plan.pnicsPerHost ?? 2);
   const tepRange = tepCidr
     ? allocateRange(tepCidr, plan.tepPool?.offset ?? 9, Math.max(tepCount, 1))
     : null;
+  const tepPoolName = plan.tepPoolName ?? `${prefix}-tep01`;
+  const ignoreUnavailable =
+    plan.ignoreUnavailableNsxtCluster !== undefined
+      ? { ignoreUnavailableNsxtCluster: plan.ignoreUnavailableNsxtCluster }
+      : {};
 
-  const nsxtSpec               = {
-    nsxtManagers: ha
+  const ipAddressPoolSpec =
+    tepLess || tepMode === 'dhcp'
+      ? undefined
+      : tepMode === 'existing-pool'
+        ? { name: tepPoolName, ...ignoreUnavailable }
+        : tepCidr && tepRange
+          ? {
+              name: tepPoolName,
+              description: 'ESXi host overlay TEP IP pool',
+              ...ignoreUnavailable,
+              subnets: [
+                {
+                  cidr: plan.hostTep.cidr,
+                  gateway: gatewayFor(plan.hostTep, tepCidr),
+                  // Note: start/end here, unlike the startIpAddress/endIpAddress
+                  // used by networkSpecs. This asymmetry is in the API itself.
+                  ipAddressPoolRanges: [
+                    { start: formatIPv4(tepRange.start), end: formatIPv4(tepRange.end) },
+                  ],
+                },
+              ],
+            }
+          : undefined;
+  if (!tepLess && tepMode === 'dhcp') {
+    findings.push(
+      info(
+        'vcf.build.tep-dhcp',
+        'Host TEPs use DHCP: no ipAddressPoolSpec is emitted. VERIFY: the API does not state that an absent pool means DHCP.',
+        { path: 'nsxtSpec.ipAddressPoolSpec', source: 'VCF Installer API — SddcNsxtSpec' },
+      ),
+    );
+  }
+
+  const nsxManagerCount = plan.nsxManagerCount ?? preset?.nsxManagerCount ?? (ha ? 3 : 1);
+  const nsxManagers = existing.nsx
+    ? (existing.nsx.nodeFqdns?.length ? existing.nsx.nodeFqdns : [existing.nsx.fqdn]).map((h) => ({ hostname: h.toLowerCase() }))
+    : nsxManagerCount === 3
       ? ([1, 2, 3]         ).map((n) => ({
           hostname: name(`nsxManager${n}`           , `${prefix}-nsx${pad(n)}`),
         }))
-      : [{ hostname: name('nsxManager1', `${prefix}-nsx01`) }],
-    vipFqdn: name('nsxVip', `${prefix}-nsx`),
-    nsxtManagerSize: plan.nsxManagerSize ?? 'medium',
-    rootNsxtManagerPassword: secret('nsxRoot', 'nsxtSpec.rootNsxtManagerPassword'),
-    nsxtAdminPassword: secret('nsxAdmin', 'nsxtSpec.nsxtAdminPassword'),
-    nsxtAuditPassword: secret('nsxAudit', 'nsxtSpec.nsxtAuditPassword'),
+      : [{ hostname: name('nsxManager1', `${prefix}-nsx01`) }];
+  if (existing.nsx && !existing.nsx.nodeFqdns?.length) {
+    findings.push(
+      info(
+        'vcf.build.existing-nsx-nodes',
+        'The existing NSX Manager node FQDNs were not supplied, so nsxtManagers carries the VIP FQDN.',
+        { path: 'existing.nsx.nodeFqdns', remediation: 'List the existing NSX Manager node FQDNs.' },
+      ),
+    );
+  }
+  const edgeSync = plan.enableEdgeClusterSync ?? true;
+
+  const nsxtSpec               = {
+    nsxtManagers: nsxManagers,
+    vipFqdn: existingName(existing.nsx, 'nsxVip', `${prefix}-nsx`),
+    ...(nsxExisting ? {} : { nsxtManagerSize: plan.nsxManagerSize ?? preset?.nsxManagerSize ?? 'medium' }),
+    rootNsxtManagerPassword: generatable('nsxRoot', 'nsxtSpec.rootNsxtManagerPassword', !nsxExisting),
+    nsxtAdminPassword: generatable('nsxAdmin', 'nsxtSpec.nsxtAdminPassword', !nsxExisting),
+    nsxtAuditPassword: generatable('nsxAudit', 'nsxtSpec.nsxtAuditPassword', !nsxExisting),
     transportVlanId: plan.hostTep.vlanId,
-    ...(tepCidr && tepRange
-      ? {
-          ipAddressPoolSpec: {
-            name: `${prefix}-tep01`,
-            description: 'ESXi host overlay TEP IP pool',
-            subnets: [
-              {
-                cidr: plan.hostTep.cidr,
-                gateway: gatewayFor(plan.hostTep, tepCidr),
-                // Note: start/end here, unlike the startIpAddress/endIpAddress
-                // used by networkSpecs. This asymmetry is in the API itself.
-                ipAddressPoolRanges: [
-                  { start: formatIPv4(tepRange.start), end: formatIPv4(tepRange.end) },
-                ],
-              },
-            ],
-          },
-        }
+    ...(ipAddressPoolSpec ? { ipAddressPoolSpec } : {}),
+    ...(tepLess ? { overlayVtepSpec: { vtepType: 'NO_IP'          } } : {}),
+    ...(plan.skipNsxOverlayOverManagementNetwork !== undefined
+      ? { skipNsxOverlayOverManagementNetwork: plan.skipNsxOverlayOverManagementNetwork }
       : {}),
-    ...(plan.tepLess ? { overlayVtepSpec: { vtepType: 'NO_IP'          } } : {}),
-    ...(plan.existing?.nsx
+    ...versionOf('nsx'),
+    ...(nsxExisting
       ? {
           useExistingDeployment: true,
-          sslThumbprint: plan.existing.nsx.sslThumbprint ?? PLACEHOLDER_SECRET,
-          enableEdgeClusterSync: true,
+          sslThumbprint: thumbprint(existing.nsx, 'nsxtSpec.sslThumbprint'),
+          enableEdgeClusterSync: edgeSync,
         }
       : {}),
   };
 
+  if (nsxExisting && edgeSync) {
+    findings.push(
+      warning(
+        'vcf.build.edge-cluster-sync',
+        'enableEdgeClusterSync is true: importing the existing NSX triggers a one-time reset of the NSX Edge node passwords.',
+        {
+          path: 'nsxtSpec.enableEdgeClusterSync',
+          remediation: 'Set enableEdgeClusterSync to false to leave the Edge passwords alone.',
+          source: 'VCF Installer API — SddcNsxtSpec',
+        },
+      ),
+    );
+  }
+  if (!nsxExisting && plan.enableEdgeClusterSync !== undefined) {
+    findings.push(
+      info('vcf.build.edge-cluster-sync-ignored', 'enableEdgeClusterSync applies only to an imported NSX, so it is not emitted.', {
+        path: 'enableEdgeClusterSync',
+      }),
+    );
+  }
+  if (plan.skipNsxOverlayOverManagementNetwork !== undefined && !vcenterExisting) {
+    findings.push(
+      info(
+        'vcf.build.skip-nsx-overlay-greenfield',
+        'skipNsxOverlayOverManagementNetwork is documented for an existing vCenter being converted; Broadcom’s greenfield sample sets it anyway.',
+        { path: 'nsxtSpec.skipNsxOverlayOverManagementNetwork', source: 'VCF Installer API — SddcNsxtSpec' },
+      ),
+    );
+  }
+
   // A TEP-less deployment creates no host overlay VTEPs, so a TEP pool would
   // be meaningless alongside it.
-  if (plan.tepLess) {
-    delete (nsxtSpec                                   ).ipAddressPoolSpec;
+  if (tepLess) {
     findings.push(
       info(
         'vcf.build.tep-less',
-        'TEP-less deployment selected: no host overlay TEP pool is emitted.',
+        `TEP-less deployment${vlanBackedVpc ? ' (VLAN-backed VPC)' : ''} selected: no host overlay TEP pool is emitted.`,
         { source: 'VCF 9.1.1 TEP-less deployments' },
       ),
     );
@@ -1361,12 +2055,22 @@ export function buildSddcSpec(plan                )              {
 
   // The DTGW block's gateway and IP blocks are only documented with IPv4
   // values, so IPv6 is not emitted there until that is confirmed.
+  const vpcType = plan.vpcNetworkConfigurationType ?? (plan.tepLess ? 'VLAN_BACKED_VPC' : 'FULL_STACK_VPC');
   const dtgwV6 = plan.dtgw
     ? [plan.dtgw.gatewayCidr, plan.dtgw.externalIpBlockCidr, plan.dtgw.privateTgwIpBlockCidr].filter(
         (v)              => typeof v === 'string' && familyOf(v) === 6,
       )
     : [];
-  if (dtgwV6.length > 0) {
+  if (plan.dtgw && vpcType === 'VLAN_BACKED_VPC') {
+    findings.push(
+      warning(
+        'vcf.build.dtgw-with-vlan-backed-vpc',
+        'A VLAN-backed VPC has no distributed transit gateway, so the planned DTGW is not emitted.',
+        { path: 'dtgw', remediation: 'Remove the DTGW, or choose a full-stack VPC.' },
+      ),
+    );
+    nsxtSpec.vpcSpec = { vpcNetworkConfigurationType: vpcType };
+  } else if (dtgwV6.length > 0) {
     findings.push(
       warning(
         'vcf.build.dtgw-ipv6-unverified',
@@ -1378,10 +2082,10 @@ export function buildSddcSpec(plan                )              {
         },
       ),
     );
-    nsxtSpec.vpcSpec = { vpcNetworkConfigurationType: plan.vpcNetworkConfigurationType ?? 'FULL_STACK_VPC' };
+    nsxtSpec.vpcSpec = { vpcNetworkConfigurationType: vpcType };
   } else if (plan.dtgw) {
     nsxtSpec.vpcSpec = {
-      vpcNetworkConfigurationType: plan.vpcNetworkConfigurationType ?? 'FULL_STACK_VPC',
+      vpcNetworkConfigurationType: vpcType,
       dtgwSpec: {
         vlan: plan.dtgw.vlan,
         gatewayCidr: plan.dtgw.gatewayCidr,
@@ -1389,11 +2093,11 @@ export function buildSddcSpec(plan                )              {
         privateTgwIpBlockCidr: plan.dtgw.privateTgwIpBlockCidr,
       },
     };
-  } else if (plan.vpcNetworkConfigurationType) {
-    nsxtSpec.vpcSpec = { vpcNetworkConfigurationType: plan.vpcNetworkConfigurationType };
+  } else if (plan.vpcNetworkConfigurationType || tepLess) {
+    nsxtSpec.vpcSpec = { vpcNetworkConfigurationType: vpcType };
   }
 
-  if (tepCidr && !tepRange) {
+  if (tepCidr && !tepRange && !tepLess && tepMode === 'static') {
     findings.push(
       warning(
         'vcf.build.tep-pool-not-allocated',
@@ -1415,7 +2119,6 @@ export function buildSddcSpec(plan                )              {
       ? parseCidr(plan.fleetManagement.cidr)
       : sharedHomeCidr;
   const vcfmsPool = buildPool(plan.vcfmsPool, vcfmsHomeCidr, 31, VCFMS_RECOMMENDED_IPS);
-  const vcfmsRange = vcfmsPool;
   // On dual stack the services runtime takes an IPv6 pool too, carved from the
   // IPv6 prefix of whichever network the IPv4 pool came from, at the same
   // offset. An explicit vcfmsIpv6Pool is honoured with or without dual stack.
@@ -1428,7 +2131,7 @@ export function buildSddcSpec(plan                )              {
     plan.vcfmsIpv6Pool || vcfmsHomeV6
       ? buildPoolV6(plan.vcfmsIpv6Pool, vcfmsHomeV6, 31, VCFMS_RECOMMENDED_IPS)
       : null;
-  if (!vcfmsIpv6 && (plan.vcfmsIpv6Pool || vcfmsHomeV6)) {
+  if (!vcfmsIpv6 && (plan.vcfmsIpv6Pool || vcfmsHomeV6) && includeManagementServices && !vspExisting) {
     findings.push(
       warning(
         'vcf.build.vcfms-ipv6-pool-not-allocated',
@@ -1441,24 +2144,41 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
-  const vspClusterSpec                     = {
-    platformFqdn: name('vspPlatform', `${prefix}-msr01`),
-    instanceFqdn: name('vspInstance', `${prefix}-int01`),
-    // A secondary instance joins an existing fleet and must omit fleetFqdn.
-    ...(secondary ? {} : { fleetFqdn: name('vspFleet', `${prefix}-flt01`) }),
-    ipv4Pool: vcfmsPool ?? {},
-    ...(vcfmsIpv6 ? { ipv6Pool: vcfmsIpv6 } : {}),
-    ...(plan.internalClusterCidrIpv6
-      ? { internalClusterCidrIpv6: plan.internalClusterCidrIpv6 }
-      : {}),
-    systemUserPassword: secret('vspSystem', 'vspClusterSpec.systemUserPassword'),
-    size: plan.vspSize ?? (ha ? 'small_ha' : 'small'),
-    internalClusterCidrIpv4: plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0],
-    // Present in a real working spec but absent from the published schema.
-    name: `${prefix}-vmsp-01`,
-  };
+  const fleetFqdnValue = name('vspFleet', `${prefix}-flt01`);
+  const instanceFqdnValue = name('vspInstance', `${prefix}-int01`);
+  // An existing runtime is referenced, not redeployed: no pool, size, internal
+  // CIDRs or password. VERIFY: the API marks ipv4Pool required without saying
+  // whether that holds for an existing deployment.
+  const vspClusterSpec                     = vspExisting
+    ? ({
+        platformFqdn: existingName(existing.managementServices, 'vspPlatform', `${prefix}-msr01`),
+        instanceFqdn: instanceFqdnValue,
+        ...(secondary ? {} : { fleetFqdn: fleetFqdnValue }),
+        ...versionOf('managementServices'),
+        useExistingDeployment: true,
+        sslThumbprint: thumbprint(existing.managementServices, 'vspClusterSpec.sslThumbprint'),
+      }                      )
+    : {
+        platformFqdn: name('vspPlatform', `${prefix}-msr01`),
+        instanceFqdn: instanceFqdnValue,
+        // A secondary instance joins an existing fleet and must omit fleetFqdn.
+        ...(secondary ? {} : { fleetFqdn: fleetFqdnValue }),
+        ipv4Pool: vcfmsPool ?? {},
+        ...(vcfmsIpv6 ? { ipv6Pool: vcfmsIpv6 } : {}),
+        ...(plan.internalClusterCidrIpv6
+          ? { internalClusterCidrIpv6: plan.internalClusterCidrIpv6 }
+          : {}),
+        systemUserPassword: generatable('vspSystem', 'vspClusterSpec.systemUserPassword'),
+        size: plan.vspSize ?? preset?.vspSize ?? (ha ? 'small_ha' : 'small'),
+        internalClusterCidrIpv4: plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0],
+        // Present in a real working spec but absent from the published schema.
+        name: plan.vspName ?? `${prefix}-vmsp-01`,
+        ...versionOf('managementServices'),
+        // Broadcom's VVF example states the new runtime explicitly.
+        ...(scenario === 'vvf-management-services' ? { useExistingDeployment: false } : {}),
+      };
 
-  if (!vcfmsRange) {
+  if (!vcfmsPool && includeManagementServices && !vspExisting) {
     findings.push(
       warning(
         'vcf.build.vcfms-pool-not-allocated',
@@ -1475,56 +2195,144 @@ export function buildSddcSpec(plan                )              {
 
   // --- Operations ----------------------------------------------------------
   const includeOps = plan.includeOperations !== false;
-  const vcfOperationsSpec                                = includeOps
+  const opsNodeCount = plan.opsNodeCount ?? preset?.opsNodeCount ?? (ha ? 3 : 1);
+  const opsSize = plan.opsSize ?? preset?.opsSize ?? defaultApplianceSize(targetVersion, ha);
+  if (!opsExisting && opsNodeCount > 1 && opsSize === 'xsmall') {
+    findings.push(
+      error('vcf.build.ops-xsmall-ha', 'VCF Operations xsmall supports a single node only; HA needs small or larger.', {
+        path: 'opsSize',
+        source: 'VCF Installer API — VcfOperationsSpec',
+      }),
+    );
+  }
+  const opsNodeRoles                                                                                      = [
+    ['opsPrimary', 'master'],
+    ['opsReplica', 'replica'],
+    ['opsData', 'data'],
+  ];
+  const opsLoadBalancer = plan.opsLoadBalancer ?? (ha && opsNodeCount > 1);
+
+  // Reusing VCF Operations (a further instance, or a converge onto the fleet's
+  // Operations) references exactly one node, the existing master, with its
+  // thumbprint and the existing admin password; nothing is sized.
+  const vcfOperationsSpec                                = !includeOps
+    ? undefined
+    : opsExisting
+      ? {
+          nodes: [
+            {
+              hostname: existingName(existing.operations, 'opsPrimary', `${prefix}-ops01`),
+              type: 'master',
+              sslThumbprint: thumbprint(existing.operations, 'vcfOperationsSpec.nodes[0].sslThumbprint'),
+            },
+          ],
+          adminUserPassword: generatable('opsAdmin', 'vcfOperationsSpec.adminUserPassword', false),
+          useExistingDeployment: true,
+          ...versionOf('operations'),
+        }
+      : {
+          nodes: opsNodeRoles.slice(0, opsNodeCount).map(([key, type], i)                    => ({
+            hostname: name(key, `${prefix}-ops${pad(i + 1)}`),
+            type,
+            rootUserPassword: secret('opsRoot', `vcfOperationsSpec.nodes[${i}].rootUserPassword`),
+          })),
+          adminUserPassword: generatable('opsAdmin', 'vcfOperationsSpec.adminUserPassword'),
+          applianceSize: opsSize,
+          ...(opsLoadBalancer ? { loadBalancerFqdn: name('opsLoadBalancer', `${prefix}-ops`) } : {}),
+          ...versionOf('operations'),
+        };
+
+  // The deferred-components example states useExistingDeployment:false outright.
+  if (vcfOperationsSpec && !opsExisting && scenario === 'deferred-components') {
+    vcfOperationsSpec.useExistingDeployment = false;
+  }
+
+  // --- cloud proxy -----------------------------------------------------------
+  // The collector is an Instance-level component: every instance, including a
+  // further one, deploys its own unless one is named as existing.
+  const includeCollector = includeOps && scenario !== 'vvf-management-services';
+  const vcfOperationsCollectorSpec                                         = !includeCollector
+    ? undefined
+    : collectorExisting
+      ? {
+          hostname: existingName(existing.collector, 'opsCollector', `${prefix}-proxy01`),
+          useExistingDeployment: true,
+          sslThumbprint: thumbprint(existing.collector, 'vcfOperationsCollectorSpec.sslThumbprint'),
+          ...versionOf('collector'),
+        }
+      : {
+          hostname: name('opsCollector', `${prefix}-proxy01`),
+          rootUserPassword: secret('opsCollectorRoot', 'vcfOperationsCollectorSpec.rootUserPassword'),
+          applianceSize: plan.collectorSize ?? preset?.collectorSize ?? 'small',
+          ...(scenario === 'deferred-components' ? { useExistingDeployment: false } : {}),
+          ...versionOf('collector'),
+        };
+
+  // --- License Server ----------------------------------------------------------
+  const licenseServerSpec                                = !includeLicenseServer
+    ? undefined
+    : licenseExisting
+      ? {
+          hostname: existingName(existing.licenseServer, 'licenseServer', `${prefix}-lic01`),
+          useExistingDeployment: true,
+          sslThumbprint: thumbprint(existing.licenseServer, 'licenseServerSpec.sslThumbprint'),
+          ...versionOf('licenseServer'),
+        }
+      : { hostname: name('licenseServer', `${prefix}-lic01`), ...versionOf('licenseServer') };
+
+  // --- identity broker ---------------------------------------------------------
+  const vidbSpec                       = includeIdentityBroker
     ? {
-        nodes: ha
-          ? [
-              { hostname: name('opsPrimary', `${prefix}-ops01`), type: 'master', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[0].rootUserPassword') },
-              { hostname: name('opsReplica', `${prefix}-ops02`), type: 'replica', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[1].rootUserPassword') },
-              { hostname: name('opsData', `${prefix}-ops03`), type: 'data', rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[2].rootUserPassword') },
-            ]
-          : [
-              {
-                hostname: name('opsPrimary', `${prefix}-ops01`),
-                type: 'master',
-                rootUserPassword: secret('opsRoot', 'vcfOperationsSpec.nodes[0].rootUserPassword'),
-              },
-            ],
-        adminUserPassword: secret('opsAdmin', 'vcfOperationsSpec.adminUserPassword'),
-        applianceSize: plan.opsSize ?? defaultApplianceSize(targetVersion, ha),
-        ...(ha ? { loadBalancerFqdn: name('opsLoadBalancer', `${prefix}-ops`) } : {}),
-        // A secondary instance attaches to the fleet's existing Operations.
-        ...(secondary || plan.existing?.operations ? { useExistingDeployment: true } : {}),
+        hostname: name('identityBroker', `${prefix}-idb01`),
+        ...(plan.identityBrokerSize ? { size: plan.identityBrokerSize } : {}),
+        ...versionOf('identityBroker'),
       }
     : undefined;
+  if (plan.identityBrokerSize && !vidbSpec) {
+    findings.push(
+      info('vcf.build.identity-broker-size-ignored', 'identityBrokerSize is set but no vidbSpec is emitted, so it has no effect.', {
+        path: 'identityBrokerSize',
+      }),
+    );
+  }
 
   // --- Automation ----------------------------------------------------------
-  // VVF has no VCF Automation at all, which the table records as n/a.
+  // VVF has no VCF Automation at all.
   const includeAutomation =
     componentTakesPart(rule, rule.automationExisting) && plan.includeAutomation !== false;
-  const automationPool = buildPool(
-    plan.automationPool,
-    vcfmsHomeCidr,
-    31 + VCFMS_RECOMMENDED_IPS,
-    automationIpCount(targetVersion),
-  );
+  const automationPool = automationExisting
+    ? null
+    : buildPool(plan.automationPool, vcfmsHomeCidr, 31 + VCFMS_RECOMMENDED_IPS, automationIpCount(targetVersion));
+  const automationCidr =
+    plan.automationInternalClusterCidr ?? plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0];
 
-  const vcfAutomationSpec                                = includeAutomation
-    ? {
-        hostname: name('automation', `${prefix}-auto01`),
-        platformFqdn: name('automationPlatform', `${prefix}-asr01`),
-        internalClusterCidr: plan.internalClusterCidr ?? INTERNAL_CLUSTER_CIDRS_V4[0],
-        adminUserPassword: secret('automationAdmin', 'vcfAutomationSpec.adminUserPassword'),
-        nodePrefix: `${prefix}-node-01`.toLowerCase(),
-        // vcfAutomationSpec.ipPool is a plain string array, not an IPv4Pool,
-        // so whichever pool form was chosen is flattened to addresses here.
-        ...(automationPool ? { ipPool: poolToAddresses(automationPool) } : {}),
-        size: plan.automationSize ?? defaultApplianceSize(targetVersion, ha),
-        ...(plan.existing?.automation ? { useExistingDeployment: true } : {}),
-      }
-    : undefined;
+  // An existing VCF Automation is referenced only: hostname, thumbprint and
+  // the internal CIDR the API still requires; no platform FQDN, pool, prefix,
+  // size or password.
+  const vcfAutomationSpec                                = !includeAutomation
+    ? undefined
+    : automationExisting
+      ? {
+          hostname: existingName(existing.automation, 'automation', `${prefix}-auto01`),
+          internalClusterCidr: automationCidr,
+          useExistingDeployment: true,
+          sslThumbprint: thumbprint(existing.automation, 'vcfAutomationSpec.sslThumbprint'),
+          ...versionOf('automation'),
+        }
+      : {
+          hostname: name('automation', `${prefix}-auto01`),
+          platformFqdn: name('automationPlatform', `${prefix}-asr01`),
+          internalClusterCidr: automationCidr,
+          adminUserPassword: generatable('automationAdmin', 'vcfAutomationSpec.adminUserPassword'),
+          nodePrefix: (plan.automationNodePrefix ?? `${prefix}-node-01`).toLowerCase(),
+          // vcfAutomationSpec.ipPool is a plain string array, not an IPv4Pool,
+          // so whichever pool form was chosen is flattened to addresses here.
+          ...(automationPool ? { ipPool: poolToAddresses(automationPool) } : {}),
+          size: plan.automationSize ?? preset?.automationSize ?? defaultApplianceSize(targetVersion, ha),
+          ...versionOf('automation'),
+        };
 
-  if (includeAutomation && !automationPool) {
+  if (includeAutomation && !automationExisting && !automationPool) {
     findings.push(
       warning(
         'vcf.build.automation-pool-not-allocated',
@@ -1535,12 +2343,13 @@ export function buildSddcSpec(plan                )              {
   }
 
   // --- security ------------------------------------------------------------
-  const securitySpec                           = plan.esxiCertsMode
-    ? {
-        esxiCertsMode: plan.esxiCertsMode,
-        ...(plan.rootCaCerts ? { rootCaCerts: plan.rootCaCerts } : {}),
-      }
-    : undefined;
+  const securitySpec                           =
+    plan.esxiCertsMode || plan.rootCaCerts?.length
+      ? {
+          ...(plan.esxiCertsMode ? { esxiCertsMode: plan.esxiCertsMode } : {}),
+          ...(plan.rootCaCerts?.length ? { rootCaCerts: plan.rootCaCerts.map((c) => ({ alias: c.alias, certChain: [...c.certChain] })) } : {}),
+        }
+      : undefined;
 
   if (plan.esxiCertsMode === 'Custom' && !plan.rootCaCerts?.length) {
     findings.push(
@@ -1557,30 +2366,103 @@ export function buildSddcSpec(plan                )              {
   }
 
   // --- VCF management component networks -----------------------------------
-  // Community reporting says only xRegionNetwork is required now, and that the
-  // network must be VLAN-backed rather than NSX overlay.
+  // xRegionNetwork names the port group or segment the fleet-level components
+  // are placed on. Broadcom's examples use it for a dedicated VLAN port group,
+  // an NSX segment, the converge placement and VCF management services for VVF;
+  // they never use localRegionNetwork.
   const mc = plan.managementComponentNetworks;
+  const fromNetworkPlan = (
+    net             ,
+    defaultPortGroup        ,
+  )                                                 => {
+    const cidr = parseCidr(net.cidr);
+    if (!cidr) return undefined;
+    const v6 = plan.dualStack ? v6Cidr(net.ipv6Cidr) : null;
+    return {
+      networkName: net.portGroupName ?? defaultPortGroup,
+      subnetMask: formatIPv4(prefixToMask(cidr.prefix)),
+      gateway: gatewayFor(net, cidr),
+      ...(v6 && net.ipv6Gateway ? { ipv6Gateway: net.ipv6Gateway, ipv6Prefix: v6.prefix } : {}),
+    };
+  };
+  let derivedXRegion                                                ;
+  let derivedFrom                         ;
+  if (!mc?.xRegion) {
+    if (networkModel.model === 'dedicated-vlan' && plan.fleetManagement) {
+      derivedFrom = plan.fleetManagement;
+      derivedXRegion = fromNetworkPlan(plan.fleetManagement, `${prefix}-pg-fleet`);
+    } else if (
+      networkModel.model === 'shared-vlan' &&
+      vcenterExisting &&
+      scenario !== 'deferred-components' &&
+      (includeManagementServices || includeOps)
+    ) {
+      // Converge and VCF management services for VVF place the components on
+      // the existing VM management port group.
+      derivedFrom = vmMgmtOwnPlan;
+      derivedXRegion = fromNetworkPlan(vmMgmtOwnPlan, `${prefix}-pg-vm-mgmt`);
+    }
+  }
+  if (derivedXRegion && vcenterExisting && !derivedFrom?.portGroupName) {
+    findings.push(
+      warning(
+        'vcf.build.xregion-port-group-unnamed',
+        `xRegionNetwork.networkName is "${derivedXRegion.networkName}", a generated name. With an existing vCenter it must be the name of a port group that already exists there.`,
+        {
+          path: 'vcfManagementComponentsInfrastructureSpec.xRegionNetwork.networkName',
+          remediation: 'Set portGroupName on the network the fleet-level components are placed on.',
+        },
+      ),
+    );
+  }
+  const xRegion = mc?.xRegion ?? derivedXRegion;
   const managementInfrastructure                                                        =
-    mc?.local || mc?.xRegion
+    mc?.local || xRegion
       ? {
-          ...(mc.local ? { localRegionNetwork: mc.local } : {}),
-          ...(mc.xRegion ? { xRegionNetwork: mc.xRegion } : {}),
+          ...(mc?.local ? { localRegionNetwork: mc.local } : {}),
+          ...(xRegion ? { xRegionNetwork: xRegion } : {}),
         }
       : undefined;
+  if (mc?.local) {
+    findings.push(
+      info(
+        'vcf.build.local-region-unconfirmed',
+        'VERIFY: localRegionNetwork is in the schema, but Broadcom documents no example of it; its semantics are unconfirmed.',
+        { path: 'vcfManagementComponentsInfrastructureSpec.localRegionNetwork', source: 'VCF Installer API — VcfManagementComponentsInfrastructureSpec' },
+      ),
+    );
+  }
+  if (
+    scenario === 'deferred-components' &&
+    networkModel.requiresDedicatedNetwork &&
+    !xRegion
+  ) {
+    findings.push(
+      warning(
+        'vcf.build.deferred-without-placement',
+        'Deferred components on a dedicated network or NSX segment are placed through vcfManagementComponentsInfrastructureSpec.xRegionNetwork, which is not set.',
+        {
+          path: 'managementComponentNetworks.xRegion',
+          remediation: 'Name the port group or segment with its subnet mask and gateway.',
+          source: 'VCF 9.1 Deployment — Deploy Deferred Components',
+        },
+      ),
+    );
+  }
 
   // --- deferred components reuse the instance they are added to -------------
   // Broadcom's worked example for this workflow marks both vCenter and SDDC
   // Manager as existing. The summary table has no SDDC Manager column at all,
   // so this is reported rather than assumed.
-  if (scenario === 'deferred-components' && !plan.existing?.sddcManager) {
+  if (scenario === 'deferred-components' && !existing.sddcManager) {
     findings.push(
       warning(
         'vcf.build.deferred-without-existing-sddc-manager',
-        'Deferred components are added to an instance that already exists, but no existing SDDC Manager was supplied, so sddcManagerSpec will not declare useExistingDeployment.',
+        'Deferred components are added to an instance that already exists, but no existing SDDC Manager was supplied, so sddcManagerSpec carries a generated hostname and a placeholder thumbprint.',
         {
           path: 'existing.sddcManager',
           remediation:
-            'Supply the existing SDDC Manager FQDN and SSL thumbprint, as Broadcom\u2019s worked example does.',
+            'Supply the existing SDDC Manager FQDN and SSL thumbprint, as Broadcom’s worked example does.',
           source: 'VCF 9.1 Deployment — Deploy Deferred Components on NSX Overlay Segments',
         },
       ),
@@ -1613,7 +2495,7 @@ export function buildSddcSpec(plan                )              {
     ),
   );
 
-  if (networkModel.requiresDedicatedNetwork && !plan.fleetManagement) {
+  if (networkModel.requiresDedicatedNetwork && !plan.fleetManagement && !minimal) {
     findings.push(
       warning(
         'vcf.build.management-network-missing-dedicated',
@@ -1672,7 +2554,7 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
-  if (includeOps) {
+  if (includeCollector) {
     findings.push(
       info('vcf.build.cloud-proxy-network', CLOUD_PROXY_ALWAYS_VM_MANAGEMENT, {
         path: 'vcfOperationsCollectorSpec',
@@ -1681,8 +2563,75 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
+  // --- vCenter -----------------------------------------------------------------
+  const ssoDomain = plan.vcenterSsoDomain ?? 'vsphere.local';
+  const vcenterSize =
+    plan.vcenterSize ?? (preset ? (secondary ? preset.vcenterSizeAdditional : preset.vcenterSize) : 'small');
+  // An existing vCenter is referenced with its real passwords: nothing is
+  // sized, and rootVcenterPassword is the existing one (8-20 characters). The
+  // deferred-components example carries no root password at all.
+  const vcenterSpec                  = {
+    vcenterHostname: existingName(existing.vcenter, 'vcenter', `${prefix}-vc01`),
+    rootVcenterPassword: generatable('vcenterRoot', 'vcenterSpec.rootVcenterPassword', !vcenterExisting),
+    ...(vcenterExisting
+      ? {}
+      : {
+          vmSize: vcenterSize,
+          storageSize: plan.vcenterStorageSize ?? 'lstorage',
+          ssoDomain,
+        }),
+    adminUserSsoUsername: plan.vcenterSsoUsername ?? `administrator@${ssoDomain}`,
+    adminUserSsoPassword: generatable('ssoAdmin', 'vcenterSpec.adminUserSsoPassword', !vcenterExisting),
+    ...versionOf('vcenter'),
+    ...(vcenterExisting
+      ? {
+          useExistingDeployment: true,
+          sslThumbprint: thumbprint(existing.vcenter, 'vcenterSpec.sslThumbprint'),
+        }
+      : {}),
+  };
+  if (scenario === 'deferred-components' && minimal && !plan.passwords?.vcenterRoot) {
+    delete (vcenterSpec                                    ).rootVcenterPassword;
+    const at = placeholders.indexOf('vcenterSpec.rootVcenterPassword');
+    if (at >= 0) placeholders.splice(at, 1);
+  }
+
+  // --- SDDC Manager ------------------------------------------------------------
+  const sddcManagerSpec                  = {
+    hostname: existingName(existing.sddcManager, 'sddcManager', `${prefix}-sddcm01`),
+    rootPassword: generatable('sddcManagerRoot', 'sddcManagerSpec.rootPassword', !sddcManagerExisting),
+    sshPassword: generatable('sddcManagerSsh', 'sddcManagerSpec.sshPassword', !sddcManagerExisting),
+    localUserPassword: generatable('sddcManagerLocal', 'sddcManagerSpec.localUserPassword', !sddcManagerExisting),
+    ...versionOf('sddcManager'),
+    ...(sddcManagerExisting
+      ? {
+          useExistingDeployment: true,
+          sslThumbprint: thumbprint(existing.sddcManager, 'sddcManagerSpec.sslThumbprint'),
+        }
+      : {}),
+  };
+
+  // --- fleet and lifecycle services -----------------------------------------------
+  // The LCM hostnames mirror the vsp FQDNs. A further instance joins an existing
+  // fleet, so it carries no fleet-level lifecycle block of its own.
+  const sizes = plan.serviceSizes ?? {};
+  const service = (key                )                                      => ({
+    ...versionOf(key),
+    ...(sizes[key] ? { size: sizes[key] } : {}),
+  });
+  const includeServiceBlocks = plan.includeFleetServiceSpecs ?? true;
+  if (secondary && includeManagementServices) {
+    findings.push(
+      info(
+        'vcf.build.secondary-no-fleet-lcm',
+        'A further instance joins the existing fleet, so no fleetLcmSpec is emitted. VERIFY: whether fleetDepotSpec and saltRaasSpec, also fleet-level, should be omitted too is not documented.',
+        { path: 'fleetLcmSpec', source: 'VCF Installer API — SddcVspClusterSpec' },
+      ),
+    );
+  }
+
   // --- assemble ------------------------------------------------------------
-  const spec           = {
+  const full           = {
     sddcId: plan.sddcId,
     version: targetVersion,
     vcfInstanceName: plan.vcfInstanceName ?? plan.sddcId,
@@ -1690,11 +2639,11 @@ export function buildSddcSpec(plan                )              {
     // existing fleet must declare VCF_EXTEND rather than VCF, and a vSphere
     // Foundation platform must declare VVF; emitting the wrong one is a silent
     // misconfiguration rather than a rejected document.
-    workflowType: plan.workflowType ?? rule.workflowType,
+    workflowType,
     ceipEnabled: plan.ceipEnabled ?? false,
     // Validation can only be enforced when every host carries a thumbprint.
     skipEsxThumbprintValidation: missingThumbprints > 0,
-    skipGatewayPingValidation: false,
+    skipGatewayPingValidation: plan.skipGatewayPingValidation ?? false,
 
     dnsSpec: {
       subdomain: domain,
@@ -1718,82 +2667,55 @@ export function buildSddcSpec(plan                )              {
       ? { vcfManagementComponentsInfrastructureSpec: managementInfrastructure }
       : {}),
 
-    vcenterSpec: {
-      vcenterHostname: name('vcenter', `${prefix}-vc01`),
-      rootVcenterPassword: secret('vcenterRoot', 'vcenterSpec.rootVcenterPassword'),
-      vmSize: plan.vcenterSize ?? 'small',
-      storageSize: 'lstorage',
-      ssoDomain: 'vsphere.local',
-      adminUserSsoUsername: 'administrator',
-      adminUserSsoPassword: secret('ssoAdmin', 'vcenterSpec.adminUserSsoPassword'),
-      ...(plan.existing?.vcenter
-        ? {
-            useExistingDeployment: true,
-            sslThumbprint: plan.existing.vcenter.sslThumbprint ?? PLACEHOLDER_SECRET,
-          }
-        : {}),
-    },
+    vcenterSpec,
 
     ...(includeNsx ? { nsxtSpec } : {}),
 
-    datastoreSpec: buildDatastoreSpec(plan, findings),
+    datastoreSpec: buildDatastoreSpec(plan, minimal ? [] : findings),
 
-    dvsSpecs: buildDvsSpecs(plan, findings),
+    dvsSpecs: buildDvsSpecs(plan, minimal ? [] : findings),
 
-    sddcManagerSpec: {
-      hostname: name('sddcManager', `${prefix}-sddcm01`),
-      rootPassword: secret('sddcManagerRoot', 'sddcManagerSpec.rootPassword'),
-      sshPassword: secret('sddcManagerSsh', 'sddcManagerSpec.sshPassword'),
-      localUserPassword: secret('sddcManagerLocal', 'sddcManagerSpec.localUserPassword'),
-      ...(plan.existing?.sddcManager
-        ? {
-            useExistingDeployment: true,
-            sslThumbprint: plan.existing.sddcManager.sslThumbprint ?? PLACEHOLDER_SECRET,
-          }
-        : {}),
-    },
+    sddcManagerSpec,
 
-    // Fleet and lifecycle services. An empty object signals "deploy with
-    // defaults", which is how a real working 9.1 spec expresses them. The LCM
-    // hostnames mirror the vsp FQDNs, so they travel with vspClusterSpec rather
-    // than being emitted on their own.
     ...(includeManagementServices
       ? {
           vspClusterSpec,
-          fleetLcmSpec: { hostname: name('vspFleet', `${prefix}-flt01`) },
-          sddcLcmSpec: { hostname: name('vspInstance', `${prefix}-int01`) },
+          ...(secondary ? {} : { fleetLcmSpec: { hostname: fleetFqdnValue, ...service('fleetLcm') } }),
+          sddcLcmSpec: { hostname: instanceFqdnValue, ...service('sddcLcm') },
         }
       : {}),
-    fleetDepotSpec: {},
-    telemetryAcceptorSpec: {},
-    saltSpec: {},
-    saltRaasSpec: {},
+    ...(includeServiceBlocks
+      ? {
+          fleetDepotSpec: service('fleetDepot'),
+          telemetryAcceptorSpec: service('telemetryAcceptor'),
+          saltSpec: service('salt'),
+          saltRaasSpec: service('saltRaas'),
+        }
+      : {}),
 
-    ...(includeIdentityBroker
-      ? { vidbSpec: { hostname: name('identityBroker', `${prefix}-idb01`) } }
-      : {}),
-    ...(includeLicenseServer
-      ? { licenseServerSpec: { hostname: name('licenseServer', `${prefix}-lic01`) } }
-      : {}),
+    ...(vidbSpec ? { vidbSpec } : {}),
+    ...(licenseServerSpec ? { licenseServerSpec } : {}),
 
     ...(vcfOperationsSpec ? { vcfOperationsSpec } : {}),
-    ...(includeOps
-      ? {
-          vcfOperationsCollectorSpec: {
-            hostname: name('opsCollector', `${prefix}-proxy01`),
-            rootUserPassword: secret('opsCollectorRoot', 'vcfOperationsCollectorSpec.rootUserPassword'),
-            applianceSize: 'small',
-          },
-        }
-      : {}),
+    ...(vcfOperationsCollectorSpec ? { vcfOperationsCollectorSpec } : {}),
     ...(vcfAutomationSpec ? { vcfAutomationSpec } : {}),
   };
+
+  // A minimal document keeps only the keys Broadcom's example for the workflow
+  // carries. The SddcSpec type still declares networkSpecs and dnsSpec, which
+  // the schema marks required, so consumers must not assume them here.
+  let spec           = full;
+  if (minimal) {
+    const keep = new Set(MINIMAL_KEYS[minimalKind]);
+    spec = Object.fromEntries(Object.entries(full).filter(([key]) => keep.has(key)))            ;
+    if (minimalKind === 'vvf-services') spec.skipEsxThumbprintValidation = true;
+  }
 
   if (secondary) {
     findings.push(
       info(
         'vcf.build.secondary-instance',
-        'Built as a secondary instance: workflowType is VCF_EXTEND, vspClusterSpec.fleetFqdn is omitted, and VCF Operations uses the existing fleet deployment.',
+        'Built as a secondary instance: workflowType is VCF_EXTEND, vspClusterSpec.fleetFqdn is omitted, and VCF Operations references the fleet’s existing master node.',
         { source: 'VCF Installer API — SddcSpec.workflowType' },
       ),
     );
@@ -1816,14 +2738,33 @@ export function buildSddcSpec(plan                )              {
     );
   }
 
-  if (placeholders.length > 0) {
+  // Only what is actually in the document counts.
+  const present = (path        )          => topKey(path) in spec;
+  const remaining = placeholders.filter(present);
+  const blank = autoGenerated.filter(present);
+
+  if (blank.length > 0) {
+    findings.push(
+      info(
+        'vcf.build.auto-generated-passwords',
+        `${blank.length} password field(s) are left blank for the VCF Installer to auto-generate: ${blank.join(', ')}.`,
+        {
+          remediation: 'Retrieve the generated passwords from the installer after deployment.',
+          source: 'VCF Installer API — SddcSpec',
+        },
+      ),
+    );
+  }
+
+  if (remaining.length > 0) {
     findings.push(
       warning(
         'vcf.build.placeholder-secrets',
-        `${placeholders.length} credential field(s) contain "${PLACEHOLDER_SECRET}" and must be filled before deployment.`,
+        `${remaining.length} credential or thumbprint field(s) contain "${PLACEHOLDER_SECRET}" and must be filled before deployment.`,
         {
-          remediation:
-            'VCF 9.1 can auto-generate complex passwords during installation; alternatively supply them in the plan.',
+          remediation: plan.autoGeneratePasswords
+            ? 'These cannot be auto-generated: an existing component’s real password or thumbprint, the ESX root password, or an appliance root password.'
+            : 'VCF 9.1 can auto-generate most passwords during installation (set autoGeneratePasswords); alternatively supply them in the plan.',
         },
       ),
     );
@@ -1837,7 +2778,7 @@ export function buildSddcSpec(plan                )              {
     ),
   );
 
-  return { spec, findings, placeholders };
+  return { spec, findings, placeholders: remaining };
 }
 
 /** Serialize a spec with stable key ordering for diffing between runs. */

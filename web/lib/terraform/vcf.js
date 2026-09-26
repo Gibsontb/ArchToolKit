@@ -196,26 +196,58 @@ export function emitTerraform(spec          )                  {
   const resourceBlocks             = [];
 
   // dns
-  resourceBlocks.push({
-    type: 'dns',
-    attributes: [
-      { name: 'domain', value: str(spec.dnsSpec.subdomain) },
-      ...attr(
-        'name_server',
-        spec.dnsSpec.nameservers?.[0] ? str(spec.dnsSpec.nameservers[0]) : undefined,
+  // A minimal document (deferred components, VCF management services for VVF)
+  // carries no dnsSpec or networkSpecs: Broadcom's own examples for those runs
+  // omit them. vcf_instance needs both, so their absence is reported, not thrown.
+  const dnsSpec = spec.dnsSpec;
+  const networkSpecs = spec.networkSpecs ?? [];
+  if (!dnsSpec) {
+    findings.push(
+      error(
+        'vcf.terraform.no-dns',
+        'vcf_instance requires a dns block, and the specification carries no dnsSpec (a minimal document, such as a deferred-components or VCF management services run). No dns block was emitted.',
+        {
+          path: 'dnsSpec',
+          remediation: 'Deploy a minimal document with the JSON specification; vcf_instance models only a full bring-up.',
+          source: 'terraform-provider-vcf — vcf_instance schema',
+        },
       ),
-      ...attr(
-        'secondary_name_server',
-        spec.dnsSpec.nameservers?.[1] ? str(spec.dnsSpec.nameservers[1]) : undefined,
+    );
+  } else {
+    resourceBlocks.push({
+      type: 'dns',
+      attributes: [
+        { name: 'domain', value: str(dnsSpec.subdomain) },
+        ...attr(
+          'name_server',
+          dnsSpec.nameservers?.[0] ? str(dnsSpec.nameservers[0]) : undefined,
+        ),
+        ...attr(
+          'secondary_name_server',
+          dnsSpec.nameservers?.[1] ? str(dnsSpec.nameservers[1]) : undefined,
+        ),
+      ],
+    });
+  }
+  if (!spec.networkSpecs || spec.networkSpecs.length === 0) {
+    findings.push(
+      error(
+        'vcf.terraform.no-networks',
+        'vcf_instance requires network blocks, and the specification carries no networkSpecs (a minimal document, such as a deferred-components or VCF management services run). No network block was emitted.',
+        {
+          path: 'networkSpecs',
+          remediation: 'Deploy a minimal document with the JSON specification; vcf_instance models only a full bring-up.',
+          source: 'terraform-provider-vcf — vcf_instance schema',
+        },
       ),
-    ],
-  });
+    );
+  }
 
   // networks
   // vcf_instance's network block has no ip_address_version, so an IPv6 twin
   // would come out as a second IPv4 network of the same type. It is left out
   // rather than written wrong.
-  const v6Networks = spec.networkSpecs.filter((n) => n.ipAddressVersion === 'IPv6');
+  const v6Networks = networkSpecs.filter((n) => n.ipAddressVersion === 'IPv6');
   if (v6Networks.length > 0) {
     findings.push(
       warning(
@@ -229,7 +261,7 @@ export function emitTerraform(spec          )                  {
       ),
     );
   }
-  for (const network of spec.networkSpecs.filter((n) => n.ipAddressVersion !== 'IPv6')) {
+  for (const network of networkSpecs.filter((n) => n.ipAddressVersion !== 'IPv6')) {
     const vlan = vlanNumber(network.vlanId);
     resourceBlocks.push({
       type: 'network',

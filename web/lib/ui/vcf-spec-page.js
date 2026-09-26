@@ -5,6 +5,13 @@
  * findings, and an import panel for checking a spec produced elsewhere — which
  * is how a 9.0-shaped document from another tool gets caught before it reaches
  * an installer.
+ *
+ * Every control is registered by name and read into a flat record of values;
+ * turning that record into a DeploymentPlan is vcf-spec-plan.ts's job, so the
+ * whole assembly is testable without a DOM. The deployment scenario decides
+ * which blocks show: a block the scenario has no use for is hidden, and the
+ * plan assembly ignores it as well, so a hidden field can never leak into the
+ * document.
  */
 
 import { el, append, replace, downloadFile, readFileAsText } from './dom.js';
@@ -21,17 +28,29 @@ import {
   stat,
   statGrid,
 } from './components.js';
+import { tableEditor } from './multi-editors.js';
 import { countBySeverity, hasErrors,              } from '../core/findings.js';
 import {
   buildSddcSpec,
   serializeSpec,
   redactSpec,
                       
-                   
                   
                  
 } from '../vcf/spec-builder.js';
 import { validateSddcSpec, validateSddcSpecJson } from '../vcf/spec-validate.js';
+import {
+  COLLECTOR_SIZES,
+  DOCUMENTED_SIZES,
+  HOST_SWITCH_MODES,
+  IP_ASSIGNMENT_MODES,
+  LACP_MODES,
+  LACP_TIMEOUT_MODES,
+  LAG_LOAD_BALANCING_MODES,
+  NETWORK_TEAMING_POLICIES,
+  NSX_TEAMING_POLICIES,
+  VCENTER_STORAGE_SIZES,
+} from '../vcf/spec-validate.js';
 import { SCENARIO_RULES, scenarioRule,                         } from '../vcf/scenarios.js';
 import { putHandoff, takeHandoff, unappliedLatest, markApplied, wasApplied } from './handoff.js';
 import { mountEstateBar } from './estate-bar.js';
@@ -45,124 +64,47 @@ import {
 } from '../vcf/management-network.js';
 import { SDDC_SPEC_TOP_LEVEL_KEYS,               } from '../vcf/spec-types.js';
 import { EVC_MODES } from '../vcf/spec-types.js';
-                                                                                    
-import { DEFAULT_VCF_VERSION } from '../vcf/version.js';
+                                                                           
 import {
   INTERNAL_CLUSTER_CIDRS_V4,
   INTERNAL_CLUSTER_CIDRS_V6,
 } from '../vcf/sizing-data.js';
+import {
+  ADVANCED_NETWORKS,
+  DVS_SWITCH_GRID,
+  EXISTING_COMPONENTS,
+  FORM_DEFAULTS,
+  FQDN_OVERRIDES,
+  IP_POOLS,
+  PASSWORDS,
+  RESOURCE_POOL_GRID,
+  ROOT_CA_GRID,
+  SERVICE_SPECS,
+  SIZE_PRESET_OPTIONS,
+  VERSIONED_COMPONENTS,
+  generatedFqdn,
+  isSecretControl,
+  migrateFields,
+  planFromForm,
+  scenarioView,
+  specSummary,
+                
+} from './vcf-spec-plan.js';
 
-                    
-                           
-                                 
-                                 
-                               
-                              
-                            
-                              
-                         
-                         
-                         
-                         
-                             
-                             
+/** Every value-holding control on the page. */
+                                                                          
+
+                
                                 
                                 
-                             
-                             
-                            
-                            
-                                            
-                              
-                              
-                                   
-                                
-                                   
-                                 
-                              
-                                 
-                                                                     
-                                 
-                             
-                        
-                                  
-                              
-                                         
-                                            
-                                     
-                               
-                               
-                                       
-                                         
+                                                                    
                                              
-                              
-                                                               
-                               
-                                  
-                                 
-                                    
-                                  
-                                     
-                               
-                                  
-                                
-                                   
-                                  
-                                       
-                                     
-                          
-                               
-                                   
-                                
-                               
-                            
-                                
-                               
-                                    
-                                       
-                                                                        
-                         
-                          
-                          
-                             
-                            
-                                 
-                             
-                             
-                             
-                                    
-                             
-                            
-                           
-                                   
-                                
-                                
-                           
-                                 
-                               
-                              
-                             
-                                    
-                                     
-                                    
-                                      
-                                      
-                                              
-                                          
-                               
-                                        
-                                              
-                                    
-                                          
-                                            
+                                                                             
+                                               
                                                   
-                                    
-                                          
-                                           
-                                                 
-                                          
-                              
-                           
+                                              
+                                               
+                                                      
  
 
 const STORAGE_OPTIONS = [
@@ -177,9 +119,11 @@ const DVS_OPTIONS                                         = [
   { value: 'storage-separation', label: 'Storage separation (2)' },
   { value: 'nsx-separation', label: 'NSX separation (2)' },
   { value: 'storage-and-nsx-separation', label: 'Storage + NSX separation (3)' },
+  { value: 'custom', label: 'Custom switch configuration' },
 ];
 
-const VCENTER_SIZES                                            = [
+const VCENTER_SIZES                                                 = [
+  { value: '', label: 'From the preset (else Small)' },
   { value: 'tiny', label: 'Tiny' },
   { value: 'small', label: 'Small' },
   { value: 'medium', label: 'Medium' },
@@ -187,11 +131,17 @@ const VCENTER_SIZES                                            = [
   { value: 'xlarge', label: 'X-Large' },
 ];
 
-const NSX_SIZES                                              = [
+const NSX_SIZES                                                   = [
+  { value: '', label: 'From the preset (else Medium)' },
   { value: 'medium', label: 'Medium' },
   { value: 'large', label: 'Large' },
   { value: 'xlarge', label: 'X-Large' },
 ];
+
+/** The passwords the installer generates when left blank, and the ones that stay required. */
+const AUTO_PASSWORDS_NOTE =
+  'Generated by the installer when blank: vCenter root and SSO administrator, NSX root, admin and audit, SDDC Manager root, vcf and local administrator, the VCF management services system user, the VCF Operations admin and the VCF Automation admin. ' +
+  'Still required: the ESX root password, the VCF Operations node and cloud proxy root passwords, and every password of a component that already exists (the existing vCenter, NSX, SDDC Manager, and the fleet’s VCF Operations admin on a new instance).';
 
 function textInput(value        , placeholder = '')                   {
   return el('input', {
@@ -419,8 +369,18 @@ class HostTable {
   }
 }
 
+
+/**
+ * Show or hide a block.
+ *
+ * Set on the style rather than the `hidden` attribute: `.stack` and
+ * `.field-row` set their own display, which beats the attribute's.
+ */
+function show(node                         , on         )       {
+  if (node) node.style.display = on ? '' : 'none';
+}
+
 export function mountVcfSpecPage(root             )       {
-  const controls = {}            ;
   /**
    * Serialized plan from the last render, so an unchanged form is not redrawn.
    *
@@ -434,38 +394,40 @@ export function mountVcfSpecPage(root             )       {
    */
   let lastRenderKey = '';
   const outputPane = el('div', { class: 'stack' });
-  const inputsPane = buildInputs(controls, () => render());
+  const form = buildInputs(() => render());
+  const controls = form.controls;
+  const text = (name        )         => (controls[name]?.value ?? '').trim();
 
   const hostTable = new HostTable(
     () => render(),
     () => ({
-      base: controls.esxBase.value.trim() || 'esx',
-      count: Math.max(1, Number(controls.hostCount.value) || 4),
+      base: text('esxBase') || 'esx',
+      count: Math.max(1, Number(text('hostCount')) || 4),
     }),
   );
 
   // Changing the host count adjusts the table without discarding typed detail.
-  controls.hostCount.addEventListener('change', () => hostTable.syncCount());
+  controls.hostCount?.addEventListener('change', () => hostTable.syncCount());
 
   /**
    * Values a sizing result determined that no control represents.
    *
    * The IP pool counts are the reason this exists: sizing works out how many
    * addresses each pool needs, the builder allocates them from the subnets, and
-   * there is no sensible form field in between. Keeping them here lets the
-   * emitted pools match the sizing that justified them.
+   * the pool controls only override what they are given. Keeping them here lets
+   * the emitted pools match the sizing that justified them.
    */
   let inherited                          = {};
 
   // Where the prefill came from, above the form.
   const notice = el('div', {});
 
-  /** Every form control's value, by its name in `controls`. */
-  function snapshot()                       {
+  /** Every control's value, by its name. Secrets only when asked for: they are never saved. */
+  function values(includeSecrets = true)                       {
     const out                       = {};
     for (const [key, node] of Object.entries(controls)) {
-      if (node instanceof HTMLInputElement) out[key] = node.type === 'checkbox' ? node.checked : node.value;
-      else if (node instanceof HTMLSelectElement) out[key] = node.value;
+      if (!includeSecrets && isSecretControl(key)) continue;
+      out[key] = node instanceof HTMLInputElement && node.type === 'checkbox' ? node.checked : node.value;
     }
     return out;
   }
@@ -473,8 +435,10 @@ export function mountVcfSpecPage(root             )       {
   /** Put saved values back into the form. Returns the names that could not be. */
   function restore(fields                      )           {
     const skipped           = [];
-    for (const [key, value] of Object.entries(fields)) {
-      const node = (controls                                                      )[key];
+    for (const [key, value] of Object.entries(migrateFields(fields))) {
+      const node = controls[key];
+      // A secret is never restored, even from a hand-edited file.
+      if (isSecretControl(key)) continue;
       if (node instanceof HTMLInputElement) {
         if (node.type === 'checkbox') node.checked = value === true;
         else node.value = value === null ? '' : String(value);
@@ -482,38 +446,47 @@ export function mountVcfSpecPage(root             )       {
         const v = String(value ?? '');
         if ([...node.options].some((o) => o.value === v)) node.value = v;
         else skipped.push(key);
+      } else if (node instanceof HTMLTextAreaElement) {
+        const reset = form.grids.get(key);
+        if (reset) reset(String(value ?? ''));
+        else node.value = String(value ?? '');
       } else skipped.push(key);
     }
     return skipped;
   }
 
   // Where Clear goes back to: the form as the page draws it, before any prefill.
-  const defaults = snapshot();
+  const defaults = values(false);
   const defaultHosts = hostTable.entries;
+  const clearSecrets = ()       => {
+    for (const [key, node] of Object.entries(controls)) if (isSecretControl(key)) node.value = '';
+  };
 
   append(
     root,
     fileBar({
       noun: 'the builder settings',
-      fileName: () => `${controls.sddcId.value.trim() || 'vcf'}-builder-settings`,
+      fileName: () => `${text('sddcId') || 'vcf'}-builder-settings`,
       header: () => [
-        `ArchToolKit VCF spec builder settings for ${controls.sddcId.value.trim() || 'vcf'}`,
+        `ArchToolKit VCF spec builder settings for ${text('sddcId') || 'vcf'}`,
         'Load this file on the VCF spec builder to carry on. Passwords are not saved.',
       ],
       save: () =>
         envelope('archtoolkit.vcf-spec-builder', {
-          fields: snapshot(),
+          fields: values(false),
           hosts: stripSecrets(hostTable.entries                   ),
           inherited: stripSecrets(inherited                   ),
         })                   ,
       load: (value, name) => {
-        if (isRecord(value) && 'hostSpecs' in value && ('sddcId' in value || 'workflowType' in value)) {
+        // A minimal document has no hostSpecs, so vcenterSpec is checked too.
+        if (isRecord(value) && ('hostSpecs' in value || 'vcenterSpec' in value) && ('sddcId' in value || 'workflowType' in value)) {
           throw new Error('that is a deployment specification, not builder settings. Open it in the Data editor to change it.');
         }
         const opened = openEnvelope(value, 'archtoolkit.vcf-spec-builder', SETTINGS_KINDS);
         if ('error' in opened) throw new Error(opened.error);
         const file = opened.ok;
         restore(defaults);
+        clearSecrets();
         const skipped = isRecord(file.fields) ? restore(file.fields) : [];
         inherited = isRecord(file.inherited) ? (file.inherited                                      ) : {};
         hostTable.syncCount();
@@ -521,11 +494,12 @@ export function mountVcfSpecPage(root             )       {
         replace(notice);
         lastRenderKey = '';
         render();
-        const passwords = Array.isArray(file.hosts) && file.hosts.length > 0 ? ' Host passwords are not kept in the file; type them again.' : '';
+        const passwords = ' Passwords are not kept in the file; type them again.';
         return `Loaded ${name}.${skipped.length ? ` ${skipped.length} field${skipped.length === 1 ? '' : 's'} could not be set (${skipped.slice(0, 4).join(', ')}).` : ''}${passwords}`;
       },
       clear: () => {
         restore(defaults);
+        clearSecrets();
         inherited = {};
         hostTable.syncCount();
         hostTable.load(defaultHosts);
@@ -540,7 +514,7 @@ export function mountVcfSpecPage(root             )       {
   /** Fill the form from a sizing result or an estate, and say so. */
   function applyInbound(origin        , payload                         , from                     )       {
     inherited = payload;
-    applySizingPlan(controls, payload);
+    applySizingPlan(form, payload);
     hostTable.syncCount();
     if (payload.hosts && payload.hosts.length > 0) hostTable.load(payload.hosts);
     replace(
@@ -566,311 +540,18 @@ export function mountVcfSpecPage(root             )       {
   if (latest) markApplied('sizing-to-spec', latest.createdAt);
   if (inbound) applyInbound(inbound.origin, inbound.payload, 'sizing');
 
-  append(inputsPane, hostTable.element);
-  append(root, el('div', { class: 'split' }, el('div', {}, inputsPane), outputPane));
+  append(form.element, hostTable.element);
+  form.blocks.hostTable = hostTable.element;
+  append(root, el('div', { class: 'split' }, el('div', {}, form.element), outputPane));
 
   function currentPlan()                 {
-    const num = (input                  , fallback        )         => {
-      const parsed = Number(input.value);
-      return Number.isFinite(parsed) ? parsed : fallback;
-    };
     // Controls win over anything inherited; what survives is only the fields no
     // control represents.
-    const inheritedPlan = inherited;
-    const list = (input                  )           =>
-      input.value
-        .split(/[,\s]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-    const storage = controls.storage.value                             ;
-    const vsanSelected = storage === 'vsan-esa' || storage === 'vsan-osa';
-    const scenario = controls.scenario.value                      ;
-    const rule = scenarioRule(scenario);
-    const model = managementNetworkModel(
-      controls.managementNetworkModel.value                          ,
-    );
-    const overlaySegment = controls.overlaySegment.value.trim();
-    const dual = controls.dualStack.checked;
-    // The IPv6 side of a network. Always written, so an IPv6 prefix inherited
-    // from the estate is dropped once the field is cleared or dual stack is off.
-    const v6 = (cidr                  , gateway                  )                       => {
-      const c = cidr.value.trim();
-      const g = gateway.value.trim();
-      return dual && c
-        ? { ipv6Cidr: c, ipv6Gateway: g || undefined }
-        : { ipv6Cidr: undefined, ipv6Gateway: undefined };
-    };
-    // "2001:db8:11::1/64" into the API's separate ipv6Gateway and ipv6Prefix.
-    const v6GatewayPrefix = (input                  )                                                => {
-      const [gateway = '', prefix] = input.value.trim().split('/');
-      if (!dual || !gateway) return {};
-      return { ipv6Gateway: gateway, ...(prefix !== undefined ? { ipv6Prefix: Number(prefix) } : {}) };
-    };
-    // Blank takes a range from the IPv6 prefix of the network the services
-    // live on; a CIDR or an address list is used as typed.
-    const vcfmsV6 = controls.vcfmsIpv6Pool.value.trim();
-    const vcfmsIpv6Pool                                  =
-      dual && vcfmsV6
-        ? vcfmsV6.includes('/')
-          ? { mode: 'cidr', cidr: vcfmsV6 }
-          : { mode: 'addresses', addresses: list(controls.vcfmsIpv6Pool) }
-        : undefined;
-
-    return {
-      ...inheritedPlan,
-      sddcId: controls.sddcId.value.trim() || 'vcf-m01',
-      vcfInstanceName: controls.instanceName.value.trim() || undefined,
-      domainSuffix: controls.domainSuffix.value.trim() || 'vcf.lab',
-      namePrefix: controls.namePrefix.value.trim() || undefined,
-      scenario,
-      // A further instance joins an existing fleet; the scenario decides that,
-      // so the two can no longer disagree.
-      instanceRole: rule.workflowType === 'VCF_EXTEND' ? 'secondary' : 'primary',
-      esxHostnameBase: controls.esxBase.value.trim() || 'esx',
-      hostCount: Math.max(1, num(controls.hostCount, 4)),
-      hosts: hostTable.entries,
-      dnsServers: [controls.dns1.value.trim(), controls.dns2.value.trim()].filter(Boolean),
-      ntpServers: [controls.ntp1.value.trim(), controls.ntp2.value.trim()].filter(Boolean),
-      // A gateway or MTU the estate supplied survives while the subnet is unchanged.
-      management: {
-        ...keep(inheritedPlan.management, controls.mgmtCidr.value.trim(), num(controls.mgmtVlan, 30)),
-        ...v6(controls.mgmtV6Cidr, controls.mgmtV6Gateway),
-      },
-      vmotion: {
-        ...keep(inheritedPlan.vmotion, controls.vmotionCidr.value.trim(), num(controls.vmotionVlan, 40)),
-        ...v6(controls.vmotionV6Cidr, controls.vmotionV6Gateway),
-      },
-      ...(vsanSelected
-        ? {
-            vsan: {
-              ...keep(inheritedPlan.vsan, controls.vsanCidr.value.trim(), num(controls.vsanVlan, 50)),
-              ...v6(controls.vsanV6Cidr, controls.vsanV6Gateway),
-            },
-          }
-        : {}),
-      hostTep: { cidr: controls.tepCidr.value.trim(), vlanId: num(controls.tepVlan, 60) },
-      ...(controls.vmMgmtCidr.value.trim()
-        ? {
-            vmManagement: {
-              cidr: controls.vmMgmtCidr.value.trim(),
-              vlanId: num(controls.vmMgmtVlan, 30),
-              ...v6(controls.vmMgmtV6Cidr, controls.vmMgmtV6Gateway),
-            },
-          }
-        : {}),
-      ...(controls.managementPoolName.value.trim()
-        ? { managementPoolName: controls.managementPoolName.value.trim() }
-        : {}),
-      internalClusterCidr: controls.internalClusterCidr.value,
-      dualStack: controls.dualStack.checked,
-      ...(controls.dualStack.checked
-        ? { internalClusterCidrIpv6: controls.internalClusterCidrIpv6.value }
-        : {}),
-      ...(vcfmsIpv6Pool ? { vcfmsIpv6Pool } : {}),
-      ...(controls.esxiCertsMode.value
-        ? { esxiCertsMode: controls.esxiCertsMode.value                      }
-        : {}),
-      ceipEnabled: controls.ceipEnabled.checked,
-      managementNetworkModel: model.model,
-      ...(model.requiresDedicatedNetwork && controls.fleetCidr.value.trim()
-        ? {
-            fleetManagement: {
-              cidr: controls.fleetCidr.value.trim(),
-              vlanId: num(controls.fleetVlan, 80),
-              ...v6(controls.fleetV6Cidr, controls.fleetV6Gateway),
-            },
-          }
-        : {}),
-      ...(model.requiresOverlaySegment && overlaySegment
-        ? {
-            managementComponentNetworks: {
-              xRegion: {
-                networkName: overlaySegment,
-                subnetMask: controls.overlayMask.value.trim(),
-                gateway: controls.overlayGateway.value.trim(),
-                ...v6GatewayPrefix(controls.overlayIpv6Gateway),
-              },
-              // The stretched model spans two regions, so the cross-region
-              // segment is joined by a region-local one.
-              ...(model.stretched && controls.localSegment.value.trim()
-                ? {
-                    local: {
-                      networkName: controls.localSegment.value.trim(),
-                      subnetMask: controls.localMask.value.trim(),
-                      gateway: controls.localGateway.value.trim(),
-                      ...v6GatewayPrefix(controls.localIpv6Gateway),
-                    },
-                  }
-                : {}),
-            },
-          }
-        : {}),
-      pnicsPerHost: Math.max(1, num(controls.pnicsPerHost, 2)),
-      storage,
-      failuresToTolerate: num(controls.ftt, 1),
-      ...(controls.datastoreName.value.trim()
-        ? { datastoreName: controls.datastoreName.value.trim() }
-        : {}),
-      ...(vsanSelected
-        ? {
-            vsanDedup: controls.vsanDedup.checked,
-            skipHclAutoDiskClaim: controls.skipHclAutoDiskClaim.checked,
-            vsanEncryptionInTransit: controls.vsanEncryptionInTransit.checked,
-            ...(controls.vsanEncryptionInTransit.checked
-              ? { vsanRekeyIntervalMinutes: num(controls.vsanRekeyMinutes, 1440) }
-              : {}),
-          }
-        : {}),
-      ...(storage === 'nfs'
-        ? {
-            nfsServers: list(controls.nfsServers),
-            nfsPath: controls.nfsPath.value.trim(),
-            nfsReadOnly: controls.nfsReadOnly.checked,
-            ...(controls.nfsUserTag.value.trim()
-              ? { nfsUserTag: controls.nfsUserTag.value.trim() }
-              : {}),
-            nfsBindToVmknic: controls.nfsBindToVmknic.checked,
-          }
-        : {}),
-      ...(storage === 'vmfs-fc' ? { vmfsDatastoreNames: list(controls.vmfsDatastoreNames) } : {}),
-      profile: controls.profile.value                   ,
-      version: controls.version.value.trim() || DEFAULT_VCF_VERSION,
-      vcenterSize: controls.vcenterSize.value                 ,
-      nsxManagerSize: controls.nsxSize.value                   ,
-      ...(controls.opsSize.value
-        ? { opsSize: controls.opsSize.value                              }
-        : {}),
-      ...(controls.vspSize.value
-        ? { vspSize: controls.vspSize.value                              }
-        : {}),
-      ...(controls.automationSize.value ? { automationSize: controls.automationSize.value } : {}),
-      ...(controls.evcMode.value ? { evcMode: controls.evcMode.value            } : {}),
-      tepLess: controls.tepLess.checked,
-      dvsMtu: num(controls.dvsMtu, 9000),
-      ...(controls.datacenterName.value.trim()
-        ? { datacenterName: controls.datacenterName.value.trim() }
-        : {}),
-      ...(controls.clusterName.value.trim()
-        ? { clusterName: controls.clusterName.value.trim() }
-        : {}),
-      dvsProfile: controls.dvsProfile.value              ,
-      vmnics: list(controls.vmnics),
-      ...(controls.enableLacp.checked
-        ? {
-            lacp: {
-              uplinksCount: 2,
-              lacpMode: 'ACTIVE'         ,
-              lacpTimeoutMode: 'FAST'         ,
-              loadBalancingMode: 'SOURCE_AND_DESTINATION_IP'         ,
-            },
-          }
-        : {}),
-      ...(controls.enableVpc.checked
-        ? {
-            vpcNetworkConfigurationType: 'FULL_STACK_VPC'         ,
-            dtgw: {
-              vlan: num(controls.dtgwVlan, 70),
-              gatewayCidr: controls.dtgwGatewayCidr.value.trim(),
-              externalIpBlockCidr: controls.dtgwExternalCidr.value.trim(),
-              privateTgwIpBlockCidr: controls.dtgwPrivateCidr.value.trim(),
-            },
-          }
-        : {}),
-      includeAutomation: controls.includeAutomation.checked,
-      includeOperations: controls.includeOperations.checked,
-      includeManagementServices: controls.includeManagementServices.checked,
-      includeIdentityBroker: controls.includeIdentityBroker.checked,
-      // A converge scenario reuses an existing vCenter by definition, so the
-      // checkbox only has to cover the greenfield rows.
-      ...(existingBlock(controls, rule) ?? {}),
-    };
-  }
-
-  /**
-   * Reflect the chosen scenario in the component toggles.
-   *
-   * Most scenarios fix whether a component takes part, and only a couple leave
-   * it open. Showing a live checkbox the builder is going to override would be
-   * a lie, so a fixed cell disables the control and shows its real value.
-   */
-  /** Grey out the fleet-network and overlay inputs the chosen model does not use. */
-  function syncNetworkModelControls()       {
-    const model = managementNetworkModel(
-      controls.managementNetworkModel.value                          ,
-    );
-    for (const input of [controls.fleetCidr, controls.fleetVlan, controls.fleetV6Cidr, controls.fleetV6Gateway]) {
-      input.disabled = !model.requiresDedicatedNetwork;
-    }
-    for (const input of [
-      controls.overlaySegment,
-      controls.overlayMask,
-      controls.overlayGateway,
-      controls.overlayIpv6Gateway,
-    ]) {
-      input.disabled = !model.requiresOverlaySegment;
-    }
-    // Only the stretched model has a second region to name.
-    controls.localRegionFields.hidden = !model.stretched;
-    controls.localIpv6Gateway.disabled = !model.stretched;
-  }
-
-  /**
-   * Show only the storage detail the chosen type uses.
-   *
-   * The dropdown has always offered NFS and VMFS on FC; without these fields a
-   * spec came out with a placeholder server name and could not deploy.
-   */
-  function syncStorageControls()       {
-    const storage = controls.storage.value;
-    const vsan = storage === 'vsan-esa' || storage === 'vsan-osa';
-    controls.nfsFields.hidden = storage !== 'nfs';
-    controls.vmfsFields.hidden = storage !== 'vmfs-fc';
-    controls.vsanFields.hidden = !vsan;
-    controls.ftt.disabled = !vsan;
-    // Dedup and compression is an OSA capability; ESA has neither knob.
-    controls.vsanDedup.disabled = storage !== 'vsan-osa';
-    controls.skipHclAutoDiskClaim.disabled = storage !== 'vsan-esa';
-    controls.vsanRekeyMinutes.disabled = !controls.vsanEncryptionInTransit.checked;
-    controls.internalClusterCidrIpv6.disabled = !controls.dualStack.checked;
-    // The IPv6 half of every network appears with dual stack, and vSAN's only
-    // when vSAN is the storage.
-    controls.ipv6Fields.hidden = !controls.dualStack.checked;
-    controls.fleetIpv6Fields.hidden = !controls.dualStack.checked;
-    controls.vsanV6Cidr.disabled = !vsan;
-    controls.vsanV6Gateway.disabled = !vsan;
-    controls.vmMgmtV6Cidr.disabled = !controls.vmMgmtCidr.value.trim();
-    controls.vmMgmtV6Gateway.disabled = !controls.vmMgmtCidr.value.trim();
-  }
-
-  function syncScenarioControls()       {
-    const rule = scenarioRule(controls.scenario.value                      );
-    const apply = (input                  , cell                                     )       => {
-      const fixed = cell !== 'either';
-      input.disabled = fixed;
-      if (fixed) input.checked = cell === 'true';
-    };
-    apply(controls.includeManagementServices, rule.managementServices);
-    apply(controls.includeIdentityBroker, rule.identityBroker);
-
-    // Reused components only need naming when the scenario actually reuses any.
-    const reuses =
-      rule.vcenterExisting === 'true' ||
-      rule.nsxExisting !== 'false' ||
-      rule.operationsExisting === 'true' ||
-      rule.automationExisting === 'true';
-    controls.existingFields.hidden = !reuses && !controls.brownfield.checked;
-
-    // NSX and Automation are absent from vSphere Foundation entirely.
-    const automationFixed = rule.automationExisting === 'na' && rule.workflowType === 'VVF';
-    controls.includeAutomation.disabled = automationFixed;
-    if (automationFixed) controls.includeAutomation.checked = false;
+    return planFromForm(values(), hostTable.entries, inherited);
   }
 
   function render()       {
-    syncScenarioControls();
-    syncNetworkModelControls();
-    syncStorageControls();
+    syncForm(form);
     const plan = currentPlan();
     const key = JSON.stringify(plan);
     if (key === lastRenderKey) return;
@@ -879,7 +560,7 @@ export function mountVcfSpecPage(root             )       {
     const validation = validateSddcSpec(built.spec, {
       secondaryInstance: plan.instanceRole === 'secondary',
     });
-    replace(outputPane, ...buildOutput(built.spec, built.findings, validation, controls));
+    replace(outputPane, ...buildOutput(built.spec, built.findings, validation, form));
   }
 
   render();
@@ -911,13 +592,153 @@ export function mountVcfSpecPage(root             )       {
 }
 
 /**
- * Assemble the brownfield `existing` block.
+ * Reflect the scenario and the other choices in the form.
  *
- * A converge or deferred-component scenario is defined by what it reuses, so the
- * FQDN and thumbprint of each reused component have to be collectable. Emitting
- * `existing.vcenter` with an empty name, as this page did before, declared a
- * reuse the installer could not act on.
+ * Most scenarios fix whether a component takes part, and only a couple leave
+ * it open. Showing a live checkbox the builder is going to override would be
+ * a lie, so a fixed cell disables the control and shows its real value, and a
+ * block the scenario has no use for is hidden (the plan assembly ignores it
+ * too, so nothing hidden reaches the document).
  */
+function syncForm(form      )       {
+  const c = form.controls;
+  const b = form.blocks;
+  const value = (name        )         => (c[name]?.value ?? '').trim();
+  const on = (name        )          => (c[name]                                )?.checked === true;
+  const disable = (names                   , off         )       => {
+    for (const name of names) if (c[name]) c[name].disabled = off;
+  };
+  const input = (name        )                   => c[name]                    ;
+
+  // --- scenario ---------------------------------------------------------------
+  const scenario = (value('scenario') || 'new-vcf-fleet')                      ;
+  const rule = scenarioRule(scenario);
+  const view = scenarioView(scenario, on('brownfield'));
+  const fix = (name        , cell                                     , open = false)       => {
+    const fixed = cell !== 'either' && !open;
+    c[name] .disabled = fixed;
+    if (fixed) input(name).checked = cell === 'true';
+  };
+  fix('includeManagementServices', rule.managementServices);
+  fix('includeIdentityBroker', rule.identityBroker, view.identityBrokerOptional);
+  // NSX and Automation are absent from vSphere Foundation entirely.
+  c.includeAutomation .disabled = !view.automation;
+  if (!view.automation) input('includeAutomation').checked = false;
+
+  show(b.licenseServer, view.licenseServerOptional);
+  show(b.identityBrokerModel, view.identityBrokerOptional);
+  show(b.identityBrokerSize, view.identityBroker);
+  show(b.automationOptions, view.automation);
+  show(b.automationOptionsMore, view.automation);
+  show(b.automationPool, view.automation);
+  show(b.vspName, view.managementServices);
+  show(b.nsxBrownfield, view.nsxMayExist);
+  show(b.nsxOptions, view.nsx);
+
+  for (const component of EXISTING_COMPONENTS) show(b[`existing_${component.key}`], view.existing[component.key]);
+  show(b.existingNsxNodes, view.existing.nsx);
+  show(b.existingDatastore, view.existingDatastore);
+  show(b.existingFields, view.anyExisting || view.existingDatastore);
+
+  const shapeOption = (c.documentShape                     ).options[0];
+  if (shapeOption) shapeOption.textContent = `Scenario default (${view.defaultShape})`;
+  // A minimal document carries no hosts, DNS, switches or NSX, so their
+  // sections go with it.
+  const minimal = (value('documentShape') || view.defaultShape) === 'minimal';
+  show(b.minimalNote, minimal);
+  show(b.hostsCard, !minimal);
+  show(b.servicesCard, !minimal);
+  show(b.hostTable, !minimal);
+  show(b.switchingCard, !minimal);
+
+  if (form.hints.opsAdmin) {
+    form.hints.opsAdmin.textContent = view.existingOpsAdminPassword
+      ? 'Required: the fleet’s existing VCF Operations admin password. A new instance references the existing VCF Operations, so it cannot be generated.'
+      : 'VCF Operations admin. Blank: a placeholder, or generated by the installer with the option above.';
+  }
+  if (form.hints.vcenterRoot) {
+    form.hints.vcenterRoot.textContent =
+      rule.vcenterExisting === 'true'
+        ? 'The existing vCenter’s root password (8-20 characters); it cannot be generated.'
+        : '15-20 characters.';
+  }
+
+  // --- sizing -----------------------------------------------------------------
+  const preset = value('sizePreset');
+  c.profile .disabled = preset !== '';
+
+  // --- networks and model -------------------------------------------------------
+  const model = managementNetworkModel((value('managementNetworkModel') || 'shared-vlan')                          );
+  disable(['fleetCidr', 'fleetVlan', 'fleetV6Cidr', 'fleetV6Gateway'], !model.requiresDedicatedNetwork);
+  show(b.net_fleet, model.requiresDedicatedNetwork);
+  // Only the stretched model has a second region to name.
+  show(b.localRegionFields, model.stretched);
+  c.localIpv6Gateway .disabled = !model.stretched;
+  if (form.hints.overlaySegment) {
+    form.hints.overlaySegment.textContent = model.requiresOverlaySegment
+      ? 'Required: the NSX overlay segment the fleet-level components are placed on (xRegionNetwork).'
+      : 'Optional: the port group the fleet-level components are placed on (xRegionNetwork). Blank derives it from the fleet network’s port group, or the VM management port group on a converge.';
+  }
+
+  // --- storage ------------------------------------------------------------------
+  const storage = value('storage');
+  const vsan = storage === 'vsan-esa' || storage === 'vsan-osa';
+  const nfs = storage === 'nfs';
+  show(b.nfsFields, nfs);
+  show(b.vmfsFields, storage === 'vmfs-fc');
+  show(b.vsanFields, vsan);
+  show(b.vsanNetwork, vsan);
+  show(b.nfsNetwork, nfs);
+  show(b.net_vsan, vsan);
+  show(b.net_nfs, nfs);
+  c.ftt .disabled = !vsan;
+  // Dedup and compression is an OSA capability; ESA has neither knob.
+  c.vsanDedup .disabled = storage !== 'vsan-osa';
+  c.skipHclAutoDiskClaim .disabled = storage !== 'vsan-esa';
+  c.vsanRekeyMinutes .disabled = !on('vsanEncryptionInTransit');
+
+  // --- dual stack -----------------------------------------------------------------
+  const dual = on('dualStack');
+  c.internalClusterCidrIpv6 .disabled = !dual;
+  // The IPv6 half of every network appears with dual stack, and vSAN's or NFS's
+  // only when that is the storage.
+  show(b.ipv6Fields, dual);
+  show(b.fleetIpv6Fields, dual);
+  disable(['vsanV6Cidr', 'vsanV6Gateway'], !vsan);
+  disable(['nfsV6Cidr', 'nfsV6Gateway'], !nfs);
+  disable(['vmMgmtV6Cidr', 'vmMgmtV6Gateway'], !value('vmMgmtCidr'));
+
+  // --- switching ------------------------------------------------------------------
+  const custom = value('dvsProfile') === 'custom';
+  show(b.customSwitches, custom);
+  c.vmnics .disabled = custom;
+  show(b.lacpParameters, on('enableLacp') || custom);
+
+  // --- TEPs and VPC -----------------------------------------------------------------
+  const vpc = value('vpcMode');
+  const vlanBacked = vpc === 'vlan-backed';
+  const tepLess = input('tepLess');
+  // VLAN-backed VPC is the TEP-less deployment seen from the other side.
+  if (vlanBacked) tepLess.checked = true;
+  tepLess.disabled = vlanBacked;
+  show(b.dtgw, vpc === 'full-distributed');
+  show(b.vlanBackedNote, vlanBacked);
+  const noTeps = tepLess.checked;
+  const tepMode = value('tepMode');
+  disable(['tepMode', 'tepCidr', 'tepVlan', 'tepGateway'], noTeps);
+  c.tepPoolName .disabled = noTeps || tepMode === 'dhcp';
+  c.ignoreUnavailableNsxtCluster .disabled = noTeps || tepMode === 'dhcp';
+  show(b.tepPool, !noTeps && tepMode === 'static');
+
+  // --- FQDN overrides: the generated name as each placeholder ---------------------------
+  const prefix = value('namePrefix') || value('sddcId') || 'vcf-m01';
+  const domain = value('domainSuffix') || 'vcf.lab';
+  for (const o of FQDN_OVERRIDES) {
+    const node = c[`fqdn_${o.key}`]                                ;
+    if (node) node.placeholder = generatedFqdn(o.suffix, prefix, domain);
+  }
+}
+
 /**
  * Push the sizing-determined part of a plan into the form.
  *
@@ -925,579 +746,707 @@ export function mountVcfSpecPage(root             )       {
  * subnets are left alone: sizing has no view on them, and filling them with
  * plausible-looking defaults would disguise a guess as a derivation.
  */
-function keep(from                         , cidr        , vlanId        )              {
-  return from && from.cidr === cidr ? { ...from, cidr, vlanId } : { cidr, vlanId };
-}
-
-function applySizingPlan(controls          , plan                         )       {
-  if (plan.hostCount !== undefined) controls.hostCount.value = String(plan.hostCount);
-  if (plan.storage) controls.storage.value = plan.storage;
-  if (plan.profile) controls.profile.value = plan.profile;
-  if (plan.failuresToTolerate !== undefined) {
-    controls.ftt.value = String(plan.failuresToTolerate);
-  }
-  if (plan.scenario) controls.scenario.value = plan.scenario;
-  if (plan.pnicsPerHost !== undefined) controls.pnicsPerHost.value = String(plan.pnicsPerHost);
-  if (plan.includeAutomation !== undefined) {
-    controls.includeAutomation.checked = plan.includeAutomation;
-  }
-  if (plan.automationSize) controls.automationSize.value = plan.automationSize;
+function applySizingPlan(form      , plan                         )       {
+  const c = form.controls;
+  const set = (name        , v                    )       => {
+    if (v !== undefined && c[name]) c[name].value = v;
+  };
+  const tick = (name        , v                     )       => {
+    if (v !== undefined && c[name]) (c[name]                    ).checked = v;
+  };
+  if (plan.hostCount !== undefined) set('hostCount', String(plan.hostCount));
+  set('storage', plan.storage);
+  set('profile', plan.profile);
+  set('sizePreset', plan.sizePreset);
+  if (plan.failuresToTolerate !== undefined) set('ftt', String(plan.failuresToTolerate));
+  set('scenario', plan.scenario);
+  if (plan.pnicsPerHost !== undefined) set('pnicsPerHost', String(plan.pnicsPerHost));
+  tick('includeAutomation', plan.includeAutomation);
+  set('automationSize', plan.automationSize);
   // What the imported estate knows: the hosts' own DNS, NTP and domain, and the
   // converged cluster's networks.
-  if (plan.domainSuffix) controls.domainSuffix.value = plan.domainSuffix;
+  set('domainSuffix', plan.domainSuffix);
   if (plan.dnsServers) {
-    controls.dns1.value = plan.dnsServers[0] ?? '';
-    controls.dns2.value = plan.dnsServers[1] ?? '';
+    set('dns1', plan.dnsServers[0] ?? '');
+    set('dns2', plan.dnsServers[1] ?? '');
   }
   if (plan.ntpServers) {
-    controls.ntp1.value = plan.ntpServers[0] ?? '';
-    controls.ntp2.value = plan.ntpServers[1] ?? '';
+    set('ntp1', plan.ntpServers[0] ?? '');
+    set('ntp2', plan.ntpServers[1] ?? '');
   }
-  const net = (
-    n                         ,
-    cidr                  ,
-    vlan                  ,
-    v6Cidr                  ,
-    v6Gateway                  ,
-  )       => {
+  const net = (n                                          , stem        )       => {
     if (!n) return;
-    cidr.value = n.cidr;
-    vlan.value = String(n.vlanId);
+    set(`${stem}Cidr`, n.cidr);
+    set(`${stem}Vlan`, String(n.vlanId));
     // The estate's IPv6 prefix, when its VMkernel adapters carry one.
-    v6Cidr.value = n.ipv6Cidr ?? '';
-    v6Gateway.value = n.ipv6Gateway ?? '';
+    set(`${stem}V6Cidr`, n.ipv6Cidr ?? '');
+    set(`${stem}V6Gateway`, n.ipv6Gateway ?? '');
   };
-  net(plan.management, controls.mgmtCidr, controls.mgmtVlan, controls.mgmtV6Cidr, controls.mgmtV6Gateway);
-  net(plan.vmotion, controls.vmotionCidr, controls.vmotionVlan, controls.vmotionV6Cidr, controls.vmotionV6Gateway);
-  net(plan.vsan, controls.vsanCidr, controls.vsanVlan, controls.vsanV6Cidr, controls.vsanV6Gateway);
-  if (plan.dualStack !== undefined) controls.dualStack.checked = plan.dualStack;
+  net(plan.management, 'mgmt');
+  net(plan.vmotion, 'vmotion');
+  net(plan.vsan, 'vsan');
+  tick('dualStack', plan.dualStack);
 }
 
-function existingBlock(
-  controls          ,
-  rule                                 ,
-)                                               {
-  const part = (fqdnInput                  , thumbInput                  ) => {
-    const fqdn = fqdnInput.value.trim();
-    if (!fqdn) return undefined;
-    const sslThumbprint = thumbInput.value.trim();
-    return { fqdn, ...(sslThumbprint ? { sslThumbprint } : {}) };
+/** A grid of " | " rows (src/ui/multi-editors.ts), kept in a textarea the page reads like any control. */
+function gridEditor(
+  spec          ,
+  initial        ,
+  onChange            ,
+)                                                                                   {
+  const columns = spec.hint.split(' | ');
+  const shape                                    = {
+    separator: ' | ',
+    columns,
+    headerInValue: false,
+    spaced: true,
+    choices: columns.map((col) => {
+      const offered = spec.options.filter((o) => o.group === col);
+      return offered.length > 0 ? offered : undefined;
+    }),
   };
-
-  const vcenter =
-    part(controls.existingVcenterFqdn, controls.existingVcenterThumbprint) ??
-    // The scenario fixes vCenter as existing even when no detail was typed;
-    // keep declaring it so the mismatch finding stays accurate.
-    (controls.brownfield.checked || rule.vcenterExisting === 'true'
-      ? { fqdn: controls.existingVcenterFqdn.value.trim() }
-      : undefined);
-  const nsx = part(controls.existingNsxFqdn, controls.existingNsxThumbprint);
-  const sddcManager = part(
-    controls.existingSddcManagerFqdn,
-    controls.existingSddcManagerThumbprint,
-  );
-  const operations = part(controls.existingOpsFqdn, controls.existingOpsThumbprint);
-  const automation = part(
-    controls.existingAutomationFqdn,
-    controls.existingAutomationThumbprint,
-  );
-  const datastoreName = controls.existingDatastoreName.value.trim();
-
-  if (!vcenter && !nsx && !sddcManager && !operations && !automation && !datastoreName) {
-    return undefined;
-  }
-  return {
-    existing: {
-      ...(vcenter ? { vcenter } : {}),
-      ...(nsx ? { nsx } : {}),
-      ...(sddcManager ? { sddcManager } : {}),
-      ...(operations ? { operations } : {}),
-      ...(automation ? { automation } : {}),
-      ...(datastoreName ? { datastoreName } : {}),
-    },
+  const value = el('textarea', { attrs: { hidden: true } })                       ;
+  const host = el('div', {});
+  const mount = (text        )       => {
+    value.value = text;
+    const editor = tableEditor(shape, text, () => {
+      const inner = editor.querySelector('textarea.multi-value')                              ;
+      value.value = inner?.value ?? '';
+      onChange();
+    });
+    replace(host, editor);
   };
+  mount(initial);
+  return { wrap: el('div', {}, host, value), value, reset: mount };
 }
 
-function buildInputs(controls          , onChange            )              {
-  const bind =                        (node   )    => {
+/** A collapsed section for the settings most plans leave at their defaults. */
+function advanced(title        , ...children               )              {
+  return el(
+    'details',
+    { class: 'input-section' },
+    el('summary', { text: title }),
+    el('div', { class: 'input-section-list', style: { maxHeight: 'none' } }, ...children),
+  );
+}
+
+function row(...children               )              {
+  return el('div', { class: 'field-row' }, ...children);
+}
+
+function buildInputs(onChange            )       {
+  const controls                          = {};
+  const blocks                              = {};
+  const hints                              = {};
+  const grids = new Map                                ();
+  const D = FORM_DEFAULTS;
+  const def = (name        )         => String(D[name] ?? '');
+
+  const register =                    (name        , node   )    => {
     node.addEventListener('change', onChange);
     node.addEventListener('input', onChange);
+    controls[name] = node;
+    return node;
+  };
+  const txt = (name        , placeholder = '')                   => register(name, textInput(def(name), placeholder));
+  const num = (name        , min        , max        )                   =>
+    register(name, numberInput(Number(def(name)), { min, max }));
+  /** A number that may be left blank, meaning "the default". */
+  const optNum = (name        , placeholder        , min        , max        )                   =>
+    register(
+      name,
+      el('input', { attrs: { type: 'number', min, max, placeholder, value: def(name) } })                    ,
+    );
+  const pick = (name        , options                                             )                    =>
+    register(name, select(options, def(name)));
+  const choices = (values                   , blank         )                                     => [
+    ...(blank !== undefined ? [{ value: '', label: blank }] : []),
+    ...values.map((v) => ({ value: v, label: v })),
+  ];
+  const tick = (name        , label        )              => {
+    const box = checkbox(label, D[name] === true);
+    register(name, box.input);
+    return el('div', { class: 'field' }, box.wrap);
+  };
+  /** A secret: never pre-filled, never saved, never offered to the browser's autofill. */
+  const secret = (name        , placeholder = '')                   =>
+    register(
+      name,
+      el('input', { attrs: { type: 'password', autocomplete: 'new-password', placeholder, value: '' } })                    ,
+    );
+  const grid = (name        , spec          )              => {
+    const g = gridEditor(spec, def(name), onChange);
+    controls[name] = g.value;
+    grids.set(name, g.reset);
+    return g.wrap;
+  };
+  const hint = (key        , textValue = '')              => {
+    const node = el('div', { class: 'field-hint', text: textValue });
+    hints[key] = node;
+    return node;
+  };
+  const block =                        (key        , node   )    => {
+    blocks[key] = node;
     return node;
   };
 
-  controls.sddcId = bind(textInput('vcf-m01'));
-  controls.instanceName = bind(textInput('', 'Defaults to the SDDC ID'));
-  controls.domainSuffix = bind(textInput('vcf.lab'));
-  controls.namePrefix = bind(textInput('vcf-m01', 'Prefix for component FQDNs'));
-  controls.scenario = bind(
-    select(
-      SCENARIO_RULES.map((rule) => ({
-        value: rule.scenario,
-        label: `${rule.label} (${rule.workflowType})`,
-      })),
-      'new-vcf-fleet',
+  // --- instance ---------------------------------------------------------------
+  const instanceCard = card(
+    'Instance',
+    field('SDDC ID', txt('sddcId'), '3-20 characters, alphanumeric and hyphens.'),
+    field('Instance name', txt('instanceName', 'Defaults to the SDDC ID')),
+    field('Domain suffix', txt('domainSuffix')),
+    field('Name prefix', txt('namePrefix', 'Prefix for component FQDNs'), 'Component FQDNs are built from this.'),
+    field(
+      'Target version',
+      txt('version', 'Target VCF version, e.g. 9.1.1.0'),
+      'Drives the VCF Automation pool size and the appliance size defaults.',
+    ),
+    field(
+      'Deployment scenario',
+      pick(
+        'scenario',
+        SCENARIO_RULES.map((rule) => ({ value: rule.scenario, label: `${rule.label} (${rule.workflowType})` })),
+      ),
+      'Sets the workflow type and which components take part, from the eight scenarios Broadcom publishes.',
+    ),
+    field(
+      'Document shape',
+      pick('documentShape', [
+        { value: '', label: 'Scenario default' },
+        { value: 'full', label: 'Full: every bring-up block' },
+        { value: 'minimal', label: 'Minimal: only the component blocks' },
+      ]),
+      'Minimal is what Broadcom’s samples use for deferred components and VCF management services for VVF: no hosts, networks, switches, NSX, datastore or cluster.',
+    ),
+    tick('skipGatewayPingValidation', 'Skip gateway ping validation (skipGatewayPingValidation)'),
+    block(
+      'minimalNote',
+      el('div', {
+        class: 'section-note',
+        text: 'Minimal document: hosts, DNS, NTP, switches, NSX, the datastore and the cluster are not emitted, so the Hosts, Services and Switching sections are hidden. The existing vCenter (and SDDC Manager) and the component blocks are all it carries.',
+      }),
     ),
   );
-  controls.managementNetworkModel = bind(
-    select(
-      MANAGEMENT_NETWORK_MODELS.map((m) => ({ value: m.model, label: m.label })),
-      'shared-vlan',
+
+  // --- hosts ------------------------------------------------------------------
+  const hostsCard = block('hostsCard', card(
+    'Hosts',
+    row(field('ESX name base', txt('esxBase')), field('Host count', num('hostCount', 1, 64))),
+    row(field('vmnics', txt('vmnics')), field('pNICs per host', num('pnicsPerHost', 1, 8))),
+    field(
+      'ESX root password (all hosts)',
+      secret('esxRootPassword', 'Placeholder when blank'),
+      'Used for every host without its own password in the table below. Never saved.',
     ),
-  );
-  controls.fleetCidr = bind(textInput('172.30.80.0/24', 'Dedicated fleet-level components network'));
-  controls.fleetVlan = bind(numberInput(80, { min: 0, max: 4094 }));
-  controls.overlaySegment = bind(textInput('', 'NSX overlay segment name'));
-  controls.overlayMask = bind(textInput('255.255.255.0'));
-  controls.overlayGateway = bind(textInput('192.168.11.1'));
-  controls.localSegment = bind(textInput('', 'Local region segment name'));
-  controls.localMask = bind(textInput('255.255.255.0'));
-  controls.localGateway = bind(textInput('192.168.12.1'));
+  ));
 
-  controls.esxBase = bind(textInput('esx'));
-  controls.hostCount = bind(numberInput(4, { min: 1, max: 64 }));
+  const servicesCard = block('servicesCard', card(
+    'Services',
+    row(field('DNS 1', txt('dns1')), field('DNS 2', txt('dns2'))),
+    row(field('NTP 1', txt('ntp1')), field('NTP 2', txt('ntp2'))),
+  ));
 
-  controls.dns1 = bind(textInput('192.168.30.29'));
-  controls.dns2 = bind(textInput('192.168.30.30'));
-  controls.ntp1 = bind(textInput('192.168.30.1'));
-  controls.ntp2 = bind(textInput('192.168.30.2'));
-
-  controls.mgmtCidr = bind(textInput('172.30.0.0/24'));
-  controls.mgmtVlan = bind(numberInput(30, { min: 0, max: 4094 }));
-  controls.vmotionCidr = bind(textInput('172.30.40.0/24'));
-  controls.vmotionVlan = bind(numberInput(40, { min: 0, max: 4094 }));
-  controls.vsanCidr = bind(textInput('172.30.50.0/24'));
-  controls.vsanVlan = bind(numberInput(50, { min: 0, max: 4094 }));
-  controls.tepCidr = bind(textInput('172.30.60.0/24'));
-  controls.tepVlan = bind(numberInput(60, { min: 0, max: 4094 }));
-
-  controls.storage = bind(select(STORAGE_OPTIONS         , 'vsan-esa'));
-  controls.ftt = bind(numberInput(1, { min: 0, max: 3 }));
-  controls.profile = bind(
-    select(
-      [
-        { value: 'simple', label: 'Simple (1 node each)' },
-        { value: 'ha', label: 'High Availability (3 nodes)' },
-      ],
-      'simple',
-    ),
-  );
-  controls.vcenterSize = bind(select(VCENTER_SIZES, 'small'));
-  controls.nsxSize = bind(select(NSX_SIZES, 'medium'));
-
-  controls.dvsProfile = bind(select(DVS_OPTIONS, 'default'));
-  controls.vmnics = bind(textInput('vmnic0, vmnic1'));
-  controls.pnicsPerHost = bind(numberInput(2, { min: 1, max: 8 }));
-
-  const lacp = checkbox('Use LACP (LAG)', false);
-  controls.enableLacp = bind(lacp.input);
-
-  const vpc = checkbox('Configure VPC with Distributed TGW', false);
-  controls.enableVpc = bind(vpc.input);
-  controls.dtgwVlan = bind(numberInput(70, { min: 0, max: 4094 }));
-  controls.dtgwGatewayCidr = bind(textInput('172.30.70.1/24'));
-  controls.dtgwExternalCidr = bind(textInput('172.30.70.0/26'));
-  controls.dtgwPrivateCidr = bind(textInput('172.31.0.0/16'));
-
-  controls.version = bind(
-    textInput(DEFAULT_VCF_VERSION, 'Target VCF version, e.g. 9.1.1.0'),
-  );
-  const sizeOptions = (values                   , autoLabel = 'Default for the version'  
-                                     ) => [
-    { value: '', label: autoLabel },
-    ...values.map((v) => ({ value: v, label: v })),
-  ];
-  controls.opsSize = bind(
-    select(sizeOptions(['xsmall', 'small', 'medium', 'large', 'xlarge']), ''),
-  );
-  controls.vspSize = bind(select(sizeOptions(['small', 'small_ha', 'medium', 'large']), ''));
-  controls.automationSize = bind(select(sizeOptions(['small', 'medium', 'large']), ''));
-  controls.evcMode = bind(
-    select(
-      [{ value: '', label: 'None' }, ...EVC_MODES.map((m) => ({ value: m, label: m }))],
-      '',
-    ),
-  );
-  controls.dvsMtu = bind(numberInput(9000, { min: 1500, max: 9190 }));
-  controls.datacenterName = bind(textInput('', 'Auto-generated when blank'));
-  controls.clusterName = bind(textInput('', 'Auto-generated when blank'));
-
-  controls.vmMgmtCidr = bind(textInput('', 'Defaults to the management network'));
-  controls.vmMgmtVlan = bind(numberInput(30, { min: 0, max: 4094 }));
-  controls.managementPoolName = bind(textInput('', 'Auto-generated when blank'));
-  controls.internalClusterCidr = bind(
-    select(
-      INTERNAL_CLUSTER_CIDRS_V4.map((c) => ({ value: c, label: c })),
-      INTERNAL_CLUSTER_CIDRS_V4[0],
-    ),
-  );
-  controls.internalClusterCidrIpv6 = bind(
-    select(
-      INTERNAL_CLUSTER_CIDRS_V6.map((c) => ({ value: c, label: c })),
-      INTERNAL_CLUSTER_CIDRS_V6[0],
-    ),
-  );
-  controls.esxiCertsMode = bind(
-    select(
-      [
-        { value: '', label: 'Installer default' },
-        { value: 'VMCA', label: 'VMCA' },
-        { value: 'Custom', label: 'Custom' },
-      ],
-      '',
-    ),
-  );
-  controls.vsanRekeyMinutes = bind(numberInput(1440, { min: 30, max: 10080 }));
-
-  const vsanDedup = checkbox('Deduplication and compression (OSA only)', false);
-  controls.vsanDedup = bind(vsanDedup.input);
-  const skipHcl = checkbox('Skip automatic disk claim (ESA)', false);
-  controls.skipHclAutoDiskClaim = bind(skipHcl.input);
-  const vsanDit = checkbox('Data-in-transit encryption', false);
-  controls.vsanEncryptionInTransit = bind(vsanDit.input);
-  const dualStack = checkbox('Dual stack (emit IPv6 alongside IPv4)', false);
-  controls.dualStack = bind(dualStack.input);
+  // --- networks -----------------------------------------------------------------
+  const v6Row = (label        , stem        , cidrPlaceholder        , gatewayPlaceholder        )              =>
+    row(field(`${label} IPv6 prefix`, txt(`${stem}V6Cidr`, cidrPlaceholder)), field('IPv6 gateway', txt(`${stem}V6Gateway`, gatewayPlaceholder)));
   // IPv6 halves of the networks. Placeholders only: a documentation prefix
   // typed in for someone would end up in a real spec.
-  controls.mgmtV6Cidr = bind(textInput('', 'e.g. 2001:db8:30::/64'));
-  controls.mgmtV6Gateway = bind(textInput('', 'e.g. 2001:db8:30::1'));
-  controls.vmMgmtV6Cidr = bind(textInput('', 'Defaults to the management IPv6 network'));
-  controls.vmMgmtV6Gateway = bind(textInput('', 'IPv6 gateway'));
-  controls.vmotionV6Cidr = bind(textInput('', 'e.g. 2001:db8:40::/64'));
-  controls.vmotionV6Gateway = bind(textInput('', 'Optional; blank if not routed'));
-  controls.vsanV6Cidr = bind(textInput('', 'e.g. 2001:db8:50::/64'));
-  controls.vsanV6Gateway = bind(textInput('', 'Optional; blank if not routed'));
-  controls.fleetV6Cidr = bind(textInput('', 'e.g. 2001:db8:80::/64'));
-  controls.fleetV6Gateway = bind(textInput('', 'e.g. 2001:db8:80::1'));
-  controls.vcfmsIpv6Pool = bind(
-    textInput('', 'Blank: a range from the services network’s IPv6 prefix'),
-  );
-  controls.overlayIpv6Gateway = bind(textInput('', 'e.g. 2001:db8:11::1/64'));
-  controls.localIpv6Gateway = bind(textInput('', 'e.g. 2001:db8:12::1/64'));
-  const ceip = checkbox('Join the Customer Experience Improvement Program', false);
-  controls.ceipEnabled = bind(ceip.input);
-
-  controls.datastoreName = bind(textInput('', 'Auto-generated when blank'));
-  controls.nfsServers = bind(textInput('', 'One or more server addresses, comma separated'));
-  controls.nfsPath = bind(textInput('/export/vcf'));
-  controls.nfsUserTag = bind(textInput('', 'Optional annotation'));
-  controls.vmfsDatastoreNames = bind(textInput('', 'One name per LUN, comma separated'));
-
-  const tepLess = checkbox('TEP-less deployment (9.1.1+)', false);
-  controls.tepLess = bind(tepLess.input);
-
-  const nfsReadOnly = checkbox('Mount read-only', false);
-  controls.nfsReadOnly = bind(nfsReadOnly.input);
-  const nfsBind = checkbox('Bind to the NFS network VMkernel NIC', false);
-  controls.nfsBindToVmknic = bind(nfsBind.input);
-
-  const automation = checkbox('Include VCF Automation', true);
-  controls.includeAutomation = bind(automation.input);
-  const operations = checkbox('Include VCF Operations', true);
-  controls.includeOperations = bind(operations.input);
-  const managementServices = checkbox('Include VCF management services', true);
-  controls.includeManagementServices = bind(managementServices.input);
-  const identityBroker = checkbox('Include Identity Broker', true);
-  controls.includeIdentityBroker = bind(identityBroker.input);
-  const brownfield = checkbox('Reuse an existing vCenter (brownfield)', false);
-  controls.brownfield = bind(brownfield.input);
-
-  const existingPair = (placeholder        )                                       => [
-    bind(textInput('', placeholder)),
-    bind(textInput('', 'SHA256 thumbprint')),
-  ];
-  [controls.existingVcenterFqdn, controls.existingVcenterThumbprint] =
-    existingPair('vcenter.example.com');
-  [controls.existingNsxFqdn, controls.existingNsxThumbprint] = existingPair('nsx.example.com');
-  [controls.existingSddcManagerFqdn, controls.existingSddcManagerThumbprint] =
-    existingPair('sddc-manager.example.com');
-  [controls.existingOpsFqdn, controls.existingOpsThumbprint] = existingPair('ops.example.com');
-  [controls.existingAutomationFqdn, controls.existingAutomationThumbprint] =
-    existingPair('automation.example.com');
-  controls.existingDatastoreName = bind(textInput('', 'Existing datastore to reuse'));
-  const redact = checkbox('Redact secrets in output', false);
-  controls.redact = bind(redact.input);
-
-  // Built before the layout so the storage sections can be shown or hidden by
-  // reference rather than by re-querying the DOM.
-  controls.nfsFields = el(
-    'div',
-    { class: 'stack' },
-    field('NFS servers', controls.nfsServers, 'Required; the API rejects an empty list.'),
-    field('Export path', controls.nfsPath),
-    field('User tag', controls.nfsUserTag),
-    el('div', { class: 'field' }, nfsReadOnly.wrap),
-    el('div', { class: 'field' }, nfsBind.wrap),
-  );
-  controls.vmfsFields = el(
-    'div',
-    { class: 'stack' },
-    field('VMFS datastore names', controls.vmfsDatastoreNames, 'One entry per FC LUN.'),
-  );
-  const existingRow = (
-    label        ,
-    fqdnInput                  ,
-    thumbInput                  ,
-  )              =>
+  const ipv6Fields = block(
+    'ipv6Fields',
     el(
       'div',
-      { class: 'field-row' },
-      field(`${label} FQDN`, fqdnInput),
-      field('SSL thumbprint', thumbInput),
+      { class: 'stack' },
+      el('p', {
+        class: 'muted small',
+        text: 'Each network with an IPv6 prefix is emitted a second time with ipAddressVersion IPv6 on the same VLAN. Host TEPs stay IPv4: the installer’s TEP pool takes no IPv6.',
+      }),
+      v6Row('Management', 'mgmt', 'e.g. 2001:db8:30::/64', 'e.g. 2001:db8:30::1'),
+      v6Row('VM management', 'vmMgmt', 'Defaults to the management IPv6 network', 'IPv6 gateway'),
+      v6Row('vMotion', 'vmotion', 'e.g. 2001:db8:40::/64', 'Optional; blank if not routed'),
+      v6Row('vSAN', 'vsan', 'e.g. 2001:db8:50::/64', 'Optional; blank if not routed'),
+      v6Row('NFS', 'nfs', 'e.g. 2001:db8:90::/64', 'Optional; blank if not routed'),
+    ),
+  );
+
+  const networkAdvancedBlock = (id        , label        )              => {
+    const n = (f        )         => `net_${id}_${f}`;
+    return block(
+      `net_${id}`,
+      el(
+        'div',
+        { class: 'stack' },
+        el('strong', { text: label }),
+        row(
+          field('Port group name', txt(n('portGroup'), 'Generated when blank'), 'portGroupKey, max 80 characters. With an existing vCenter, the port group that is really there.'),
+          field('Gateway', txt(n('gateway'), 'First usable address')),
+        ),
+        row(
+          field('MTU', optNum(n('mtu'), 'Default', 1280, 9190)),
+          field('Address assignment', pick(n('assignment'), choices(IP_ASSIGNMENT_MODES, 'Default (STATIC)'))),
+        ),
+        row(
+          field('Teaming policy', pick(n('teaming'), choices(NETWORK_TEAMING_POLICIES, 'Default (loadbalance_loadbased)'))),
+          field('Active uplinks', txt(n('active'), 'uplink1, uplink2')),
+          field('Standby uplinks', txt(n('standby'), 'None')),
+        ),
+        field('IP ranges', txt(n('ranges'), 'start-end, start-end'), 'includeIpAddressRanges; replaces the range carved at a fixed offset.'),
+        field('IP addresses', txt(n('addresses'), 'Comma separated'), 'includeIpAddress: individual host VMkernel addresses.'),
+      ),
     );
+  };
 
-  controls.existingFields = el(
-    'div',
-    { class: 'stack' },
-    existingRow('vCenter', controls.existingVcenterFqdn, controls.existingVcenterThumbprint),
-    existingRow('NSX Manager', controls.existingNsxFqdn, controls.existingNsxThumbprint),
-    existingRow(
-      'SDDC Manager',
-      controls.existingSddcManagerFqdn,
-      controls.existingSddcManagerThumbprint,
+  const networksCard = card(
+    'Networks',
+    row(field('Management CIDR', txt('mgmtCidr')), field('VLAN', num('mgmtVlan', 0, 4094))),
+    row(field('VM management CIDR', txt('vmMgmtCidr', 'Defaults to the management network')), field('VLAN', num('vmMgmtVlan', 0, 4094))),
+    row(field('vMotion CIDR', txt('vmotionCidr')), field('VLAN', num('vmotionVlan', 0, 4094))),
+    block('vsanNetwork', row(field('vSAN CIDR', txt('vsanCidr')), field('VLAN', num('vsanVlan', 0, 4094)))),
+    block(
+      'nfsNetwork',
+      el(
+        'div',
+        {},
+        row(field('NFS CIDR', txt('nfsCidr')), field('VLAN', num('nfsVlan', 0, 4094))),
+        el('div', { class: 'field-hint', text: 'The NFS VMkernel network the hosts mount the principal datastore over. Blank CIDR: no NFS network (the builder then reports it missing).' }),
+      ),
     ),
-    existingRow('VCF Operations', controls.existingOpsFqdn, controls.existingOpsThumbprint),
-    existingRow(
-      'VCF Automation',
-      controls.existingAutomationFqdn,
-      controls.existingAutomationThumbprint,
+    row(field('Host TEP CIDR', txt('tepCidr')), field('VLAN', num('tepVlan', 0, 4094)), field('TEP gateway', txt('tepGateway', 'First usable address'))),
+    tick('dualStack', 'Dual stack (emit IPv6 alongside IPv4)'),
+    ipv6Fields,
+    advanced(
+      'Per-network advanced settings',
+      el('p', { class: 'muted small', text: 'Blank keeps the builder’s default. The fleet network’s settings apply with a dedicated model.' }),
+      ...ADVANCED_NETWORKS.map((n) => networkAdvancedBlock(n.id, n.label)),
     ),
-    field('Existing datastore', controls.existingDatastoreName),
   );
 
-  controls.localRegionFields = el(
-    'div',
-    { class: 'stack' },
-    field('Local region segment', controls.localSegment, 'The region-local network of the stretched model.'),
+  // --- fleet-level components ------------------------------------------------------
+  const poolBlock = (id        , label        )              => {
+    const p = (f        )         => `pool_${id}_${f}`;
+    return block(
+      id === 'automation' ? 'automationPool' : id === 'tep' ? 'tepPool' : `pool_${id}`,
+      el(
+        'div',
+        { class: 'stack' },
+        el('strong', { text: label }),
+        row(
+          field(
+            'Form',
+            pick(p('mode'), [
+              { value: 'range', label: 'Range (allocated)' },
+              { value: 'cidr', label: 'CIDR' },
+              { value: 'addresses', label: 'Address list' },
+            ]),
+          ),
+          field('CIDR', txt(p('cidr'), 'Range: source subnet. CIDR: the pool')),
+        ),
+        row(field('Offset', optNum(p('offset'), 'Default', 0, 65535)), field('Count', optNum(p('count'), 'From sizing', 1, 65535))),
+        field('Addresses', txt(p('addresses'), 'Comma separated'), 'Address list form: non-contiguous addresses.'),
+        field('Excluded addresses', txt(p('excluded'), 'Comma separated'), 'Carved out of a range or CIDR (9.1.0.400+ in the UI).'),
+      ),
+    );
+  };
+
+  const fleetCard = card(
+    'Fleet-level components',
+    field(
+      'Management network model',
+      pick('managementNetworkModel', MANAGEMENT_NETWORK_MODELS.map((m) => ({ value: m.model, label: m.label }))),
+      'Where VCF Operations, Automation, the Identity Broker, the License Server and VCF management services live. The cloud proxy always stays on VM management.',
+    ),
+    row(field('Fleet network CIDR', txt('fleetCidr', 'Dedicated fleet-level components network')), field('VLAN', num('fleetVlan', 0, 4094))),
+    field('Network pool name', txt('managementPoolName', 'Auto-generated when blank')),
+    field(
+      'Services runtime internal CIDR',
+      pick('internalClusterCidr', INTERNAL_CLUSTER_CIDRS_V4.map((c) => ({ value: c, label: c }))),
+      'Routed internally by the runtime; only these values are supported.',
+    ),
+    field(
+      'Internal CIDR (IPv6)',
+      pick('internalClusterCidrIpv6', INTERNAL_CLUSTER_CIDRS_V6.map((c) => ({ value: c, label: c }))),
+      'Used with dual stack, ticked under Networks.',
+    ),
+    block(
+      'fleetIpv6Fields',
+      el(
+        'div',
+        { class: 'stack' },
+        v6Row('Fleet network', 'fleet', 'e.g. 2001:db8:80::/64', 'e.g. 2001:db8:80::1'),
+        field('Management services IPv6 pool', txt('vcfmsIpv6Pool', 'Blank: a range from the services network’s IPv6 prefix'), 'An IPv6 CIDR, or addresses separated by commas.'),
+        field('Placement network IPv6 gateway/prefix', txt('overlayIpv6Gateway', 'e.g. 2001:db8:11::1/64')),
+        field('Local segment IPv6 gateway/prefix', txt('localIpv6Gateway', 'e.g. 2001:db8:12::1/64'), 'Stretched model only.'),
+      ),
+    ),
     el(
       'div',
-      { class: 'field-row' },
-      field('Local subnet mask', controls.localMask),
-      field('Local gateway', controls.localGateway),
+      { class: 'field' },
+      el('label', { text: 'Placement network (port group or NSX segment)' }),
+      txt('overlaySegment', 'Port group or segment name'),
+      hint('overlaySegment'),
     ),
-  );
-  const v6Row = (label        , cidr                  , gateway                  )              =>
-    el('div', { class: 'field-row' }, field(`${label} IPv6 prefix`, cidr), field('IPv6 gateway', gateway));
-  controls.ipv6Fields = el(
-    'div',
-    { class: 'stack' },
-    el('p', {
-      class: 'muted small',
-      text: 'Each network with an IPv6 prefix is emitted a second time with ipAddressVersion IPv6 on the same VLAN. Host TEPs stay IPv4: the installer’s TEP pool takes no IPv6.',
-    }),
-    v6Row('Management', controls.mgmtV6Cidr, controls.mgmtV6Gateway),
-    v6Row('VM management', controls.vmMgmtV6Cidr, controls.vmMgmtV6Gateway),
-    v6Row('vMotion', controls.vmotionV6Cidr, controls.vmotionV6Gateway),
-    v6Row('vSAN', controls.vsanV6Cidr, controls.vsanV6Gateway),
-  );
-  controls.fleetIpv6Fields = el(
-    'div',
-    { class: 'stack' },
-    v6Row('Fleet network', controls.fleetV6Cidr, controls.fleetV6Gateway),
-    field(
-      'Management services IPv6 pool',
-      controls.vcfmsIpv6Pool,
-      'An IPv6 CIDR, or addresses separated by commas.',
+    row(field('Subnet mask', txt('overlayMask')), field('Gateway', txt('overlayGateway'))),
+    block(
+      'localRegionFields',
+      el(
+        'div',
+        { class: 'stack' },
+        field('Local region segment', txt('localSegment', 'Local region segment name'), 'The region-local network of the stretched model. VERIFY: Broadcom documents no example of localRegionNetwork.'),
+        row(field('Local subnet mask', txt('localMask')), field('Local gateway', txt('localGateway'))),
+      ),
     ),
-    field('Segment IPv6 gateway/prefix', controls.overlayIpv6Gateway),
-    field('Local segment IPv6 gateway/prefix', controls.localIpv6Gateway, 'Stretched model only.'),
-  );
-  controls.vsanFields = el(
-    'div',
-    { class: 'stack' },
-    el('div', { class: 'field' }, vsanDedup.wrap),
-    el('div', { class: 'field' }, skipHcl.wrap),
-    el('div', { class: 'field' }, vsanDit.wrap),
-    field('Rekey interval (minutes)', controls.vsanRekeyMinutes),
+    advanced(
+      'IP pools',
+      el('p', { class: 'muted small', text: 'Untouched pools keep the builder’s allocation, with the counts from sizing when it sent any.' }),
+      ...IP_POOLS.map((p) => poolBlock(p.id, p.label)),
+    ),
   );
 
-  return el(
-    'div',
-    { class: 'stack' },
-    card(
-      'Instance',
-      field('SDDC ID', controls.sddcId, '3-20 characters, alphanumeric and hyphens.'),
-      field('Instance name', controls.instanceName),
-      field('Domain suffix', controls.domainSuffix),
-      field('Name prefix', controls.namePrefix, 'Component FQDNs are built from this.'),
-      field(
-        'Target version',
-        controls.version,
-        'Drives the VCF Automation pool size and the appliance size defaults.',
-      ),
-      field(
-        'Deployment scenario',
-        controls.scenario,
-        'Sets the workflow type and which components take part, from the eight scenarios Broadcom publishes.',
+  // --- storage and scale ------------------------------------------------------------
+  const storageCard = card(
+    'Storage and scale',
+    field('Principal storage', pick('storage', STORAGE_OPTIONS)),
+    field('Datastore name', txt('datastoreName', 'Auto-generated when blank')),
+    block(
+      'vsanFields',
+      el(
+        'div',
+        { class: 'stack' },
+        tick('vsanDedup', 'Deduplication and compression (OSA only)'),
+        // skipHclAutoDiskClaim: true skips the HCL check during automatic
+        // claiming, so incompatible disks are claimed too. It is not "skip
+        // the claim".
+        tick('skipHclAutoDiskClaim', 'Allow auto-claim of HCL-incompatible disks (ESA)'),
+        tick('vsanEncryptionInTransit', 'Data-in-transit encryption'),
+        field('Rekey interval (minutes)', num('vsanRekeyMinutes', 30, 10080)),
       ),
     ),
-    card(
-      'Hosts',
+    block(
+      'nfsFields',
       el(
         'div',
-        { class: 'field-row' },
-        field('ESX name base', controls.esxBase),
-        field('Host count', controls.hostCount),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('vmnics', controls.vmnics),
-        field('pNICs per host', controls.pnicsPerHost),
+        { class: 'stack' },
+        field('NFS servers', txt('nfsServers', 'One or more server addresses, comma separated'), 'Required; the API rejects an empty list.'),
+        field('Export path', txt('nfsPath')),
+        field('User tag', txt('nfsUserTag', 'Optional annotation')),
+        tick('nfsReadOnly', 'Mount read-only'),
+        tick('nfsBindToVmknic', 'Bind to the NFS network VMkernel NIC'),
+        el('div', { class: 'field-hint', text: 'The NFS network itself (CIDR and VLAN) is under Networks.' }),
       ),
     ),
-    card(
-      'Services',
-      el('div', { class: 'field-row' }, field('DNS 1', controls.dns1), field('DNS 2', controls.dns2)),
-      el('div', { class: 'field-row' }, field('NTP 1', controls.ntp1), field('NTP 2', controls.ntp2)),
+    block(
+      'vmfsFields',
+      el('div', { class: 'stack' }, field('VMFS datastore names', txt('vmfsDatastoreNames', 'One name per LUN, comma separated'), 'One entry per FC LUN.')),
     ),
-    card(
-      'Networks',
-      el(
-        'div',
-        { class: 'field-row' },
-        field('Management CIDR', controls.mgmtCidr),
-        field('VLAN', controls.mgmtVlan),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('VM management CIDR', controls.vmMgmtCidr),
-        field('VLAN', controls.vmMgmtVlan),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('vMotion CIDR', controls.vmotionCidr),
-        field('VLAN', controls.vmotionVlan),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('vSAN CIDR', controls.vsanCidr),
-        field('VLAN', controls.vsanVlan),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('Host TEP CIDR', controls.tepCidr),
-        field('VLAN', controls.tepVlan),
-      ),
-      el('div', { class: 'field' }, dualStack.wrap),
-      controls.ipv6Fields,
+    field('Failures to tolerate', num('ftt', 0, 3)),
+    field(
+      'Sizing preset',
+      pick('sizePreset', [{ value: '', label: 'None: the profile and the sizes below' }, ...SIZE_PRESET_OPTIONS]),
+      'Broadcom’s fleet sizing models. Sets every size and count; any size chosen below still overrides it.',
     ),
-    card(
-      'Fleet-level components',
-      field(
-        'Management network model',
-        controls.managementNetworkModel,
-        'Where VCF Operations, Automation, the Identity Broker, the License Server and VCF management services live. The cloud proxy always stays on VM management.',
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('Fleet network CIDR', controls.fleetCidr),
-        field('VLAN', controls.fleetVlan),
-      ),
-      field('Network pool name', controls.managementPoolName),
-      field(
-        'Services runtime internal CIDR',
-        controls.internalClusterCidr,
-        'Routed internally by the runtime; only these values are supported.',
-      ),
-      field('Internal CIDR (IPv6)', controls.internalClusterCidrIpv6, 'Used with dual stack, ticked under Networks.'),
-      controls.fleetIpv6Fields,
-      field('NSX overlay segment', controls.overlaySegment, 'Segment name, for the overlay models.'),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('Segment subnet mask', controls.overlayMask),
-        field('Segment gateway', controls.overlayGateway),
-      ),
-      controls.localRegionFields,
+    field(
+      'Profile',
+      pick('profile', [
+        { value: 'simple', label: 'Simple (1 node each)' },
+        { value: 'ha', label: 'High Availability (3 nodes)' },
+      ]),
+      'Ignored when a preset is chosen.',
     ),
-    card(
-      'Storage and scale',
-      field('Principal storage', controls.storage),
-      field('Datastore name', controls.datastoreName),
-      controls.vsanFields,
-      controls.nfsFields,
-      controls.vmfsFields,
-      el(
-        'div',
-        { class: 'field-row' },
-        field('Failures to tolerate', controls.ftt),
-        field('Profile', controls.profile),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('vCenter size', controls.vcenterSize),
-        field('NSX Manager size', controls.nsxSize),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('VCF Operations size', controls.opsSize),
-        field('Management services size', controls.vspSize),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('VCF Automation size', controls.automationSize),
-        field('EVC baseline', controls.evcMode),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('Datacenter name', controls.datacenterName),
-        field('Cluster name', controls.clusterName),
-      ),
+    row(
+      field('vCenter size', pick('vcenterSize', VCENTER_SIZES)),
+      field('vCenter storage', pick('vcenterStorageSize', choices(VCENTER_STORAGE_SIZES, 'Default (lstorage)'))),
     ),
-    card(
-      'Switching and NSX',
-      field('vDS profile', controls.dvsProfile),
-      field('vDS MTU', controls.dvsMtu),
-      el('div', { class: 'field' }, tepLess.wrap),
-      el('div', { class: 'field' }, lacp.wrap),
-      el('div', { class: 'field' }, vpc.wrap),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('DTGW VLAN', controls.dtgwVlan),
-        field('Gateway CIDR', controls.dtgwGatewayCidr),
-      ),
-      el(
-        'div',
-        { class: 'field-row' },
-        field('External IP block', controls.dtgwExternalCidr),
-        field('Private TGW block', controls.dtgwPrivateCidr),
-      ),
+    row(
+      field('NSX Manager size', pick('nsxSize', NSX_SIZES)),
+      field('NSX Managers', pick('nsxManagerCount', [
+        { value: '', label: 'From the preset or profile' },
+        { value: '1', label: '1' },
+        { value: '3', label: '3' },
+      ])),
     ),
-    card(
-      'Components',
-      field('ESXi certificate mode', controls.esxiCertsMode),
-      el('div', { class: 'field' }, ceip.wrap),
-      el('div', { class: 'field' }, operations.wrap),
-      el('div', { class: 'field' }, automation.wrap),
-      el('div', { class: 'field' }, managementServices.wrap),
-      el('div', { class: 'field' }, identityBroker.wrap),
-      el('div', { class: 'field' }, brownfield.wrap),
-      controls.existingFields,
-      el('div', { class: 'field' }, redact.wrap),
+    row(
+      field('VCF Operations size', pick('opsSize', choices(['xsmall', 'small', 'medium', 'large', 'xlarge'], 'From the preset or version'))),
+      field('VCF Operations nodes', pick('opsNodeCount', [
+        { value: '', label: 'From the preset or profile' },
+        { value: '1', label: '1 (master)' },
+        { value: '2', label: '2 (master, replica)' },
+        { value: '3', label: '3 (master, replica, data)' },
+      ])),
+    ),
+    row(
+      field('VCF Operations load balancer', pick('opsLoadBalancer', [
+        { value: '', label: 'Default (HA with more than one node)' },
+        { value: 'true', label: 'Emit loadBalancerFqdn' },
+        { value: 'false', label: 'None' },
+      ]), 'The name is the VCF Operations load balancer FQDN override, or generated.'),
+      field('Cloud proxy size', pick('collectorSize', choices(COLLECTOR_SIZES, 'From the preset (else small)'))),
+    ),
+    row(
+      field('Management services size', pick('vspSize', choices(['small', 'small_ha', 'medium', 'large'], 'From the preset or profile'))),
+      block('automationOptions', field('VCF Automation size', pick('automationSize', choices(['small', 'medium', 'large'], 'From the preset or version')))),
+    ),
+    row(
+      field('EVC baseline', pick('evcMode', [{ value: '', label: 'None' }, ...EVC_MODES.map((m) => ({ value: m, label: m }))])),
+    ),
+    row(field('Datacenter name', txt('datacenterName', 'Auto-generated when blank')), field('Cluster name', txt('clusterName', 'Auto-generated when blank'))),
+    advanced(
+      'Resource pools',
+      el('p', { class: 'muted small', text: 'clusterSpec.resourcePoolSpecs. Blank cells are left out. Limits and reservations in MHz and MB; -1 is unlimited.' }),
+      grid('resourcePools', RESOURCE_POOL_GRID),
     ),
   );
+
+  // --- switching and NSX ------------------------------------------------------------
+  const switchingCard = block('switchingCard', card(
+    'Switching and NSX',
+    field('vDS profile', pick('dvsProfile', DVS_OPTIONS)),
+    block(
+      'customSwitches',
+      el(
+        'div',
+        { class: 'field' },
+        el('label', { text: 'Switches' }),
+        grid('dvsSwitches', DVS_SWITCH_GRID),
+        el('div', {
+          class: 'field-hint',
+          text: 'One row per switch. Networks: traffic types, comma separated (custom names allowed). vmnics: vmnic0:uplink1, vmnic1:uplink2, or plain vmnic0, vmnic1. Transport zones: name:OVERLAY, name:VLAN (blank: one of each). Active and Standby: the NSX teaming uplinks. LACP yes: this switch uses the LACP parameters below.',
+        }),
+      ),
+    ),
+    field('vDS MTU', num('dvsMtu', 1500, 9190)),
+    row(
+      field('NSX teaming policy', pick('nsxTeamingPolicy', choices(NSX_TEAMING_POLICIES, 'Default (LOADBALANCE_SRCID)'))),
+      field('Host switch mode', pick('hostSwitchOperationalMode', choices(HOST_SWITCH_MODES, 'Not emitted'))),
+    ),
+    row(
+      field('NSX active uplinks', txt('nsxActiveUplinks', 'Every uplink not on standby')),
+      field('NSX standby uplinks', txt('nsxStandbyUplinks', 'None')),
+    ),
+    tick('enableLacp', 'Use LACP (LAG) on the NSX switch'),
+    block(
+      'lacpParameters',
+      el(
+        'div',
+        { class: 'stack' },
+        row(field('LAG name', txt('lacpName', 'Generated; max 16 characters')), field('Uplinks', num('lacpUplinksCount', 2, 32))),
+        row(field('LACP mode', pick('lacpMode', choices(LACP_MODES))), field('Timeout', pick('lacpTimeoutMode', choices(LACP_TIMEOUT_MODES)))),
+        field('Load balancing', pick('lacpLoadBalancingMode', choices(LAG_LOAD_BALANCING_MODES))),
+      ),
+    ),
+    block(
+      'nsxOptions',
+      el(
+        'div',
+        { class: 'stack' },
+        row(
+          field('Host TEP addressing', pick('tepMode', [
+            { value: 'static', label: 'Static IP pool' },
+            { value: 'existing-pool', label: 'Reuse an existing pool' },
+            { value: 'dhcp', label: 'DHCP (no pool; VERIFY)' },
+          ])),
+          field('TEP pool name', txt('tepPoolName', 'Generated when blank')),
+        ),
+        tick('ignoreUnavailableNsxtCluster', 'Ignore an unavailable NSX cluster when reusing the pool (ignoreUnavailableNsxtCluster)'),
+        tick('tepLess', 'TEP-less deployment (9.1.1+)'),
+        field(
+          'VPC',
+          pick('vpcMode', [
+            { value: '', label: 'Not configured' },
+            { value: 'full-distributed', label: 'Full stack, distributed connectivity (DTGW)' },
+            { value: 'full-centralized', label: 'Full stack, centralized connectivity (no DTGW)' },
+            { value: 'vlan-backed', label: 'VLAN-backed (9.1.1+)' },
+          ]),
+        ),
+        block(
+          'vlanBackedNote',
+          el('div', {
+            class: 'section-note',
+            text: 'A VLAN-backed VPC is the TEP-less deployment: overlayVtepSpec.vtepType NO_IP, no host TEPs, no TEP pool and no distributed transit gateway.',
+          }),
+        ),
+        block(
+          'dtgw',
+          el(
+            'div',
+            { class: 'stack' },
+            row(field('DTGW VLAN', num('dtgwVlan', 0, 4094)), field('Gateway CIDR', txt('dtgwGatewayCidr'))),
+            row(field('External IP block', txt('dtgwExternalCidr')), field('Private TGW block', txt('dtgwPrivateCidr'))),
+          ),
+        ),
+        field(
+          'Skip NSX overlay over the management network',
+          pick('skipNsxOverlayOverManagementNetwork', [
+            { value: '', label: 'Not emitted' },
+            { value: 'true', label: 'true' },
+            { value: 'false', label: 'false' },
+          ]),
+          'Documented for an existing vCenter being converted; Broadcom’s greenfield sample sets it true.',
+        ),
+        block(
+          'nsxBrownfield',
+          el(
+            'div',
+            { class: 'field' },
+            tick('enableEdgeClusterSync', 'Sync the existing NSX Edge clusters (enableEdgeClusterSync)'),
+            el('div', {
+              class: 'field-hint',
+              text: 'Existing NSX only. Warning: importing with this on triggers a one-time reset of the NSX Edge node passwords.',
+            }),
+          ),
+        ),
+      ),
+    ),
+  ));
+
+  // --- components -----------------------------------------------------------------
+  const existingRow = (key        , label        , stem        , placeholder        )              =>
+    block(
+      `existing_${key}`,
+      row(field(`${label} FQDN`, txt(`${stem}Fqdn`, placeholder)), field('SSL thumbprint', txt(`${stem}Thumbprint`, 'SHA256 thumbprint'))),
+    );
+  const placeholders                         = {
+    vcenter: 'vcenter.example.com',
+    nsx: 'nsx.example.com',
+    sddcManager: 'sddc-manager.example.com',
+    operations: 'ops.example.com',
+    automation: 'automation.example.com',
+    licenseServer: 'license.example.com',
+    collector: 'cloud-proxy.example.com',
+    managementServices: 'services.example.com',
+  };
+  const existingFields = block(
+    'existingFields',
+    el(
+      'div',
+      { class: 'stack' },
+      el('p', { class: 'muted small', text: 'Only the components this scenario can reuse are offered. A reused component is referenced by its FQDN and SHA256 SSL thumbprint.' }),
+      ...EXISTING_COMPONENTS.flatMap((c) => [
+        existingRow(c.key, c.label, c.stem, placeholders[c.key] ?? ''),
+        ...(c.key === 'nsx'
+          ? [block('existingNsxNodes', field('NSX Manager node FQDNs', txt('existingNsxNodes', 'nsx-a.example.com, nsx-b.example.com, nsx-c.example.com'), 'Blank: nsxtManagers carries the VIP FQDN.'))]
+          : []),
+      ]),
+      block('existingDatastore', field('Existing datastore', txt('existingDatastoreName', 'Existing datastore to reuse'))),
+    ),
+  );
+
+  const componentsCard = card(
+    'Components',
+    field('ESXi certificate mode', pick('esxiCertsMode', [
+      { value: '', label: 'Installer default' },
+      { value: 'VMCA', label: 'VMCA' },
+      { value: 'Custom', label: 'Custom' },
+    ])),
+    el(
+      'div',
+      { class: 'field' },
+      el('label', { text: 'Root CA certificates' }),
+      grid('rootCaCerts', ROOT_CA_GRID),
+      el('div', { class: 'field-hint', text: 'securitySpec.rootCaCerts: Base64-encoded certificates, the chain comma separated. Required for the Custom mode.' }),
+    ),
+    tick('ceipEnabled', 'Join the Customer Experience Improvement Program'),
+    tick('includeOperations', 'Include VCF Operations'),
+    tick('includeAutomation', 'Include VCF Automation'),
+    tick('includeManagementServices', 'Include VCF management services'),
+    tick('includeIdentityBroker', 'Include Identity Broker'),
+    block(
+      'identityBrokerModel',
+      field('Identity broker model', pick('identityBrokerModel', [
+        { value: '', label: 'From the checkbox above' },
+        { value: 'instance', label: 'Instance (on VCF management services; vidbSpec)' },
+        { value: 'embedded', label: 'Embedded (a vCenter service; no vidbSpec)' },
+      ]), 'Embedded is one broker per instance, for lab and proof-of-concept use. Mandatory Instance brokers leave no choice.'),
+    ),
+    block('identityBrokerSize', field('Identity broker size', pick('identityBrokerSize', choices(DOCUMENTED_SIZES, 'Not emitted')))),
+    block(
+      'licenseServer',
+      el(
+        'div',
+        { class: 'field' },
+        tick('includeLicenseServer', 'Include the License Server'),
+        el('div', { class: 'field-hint', text: 'Required only when the existing VCF Operations does not already have one.' }),
+      ),
+    ),
+    row(
+      field('vCenter SSO domain', txt('vcenterSsoDomain', 'vsphere.local')),
+      field('SSO administrator', txt('vcenterSsoUsername', 'administrator@<SSO domain>')),
+    ),
+    block(
+      'automationOptionsMore',
+      row(
+        field('VCF Automation node prefix', txt('automationNodePrefix', '<prefix>-node-01'), 'Lowercase, up to 57 characters.'),
+        field('VCF Automation internal CIDR', pick('automationInternalClusterCidr', choices(INTERNAL_CLUSTER_CIDRS_V4, 'Same as the services runtime'))),
+      ),
+    ),
+    block('vspName', field('VCF management services cluster name', txt('vspName', '<prefix>-vmsp-01'), 'vspClusterSpec.name: in working specs, not in the published schema.')),
+    tick('includeFleetServiceSpecs', 'Emit the fleet service blocks (fleetDepotSpec, telemetryAcceptorSpec, saltSpec, saltRaasSpec)'),
+    advanced(
+      'Fleet and lifecycle service sizes',
+      el('p', { class: 'muted small', text: 'Free text; the API publishes no enum. Blank: no size emitted.' }),
+      ...SERVICE_SPECS.map((s) => field(s.label, txt(`size_${s.key}`, 'Not emitted'))),
+    ),
+    advanced(
+      'Component versions',
+      el('p', { class: 'muted small', text: 'Pins each block’s version field. Blank: none emitted, and the installer uses its bundled version.' }),
+      ...VERSIONED_COMPONENTS.map((v) => field(v.label, txt(`ver_${v.key}`, 'Not pinned'))),
+    ),
+    advanced(
+      'Component FQDN overrides',
+      el('p', { class: 'muted small', text: 'Each placeholder is the generated name. An existing component’s own FQDN wins over its override.' }),
+      ...FQDN_OVERRIDES.map((o) => field(o.label, txt(`fqdn_${o.key}`))),
+    ),
+    tick('brownfield', 'Reuse an existing vCenter (brownfield)'),
+    existingFields,
+    tick('redact', 'Redact secrets in output'),
+  );
+  // --- passwords ---------------------------------------------------------------------
+  const passwordsCard = card(
+    'Passwords',
+    el('p', { class: 'muted small', text: 'Never pre-filled and never saved in the settings file. Blank emits a placeholder the validator flags.' }),
+    tick('autoGeneratePasswords', 'Let the installer generate passwords'),
+    el('div', { class: 'field-hint', text: AUTO_PASSWORDS_NOTE }),
+    el('div', { class: 'field' }, el('label', { text: 'VCF Operations admin password' }), secret('password_opsAdmin'), hint('opsAdmin')),
+    advanced(
+      'Other passwords',
+      ...PASSWORDS.map((p) =>
+        el(
+          'div',
+          { class: 'field' },
+          el('label', { text: `${p.label} password` }),
+          secret(`password_${p.key}`, p.generated ? 'Placeholder, or generated' : 'Placeholder when blank'),
+          p.key === 'vcenterRoot' ? hint('vcenterRoot') : el('span'),
+        ),
+      ),
+    ),
+  );
+
+  const element = el(
+    'div',
+    { class: 'stack' },
+    instanceCard,
+    hostsCard,
+    servicesCard,
+    networksCard,
+    fleetCard,
+    storageCard,
+    switchingCard,
+    componentsCard,
+    passwordsCard,
+  );
+
+  return { element, controls, blocks, hints, grids };
 }
 
 function buildOutput(
   spec          ,
   buildFindings                    ,
   validation                    ,
-  controls          ,
+  form      ,
 )                {
   const all = [...buildFindings, ...validation];
   const counts = countBySeverity(all);
   const emitted = Object.keys(spec).length;
-  const output = controls.redact.checked ? redactSpec(spec) : spec;
+  const output = (form.controls.redact                                )?.checked ? redactSpec(spec) : spec;
   const json = serializeSpec(output);
 
   const summary = card(
@@ -1517,7 +1466,7 @@ function buildOutput(
       stat({
         label: 'Size',
         value: `${(json.length / 1024).toFixed(1)} KB`,
-        sub: `${spec.hostSpecs?.length ?? 0} hosts, ${spec.networkSpecs.length} networks`,
+        sub: specSummary(spec),
       }),
     ),
     el(

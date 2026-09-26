@@ -631,7 +631,10 @@ export const EVC_MODES                     = [
 /**
  * The VCF Installer bring-up document.
  *
- * Required: sddcId, vcenterSpec, networkSpecs, dnsSpec.
+ * The schema marks sddcId, vcenterSpec, networkSpecs and dnsSpec required, but
+ * Broadcom's own minimal examples (deferred components, VCF management services
+ * for VVF) omit networkSpecs, dnsSpec and hostSpecs, so they are optional here
+ * and every consumer must tolerate their absence.
  */
 /**
  * Declared as a type alias rather than an interface on purpose.
@@ -646,8 +649,10 @@ export const EVC_MODES                     = [
                                               
                  
                                
-                                  
-                   
+                                                                
+                                   
+                                                                
+                    
 
                               
                      
