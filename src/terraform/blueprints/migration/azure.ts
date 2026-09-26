@@ -797,7 +797,7 @@ function azureCompute(): Blueprint {
             { name: 'mig_bootstrap_windows', value: x(winrmBootstrap(`${lz}.mgmt_cidrs`)) },
             {
               name: 'mig_vm_ids',
-              value: x('merge(\n    { for k, v in azurerm_linux_virtual_machine.vm : k => v.id },\n    { for k, v in azurerm_windows_virtual_machine.vm : k => v.id },\n    { for k, v in azurerm_linux_virtual_machine.replicated : k => v.id },\n    { for k, v in azurerm_windows_virtual_machine.replicated : k => v.id },\n  )'),
+              value: x('merge(\n    { for k, v in azurerm_linux_virtual_machine.vm : k => v.id },\n' + (anyWindows ? '    { for k, v in azurerm_windows_virtual_machine.vm : k => v.id },\n' : '') + '    { for k, v in azurerm_linux_virtual_machine.replicated : k => v.id },\n    { for k, v in azurerm_windows_virtual_machine.replicated : k => v.id },\n  )'),
             },
           ],
         },
@@ -862,13 +862,13 @@ function azureCompute(): Blueprint {
           disable_password_authentication: true,
           custom_data: x(`base64encode(${withHost('local.mig_bootstrap_linux')})`),
         }, [blk('admin_ssh_key', { username: 'ansible', public_key: x(`var.${sshVar}`) }), osDisk, imageRef, identity, ignoreChanges(['custom_data', 'source_image_reference', 'admin_ssh_key'])]),
-        res('azurerm_windows_virtual_machine', 'vm', {
+        ...(anyWindows ? [res('azurerm_windows_virtual_machine', 'vm', {
           for_each: x('{ for k, v in local.mig_rebuild : k => v if v.kind == "windows" }'),
           name: x('each.key'),
           computer_name: x('substr(each.key, 0, 15)'),
           ...vmCommon,
           admin_username: 'azureadmin',
-          admin_password: anyWindows ? x(`var.${pwVar}`) : undefined,
+          admin_password: x(`var.${pwVar}`),
           hotpatching_enabled: false,
         }, [osDisk, imageRef, identity, ignoreChanges(['source_image_reference', 'admin_password'])]),
         res('azurerm_virtual_machine_extension', 'winrm', {
@@ -881,7 +881,7 @@ function azureCompute(): Blueprint {
           auto_upgrade_minor_version: true,
           // An encoded command: the script needs no file, and no quoting survives three shells.
           protected_settings: x('jsonencode({ commandToExecute = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${textencodebase64(local.mig_bootstrap_windows, "UTF-16LE")}" })'),
-        }, [ignoreChanges(['protected_settings'])], 'WinRM over HTTPS for Ansible, from the management ranges only.'),
+        }, [ignoreChanges(['protected_settings'])], 'WinRM over HTTPS for Ansible, from the management ranges only.')] : []),
         res('azurerm_managed_disk', 'data', {
           for_each: x('local.mig_data_disks'),
           name: x('each.key'),
@@ -924,8 +924,8 @@ function azureCompute(): Blueprint {
         { type: 'import', comment: 'Replicated Windows VMs, adopted after cutover.', attributes: attrs({ for_each: x(replicated('windows')), to: x('azurerm_windows_virtual_machine.replicated[each.key]'), id: x('each.value.vm_id') }) },
         res('azurerm_linux_virtual_machine', 'replicated', adoptCommon('linux'), [blk('os_disk', { caching: 'ReadWrite' }), adoptIgnore('linux')]),
         res('azurerm_windows_virtual_machine', 'replicated', adoptCommon('windows'), [blk('os_disk', { caching: 'ReadWrite' }), adoptIgnore('windows')]),
-        output('vms', '{ for k, v in merge(azurerm_linux_virtual_machine.vm, azurerm_windows_virtual_machine.vm) : k => { id = v.id, private_ip = v.private_ip_address, ipv6 = [for a in v.private_ip_addresses : a if can(regex(":", a))], os = local.mig_vms[k].os } }', 'Each built VM: id and addresses, for the Ansible inventory.'),
-        ...ansibleInventoryOutput('azure', '{ for k, v in merge(azurerm_linux_virtual_machine.vm, azurerm_windows_virtual_machine.vm, azurerm_linux_virtual_machine.replicated, azurerm_windows_virtual_machine.replicated) : k => { ansible_host = v.private_ip_address } }'),
+        output('vms', `{ for k, v in merge(azurerm_linux_virtual_machine.vm${anyWindows ? ', azurerm_windows_virtual_machine.vm' : ''}) : k => { id = v.id, private_ip = v.private_ip_address, ipv6 = [for a in v.private_ip_addresses : a if can(regex(":", a))], os = local.mig_vms[k].os } }`, 'Each built VM: id and addresses, for the Ansible inventory.'),
+        ...ansibleInventoryOutput('azure', `{ for k, v in merge(azurerm_linux_virtual_machine.vm${anyWindows ? ', azurerm_windows_virtual_machine.vm' : ''}, azurerm_linux_virtual_machine.replicated, azurerm_windows_virtual_machine.replicated) : k => { ansible_host = v.private_ip_address } }`),
       );
       for (const vm of vms) {
         if (vm.licence === 'rhel-byos' || vm.licence === 'sles-byos') {

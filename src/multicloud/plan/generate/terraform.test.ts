@@ -498,3 +498,50 @@ describe('generate/terraform: scopes', () => {
     expect(s.perPlatform.azure?.items.some((i) => i.blueprintId === 'azure_mig_compute') ?? false).toBe(false);
   });
 });
+
+describe('generate/terraform: the apps scope with a shared landing zone (WP-19 delta)', () => {
+  const bucket = { id: 'c:tools:assets', name: 'assets', kind: 'resource', blueprintId: 'res_aws_s3_bucket', values: { 'r.bucket': 'tools-assets', 'r.tags': '{ subnet = local.landing_zone.subnet_ids["prod/app/a"] }' } };
+
+  it('starts a stack with no other consumer with the landing-zone contract item, and rewrites local.landing_zone to var', () => {
+    // tools' only workload is dev01; leave it out by environment, so only the resource component is in the stack.
+    const appPlans = [{ app: itemId('app', 'tools'), status: 'planned', platform: 'aws', variants: { aws: [bucket] } }];
+    const f = fixture({}, { appPlans } as unknown as Partial<Plan>);
+    const s = planToStacks(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'shared', apps: ['tools'], environment: 'prod' });
+    const aws = s.perPlatform.aws!;
+    expect(aws.items.map((i) => i.blueprintId)).toEqual(['aws_mig_landing_zone_variable', 'res_aws_s3_bucket']);
+    expect(aws.items[1]!.values['r.tags']).toBe('{ subnet = var.landing_zone.subnet_ids["prod/app/a"] }');
+    const out = terraformFiles(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'shared', apps: ['tools'], environment: 'prod' });
+    const text = Object.entries(out.files).filter(([k]) => k.startsWith('terraform/aws/') && k.endsWith('.tf')).map(([, t]) => t).join('\n');
+    expect(text).toContain('variable "landing_zone"');
+    expect(text).toContain('var.landing_zone.subnet_ids');
+    expect(/local\.landing_zone/.test(text)).toBe(false);
+    expect(out.findings.filter((x) => x.severity === 'error')).toEqual([]);
+    // With the landing zone included, the reference stays local and no contract item is added.
+    const inc = planToStacks(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'included', apps: ['tools'], environment: 'prod' });
+    expect(inc.perPlatform.aws!.items.some((i) => i.blueprintId === 'aws_mig_landing_zone_variable')).toBe(false);
+  });
+
+  it('never generates an unresolved component, or one left out on the platform', () => {
+    const appPlans = [{
+      app: itemId('app', 'shop'), status: 'planned', platform: 'aws',
+      variants: { aws: [{ ...bucket, id: 'c:shop:a' }, { ...bucket, id: 'c:shop:b', name: 'b', status: 'unresolved' }, { ...bucket, id: 'c:shop:c', name: 'c' }] },
+      leftOut: { aws: ['c:shop:c'] },
+    }];
+    const f = fixture({}, { appPlans } as unknown as Partial<Plan>);
+    const s = planToStacks(f.plan, f.decision, f.design, { scope: 'apps', landingZone: 'shared', apps: ['shop'] });
+    expect(s.perPlatform.aws!.items.filter((i) => i.id.startsWith('c:')).map((i) => i.id)).toEqual(['c:shop:a']);
+    expect(s.findings.some((x) => x.code === 'plan.tf.component-unresolved')).toBe(true);
+  });
+
+  it('leaves a new app\'s non-VM synthetic item out of the compute grid, and extra database services out of the databases grid', () => {
+    const synthetic = workload('portal-web', { app: 'shop', synthetic: true, disposition: 'new' });
+    const appPlans = [{ app: itemId('app', 'shop'), status: 'planned', platform: 'aws', variants: { aws: [{ id: 'c:shop:web', name: 'web', kind: 'pattern', tierPattern: 'paas-web', servers: ['portal-web'], databases: [] }] } }];
+    const f = fixture({}, { appPlans, workloads: [...MIXED.plan.workloads, synthetic] } as unknown as Partial<Plan>);
+    const items = { ...f.decision.items, [synthetic.id]: decisionItem(synthetic.id, 'workload', { platform: 'aws', method: 'rebuild' }) };
+    const decision = { ...f.decision, items };
+    const design = designPlan(f.plan, decision);
+    const s = planToStacks(f.plan, decision, design);
+    expect(rows(itemOf(s.perPlatform.aws, '_mig_compute')?.values.vms).map((r) => r[0])).not.toContain('portal-web');
+    expect(s.findings.some((x) => x.code === 'plan.tf.synthetic-service')).toBe(true);
+  });
+});

@@ -21,6 +21,18 @@
  *   app context, pattern items, resource components,
  *   7 backup, 8 monitoring, app monitoring, relocate, 9 replication
  *
+ * Scopes (addendum A.12.3): `estate` (everything), `landing-zone` (the
+ * foundation only) and `apps` (the selected apps' workloads, databases and
+ * app items). An `apps` stack with `landingZone: 'shared'` emits no landing
+ * zone, identity or connectivity: every consumer reads `var.landing_zone`,
+ * a resource component's `local.landing_zone` references become
+ * `var.landing_zone`, and when no item declares the variable itself the
+ * stack starts with the contract item `<p>_mig_landing_zone_variable` (built
+ * by `withPlanBlueprints`, which `terraformFiles` uses as its lookup).
+ * Components that are unresolved on the platform, or left out there, are not
+ * generated; a new app's synthetic items whose component is not a VM are
+ * built by their pattern item, never as compute rows.
+ *
  * Every item is left out when it would be empty. The items whose blueprints
  * are not written yet (replication, governance, app context and monitoring,
  * patterns) are added only when the blueprint lookup returns them, so this
@@ -36,11 +48,15 @@ import type { Json } from '../../../editor/doc.ts';
 import type { Blueprint } from '../../../kit/blueprint.ts';
 import { envelope, writeSettings } from '../../../kit/settings-file.ts';
 import type { BlueprintLookup, StackItem } from '../../../kit/stack.ts';
-import { planTagValue, renderImageRef, type ImageRef as GridImageRef } from '../../../terraform/blueprints/migration/common.ts';
+import {
+  consumerProvider, landingZoneVariable, planTagValue, renderImageRef, terraformBlock, type ImageRef as GridImageRef, type MigCloud,
+} from '../../../terraform/blueprints/migration/common.ts';
 import { findTerraformBlueprint } from '../../../terraform/blueprints/index.ts';
+import { renderFile } from '../../../terraform/hcl.ts';
 import type { CloudTarget } from '../../../terraform/providers.ts';
 import type { BackendKind } from '../../../terraform/scaffold.ts';
 import { buildStack } from '../../../terraform/stack.ts';
+import { DB_SERVICES_EXTRA } from '../db-catalog-extra.ts';
 import { designWorkloads, isIaasService, licenceKeyOf, siteCidrs } from '../design/index.ts';
 import { networkForEnv, networkZones } from '../design/network.ts';
 import { RELOCATE_HOSTS } from '../design/relocate.ts';
@@ -128,6 +144,8 @@ export interface AppComponentLike {
   readonly settings?: Readonly<Record<string, string>>;
   readonly blueprintId?: string;
   readonly values?: Readonly<Record<string, string>>;
+  /** `unresolved`: no equivalent on this platform (a placeholder): never generated. */
+  readonly status?: 'ok' | 'partial' | 'unresolved' | 'invalid';
 }
 export interface AppPlanLike {
   readonly app: ItemId;
@@ -135,6 +153,8 @@ export interface AppPlanLike {
   readonly platform?: Platform;
   readonly recommendation?: { readonly platform: Platform };
   readonly variants?: Readonly<Partial<Record<Platform, readonly AppComponentLike[]>>>;
+  /** Component ids accepted as left out, per platform. */
+  readonly leftOut?: Readonly<Partial<Record<Platform, readonly string[]>>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +245,69 @@ function declared(bp: Blueprint, values: Readonly<Record<string, string>>): Reco
 const appPlansOf = (plan: Plan): readonly AppPlanLike[] => (plan as Plan & { readonly appPlans?: readonly AppPlanLike[] }).appPlans ?? [];
 
 // ---------------------------------------------------------------------------
+// The shared landing zone's contract, for a stack with no other consumer
+// ---------------------------------------------------------------------------
+
+const MIG_CLOUDS: Readonly<Partial<Record<Platform, MigCloud>>> = { aws: 'aws', azure: 'azure', google: 'google', oci: 'oci' };
+
+/** The id of a platform's landing-zone contract item: `<p>_mig_landing_zone_variable`. */
+export const landingZoneVariableId = (platform: Platform): string => `${BP[platform]}_mig_landing_zone_variable`;
+
+/**
+ * `variable "landing_zone"` (the contract's shape) and the provider block
+ * configured from it, as a blueprint of its own. A `shared` app stack whose
+ * items do not declare the variable themselves (only resource components,
+ * say) starts with it, so `var.landing_zone` is always declared with its
+ * real type. It builds nothing.
+ */
+function landingZoneVariableBlueprint(platform: Platform): Blueprint | undefined {
+  const cloud = MIG_CLOUDS[platform];
+  if (!cloud) return undefined;
+  return {
+    id: landingZoneVariableId(platform),
+    label: 'Landing zone (shared)',
+    description: 'The landing zone of the landing-zone project, as var.landing_zone: this stack builds in it and creates none of its own.',
+    inputs: [],
+    emits: [],
+    build: () => ({ files: { 'main.tf': renderFile([terraformBlock([TARGET[platform]]), landingZoneVariable(cloud), consumerProvider(cloud)]) } }),
+  };
+}
+
+const LZ_VARIABLE_BLUEPRINTS: ReadonlyMap<string, Blueprint> = new Map(
+  PLATFORM_VALUES.flatMap((p) => {
+    const b = landingZoneVariableBlueprint(p);
+    return b ? [[b.id, b] as const] : [];
+  }),
+);
+
+/** A lookup that also knows the planner's own landing-zone contract items. */
+export function withPlanBlueprints(lookup: BlueprintLookup = findTerraformBlueprint): BlueprintLookup {
+  return (id) => LZ_VARIABLE_BLUEPRINTS.get(id) ?? lookup(id);
+}
+
+/** `local.landing_zone` → `var.landing_zone`, for a resource component's values in a shared stack. */
+const toSharedReference = (values: Readonly<Record<string, string>>): Record<string, string> =>
+  Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.replace(/\blocal\.landing_zone\b/g, 'var.landing_zone')]));
+
+/**
+ * Workload names that are synthetic items of new apps whose component on this
+ * platform is not a VM (paas-web, serverless, containers …): the component's
+ * pattern item builds them, never the compute grid.
+ */
+function syntheticServices(plan: Plan, platform: Platform): Map<string, string> {
+  const out = new Map<string, string>();
+  const synthetic = new Set(plan.workloads.filter((w) => w.synthetic).map((w) => w.name));
+  if (synthetic.size === 0) return out;
+  for (const ap of appPlansOf(plan)) {
+    for (const c of ap.variants?.[platform] ?? []) {
+      if (c.kind !== 'pattern' || !c.tierPattern || c.tierPattern === 'vm') continue;
+      for (const n of c.servers ?? []) if (synthetic.has(n)) out.set(n, c.tierPattern);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // The per-platform context
 // ---------------------------------------------------------------------------
 
@@ -276,8 +359,17 @@ function contextFor(plan: Plan, decision: PlanDecision, design: TargetDesign, pd
     : null;
 
   const compute: ComputeTarget[] = [];
+  const services = syntheticServices(plan, platform);
   for (const c of pd.compute) {
     const method = decision.items[c.workload]?.method;
+    const w = workloadById.get(c.workload);
+    const service = w ? services.get(w.name) : undefined;
+    if (service) {
+      if (inScopeWorkload(w, options, apps)) {
+        findings.push(info('plan.tf.synthetic-service', `${w!.app}: ${w!.name} stands for the ${service} component, which its pattern item builds; it is not a VM in the compute grid.`));
+      }
+      continue;
+    }
     if (method === 'managed-db') {
       // The source host of a database that moves to a managed service is not rebuilt anywhere.
       findings.push(info('plan.tf.managed-db-host', `${workloadById.get(c.workload)?.name ?? c.workload}: its database moves to a managed service, so it is not a compute row.`));
@@ -669,6 +761,11 @@ function databaseRows(ctx: Ctx): (string | number)[][] {
     const db = ctx.dbById.get(t.database);
     const name = db?.name ?? t.database;
     if (toOracleAt(t)) continue;
+    if (t.service in DB_SERVICES_EXTRA) {
+      // Caches, document and search stores are not in the databases grid: their pattern item, or a resource component, builds them.
+      ctx.findings.push(info('plan.tf.extra-db-service', `${name} (${t.service}) is not in the migration databases grid; its pattern item builds it, or add it as a resource component (Add any service).`));
+      continue;
+    }
     if (t.service === 'google-odb-basedb') {
       ctx.manual.push(`${name}: Base Database on Oracle Database@Google Cloud (google_oracle_database_db_system) is not in Terraform here; create it in the console or with gcloud oracle-database, on the ODB network, before the data move.`);
       continue;
@@ -843,7 +940,15 @@ function appsHere(ctx: Ctx, options: PlanToStacksOptions): { app: App; component
     if (wanted && !wanted.has(app.id) && !wanted.has(app.name)) continue;
     const ap = plans.get(app.id);
     const platform = ap?.platform ?? ap?.recommendation?.platform;
-    const components = ap && platform === ctx.platform ? (ap.variants?.[ctx.platform] ?? []) : [];
+    const leftOut = new Set(ap?.leftOut?.[ctx.platform] ?? []);
+    const components = (ap && platform === ctx.platform ? (ap.variants?.[ctx.platform] ?? []) : []).filter((c) => {
+      if (leftOut.has(c.id)) return false;
+      if (c.status === 'unresolved') {
+        ctx.findings.push(error('plan.tf.component-unresolved', `${app.name}: the ${c.name} component has no equivalent on ${PLATFORM_LABELS[ctx.platform]}, so it is not generated; replace it or leave it out.`, { path: c.id }));
+        return false;
+      }
+      return true;
+    });
     if (ctx.scope === 'estate') {
       // The estate stack carries an app's own items only once its plan is saved.
       if (!ap || ap.status === 'draft' || platform !== ctx.platform || components.length === 0) continue;
@@ -886,7 +991,8 @@ function appItems(ctx: Ctx, options: PlanToStacksOptions): { head: StackItem[]; 
         ctx.findings.push(error('plan.tf.resource-component-unknown', `${app.name}: the ${c.name} component's blueprint ${c.blueprintId ?? '(none)'} is not one the Terraform page has, so it is not in the stack.`));
         continue;
       }
-      head.push({ id: c.id, blueprintId: c.blueprintId, label: `${app.name} ${c.name}`, values: { ...(c.values ?? {}) } });
+      // In a shared stack the landing zone is var.landing_zone: a reference to the contract follows it.
+      head.push({ id: c.id, blueprintId: c.blueprintId, label: `${app.name} ${c.name}`, values: ctx.shared ? toSharedReference(c.values ?? {}) : { ...(c.values ?? {}) } });
     }
     const mon = optional(ctx, `app:${slug}:monitoring`, `${ctx.bp}_app_monitoring`, `${app.name} monitoring`, common);
     if (mon) monitoring.push(mon);
@@ -1007,6 +1113,11 @@ export function planToStacks(plan: Plan, decision: PlanDecision, design: TargetD
 
     const items = [lz, identity, connectivity, governance, compute, databases, oracleAt, ...app.head, backup, monitoring, ...app.monitoring, relocate, replication]
       .filter((i): i is StackItem => i !== null);
+    if (ctx.shared && items.length > 0 && LZ_VARIABLE_BLUEPRINTS.has(landingZoneVariableId(platform))
+      && !items.some((i) => i.values.landing_zone_source === 'variables')) {
+      // Nothing here declares var.landing_zone (only resource components, say): the contract item does.
+      items.unshift(item(ctx, 'landing-zone-variable', landingZoneVariableId(platform), 'Landing zone (shared)', {}));
+    }
     if (items.length === 0) {
       findings.push(info('plan.tf.empty-platform', `${PLATFORM_LABELS[platform]}: nothing in this plan is built by Terraform there, so there is no stack for it.`));
       continue;
@@ -1181,7 +1292,7 @@ export function terraformFiles(
   options: PlanToStacksOptions = {},
 ): { files: Record<string, string>; findings: Finding[]; envelopes: GeneratedProject['handoffs']['terraform'] } {
   const stacks = planToStacks(plan, decision, design, options);
-  const lookup = options.lookup ?? findTerraformBlueprint;
+  const lookup = withPlanBlueprints(options.lookup ?? findTerraformBlueprint);
   const findings: Finding[] = [...stacks.findings];
   const files: Record<string, string> = {};
   const envelopes: Partial<Record<Platform, TerraformSettingsEnvelope>> = {};
