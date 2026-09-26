@@ -438,7 +438,7 @@ function Invoke-AtkMain {
 Export-ModuleMember -Function @(
   'Initialize-Atk', 'Invoke-AtkMain', 'Get-AtkItems', 'Get-AtkItem', 'Get-AtkName', 'Invoke-AtkStep', 'Invoke-AtkRetry',
   'Wait-AtkUntil', 'Get-AtkSecret', 'Write-AtkEvent', 'Set-AtkOutcome', 'Enter-AtkLock', 'Assert-AtkGate', 'Assert-AtkTool',
-  'Get-AtkId', 'Set-AtkId', 'New-AtkTempFile', 'Write-AtkLog', 'Hide-AtkSecret', 'Get-AtkNow'
+  'Get-AtkId', 'Set-AtkId', 'New-AtkTempFile', 'Write-AtkLog', 'Hide-AtkSecret', 'Get-AtkNow', 'Stop-Atk'
 )
 `;
 }

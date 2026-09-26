@@ -247,7 +247,7 @@ function shLogicalLines(text: string): { line: string; n: number }[] {
 }
 
 /** A bash line that only prints or logs text (the command appears inside a message). */
-const SH_MESSAGE = /^\s*(echo|printf|atk_log|atk_die|atk_usage|atk_event|atk_done|atk_skip|atk_fail|local\s+\w+=["']|\w+=["'])/;
+const SH_MESSAGE = /^\s*(echo|printf|check_command|check_pwsh_module|check_collection|check_python_module|atk_need|atk_log|atk_die|atk_usage|atk_event|atk_done|atk_skip|atk_fail|local\s+\w+=["']|\w+=["'])/;
 const PS_MESSAGE = /^\s*(Write-(Host|Output|Verbose|Warning|AtkLog|AtkEvent)|Set-AtkOutcome|#|throw\b|'[^']*'\s*$|"[^"]*"\s*$)/;
 
 /**

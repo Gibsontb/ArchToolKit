@@ -29,6 +29,11 @@ import { DB_MOVE_PATH_VALUES, MOVE_PATH_VALUES } from '../options.js';
 import { shScript } from './lib-sh.js';
                                                             
                                                  
+import { GENERATORS as HCX } from './paths/hcx.js';
+import { GENERATORS as REBUILD } from './paths/rebuild.js';
+import { GENERATORS as VCF_CONVERTER } from './paths/vcf-converter.js';
+import { GENERATORS as VCF_IMPORT } from './paths/vcf-import.js';
+import { GENERATORS as XVC } from './paths/xvc.js';
 
                                                                                       
 
@@ -232,7 +237,7 @@ ${cases}
 // ---------------------------------------------------------------------------
 
 /** The generators built into the kit. WP-11b/c/d and WP-17 modules are added here as they land. */
-const BUILT_IN                           = [];
+const BUILT_IN                           = [...HCX, ...XVC, ...VCF_IMPORT, ...VCF_CONVERTER, ...REBUILD];
 
 /** The registry `executionKit` uses by default. */
 export const PATH_REGISTRY               = createRegistry(BUILT_IN);

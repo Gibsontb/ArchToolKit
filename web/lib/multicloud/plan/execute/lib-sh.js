@@ -500,7 +500,9 @@ atk_run() {
   printf -v shown '%q ' "$@"
   shown="$(_atk_redact_text "$\{shown% }")"
   if (( ATK_DRY_RUN )); then
-    if [[ -p /dev/stdin ]]; then cat > /dev/null; fi
+    # Drain piped input so the writer sees no broken pipe, but never wait on
+    # a pipe that stays open (wsl.exe, CI runners).
+    if [[ -p /dev/stdin ]] && command -v timeout > /dev/null; then timeout 2 cat > /dev/null 2>&1 || true; fi
     atk_log "dry-run, not run: $shown"
     return 0
   fi

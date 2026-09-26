@@ -29,6 +29,11 @@ import type { ExecPath } from './contract.ts';
 import { shScript } from './lib-sh.ts';
 import type { Manifest, ManifestItem } from './manifest.ts';
 import type { PathResolution } from './paths.ts';
+import { GENERATORS as HCX } from './paths/hcx.ts';
+import { GENERATORS as REBUILD } from './paths/rebuild.ts';
+import { GENERATORS as VCF_CONVERTER } from './paths/vcf-converter.ts';
+import { GENERATORS as VCF_IMPORT } from './paths/vcf-import.ts';
+import { GENERATORS as XVC } from './paths/xvc.ts';
 
 export type PackageId = 'WP-11a' | 'WP-11b' | 'WP-11c' | 'WP-11d' | 'WP-17' | 'WP-20';
 
@@ -232,7 +237,7 @@ ${cases}
 // ---------------------------------------------------------------------------
 
 /** The generators built into the kit. WP-11b/c/d and WP-17 modules are added here as they land. */
-const BUILT_IN: readonly PathGenerator[] = [];
+const BUILT_IN: readonly PathGenerator[] = [...HCX, ...XVC, ...VCF_IMPORT, ...VCF_CONVERTER, ...REBUILD];
 
 /** The registry `executionKit` uses by default. */
 export const PATH_REGISTRY: PathRegistry = createRegistry(BUILT_IN);
