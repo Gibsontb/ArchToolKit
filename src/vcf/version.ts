@@ -55,6 +55,17 @@ export function atLeastVcfVersion(version: string, minimum: string): boolean {
  * This settles a discrepancy the toolkit previously recorded as unresolved: a
  * real 9.1.0.0 spec was observed carrying 6 addresses where the docs then said
  * 5. The rule is a version boundary, not a contradiction.
+ *
+ * This is the toolkit's one Automation-pool rule: the sizing engine's IP
+ * count, the sizing-to-spec handoff (bridge.ts) and the Spec Builder all call
+ * it. Provenance: the current "First VCF Instance FQDNs and IP addresses" page
+ * (Sep 2026) still says 5 (3 nodes + 2 buffer) with no version split, so the
+ * 6-from-9.1.0.400 half is unconfirmed on current TechDocs; the Spec Builder's
+ * validator accepts 5 or 6 from 9.1.0.400. The 9.1 and 9.1.1 Planning and
+ * Preparation Workbooks do not settle it: their Deploy Management Domain sample
+ * range is 5 addresses ("4 are used for active nodes, and 1 is used when
+ * recreating a node during rolling upgrades") while their IP reference table
+ * lists a 6-address range.
  */
 export function automationIpCount(version: string): number {
   return atLeastVcfVersion(version, AUTOMATION_SIX_IP_VERSION) ? 6 : 5;

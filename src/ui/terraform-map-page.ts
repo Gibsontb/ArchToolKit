@@ -226,6 +226,11 @@ export function mountTerraformMapPage(root: HTMLElement): void {
     ),
   );
   draw();
+
+  // `#map:aws-networking` opens the map on one section — the reference panel
+  // under generated output links here, and so does the old page's redirect.
+  const section = (globalThis.location?.hash ?? '').split(':')[1];
+  if (section) setTimeout(() => globalThis.document?.getElementById(decodeURIComponent(section))?.scrollIntoView({ block: 'start' }), 0);
 }
 
 // Mounted by terraform-page.ts as a tab. It was a page of its own until a

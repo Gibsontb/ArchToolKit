@@ -18,6 +18,8 @@ import { scopedKey, type Inventory, type InventoryHost, type VmkernelAdapter } f
 import { parseIPv4, formatIPv4, maskToPrefix } from '../core/net.ts';
 import { parseCidrAny, formatCidrAny } from '../core/ip.ts';
 import type { DeploymentScenario } from './scenarios.ts';
+import { automationIpCount } from './version.ts';
+import { fullVcfVersion } from './sizing-data.ts';
 
 /** The deployment scenario a sizing path implies, where one does. */
 export function scenarioForPath(path: SizingInput['path']): DeploymentScenario | undefined {
@@ -45,8 +47,14 @@ export function scenarioForPath(path: SizingInput['path']): DeploymentScenario |
 export function sizingToPlan(result: SizingResult): Partial<DeploymentPlan> {
   const { input } = result;
   const scenario = scenarioForPath(input.path);
+  // One rule for the Automation pool: version.ts `automationIpCount`, applied
+  // to the same target version the builder is handed, so the handoff never
+  // overrides the builder's own count.
+  const version = fullVcfVersion(input.version);
+  const automationIncluded = input.includeAutomation !== false && (input.instanceRole ?? 'first') === 'first';
 
   return {
+    ...(input.version ? { version } : {}),
     hostCount: input.hostCount,
     storage: input.storage,
     // The spec builder's profile is the HA split only; the sizing profile also
@@ -62,7 +70,7 @@ export function sizingToPlan(result: SizingResult): Partial<DeploymentPlan> {
     // Counts come from the sizing model so the emitted pools match the sizing
     // that justified them.
     vcfmsPool: { count: result.ips.vcfmsRecommended },
-    automationPool: { count: result.ips.automationIps },
+    ...(automationIncluded ? { automationPool: { count: automationIpCount(version) } } : {}),
     tepPool: { count: result.ips.tepIps },
   };
 }

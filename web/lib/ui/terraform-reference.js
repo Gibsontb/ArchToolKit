@@ -70,7 +70,7 @@ export function referencePanel(platform        , files                          
         el('a', {
           class: 'btn btn-small',
           text: 'Open on the map →',
-          attrs: { href: `terraform-map.html#${first.sectionId}`, title: 'The whole section, with everything around it' },
+          attrs: { href: `terraform.html#map:${first.sectionId}`, title: 'The whole section, with everything around it' },
         }),
       );
     }

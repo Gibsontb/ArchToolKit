@@ -27,6 +27,11 @@
  *  - **Domains follow vCenters** by default: each source vCenter becomes a
  *    workload domain, since that is the boundary operations already runs to.
  *  - **N+1 per cluster,** and no cluster over 64 hosts — a larger demand splits.
+ *  - **Every workload domain costs the management domain** a vCenter (sized by
+ *    its hosts and VMs) and, unless NSX is shared, an NSX Manager cluster.
+ *  - **vSAN ESA or OSA** cannot be read from RVTools; it is an option, per
+ *    cluster if need be, and OSA is never sized with ESA's Auto-RAID.
+ *  - **Growth applies everywhere,** the management domain's own workloads too.
  */
 
 import { error, warning, info, type Finding } from '../core/findings.ts';
@@ -42,8 +47,25 @@ import {
   type InventoryVm,
   type ClusterRollup,
 } from '../vmware/inventory.ts';
-import { LICENSE_MIN_CORES_PER_CPU, raidOverhead, VSAN_SLACK_WITH_FAULT_DOMAINS } from './sizing-data.ts';
-import { minimumHosts, type HostSpec, type SizingInput, type StorageType } from './sizing.ts';
+import {
+  LICENSE_MIN_CORES_PER_CPU,
+  addFootprints,
+  ZERO_FOOTPRINT,
+  type DeploymentProfile,
+  type Footprint,
+  type NsxManagerSize,
+  type VcenterSize,
+} from './sizing-data.ts';
+import {
+  fitCluster,
+  minimumHosts,
+  recommendHostCount,
+  sizeWorkloadDomain,
+  type HostSpec,
+  type SizingInput,
+  type StorageType,
+  type WorkloadDomainInput,
+} from './sizing.ts';
 
 export interface HostProfile extends HostSpec {
   /** "UCSX-210C-M7 · 2 × 32-core Platinum 8462Y+ · 2048 GiB". */
@@ -107,6 +129,20 @@ export interface EstatePlanOptions {
   readonly workloadStorage?: StorageType | 'same-as-source';
   readonly grouping?: DomainGrouping;
   readonly maxHostsPerCluster?: number;
+  /** What a vSAN source becomes: RVTools cannot tell ESA from OSA. Default 'esa'. */
+  readonly vsanArchitecture?: 'esa' | 'osa';
+  /** Per source cluster (by key), the target principal storage. Wins over everything else. */
+  readonly clusterStorage?: Readonly<Record<string, StorageType>>;
+  /** Each workload domain's NSX: its own Manager cluster (default), or all but the first share. */
+  readonly nsxPerDomain?: 'dedicated' | 'shared';
+  /** NSX Manager size for workload domains. Default medium (3 nodes). */
+  readonly nsxManagerSize?: NsxManagerSize;
+  /** Management-domain profile. Default simple. */
+  readonly profile?: DeploymentProfile;
+  /** Target VCF version. Default 9.1.1.0. */
+  readonly version?: string;
+  /** Host failures per cluster: 0, 1 or 2. Overrides reserveHostFailure. */
+  readonly hostFailures?: 0 | 1 | 2;
 }
 
 export interface PlannedCluster {
@@ -137,6 +173,10 @@ export interface PlannedDomain {
   readonly datacenter?: string;
   readonly clusters: readonly PlannedCluster[];
   readonly hosts: number;
+  /** Workload domains: the vCenter they get. */
+  readonly vcenterSize?: VcenterSize;
+  /** Workload domains: what they place in the management domain (vCenter, NSX Managers). */
+  readonly managementOverhead?: Footprint;
 }
 
 export interface EstatePlan {
@@ -148,7 +188,9 @@ export interface EstatePlan {
   readonly physicalCores: number;
   readonly billableCores: number;
   readonly findings: readonly Finding[];
-  readonly options: Required<Omit<EstatePlanOptions, 'selected' | 'managementSource'>> & {
+  readonly options: Required<Omit<EstatePlanOptions, 'selected' | 'managementSource' | 'clusterStorage' | 'hostFailures'>> & {
+    readonly clusterStorage: Readonly<Record<string, StorageType>>;
+    readonly hostFailures?: 0 | 1 | 2;
     readonly selected: readonly string[];
     readonly managementSource: string;
   };
@@ -301,6 +343,13 @@ interface Settings {
   workloadStorage: StorageType | 'same-as-source';
   grouping: DomainGrouping;
   maxHostsPerCluster: number;
+  vsanArchitecture: 'esa' | 'osa';
+  nsxPerDomain: 'dedicated' | 'shared';
+  nsxManagerSize: NsxManagerSize;
+  profile: DeploymentProfile;
+  version: string;
+  hostFailures?: 0 | 1 | 2;
+  clusterStorage?: Readonly<Record<string, StorageType>>;
 }
 
 const DEFAULTS: Settings = {
@@ -313,7 +362,25 @@ const DEFAULTS: Settings = {
   workloadStorage: 'same-as-source',
   grouping: 'vcenter',
   maxHostsPerCluster: 64,
+  vsanArchitecture: 'esa',
+  nsxPerDomain: 'dedicated',
+  nsxManagerSize: 'medium',
+  profile: 'simple',
+  version: '9.1.1.0',
 };
+
+function failuresOf(o: Settings): number {
+  return o.hostFailures ?? (o.reserveHostFailure ? 1 : 0);
+}
+
+/** A vSAN source becomes ESA or OSA per the option; a per-cluster choice wins. */
+function targetStorage(c: SourceCluster, o: Settings): StorageType {
+  const explicit = o.clusterStorage?.[c.key];
+  if (explicit) return explicit;
+  if (o.workloadStorage !== 'same-as-source') return o.workloadStorage;
+  if (isVsan(c.storage)) return o.vsanArchitecture === 'osa' ? 'vsan-osa' : 'vsan-esa';
+  return c.storage;
+}
 
 function isVsan(storage: StorageType): boolean {
   return storage === 'vsan-esa' || storage === 'vsan-osa';
@@ -326,57 +393,28 @@ function sizeCluster(
   storage: StorageType,
   o: Settings,
 ): Omit<PlannedCluster, 'name' | 'sources' | 'rdmGib' | 'sourceHosts'> {
-  const coresPerHost = host.cpuSockets * host.coresPerCpu;
   const vcpu = demand.vcpu * (1 + o.growth);
   const ramGib = demand.ramGib * (1 + o.growth);
   const storageGib = demand.storageGib * (1 + o.growth);
-  const spare = o.reserveHostFailure ? 1 : 0;
-
-  const byCpu = coresPerHost > 0 ? Math.ceil(vcpu / (o.cpuRatio * coresPerHost)) + spare : 0;
-  const byMemory = host.ramGib > 0 ? Math.ceil(ramGib / (host.ramGib * o.memoryCeiling)) + spare : 0;
-
-  let byStorage = 0;
-  let raid: string | undefined;
-  if (isVsan(storage) && storageGib > 0) {
-    if (host.rawStorageGib > 0) {
-      // RAID overhead depends on the host count, so search upward.
-      for (let n = 3; n <= 4096; n += 1) {
-        const overhead = raidOverhead('standard', n);
-        const needed = (storageGib * overhead.multiplier) / (1 - VSAN_SLACK_WITH_FAULT_DOMAINS);
-        if ((n - spare) * host.rawStorageGib >= needed) {
-          byStorage = n;
-          raid = overhead.raid;
-          break;
-        }
-      }
-    } else {
-      raid = raidOverhead('standard', Math.max(byCpu, byMemory)).raid;
-    }
-  }
-
-  const minimum = minimumHosts({ path: 'brownfield-import', storage, topology: 'standard' }).hosts;
-  const hosts = Math.max(byCpu, byMemory, byStorage, minimum);
-  const binding =
-    hosts === minimum && minimum > Math.max(byCpu, byMemory, byStorage)
-      ? 'minimum'
-      : hosts === byStorage && byStorage >= Math.max(byCpu, byMemory)
-        ? 'storage'
-        : hosts === byMemory && byMemory >= byCpu
-          ? 'memory'
-          : 'cpu';
-
+  const minimum = minimumHosts({ path: 'brownfield-import', storage, topology: 'standard', role: 'workload' }).hosts;
+  // The sizing engine's cluster fit: vSAN ESA Auto-RAID or OSA policy, one
+  // rebuild reserve (the failure hosts), no blanket slack.
+  const fit = fitCluster(
+    { vcpu, ramGib, storageGib },
+    { host, storage, topology: 'standard', cpuRatio: o.cpuRatio, memoryCeiling: o.memoryCeiling, hostFailures: failuresOf(o), minimum },
+  );
   return {
     vcpu,
     ramGib,
     storageGib,
     storage,
-    byCpu,
-    byMemory,
-    byStorage,
+    byCpu: fit.byCpu,
+    byMemory: fit.byMemory,
+    byStorage: fit.byStorage,
     minimum,
-    hosts,
-    binding,
-    ...(raid ? { raid } : {}),
+    hosts: fit.hosts,
+    binding: fit.binding,
+    ...(fit.raid ? { raid: fit.raid } : {}),
   };
 }
 
@@ -389,7 +427,7 @@ function demandOf(c: SourceCluster, o: Settings): { vcpu: number; ramGib: number
 }
 
 function planCluster(c: SourceCluster, host: HostSpec, o: Settings): PlannedCluster[] {
-  const storage = o.workloadStorage === 'same-as-source' ? c.storage : o.workloadStorage;
+  const storage = targetStorage(c, o);
   const demand = demandOf(c, o);
   const whole = sizeCluster(demand, host, storage, o);
   // Past the cluster maximum, the demand splits evenly across as many
@@ -451,36 +489,45 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
   let management: SizingInput;
   if (mgmtCluster) {
     const host = mgmtCluster.weakestHost ?? options.host;
-    const external = !isVsan(mgmtCluster.storage);
+    const storage = targetStorage(mgmtCluster, { ...o, workloadStorage: 'same-as-source' });
+    const external = !isVsan(storage);
+    const grow = 1 + o.growth;
     management = {
       path: 'brownfield-converge',
-      profile: 'simple',
+      profile: o.profile,
+      version: o.version,
       instanceCount: 1,
       topology: 'standard',
-      storage: mgmtCluster.storage,
+      storage,
       hostCount: mgmtCluster.hostCount,
       host: { ...host, rawStorageGib: external ? 0 : (mgmtCluster.vsanRawPerHostGib ?? host.rawStorageGib) },
-      // Whatever already runs on the converged cluster stays there.
-      workloadVcpu: mgmtCluster.vcpu,
-      workloadRamGib: mgmtCluster.ramGib,
-      workloadCapacityGib: mgmtCluster.usedGib,
+      // Whatever already runs on the converged cluster stays there, and grows.
+      workloadVcpu: (mgmtCluster.vcpu + (o.includePoweredOff ? mgmtCluster.offVcpu : 0)) * grow,
+      workloadRamGib: (mgmtCluster.ramGib + (o.includePoweredOff ? mgmtCluster.offRamGib : 0)) * grow,
+      workloadCapacityGib: (o.storageBasis === 'provisioned' ? mgmtCluster.provisionedGib : mgmtCluster.usedGib) * grow,
       reserveHostFailure: o.reserveHostFailure,
+      ...(o.hostFailures !== undefined ? { hostFailuresToTolerate: o.hostFailures } : {}),
     };
   } else {
     // New management hosts store on what the estate already runs: VCF 9 takes
     // NFS v3 or VMFS on FC for a new management domain as well as vSAN.
     const byStorage = new Map<StorageType, number>();
-    for (const c of inScope) byStorage.set(c.storage, (byStorage.get(c.storage) ?? 0) + c.hostCount);
+    for (const c of inScope) {
+      const t = targetStorage(c, { ...o, workloadStorage: 'same-as-source' });
+      byStorage.set(t, (byStorage.get(t) ?? 0) + c.hostCount);
+    }
     const storage = [...byStorage.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'vsan-esa';
     management = {
       path: 'greenfield',
-      profile: 'simple',
+      profile: o.profile,
+      version: o.version,
       instanceCount: 1,
       topology: 'standard',
       storage,
-      hostCount: minimumHosts({ path: 'greenfield', storage, topology: 'standard' }).hosts,
+      hostCount: minimumHosts({ path: 'greenfield', storage, topology: 'standard', profile: o.profile }).hosts,
       host: isVsan(storage) ? o.host : { ...o.host, rawStorageGib: 0 },
       reserveHostFailure: o.reserveHostFailure,
+      ...(o.hostFailures !== undefined ? { hostFailuresToTolerate: o.hostFailures } : {}),
     };
   }
 
@@ -540,6 +587,42 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
     index += 1;
   }
 
+  // --- workload domains' management load, into the management domain ---------
+  const workloadDomainList = domains.filter((d) => d.kind === 'workload');
+  const wldInputs: WorkloadDomainInput[] = workloadDomainList.map((d, i) => {
+    const vms = d.clusters.reduce(
+      (s, c) => s + (c.part && c.part.n > 1 ? 0 : c.sources.reduce((t, key) => t + (all.find((x) => x.key === key)?.vmCount ?? 0), 0)),
+      0,
+    );
+    return {
+      name: d.name,
+      hosts: d.hosts,
+      vms: Math.ceil(vms * (1 + o.growth)),
+      nsx: o.nsxPerDomain === 'shared' && i > 0 ? 'shared' : 'dedicated',
+      nsxSize: o.nsxManagerSize,
+    };
+  });
+  if (wldInputs.length > 0) {
+    management = { ...management, workloadDomains: wldInputs };
+    let provider: string | undefined;
+    wldInputs.forEach((w, i) => {
+      const r = sizeWorkloadDomain(w, { version: o.version, index: i, ...(provider ? { nsxProvider: provider } : {}) });
+      if (w.nsx === 'dedicated' && !provider) provider = r.name;
+      const at = domains.findIndex((d) => d.kind === 'workload' && d.name === w.name);
+      const d = domains[at];
+      if (d) domains[at] = { ...d, vcenterSize: r.vcenterSize, managementOverhead: r.overheadFootprint };
+    });
+  }
+  // New management hosts: as many as the management domain now needs, not just the minimum.
+  if (!mgmtCluster) {
+    const hosts = recommendHostCount(management) ?? management.hostCount;
+    management = { ...management, hostCount: hosts };
+    const m = domains[0];
+    const c0 = m?.clusters[0];
+    if (m && c0) domains[0] = { ...m, hosts, clusters: [{ ...c0, hosts, binding: hosts > c0.minimum ? 'cpu' : 'minimum' }] };
+  }
+  const overheadTotal = domains.reduce((s, d) => addFootprints(s, d.managementOverhead ?? ZERO_FOOTPRINT), ZERO_FOOTPRINT);
+
   // --- totals ---------------------------------------------------------------
   const workloadHosts = domains.filter((d) => d.kind === 'workload').reduce((s, d) => s + d.hosts, 0);
   const newHosts = workloadHosts + (mgmtCluster ? 0 : management.hostCount);
@@ -556,6 +639,25 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
   const sourceHosts = inScope.reduce((s, c) => s + c.hostCount, 0);
 
   // --- findings -------------------------------------------------------------
+  if (workloadDomainList.length > 0) {
+    findings.push(
+      info(
+        'estate.plan.workload-domain-overhead',
+        `${workloadDomainList.length} workload domain(s) place ${Math.round(overheadTotal.vcpu)} vCPU and ${Math.round(overheadTotal.ramGib)} GiB in the management domain: a vCenter each${o.nsxPerDomain === 'dedicated' ? ' and an NSX Manager cluster each' : ', and one shared NSX Manager cluster'}.`,
+        { source: 'TechDocs: vCenter 9.1 hardware requirements; NSX Manager sizes unconfirmed for 9.1' },
+      ),
+    );
+  }
+  const vsanSources = inScope.filter((c) => isVsan(c.storage) && !o.clusterStorage?.[c.key]);
+  if (vsanSources.length > 0 && options.vsanArchitecture === undefined && o.workloadStorage === 'same-as-source') {
+    findings.push(
+      info(
+        'estate.plan.vsan-architecture-assumed',
+        `${vsanSources.length} cluster(s) run vSAN, and RVTools cannot tell ESA from OSA; they are planned as ESA.`,
+        { remediation: 'Set the vSAN architecture (or a per-cluster storage) if any is OSA: OSA has no Auto-RAID and needs more raw capacity.' },
+      ),
+    );
+  }
   if (inScope.length === 0) {
     findings.push(warning('estate.plan.nothing-selected', 'No source clusters are in scope, so there is nothing to plan.'));
   }
@@ -639,7 +741,7 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
   findings.push(
     info(
       'estate.plan.basis',
-      `Sized on ${o.includePoweredOff ? 'all' : 'running'} workloads' allocated vCPU and memory at ${o.cpuRatio}:1 vCPU per core and ${Math.round(o.memoryCeiling * 100)}% of memory, ${o.storageBasis} VMDK storage, ${Math.round(o.growth * 100)}% growth${o.reserveHostFailure ? ', N+1 per cluster' : ''}.`,
+      `Sized on ${o.includePoweredOff ? 'all' : 'running'} workloads' allocated vCPU and memory at ${o.cpuRatio}:1 vCPU per core and ${Math.round(o.memoryCeiling * 100)}% of memory, ${o.storageBasis} VMDK storage, ${Math.round(o.growth * 100)}% growth${failuresOf(o) > 0 ? `, N+${failuresOf(o)} per cluster` : ''} (management domain included), one vSAN rebuild reserve and no blanket slack.`,
       { source: 'ArchToolKit estate plan' },
     ),
   );
@@ -658,6 +760,7 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
       host: o.host,
       selected: inScope.map((c) => c.key),
       managementSource,
+      clusterStorage: options.clusterStorage ?? {},
     } as EstatePlan['options'],
   };
 }

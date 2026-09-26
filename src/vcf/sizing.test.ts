@@ -69,12 +69,16 @@ describe('fleetFootprint', () => {
 });
 
 describe('minimumHosts', () => {
-  it('requires 4 hosts for greenfield vSAN in a single AZ', () => {
-    expect(minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'standard' }).hosts).toBe(4);
+  // Was 4 for every profile; the Single-Rack Cluster Model (S4) gives Simple 3, HA 4.
+  it('requires 3 hosts for a Simple and 4 for an HA vSAN management domain', () => {
+    expect(minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'standard' }).hosts).toBe(3);
+    expect(minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'standard', profile: 'ha-small' }).hosts).toBe(4);
   });
 
-  it('requires 8 hosts for a greenfield stretched cluster', () => {
-    expect(minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'stretched' }).hosts).toBe(8);
+  // Was 8 for every profile; the Stretched Cluster Model (S5) gives Simple 6, HA 8.
+  it('requires 6 (Simple) or 8 (HA) hosts for a stretched management domain', () => {
+    expect(minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'stretched' }).hosts).toBe(6);
+    expect(minimumHosts({ path: 'greenfield', storage: 'vsan-esa', topology: 'stretched', profile: 'ha-medium' }).hosts).toBe(8);
   });
 
   it('allows 3 hosts when converging an existing vSAN estate', () => {
@@ -207,9 +211,12 @@ describe('sizeDeployment', () => {
     }
   });
 
-  it('still wants four hosts for a new vSAN management domain', () => {
-    const codes = sizeDeployment(baseInput({ storage: 'vsan-esa', hostCount: 3 })).findings.map((f) => f.code);
-    expect(codes).toContain('vcf.hosts.below-minimum');
+  // Was "still wants four hosts" for Simple; only HA needs 4 (S4).
+  it('wants four hosts for a new HA vSAN management domain, three for Simple', () => {
+    const ha = sizeDeployment(baseInput({ profile: 'ha-small', storage: 'vsan-esa', hostCount: 3 })).findings.map((f) => f.code);
+    expect(ha).toContain('vcf.hosts.below-minimum');
+    const simple = sizeDeployment(baseInput({ storage: 'vsan-esa', hostCount: 3 })).findings.map((f) => f.code);
+    expect(simple).not.toContain('vcf.hosts.below-minimum');
   });
 
   it('accepts external storage on the converge path', () => {
@@ -245,10 +252,11 @@ describe('sizeDeployment', () => {
     expect(result.memoryUtilization).toBeGreaterThan(1);
   });
 
-  it('applies RAID overhead and slack to the storage requirement', () => {
+  // Was ((7448 + 10000) x 1.5) / 0.75: the 25% slack double-counted the N+1 rebuild reserve.
+  it('applies RAID overhead without a second slack reserve', () => {
     const result = sizeDeployment(baseInput({ workloadCapacityGib: 10000 }));
-    // (7448 mgmt + 10000 workload) x 1.5 RAID / 0.75 slack
-    const expected = ((7448 + 10000) * 1.5) / 0.75;
+    // (7448 mgmt + 10000 workload) x 1.5 Auto-RAID; the rebuild reserve is the N+1 host.
+    const expected = (7448 + 10000) * 1.5;
     expect(result.storage.rawRequiredGib).toBeCloseTo(expected, 0);
     expect(result.storage.multiplier).toBe(1.5);
   });
@@ -281,23 +289,28 @@ describe('sizeDeployment', () => {
     expect(sizeDeployment(baseInput({ includeEdgeCluster: true })).verification).toBe('V-DOC');
   });
 
-  it('notes fleet scale when sizing multiple instances', () => {
+  // Was 76 + 34 x 2 on one cluster: each additional instance is its own management domain.
+  it('sizes each additional instance as its own management domain', () => {
     const result = sizeDeployment(baseInput({ instanceCount: 3, hostCount: 8 }));
     expect(result.findings.map((f) => f.code)).toContain('vcf.fleet.additional-instances');
-    expect(result.managementFootprint.vcpu).toBe(76 + 34 * 2);
+    expect(result.managementFootprint.vcpu).toBe(76);
+    expect(result.fleet?.instances.length).toBe(3);
+    expect(result.fleet?.instances[1]?.managementFootprint.vcpu).toBe(34);
   });
 });
 
 describe('recommendHostCount', () => {
+  // Was 4: the Simple vSAN minimum is 3 (S4).
   it('returns the documented minimum when it already fits', () => {
-    expect(recommendHostCount(baseInput())).toBe(4);
+    expect(recommendHostCount(baseInput())).toBe(3);
   });
 
   it('grows the cluster until memory fits', () => {
     const lean: HostSpec = { ...BIG_HOST, ramGib: 256 };
     const hosts = recommendHostCount(baseInput({ profile: 'ha-large', host: lean }));
-    // HA-Large needs 949 GiB; with N+1 that needs 4 surviving hosts of 256 GiB.
-    expect(hosts).toBe(5);
+    // Was 5 (memory just fitting). HA-Large needs 949 GiB, which must stay within
+    // the 80% headroom warning: 949 / 0.8 = 1186 GiB = 5 surviving 256 GiB hosts, plus N+1.
+    expect(hosts).toBe(6);
   });
 
   it('returns null when a per-host constraint can never be satisfied', () => {
