@@ -997,7 +997,8 @@ export interface ExternalLink {
   readonly noticeDays: number;
 }
 export type ContractKind = 'support' | 'maintenance' | 'colocation' | 'power' | 'circuit' | 'licence' | 'lease';
-export interface Contract { readonly id: string; readonly kind: ContractKind; readonly vendor: string; readonly ends: string; readonly noticeDays: number }
+export type ContractStatus = 'active' | 'notice-given' | 'terminated';
+export interface Contract { readonly id: string; readonly kind: ContractKind; readonly vendor: string; readonly ends: string; readonly noticeDays: number; readonly status?: ContractStatus }
 /** NIST SP 800-88 media sanitisation methods. */
 export type Sanitisation = 'clear' | 'purge' | 'destroy';
 export interface Asset {

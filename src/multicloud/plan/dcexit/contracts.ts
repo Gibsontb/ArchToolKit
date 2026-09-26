@@ -17,7 +17,7 @@
 
 import { toCsv } from '../../../core/csv.ts';
 import { error, info, warning, type Finding } from '../../../core/findings.ts';
-import type { Asset, Contract, ContractKind, DcExit, Sanitisation } from '../types.ts';
+import type { Asset, Contract, ContractKind, ContractStatus, DcExit, Sanitisation } from '../types.ts';
 
 export const NIST_800_88 = 'https://csrc.nist.gov/pubs/sp/800/88/r2/final';
 
@@ -46,7 +46,7 @@ export function terminateBy(ends: string, noticeDays: number, exitDate?: string)
   return iso(base - Math.max(0, noticeDays) * DAY);
 }
 
-export type ContractStatus = 'active' | 'notice-given' | 'terminated';
+export type { ContractStatus };
 
 export interface ContractTask {
   readonly id: string;
@@ -76,7 +76,7 @@ export function contractTasks(
   const tasks: ContractTask[] = [];
   const add = (id: string, source: ContractTask['source'], kind: ContractKind, vendor: string, ends: string, noticeDays: number): void => {
     const by = terminateBy(ends, noticeDays, dc.exitDate);
-    const s = status[id] ?? 'active';
+    const s = status[id] ?? dc.contracts.find((c) => c.id === id)?.status ?? 'active';
     const byMs = parse(by ?? undefined);
     const overdue = s === 'active' && byMs !== null && byMs < now;
     tasks.push({ id, source, kind, vendor, ends, noticeDays, terminateBy: by, overdue, status: s });

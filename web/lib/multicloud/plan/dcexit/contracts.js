@@ -17,7 +17,7 @@
 
 import { toCsv } from '../../../core/csv.js';
 import { error, info, warning,              } from '../../../core/findings.js';
-                                                                                       
+                                                                                                       
 
 export const NIST_800_88 = 'https://csrc.nist.gov/pubs/sp/800/88/r2/final';
 
@@ -46,7 +46,7 @@ export function terminateBy(ends        , noticeDays        , exitDate         )
   return iso(base - Math.max(0, noticeDays) * DAY);
 }
 
-                                                                      
+                               
 
                                
                       
@@ -76,7 +76,7 @@ export function contractTasks(
   const tasks                 = [];
   const add = (id        , source                        , kind              , vendor        , ends        , noticeDays        )       => {
     const by = terminateBy(ends, noticeDays, dc.exitDate);
-    const s = status[id] ?? 'active';
+    const s = status[id] ?? dc.contracts.find((c) => c.id === id)?.status ?? 'active';
     const byMs = parse(by ?? undefined);
     const overdue = s === 'active' && byMs !== null && byMs < now;
     tasks.push({ id, source, kind, vendor, ends, noticeDays, terminateBy: by, overdue, status: s });

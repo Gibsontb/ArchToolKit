@@ -139,6 +139,9 @@ describe('contracts and assets', () => {
     expect(tasks.find((t) => t.id === 'k2')?.overdue).toBe(true);
     expect(findings.filter((f) => f.code === 'dc.terminate-by-past').map((f) => f.path)).toEqual(['contracts.k2']);
     expect(contractTasks(dc(), '2026-09-26', { k2: 'terminated' }).findings.some((f) => f.code === 'dc.terminate-by-past')).toBe(false);
+    const stored: DcExit = { ...dc(), contracts: dc().contracts.map((c) => (c.id === 'k2' ? { ...c, status: 'terminated' as const } : c)) };
+    expect(contractTasks(stored, '2026-09-26').tasks.find((t) => t.id === 'k2')?.status).toBe('terminated');
+    expect(contractTasks(stored, '2026-09-26', { k2: 'active' }).tasks.find((t) => t.id === 'k2')?.status).toBe('active');
   });
 
   it('an asset holding data needs a NIST SP 800-88 method and a certificate before disposal', () => {
