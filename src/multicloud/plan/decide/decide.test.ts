@@ -472,3 +472,14 @@ describe('decide: greenfield items (disposition new)', () => {
     expect(host?.method).toBe(managed ? 'managed-db' : 'rebuild');
   });
 });
+
+describe('decide: shape.large-memory', () => {
+  it('eliminates a platform whose ladder is too small, but leaves SAP HANA to the certified lists', () => {
+    const big = { vcpu: 448, ramGib: 20480, os: 'sles-15' as const };
+    const generic = plan({ workloads: [workload('big-01', big)] });
+    const hana = plan({ workloads: [workload('hana-01', { ...big, workloadType: 'sap-hana' })] });
+    const elim = (p: Plan, id: string) => whatIfItem(p, id, opts).filter((o) => o.eliminated === 'shape.large-memory').map((o) => o.platform);
+    expect(elim(generic, 'w:big-01').length).toBeGreaterThan(0);
+    expect(elim(hana, 'w:hana-01')).toEqual([]);
+  });
+});

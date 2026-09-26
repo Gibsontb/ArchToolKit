@@ -14,6 +14,13 @@ import type { Workload } from '../../types.ts';
 import { DC_SOURCE, isDatabase, type PlanItem } from '../disposition.ts';
 import { rule, type AnyRule, type RuleContext } from '../engine.ts';
 
+/** A SAP HANA server, set by the user or detected with confidence. */
+const isHana = (w: Workload): boolean => {
+  if (w.workloadType === 'sap-hana') return true;
+  const d = w.facts?.detection;
+  return !!d && d.confidence >= 0.7 && d.type === 'sap-hana';
+};
+
 /** Memory from which instance shapes start to narrow (from-inventory.ts). */
 export const LARGE_MEMORY_GIB = 384;
 /** Workloads relocated as they are, from which a VMware service moves them in bulk (decide.ts `rehost-at-scale`). */
@@ -170,6 +177,9 @@ export const SHAPE_RULES: readonly AnyRule[] = [
     applies: (w, ctx) => ctx.appOf(w)?.special === 'large-memory' || w.ramGib >= LARGE_MEMORY_GIB,
     evaluate: (w, o, ctx) => {
       if (!isHyperscaler(o.platform) || ctx.placementOf(w).method === 'relocate-hcx') return undefined;
+      // SAP HANA is judged on the certified lists (pattern.sap.hana-certified),
+      // which reach past the general ladders (u-*, X4, M-series).
+      if (isHana(w)) return undefined;
       const fit = rightsize(o.platform as 'aws' | 'azure' | 'google' | 'oci', w.vcpu, w.ramGib);
       return fit ? undefined : { eliminate: true, reason: `${w.vcpu} vCPU / ${w.ramGib} GiB is larger than the largest shape on the ${o.platform} ladder.` };
     },
