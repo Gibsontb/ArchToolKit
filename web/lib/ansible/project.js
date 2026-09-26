@@ -201,8 +201,8 @@ function readme(playbooks                   , apiPlay         , hasRequirements 
     '```sh',
     ...(hasRequirements ? ['ansible-galaxy collection install -r requirements.yml'] : []),
     ...playbooks.map((p) => `ansible-playbook ${p} --syntax-check`),
-    `ansible-playbook ${first} --check --diff   # dry run`,
-    `ansible-playbook ${first}                  # for real`,
+    `ansible-playbook ${first}`,
+    `# a dry run first, if you want one: ansible-playbook ${first} --check --diff`,
     '```',
     '',
     apiPlay

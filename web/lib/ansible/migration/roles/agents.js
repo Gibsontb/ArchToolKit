@@ -6,9 +6,34 @@
  * (the SSM Agent and EC2Launch v2 on AWS, the Azure VM agent, the Google
  * guest environment and OS Config agent, the Oracle Cloud Agent or
  * Cloudbase-Init on OCI), and on a replicated VM removes the agents of the
- * other clouds it may have carried. vmware_tools_removal removes VMware Tools
- * from a VM that has left vSphere. Both take the platform from the host's
- * platform_<p> group.
+ * other clouds it may have carried. It also installs the EDR and
+ * vulnerability-scanner agents the plan names (`edr_agents`,
+ * `scanner_agents` in group_vars/all/), registers them, and keeps them enabled
+ * and running, on every host it runs on, VMware ones included.
+ * vmware_tools_removal removes VMware Tools from a VM that has left vSphere.
+ * Both take the platform from the host's platform_<p> group.
+ *
+ * A security agent entry (group_vars shape):
+ *
+ *   name              what it is, for the log
+ *   linux_package     the package name (installed from the host's repositories
+ *                     when there is no linux_source)
+ *   linux_source      a URL or a path on the host to the .rpm / .deb
+ *   windows_package   the MSI product code ({GUID}) when there is one, so the
+ *                     install is skipped where it is already present
+ *   windows_source    a URL, UNC path or local path to the .msi / .exe
+ *   service           the service to keep enabled and running
+ *                     (linux_service / windows_service override it per OS)
+ *   token_var         optional: the vault_* variable holding the registration
+ *                     token or customer id; `%TOKEN%` in the two fields below
+ *                     is replaced with its value
+ *   linux_register    optional: the command that registers the agent after
+ *                     the install (linux_creates: a file that says it is done)
+ *   windows_arguments optional: the installer arguments (they often carry the
+ *                     token, so the task logs nothing)
+ *
+ * The tasks that see a token run with no_log, and no token is ever written
+ * outside the vault.
  */
 
 import { CLOUD_PLATFORM,                      } from './types.js';
@@ -19,6 +44,89 @@ const RH = "ansible_facts.os_family == 'RedHat'";
 const DEB = "ansible_facts.os_family == 'Debian'";
 const UBUNTU = "ansible_facts.distribution == 'Ubuntu'";
 const REPLICATED = "'method_replicate' in group_names";
+const ON_A_CLOUD = "cloud_platform in ['aws', 'azure', 'google', 'oci']";
+
+/** The token for an agent entry, from its vault variable; empty when it names none. */
+const AGENT_TOKEN = "{{ lookup('ansible.builtin.vars', item.token_var, default='') if (item.token_var | default('')) != '' else '' }}";
+const LINUX_SOURCE = "(item.linux_source | default('')) != ''";
+const LINUX_ANY = "((item.linux_source | default('')) != '' or (item.linux_package | default('')) != '')";
+const WINDOWS_SOURCE = "(item.windows_source | default('')) != ''";
+const LINUX_SERVICE = "item.linux_service | default(item.service | default(''), true)";
+const WINDOWS_SERVICE = "item.windows_service | default(item.service | default(''), true)";
+const AGENT_LOOP = { loop: '{{ cloud_agents_security }}', loop_control: { label: '{{ item.name }}' } };
+
+/** EDR and scanner agents on Linux: install, register, enabled and running. */
+const LINUX_SECURITY         = [
+  {
+    name: 'Install the EDR and scanner agents from their source (RHEL family)',
+    'ansible.builtin.dnf': { name: '{{ item.linux_source }}', state: 'present' },
+    ...AGENT_LOOP,
+    when: [LINUX_SOURCE, RH],
+  },
+  {
+    name: 'Install the EDR and scanner agents from their source (Debian family)',
+    'ansible.builtin.apt': { deb: '{{ item.linux_source }}', state: 'present' },
+    ...AGENT_LOOP,
+    when: [LINUX_SOURCE, DEB],
+  },
+  {
+    name: 'Install the EDR and scanner agents from their source (SUSE)',
+    'community.general.zypper': { name: '{{ item.linux_source }}', state: 'present' },
+    ...AGENT_LOOP,
+    when: [LINUX_SOURCE, "ansible_facts.os_family == 'Suse'"],
+  },
+  {
+    name: 'Install the EDR and scanner agents from the repositories',
+    'ansible.builtin.package': { name: '{{ item.linux_package }}', state: 'present' },
+    ...AGENT_LOOP,
+    when: [`not ${LINUX_SOURCE}`, "(item.linux_package | default('')) != ''"],
+  },
+  {
+    name: 'Register the EDR and scanner agents',
+    'ansible.builtin.command': {
+      cmd: "{{ item.linux_register | replace('%TOKEN%', cloud_agents_token) }}",
+      creates: '{{ item.linux_creates | default(omit, true) }}',
+    },
+    vars: { cloud_agents_token: AGENT_TOKEN },
+    ...AGENT_LOOP,
+    when: [LINUX_ANY, "(item.linux_register | default('')) != ''"],
+    changed_when: true,
+    no_log: true,
+  },
+  {
+    name: 'Keep the EDR and scanner agents enabled and running',
+    'ansible.builtin.service': { name: `{{ ${LINUX_SERVICE} }}`, state: 'started', enabled: true },
+    ...AGENT_LOOP,
+    when: [LINUX_ANY, `(${LINUX_SERVICE}) != ''`],
+  },
+];
+
+/** An MSI product code: the install is skipped where it is already present. */
+const PRODUCT_CODE = "^\\{[0-9A-Fa-f-]+\\}$";
+
+/** EDR and scanner agents on Windows: install (with the token in the arguments), enabled and running. */
+const WINDOWS_SECURITY         = [
+  {
+    name: 'Install the EDR and scanner agents',
+    'ansible.windows.win_package': {
+      path: '{{ item.windows_source }}',
+      product_id: `{{ item.windows_package if (item.windows_package | default('')) is match('${PRODUCT_CODE}') else omit }}`,
+      arguments: "{{ (item.windows_arguments | replace('%TOKEN%', cloud_agents_token)) if (item.windows_arguments | default('')) != '' else omit }}",
+      creates_service: `{{ (${WINDOWS_SERVICE}) if (${WINDOWS_SERVICE}) != '' else omit }}`,
+      state: 'present',
+    },
+    vars: { cloud_agents_token: AGENT_TOKEN },
+    ...AGENT_LOOP,
+    when: WINDOWS_SOURCE,
+    no_log: true,
+  },
+  {
+    name: 'Keep the EDR and scanner agents enabled and running',
+    'ansible.windows.win_service': { name: `{{ ${WINDOWS_SERVICE} }}`, state: 'started', start_mode: 'auto' },
+    ...AGENT_LOOP,
+    when: [WINDOWS_SOURCE, `(${WINDOWS_SERVICE}) != ''`],
+  },
+];
 
 const SSM = 'https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest';
 
@@ -112,8 +220,9 @@ const tasks         = [
       {
         name: "Remove the other clouds' agents from a replicated VM",
         'ansible.builtin.package': { name: '{{ cloud_agents_linux_remove }}', state: 'absent' },
-        when: [REPLICATED, 'cloud_agents_linux_remove | length > 0'],
+        when: [REPLICATED, ON_A_CLOUD, 'cloud_agents_linux_remove | length > 0'],
       },
+      ...LINUX_SECURITY,
     ],
   },
   // ---------------------------------------------------------- Windows ---
@@ -183,8 +292,9 @@ const tasks         = [
       {
         name: "Remove the other clouds' agents from a replicated VM",
         'ansible.windows.win_powershell': { script: UNINSTALL_BY_NAME, parameters: { Names: '{{ cloud_agents_windows_remove }}' } },
-        when: [REPLICATED, 'cloud_agents_windows_remove | length > 0'],
+        when: [REPLICATED, ON_A_CLOUD, 'cloud_agents_windows_remove | length > 0'],
       },
+      ...WINDOWS_SECURITY,
     ],
   },
 ];
@@ -204,10 +314,12 @@ const WINDOWS_PROGRAMS                           = {
 
 export const CLOUD_AGENTS       = {
   name: 'cloud_agents',
-  description: "the platform's guest agents present and running; other clouds' agents removed from replicated VMs.",
+  description: "the platform's guest agents present and running; other clouds' agents removed from replicated VMs; the EDR and scanner agents installed, registered, enabled and running.",
   tasks,
   derived: {
     cloud_platform: CLOUD_PLATFORM,
+    // edr_agents and scanner_agents come from group_vars/all/security_agents.yml; the role runs without them.
+    cloud_agents_security: '{{ (edr_agents | default([])) + (scanner_agents | default([])) }}',
     cloud_agents_arch: "{{ 'arm64' if ansible_facts.architecture in ['aarch64', 'arm64'] else 'amd64' }}",
     cloud_agents_linux_services: {
       aws: ['amazon-ssm-agent', 'snap.amazon-ssm-agent.amazon-ssm-agent'],

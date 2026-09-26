@@ -36,7 +36,7 @@ import type { Json } from '../../../editor/doc.ts';
 import type { Blueprint } from '../../../kit/blueprint.ts';
 import { envelope, writeSettings } from '../../../kit/settings-file.ts';
 import type { BlueprintLookup, StackItem } from '../../../kit/stack.ts';
-import { renderImageRef, type ImageRef as GridImageRef } from '../../../terraform/blueprints/migration/common.ts';
+import { planTagValue, renderImageRef, type ImageRef as GridImageRef } from '../../../terraform/blueprints/migration/common.ts';
 import { findTerraformBlueprint } from '../../../terraform/blueprints/index.ts';
 import type { CloudTarget } from '../../../terraform/providers.ts';
 import type { BackendKind } from '../../../terraform/scaffold.ts';
@@ -120,6 +120,10 @@ export interface AppComponentLike {
   readonly id: string;
   readonly name: string;
   readonly kind: 'pattern' | 'resource' | 'config';
+  /** The workloads (names) a pattern component runs on. */
+  readonly servers?: readonly string[];
+  /** The databases (names) it uses; their hosts serve it too. */
+  readonly databases?: readonly string[];
   readonly tierPattern?: string;
   readonly settings?: Readonly<Record<string, string>>;
   readonly blueprintId?: string;
@@ -131,6 +135,36 @@ export interface AppPlanLike {
   readonly platform?: Platform;
   readonly recommendation?: { readonly platform: Platform };
   readonly variants?: Readonly<Partial<Record<Platform, readonly AppComponentLike[]>>>;
+}
+
+// ---------------------------------------------------------------------------
+// The tags the compute rows carry for Ansible
+// ---------------------------------------------------------------------------
+
+/** The atk_plan tag of a plan's VMs: the plan id, as a tag value every cloud accepts. */
+export const planTag = (plan: Pick<Plan, 'id'>): string => planTagValue(plan.id);
+
+/**
+ * The app component each server serves, for its atk_component tag: workload
+ * name -> component id. A server is tagged with the first pattern component
+ * of its app's saved plan (on the app's chosen platform) that lists it, or
+ * lists a database it hosts. A server in two components carries the first;
+ * the Ansible inventory adds it to the second by name.
+ */
+export function componentOfServers(plan: Plan): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const ap of (plan.appPlans ?? []) as readonly AppPlanLike[]) {
+    if (ap.status === 'draft') continue;
+    const platform = ap.platform ?? ap.recommendation?.platform;
+    if (!platform) continue;
+    for (const c of ap.variants?.[platform] ?? []) {
+      if (c.kind !== 'pattern') continue;
+      const names = [...(c.servers ?? [])];
+      for (const dbName of c.databases ?? []) names.push(...(plan.databases.find((d) => d.name === dbName)?.hosts ?? []));
+      for (const n of names) if (!out.has(n)) out.set(n, c.id);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +249,8 @@ interface Ctx {
   readonly databases: readonly DbTarget[];
   /** Workload id → database engine, for the hosts of an IaaS database. */
   readonly dbEngineOfHost: ReadonlyMap<string, string>;
+  /** Workload name → the app component it serves (atk_component). */
+  readonly componentOf: ReadonlyMap<string, string>;
   /** Addresses already taken: every design network, the sites, and what this run allocated. */
   readonly used: string[];
 }
@@ -280,6 +316,7 @@ function contextFor(plan: Plan, decision: PlanDecision, design: TargetDesign, pd
     manual: [],
     workloadById, dbById, appByName,
     compute, databases, dbEngineOfHost,
+    componentOf: componentOfServers(plan),
     used,
   };
 }
@@ -373,6 +410,7 @@ function computeRows(ctx: Ctx, rows: readonly ComputeTarget[]): string {
       ctx.dbEngineOfHost.get(t.workload) ?? w?.role ?? '',
       w?.env ?? '',
       waveOf(ctx, w),
+      (w && ctx.componentOf.get(w.name)) ?? '',
     ];
   }));
 }
@@ -621,7 +659,7 @@ function computeItem(ctx: Ctx): StackItem | null {
       ctx.findings.push(info('plan.tf.google-vm-name', `${name} is written as ${computeRowName(platform, name)}: a Compute Engine name is lowercase letters, digits and hyphens.`));
     }
   }
-  return item(ctx, 'compute', `${ctx.bp}_mig_compute`, 'Compute', { vms: computeRows(ctx, ctx.compute), landing_zone_source: lzSource(ctx) });
+  return item(ctx, 'compute', `${ctx.bp}_mig_compute`, 'Compute', { vms: computeRows(ctx, ctx.compute), plan_id: planTag(ctx.plan), landing_zone_source: lzSource(ctx) });
 }
 
 /** The databases-grid rows (managed services, and SQL Server on Azure VMs). */

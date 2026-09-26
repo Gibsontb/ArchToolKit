@@ -7,7 +7,9 @@
  *
  *   site.yml           imports each item, in list order
  *   NN-<name>.yml      one playbook per item
- *   group_vars/all.yml the answers more than one item gave the same way
+ *   group_vars/all/main.yml  the answers more than one item gave the same way
+ *                      (a directory, so a vault.yml can sit beside it: Ansible reads
+ *                      group_vars/all/ or group_vars/all.yml, never both)
  *   requirements.yml   every collection (and role) the items use, merged and pinned
  *   inventory/hosts.yml  a starting inventory, with the hosts the plays name
  *   README.md          what it does and how to run it
@@ -25,7 +27,7 @@
  *
  * Two plays cannot pass values to each other the way two Terraform resources
  * can — a registered variable belongs to the play that registered it. What
- * does carry across every play is `group_vars/all.yml`, so that is what the
+ * does carry across every play is `group_vars/all/`, so that is what the
  * page's picker offers, and what an answer repeated by two items is hoisted
  * into. A field set to `{{ vcenter_hostname }}` in three playbooks is then
  * changed in one place.
@@ -38,6 +40,13 @@ import { numbered, slug,                                                        
                                                            
 import { readYaml,               } from '../core/yaml-read.js';
 import { renderYaml,                } from './yaml.js';
+
+/**
+ * Where the shared answers go. A directory, not group_vars/all.yml: Ansible
+ * reads group_vars/all/ or group_vars/all.yml, never both (the directory
+ * wins), and the vault belongs in group_vars/all/vault.yml.
+ */
+export const ALL_VARS = 'group_vars/all/main.yml';
 
 /** Controls whose value can be swapped for a `{{ variable }}` without breaking it. */
 const FREE_TEXT = new Set(['text', 'textarea', 'combo']);
@@ -142,7 +151,7 @@ function placeOf(path        , playbookDir        )                             
   if (path.startsWith('roles/')) return { kind: 'roles', to: path };
   if (path.startsWith('templates/') || path.startsWith('files/')) return { kind: 'beside', to: `${besideBase}${path}` };
   if (path.startsWith('host_vars/')) return { kind: 'host_vars', to: `${varsBase}${path}` };
-  if (path === 'group_vars/all.yml') return { kind: 'all', to: `${varsBase}${path}` };
+  if (path === 'group_vars/all.yml' || /^group_vars\/all\/[^/]+\.ya?ml$/.test(path)) return { kind: 'all', to: `${varsBase}${ALL_VARS}` };
   if (/^group_vars\/[^/]+\.ya?ml$/.test(path)) return { kind: 'group_vars', to: `${varsBase}${path}` };
   return null;
 }
@@ -151,7 +160,7 @@ function placeOf(path        , playbookDir        )                             
  * Assemble the items into one site playbook.
  *
  * An answer given identically by more than one item, in a field that can hold
- * a variable, moves to `group_vars/all.yml` and the items reference it. An
+ * a variable, moves to `group_vars/all/main.yml` and the items reference it. An
  * answer someone has already written as `{{ something }}` is declared there
  * too, empty if nothing supplies it, so `ansible-playbook` fails with a clear
  * "undefined variable" rather than a silent empty string.
@@ -203,8 +212,8 @@ export function buildSite(items                      , blueprintFor             
     const name = variableName(id);
     hoisted.set(id, { name, value: seen.value });
     findings.push(
-      info('ansible.site.hoisted', `${seen.items.join(' and ')} all answer ${id} with ${seen.value}; it is now ${name} in group_vars/all.yml, and they reference it.`, {
-        path: `${varsBase}group_vars/all.yml`,
+      info('ansible.site.hoisted', `${seen.items.join(' and ')} all answer ${id} with ${seen.value}; it is now ${name} in ${ALL_VARS}, and they reference it.`, {
+        path: `${varsBase}${ALL_VARS}`,
       }),
     );
   }
@@ -215,16 +224,16 @@ export function buildSite(items                      , blueprintFor             
     if (SECRET_NAME.test(name)) {
       // A secret is supplied at run time, never written into the site.
       findings.push(
-        warning('ansible.site.secret-variable', `${users.join(' and ')} use {{ ${name} }}. It is deliberately not in group_vars/all.yml: supply it at run time.`, {
-          remediation: `Keep it in an ansible-vault file, or pass it with -e "${name}=…".`,
+        warning('ansible.site.secret-variable', `${users.join(' and ')} use {{ ${name} }}. It is deliberately not in ${ALL_VARS}: supply it at run time.`, {
+          remediation: `Keep it in an ansible-vault file (group_vars/all/vault.yml), or pass it with -e "${name}=…".`,
         }),
       );
       continue;
     }
     variables.set(name, '');
     findings.push(
-      warning('ansible.site.undefined-variable', `${users.join(' and ')} use {{ ${name} }}, which nothing sets. group_vars/all.yml now declares it, with no value.`, {
-        path: `${varsBase}group_vars/all.yml`,
+      warning('ansible.site.undefined-variable', `${users.join(' and ')} use {{ ${name} }}, which nothing sets. ${ALL_VARS} now declares it, with no value.`, {
+        path: `${varsBase}${ALL_VARS}`,
         remediation: 'Give it a value there, or pass it with -e on the command line.',
       }),
     );
@@ -372,7 +381,8 @@ export function buildSite(items                      , blueprintFor             
 # ${siteName} — every playbook in this site, in order.
 #
 # Install the collections first:  ansible-galaxy ${roleRequirements.size > 0 ? 'install' : 'collection install'} -r requirements.yml
-# Then dry-run it:                ansible-playbook -i ${inventoryArg} site.yml --check --diff
+# Then run it (it applies):       ansible-playbook -i ${inventoryArg} site.yml
+# A dry run first, if you want one: add --check --diff.
 
 ${imports.join('\n\n')}
 `;
@@ -388,8 +398,8 @@ ${imports.join('\n\n')}
     if (variables.has(name)) continue;
     variables.set(name, '');
     findings.push(
-      warning('ansible.site.undefined-variable', `${from} needs ${name}, which nothing sets. group_vars/all.yml now declares it, with no value.`, {
-        path: `${varsBase}group_vars/all.yml`,
+      warning('ansible.site.undefined-variable', `${from} needs ${name}, which nothing sets. ${ALL_VARS} now declares it, with no value.`, {
+        path: `${varsBase}${ALL_VARS}`,
         remediation: 'Give it a value there, or pass it with -e on the command line.',
       }),
     );
@@ -399,9 +409,9 @@ ${imports.join('\n\n')}
     const rows = [...variables.entries()].map(([name, value]) =>
       value === '' ? `${name}: ""   # set this before running` : `${name}: ${/[:#{}[\]]|^\s|\s$/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value}`,
     );
-    files[`${varsBase}group_vars/all.yml`] = `---\n# Answers every playbook in this site shares. Change one here and every\n# playbook that references it follows.\n\n${rows.join('\n')}\n`;
+    files[`${varsBase}${ALL_VARS}`] = `---\n# Answers every playbook in this site shares. Change one here and every\n# playbook that references it follows.\n\n${rows.join('\n')}\n`;
     for (const name of variables.keys()) {
-      references.push({ expression: name, item: 'group_vars/all.yml', address: `${varsBase}group_vars/all.yml`, attribute: name });
+      references.push({ expression: name, item: ALL_VARS, address: `${varsBase}${ALL_VARS}`, attribute: name });
     }
   }
 
@@ -479,7 +489,7 @@ function readme(
     '',
     ...(variables.size > 0
       ? [
-          `Then check \`${layout.varsBase}group_vars/all.yml\`: ${variables.size} value${variables.size === 1 ? '' : 's'} are shared by the playbooks, and any left empty must be filled in.`,
+          `Then check \`${layout.varsBase}${ALL_VARS}\`: ${variables.size} value${variables.size === 1 ? '' : 's'} are shared by the playbooks, and any left empty must be filled in.`,
           '',
         ]
       : []),
@@ -488,15 +498,18 @@ function readme(
     '## Running it',
     '',
     '```',
-    `ansible-playbook -i ${layout.inventoryArg} site.yml --check --diff   # dry run`,
-    `ansible-playbook -i ${layout.inventoryArg} site.yml                  # for real`,
+    `ansible-playbook -i ${layout.inventoryArg} site.yml`,
     '```',
+    '',
+    'It applies what it describes. For a dry run first, add `--check --diff`;',
+    'a task that needs something an earlier task installs may be skipped or fail',
+    'in check mode, since nothing was installed.',
     '',
     'To run one part on its own, point `ansible-playbook` at that file instead',
     'of `site.yml`. To run only some of it, tag the tasks and use `--tags`.',
     '',
     'No credentials are written into these files. Supply them with',
-    '`ansible-vault`, an environment variable, or your inventory.',
+    `\`ansible-vault\` (\`${layout.varsBase}group_vars/all/vault.yml\`, for example), an environment variable, or your inventory.`,
     '',
   ].join('\n')}`;
 }

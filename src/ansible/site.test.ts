@@ -43,7 +43,7 @@ describe('a site playbook', () => {
       '03-harden-ssh.yml',
       'README.md',
       'ansible.cfg',
-      'group_vars/all.yml',
+      'group_vars/all/main.yml',
       'inventory/hosts.yml',
       'requirements.yml',
       'site.yml',
@@ -61,7 +61,7 @@ describe('a site playbook', () => {
   });
 
   it('hoists an answer two playbooks give the same way, and references it', () => {
-    const shared = site.files['group_vars/all.yml'] as string;
+    const shared = site.files['group_vars/all/main.yml'] as string;
     expect(shared.includes('vcenter_hostname: vc01.example.com')).toBe(true);
     expect((site.files['01-build-the-vms.yml'] as string).includes('{{ vcenter_hostname }}')).toBe(true);
     expect((site.files['02-add-the-data-disk.yml'] as string).includes('vc01.example.com')).toBe(false);
@@ -72,7 +72,7 @@ describe('a site playbook', () => {
 
   it('offers the shared variables to the page', () => {
     expect(site.references.map((r) => r.expression)).toEqual(['vcenter_hostname']);
-    expect(site.references[0]?.address).toBe('group_vars/all.yml');
+    expect(site.references[0]?.address).toBe('group_vars/all/main.yml');
   });
 
   it('writes YAML that reads back, in every file', () => {
@@ -85,7 +85,17 @@ describe('a site playbook', () => {
   it('says how to run it', () => {
     const readme = site.files['README.md'] as string;
     expect(readme.includes('ansible-galaxy collection install -r requirements.yml')).toBe(true);
+    // It applies by default; the dry run is an opt-in, never the command shown first.
     expect(readme.includes('--check --diff')).toBe(true);
+    expect(/^ansible-playbook -i \S+ site\.yml$/m.test(readme)).toBe(true);
+    expect(/^ansible-playbook[^\n]*--check/m.test(readme)).toBe(false);
+    expect(/^# [^\n]*ansible-playbook[^\n]*--check/m.test(site.files['site.yml'] as string)).toBe(false);
+  });
+
+  it('puts the shared answers in group_vars/all/, so a vault.yml beside them is read too', () => {
+    // Ansible reads group_vars/all/ or group_vars/all.yml, never both.
+    expect(site.files['group_vars/all.yml']).toBeUndefined();
+    expect(Object.keys(site.files).some((f) => f.startsWith('group_vars/all/'))).toBe(true);
   });
 });
 
@@ -93,7 +103,7 @@ describe('what a site has to catch', () => {
   it('a variable nothing sets', () => {
     const site = buildSite([item('linux_users', 'users', { hosts: '{{ patch_group }}' })], byId);
     expect(site.findings.some((f) => f.code === 'ansible.site.undefined-variable')).toBe(true);
-    expect((site.files['group_vars/all.yml'] as string).includes('patch_group: ""')).toBe(true);
+    expect((site.files['group_vars/all/main.yml'] as string).includes('patch_group: ""')).toBe(true);
   });
 
   it('two items with the same name', () => {
@@ -113,7 +123,7 @@ describe('what a site has to catch', () => {
       byId,
     );
     expect(site.findings.some((f) => f.code === 'ansible.site.secret-variable')).toBe(true);
-    expect((site.files['group_vars/all.yml'] as string | undefined)?.includes('vault_vcenter_password') ?? false).toBe(false);
+    expect((site.files['group_vars/all/main.yml'] as string | undefined)?.includes('vault_vcenter_password') ?? false).toBe(false);
   });
 
   it('a shared answer whose name is one of Ansible\'s own words', () => {
@@ -128,14 +138,14 @@ describe('what a site has to catch', () => {
     });
     const lookup = (id: string) => (id === 'one' || id === 'two' ? withState(id) : undefined);
     const site = buildSite([item('one', 'one', { state: 'started' }), item('two', 'two', { state: 'started' })], lookup);
-    const shared = site.files['group_vars/all.yml'] as string;
+    const shared = site.files['group_vars/all/main.yml'] as string;
     expect(shared.includes('site_state: started')).toBe(true);
     expect((site.files['01-one.yml'] as string).includes('{{ site_state }}')).toBe(true);
   });
 
   it('a shared hosts pattern stays in the plays: hosts is resolved before any inventory variable exists', () => {
     const site = buildSite([item('linux_harden_ssh', 'one', { hosts: 'web' }), item('linux_users', 'two', { hosts: 'web' })], byId);
-    expect(site.files['group_vars/all.yml'] ?? '').not.toContain('hosts');
+    expect(site.files['group_vars/all/main.yml'] ?? '').not.toContain('hosts');
     expect(site.files['01-one.yml'] as string).toContain('hosts: web');
     expect(site.files['02-two.yml'] as string).toContain('hosts: web');
   });

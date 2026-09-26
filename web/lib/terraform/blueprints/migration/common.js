@@ -762,7 +762,23 @@ export const LICENCES = ['li', 'ahb', 'dedicated-host', 'byol-image', 'rhel-byos
 export const BACKUP_TIERS = ['gold', 'silver', 'bronze']         ;
 export const METHODS = ['rebuild', 'replicate']         ;
 
-export const VM_COLUMN_NAMES = ['Name', 'OS', 'Image', 'Size', 'Cores', 'Disks', 'Network', 'Tier', 'Zone', 'Licence', 'Backup', 'Method', 'App', 'Role', 'Env', 'Wave']         ;
+export const VM_COLUMN_NAMES = ['Name', 'OS', 'Image', 'Size', 'Cores', 'Disks', 'Network', 'Tier', 'Zone', 'Licence', 'Backup', 'Method', 'App', 'Role', 'Env', 'Wave', 'Component']         ;
+
+/**
+ * The plan id every VM of a stack is tagged with (atk_plan), so a dynamic
+ * inventory finds this plan's VMs and no one else's. Lower case letters,
+ * digits and `-`, which every cloud accepts as a tag or label value.
+ */
+export const PLAN_ID_INPUT                 = {
+  id: 'plan_id',
+  label: 'Plan id (atk_plan tag)',
+  control: 'text',
+  default: '',
+  hint: 'Written as the atk_plan tag on every VM, for the Ansible dynamic inventory; the migration plan fills it in.',
+};
+
+/** A plan id as the atk_plan tag carries it: lower case a-z, 0-9 and `-`, 63 at most. */
+export const planTagValue = (id        )         => id.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
 
 export function vmColumns(sizes                                    , diskTypes                   )               {
   return [
@@ -782,6 +798,7 @@ export function vmColumns(sizes                                    , diskTypes  
     { name: 'Role' },
     { name: 'Env' },
     { name: 'Wave' },
+    { name: 'Component' },
   ];
 }
 
@@ -814,9 +831,40 @@ export function vmColumns(sizes                                    , diskTypes  
                         
                        
                         
+                                                                             
+                             
+                                                                                         
+                        
                                                                    
                       
  
+
+/**
+ * The database engine a compute row's Role names, as the atk_db tag carries
+ * it: oracle, sqlserver, postgres, mysql, mariadb, db2, mongodb, sybase-ase,
+ * informix, sap-hana, redis, cassandra, elasticsearch; `db` for a database
+ * host of no named engine; empty for anything else. The engines whose name
+ * contains another's are tested first (mysql and postgresql both contain
+ * "sql"; mariadb is not mysql).
+ */
+export function dbTagOf(role        )         {
+  const r = role.trim().toLowerCase();
+  if (r === '') return '';
+  if (/oracle/.test(r)) return 'oracle';
+  if (/maria/.test(r)) return 'mariadb';
+  if (/mysql/.test(r)) return 'mysql';
+  if (/postgres|pgsql|^pg(\d|$|[ _-])/.test(r)) return 'postgres';
+  if (/mssql|sql[ _-]?server|^sql(\d|$|[ _-])/.test(r)) return 'sqlserver';
+  if (/db2/.test(r)) return 'db2';
+  if (/mongo/.test(r)) return 'mongodb';
+  if (/sybase|^ase$/.test(r)) return 'sybase-ase';
+  if (/informix/.test(r)) return 'informix';
+  if (/hana/.test(r)) return 'sap-hana';
+  if (/redis/.test(r)) return 'redis';
+  if (/cassandra/.test(r)) return 'cassandra';
+  if (/elastic/.test(r)) return 'elasticsearch';
+  return r === 'db' ? 'db' : '';
+}
 
 /** "gp3:100 gp3:200" → disks; the first is the boot disk. */
 export function parseDisks(text        , fallbackType        )           {
@@ -835,7 +883,8 @@ const zoneIndex = (z        )         => {
   return Number.isFinite(n) && n >= 1 && n <= 3 ? n - 1 : 0;
 };
 
-export function parseVms(text        , fallbackDisk        , findings           )           {
+export function parseVms(text        , fallbackDisk        , findings           , planId = '')           {
+  const plan = planTagValue(planId);
   const rows = uniqueNames(parseGrid(text, VM_COLUMN_NAMES), 'Name', 'vms', findings);
   return rows.map((r) => {
     const os = r['OS'] || 'unknown';
@@ -877,18 +926,25 @@ export function parseVms(text        , fallbackDisk        , findings           
       role,
       env: r['Env'] ?? '',
       wave: r['Wave'] ?? '',
-      db: /oracle/.test(role) ? 'oracle' : /sql|mssql/.test(role) ? 'sqlserver' : /postgres|pg/.test(role) ? 'postgres' : /mysql|maria/.test(role) ? 'mysql' : role === 'db' ? 'db' : '',
+      component: r['Component'] ?? '',
+      plan,
+      db: dbTagOf(role),
     };
   });
 }
 
 /**
  * The tags Ansible's dynamic inventories key on, and backup selects by. Every
- * compute and database target carries them; keys are the same on every cloud
- * (lowercase, so GCP labels accept them too).
+ * compute target carries them; keys are the same on every cloud (lowercase,
+ * so GCP labels accept them too). atk_plan scopes the inventory to one plan,
+ * atk_method says replicated or rebuilt, atk_component the app component the
+ * VM serves.
  */
 export function migTags(vm        )                         {
   return {
+    atk_plan: vm.plan,
+    atk_method: vm.method,
+    atk_component: vm.component,
     atk_app: vm.app,
     atk_role: vm.role,
     atk_env: vm.env,
@@ -902,6 +958,60 @@ export function migTags(vm        )                         {
 
 /** A label value Google accepts: lowercase letters, digits, `-` and `_`, 63 at most. */
 export const gcpLabel = (v        )         => v.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 63);
+
+/** A tag value as an Ansible group name: lower case, a-z 0-9 _ (the dynamic inventories apply the same filters). */
+const safeGroupExpr = (v        )         => `lower(replace(${v}, "/[^a-zA-Z0-9_]/", "_"))`;
+
+/**
+ * The static route to Ansible: `output "ansible_inventory"`, an inventory in
+ * the YAML plugin's shape (JSON is YAML), with every VM Terraform built or
+ * adopted, its address, and the groups the tags give it, named as the dynamic
+ * inventories name them (platform_, os_kind_, method_, role_, os_,
+ * os_family_, env_, app_, wave_, backup_, db_):
+ *
+ *   terraform output -json ansible_inventory > ../../ansible/inventory/terraform_<p>.json
+ *
+ * (in a stack the output is prefixed with the item's name: compute_ansible_inventory).
+ *
+ * `hostsExpr` is a map expression: VM name → an object with ansible_host
+ * (and any other host variables). Groups no tag carries (availability groups,
+ * app components, plan waves) come from the Ansible project's own inventory.
+ */
+export function ansibleInventoryOutput(platform        , hostsExpr        )             {
+  const tagGroup = (tag        , prefix        )         => `v.tags.${tag} == "" ? "" : "${prefix}_\${${safeGroupExpr(`v.tags.${tag}`)}}"`;
+  const groups = [
+    'v.kind',
+    `"platform_${platform}"`,
+    '"os_kind_${v.kind}"',
+    'v.kind == "windows" ? "bootstrap_windows" : ""',
+    '"method_${v.method}"',
+    tagGroup('atk_role', 'role'),
+    tagGroup('atk_os', 'os'),
+    tagGroup('atk_os_family', 'os_family'),
+    tagGroup('atk_env', 'env'),
+    tagGroup('atk_app', 'app'),
+    tagGroup('atk_wave', 'wave'),
+    tagGroup('atk_backup', 'backup'),
+    'contains(["oracle", "sqlserver", "postgres"], v.tags.atk_db) ? "db_${v.tags.atk_db}" : ""',
+    'contains(["mysql", "mariadb"], v.tags.atk_db) ? "db_mysql" : ""',
+  ];
+  const groupsExpr = `{ for k, v in local.mig_vms : k => compact([\n    ${groups.join(',\n    ')},\n  ]) if contains(keys(local.mig_ansible_hosts), k) }`;
+  return [
+    {
+      type: 'locals',
+      comment: 'The Ansible groups of each VM that exists, from its tags (the static route; the dynamic inventories read the same tags).',
+      attributes: [
+        { name: 'mig_ansible_hosts', value: x(hostsExpr) },
+        { name: 'mig_ansible_groups', value: x(groupsExpr) },
+      ],
+    },
+    output(
+      'ansible_inventory',
+      '{ all = { hosts = local.mig_ansible_hosts, children = { for g in distinct(flatten(values(local.mig_ansible_groups))) : g => { hosts = { for k, gs in local.mig_ansible_groups : k => {} if contains(gs, g) } } } } }',
+      'An Ansible inventory of the VMs Terraform built or adopted, with their addresses and tag groups, for running without the dynamic inventory plugin: terraform output -json <this output> > inventory/terraform_<platform>.json',
+    ),
+  ];
+}
 
 /** One entry of `local.mig_vms`: everything a VM's resources and the backup and monitoring blueprints read. */
 export function vmLocalEntry(vm        , extra                                  )         {

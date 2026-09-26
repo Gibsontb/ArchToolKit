@@ -266,7 +266,7 @@ export function scaffoldAnsible(options                        )                
 
   if (options.starterPlay) {
     const out = emitPlaybook([options.starterPlay], {
-      header: `${projectName}\n\nRun with:  ansible-playbook -i inventory site.yml --check --diff`,
+      header: `${projectName}\n\nRun with:  ansible-playbook -i inventory site.yml\n(It applies. For a dry run first, add --check --diff.)`,
     });
     files['site.yml'] = out.yaml;
     findings.push(...out.findings);

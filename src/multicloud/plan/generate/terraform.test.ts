@@ -252,6 +252,26 @@ describe('generate/terraform: compute rows', () => {
     // A Compute Engine name is lowercase.
     expect(rows(itemOf(STACKS.perPlatform.google, '_mig_compute')?.values.vms).map((r) => r[0])).toContain('gapp01');
   });
+
+  it('writes the plan id (atk_plan) and each server\'s app component (atk_component) for the Ansible inventory', () => {
+    const appPlans = [{
+      app: itemId('app', 'shop'), status: 'planned', platform: 'aws',
+      variants: { aws: [{ id: 'c:shop:web', name: 'web tier', kind: 'pattern', tierPattern: 'three-tier', servers: ['web01', 'web02'], settings: {} }] },
+    }];
+    const f = fixture({}, { appPlans } as unknown as Partial<Plan>);
+    const s = planToStacks(f.plan, f.decision, f.design);
+    const compute = itemOf(s.perPlatform.aws, '_mig_compute')!;
+    expect(compute.values.plan_id).toBe('plan-wp6');
+    const col = VM_COLUMN_NAMES.indexOf('Component');
+    const aws = rows(compute.values.vms);
+    expect(aws.find((r) => r[0] === 'web01')![col]).toBe('c:shop:web');
+    expect(aws.find((r) => r[0] === 'app01')![col] ?? '').toBe('');
+    // The built stack tags the VMs with it.
+    const tf = buildStack(s.perPlatform.aws!.items, findTerraformBlueprint, { target: 'aws', stackName: 'x', requiredVersion: '>= 1.7.0' });
+    const text = Object.values(tf.files).join('\n');
+    expect(/atk_plan\s*=\s*"plan-wp6"/.test(text)).toBe(true);
+    expect(/atk_component\s*=\s*"c:shop:web"/.test(text)).toBe(true);
+  });
 });
 
 describe('generate/terraform: databases', () => {

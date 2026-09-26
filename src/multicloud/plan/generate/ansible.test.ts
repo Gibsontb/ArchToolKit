@@ -212,8 +212,19 @@ function groupsFromConfig(p: DynamicPlatform, config: Record<string, YamlData>, 
 /** Is the host kept by the config's filters? */
 function keptByConfig(p: DynamicPlatform, config: Record<string, YamlData>, h: { name: string; tags: Readonly<Record<string, string>> }): boolean {
   const vars = pluginVars(p, h);
-  if (p === 'aws') return (asMap(config.filters)['tag:atk_app'] as string[]).includes(h.tags.atk_app ?? '');
-  if (p === 'google') return String((config.filters as string[])[1]).includes(`"${h.tags.atk_app}"`);
+  if (p === 'aws') {
+    const filters = asMap(config.filters);
+    return Object.entries(filters).every(([k, v]) => {
+      const m = /^tag:(.+)$/.exec(k);
+      return !m || (v as string[]).includes(h.tags[m[1]!] ?? '');
+    });
+  }
+  if (p === 'google') {
+    return (config.filters as string[]).every((f) => {
+      const tags = [...f.matchAll(/labels\.(atk_[a-z_]+) = "([^"]*)"/g)];
+      return tags.length === 0 || tags.some((m) => h.tags[m[1]!] === m[2]);
+    });
+  }
   return !((config.exclude_host_filters ?? []) as string[]).some((e) => evalCond(e, vars));
 }
 
@@ -280,15 +291,45 @@ describe('generate/ansible: dynamic inventories', () => {
     expect(F('inventory/vmware_vms.yml')).toBe('');
   });
 
-  it('keys only on tags Terraform writes, and never filters on atk_plan', () => {
+  it('keys only on tags Terraform writes (migTags), and filters on the plan\'s atk_plan', () => {
     for (const p of dynamic) {
       const text = F(DYNAMIC_FILES[p]);
-      expect(text.includes('atk_plan')).toBe(false);
-      expect(text.includes('atk_db ')).toBe(false);
-      for (const m of text.matchAll(/(?:ec2_tags|tags|labels|freeform_tags)\.(atk_[a-z_]+)/g)) {
-        expect(['atk_app', 'atk_role', 'atk_env', 'atk_os', 'atk_os_family', 'atk_wave', 'atk_backup', 'atk_phase', 'atk_component']).toContain(m[1]);
+      expect(text).toContain('atk_plan');
+      expect(text).toContain('plan-wp8');
+      for (const m of text.matchAll(/(?:ec2_tags|tags|labels|freeform_tags|tag:)\.?(atk_[a-z_]+)/g)) {
+        expect(['atk_plan', 'atk_method', 'atk_component', 'atk_app', 'atk_role', 'atk_env', 'atk_os', 'atk_os_family', 'atk_wave', 'atk_backup', 'atk_db', 'atk_phase']).toContain(m[1]);
       }
     }
+    // The whole plan: no atk_app filter, the plan tag says it.
+    expect(asMap(asMap(yaml(DYNAMIC_FILES.aws)).filters)['tag:atk_plan']).toEqual(['plan-wp8']);
+    expect(asMap(asMap(yaml(DYNAMIC_FILES.aws)).filters)['tag:atk_app']).toBeUndefined();
+    expect((asMap(yaml(DYNAMIC_FILES.google)).filters as string[])).toContain('labels.atk_plan = "plan-wp8"');
+  });
+
+  it('reads method, engine and component from their tags, and names hosts only where no tag can say it', () => {
+    const config = asMap(yaml(DYNAMIC_FILES.aws));
+    const groups = asMap(config.groups);
+    expect(String(groups.method_replicate)).toBe("(ec2_tags.atk_method | default('')) == 'replicate'");
+    expect(String(groups.method_rebuild)).toBe("(ec2_tags.atk_method | default('')) == 'rebuild'");
+    expect(String(groups.db_mysql)).toContain('ec2_tags.atk_db');
+    expect(String(groups.comp_shop_web)).toBe("(ec2_tags.atk_component | default('')) == 'c:shop:web'");
+    expect(String(groups.app_planned)).toContain('ec2_tags.atk_app');
+    // A replicated host that lost its name still lands in method_replicate through its tag.
+    const web01 = SITE.model.hosts.find((h) => h.name === 'web01')!;
+    expect(web01.tags.atk_method).toBe('replicate');
+    expect(web01.tags.atk_plan).toBe('plan-wp8');
+    expect(groupsFromConfig('aws', config, { name: 'renamed', tags: web01.tags }).has('method_replicate')).toBe(true);
+    const lweb01 = SITE.model.hosts.find((h) => h.name === 'lweb01')!;
+    expect(lweb01.tags.atk_component).toBe('c:shop:web');
+    // The availability group has no tag: its members by name.
+    expect(String(asMap(asMap(yaml(DYNAMIC_FILES.azure)).conditional_groups).db_sqlserver_ag)).toContain("name | default('')");
+  });
+
+  it('filters on atk_app as well for an app slice', () => {
+    const sliced = ansibleFiles(MIXED.plan, MIXED.decision, MIXED.design, { apps: ['shop'] });
+    const doc = asMap(readYaml(sliced.files[`ansible/${DYNAMIC_FILES.aws}`] ?? '').documents[0]);
+    expect(asMap(doc.filters)['tag:atk_plan']).toEqual(['plan-wp8']);
+    expect(asMap(doc.filters)['tag:atk_app']).toEqual(['shop']);
   });
 
   it('produces exactly the groups the items name, with the same hosts in them (cross-check)', () => {
@@ -333,9 +374,9 @@ describe('generate/ansible: dynamic inventories', () => {
     expect(groupsFromConfig('aws', config, web01).has('wave_1_test')).toBe(false);
   });
 
-  it('groups a MySQL host under db_mysql, not db_sqlserver (atk_db is not trusted)', () => {
+  it('groups a MySQL host under db_mysql, not db_sqlserver, from its atk_db tag', () => {
     const my = SITE.model.hosts.find((h) => h.name === 'my01')!;
-    expect(my.tags.atk_db).toBe('sqlserver');
+    expect(my.tags.atk_db).toBe('mysql');
     expect(my.groups).toContain('db_mysql');
     expect(my.groups.includes('db_sqlserver')).toBe(false);
   });
@@ -465,7 +506,34 @@ describe('generate/ansible: vars', () => {
     expect(edr).toHaveLength(1);
     expect(edr[0]!.name).toBe('Example Sensor');
     expect(edr[0]!.linux_package).toBe('example-sensor');
+    expect(edr[0]!.token_var).toBe('vault_agent_example_sensor_token');
     expect(doc.scanner_agents).toEqual([]);
+    // The token is a vault variable, listed by name only.
+    expect(F('inventory/group_vars/all/vault.yml.example')).toContain('vault_agent_example_sensor_token: ""');
+  });
+
+  it('runs the agent play on every migrated host when the plan names security agents, and the role installs, registers and starts them', () => {
+    const agents = SITE.items.find((i) => i.blueprintId === 'mig_cloud_agents')!;
+    expect(agents.values.hosts).toBe('all:!sources');
+    const tasks = F('roles/cloud_agents/tasks/main.yml');
+    for (const t of ['Install the EDR and scanner agents from their source (RHEL family)', 'Register the EDR and scanner agents', 'Keep the EDR and scanner agents enabled and running', 'Install the EDR and scanner agents']) {
+      expect(tasks).toContain(t);
+    }
+    expect(tasks).toContain('{{ cloud_agents_security }}');
+    expect(tasks).toContain('state: started');
+    expect(tasks).toContain('enabled: true');
+    expect(tasks).toContain('start_mode: auto');
+    // Every task that sees the token logs nothing.
+    const docs = readYaml(tasks).documents[0] as unknown as { block?: Record<string, unknown>[] }[];
+    const flat = docs.flatMap((b) => b.block ?? [b as Record<string, unknown>]);
+    const seeing = flat.filter((t) => JSON.stringify(t).includes('cloud_agents_token'));
+    expect(seeing.length).toBe(2);
+    for (const t of seeing) expect(t.no_log).toBe(true);
+    // No playbook header or README suggests the dry run as the command to run.
+    for (const [path, text] of Object.entries(OUT.files)) {
+      if (!/\.(ya?ml|md)$/.test(path)) continue;
+      expect([path, /^(#\s*)?(Run with:\s*|Then [a-z-]+ it:\s*)?ansible-playbook[^\n]*--check/m.test(text)]).toEqual([path, false]);
+    }
   });
 
   it('lists the relocated and VCF VMs statically, with their addresses, and the sources separately', () => {

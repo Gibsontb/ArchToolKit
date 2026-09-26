@@ -75,6 +75,8 @@ import {
   variable,
   vmColumns,
   vmLocalEntry,
+  PLAN_ID_INPUT,
+  ansibleInventoryOutput,
   vmSource,
   winrmBootstrap,
   withHost,
@@ -703,13 +705,14 @@ function googleCompute(): Blueprint {
     inputs: [
       gridInput('vms', 'VMs', vmColumns(SIZES, ['pd-balanced', 'pd-ssd']), DEFAULT_VMS, 'One row per VM. Image: family:<project>/<family> or var:<name>. Disks: type:GiB, the first is the boot disk. Licence byol-image or dedicated-host puts the VM on a sole-tenant node. Method replicate: the replication tool builds it; list it in cutover_instance_ids after cutover to adopt it.'),
       { id: 'ssh_public_key_var', label: 'SSH key variable', control: 'text', default: 'ssh_public_key', hint: 'The variable holding the ansible user\'s public key.' },
+      PLAN_ID_INPUT,
       LANDING_ZONE_SOURCE,
     ],
     emits: ['google_compute_instance', 'google_compute_disk', 'google_compute_attached_disk', 'google_compute_node_template', 'google_compute_node_group'],
     build: (values: BlueprintValues) => {
       const findings: Finding[] = [];
       const lz = lzRef(values);
-      const vms = parseVms(valueOf(values, 'vms'), 'pd-balanced', findings);
+      const vms = parseVms(valueOf(values, 'vms'), 'pd-balanced', findings, valueOf(values, 'plan_id'));
       const sshVar = ident(valueOf(values, 'ssh_public_key_var', 'ssh_public_key'));
       const images = new Map(vms.map((vm) => [vm.key, effectiveImage(vm, findings)] as const));
       const { blocks: imageBlocks, exprFor } = googleImageData(vms, images);
@@ -877,6 +880,7 @@ function googleCompute(): Blueprint {
         ]),
         output('vms', '{ for k, v in google_compute_instance.vm : k => { id = v.id, zone = v.zone, private_ip = v.network_interface[0].network_ip, ipv6 = v.network_interface[0].ipv6_address, os = local.mig_vms[k].os } }', 'Each built VM: id and addresses, for the Ansible inventory.'),
         output('replicated', '{ for k, v in google_compute_instance.replicated : k => { id = v.id, zone = v.zone, private_ip = v.network_interface[0].network_ip, os = local.mig_vms[k].os } }', 'Each adopted VM.'),
+        ...ansibleInventoryOutput('google', 'merge({ for k, v in google_compute_instance.vm : k => { ansible_host = v.network_interface[0].network_ip } }, { for k, v in google_compute_instance.replicated : k => { ansible_host = v.network_interface[0].network_ip } })'),
       );
       for (const vm of vms) {
         if (vm.licence === 'ahb' || vm.licence === 'rhel-byos' || vm.licence === 'sles-byos') {

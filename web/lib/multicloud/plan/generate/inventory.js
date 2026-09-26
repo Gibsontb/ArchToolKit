@@ -8,10 +8,13 @@
  *
  *   inventory/aws_ec2.yml  azure_rm.yml  gcp_compute.yml  migration.oci.yml
  *        the dynamic inventory plugin configs, one per hyperscaler in the
- *        plan. Their `keyed_groups` read only the tags the migration compute
- *        blueprints really write (atk_app, atk_role, atk_env, atk_os,
- *        atk_os_family, atk_wave, atk_backup, plus Name); what no tag says
- *        (replicated or rebuilt, availability group, app component) is a
+ *        plan. They list only this plan's VMs (the atk_plan tag), and read
+ *        only the tags the migration compute blueprints really write
+ *        (atk_plan, atk_method, atk_component, atk_app, atk_role, atk_env,
+ *        atk_os, atk_os_family, atk_wave, atk_backup, atk_db, plus Name):
+ *        `keyed_groups` for the plain ones, `groups:` expressions for
+ *        method, engine and component. What no tag can say (availability
+ *        group, the plan's own waves, a server in a second component) is a
  *        `groups:` expression over the host names the plan knows.
  *   inventory/hosts.yml   the group skeleton, no hosts: every group a play
  *        names or group_vars configure, so the project runs with any route.
@@ -37,8 +40,10 @@ import { familyOf } from '../../../core/ip.js';
 import { hostAddress } from '../../../ansible/estate.js';
 import { renderYaml,                } from '../../../ansible/yaml.js';
                                                                 
+import { dbTagOf } from '../../../terraform/blueprints/migration/common.js';
 import { designWorkloads, isIaasService } from '../design/index.js';
 import { PLATFORM_LABELS, PLATFORM_VALUES, slugName } from '../options.js';
+import { componentOfServers, planTag } from './terraform.js';
              
                                                                                                                         
                      
@@ -92,9 +97,8 @@ export const NAME_VAR                                            = { aws: 'ec2_t
 /**
  * The tags the migration compute blueprints write on every VM
  * (terraform/blueprints/migration/common.ts `migTags`), and the group prefix
- * each keys. `atk_db` is written too, but it reads "sqlserver" for a MySQL
- * host (its pattern tests /sql/ first), so the db_<engine> groups are keyed
- * on `atk_role`, which holds the engine for a database host, instead.
+ * each keys. atk_plan, atk_method, atk_component and atk_db are written too;
+ * they filter the inventory and make the method_, comp_ and db_ groups.
  */
 export const KEYED_TAGS                                                      = [
   ['atk_role', 'role'],
@@ -106,8 +110,8 @@ export const KEYED_TAGS                                                      = [
   ['atk_backup', 'backup'],
 ];
 
-/** The engine groups, from the atk_role value a database host carries. */
-const ENGINE_GROUPS                                                                  = [
+/** The engine groups, from the atk_db value a database host carries (`dbTagOf`). */
+const ENGINE_GROUPS                                                                    = [
   ['db_oracle', ['oracle']],
   ['db_sqlserver', ['sqlserver']],
   ['db_postgres', ['postgres']],
@@ -148,8 +152,10 @@ const LINUX_FAMILIES = ['rhel', 'suse', 'debian', 'other'];
                        
                           
                                       
-                                                                                                        
+                                                                                                            
                                            
+                                                                                                        
+                              
  
 
                              
@@ -181,6 +187,10 @@ const LINUX_FAMILIES = ['rhel', 'suse', 'debian', 'other'];
                                                                                     
                                                                                          
                                   
+                                                                                        
+                           
+                                                                                        
+                           
                                         
  
 
@@ -194,15 +204,6 @@ const LINUX_FAMILIES = ['rhel', 'suse', 'debian', 'other'];
 /** The compute row's Role, as Terraform writes it: the engine for an IaaS database host, else the workload's role. */
 function roleTag(w                      , engine                    )         {
   return (engine ?? w?.role ?? '').toLowerCase();
-}
-
-/** Terraform's atk_db value for a Role (reproduced as written, with its MySQL quirk). */
-function dbTag(role        )         {
-  if (/oracle/.test(role)) return 'oracle';
-  if (/sql|mssql/.test(role)) return 'sqlserver';
-  if (/postgres|pg/.test(role)) return 'postgres';
-  if (/mysql|maria/.test(role)) return 'mysql';
-  return role === 'db' ? 'db' : '';
 }
 
 function osFamily(os        )                                                   {
@@ -257,6 +258,8 @@ export function inventoryModel(plan      , decision              , design       
   const byName = new Map(workloads.map((w) => [w.name, w]));
   const dbById = new Map(plan.databases.map((d) => [d.id, d]));
   const appByName = new Map             (plan.apps.map((a) => [a.name, a]));
+  const componentOf = componentOfServers(plan);
+  const planId = planTag(plan);
 
   // The slice.
   const wanted = options.apps && options.apps.length > 0
@@ -314,6 +317,9 @@ export function inventoryModel(plan      , decision              , design       
       const role = roleTag(w, onDb?.db.engine);
       const wave = w ? waveOf(w) : undefined;
       const raw                         = {
+        atk_plan: planId,
+        atk_method: method,
+        atk_component: (w && componentOf.get(w.name)) ?? '',
         atk_app: w?.app ?? '',
         atk_role: role,
         atk_env: w?.env ?? '',
@@ -321,7 +327,7 @@ export function inventoryModel(plan      , decision              , design       
         atk_os_family: family,
         atk_wave: w ? (appByName.get(w.app)?.wave === undefined ? '' : String(appByName.get(w.app) .wave)) : '',
         atk_backup: c.backupTier,
-        atk_db: dbTag(role),
+        atk_db: dbTagOf(role),
       };
       const tags = platform === 'google' ? Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, gcpLabel(v)])) : raw;
       const draft        = {
@@ -348,7 +354,10 @@ export function inventoryModel(plan      , decision              , design       
     drafts.push({
       name: w.name, w, id: w.id, platform: d.chosen.platform, route: 'static', method: 'relocate',
       kind: family === 'windows' ? 'windows' : 'linux', app: w.app, ...(wave !== undefined ? { wave } : {}),
-      tags: { atk_app: w.app, atk_role: w.role, atk_env: w.env, atk_os: w.os, atk_os_family: family, atk_wave: '', atk_backup: '', atk_db: '' },
+      tags: {
+        atk_plan: '', atk_method: 'relocate', atk_component: componentOf.get(w.name) ?? '', atk_app: w.app, atk_role: w.role, atk_env: w.env,
+        atk_os: w.os, atk_os_family: family, atk_wave: '', atk_backup: '', atk_db: dbTagOf(w.role),
+      },
       ...(address ? { address } : {}),
       groups: new Set(),
     });
@@ -384,7 +393,7 @@ export function inventoryModel(plan      , decision              , design       
     }
     if (d.tags.atk_wave) g.add(`wave_${safeGroup(d.tags.atk_wave)}`);
     if (d.wave !== undefined) g.add(`wave_${d.wave}`);
-    for (const [group, roles] of ENGINE_GROUPS) if (roles.includes(d.tags.atk_role ?? '')) g.add(group);
+    for (const [group, engines] of ENGINE_GROUPS) if (engines.includes(d.tags.atk_db ?? '')) g.add(group);
     if (planned.has(d.app)) g.add('app_planned');
   }
 
@@ -464,7 +473,7 @@ export function inventoryModel(plan      , decision              , design       
         else findings.push(warning('plan.ansible.component-unknown-target', `${app.name}: the ${c.name} configuration applies to ${ref}, which is neither a component nor a server of the app on the target.`));
       }
       for (const m of members) m.groups.add(group);
-      components.push({ group, app: app.name, members: [...members].map((m) => m.name), componentIds: ids });
+      components.push({ group, app: app.name, members: [...members].map((m) => m.name), componentIds: ids, ...(applies.length === 0 ? { wholeApp: true } : {}) });
     }
   }
 
@@ -520,7 +529,7 @@ export function inventoryModel(plan      , decision              , design       
   return {
     hosts, sources, platforms, dbHosts, ags: agsOut, components,
     apps: [...new Set(hosts.map((h) => h.app).filter(Boolean))].sort(),
-    testWaves, wavesFromPlan: !!options.waves, findings,
+    testWaves, wavesFromPlan: !!options.waves, planTag: planId, sliced: wanted !== null, findings,
   };
 }
 
@@ -612,17 +621,25 @@ export function conditionalGroups(model                , platform               
     out.os_kind_windows = tagIn('atk_os_family', ['windows']);
     out.bootstrap_windows = tagIn('atk_os_family', ['windows']);
   }
-  for (const [group, roles] of ENGINE_GROUPS) if (has(group)) out[group] = tagIn('atk_role', roles);
-  for (const m of ['replicate', 'rebuild']         ) if (has(`method_${m}`)) out[`method_${m}`] = nameIn(names(`method_${m}`));
+  for (const [group, engines] of ENGINE_GROUPS) if (has(group)) out[group] = tagIn('atk_db', engines);
+  for (const m of ['replicate', 'rebuild']         ) if (has(`method_${m}`)) out[`method_${m}`] = tagIn('atk_method', [m]);
+  // An availability group is no tag: its members by name.
   if (has('db_sqlserver_ag')) out.db_sqlserver_ag = nameIn(names('db_sqlserver_ag'));
   for (const ag of model.ags) if (has(ag.group)) out[ag.group] = nameIn(names(ag.group));
-  if (has('app_planned')) out.app_planned = nameIn(names('app_planned'));
+  if (has('app_planned')) {
+    const apps = [...new Set(here.filter((h) => h.groups.includes('app_planned')).map((h) => h.tags.atk_app ?? h.app))].filter(Boolean).sort();
+    out.app_planned = tagIn('atk_app', apps);
+  }
   for (const c of model.components) {
     if (!has(c.group)) continue;
-    const members = names(c.group);
-    out[c.group] = c.componentIds.length > 0
-      ? { op: 'or', of: [nameIn(members), tagIn('atk_component', c.componentIds)] }
-      : nameIn(members);
+    if (c.wholeApp) {
+      out[c.group] = tagIn('atk_app', [c.app]);
+      continue;
+    }
+    // The atk_component tag, and by name the members whose tag names another component (a server in two).
+    const byName = here.filter((h) => h.groups.includes(c.group) && !c.componentIds.includes(h.tags.atk_component ?? '')).map((h) => h.name);
+    if (c.componentIds.length === 0) out[c.group] = nameIn(byName);
+    else out[c.group] = byName.length > 0 ? { op: 'or', of: [tagIn('atk_component', c.componentIds), nameIn(byName)] } : tagIn('atk_component', c.componentIds);
   }
   if (model.wavesFromPlan) {
     const waves = [...new Set(here.map((h) => h.wave).filter((w)              => w !== undefined))].sort((a, b) => a - b);
@@ -646,18 +663,24 @@ export function dynamicInventory(model                , pd                , find
   const platform = pd.platform                   ;
   const here = model.hosts.filter((h) => h.route === 'dynamic' && h.platform === platform);
   const apps = [...new Set(here.map((h) => h.tags.atk_app ?? h.app))].filter(Boolean).sort();
+  const plan = model.planTag;
+  // The plan's own VMs by atk_plan; the app slice (or a plan with no id) by atk_app too.
+  const byApp = model.sliced || plan === '';
   const groups = conditionalGroups(model, platform);
   const conditional = Object.fromEntries(Object.entries(groups).map(([g, c]) => [g, renderCond(c, platform)]));
   const keyed = keyedGroups(platform)                        ;
   const doc                            = { plugin: DYNAMIC_PLUGINS[platform] };
   const header           = [];
-  const appNote = 'Only this plan\'s VMs: the ones whose atk_app tag names one of its apps.';
+  const appNote = plan === ''
+    ? 'Only this plan\'s VMs: the ones whose atk_app tag names one of its apps.'
+    : `Only this plan's VMs: the ones tagged atk_plan = ${plan}${byApp ? ', and atk_app one of the apps in this slice' : ''}.`;
+  const excludes = (tagVar        )           => [...(plan !== '' ? [notIn(`${tagVar}.atk_plan`, [plan])] : []), ...(byApp ? [notIn(`${tagVar}.atk_app`, apps)] : [])];
 
   if (platform === 'aws') {
     header.push(`${PLATFORM_LABELS.aws}: the EC2 instances the migration compute stack built or adopted.`, appNote,
       'Credentials: the environment, a profile or the instance role, never this file.');
     doc.regions = [pd.region];
-    doc.filters = { 'tag:atk_app': apps, 'instance-state-name': ['running'] };
+    doc.filters = { ...(plan !== '' ? { 'tag:atk_plan': [plan] } : {}), ...(byApp ? { 'tag:atk_app': apps } : {}), 'instance-state-name': ['running'] };
     doc.hostnames = ['tag:Name', 'private-ip-address'];
     doc.compose = {
       ansible_host: 'private_ip_address',
@@ -673,13 +696,13 @@ export function dynamicInventory(model                , pd                , find
     doc.include_vm_resource_groups = ['*'];
     doc.plain_host_names = true;
     doc.hostnames = ['name', 'default'];
-    doc.exclude_host_filters = [notIn('tags.atk_app', apps)];
+    doc.exclude_host_filters = excludes('tags');
     doc.hostvar_expressions = { ansible_host: '(private_ipv4_addresses + ansible_all_ipv6_addresses) | first' };
     doc.keyed_groups = keyed;
     doc.conditional_groups = conditional;
   } else if (platform === 'google') {
     header.push(`${PLATFORM_LABELS.google}: the Compute Engine instances the migration compute stack built or adopted.`,
-      'Only this plan\'s VMs: the ones whose atk_app label names one of its apps (labels are lower case).',
+      `${appNote} (Labels are lower case.)`,
       'Credentials: Application Default Credentials (gcloud auth application-default login), never this file.');
     if (pd.scope?.trim()) doc.projects = [pd.scope.trim()];
     else {
@@ -692,7 +715,8 @@ export function dynamicInventory(model                , pd                , find
     doc.auth_kind = 'application';
     doc.filters = [
       'status = RUNNING',
-      apps.length === 1 ? `labels.atk_app = "${gcpLabel(apps[0] )}"` : apps.map((a) => `(labels.atk_app = "${gcpLabel(a)}")`).join(' OR '),
+      ...(plan !== '' ? [`labels.atk_plan = "${gcpLabel(plan)}"`] : []),
+      ...(byApp ? [apps.length === 1 ? `labels.atk_app = "${gcpLabel(apps[0] )}"` : apps.map((a) => `(labels.atk_app = "${gcpLabel(a)}")`).join(' OR ')] : []),
     ];
     doc.hostnames = ['name', 'private_ip'];
     doc.compose = { ansible_host: 'networkInterfaces[0].networkIP' };
@@ -707,7 +731,7 @@ export function dynamicInventory(model                , pd                , find
     doc.primary_vnic_only = true;
     doc.enable_ipv6 = true;
     doc.hostname_format_preferences = ['display_name', 'private_ip'];
-    doc.exclude_host_filters = [notIn('freeform_tags.atk_app', apps)];
+    doc.exclude_host_filters = excludes('freeform_tags');
     doc.compose = { ansible_host: 'private_ip' };
     doc.keyed_groups = keyed;
     doc.groups = conditional;
@@ -715,8 +739,10 @@ export function dynamicInventory(model                , pd                , find
   header.push(
     '',
     'Groups: role_, os_, os_family_, env_, app_, wave_ and backup_ from the atk_* tags',
-    'Terraform writes; the rest (platform, OS kind, engine, method, availability',
-    'group, app component, wave test launches) from the expressions under groups.',
+    'Terraform writes; platform, OS kind, engine (atk_db), method (atk_method), app',
+    'component (atk_component) and wave test launches from the expressions under',
+    'groups, which fall back to host names only where no tag can say it',
+    '(availability groups, the wave plan, a server in a second component).',
   );
   return { path: DYNAMIC_FILES[platform], text: renderYaml(doc, { header: header.join('\n') }) };
 }
@@ -788,7 +814,16 @@ export function skeletonInventory(groups                   )         {
                                    
                                   
                            
+                                                                                                    
+                             
+                                                                                                         
+                                  
+                                           
+                                     
  
+
+/** The vault variable an agent's token is read from. */
+export const agentTokenVar = (name        )         => `vault_agent_${safeGroup(slugName(name) || name).replace(/_+/g, '_').replace(/^_|_$/g, '') || 'agent'}_token`;
 
 /**
  * EDR and vulnerability-scanner agents from the plan's security services
@@ -796,7 +831,9 @@ export function skeletonInventory(groups                   )         {
  * Kind comes from facts.kind (edr / vuln-scanning), the package and install
  * sources from facts.linux_package, linux_source, windows_package,
  * windows_source (or package / source for both), the service from
- * facts.service.
+ * facts.service, the registration from facts.linux_register and
+ * facts.windows_arguments (`%TOKEN%` stands for the token, which is always a
+ * vault variable, vault_agent_<name>_token, never a fact).
  */
 export function securityAgents(plan      )                                                     {
   const edr                  = [];
@@ -809,13 +846,17 @@ export function securityAgents(plan      )                                      
     const isEdr = /edr|endpoint/.test(kind);
     const isScanner = /scan|vuln/.test(kind);
     if (!isEdr && !isScanner) continue;
+    const name = (f.product || [item.vendor, item.model].filter(Boolean).join(' ') || item.name).trim();
     const agent                = {
-      name: (f.product || [item.vendor, item.model].filter(Boolean).join(' ') || item.name).trim(),
+      name,
       linux_package: (f.linux_package ?? f.package ?? '').trim(),
       linux_source: (f.linux_source ?? f.source ?? '').trim(),
       windows_package: (f.windows_package ?? f.package ?? '').trim(),
       windows_source: (f.windows_source ?? f.source ?? '').trim(),
       service: (f.service ?? '').trim(),
+      token_var: agentTokenVar(name),
+      linux_register: (f.linux_register ?? '').trim(),
+      windows_arguments: (f.windows_arguments ?? f.install_args ?? '').trim(),
     };
     (isEdr ? edr : scanner).push(agent);
   }
@@ -1004,6 +1045,8 @@ export function vaultNamesIn(files                                  )           
 /** group_vars/all/vault.yml.example: every name, empty. */
 export function vaultExample(names                   )         {
   const all = [...new Set([...names, ...KNOWN_VAULT_NAMES])].sort();
+  const describe = (n        )         =>
+    VAULT_DESCRIPTIONS[n] ?? (/^vault_agent_\w+_token$/.test(n) ? `registration token or customer id for the ${n.slice(12, -6).replace(/_/g, ' ')} agent (%TOKEN% in security_agents.yml)` : 'a secret a playbook here reads');
   const lines = [
     '# Every secret this project reads, with no values. Copy it to vault.yml in',
     '# this folder, fill it in, and encrypt it:',
@@ -1012,7 +1055,7 @@ export function vaultExample(names                   )         {
     '# Ansible ignores this .example file; it reads vault.yml.',
     '---',
   ];
-  for (const n of all) lines.push(`# ${VAULT_DESCRIPTIONS[n] ?? 'a secret a playbook here reads'}`, `${n}: ""`);
+  for (const n of all) lines.push(`# ${describe(n)}`, `${n}: ""`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -1167,7 +1210,12 @@ export function groupVars({ plan, design, model }                , findings     
       'EDR and vulnerability-scanner agents to put on every migrated host, from the',
       'plan\'s security services: the package names and install sources you named.',
       'Each entry: name, linux_package, linux_source, windows_package,',
-      'windows_source, service.',
+      'windows_source, service; and for the registration token_var (the vault',
+      'variable holding the token or customer id), linux_register (the command',
+      'that registers the agent) and windows_arguments (the installer\'s',
+      'arguments). %TOKEN% in those two is replaced with the token at run time;',
+      'the tasks that see it log nothing. The cloud_agents play installs them,',
+      'registers them, and keeps them enabled and running.',
     ].join('\n'),
   });
   const missing = [...agents.edr, ...agents.scanner].filter((a) => !a.linux_source && !a.windows_source && !a.linux_package && !a.windows_package);

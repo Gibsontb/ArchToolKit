@@ -18,9 +18,13 @@ import { TERRAFORM_BLUEPRINTS, findTerraformBlueprint } from '../index.ts';
 import {
   MIGRATION_GROUP,
   carve,
+  dbTagOf,
   landingZoneKeys,
+  migTags,
   parseGrid,
   parseImageRef,
+  parseVms,
+  planTagValue,
   renderImageRef,
   ulaFor,
   type ImageRef,
@@ -128,7 +132,7 @@ describe('migration blueprints: the set', () => {
       if (!findTerraformBlueprint(`${c}_mig_landing_zone`)) continue;
       expect(hint(`${c}_mig_landing_zone`, 'networks')).toBe('Network | Environments | IPv4 CIDR | IPv6 | Tiers | Zones');
       expect(hint(`${c}_mig_connectivity`, 'sites')).toBe('Site | VPN peer address | BGP ASN | On-prem CIDRs | Method | Circuit id or service key');
-      expect(hint(`${c}_mig_compute`, 'vms')).toBe('Name | OS | Image | Size | Cores | Disks | Network | Tier | Zone | Licence | Backup | Method | App | Role | Env | Wave');
+      expect(hint(`${c}_mig_compute`, 'vms')).toBe('Name | OS | Image | Size | Cores | Disks | Network | Tier | Zone | Licence | Backup | Method | App | Role | Env | Wave | Component');
       expect(hint(`${c}_mig_databases`, 'databases')).toBe('Name | Service | Engine | Edition | Version | Class | Storage GiB | HA | Licence | Backup days | Network | App');
       expect(hint(`${c}_mig_backup`, 'tiers')).toBe('Tier | Frequency | Retention days | Copy to DR region | Immutable');
     }
@@ -331,6 +335,46 @@ describe('migration blueprints: the shared pieces', () => {
     for (const r of refs) expect(parseImageRef(renderImageRef(r))).toEqual(r);
     expect(parseImageRef('')).toBe(null);
     expect(parseImageRef('nonsense')).toBe(null);
+  });
+
+  it('reads the database engine from a Role, MySQL and PostgreSQL included (they contain "sql")', () => {
+    const cases: Record<string, string> = {
+      oracle: 'oracle', 'oracle-rac': 'oracle',
+      sqlserver: 'sqlserver', mssql: 'sqlserver', 'sql-server': 'sqlserver', sql: 'sqlserver', sql2019: 'sqlserver',
+      mysql: 'mysql', mariadb: 'mariadb', maria: 'mariadb',
+      postgres: 'postgres', postgresql: 'postgres', pg: 'postgres', pgsql: 'postgres', 'pg-16': 'postgres',
+      db2: 'db2', mongodb: 'mongodb', 'sybase-ase': 'sybase-ase', informix: 'informix', 'sap-hana': 'sap-hana',
+      redis: 'redis', cassandra: 'cassandra', elasticsearch: 'elasticsearch',
+      db: 'db', web: '', app: '', upgrade: '', 'ad-dc': '', '': '',
+    };
+    for (const [role, want] of Object.entries(cases)) expect([role, dbTagOf(role)]).toEqual([role, want]);
+  });
+
+  it('tags every VM with its plan, method and component, as the Ansible inventory reads them', () => {
+    const [vm] = parseVms('my01 | ubuntu-24.04 | var:img | m7i.large |  | gp3:64 | prod | db | a | li | gold | replicate | catalog | mysql | prod | 2 | c:catalog:db', 'gp3', [], ' Plan-WP8 ');
+    const tags = migTags(vm!);
+    expect(tags).toEqual({
+      atk_plan: 'plan-wp8', atk_method: 'replicate', atk_component: 'c:catalog:db', atk_app: 'catalog', atk_role: 'mysql', atk_env: 'prod',
+      atk_os: 'ubuntu-24.04', atk_os_family: 'debian', atk_wave: '2', atk_backup: 'gold', atk_db: 'mysql',
+    });
+    // A row written before the Component column, and a stack built by hand: empty, never missing.
+    const [old] = parseVms('app01 | rhel-9 | var:img | m7i.large |  | gp3:64 | prod | app | a | li | silver | rebuild | shop | app | prod | 1', 'gp3', []);
+    expect(migTags(old!).atk_component).toBe('');
+    expect(migTags(old!).atk_plan).toBe('');
+    expect(planTagValue('0F8E-uuid_x')).toBe('0f8e-uuid-x');
+  });
+
+  it('writes the plan id into every compute blueprint\'s tags, and an ansible_inventory output', () => {
+    for (const c of CLOUDS) {
+      const b = findTerraformBlueprint(`${c}_mig_compute`);
+      if (!b) continue;
+      expect([c, b.inputs.some((i) => i.id === 'plan_id')]).toEqual([c, true]);
+      const text = tfText(build(b, { plan_id: 'plan-wp8' }).files);
+      expect([c, /atk_plan\s*=\s*"plan-wp8"/.test(text), /atk_method\s*=/.test(text), /atk_component\s*=/.test(text)]).toEqual([c, true, true, true]);
+      const blocks = topLevelBlocks(text);
+      expect([c, blocks.some((x) => x.kind === 'output' && x.labels[0] === 'ansible_inventory')]).toEqual([c, true]);
+      expect([c, text.includes(`"platform_${c}"`), text.includes('"method_${v.method}"')]).toEqual([c, true, true]);
+    }
   });
 
   it('gives an Azure network the same ULA /48 every time', () => {

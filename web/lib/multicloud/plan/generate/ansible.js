@@ -44,7 +44,7 @@ import { PLATFORM_LABELS, slugName } from '../options.js';
                                                                                                                          
 import {
   componentGroup, DYNAMIC_FILES, DYNAMIC_PLUGINS, dynamicInventory, groupsInPattern, groupVars, hostsMatching, hostVarsFor,
-  inventoryModel, onPremDcAddresses, renderHostVars, safeGroup, skeletonInventory, sourcesInventory, vaultExample, vaultNamesIn,
+  inventoryModel, onPremDcAddresses, renderHostVars, safeGroup, securityAgents, skeletonInventory, sourcesInventory, vaultExample, vaultNamesIn,
   vmwareInventory,                                                                      
 } from './inventory.js';
 
@@ -139,10 +139,15 @@ export function planToSite(plan      , decision              , design           
     hosts: 'os_kind_windows', platform, timezone: 'UTC', hardening: HARDENING[req.securityBaseline] ?? 'none', licence: 'li',
     domain_join: joins ? 'true' : 'false', update: 'true', allowed_tcp_ports: '5986',
   });
+  const agents = securityAgents(plan);
+  const hasAgents = agents.edr.length + agents.scanner.length > 0;
   if (hyperscalers.length > 0) {
     const onClouds = hyperscalers.map((p) => `platform_${p}`).join(':');
     add(12, 'vmware-tools', 'mig_vmware_tools_removal', 'Remove VMware Tools', { hosts: `${onClouds}:&method_replicate`, platform });
-    add(13, 'cloud-agents', 'mig_cloud_agents', 'Cloud guest agents', { hosts: onClouds, platform });
+    // The EDR and scanner agents go on every migrated host, VMware ones too.
+    add(13, 'cloud-agents', 'mig_cloud_agents', hasAgents ? 'Cloud guest and security agents' : 'Cloud guest agents', { hosts: hasAgents ? everywhere : onClouds, platform });
+  } else if (hasAgents) {
+    add(13, 'cloud-agents', 'mig_cloud_agents', 'Security agents', { hosts: everywhere, platform });
   }
   // The source-platform tools a replication tool leaves behind (addendum A.3.5); added when the kit has the play.
   add(14, 'source-tools', 'mig_source_tools', 'Source platform tools', { hosts: 'method_replicate', platform }, true);
@@ -310,6 +315,21 @@ function readme(plan      , site          , files                               
     'the steps before cutover `wave_<n>_sources` (the sources) and `wave_<n>_test` (test launches).',
     'See them with `ansible-inventory --graph`.',
     '',
+    ...(dynamic.length > 0
+      ? [
+          'The dynamic inventories list only this plan\'s VMs (the `atk_plan` tag). Without the',
+          'cloud SDKs, each Terraform root module gives the same hosts statically instead:',
+          '',
+          '```sh',
+          ...dynamic.map((p) => `terraform -chdir=../terraform/${p} output -json compute_ansible_inventory > inventory/terraform_${p}.json`),
+          '```',
+          '',
+          'Remove that platform\'s dynamic config when you do, so a host is not listed twice.',
+          'The static file carries the tag groups; availability groups, app components and',
+          'the wave plan\'s waves come from the dynamic configs only.',
+          '',
+        ]
+      : []),
     '## Before the first run',
     '',
     '```sh',
@@ -399,12 +419,7 @@ export function ansibleFiles(
     }
     for (const [path, text] of Object.entries(built.files)) {
       if (path === 'README.md' || path === 'inventory/hosts.yml') continue;
-      // Ansible reads group_vars/all/ or group_vars/all.yml, not both: the directory wins,
-      // and the vault lives there, so the shared answers go in all/main.yml.
-      if (path === 'inventory/group_vars/all.yml') {
-        files['inventory/group_vars/all/main.yml'] = text;
-        continue;
-      }
+      // The site writes its shared answers to group_vars/all/main.yml, beside the vault.
       files[path] = text;
     }
   }

@@ -73,6 +73,8 @@ import {
   variable,
   vmColumns,
   vmLocalEntry,
+  PLAN_ID_INPUT,
+  ansibleInventoryOutput,
   vmSource,
   winrmBootstrap,
   withHost,
@@ -659,13 +661,14 @@ function ociCompute()            {
     inputs: [
       gridInput('vms', 'VMs', vmColumns(SHAPES, ['balanced', 'higher']), DEFAULT_VMS, 'One row per VM. Size: shape, or shape:OCPUs:memory GB for a flexible shape (VM.Standard.E5.Flex:4:64); Cores, when set, is the OCPU count. Disks: balanced:GiB or higher:GiB, the first is the boot volume. Method replicate: the replication tool builds it; list it in cutover_instance_ids after cutover to adopt it.'),
       { id: 'ssh_public_key_var', label: 'SSH key variable', control: 'text', default: 'ssh_public_key', hint: 'The variable holding the ansible user\'s public key.' },
+      PLAN_ID_INPUT,
       LANDING_ZONE_SOURCE,
     ],
     emits: ['oci_core_instance', 'oci_core_volume', 'oci_core_volume_attachment'],
     build: (values                 ) => {
       const findings            = [];
       const lz = lzRef(values);
-      const vms = parseVms(valueOf(values, 'vms'), 'balanced', findings);
+      const vms = parseVms(valueOf(values, 'vms'), 'balanced', findings, valueOf(values, 'plan_id'));
       const sshVar = ident(valueOf(values, 'ssh_public_key_var', 'ssh_public_key'));
       const { blocks: imageBlocks, exprFor } = ociImageData(vms, lz);
 
@@ -804,6 +807,7 @@ function ociCompute()            {
         ]),
         output('vms', '{ for k, v in oci_core_instance.vm : k => { id = v.id, private_ip = v.private_ip, os = local.mig_vms[k].os } }', 'Each built VM: id and address, for the Ansible inventory.'),
         output('replicated', '{ for k, v in oci_core_instance.replicated : k => { id = v.id, private_ip = v.private_ip, os = try(local.mig_vms[k].os, null) } }', 'Each adopted VM.'),
+        ...ansibleInventoryOutput('oci', 'merge({ for k, v in oci_core_instance.vm : k => { ansible_host = v.private_ip } }, { for k, v in oci_core_instance.replicated : k => { ansible_host = v.private_ip } })'),
       );
       return { files: { 'main.tf': mainTf(blocks, `OCI compute: ${vms.length} VM(s)`) }, findings };
     },

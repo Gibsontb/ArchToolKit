@@ -18,6 +18,7 @@
 import { info } from '../../../core/findings.ts';
 import { assertVault } from '../../migration/roles/ad_join.ts';
 import type { Task } from '../../migration/roles/index.ts';
+import type { YamlValue } from '../../yaml.ts';
 import { list, migrationBlueprint, text, TRUE_FALSE, yes } from './common.ts';
 
 const FIRST = 'inventory_hostname == dc_first';
@@ -149,7 +150,7 @@ export const MIG_AD_DC_PROMOTE = migrationBlueprint({
     { id: 'replication_source', label: 'Replicate from', control: 'text', default: '', hint: 'A DC to copy the directory from; blank lets AD choose', showWhen: { input: 'mode', equals: ['extend'] } },
     { id: 'kds_root_key', label: 'Add a KDS root key (gMSA)', control: 'select', options: TRUE_FALSE, default: 'true' },
   ],
-  play: (v) => (text(v.mode, 'extend') === 'new-forest' ? { serial: 1 } : {}),
+  play: (v): Record<string, YamlValue> => (text(v.mode, 'extend') === 'new-forest' ? { serial: 1 } : {}),
   vars: (v) => ({
     dc_mode: text(v.mode, 'extend'),
     dc_domain: text(v.domain, 'corp.example.com'),

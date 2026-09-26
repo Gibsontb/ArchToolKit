@@ -78,7 +78,7 @@ export function playbookScenario(definition                  )            {
       const file = `${(name || definition.id).trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || definition.id}.yml`;
       const files                         = {
         [file]: renderYaml(plays, {
-          header: `${definition.label}\n\nRun with:  ansible-playbook ${file} --check --diff\n\nCredentials belong in the environment or an ansible-vault file, never in\nthis playbook. Nothing here writes one.`,
+          header: `${definition.label}\n\nRun with:  ansible-playbook ${file}\n(It applies. For a dry run first, add --check --diff.)\n\nCredentials belong in the environment or an ansible-vault file, never in\nthis playbook. Nothing here writes one.`,
         }),
       };
       const collections = [...new Set(collectModules(plays).map((m) => m.split('.').slice(0, 2).join('.')))].sort();

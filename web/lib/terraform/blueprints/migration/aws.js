@@ -69,6 +69,8 @@ import {
   variable,
   vmColumns,
   vmLocalEntry,
+  PLAN_ID_INPUT,
+  ansibleInventoryOutput,
   winrmBootstrap,
   withHost,
   words,
@@ -735,13 +737,14 @@ function awsCompute()            {
       gridInput('vms', 'VMs', vmColumns(SIZES, ['gp3', 'io2']), DEFAULT_VMS, 'One row per VM. Disks: type:GiB, the first is the boot disk. Method replicate: the replication tool builds it; list it in cutover_instance_ids after cutover to adopt it.'),
       { id: 'ssh_public_key_var', label: 'SSH key variable', control: 'text', default: 'ssh_public_key', hint: 'The variable holding the ansible user\'s public key.' },
       { id: 'imdsv2', label: 'Instance metadata', control: 'select', default: 'required', options: [{ value: 'required', label: 'IMDSv2 only (tokens required)' }] },
+      PLAN_ID_INPUT,
       LANDING_ZONE_SOURCE,
     ],
     emits: ['aws_instance', 'aws_ebs_volume', 'aws_volume_attachment', 'aws_ec2_host', 'aws_licensemanager_license_configuration', 'aws_licensemanager_association'],
     build: (values                 ) => {
       const findings            = [];
       const lz = lzRef(values);
-      const vms = parseVms(valueOf(values, 'vms'), 'gp3', findings);
+      const vms = parseVms(valueOf(values, 'vms'), 'gp3', findings, valueOf(values, 'plan_id'));
       const sshVar = ident(valueOf(values, 'ssh_public_key_var', 'ssh_public_key'));
       const { blocks: imageBlocks, exprFor } = awsImageData(vms);
       const hostKey = (vm        ) => (vm.licence === 'dedicated-host' && vm.method === 'rebuild' ? `${familyOfSize(vm.size)}-${vm.zone}` : '');
@@ -854,6 +857,7 @@ function awsCompute()            {
         }, [metadata, ignoreChanges(['ami', 'user_data', 'user_data_base64', 'subnet_id', 'availability_zone', 'key_name', 'private_ip', 'root_block_device', 'ebs_block_device'])]),
         output('vms', '{ for k, v in aws_instance.vm : k => { id = v.id, private_ip = v.private_ip, ipv6 = v.ipv6_addresses, os = local.mig_vms[k].os } }', 'Each built VM: id and addresses, for the Ansible inventory.'),
         output('replicated', '{ for k, v in aws_instance.replicated : k => { id = v.id, private_ip = v.private_ip, ipv6 = v.ipv6_addresses, os = local.mig_vms[k].os } }', 'Each adopted VM.'),
+        ...ansibleInventoryOutput('aws', 'merge({ for k, v in aws_instance.vm : k => { ansible_host = v.private_ip, ansible_aws_ssm_instance_id = v.id } }, { for k, v in aws_instance.replicated : k => { ansible_host = v.private_ip, ansible_aws_ssm_instance_id = v.id } })'),
       );
       for (const vm of vms) {
         if (vm.licence === 'ahb' || vm.licence === 'rhel-byos' || vm.licence === 'sles-byos') {

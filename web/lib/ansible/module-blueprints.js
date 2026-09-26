@@ -932,7 +932,8 @@ function materialize(fqcn        , schema              )               {
       const header = [
         `${fqcn}${schema.d ? ` — ${schema.d}` : ''}`,
         '',
-        `Run with:  ansible-playbook ${playbook} --check --diff`,
+        `Run with:  ansible-playbook ${playbook}`,
+        '(It applies. For a dry run first, add --check --diff.)',
         '',
         'Credentials belong in the environment or an ansible-vault file, never in',
         'this playbook. Nothing here writes one.',

@@ -146,7 +146,8 @@ export function playbookFiles(
     header: [
       `${label}`,
       '',
-      `Run with:  ansible-playbook -i inventory ${filename} --check --diff`,
+      `Run with:  ansible-playbook -i inventory ${filename}`,
+      '(It applies. For a dry run first, add --check --diff.)',
       '',
       'Credentials belong in the environment or an ansible-vault file, never in',
       'this playbook. Nothing here writes one.',

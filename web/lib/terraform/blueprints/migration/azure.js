@@ -71,6 +71,8 @@ import {
   variable,
   vmColumns,
   vmLocalEntry,
+  PLAN_ID_INPUT,
+  ansibleInventoryOutput,
   vmSource,
   winrmBootstrap,
   withHost,
@@ -722,13 +724,14 @@ function azureCompute()            {
       gridInput('vms', 'VMs', vmColumns(SIZES, ['Premium_LRS', 'PremiumV2_LRS', 'StandardSSD_LRS']), DEFAULT_VMS, 'One row per VM. Image: mkt:<publisher>:<offer>:<sku> or var:<name>. Disks: type:GiB, the first is the OS disk.'),
       { id: 'ssh_public_key_var', label: 'SSH key variable', control: 'text', default: 'ssh_public_key' },
       { id: 'windows_admin_password_var', label: 'Windows admin password variable', control: 'text', default: 'windows_admin_password', hint: 'Azure requires one at create: a sensitive variable, set as TF_VAR_… and never written.' },
+      PLAN_ID_INPUT,
       LANDING_ZONE_SOURCE,
     ],
     emits: ['azurerm_network_interface', 'azurerm_linux_virtual_machine', 'azurerm_windows_virtual_machine', 'azurerm_virtual_machine_extension', 'azurerm_managed_disk', 'azurerm_virtual_machine_data_disk_attachment', 'azurerm_dedicated_host_group', 'azurerm_dedicated_host'],
     build: (values                 ) => {
       const findings            = [];
       const lz = lzRef(values);
-      const vms = parseVms(valueOf(values, 'vms'), 'Premium_LRS', findings);
+      const vms = parseVms(valueOf(values, 'vms'), 'Premium_LRS', findings, valueOf(values, 'plan_id'));
       const sshVar = ident(valueOf(values, 'ssh_public_key_var', 'ssh_public_key'));
       const pwVar = ident(valueOf(values, 'windows_admin_password_var', 'windows_admin_password'));
       const anyWindows = vms.some((v) => v.kind === 'windows' && v.method === 'rebuild');
@@ -922,6 +925,7 @@ function azureCompute()            {
         res('azurerm_linux_virtual_machine', 'replicated', adoptCommon('linux'), [blk('os_disk', { caching: 'ReadWrite' }), adoptIgnore('linux')]),
         res('azurerm_windows_virtual_machine', 'replicated', adoptCommon('windows'), [blk('os_disk', { caching: 'ReadWrite' }), adoptIgnore('windows')]),
         output('vms', '{ for k, v in merge(azurerm_linux_virtual_machine.vm, azurerm_windows_virtual_machine.vm) : k => { id = v.id, private_ip = v.private_ip_address, ipv6 = [for a in v.private_ip_addresses : a if can(regex(":", a))], os = local.mig_vms[k].os } }', 'Each built VM: id and addresses, for the Ansible inventory.'),
+        ...ansibleInventoryOutput('azure', '{ for k, v in merge(azurerm_linux_virtual_machine.vm, azurerm_windows_virtual_machine.vm, azurerm_linux_virtual_machine.replicated, azurerm_windows_virtual_machine.replicated) : k => { ansible_host = v.private_ip_address } }'),
       );
       for (const vm of vms) {
         if (vm.licence === 'rhel-byos' || vm.licence === 'sles-byos') {

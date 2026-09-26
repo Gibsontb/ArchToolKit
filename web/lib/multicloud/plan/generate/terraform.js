@@ -36,7 +36,7 @@ import { familyOf, overlapsAny } from '../../../core/ip.js';
                                                            
 import { envelope, writeSettings } from '../../../kit/settings-file.js';
                                                                         
-import { renderImageRef,                               } from '../../../terraform/blueprints/migration/common.js';
+import { planTagValue, renderImageRef,                               } from '../../../terraform/blueprints/migration/common.js';
 import { findTerraformBlueprint } from '../../../terraform/blueprints/index.js';
                                                                    
                                                                   
@@ -120,6 +120,10 @@ import { NETWORK_BASE, overrideKey, PLATFORM_LABELS, PLATFORM_VALUES, slugName }
                       
                         
                                                    
+                                                           
+                                       
+                                                                 
+                                         
                                 
                                                        
                                 
@@ -132,6 +136,36 @@ import { NETWORK_BASE, overrideKey, PLATFORM_LABELS, PLATFORM_VALUES, slugName }
                                                             
                                                                                        
  
+
+// ---------------------------------------------------------------------------
+// The tags the compute rows carry for Ansible
+// ---------------------------------------------------------------------------
+
+/** The atk_plan tag of a plan's VMs: the plan id, as a tag value every cloud accepts. */
+export const planTag = (plan                  )         => planTagValue(plan.id);
+
+/**
+ * The app component each server serves, for its atk_component tag: workload
+ * name -> component id. A server is tagged with the first pattern component
+ * of its app's saved plan (on the app's chosen platform) that lists it, or
+ * lists a database it hosts. A server in two components carries the first;
+ * the Ansible inventory adds it to the second by name.
+ */
+export function componentOfServers(plan      )                      {
+  const out = new Map                ();
+  for (const ap of (plan.appPlans ?? [])                          ) {
+    if (ap.status === 'draft') continue;
+    const platform = ap.platform ?? ap.recommendation?.platform;
+    if (!platform) continue;
+    for (const c of ap.variants?.[platform] ?? []) {
+      if (c.kind !== 'pattern') continue;
+      const names = [...(c.servers ?? [])];
+      for (const dbName of c.databases ?? []) names.push(...(plan.databases.find((d) => d.name === dbName)?.hosts ?? []));
+      for (const n of names) if (!out.has(n)) out.set(n, c.id);
+    }
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -215,6 +249,8 @@ const appPlansOf = (plan      )                         => (plan                
                                           
                                                                           
                                                        
+                                                                     
+                                                    
                                                                                                
                           
  
@@ -280,6 +316,7 @@ function contextFor(plan      , decision              , design              , pd
     manual: [],
     workloadById, dbById, appByName,
     compute, databases, dbEngineOfHost,
+    componentOf: componentOfServers(plan),
     used,
   };
 }
@@ -373,6 +410,7 @@ function computeRows(ctx     , rows                          )         {
       ctx.dbEngineOfHost.get(t.workload) ?? w?.role ?? '',
       w?.env ?? '',
       waveOf(ctx, w),
+      (w && ctx.componentOf.get(w.name)) ?? '',
     ];
   }));
 }
@@ -621,7 +659,7 @@ function computeItem(ctx     )                   {
       ctx.findings.push(info('plan.tf.google-vm-name', `${name} is written as ${computeRowName(platform, name)}: a Compute Engine name is lowercase letters, digits and hyphens.`));
     }
   }
-  return item(ctx, 'compute', `${ctx.bp}_mig_compute`, 'Compute', { vms: computeRows(ctx, ctx.compute), landing_zone_source: lzSource(ctx) });
+  return item(ctx, 'compute', `${ctx.bp}_mig_compute`, 'Compute', { vms: computeRows(ctx, ctx.compute), plan_id: planTag(ctx.plan), landing_zone_source: lzSource(ctx) });
 }
 
 /** The databases-grid rows (managed services, and SQL Server on Azure VMs). */

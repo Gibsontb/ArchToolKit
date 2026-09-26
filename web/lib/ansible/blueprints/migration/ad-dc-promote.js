@@ -18,6 +18,7 @@
 import { info } from '../../../core/findings.js';
 import { assertVault } from '../../migration/roles/ad_join.js';
                                                            
+                                               
 import { list, migrationBlueprint, text, TRUE_FALSE, yes } from './common.js';
 
 const FIRST = 'inventory_hostname == dc_first';
@@ -149,7 +150,7 @@ export const MIG_AD_DC_PROMOTE = migrationBlueprint({
     { id: 'replication_source', label: 'Replicate from', control: 'text', default: '', hint: 'A DC to copy the directory from; blank lets AD choose', showWhen: { input: 'mode', equals: ['extend'] } },
     { id: 'kds_root_key', label: 'Add a KDS root key (gMSA)', control: 'select', options: TRUE_FALSE, default: 'true' },
   ],
-  play: (v) => (text(v.mode, 'extend') === 'new-forest' ? { serial: 1 } : {}),
+  play: (v)                            => (text(v.mode, 'extend') === 'new-forest' ? { serial: 1 } : {}),
   vars: (v) => ({
     dc_mode: text(v.mode, 'extend'),
     dc_domain: text(v.domain, 'corp.example.com'),
