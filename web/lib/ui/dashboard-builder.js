@@ -33,6 +33,21 @@ import { dashboardChoices, loadDashboard, readStore,                  } from '..
 import { KIND_ALIASES, Settings, WIDGET_TYPES, metricKeyProblem, widgetType,                                     } from '../automation/blueprints/vcf-ops-widgets.js';
 
 const COLUMNS = 12;
+const WIDE_KEY = 'archtoolkit.dashboard-builder.wide';
+function readWide()          {
+  try {
+    return globalThis.localStorage?.getItem(WIDE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeWide(on         )       {
+  try {
+    globalThis.localStorage?.setItem(WIDE_KEY, on ? '1' : '0');
+  } catch {
+    // A private window: the choice lasts until the page reloads.
+  }
+}
 const ROW_PX = 30;
 
 /** Dashboard options shown in the settings card, in order. */
@@ -229,6 +244,8 @@ function mountBuilder(context                  )              {
   let findings                     = [];
   let store                         ;
   let message                                            = { text: '', tone: '' };
+  /** The builder across the whole window rather than the page's width (a per-viewer preference). */
+  let wide = readWide();
   /** The widget last removed, so Undo can put it back exactly. */
   let lastRemoved                                                          = null;
   let search = '';
@@ -278,7 +295,7 @@ function mountBuilder(context                  )              {
     el('section', { class: 'card dbb-card dbb-canvas-card', attrs: { 'aria-label': 'Dashboard layout' } }, el('div', { class: 'card-title' }, el('h2', { text: 'Layout' })), canvasWrap, offGrid, dashFindings),
     el('section', { class: 'card dbb-card', attrs: { 'aria-label': 'Selected widget' } }, inspector),
   );
-  const root = el('div', { class: 'dbb', attrs: { 'data-control': 'dashboard-builder' } }, metricList, viewList, toolbar, picker, status, main, textArea, settingsCard);
+  const root = el('div', { class: `dbb${wide ? ' is-wide' : ''}`, attrs: { 'data-control': 'dashboard-builder' } }, metricList, viewList, toolbar, picker, status, main, textArea, settingsCard);
 
   // --- keeping the values in step ----------------------------------------------
   let checkTimer                                           ;
@@ -399,6 +416,19 @@ function mountBuilder(context                  )              {
       el(
         'div',
         { class: 'btn-row' },
+        el('button', {
+          class: 'btn btn-small',
+          text: wide ? 'Page width' : 'Full width',
+          attrs: { type: 'button', 'aria-pressed': wide ? 'true' : 'false', 'data-control': 'dashboard-wide', title: 'Stretch the builder across the whole window. The dashboard is still 12 columns: VCF Operations fills the screen with them.' },
+          on: {
+            click: () => {
+              wide = !wide;
+              writeWide(wide);
+              root.classList.toggle('is-wide', wide);
+              renderAll();
+            },
+          },
+        }),
         el('button', { class: 'btn btn-small', text: 'Load from export…', attrs: { type: 'button', title: 'A VCF Operations content export (.zip), a dashboard .json, or a file this builder generated', 'data-control': 'dashboard-load' }, on: { click: () => fileInput.click() } }),
         fileInput,
         el('button', {

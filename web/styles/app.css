@@ -2651,6 +2651,8 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 
 /* ---------- The dashboard builder (VCF Operations) ---------- */
 .dbb { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.dbb.is-wide { width: calc(100vw - 2rem); max-width: none; margin-inline: calc(50% - 50vw + 1rem); }
+@media (max-width: 760px) { .dbb.is-wide { width: auto; margin-inline: 0; } }
 .dbb-card { margin: 0; min-width: 0; }
 .dbb .card + .card { margin-top: 0; }
 .dbb-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
