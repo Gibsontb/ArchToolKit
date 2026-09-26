@@ -14,6 +14,7 @@
  */
 
 import { slugName } from '../../options.js';
+import { SOURCE_ADAPTER_REFS,                       } from '../../sources/adapters.js';
              
                                                                                                            
                         
@@ -203,29 +204,11 @@ export const DATA_LOSS_DEFAULT = 'The reverse replication set up at cutover carr
  *   bash:       source/<file>.sh  VERB --item ID [--wave N] [--dry-run] [--timeout MIN] [--step STEP] [--path PATH]
  *   PowerShell: source/<file>.ps1 VERB -Item ID [-Wave N] [-DryRun] [-TimeoutMinutes MIN] [-Step STEP] [-Path PATH]
  * It writes its own status events (with STEP and PATH), exits 0 / 2 / 3 / 10,
- * and `state` prints `name<TAB>state` without writing events.
+ * and `state` prints `name<TAB>state` without writing events. The table is
+ * WP-15's (`sources/adapters.ts`), which also renders the scripts into the kit.
  */
-                                   
-                                    
-                                        
-                        
-                              
-                                                                                                       
-                              
- 
-
-/**
- * The adapter file per source platform. A stub of what WP-15's
- * `sources/adapters.ts` renders; when it lands, replace this table with its
- * export (the file names match its `ADAPTER_SCRIPTS` keys).
- */
-export const SOURCE_ADAPTERS                                                     = Object.freeze(Object.fromEntries(
-  ([
-    ['vsphere', 'vsphere.ps1'], ['hyperv', 'hyperv.ps1'], ['ahv', 'ahv.sh'], ['kvm', 'kvm.sh'], ['proxmox', 'proxmox.sh'], ['ovirt', 'ovirt.sh'],
-    ['xen', 'xen.sh'], ['physical', 'physical.sh'], ['aws', 'aws.sh'], ['azure', 'azure.ps1'], ['google', 'gcp.sh'], ['oci', 'oci.sh'],
-    ['power', 'operator.sh'], ['sparc', 'operator.sh'], ['itanium', 'operator.sh'], ['pa-risc', 'operator.sh'], ['mainframe', 'operator.sh'], ['other', 'operator.sh'],
-  ]         ).map(([p, f]) => [p, { platform: p, file: `source/${f}`, lang: f.endsWith('.ps1') ? 'ps1' : 'sh', automated: f !== 'operator.sh' }]),
-)                                            );
+                                                                  
+export const SOURCE_ADAPTERS                                                     = SOURCE_ADAPTER_REFS;
 
 export function sourceAdapterFor(platform                )                   {
   return SOURCE_ADAPTERS[platform];

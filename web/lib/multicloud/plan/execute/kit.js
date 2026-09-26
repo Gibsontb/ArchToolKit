@@ -26,6 +26,7 @@ import { resolvePlanPaths,                     } from './paths.js';
 import { PATH_OWNERS, PATH_REGISTRY, pendingGenerator,                                                                        } from './registry.js';
 import { renderStatusSchema } from './schema.js';
 import { waveKit } from './waves/index.js';
+import { renderSourceAdapters } from '../sources/adapters.js';
 
                                       
                                                         
@@ -154,6 +155,9 @@ export function executionKit(
   for (const [p, t] of Object.entries(wk.files)) put(p, t, 'waves');
   needs.push(...wk.needs);
   findings.push(...wk.findings);
+
+  // The source adapters (WP-15): one per source platform among the manifest's items, as source/<file>.
+  for (const [p, t] of Object.entries(renderSourceAdapters(items.map((i) => ({ origin: i.source.platform }))))) put(p, t, 'sources');
 
   // 4. the kit's own files
   const hasPs = Object.keys(files).some((f) => f.endsWith('.ps1')) || needs.some((n) => n.kind === 'pwsh-module');

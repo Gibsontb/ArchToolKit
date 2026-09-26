@@ -26,6 +26,7 @@ import { resolvePlanPaths, type PathResolution } from './paths.ts';
 import { PATH_OWNERS, PATH_REGISTRY, pendingGenerator, type PathContext, type PathGenerator, type PathRegistry, type ToolNeed } from './registry.ts';
 import { renderStatusSchema } from './schema.ts';
 import { waveKit } from './waves/index.ts';
+import { renderSourceAdapters } from '../sources/adapters.ts';
 
 export interface ExecutionKitOptions {
   /** The generators to use; default `PATH_REGISTRY`. */
@@ -154,6 +155,9 @@ export function executionKit(
   for (const [p, t] of Object.entries(wk.files)) put(p, t, 'waves');
   needs.push(...wk.needs);
   findings.push(...wk.findings);
+
+  // The source adapters (WP-15): one per source platform among the manifest's items, as source/<file>.
+  for (const [p, t] of Object.entries(renderSourceAdapters(items.map((i) => ({ origin: i.source.platform }))))) put(p, t, 'sources');
 
   // 4. the kit's own files
   const hasPs = Object.keys(files).some((f) => f.endsWith('.ps1')) || needs.some((n) => n.kind === 'pwsh-module');

@@ -7,251 +7,190 @@
  * (A.6.2). Checked with `bash -n` or the PowerShell parser in sources.test.ts.
  */
 
-export const ADAPTER_COMMON_SH = `set -euo pipefail
+export const ADAPTER_COMMON_SH = `set -Eeuo pipefail
 
-HERE="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-KIT="$(cd "$HERE/.." && pwd)"
-# The execution kit's shared library (WP-11) supplies atk_event and atk_secret;
-# the fallbacks below keep this adapter usable on its own.
-# shellcheck disable=SC1091
-[ -f "$KIT/lib/atk.sh" ] && . "$KIT/lib/atk.sh"
-
-VERB="\${1:-}"
+# The adapter's own arguments come off first; the rest are the kit's common options,
+# parsed by the core library (atk_init_tool): --item, --wave, --dry-run, --timeout.
+SRC_VERB="\${1:-}"
 [ $# -gt 0 ] && shift
-ITEMS=()
-DRY_RUN=0
-TIMEOUT=10
+SRC_STEP=""
+SRC_PATH="orchestrator"
 NEW_NAME=""
-STEP=""
-EVENT_PATH="orchestrator"
-WAVE=""
+SRC_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --item) ITEMS+=("\${2:?--item needs an id or name}"); shift 2 ;;
-    --wave) WAVE="\${2:?--wave needs a number}"; shift 2 ;;
-    --dry-run) DRY_RUN=1; shift ;;
-    --timeout) TIMEOUT="\${2:?--timeout needs minutes}"; shift 2 ;;
+    --step) SRC_STEP="\${2:?--step needs a step id}"; shift 2 ;;
+    --path) SRC_PATH="\${2:?--path needs a move path}"; shift 2 ;;
     --new-name) NEW_NAME="\${2:?--new-name needs a name}"; shift 2 ;;
-    --step) STEP="\${2:?--step needs a step id}"; shift 2 ;;
-    --path) EVENT_PATH="\${2:?--path needs a move path}"; shift 2 ;;
-    -h|--help) VERB=help; shift ;;
-    *) echo "unknown argument: $1" >&2; exit 2 ;;
+    *) SRC_ARGS+=("$1"); shift ;;
   esac
 done
-export ATK_DRY_RUN="\${ATK_DRY_RUN:-$DRY_RUN}"
-[ "$DRY_RUN" = 1 ] && ATK_DRY_RUN=1
-
-usage() {
-  cat >&2 <<EOF
-usage: $(basename "$0") state|stop|start|snapshot|delete|rename|tools-remove --item <id|name> [--item ...]
-       [--wave N] [--dry-run] [--timeout MINUTES] [--new-name NAME] [--step STEP] [--path PATH]
-Applies by default; --dry-run prints each change instead of making it.
-Exit codes: 0 ok, 2 usage, 3 missing tool or credential, 10 some items failed, 1 other.
-EOF
-}
-case "$VERB" in state|stop|start|snapshot|delete|rename|tools-remove) ;; help) usage; exit 0 ;; *) usage; exit 2 ;; esac
-
-command -v jq >/dev/null 2>&1 || { echo "missing tool: jq" >&2; exit 3; }
-MANIFEST="$KIT/manifest/items.json"
-[ -f "$MANIFEST" ] || { echo "missing $MANIFEST" >&2; exit 3; }
-PLAN8="$(jq -r '(.planId // "plan") | tostring | .[0:8]' "$MANIFEST" 2>/dev/null || echo plan)"
-if [ \${#ITEMS[@]} -eq 0 ] && [ -n "$WAVE" ]; then
-  mapfile -t ITEMS < <(jq -r --arg p "$ADAPTER_PLATFORM" --argjson w "$WAVE" '(.items? // .)[] | select(.wave == $w and (.source.platform // "vsphere") == $p) | .id' "$MANIFEST")
+source "$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)/../lib/atk.sh"
+case "$SRC_VERB" in
+  state|stop|start|snapshot|delete|rename|tools-remove) ;;
+  -h|--help|'') printf 'usage: %s state|stop|start|snapshot|delete|rename|tools-remove --item ID [--wave N] [--step STEP] [--path PATH] [--new-name NAME] [--dry-run] [--timeout MIN]\\n' "\${0##*/}" >&2; exit 2 ;;
+  *) echo "unknown verb: $SRC_VERB" >&2; exit 2 ;;
+esac
+atk_init_tool "$SRC_PATH" \${SRC_ARGS[@]+"\${SRC_ARGS[@]}"}
+atk_need jq
+if [ -z "$SRC_STEP" ]; then
+  case "$SRC_VERB" in
+    stop) SRC_STEP=stop-source ;; start) SRC_STEP=rollback ;; snapshot) SRC_STEP=freeze ;;
+    delete|rename) SRC_STEP=decommission ;; tools-remove) SRC_STEP=post-config ;; *) SRC_STEP=manual ;;
+  esac
 fi
-[ \${#ITEMS[@]} -gt 0 ] || { echo "no items: pass --item or --wave" >&2; exit 2; }
-
-if ! type atk_event >/dev/null 2>&1; then
-  # item step outcome [state] [detail]: one status event line (no user, host or path).
-  atk_event() {
-    local dir="$KIT/../status"
-    mkdir -p "$dir"
-    jq -nc --arg item "$1" --arg step "$2" --arg outcome "$3" --arg state "\${4:-}" --arg detail "\${5:-}" \\
-      --arg path "$EVENT_PATH" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson dry "$([ "$ATK_DRY_RUN" = 1 ] && echo true || echo false)" \\
-      --arg plan "\${ATK_PLAN_ID:-}" --arg run "\${ATK_RUN_ID:-source}" --arg wave "\${WAVE:-}" \\
-      '{kind: "archtoolkit.migration-status", v: 1, planId: $plan, runId: $run, at: $at,
-        wave: (if $wave == "" then null else ($wave | tonumber) end), item: $item, path: $path, step: $step,
-        outcome: $outcome, dryRun: $dry, source: "script"}
-       + (if $state == "" then {} else {state: $state} end) + (if $detail == "" then {} else {detail: $detail} end)' \\
-      >> "$dir/events.jsonl"
-  }
-fi
-if ! type atk_secret >/dev/null 2>&1; then
-  # NAME: $NAME, else the mode-600 file in $NAME_FILE, else \`$ATK_VAULT_CMD NAME\`.
-  atk_secret() {
-    local n="$1" f v
-    v="\${!n:-}"; if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
-    f="\${n}_FILE"; f="\${!f:-}"
-    if [ -n "$f" ]; then
-      case "$(stat -c %a "$f" 2>/dev/null || echo 600)" in 600|400) ;; *) echo "\\$\${n}_FILE must be mode 600" >&2; exit 3 ;; esac
-      tr -d '\\r\\n' < "$f"; return 0
-    fi
-    if [ -n "\${ATK_VAULT_CMD:-}" ]; then $ATK_VAULT_CMD "$n"; return 0; fi
-    echo "missing credential: $n" >&2; exit 3
-  }
-fi
-
-# Runs a changing command, or prints it under --dry-run.
-mut() {
-  if [ "$ATK_DRY_RUN" = 1 ]; then printf 'dry-run:' >&2; printf ' %q' "$@" >&2; printf '\\n' >&2; return 0; fi
-  "$@"
-}
-need() { local t; for t in "$@"; do command -v "$t" >/dev/null 2>&1 || { echo "missing tool: $t" >&2; exit 3; }; done; }
-# Polls "$@" (a state reader) until it prints $1-wanted, for up to TIMEOUT minutes.
-wait_state() {
-  local want="$1"; shift
-  [ "$ATK_DRY_RUN" = 1 ] && return 0
-  local end=$(( $(date +%s) + TIMEOUT * 60 ))
-  while [ "$(date +%s)" -lt "$end" ]; do
-    [ "$("$@" 2>/dev/null || true)" = "$want" ] && return 0
-    sleep 10
-  done
-  return 1
-}
-slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-40; }
-default_step() {
-  case "$VERB" in stop) echo stop-source ;; start) echo rollback ;; snapshot) echo freeze ;; delete|rename) echo decommission ;; tools-remove) echo post-config ;; *) echo manual ;; esac
-}
-STEP="\${STEP:-$(default_step)}"
-
-# Runs the verb for every item; per-item failures are events, and the exit code is 10.
-main() {
-  local failed=0 it rec
-  for it in "\${ITEMS[@]}"; do
-    rec="$(jq -c --arg i "$it" '[(.items? // .)[] | select(.id == $i or .name == $i)][0] // empty' "$MANIFEST")"
-    if [ -z "$rec" ]; then echo "$it: not in the manifest" >&2; failed=1; continue; fi
-    ITEM_ID="$(jq -r '.id' <<<"$rec")"
-    NAME="$(jq -r '.name' <<<"$rec")"
-    SRC_ID="$(jq -r '.source.id // empty' <<<"$rec")"
-    SRC_HOST="$(jq -r '.source.host // empty' <<<"$rec")"
-    SRC_MANAGER="$(jq -r '.source.manager // empty' <<<"$rec")"
-    SRC_CLUSTER="$(jq -r '.source.cluster // empty' <<<"$rec")"
-    SRC_REGION="$(jq -r '.source.region // empty' <<<"$rec")"
-    SRC_BMC="$(jq -r '.source.bmc // empty' <<<"$rec")"
-    ITEM_WAVE="$(jq -r '.wave // empty' <<<"$rec")"
-    SNAP_NAME="atk-\${PLAN8}-\${ITEM_WAVE:-0}-$(slug "$NAME")"
-    export ITEM_ID NAME SRC_ID SRC_HOST SRC_MANAGER SRC_CLUSTER SRC_REGION SRC_BMC ITEM_WAVE SNAP_NAME
-    if [ "$VERB" = state ]; then
-      printf '%s\\t%s\\n' "$NAME" "$(v_state || echo unknown)"
-      continue
-    fi
-    atk_event "$ITEM_ID" "$STEP" started
-    local out rc=0
-    out="$("v_\${VERB//-/_}" 2>&1)" || rc=$?
-    [ -n "$out" ] && printf '%s: %s\\n' "$NAME" "$out" >&2
-    case "$rc" in
-      0) atk_event "$ITEM_ID" "$STEP" succeeded "" "$VERB" ;;
-      20) atk_event "$ITEM_ID" "$STEP" skipped "" "\${out:-already done}" ;;
-      *) atk_event "$ITEM_ID" "$STEP" failed "" "$(printf '%s' "$out" | awk '{ a[NR % 3] = $0 } END { for (i = NR - 2; i <= NR; i++) if (i > 0) printf "%s ", a[i % 3] }' | cut -c1-300)"; failed=1 ;;
-    esac
-  done
-  [ "$failed" = 0 ] || exit 10
-}
-# Verbs return 0 (done), 20 (skipped: already there, or an operator step) or anything else (failed).
+TIMEOUT="\${ATK_TIMEOUT:-0}"
+(( TIMEOUT > 0 )) || TIMEOUT=10
+# Verbs return 0 (done), SKIP (already there, or an operator step: the output says which) or anything else (failed).
 SKIP=20
 
+# The items: --item (id or name), else the wave's items on this platform.
+src_items() {
+  SRC_ITEMS=()
+  local id f
+  if (( \${#ATK_ITEM_FILTER[@]} )); then
+    for f in "\${ATK_ITEM_FILTER[@]}"; do
+      local found=""
+      for id in "\${ATK_ALL_IDS[@]}"; do
+        if [[ "$f" == "$id" || "\${f,,}" == "\${ATK_NAME[$id],,}" ]]; then found="$id"; break; fi
+      done
+      [[ -n "$found" ]] || atk_usage "no item \\"$f\\" in the manifest"
+      SRC_ITEMS+=("$found")
+    done
+  elif [[ -n "$ATK_WAVE" ]]; then
+    for id in "\${ATK_ALL_IDS[@]}"; do
+      if [[ "\${ATK_ITEM_WAVE[$id]}" == "$ATK_WAVE" && "|$ADAPTER_PLATFORM|" == *"|\${ATK_SOURCE[$id]}|"* ]]; then SRC_ITEMS+=("$id"); fi
+    done
+  else
+    atk_usage "pass --item or --wave"
+  fi
+}
+
+# The item's source reference (manifest/items.json): SRC_ID, SRC_HOST, SRC_MANAGER, SRC_CLUSTER, SRC_REGION, SRC_BMC.
+src_load() {
+  local id="$1" row
+  ITEM_ID="$id"
+  NAME="\${ATK_NAME[$id]}"
+  ITEM_WAVE="\${ATK_ITEM_WAVE[$id]}"
+  SNAP_NAME="\${ATK_RESOURCE[$id]}"
+  row="$(jq -r --arg id "$id" '.items[] | select(.id == $id) | .source | [.id // "", .host // "", .manager // "", .cluster // "", .region // "", .bmc // ""] | join("\\u001f")' "$ATK_HOME/manifest/items.json")"
+  # A unit separator, not a tab: read collapses runs of whitespace separators, which would shift empty fields.
+  IFS=$'\\x1f' read -r SRC_ID SRC_HOST SRC_MANAGER SRC_CLUSTER SRC_REGION SRC_BMC <<< "$row" || true
+}
+
+# is_state WANT: the verb's state reader prints WANT (for atk_wait_until).
+is_state() { [[ "$(v_state 2>/dev/null || true)" == "$1" ]]; }
+
 # The source platform's guest tools come out in the guest, after cutover, through
-# the kit's Ansible play (addendum A.3.5); the platforms that need nothing say so.
+# the kit's Ansible play (addendum A.3.5).
 v_tools_remove() {
-  local play="$KIT/ansible/source-tools.yml"
-  if [ ! -f "$play" ]; then echo "operator step: remove the $ADAPTER_PLATFORM guest tools (the kit has no ansible/source-tools.yml)"; return $SKIP; fi
-  need ansible-playbook
-  mut ansible-playbook -i "\${ATK_ANSIBLE_INVENTORY:-$KIT/ansible/inventory}" "$play" --limit "$NAME" -e "atk_source=$ADAPTER_PLATFORM"
+  local play="$ATK_ROOT/ansible/source-tools.yml"
+  if [[ ! -f "$play" ]]; then echo "operator step: remove the $ADAPTER_PLATFORM guest tools (the kit has no ansible/source-tools.yml)"; return $SKIP; fi
+  atk_need ansible-playbook
+  atk_run ansible-playbook -i "\${ATK_ANSIBLE_INVENTORY:-$ATK_ROOT/ansible/inventory}" "$play" --limit "$NAME" -e "atk_source=$ADAPTER_PLATFORM"
+}
+
+# Runs the verb for every item: state prints name<TAB>state[<TAB>checks] and writes no event;
+# the others write started and a terminal event, and the script exits 0, 2 / 3 at once, or 10.
+src_main() {
+  local failed=0 id out rc fn="v_\${SRC_VERB//-/_}"
+  src_items
+  for id in "\${SRC_ITEMS[@]}"; do
+    src_load "$id"
+    if [[ "$SRC_VERB" == state ]]; then
+      out="$(v_state 2>/dev/null)" || out="unknown"
+      printf '%s\\t%s\\n' "$NAME" "\${out:-unknown}"
+      continue
+    fi
+    atk_event "$id" "$SRC_STEP" started
+    rc=0
+    out="$("$fn" 2>&1)" || rc=$?
+    if [[ -n "$out" ]]; then atk_log "$NAME: $out"; fi
+    case "$rc" in
+      0) atk_event "$id" "$SRC_STEP" succeeded "" "$SRC_VERB" ;;
+      "$SKIP") atk_event "$id" "$SRC_STEP" skipped "" "\${out:-already done}" ;;
+      2|3) atk_event "$id" "$SRC_STEP" failed "" "stopped with exit $rc: \${out##*$'\\n'}"; exit "$rc" ;;
+      *) atk_event "$id" "$SRC_STEP" failed "" "\${out##*$'\\n'}"; failed=1 ;;
+    esac
+  done
+  (( failed == 0 )) || exit 10
+  return 0
 }
 `;
 
 export const ADAPTER_COMMON_PS1 = `$ErrorActionPreference = 'Stop'
-$Kit = Split-Path -Parent $PSScriptRoot
-$lib = Join-Path $Kit 'lib/Atk.psm1'
-if (Test-Path $lib) { Import-Module $lib -Force }
-if ($DryRun) { $env:ATK_DRY_RUN = '1' }
-$IsDry = $env:ATK_DRY_RUN -eq '1'
-
-if (-not (Get-Command Write-AtkEvent -ErrorAction SilentlyContinue)) {
-  # One status event line (no user, host or path), when lib/Atk.psm1 (WP-11) is not beside the kit.
-  function Write-AtkEvent([string]$Item, [string]$StepId, [string]$Outcome, [string]$State = '', [string]$Detail = '') {
-    $dir = Join-Path (Split-Path -Parent $Kit) 'status'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $e = [ordered]@{
-      kind = 'archtoolkit.migration-status'; v = 1; planId = [string]$env:ATK_PLAN_ID; runId = $(if ($env:ATK_RUN_ID) { $env:ATK_RUN_ID } else { 'source' })
-      at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); wave = $(if ($Wave -ge 0) { $Wave } else { $null })
-      item = $Item; path = $Path; step = $StepId; outcome = $Outcome; dryRun = $IsDry; source = 'script'
-    }
-    if ($State) { $e.state = $State }
-    if ($Detail) { $e.detail = $Detail }
-    Add-Content -Path (Join-Path $dir 'events.jsonl') -Value ($e | ConvertTo-Json -Compress) -Encoding utf8
-  }
-}
-if (-not (Get-Command Get-AtkSecret -ErrorAction SilentlyContinue)) {
-  # NAME: $env:NAME, else the file in $env:NAME_FILE, else \`$env:ATK_VAULT_CMD NAME\`.
-  function Get-AtkSecret([string]$Name) {
-    $v = [Environment]::GetEnvironmentVariable($Name)
-    if ($v) { return $v }
-    $f = [Environment]::GetEnvironmentVariable("\${Name}_FILE")
-    if ($f) { return (Get-Content -Raw -Path $f).Trim() }
-    if ($env:ATK_VAULT_CMD) { return (& $env:ATK_VAULT_CMD $Name | Out-String).Trim() }
-    Write-Error "missing credential: $Name"; exit 3
-  }
-}
-function Get-AtkCredential([string]$UserVar, [string]$PasswordVar) {
-  $pw = ConvertTo-SecureString (Get-AtkSecret $PasswordVar) -AsPlainText -Force
-  return New-Object System.Management.Automation.PSCredential((Get-AtkSecret $UserVar), $pw)
-}
-# Runs a changing script block, or prints its text under -DryRun.
-function Invoke-Mut([scriptblock]$Block) {
-  if ($IsDry) { Write-Host "dry-run: $($Block.ToString().Trim())"; return }
-  & $Block
-}
-function Wait-State([string]$Want, [scriptblock]$Reader) {
-  if ($IsDry) { return $true }
-  $end = (Get-Date).AddMinutes($TimeoutMinutes)
-  while ((Get-Date) -lt $end) { if ((& $Reader) -eq $Want) { return $true }; Start-Sleep -Seconds 10 }
-  return $false
-}
-function Get-Slug([string]$s) { (($s.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')) | ForEach-Object { if ($_.Length -gt 40) { $_.Substring(0, 40) } else { $_ } } }
-$Skip = 'skipped'
-
-$manifest = Join-Path $Kit 'manifest/items.json'
-if (-not (Test-Path $manifest)) { Write-Error "missing $manifest"; exit 3 }
-$doc = Get-Content -Raw $manifest | ConvertFrom-Json
-$all = if ($doc.PSObject.Properties['items']) { @($doc.items) } else { @($doc) }
-$plan8 = if ($doc.PSObject.Properties['planId'] -and $doc.planId) { ([string]$doc.planId).Substring(0, [math]::Min(8, ([string]$doc.planId).Length)) } else { 'plan' }
-if (-not $Item -and $Wave -ge 0) { $Item = @($all | Where-Object { $_.wave -eq $Wave -and $_.source.platform -eq $AdapterPlatform } | ForEach-Object { $_.id }) }
-if (-not $Item) { Write-Error 'no items: pass -Item or -Wave'; exit 2 }
+Import-Module (Join-Path $PSScriptRoot '../lib/Atk.psm1') -Force
+# The kit's common options (-Item, -Wave, -DryRun, -TimeoutMinutes) go to the core library;
+# events carry -Path (the item's move path) and -Step.
+Initialize-Atk -Path $Path -Tool -Wave $Wave -Item $Item -DryRun:$DryRun -Timeout $TimeoutMinutes
 if (-not $Step) {
   $Step = switch ($Verb) { 'stop' { 'stop-source' } 'start' { 'rollback' } 'snapshot' { 'freeze' } 'delete' { 'decommission' } 'rename' { 'decommission' } 'tools-remove' { 'post-config' } default { 'manual' } }
+}
+$script:Timeout = if ($TimeoutMinutes -gt 0) { $TimeoutMinutes } else { 10 }
+$Skip = 'skipped'
+
+function Get-AtkCredential([string]$UserVar, [string]$PasswordVar) {
+  $pw = ConvertTo-SecureString (Get-AtkSecret -Name $PasswordVar) -AsPlainText -Force
+  return [System.Management.Automation.PSCredential]::new((Get-AtkSecret -Name $UserVar), $pw)
+}
+function Wait-SourceState([string]$Want, [scriptblock]$Reader) {
+  return Wait-AtkUntil -Minutes $script:Timeout -IntervalSeconds 10 { (& $Reader) -eq $Want }
+}
+
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../manifest/items.json') | ConvertFrom-Json
+$all = @($manifest.items)
+
+# The items: -Item (ids or names, comma lists allowed), else the wave's items on this platform.
+function Get-SourceItems {
+  $filter = @($Item | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($filter.Count) {
+    foreach ($f in $filter) {
+      $it = $all | Where-Object { $_.id -ceq $f -or $_.name -ieq $f } | Select-Object -First 1
+      if (-not $it) { Write-AtkLog "usage: no item '$f' in the manifest"; exit 2 }
+      $it
+    }
+  } elseif ($Wave -ge 0) {
+    $all | Where-Object { $_.wave -eq $Wave -and $_.source.platform -eq $AdapterPlatform }
+  } else {
+    Write-AtkLog 'usage: pass -Item or -Wave'; exit 2
+  }
 }
 
 # The source platform's guest tools come out in the guest after cutover, through the kit's Ansible play (A.3.5).
 function Invoke-ToolsRemove($it) {
-  $play = Join-Path $Kit 'ansible/source-tools.yml'
+  $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+  $play = Join-Path $root 'ansible/source-tools.yml'
   if (-not (Test-Path $play)) { return "operator step: remove the $AdapterPlatform guest tools (the kit has no ansible/source-tools.yml)", $Skip }
-  $inv = if ($env:ATK_ANSIBLE_INVENTORY) { $env:ATK_ANSIBLE_INVENTORY } else { Join-Path $Kit 'ansible/inventory' }
-  Invoke-Mut { ansible-playbook -i $inv $play --limit $it.name -e "atk_source=$AdapterPlatform" }
+  $inv = if ($env:ATK_ANSIBLE_INVENTORY) { $env:ATK_ANSIBLE_INVENTORY } else { Join-Path $root 'ansible/inventory' }
+  Invoke-AtkStep "ansible-playbook source-tools.yml --limit $($it.name)" { ansible-playbook -i $inv $play --limit $it.name -e "atk_source=$AdapterPlatform" }
 }
 
-function Invoke-Main([hashtable]$Verbs) {
+# Runs the verb for every item: state prints name<TAB>state[<TAB>checks] and writes no event;
+# the others write started and a terminal event; exit 0, 2 / 3 at once, or 10.
+function Invoke-SourceMain([hashtable]$Verbs) {
   $failed = $false
-  foreach ($key in $Item) {
-    $it = $all | Where-Object { $_.id -eq $key -or $_.name -eq $key } | Select-Object -First 1
-    if (-not $it) { Write-Warning "\${key}: not in the manifest"; $failed = $true; continue }
-    $script:SnapName = 'atk-{0}-{1}-{2}' -f $plan8, $(if ($null -ne $it.wave) { $it.wave } else { 0 }), (Get-Slug $it.name)
-    if ($Verb -eq 'state') { "{0}\`t{1}" -f $it.name, (& $Verbs['state'] $it); continue }
-    Write-AtkEvent $it.id $Step 'started'
+  foreach ($it in @(Get-SourceItems)) {
+    $script:SnapName = [string]$it.resource
+    if ($Verb -eq 'state') {
+      $s = try { & $Verbs['state'] $it } catch { 'unknown' }
+      "{0}\`t{1}" -f $it.name, $(if ($s) { $s } else { 'unknown' })
+      continue
+    }
+    Write-AtkEvent -Item $it.id -Step $Step -Outcome started
     try {
       $result = @(& $Verbs[$Verb] $it)
       if ($result.Count -gt 0 -and $result[-1] -eq $Skip) {
-        $why = ($result | Select-Object -SkipLast 1) -join ' '
-        Write-AtkEvent $it.id $Step 'skipped' '' $why
+        Write-AtkEvent -Item $it.id -Step $Step -Outcome skipped -Detail (($result | Select-Object -SkipLast 1) -join ' ')
       } else {
-        Write-AtkEvent $it.id $Step 'succeeded' '' $Verb
+        Write-AtkEvent -Item $it.id -Step $Step -Outcome succeeded -Detail $Verb
       }
     } catch {
-      Write-AtkEvent $it.id $Step 'failed' '' ([string]$_.Exception.Message)
-      Write-Warning "$($it.name): $($_.Exception.Message)"
+      Write-AtkEvent -Item $it.id -Step $Step -Outcome failed -Detail ([string]$_.Exception.Message)
       $failed = $true
     }
   }
   if ($failed) { exit 10 }
+  exit 0
 }
 `;
 
@@ -268,10 +207,9 @@ export const ADAPTER_SCRIPTS: Readonly<Record<string, string>> = Object.freeze({
 ADAPTER_PLATFORM=ahv
 # @@adapter-common@@
 
-need curl
+atk_need curl
 VMS=/api/vmm/v4.1/ahv/config/vms
-HDRS="$(mktemp)"
-trap 'rm -f "$HDRS"' EXIT
+atk_tmpfile HDRS
 cfg_escape() { printf '%s' "$1" | sed 's/[\\\\"]/\\\\&/g'; }
 reqid() { cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen; }
 api() { # method path [json-body] [etag]; response headers go to $HDRS
@@ -286,15 +224,16 @@ api() { # method path [json-body] [etag]; response headers go to $HDRS
 }
 etag() { api GET "$VMS/$SRC_ID" >/dev/null; awk 'tolower($1) == "etag:" { sub(/\\r$/, "", $2); print $2 }' "$HDRS"; }
 action() { # name
-  if [ "$ATK_DRY_RUN" = 1 ]; then echo "dry-run: POST $VMS/$SRC_ID/\\$actions/$1" >&2; return 0; fi
-  api POST "$VMS/$SRC_ID/\\$actions/$1" '{}' "$(etag)" >/dev/null
+  local tag
+  tag="$(etag)"
+  atk_run api POST "$VMS/$SRC_ID/\\$actions/$1" '{}' "$tag" >/dev/null
 }
 
 v_state() { api GET "$VMS/$SRC_ID" | jq -r '.data.powerState // "UNKNOWN"'; }
 v_stop() {
   [ "$(v_state)" = OFF ] && { echo "already off"; return $SKIP; }
   action guest-shutdown || true
-  wait_state OFF v_state && return 0
+  atk_wait_until "$TIMEOUT" 10 is_state OFF && return 0
   echo "no guest shutdown in $TIMEOUT minutes; powering off"
   action power-off
 }
@@ -304,22 +243,22 @@ v_start() {
 }
 v_snapshot() {
   local body
-  body="$(jq -nc --arg n "$SNAP_NAME" --arg vm "$SRC_ID" '{name: $n, recoveryPointType: "CRASH_CONSISTENT", vmRecoveryPoints: [{vmExtId: $vm}]}')"
-  if [ "$ATK_DRY_RUN" = 1 ]; then echo "dry-run: POST /api/dataprotection/v4.0/config/recovery-points $body" >&2; return 0; fi
   if api GET "/api/dataprotection/v4.0/config/recovery-points?\\$filter=name%20eq%20'$SNAP_NAME'" | jq -e '(.data // []) | length > 0' >/dev/null; then echo "recovery point $SNAP_NAME exists"; return $SKIP; fi
-  api POST /api/dataprotection/v4.0/config/recovery-points "$body" >/dev/null
+  body="$(jq -nc --arg n "$SNAP_NAME" --arg vm "$SRC_ID" '{name: $n, recoveryPointType: "CRASH_CONSISTENT", vmRecoveryPoints: [{vmExtId: $vm}]}')"
+  atk_run api POST /api/dataprotection/v4.0/config/recovery-points "$body" >/dev/null
 }
 v_delete() {
+  local tag
   api GET "$VMS/$SRC_ID" >/dev/null 2>&1 || { echo "already gone"; return $SKIP; }
-  if [ "$ATK_DRY_RUN" = 1 ]; then echo "dry-run: DELETE $VMS/$SRC_ID" >&2; return 0; fi
-  api DELETE "$VMS/$SRC_ID" '' "$(etag)" >/dev/null
+  tag="$(etag)"
+  atk_run api DELETE "$VMS/$SRC_ID" '' "$tag" >/dev/null
 }
 v_rename() {
   echo "operator step: rename $NAME in Prism Central (a v4 VM update replaces the whole spec; not automated)"
   return $SKIP
 }
 
-main
+src_main
 `,
   "aws.sh": `#!/usr/bin/env bash
 # source/aws.sh: power and inventory operations on an Amazon EC2 source
@@ -334,25 +273,25 @@ main
 ADAPTER_PLATFORM=aws
 # @@adapter-common@@
 
-need aws
+atk_need aws
 a() { aws --region "$SRC_REGION" --output json "$@"; }
 inst() { a ec2 describe-instances --instance-ids "$SRC_ID" | jq -c '.Reservations[0].Instances[0]'; }
 
 v_state() { inst | jq -r '.State.Name'; }
 v_stop() {
   [ "$(v_state)" = stopped ] && { echo "already stopped"; return $SKIP; }
-  mut a ec2 stop-instances --instance-ids "$SRC_ID" >/dev/null
-  wait_state stopped v_state
+  atk_run a ec2 stop-instances --instance-ids "$SRC_ID" >/dev/null
+  atk_wait_until "$TIMEOUT" 10 is_state stopped
 }
 v_start() {
   [ "$(v_state)" = running ] && { echo "already running"; return $SKIP; }
-  mut a ec2 start-instances --instance-ids "$SRC_ID" >/dev/null
+  atk_run a ec2 start-instances --instance-ids "$SRC_ID" >/dev/null
 }
 v_snapshot() {
   if [ "$(a ec2 describe-snapshots --owner-ids self --filters "Name=tag:Name,Values=$SNAP_NAME" | jq '.Snapshots | length')" -gt 0 ]; then
     echo "snapshots $SNAP_NAME exist"; return $SKIP
   fi
-  mut a ec2 create-snapshots --instance-specification "InstanceId=$SRC_ID" --copy-tags-from-source volume \\
+  atk_run a ec2 create-snapshots --instance-specification "InstanceId=$SRC_ID" --copy-tags-from-source volume \\
     --tag-specifications "ResourceType=snapshot,Tags=[{Key=Name,Value=$SNAP_NAME},{Key=atk-item,Value=$ITEM_ID}]" >/dev/null
 }
 v_delete() {
@@ -361,37 +300,38 @@ v_delete() {
   case "$state" in terminated|gone|null) echo "already terminated"; return $SKIP ;; esac
   keep="$(inst | jq -r '[.BlockDeviceMappings[]? | select(.Ebs.DeleteOnTermination == false) | .Ebs.VolumeId] | join(" ")')"
   [ -n "$keep" ] && echo "volumes kept after termination (DeleteOnTermination false): $keep"
-  mut a ec2 terminate-instances --instance-ids "$SRC_ID" >/dev/null
+  atk_run a ec2 terminate-instances --instance-ids "$SRC_ID" >/dev/null
 }
 v_rename() {
   [ -n "$NEW_NAME" ] || { echo "--new-name is required"; return 2; }
-  mut a ec2 create-tags --resources "$SRC_ID" --tags "Key=Name,Value=$NEW_NAME"
+  atk_run a ec2 create-tags --resources "$SRC_ID" --tags "Key=Name,Value=$NEW_NAME"
 }
 
-main
+src_main
 `,
   "azure.ps1": `<#
 .SYNOPSIS
   source/azure.ps1: power and inventory operations on an Azure source VM
-  (cloud-to-cloud; addendum A.3.3) with the Az modules.
+  (cloud-to-cloud; addendum A.3.3) with the Az modules, on the execution kit's
+  core library.
 
 .DESCRIPTION
   stop:     Stop-AzVM -Force (deallocates)          start: Start-AzVM
-  snapshot: New-AzSnapshot of the OS and data disks (the kit's deterministic name)
+  snapshot: New-AzSnapshot of the OS and data disks (the item's kit name)
   delete:   Remove-AzVM -Force, then the VM's own disks and NICs
   rename:   an Azure VM cannot be renamed; the tag atk-renamed-to records the new name
-  source.id is the VM's resource id. Sign-in: Connect-AzAccount -Identity, or
-  a federated service principal (AZURE_CLIENT_ID, AZURE_TENANT_ID,
-  AZURE_FEDERATED_TOKEN_FILE), or an existing Az context. Applies by default;
-  -DryRun prints each change.
+  source.id is the VM's resource id. Sign-in: an existing Az context,
+  Connect-AzAccount -Identity, or a federated service principal
+  (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_FEDERATED_TOKEN_FILE). Applies by
+  default; -DryRun logs each change.
   Exit codes: 0 ok, 2 usage, 3 missing module or sign-in, 10 some items failed.
 #>
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('state', 'stop', 'start', 'snapshot', 'delete', 'rename', 'tools-remove')][string]$Verb,
-  [string[]]$Item,
+  [Parameter(Position = 0)][ValidateSet('state', 'stop', 'start', 'snapshot', 'delete', 'rename', 'tools-remove')][string]$Verb = 'state',
+  [string[]]$Item = @(),
   [int]$Wave = -1,
   [switch]$DryRun,
-  [int]$TimeoutMinutes = 10,
+  [int]$TimeoutMinutes = 0,
   [string]$NewName,
   [string]$Step,
   [string]$Path = 'orchestrator'
@@ -399,7 +339,7 @@ param(
 $AdapterPlatform = 'azure'
 # @@adapter-common@@
 
-if (-not (Get-Module -ListAvailable Az.Compute)) { Write-Error 'missing module: Az.Compute'; exit 3 }
+Assert-AtkTool -Module Az.Compute
 if (-not (Get-AzContext -ErrorAction SilentlyContinue)) {
   if ($env:AZURE_FEDERATED_TOKEN_FILE) {
     Connect-AzAccount -ServicePrincipal -ApplicationId $env:AZURE_CLIENT_ID -Tenant $env:AZURE_TENANT_ID -FederatedToken (Get-Content -Raw $env:AZURE_FEDERATED_TOKEN_FILE) | Out-Null
@@ -408,49 +348,50 @@ if (-not (Get-AzContext -ErrorAction SilentlyContinue)) {
   }
 }
 function Get-Rg([string]$id) { ($id -split '/')[4] }
-function Get-SourceVM($it) {
-  if ($it.source.id) { return Get-AzVM -ResourceGroupName (Get-Rg $it.source.id) -Name (($it.source.id -split '/')[-1]) -Status -ErrorAction SilentlyContinue }
-  return Get-AzVM -Name $it.name -Status -ErrorAction SilentlyContinue | Select-Object -First 1
+function Get-SourceVM($it, [switch]$Status) {
+  $id = [string]$it.source.id
+  if ($id) { return Get-AzVM -ResourceGroupName (Get-Rg $id) -Name (($id -split '/')[-1]) -Status:$Status -ErrorAction SilentlyContinue }
+  return Get-AzVM -Name $it.name -Status:$Status -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 function Get-Power($vm) { if (-not $vm) { return 'absent' }; ($vm.Statuses | Where-Object { $_.Code -like 'PowerState/*' } | Select-Object -First 1).Code -replace '^PowerState/', '' }
 
-Invoke-Main @{
-  'state'        = { param($it) Get-Power (Get-SourceVM $it) }
+Invoke-SourceMain @{
+  'state'        = { param($it) Get-Power (Get-SourceVM $it -Status) }
   'stop'         = { param($it)
-    $vm = Get-SourceVM $it
+    $vm = Get-SourceVM $it -Status
     if ((Get-Power $vm) -in 'deallocated', 'stopped') { 'already stopped'; $Skip; return }
-    Invoke-Mut { Stop-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name -Force | Out-Null } }
+    Invoke-AtkStep "Stop-AzVM $($vm.Name)" { Stop-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name -Force | Out-Null } }
   'start'        = { param($it)
-    $vm = Get-SourceVM $it
+    $vm = Get-SourceVM $it -Status
     if ((Get-Power $vm) -eq 'running') { 'already running'; $Skip; return }
-    Invoke-Mut { Start-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name | Out-Null } }
+    Invoke-AtkStep "Start-AzVM $($vm.Name)" { Start-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name | Out-Null } }
   'snapshot'     = { param($it)
-    $vm = Get-AzVM -ResourceGroupName (Get-Rg $it.source.id) -Name (($it.source.id -split '/')[-1])
+    $vm = Get-SourceVM $it
     $disks = @($vm.StorageProfile.OsDisk.ManagedDisk.Id) + @($vm.StorageProfile.DataDisks | ForEach-Object { $_.ManagedDisk.Id })
     $n = 0
     foreach ($d in $disks | Where-Object { $_ }) {
       $n++
       $name = '{0}-{1}' -f $SnapName, $n
       if (Get-AzSnapshot -ResourceGroupName $vm.ResourceGroupName -SnapshotName $name -ErrorAction SilentlyContinue) { continue }
-      Invoke-Mut {
+      Invoke-AtkStep "New-AzSnapshot $name" {
         $cfg = New-AzSnapshotConfig -SourceUri $d -Location $vm.Location -CreateOption Copy -Incremental
         New-AzSnapshot -ResourceGroupName $vm.ResourceGroupName -SnapshotName $name -Snapshot $cfg | Out-Null
       }
     } }
   'delete'       = { param($it)
-    $vm = Get-AzVM -ResourceGroupName (Get-Rg $it.source.id) -Name (($it.source.id -split '/')[-1]) -ErrorAction SilentlyContinue
+    $vm = Get-SourceVM $it
     if (-not $vm) { 'already gone'; $Skip; return }
     $disks = @($vm.StorageProfile.OsDisk.ManagedDisk.Id) + @($vm.StorageProfile.DataDisks | ForEach-Object { $_.ManagedDisk.Id }) | Where-Object { $_ }
     $nics = @($vm.NetworkProfile.NetworkInterfaces | ForEach-Object { $_.Id })
-    Invoke-Mut {
+    Invoke-AtkStep "Remove-AzVM $($vm.Name) with its disks and NICs" {
       Remove-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name -Force | Out-Null
       foreach ($d in $disks) { Remove-AzDisk -ResourceGroupName (Get-Rg $d) -DiskName (($d -split '/')[-1]) -Force | Out-Null }
       foreach ($n in $nics) { Remove-AzNetworkInterface -ResourceGroupName (Get-Rg $n) -Name (($n -split '/')[-1]) -Force }
     } }
   'rename'       = { param($it)
     if (-not $NewName) { throw '-NewName is required' }
-    $vm = Get-AzVM -ResourceGroupName (Get-Rg $it.source.id) -Name (($it.source.id -split '/')[-1])
-    Invoke-Mut { Update-AzTag -ResourceId $vm.Id -Tag @{ 'atk-renamed-to' = $NewName } -Operation Merge | Out-Null }
+    $vm = Get-SourceVM $it
+    Invoke-AtkStep "tag $($vm.Name) atk-renamed-to=$NewName" { Update-AzTag -ResourceId $vm.Id -Tag @{ 'atk-renamed-to' = $NewName } -Operation Merge | Out-Null }
     'an Azure VM cannot be renamed; tagged atk-renamed-to' }
   'tools-remove' = { param($it) Invoke-ToolsRemove $it }
 }
@@ -467,18 +408,18 @@ Invoke-Main @{
 ADAPTER_PLATFORM=google
 # @@adapter-common@@
 
-need gcloud
+atk_need gcloud
 g() { gcloud --project "$SRC_MANAGER" "$@" --zone "$SRC_CLUSTER" --quiet; }
 inst() { printf '%s' "\${GCP_INSTANCE:-$NAME}"; }
 
 v_state() { g compute instances describe "$(inst)" --format='value(status)'; }
 v_stop() {
   [ "$(v_state)" = TERMINATED ] && { echo "already stopped"; return $SKIP; }
-  mut g compute instances stop "$(inst)"
+  atk_run g compute instances stop "$(inst)"
 }
 v_start() {
   [ "$(v_state)" = RUNNING ] && { echo "already running"; return $SKIP; }
-  mut g compute instances start "$(inst)"
+  atk_run g compute instances start "$(inst)"
 }
 v_snapshot() {
   local disk n=0
@@ -486,46 +427,45 @@ v_snapshot() {
     n=$((n + 1))
     local snap; snap="$(printf '%s-%s' "$SNAP_NAME" "$n" | cut -c1-62)"
     if gcloud --project "$SRC_MANAGER" compute snapshots describe "$snap" >/dev/null 2>&1; then echo "snapshot $snap exists"; continue; fi
-    mut gcloud --project "$SRC_MANAGER" compute snapshots create "$snap" --source-disk "$disk" --source-disk-zone "$SRC_CLUSTER" --quiet
+    atk_run gcloud --project "$SRC_MANAGER" compute snapshots create "$snap" --source-disk "$disk" --source-disk-zone "$SRC_CLUSTER" --quiet
   done
 }
 v_delete() {
   g compute instances describe "$(inst)" >/dev/null 2>&1 || { echo "already gone"; return $SKIP; }
-  mut g compute instances delete "$(inst)" --delete-disks=all
+  atk_run g compute instances delete "$(inst)" --delete-disks=all
 }
 v_rename() {
   [ -n "$NEW_NAME" ] || { echo "--new-name is required"; return 2; }
   [ "$(v_state)" = TERMINATED ] || { echo "set-name needs the instance stopped"; return 1; }
-  mut g compute instances set-name "$(inst)" --new-name "$NEW_NAME"
+  atk_run g compute instances set-name "$(inst)" --new-name "$NEW_NAME"
 }
 
-main
+src_main
 `,
   "hyperv.ps1": `<#
 .SYNOPSIS
-  source/hyperv.ps1: power and inventory operations on a Hyper-V source VM,
-  run with Invoke-Command on the owning host in the item's source.host
-  (addendum A.3.3).
+  source/hyperv.ps1: power and inventory operations on a Hyper-V source VM on
+  the owning host in the item's source.host (addendum A.3.3), on the execution
+  kit's core library.
 
 .DESCRIPTION
   stop:     Stop-VM (graceful shutdown through the integration services),
             then Stop-VM -TurnOff after -TimeoutMinutes
   start:    Start-VM
-  snapshot: Checkpoint-VM -SnapshotName (the kit's deterministic name)
+  snapshot: Checkpoint-VM -SnapshotName (the item's kit name)
   delete:   Remove-VM -Force, then the VHD / VHDX files Get-VMHardDiskDrive listed
   rename:   Rename-VM
-  WinRM runs as the current identity (Kerberos); HYPERV_USER and
-  HYPERV_PASSWORD (or HYPERV_PASSWORD_FILE / ATK_VAULT_CMD) give another. From
-  a Linux controller, run it through Ansible's win_powershell on a management
-  host. Applies by default; -DryRun prints each change.
+  The Hyper-V cmdlets run against the host through a CIM session (the current
+  identity; HYPERV_USER and HYPERV_PASSWORD, or HYPERV_PASSWORD_FILE /
+  ATK_VAULT_CMD, give another). Applies by default; -DryRun logs each change.
   Exit codes: 0 ok, 2 usage, 3 missing credential, 10 some items failed.
 #>
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('state', 'stop', 'start', 'snapshot', 'delete', 'rename', 'tools-remove')][string]$Verb,
-  [string[]]$Item,
+  [Parameter(Position = 0)][ValidateSet('state', 'stop', 'start', 'snapshot', 'delete', 'rename', 'tools-remove')][string]$Verb = 'state',
+  [string[]]$Item = @(),
   [int]$Wave = -1,
   [switch]$DryRun,
-  [int]$TimeoutMinutes = 10,
+  [int]$TimeoutMinutes = 0,
   [string]$NewName,
   [string]$Step,
   [string]$Path = 'orchestrator'
@@ -533,44 +473,56 @@ param(
 $AdapterPlatform = 'hyperv'
 # @@adapter-common@@
 
-function Invoke-OnHost($it, [scriptblock]$Block, [object[]]$ArgumentList = @()) {
-  $params = @{ ComputerName = [string]$it.source.host; ScriptBlock = $Block; ArgumentList = $ArgumentList; ErrorAction = 'Stop' }
-  if ($env:HYPERV_USER) { $params.Credential = Get-AtkCredential 'HYPERV_USER' 'HYPERV_PASSWORD' }
-  Invoke-Command @params
+$sessions = @{}
+function Get-HostSession($it) {
+  $h = [string]$it.source.host
+  if (-not $sessions.ContainsKey($h)) {
+    $p = @{ ComputerName = $h; ErrorAction = 'Stop' }
+    if ($env:HYPERV_USER) { $p.Credential = Get-AtkCredential 'HYPERV_USER' 'HYPERV_PASSWORD' }
+    $sessions[$h] = New-CimSession @p
+  }
+  return $sessions[$h]
 }
-function Get-VmState($it) {
-  Invoke-OnHost $it { param($n, $id) $vm = if ($id) { Get-VM -Id $id -ErrorAction SilentlyContinue } else { Get-VM -Name $n -ErrorAction SilentlyContinue }; if ($vm) { [string]$vm.State } else { 'absent' } } @($it.name, [string]$it.source.id)
+function Get-SourceVM($it) {
+  $cim = Get-HostSession $it
+  if ($it.source.id) { return Get-VM -CimSession $cim -Id ([string]$it.source.id) -ErrorAction SilentlyContinue }
+  return Get-VM -CimSession $cim -Name $it.name -ErrorAction SilentlyContinue
 }
+function Get-VmState($it) { $vm = Get-SourceVM $it; if ($vm) { [string]$vm.State } else { 'absent' } }
 
-Invoke-Main @{
+Invoke-SourceMain @{
   'state'        = { param($it) Get-VmState $it }
   'stop'         = { param($it)
     if ((Get-VmState $it) -eq 'Off') { 'already off'; $Skip; return }
-    Invoke-Mut { Invoke-OnHost $it { param($n) Stop-VM -Name $n -Force -AsJob | Out-Null } @($it.name) }
-    if (-not (Wait-State 'Off' { Get-VmState $it })) {
-      Write-Warning "$($it.name): no shutdown in $TimeoutMinutes minutes; turning off"
-      Invoke-Mut { Invoke-OnHost $it { param($n) Stop-VM -Name $n -TurnOff -Force } @($it.name) }
+    $cim = Get-HostSession $it
+    Invoke-AtkStep "Stop-VM $($it.name)" { Stop-VM -CimSession $cim -Name $it.name -Force -AsJob | Out-Null }
+    if (-not (Wait-SourceState 'Off' { Get-VmState $it })) {
+      Write-AtkLog "$($it.name): no shutdown in $($script:Timeout) minutes; turning off"
+      Invoke-AtkStep "Stop-VM $($it.name) -TurnOff" { Stop-VM -CimSession $cim -Name $it.name -TurnOff -Force }
     } }
   'start'        = { param($it)
     if ((Get-VmState $it) -eq 'Running') { 'already running'; $Skip; return }
-    Invoke-Mut { Invoke-OnHost $it { param($n) Start-VM -Name $n } @($it.name) } }
+    $cim = Get-HostSession $it
+    Invoke-AtkStep "Start-VM $($it.name)" { Start-VM -CimSession $cim -Name $it.name } }
   'snapshot'     = { param($it)
-    $exists = Invoke-OnHost $it { param($n, $s) [bool](Get-VMSnapshot -VMName $n -Name $s -ErrorAction SilentlyContinue) } @($it.name, $SnapName)
-    if ($exists) { "checkpoint $SnapName exists"; $Skip; return }
-    Invoke-Mut { Invoke-OnHost $it { param($n, $s) Checkpoint-VM -Name $n -SnapshotName $s } @($it.name, $SnapName) } }
+    $cim = Get-HostSession $it
+    if (Get-VMSnapshot -CimSession $cim -VMName $it.name -Name $SnapName -ErrorAction SilentlyContinue) { "checkpoint $SnapName exists"; $Skip; return }
+    Invoke-AtkStep "Checkpoint-VM $($it.name) $SnapName" { Checkpoint-VM -CimSession $cim -Name $it.name -SnapshotName $SnapName } }
   'delete'       = { param($it)
     if ((Get-VmState $it) -eq 'absent') { 'already gone'; $Skip; return }
-    Invoke-Mut {
-      Invoke-OnHost $it { param($n)
-        $paths = @(Get-VMHardDiskDrive -VMName $n | ForEach-Object { $_.Path } | Where-Object { $_ })
-        Stop-VM -Name $n -TurnOff -Force -ErrorAction SilentlyContinue
-        Remove-VM -Name $n -Force
-        foreach ($p in $paths) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
-      } @($it.name)
+    $cim = Get-HostSession $it
+    $paths = @(Get-VMHardDiskDrive -CimSession $cim -VMName $it.name | ForEach-Object { $_.Path } | Where-Object { $_ })
+    Invoke-AtkStep "Remove-VM $($it.name) and its disks" {
+      Stop-VM -CimSession $cim -Name $it.name -TurnOff -Force -ErrorAction SilentlyContinue
+      Remove-VM -CimSession $cim -Name $it.name -Force
+      $p = @{ ComputerName = [string]$it.source.host; ArgumentList = (, $paths); ScriptBlock = { param($files) foreach ($f in $files) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue } } }
+      if ($env:HYPERV_USER) { $p.Credential = Get-AtkCredential 'HYPERV_USER' 'HYPERV_PASSWORD' }
+      Invoke-Command @p
     } }
   'rename'       = { param($it)
     if (-not $NewName) { throw '-NewName is required' }
-    Invoke-Mut { Invoke-OnHost $it { param($n, $new) Rename-VM -Name $n -NewName $new } @($it.name, $NewName) } }
+    $cim = Get-HostSession $it
+    Invoke-AtkStep "Rename-VM $($it.name) $NewName" { Rename-VM -CimSession $cim -Name $it.name -NewName $NewName } }
   'tools-remove' = { param($it) Invoke-ToolsRemove $it }
 }
 `,
@@ -586,7 +538,7 @@ Invoke-Main @{
 ADAPTER_PLATFORM=kvm
 # @@adapter-common@@
 
-need ssh
+atk_need ssh
 # The remote shell parses the command again, so every argument is quoted for it.
 v() { ssh -o BatchMode=yes "\${KVM_SSH_USER:-root}@$SRC_HOST" "virsh -c $(printf '%q' "\${KVM_URI:-qemu:///system}") $(printf '%q ' "$@")"; }
 dom() { printf '%s' "\${SRC_ID:-$NAME}"; }
@@ -594,31 +546,31 @@ dom() { printf '%s' "\${SRC_ID:-$NAME}"; }
 v_state() { v domstate "$(dom)" | awk 'NF && !d { print; d = 1 }'; }
 v_stop() {
   case "$(v_state)" in 'shut off') echo "already shut off"; return $SKIP ;; esac
-  mut v shutdown "$(dom)"
-  wait_state 'shut off' v_state && return 0
+  atk_run v shutdown "$(dom)"
+  atk_wait_until "$TIMEOUT" 10 is_state 'shut off' && return 0
   echo "no clean shutdown in $TIMEOUT minutes; forcing off"
-  mut v destroy "$(dom)"
+  atk_run v destroy "$(dom)"
 }
 v_start() {
   case "$(v_state)" in running) echo "already running"; return $SKIP ;; esac
-  mut v start "$(dom)"
+  atk_run v start "$(dom)"
 }
 v_snapshot() {
   if v snapshot-list "$(dom)" --name | grep -x "$SNAP_NAME" >/dev/null; then echo "snapshot $SNAP_NAME exists"; return $SKIP; fi
-  mut v snapshot-create-as --domain "$(dom)" --name "$SNAP_NAME" --description "pre-cutover restore point" --atomic
+  atk_run v snapshot-create-as --domain "$(dom)" --name "$SNAP_NAME" --description "pre-cutover restore point" --atomic
 }
 v_delete() {
   v dominfo "$(dom)" >/dev/null 2>&1 || { echo "already gone"; return $SKIP; }
-  [ "$(v_state)" = 'shut off' ] || mut v destroy "$(dom)"
-  mut v undefine "$(dom)" --remove-all-storage --nvram --snapshots-metadata
+  [ "$(v_state)" = 'shut off' ] || atk_run v destroy "$(dom)"
+  atk_run v undefine "$(dom)" --remove-all-storage --nvram --snapshots-metadata
 }
 v_rename() {
   [ -n "$NEW_NAME" ] || { echo "--new-name is required"; return 2; }
   [ "$(v_state)" = 'shut off' ] || { echo "domrename needs the VM shut off"; return 1; }
-  mut v domrename "$(dom)" "$NEW_NAME"
+  atk_run v domrename "$(dom)" "$NEW_NAME"
 }
 
-main
+src_main
 `,
   "oci.sh": `#!/usr/bin/env bash
 # source/oci.sh: power and inventory operations on an OCI Compute source
@@ -632,21 +584,21 @@ main
 ADAPTER_PLATFORM=oci
 # @@adapter-common@@
 
-need oci
+atk_need oci
 o() { oci \${SRC_REGION:+--region "$SRC_REGION"} "$@" --output json; }
 inst() { o compute instance get --instance-id "$SRC_ID" | jq -c '.data'; }
 
 v_state() { inst | jq -r '.["lifecycle-state"]'; }
 v_stop() {
   [ "$(v_state)" = STOPPED ] && { echo "already stopped"; return $SKIP; }
-  mut o compute instance action --instance-id "$SRC_ID" --action SOFTSTOP >/dev/null
-  wait_state STOPPED v_state && return 0
+  atk_run o compute instance action --instance-id "$SRC_ID" --action SOFTSTOP >/dev/null
+  atk_wait_until "$TIMEOUT" 10 is_state STOPPED && return 0
   echo "no soft stop in $TIMEOUT minutes; stopping"
-  mut o compute instance action --instance-id "$SRC_ID" --action STOP >/dev/null
+  atk_run o compute instance action --instance-id "$SRC_ID" --action STOP >/dev/null
 }
 v_start() {
   [ "$(v_state)" = RUNNING ] && { echo "already running"; return $SKIP; }
-  mut o compute instance action --instance-id "$SRC_ID" --action START >/dev/null
+  atk_run o compute instance action --instance-id "$SRC_ID" --action START >/dev/null
 }
 v_snapshot() {
   local i comp ad bv vol
@@ -655,29 +607,30 @@ v_snapshot() {
     echo "backup $SNAP_NAME exists"; return $SKIP
   fi
   for bv in $(o compute boot-volume-attachment list --compartment-id "$comp" --availability-domain "$ad" --instance-id "$SRC_ID" | jq -r '.data[]?["boot-volume-id"]'); do
-    mut o bv boot-volume-backup create --boot-volume-id "$bv" --display-name "$SNAP_NAME" --type INCREMENTAL >/dev/null
+    atk_run o bv boot-volume-backup create --boot-volume-id "$bv" --display-name "$SNAP_NAME" --type INCREMENTAL >/dev/null
   done
   for vol in $(o compute volume-attachment list --compartment-id "$comp" --instance-id "$SRC_ID" --all | jq -r '.data[]? | select(.["lifecycle-state"] == "ATTACHED") | .["volume-id"]'); do
-    mut o bv backup create --volume-id "$vol" --display-name "$SNAP_NAME" --type INCREMENTAL >/dev/null
+    atk_run o bv backup create --volume-id "$vol" --display-name "$SNAP_NAME" --type INCREMENTAL >/dev/null
   done
 }
 v_delete() {
   case "$(v_state 2>/dev/null || echo gone)" in TERMINATED|TERMINATING|gone) echo "already terminated"; return $SKIP ;; esac
-  mut o compute instance terminate --instance-id "$SRC_ID" --preserve-boot-volume false --force >/dev/null
+  atk_run o compute instance terminate --instance-id "$SRC_ID" --preserve-boot-volume false --force >/dev/null
 }
 v_rename() {
   [ -n "$NEW_NAME" ] || { echo "--new-name is required"; return 2; }
-  mut o compute instance update --instance-id "$SRC_ID" --display-name "$NEW_NAME" --force >/dev/null
+  atk_run o compute instance update --instance-id "$SRC_ID" --display-name "$NEW_NAME" --force >/dev/null
 }
 
-main
+src_main
 `,
   "operator.sh": `#!/usr/bin/env bash
 # source/operator.sh: the source adapter for platforms with no automation:
 # IBM Power, SPARC, Itanium, PA-RISC, mainframe and other (addendum A.3.3).
 # Every verb writes a "skipped" event naming the operator step; the runbook
 # carries the manual procedure (A.4.8).
-ADAPTER_PLATFORM="\${ATK_SOURCE_PLATFORM:-other}"
+# Every platform without automation; with --wave it serves all their items.
+ADAPTER_PLATFORM="power|sparc|itanium|pa-risc|mainframe|other"
 # @@adapter-common@@
 
 v_state() { echo "unknown (operator step)"; }
@@ -688,7 +641,7 @@ v_delete() { echo "operator step: retire $NAME and mark it in the CMDB"; return 
 v_rename() { echo "operator step: rename $NAME on the platform"; return $SKIP; }
 v_tools_remove() { echo "operator step: nothing to remove by script on this platform"; return $SKIP; }
 
-main
+src_main
 `,
   "ovirt.sh": `#!/usr/bin/env bash
 # source/ovirt.sh: power and inventory operations on an oVirt / RHV / OLVM
@@ -701,7 +654,7 @@ main
 ADAPTER_PLATFORM=ovirt
 # @@adapter-common@@
 
-need curl
+atk_need curl
 cfg_escape() { printf '%s' "$1" | sed 's/[\\\\"]/\\\\&/g'; }
 api() { # method path [json-body]
   local base="\${OVIRT_URL:-https://$SRC_MANAGER}" extra=() tls=()
@@ -711,13 +664,13 @@ api() { # method path [json-body]
     | curl -sS --fail -K - \${tls[@]+"\${tls[@]}"} -X "$1" -H 'Version: 4' -H 'Accept: application/json' \\
       \${extra[@]+"\${extra[@]}"} "\${base%/}/ovirt-engine/api$2"
 }
-change() { if [ "$ATK_DRY_RUN" = 1 ]; then echo "dry-run: $1 $2 \${3:-}" >&2; else api "$@" >/dev/null; fi; }
+change() { atk_run api "$@" >/dev/null; }
 
 v_state() { api GET "/vms/$SRC_ID" | jq -r '.status'; }
 v_stop() {
   [ "$(v_state)" = down ] && { echo "already down"; return $SKIP; }
   change POST "/vms/$SRC_ID/shutdown" '{}'
-  wait_state down v_state && return 0
+  atk_wait_until "$TIMEOUT" 10 is_state down && return 0
   echo "no clean shutdown in $TIMEOUT minutes; stopping"
   change POST "/vms/$SRC_ID/stop" '{}'
 }
@@ -731,7 +684,7 @@ v_snapshot() {
 }
 v_delete() {
   api GET "/vms/$SRC_ID" >/dev/null 2>&1 || { echo "already gone"; return $SKIP; }
-  [ "$(v_state)" = down ] || { change POST "/vms/$SRC_ID/stop" '{}'; wait_state down v_state || true; }
+  [ "$(v_state)" = down ] || { change POST "/vms/$SRC_ID/stop" '{}'; atk_wait_until "$TIMEOUT" 10 is_state down || true; }
   change DELETE "/vms/$SRC_ID?detach_only=false"
 }
 v_rename() {
@@ -739,7 +692,7 @@ v_rename() {
   change PUT "/vms/$SRC_ID" "$(jq -nc --arg n "$NEW_NAME" '{name: $n}')"
 }
 
-main
+src_main
 `,
   "physical.sh": `#!/usr/bin/env bash
 # source/physical.sh: power operations on a physical source server (A.3.3).
@@ -754,7 +707,7 @@ main
 ADAPTER_PLATFORM=physical
 # @@adapter-common@@
 
-INVENTORY="\${ATK_ANSIBLE_INVENTORY:-$KIT/ansible/inventory}"
+INVENTORY="\${ATK_ANSIBLE_INVENTORY:-$ATK_ROOT/ansible/inventory}"
 cfg_escape() { printf '%s' "$1" | sed 's/[\\\\"]/\\\\&/g'; }
 redfish() { # path
   [ -n "$SRC_BMC" ] || { echo "no BMC address (source.bmc) for $NAME" >&2; return 3; }
@@ -771,31 +724,31 @@ v_state() {
   redfish "$sys" | jq -r '.PowerState'
 }
 v_stop() {
-  need ansible
+  atk_need ansible
   [ "$(v_state 2>/dev/null || true)" = Off ] && { echo "already off"; return $SKIP; }
   local os
   os="$(ansible -i "$INVENTORY" "$NAME" -m ansible.builtin.setup -a 'gather_subset=min filter=ansible_os_family' -o 2>/dev/null | grep -o '"ansible_os_family": "[A-Za-z]*"' | awk -F'"' '{ print $4 }')"
   if [ "$os" = Windows ]; then
-    mut ansible -i "$INVENTORY" "$NAME" -m ansible.windows.win_command -a 'shutdown /s /t 60'
+    atk_run ansible -i "$INVENTORY" "$NAME" -m ansible.windows.win_command -a 'shutdown /s /t 60'
   else
-    mut ansible -i "$INVENTORY" "$NAME" -b -m ansible.builtin.command -a 'shutdown -h +1'
+    atk_run ansible -i "$INVENTORY" "$NAME" -b -m ansible.builtin.command -a 'shutdown -h +1'
   fi
-  [ -n "$SRC_BMC" ] && { wait_state Off v_state || { echo "still on after $TIMEOUT minutes"; return 1; }; }
+  [ -n "$SRC_BMC" ] && { atk_wait_until "$TIMEOUT" 10 is_state Off || { echo "still on after $TIMEOUT minutes"; return 1; }; }
   return 0
 }
 v_start() {
-  need ansible
+  atk_need ansible
   [ "$(v_state 2>/dev/null || true)" = On ] && { echo "already on"; return $SKIP; }
   [ -n "$SRC_BMC" ] || { echo "no BMC address (source.bmc) for $NAME"; return 3; }
   BMC_USER="$(atk_secret BMC_USER)" BMC_PASSWORD="$(atk_secret BMC_PASSWORD)" ATK_BMC="$SRC_BMC" \\
-    mut ansible localhost -m community.general.redfish_command \\
+    atk_run ansible localhost -m community.general.redfish_command \\
       -a "category=Systems command=PowerOn baseuri={{ lookup('ansible.builtin.env', 'ATK_BMC') }} username={{ lookup('ansible.builtin.env', 'BMC_USER') }} password={{ lookup('ansible.builtin.env', 'BMC_PASSWORD') }}"
 }
 v_snapshot() { echo "no snapshot on hardware: take a backup before cutover (runbook step)"; return $SKIP; }
 v_delete() { echo "operator step: mark $NAME for disposal in the CMDB (hardware is not deleted by script)"; return $SKIP; }
 v_rename() { echo "operator step: the source hardware keeps its name until disposal"; return $SKIP; }
 
-main
+src_main
 `,
   "proxmox.sh": `#!/usr/bin/env bash
 # source/proxmox.sh: power and inventory operations on a Proxmox VE source VM
@@ -809,7 +762,7 @@ main
 ADAPTER_PLATFORM=proxmox
 # @@adapter-common@@
 
-need ssh
+atk_need ssh
 # The remote shell parses the command again, so every argument is quoted for it.
 p() { ssh -o BatchMode=yes "\${PVE_SSH_USER:-root}@\${PVE_SSH_HOST:-$SRC_HOST}" "pvesh $(printf '%q ' "$@") --output-format json"; }
 vmtype() { p get /cluster/resources --type vm | jq -r --arg id "$SRC_ID" '[.[] | select((.vmid | tostring) == $id)][0].type // "qemu"'; }
@@ -818,54 +771,57 @@ base() { printf '/nodes/%s/%s/%s' "$SRC_HOST" "$(vmtype)" "$SRC_ID"; }
 v_state() { p get "$(base)/status/current" | jq -r '.status'; }
 v_stop() {
   [ "$(v_state)" = stopped ] && { echo "already stopped"; return $SKIP; }
-  mut p create "$(base)/status/shutdown" --timeout $((TIMEOUT * 60)) --forceStop 1
-  wait_state stopped v_state
+  atk_run p create "$(base)/status/shutdown" --timeout $((TIMEOUT * 60)) --forceStop 1
+  atk_wait_until "$TIMEOUT" 10 is_state stopped
 }
 v_start() {
   [ "$(v_state)" = running ] && { echo "already running"; return $SKIP; }
-  mut p create "$(base)/status/start"
+  atk_run p create "$(base)/status/start"
 }
 v_snapshot() {
   # Proxmox snapshot names: a letter, then letters, digits and underscores.
   local snap; snap="$(printf '%s' "$SNAP_NAME" | tr -c 'A-Za-z0-9_' '_' | cut -c1-40)"
   if p get "$(base)/snapshot" | jq -e --arg n "$snap" 'any(.[]; .name == $n)' >/dev/null; then echo "snapshot $snap exists"; return $SKIP; fi
-  mut p create "$(base)/snapshot" --snapname "$snap" --description "pre-cutover restore point"
+  atk_run p create "$(base)/snapshot" --snapname "$snap" --description "pre-cutover restore point"
 }
 v_delete() {
   p get "$(base)/status/current" >/dev/null 2>&1 || { echo "already gone"; return $SKIP; }
-  [ "$(v_state)" = stopped ] || mut p create "$(base)/status/stop"
-  wait_state stopped v_state || true
-  mut p delete "$(base)" --purge 1
+  [ "$(v_state)" = stopped ] || atk_run p create "$(base)/status/stop"
+  atk_wait_until "$TIMEOUT" 10 is_state stopped || true
+  atk_run p delete "$(base)" --purge 1
 }
 v_rename() {
   [ -n "$NEW_NAME" ] || { echo "--new-name is required"; return 2; }
-  if [ "$(vmtype)" = lxc ]; then mut p set "$(base)/config" --hostname "$NEW_NAME"; else mut p set "$(base)/config" --name "$NEW_NAME"; fi
+  if [ "$(vmtype)" = lxc ]; then atk_run p set "$(base)/config" --hostname "$NEW_NAME"; else atk_run p set "$(base)/config" --name "$NEW_NAME"; fi
 }
 
-main
+src_main
 `,
   "vsphere.ps1": `<#
 .SYNOPSIS
   source/vsphere.ps1: power and inventory operations on a vSphere source VM
-  with VCF PowerCLI (addendum A.3.3).
+  with VCF PowerCLI (addendum A.3.3), on the execution kit's core library.
 
 .DESCRIPTION
-  stop:     Stop-VMGuest, then Stop-VM -Confirm:$false after -TimeoutMinutes
+  state:    the power state, then a live check: VMware Tools running, snapshots
+            older than 24 hours, a connected ISO, a legacy NIC (E1000, E1000E,
+            Flexible, Vlance): name<TAB>state<TAB>checks
+  stop:     Stop-VMGuest, then Stop-VM after -TimeoutMinutes
   start:    Start-VM
-  snapshot: New-Snapshot -Memory:$false -Quiesce:$true (the kit's deterministic name)
-  delete:   Remove-VM -DeletePermanently -Confirm:$false
+  snapshot: New-Snapshot -Memory:$false -Quiesce:$true (the item's kit name)
+  delete:   Remove-VM -DeletePermanently
   rename:   Set-VM -Name
   The vCenter is the item's source.manager; source.id is the VM's MoRef.
   Credentials: VCENTER_USER and VCENTER_PASSWORD (or VCENTER_PASSWORD_FILE,
-  or ATK_VAULT_CMD). Applies by default; -DryRun prints each change.
+  or ATK_VAULT_CMD). Applies by default; -DryRun logs each change instead.
   Exit codes: 0 ok, 2 usage, 3 missing module or credential, 10 some items failed.
 #>
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('state', 'stop', 'start', 'snapshot', 'delete', 'rename', 'tools-remove')][string]$Verb,
-  [string[]]$Item,
+  [Parameter(Position = 0)][ValidateSet('state', 'stop', 'start', 'snapshot', 'delete', 'rename', 'tools-remove')][string]$Verb = 'state',
+  [string[]]$Item = @(),
   [int]$Wave = -1,
   [switch]$DryRun,
-  [int]$TimeoutMinutes = 10,
+  [int]$TimeoutMinutes = 0,
   [string]$NewName,
   [string]$Step,
   [string]$Path = 'orchestrator'
@@ -873,7 +829,7 @@ param(
 $AdapterPlatform = 'vsphere'
 # @@adapter-common@@
 
-if (-not (Get-Module -ListAvailable VCF.PowerCLI) -and -not (Get-Module -ListAvailable VMware.VimAutomation.Core)) { Write-Error 'missing module: VCF.PowerCLI'; exit 3 }
+Assert-AtkTool -Module VCF.PowerCLI
 $connected = @{}
 function Get-SourceVM($it) {
   $server = [string]$it.source.manager
@@ -884,33 +840,50 @@ function Get-SourceVM($it) {
   return Get-VM -Server $connected[$server] -Name $it.name -ErrorAction SilentlyContinue
 }
 
-Invoke-Main @{
-  'state'        = { param($it) $vm = Get-SourceVM $it; if ($vm) { [string]$vm.PowerState } else { 'absent' } }
+# The pre-cutover live check (WP-12): what would block or slow a replication tool.
+function Get-LiveChecks($vm) {
+  $checks = @()
+  $tools = [string]$vm.ExtensionData.Guest.ToolsRunningStatus
+  $checks += if ($tools -eq 'guestToolsRunning') { 'tools=running' } else { "tools=$(if ($tools) { $tools } else { 'unknown' })" }
+  $old = @(Get-Snapshot -VM $vm -ErrorAction SilentlyContinue | Where-Object { $_.Created -lt (Get-Date).AddHours(-24) })
+  $checks += "old-snapshots=$($old.Count)"
+  $iso = @(Get-CDDrive -VM $vm -ErrorAction SilentlyContinue | Where-Object { $_.ConnectionState.Connected -and $_.IsoPath })
+  $checks += if ($iso.Count) { 'iso=connected' } else { 'iso=none' }
+  $legacy = @(Get-NetworkAdapter -VM $vm -ErrorAction SilentlyContinue | Where-Object { [string]$_.Type -in 'e1000', 'e1000e', 'Flexible', 'Vlance' } | ForEach-Object { [string]$_.Type })
+  $checks += if ($legacy.Count) { "legacy-nic=$($legacy -join ',')" } else { 'legacy-nic=none' }
+  return $checks -join ' '
+}
+
+Invoke-SourceMain @{
+  'state'        = { param($it)
+    $vm = Get-SourceVM $it
+    if (-not $vm) { 'absent'; return }
+    '{0}{1}{2}' -f [string]$vm.PowerState, [char]9, (Get-LiveChecks $vm) }
   'stop'         = { param($it)
     $vm = Get-SourceVM $it
-    if ($vm.PowerState -eq 'PoweredOff') { 'already off'; $Skip; return }
-    Invoke-Mut { Stop-VMGuest -VM $vm -Confirm:$false | Out-Null }
-    if (-not (Wait-State 'PoweredOff' { [string](Get-SourceVM $it).PowerState })) {
-      Write-Warning "$($it.name): no guest shutdown in $TimeoutMinutes minutes; powering off"
-      Invoke-Mut { Stop-VM -VM $vm -Confirm:$false | Out-Null }
+    if ([string]$vm.PowerState -eq 'PoweredOff') { 'already off'; $Skip; return }
+    Invoke-AtkStep "Stop-VMGuest $($it.name)" { Stop-VMGuest -VM $vm -Confirm:$false | Out-Null }
+    if (-not (Wait-SourceState 'PoweredOff' { [string](Get-SourceVM $it).PowerState })) {
+      Write-AtkLog "$($it.name): no guest shutdown in $($script:Timeout) minutes; powering off"
+      Invoke-AtkStep "Stop-VM $($it.name)" { Stop-VM -VM $vm -Confirm:$false | Out-Null }
     } }
   'start'        = { param($it)
     $vm = Get-SourceVM $it
-    if ($vm.PowerState -eq 'PoweredOn') { 'already on'; $Skip; return }
-    Invoke-Mut { Start-VM -VM $vm -Confirm:$false | Out-Null } }
+    if ([string]$vm.PowerState -eq 'PoweredOn') { 'already on'; $Skip; return }
+    Invoke-AtkStep "Start-VM $($it.name)" { Start-VM -VM $vm -Confirm:$false | Out-Null } }
   'snapshot'     = { param($it)
     $vm = Get-SourceVM $it
     if (Get-Snapshot -VM $vm -Name $SnapName -ErrorAction SilentlyContinue) { "snapshot $SnapName exists"; $Skip; return }
-    Invoke-Mut { New-Snapshot -VM $vm -Name $SnapName -Description 'pre-cutover restore point' -Memory:$false -Quiesce:$true -Confirm:$false | Out-Null } }
+    Invoke-AtkStep "New-Snapshot $SnapName on $($it.name)" { New-Snapshot -VM $vm -Name $SnapName -Description 'pre-cutover restore point' -Memory:$false -Quiesce:$true -Confirm:$false | Out-Null } }
   'delete'       = { param($it)
     $vm = Get-SourceVM $it
     if (-not $vm) { 'already gone'; $Skip; return }
-    if ($vm.PowerState -ne 'PoweredOff') { Invoke-Mut { Stop-VM -VM $vm -Confirm:$false | Out-Null } }
-    Invoke-Mut { Remove-VM -VM $vm -DeletePermanently -Confirm:$false } }
+    if ([string]$vm.PowerState -ne 'PoweredOff') { Invoke-AtkStep "Stop-VM $($it.name)" { Stop-VM -VM $vm -Confirm:$false | Out-Null } }
+    Invoke-AtkStep "Remove-VM $($it.name) -DeletePermanently" { Remove-VM -VM $vm -DeletePermanently -Confirm:$false } }
   'rename'       = { param($it)
     if (-not $NewName) { throw '-NewName is required' }
     $vm = Get-SourceVM $it
-    Invoke-Mut { Set-VM -VM $vm -Name $NewName -Confirm:$false | Out-Null } }
+    Invoke-AtkStep "Set-VM $($it.name) -Name $NewName" { Set-VM -VM $vm -Name $NewName -Confirm:$false | Out-Null } }
   'tools-remove' = { param($it) Invoke-ToolsRemove $it }
 }
 `,
@@ -925,7 +898,7 @@ Invoke-Main @{
 ADAPTER_PLATFORM=xen
 # @@adapter-common@@
 
-need xe
+atk_need xe
 xe_cmd() { # sets XE to the xe command line for this item's pool
   local host="\${XE_HOST:-$SRC_MANAGER}"
   XE=(xe)
@@ -940,28 +913,27 @@ v_state() { x vm-param-get uuid="$(uuid)" param-name=power-state; }
 v_stop() {
   [ "$(v_state)" = halted ] && { echo "already halted"; return $SKIP; }
   local id; id="$(uuid)"
-  if [ "$ATK_DRY_RUN" = 1 ]; then mut x vm-shutdown uuid="$id"; return 0; fi
   xe_cmd
-  timeout $((TIMEOUT * 60)) "\${XE[@]}" vm-shutdown uuid="$id" \\
-    || { echo "no clean shutdown in $TIMEOUT minutes; forcing"; x vm-shutdown uuid="$id" force=true; }
+  atk_run timeout $((TIMEOUT * 60)) "\${XE[@]}" vm-shutdown uuid="$id" \\
+    || { echo "no clean shutdown in $TIMEOUT minutes; forcing"; atk_run x vm-shutdown uuid="$id" force=true; }
 }
 v_start() {
   [ "$(v_state)" = running ] && { echo "already running"; return $SKIP; }
-  mut x vm-start uuid="$(uuid)"
+  atk_run x vm-start uuid="$(uuid)"
 }
 v_snapshot() {
   if [ -n "$(x snapshot-list name-label="$SNAP_NAME" snapshot-of="$(uuid)" --minimal 2>/dev/null)" ]; then echo "snapshot $SNAP_NAME exists"; return $SKIP; fi
-  mut x vm-snapshot uuid="$(uuid)" new-name-label="$SNAP_NAME"
+  atk_run x vm-snapshot uuid="$(uuid)" new-name-label="$SNAP_NAME"
 }
 v_delete() {
   [ -n "$(uuid)" ] && x vm-param-get uuid="$(uuid)" param-name=uuid >/dev/null 2>&1 || { echo "already gone"; return $SKIP; }
-  mut x vm-uninstall uuid="$(uuid)" force=true
+  atk_run x vm-uninstall uuid="$(uuid)" force=true
 }
 v_rename() {
   [ -n "$NEW_NAME" ] || { echo "--new-name is required"; return 2; }
-  mut x vm-param-set uuid="$(uuid)" name-label="$NEW_NAME"
+  atk_run x vm-param-set uuid="$(uuid)" name-label="$NEW_NAME"
 }
 
-main
+src_main
 `,
 });

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect } from '../../../testing/expect.ts';
@@ -15,7 +15,6 @@ import {
 
 const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
 const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0;
-const hasJq = hasBash && spawnSync('bash', ['-c', 'command -v jq']).status === 0;
 
 function psErrors(text: string): string[] {
   const dir = mkdtempSync(join(tmpdir(), 'atk-ps-'));
@@ -118,15 +117,16 @@ describe('source adapters', () => {
   it('one adapter per source platform, all verbs, the non-x86 ones as operator steps', () => {
     for (const p of SOURCE_PLATFORM_VALUES) {
       const { path, content } = renderSourceAdapter(p);
-      expect(path.startsWith('migration/execute/source/')).toBe(true);
+      expect(path.startsWith('source/')).toBe(true);
       expect(content.includes('@@adapter-common@@')).toBe(false);
       for (const v of SOURCE_VERBS) expect(content).toContain(v);
-      expect(content).toContain('dry-run');
+      expect(/dry-?run/i.test(content)).toBe(true);
+      expect(/lib\/atk\.sh|lib\/Atk\.psm1/.test(content)).toBe(true);
     }
     for (const p of ['power', 'sparc', 'itanium', 'pa-risc', 'mainframe', 'other'] as const) expect(SOURCE_ADAPTERS[p].file).toBe('operator.sh');
     expect(Object.keys(renderSourceAdapters()).length).toBe(new Set(Object.values(SOURCE_ADAPTERS).map((a) => a.file)).size);
     const some = renderSourceAdapters([{ origin: 'kvm' }, {}, { origin: 'kvm' }] as Pick<Workload, 'origin'>[]);
-    expect(Object.keys(some)).toEqual(['migration/execute/source/kvm.sh', 'migration/execute/source/vsphere.ps1']);
+    expect(Object.keys(some)).toEqual(['source/kvm.sh', 'source/vsphere.ps1']);
   });
   it('no credential literal and no footprint in any adapter', () => {
     for (const content of Object.values(renderSourceAdapters())) {
@@ -149,31 +149,9 @@ describe('source adapters', () => {
   it('the orchestrator command lines', () => {
     expect(adapterCommand('kvm', 'stop', 'workload:build01', { dryRun: true })).toBe("source/kvm.sh stop --item 'workload:build01' --dry-run");
     expect(adapterCommand('vsphere', 'rename', 'app01', { newName: 'app01-old' })).toBe("pwsh -NoProfile -File source/vsphere.ps1 rename -Item 'app01' -NewName 'app01-old'");
-    expect(adapterCommand('power', 'stop', 'aix01')).toBe("ATK_SOURCE_PLATFORM=power source/operator.sh stop --item 'aix01'");
+    expect(adapterCommand('power', 'stop', 'aix01')).toBe("source/operator.sh stop --item 'aix01'");
   });
-  it('kvm.sh against a mock virsh: idempotent stop, a dry-run delete, status events', { skip: !hasJq }, () => {
-    const dir = mkdtempSync(join(tmpdir(), 'atk-src-'));
-    try {
-      const kit = join(dir, 'execute');
-      mkdirSync(join(kit, 'source'), { recursive: true });
-      mkdirSync(join(kit, 'manifest'));
-      mkdirSync(join(dir, 'bin'));
-      writeFileSync(join(kit, 'manifest', 'items.json'), JSON.stringify({ planId: '0123456789abcdef', items: [{ id: 'workload:build01', name: 'build01', wave: 1, source: { platform: 'kvm', host: 'kvm01', id: 'build01' } }] }));
-      writeFileSync(join(dir, 'bin', 'ssh'), '#!/usr/bin/env bash\nshift 2\ncase "$*" in *domstate*) echo "shut off" ;; *dominfo*) echo ok ;; *) echo "UNEXPECTED $*" >&2; exit 9 ;; esac\n');
-      chmodSync(join(dir, 'bin', 'ssh'), 0o755);
-      const { content } = renderSourceAdapter('kvm');
-      writeFileSync(join(kit, 'source', 'kvm.sh'), content);
-      const env = { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
-      const stop = spawnSync('bash', [join(kit, 'source', 'kvm.sh'), 'stop', '--item', 'build01'], { encoding: 'utf8', env });
-      expect(stop.status).toBe(0);
-      const del = spawnSync('bash', [join(kit, 'source', 'kvm.sh'), 'delete', '--item', 'workload:build01', '--dry-run'], { encoding: 'utf8', env });
-      expect(del.status).toBe(0);
-      expect(del.stderr).toContain('dry-run:');
-      const events = readFileSync(join(dir, 'status', 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
-      expect(events.map((e) => [e.step, e.outcome, e.dryRun])).toEqual([['stop-source', 'started', false], ['stop-source', 'skipped', false], ['decommission', 'started', true], ['decommission', 'succeeded', true]]);
-      expect(existsSync(join(dir, 'status'))).toBe(true);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+
 });
 
 // ---------------------------------------------------------------------------

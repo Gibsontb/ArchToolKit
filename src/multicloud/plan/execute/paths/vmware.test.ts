@@ -432,7 +432,7 @@ describe('syntax', () => {
   it('the PowerShell parser accepts every .ps1', { skip: !HAS_PWSH && 'pwsh is not installed' }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'atk-vmw-'));
     try {
-      const files = Object.entries(KIT.files).filter(([p]) => p.endsWith('.ps1'));
+      const files = Object.entries(KIT.files).filter(([p]) => p.endsWith('.ps1') && !p.startsWith('source/'));
       files.forEach(([, t], i) => writeFileSync(join(dir, `f${i}.ps1`), t));
       const r = tool('pwsh', ['-NoProfile', '-NonInteractive', '-Command',
         `$bad = @(); foreach ($f in Get-ChildItem -LiteralPath '${dir.replace(/\\/g, '/')}' -File) { $t = $null; $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$t, [ref]$e); foreach ($x in $e) { $bad += "$($f.Name):$($x.Extent.StartLineNumber): $($x.Message)" } }; $bad -join [char]10`]);

@@ -69,7 +69,7 @@ export function renderCollector(id             )                                
   if (!info) throw new Error(`unknown collector ${id}`);
   const raw = COLLECTOR_SCRIPTS[info.file];
   if (raw === undefined) throw new Error(`missing collector text ${info.file}`);
-  return { path: info.file, content: raw.replace('# @@common@@\n', COLLECTOR_COMMON_SH) };
+  return { path: info.file, content: raw.replace('# @@common@@\n', () => COLLECTOR_COMMON_SH) };
 }
 
 function readme(ids                        )         {

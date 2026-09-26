@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import { expect } from '../../../testing/expect.ts';
 import type { SourcePlatform } from '../types.ts';
 import { renderSourceAdapter } from './adapters.ts';
+import { renderLibSh } from '../execute/lib-sh.ts';
+import { renderLibPs } from '../execute/lib-ps.ts';
+import { renderItemsJson, renderItemsTsv, type Manifest } from '../execute/manifest.ts';
 
 const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
 const hasJq = hasBash && spawnSync('bash', ['-c', 'command -v jq']).status === 0;
@@ -20,23 +23,30 @@ const SEP = process.platform === 'win32' ? ';' : ':';
 
 interface Kit { dir: string; kit: string; log: string; script: string }
 
+/** A kit with the core library, one item's manifest (JSON and TSV) and the adapter, as `<dir>/migration/execute/`. */
 function kit(platform: SourcePlatform, source: Record<string, string>, mocks: Record<string, string>): Kit {
   const dir = mkdtempSync(join(tmpdir(), `atk-ad-${platform}-`));
-  const k = join(dir, 'execute');
+  const k = join(dir, 'migration', 'execute');
   mkdirSync(join(k, 'source'), { recursive: true });
   mkdirSync(join(k, 'manifest'));
+  mkdirSync(join(k, 'lib'));
   mkdirSync(join(dir, 'bin'));
-  writeFileSync(join(k, 'manifest', 'items.json'), JSON.stringify({
-    planId: '0123456789abcdef',
-    items: [{ id: 'w:app01', name: 'app01', wave: 2, source: { platform, ...source } }],
-  }));
+  writeFileSync(join(k, 'lib', 'atk.sh'), renderLibSh());
+  writeFileSync(join(k, 'lib', 'Atk.psm1'), renderLibPs());
+  const item = {
+    id: 'w:app01', name: 'app01', kind: 'workload', app: 'crm', wave: 2, path: 'aws-mgn', method: 'replicate', script: 'paths/aws-mgn/mgn.sh',
+    resource: 'atk-01234567-2-app01', source: { platform, ...source }, target: {}, dns: [], lb: [], services: [], checks: [],
+  };
+  const manifest = { kind: 'archtoolkit.migration-manifest', v: 1, planId: '0123456789abcdef', planId8: '01234567', items: [item], waves: [] };
+  writeFileSync(join(k, 'manifest', 'items.json'), renderItemsJson(manifest as unknown as Manifest));
+  writeFileSync(join(k, 'manifest', 'items.tsv'), renderItemsTsv(manifest as unknown as Manifest));
   const log = join(dir, 'calls.log');
   for (const [name, body] of Object.entries(mocks)) {
     writeFileSync(join(dir, 'bin', name), `#!/usr/bin/env bash\necho "${name} $*" >> "$MOCKLOG"\n${body}`);
     chmodSync(join(dir, 'bin', name), 0o755);
   }
   const { path, content } = renderSourceAdapter(platform);
-  const script = join(dir, path.replace('migration/', ''));
+  const script = join(k, path);
   writeFileSync(script, content);
   return { dir, kit: k, log, script };
 }
@@ -244,12 +254,29 @@ describe('bash source adapters against mocks', { skip: !hasJq }, () => {
     done(k);
   });
 
-  it('operator.sh: every verb is an operator step; bad usage exits 2; unknown items exit 10', () => {
+  it('operator.sh: every verb is an operator step; bad usage and unknown items exit 2; --wave serves its platforms', () => {
     const k = kit('power', {}, {});
-    expect(run(k, ['stop', '--item', 'app01'], { ATK_SOURCE_PLATFORM: 'power' }).status).toBe(0);
+    expect(run(k, ['stop', '--item', 'app01']).status).toBe(0);
     expect(events(k)).toEqual([['stop-source', 'started', false], ['stop-source', 'skipped', false]]);
     expect(run(k, ['reboot', '--item', 'app01']).status).toBe(2);
-    expect(run(k, ['stop', '--item', 'nope']).status).toBe(10);
+    expect(run(k, ['stop', '--item', 'nope']).status).toBe(2);
+    expect(run(k, ['stop', '--wave', '2']).status).toBe(0);
+    expect(events(k).length).toBe(4);
+    done(k);
+  });
+
+  it('the WP-12 call: --wave, --step and --path land in the events; state prints name<TAB>state and writes none', () => {
+    const k = kit('aws', { id: 'i-0abc', region: 'eu-west-1' }, {
+      aws: String.raw`case "$*" in *describe-instances*) echo '{"Reservations":[{"Instances":[{"State":{"Name":"stopped"}}]}]}' ;; *) echo '{}' ;; esac`,
+    });
+    expect(run(k, ['state', '--item', 'w:app01', '--wave', '2', '--step', 'precheck', '--path', 'aws-mgn']).stdout).toBe('app01\tstopped\n');
+    expect(events(k)).toEqual([]);
+    expect(run(k, ['stop', '--item', 'w:app01', '--wave', '2', '--step', 'stop-source', '--path', 'aws-mgn', '--timeout', '1']).status).toBe(0);
+    const e = readFileSync(join(k.dir, 'status', 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(e.map((x) => [x.path, x.step, x.outcome, x.wave, x.planId, x.item])).toEqual([
+      ['aws-mgn', 'stop-source', 'started', 2, '0123456789abcdef', 'w:app01'],
+      ['aws-mgn', 'stop-source', 'skipped', 2, '0123456789abcdef', 'w:app01'],
+    ]);
     done(k);
   });
 });
@@ -284,15 +311,34 @@ describe('PowerShell source adapters against mocked cmdlets', { skip: !hasPwsh }
     expect(snap.calls).toContain('New-Snapshot atk-01234567-2-app01');
     const del = ps('vsphere', { manager: 'vc01', id: 'vm-42' }, `${env}\n${VSPHERE}\n$global:vm.PowerState = 'PoweredOff'`, 'delete -Item app01 -DryRun');
     expect(del.calls.includes('Remove-VM')).toBe(false);
-    expect(del.out).toContain('dry-run: Remove-VM');
+    expect(del.out).toContain('dry-run, not run: Remove-VM');
     expect(del.events).toEqual([['decommission', 'started', true], ['decommission', 'succeeded', true]]);
   });
-  it('hyperv.ps1: runs on the owning host; an already-off VM is skipped', () => {
-    const mocks = `function global:Invoke-Command { param($ComputerName, $ScriptBlock, $ArgumentList, $ErrorAction, $Credential) $global:calls.Add("on $ComputerName"); 'Off' }`;
-    const r = ps('hyperv', { host: 'hv03' }, mocks, 'stop -Item app01');
+  it('vsphere.ps1 state: the power state and the live check (tools, old snapshots, ISO, legacy NIC)', () => {
+    const env = '$env:VCENTER_USER = "svc"; $env:VCENTER_PASSWORD = "pw"';
+    const live = `
+      $global:vm | Add-Member -NotePropertyName ExtensionData -NotePropertyValue ([pscustomobject]@{ Guest = [pscustomobject]@{ ToolsRunningStatus = 'guestToolsNotRunning' } })
+      function global:Get-Snapshot { param($VM, $Name, $ErrorAction) @([pscustomobject]@{ Created = (Get-Date).AddDays(-3) }, [pscustomobject]@{ Created = (Get-Date) }) }
+      function global:Get-CDDrive { param($VM, $ErrorAction) [pscustomobject]@{ IsoPath = '[ds1] iso/win.iso'; ConnectionState = [pscustomobject]@{ Connected = $true } } }
+      function global:Get-NetworkAdapter { param($VM, $ErrorAction) @([pscustomobject]@{ Type = 'e1000' }, [pscustomobject]@{ Type = 'Vmxnet3' }) }`;
+    const r = ps('vsphere', { manager: 'vc01', id: 'vm-42' }, `${env}\n${VSPHERE}\n${live}`, 'state -Item app01 -Step precheck -Path hcx-bulk');
     expect(r.code).toBe(0);
-    expect(r.calls).toContain('on hv03');
-    expect(r.events).toEqual([['stop-source', 'started', false], ['stop-source', 'skipped', false]]);
+    expect(r.out).toContain('app01\tPoweredOn\ttools=guestToolsNotRunning old-snapshots=1 iso=connected legacy-nic=e1000');
+    expect(r.events).toEqual([]);
+  });
+  it('hyperv.ps1: runs on the owning host through CIM; an already-off VM is skipped, a running one is stopped', () => {
+    const mocks = `
+      function global:New-CimSession { param($ComputerName, $ErrorAction, $Credential) $global:calls.Add("cim $ComputerName"); 'cim' }
+      $global:state = 'Off'
+      function global:Get-VM { param($CimSession, $Name, $Id, $ErrorAction) [pscustomobject]@{ Name = 'app01'; State = $global:state } }
+      function global:Stop-VM { param($CimSession, $Name, [switch]$Force, [switch]$AsJob, [switch]$TurnOff) $global:calls.Add("Stop-VM $Name"); $global:state = 'Off' }`;
+    const off = ps('hyperv', { host: 'hv03' }, mocks, 'stop -Item app01');
+    expect(off.code).toBe(0);
+    expect(off.calls).toContain('cim hv03');
+    expect(off.events).toEqual([['stop-source', 'started', false], ['stop-source', 'skipped', false]]);
+    const on = ps('hyperv', { host: 'hv03' }, `${mocks}\n$global:state = 'Running'`, 'stop -Item app01');
+    expect(on.calls).toContain('Stop-VM app01');
+    expect(on.events).toEqual([['stop-source', 'started', false], ['stop-source', 'succeeded', false]]);
   });
   it('azure.ps1: deallocates a running VM', () => {
     const mocks = `

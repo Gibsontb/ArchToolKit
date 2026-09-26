@@ -1,7 +1,7 @@
 /**
  * Source adapters (addendum A.3.3): the execution kit's power and inventory
  * operations on a source server, whatever it runs on, rendered into
- * `migration/execute/source/`.
+ * `migration/execute/source/` (file keys `source/<file>`, relative to the kit).
  *
  * Every adapter has the same verbs, `state | stop | start | snapshot |
  * delete | rename | tools-remove`, and keeps the kit's contract (A.6.2): it
@@ -55,8 +55,30 @@ export const SOURCE_ADAPTERS: Readonly<Record<SourcePlatform, SourceAdapterInfo>
   power: OPERATOR, sparc: OPERATOR, itanium: OPERATOR, 'pa-risc': OPERATOR, mainframe: OPERATOR, other: OPERATOR,
 });
 
-/** The folder the adapters go in, inside the generated project. */
-export const SOURCE_ADAPTER_DIR = 'migration/execute/source';
+/** The folder the adapters go in, relative to `migration/execute/` (the kit's file keys). */
+export const SOURCE_ADAPTER_DIR = 'source';
+
+/**
+ * A source adapter as the wave scripts call it (WP-12, `execute/waves/common.ts`):
+ *   bash:       source/<file>.sh  VERB --item ID [--wave N] [--dry-run] [--timeout MIN] [--step STEP] [--path PATH]
+ *   PowerShell: source/<file>.ps1 VERB -Item ID [-Wave N] [-DryRun] [-TimeoutMinutes MIN] [-Step STEP] [-Path PATH]
+ */
+export interface SourceAdapterRef {
+  readonly platform: SourcePlatform;
+  /** Relative to migration/execute/. */
+  readonly file: string;
+  readonly lang: 'sh' | 'ps1';
+  /** False for the operator stand-in (every verb is an operator step). */
+  readonly automated: boolean;
+}
+
+/** Every source platform's adapter, in the shape the wave scripts consume. */
+export const SOURCE_ADAPTER_REFS: Readonly<Record<SourcePlatform, SourceAdapterRef>> = Object.freeze(Object.fromEntries(
+  (Object.keys(SOURCE_ADAPTERS) as SourcePlatform[]).map((p) => {
+    const a = SOURCE_ADAPTERS[p];
+    return [p, { platform: p, file: `${SOURCE_ADAPTER_DIR}/${a.file}`, lang: a.language === 'powershell' ? 'ps1' : 'sh', automated: a.file !== 'operator.sh' }];
+  }),
+) as Record<SourcePlatform, SourceAdapterRef>);
 
 /** One adapter's text, ready to run (the shared part spliced in). */
 export function renderSourceAdapter(platform: SourcePlatform): { path: string; content: string } {
@@ -64,13 +86,13 @@ export function renderSourceAdapter(platform: SourcePlatform): { path: string; c
   const raw = ADAPTER_SCRIPTS[info.file];
   if (raw === undefined) throw new Error(`missing adapter text ${info.file}`);
   const common = info.language === 'bash' ? ADAPTER_COMMON_SH : ADAPTER_COMMON_PS1;
-  return { path: `${SOURCE_ADAPTER_DIR}/${info.file}`, content: raw.replace('# @@adapter-common@@\n', common) };
+  return { path: `${SOURCE_ADAPTER_DIR}/${info.file}`, content: raw.replace('# @@adapter-common@@\n', () => common) };
 }
 
 /**
  * The adapters a set of servers needs (one per distinct origin; rows with no
- * origin are vSphere), or every adapter when no rows are given. Path → text,
- * for WP-11's execution kit.
+ * origin are vSphere), or every adapter when no rows are given. Path (relative
+ * to `migration/execute/`) → text, for the execution kit.
  */
 export function renderSourceAdapters(workloads?: readonly Pick<Workload, 'origin'>[]): Record<string, string> {
   const platforms = workloads ? [...new Set(workloads.map((w) => w.origin ?? 'vsphere'))] : (Object.keys(SOURCE_ADAPTERS) as SourcePlatform[]);
@@ -89,6 +111,5 @@ export function adapterCommand(platform: SourcePlatform, verb: SourceVerb, item:
   if (info.language === 'powershell') {
     return `pwsh -NoProfile -File source/${info.file} ${verb} -Item ${q(item)}${opts.newName ? ` -NewName ${q(opts.newName)}` : ''}${opts.dryRun ? ' -DryRun' : ''}`;
   }
-  const env = info === OPERATOR ? `ATK_SOURCE_PLATFORM=${platform} ` : '';
-  return `${env}source/${info.file} ${verb} --item ${q(item)}${opts.newName ? ` --new-name ${q(opts.newName)}` : ''}${opts.dryRun ? ' --dry-run' : ''}`;
+  return `source/${info.file} ${verb} --item ${q(item)}${opts.newName ? ` --new-name ${q(opts.newName)}` : ''}${opts.dryRun ? ' --dry-run' : ''}`;
 }
