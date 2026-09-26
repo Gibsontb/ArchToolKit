@@ -35,6 +35,13 @@ import { GOOGLE_TERRAFORM_MODULES } from './modules-google.ts';
 import { OCI_TERRAFORM_MODULES } from './modules-oci.ts';
 import { ESTATE_GROUP, rehostBlueprint, VSPHERE_LANDING } from './estate.ts';
 import { providerBlueprints } from '../schema-blueprints.ts';
+import { MIGRATION_GROUP } from './migration/common.ts';
+import { MIGRATION_TERRAFORM_AWS } from './migration/aws.ts';
+import { MIGRATION_TERRAFORM_AZURE } from './migration/azure.ts';
+import { MIGRATION_TERRAFORM_GOOGLE } from './migration/google.ts';
+import { MIGRATION_TERRAFORM_OCI } from './migration/oci.ts';
+import { MIGRATION_TERRAFORM_VSPHERE } from './migration/vsphere.ts';
+import { RELOCATE_AZURE, RELOCATE_GOOGLE, RELOCATE_OCI } from './migration/relocate.ts';
 
 export { ESTATE_GROUP };
 
@@ -58,6 +65,7 @@ function combine(
   modules: BlueprintGroup | undefined,
   estate: readonly Blueprint[] = [],
   everything: readonly Blueprint[] = [],
+  migration: readonly Blueprint[] = [],
 ): BlueprintGroup {
   // The estate blueprints come last in the list, and the page opens on them
   // when an estate is loaded: with one, they answer "what does Terraform do to
@@ -68,6 +76,8 @@ function combine(
       ...labelled(resources.blueprints, RESOURCES),
       ...(modules ? labelled(modules.blueprints, MODULES) : []),
       ...labelled(estate, ESTATE_GROUP),
+      // The migration planner's blueprints: stackable, meeting through local.landing_zone.
+      ...labelled(migration, MIGRATION_GROUP),
       // Then every resource the provider has, each under its service's heading.
       ...everything,
     ],
@@ -86,11 +96,11 @@ function combine(
 export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withRootModuleLayoutAll(withSecretLiftingAll(
   withChoicesAll(
     [
-      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')], providerBlueprints('aws', 'res')),
-      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')], providerBlueprints('azurerm', 'res')),
-      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')], providerBlueprints('google', 'res')),
-      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')], providerBlueprints('oci', 'res')),
-      combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING]),
+      combine(AWS_TERRAFORM, AWS_TERRAFORM_MODULES, [rehostBlueprint('aws')], providerBlueprints('aws', 'res'), MIGRATION_TERRAFORM_AWS),
+      combine(AZURE_TERRAFORM, AZURE_TERRAFORM_MODULES, [rehostBlueprint('azure')], providerBlueprints('azurerm', 'res'), [...MIGRATION_TERRAFORM_AZURE, ...RELOCATE_AZURE]),
+      combine(GCP_TERRAFORM, GOOGLE_TERRAFORM_MODULES, [rehostBlueprint('google')], providerBlueprints('google', 'res'), [...MIGRATION_TERRAFORM_GOOGLE, ...RELOCATE_GOOGLE]),
+      combine(OCI_TERRAFORM, OCI_TERRAFORM_MODULES, [rehostBlueprint('oci')], providerBlueprints('oci', 'res'), [...MIGRATION_TERRAFORM_OCI, ...RELOCATE_OCI]),
+      combine(VMWARE_TERRAFORM, undefined, [VSPHERE_LANDING], [], MIGRATION_TERRAFORM_VSPHERE),
       combine(VCF_TERRAFORM, undefined),
       combine(LINUX_TERRAFORM, undefined),
       combine(WINDOWS_TERRAFORM, undefined),
@@ -98,3 +108,15 @@ export const TERRAFORM_BLUEPRINTS: readonly BlueprintGroup[] = withRootModuleLay
     'terraform',
   ),
 ));
+
+/**
+ * A blueprint by id, on whichever platform it is. What the stack builder is
+ * handed as its lookup, by the Terraform page and by the migration planner.
+ */
+export function findTerraformBlueprint(id: string): Blueprint | undefined {
+  for (const group of TERRAFORM_BLUEPRINTS) {
+    const found = group.blueprints.find((b) => b.id === id);
+    if (found) return found;
+  }
+  return undefined;
+}

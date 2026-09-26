@@ -363,8 +363,7 @@ resource "aws_route_table_association" "public_b" {
             },
             { id: "db_identifier", label: "DB identifier", control: 'text', default: "app-pgsql-01", hint: "Unique DB identifier" },
             { id: "db_name", label: "Database name", control: 'text', default: "app", hint: "Initial database name" },
-            { id: "username", label: "Master username", control: 'text', default: "dbadmin", hint: "Master user (use secrets in prod)" },
-            { id: "password", label: "Master password", control: 'text', default: "CHANGEME", hint: "Use secrets manager in prod" },
+            { id: "username", label: "Master username", control: 'text', default: "dbadmin", hint: "The password is generated and kept in Secrets Manager" },
             { id: "subnet_ids_csv", label: "Subnet IDs (comma-separated)", control: 'text', default: "subnet-1,subnet-2", hint: "At least two subnets" },
             { id: "vpc_security_group_ids_csv", label: "VPC security group IDs (comma-separated)", control: 'text', default: "sg-xxxx", hint: "Existing SG(s)" },
             { id: "instance_class", label: "Instance class", control: 'text', default: "db.t3.medium", hint: "e.g. db.t3.medium" },
@@ -421,7 +420,8 @@ resource "aws_db_instance" "this" {
   allocated_storage       = ${Number(vals.storage_gb) || 100}
   db_name                 = "${vals.db_name}"
   username                = "${vals.username}"
-  password                = "${vals.password}"
+  # RDS generates the master password and keeps it in Secrets Manager; it is never written here.
+  manage_master_user_password = true
   db_subnet_group_name    = aws_db_subnet_group.this.name
   vpc_security_group_ids  = [${sgHcl}]
   skip_final_snapshot     = true

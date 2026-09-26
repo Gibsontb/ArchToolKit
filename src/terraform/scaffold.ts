@@ -72,7 +72,11 @@ function providerBlock(provider: ProviderInfo): HclBlock {
   };
 }
 
-function backendBlock(kind: BackendKind): HclBlock | null {
+/**
+ * The `backend` block for a kind of state storage, or null for none. Exported so
+ * the stack builder writes the same block the scaffold does.
+ */
+export function backendBlock(kind: BackendKind): HclBlock | null {
   switch (kind) {
     case 'none':
       return null;

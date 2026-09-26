@@ -34,6 +34,8 @@ import { numbered, slug,                                                        
 import { moduleBySource } from './modules.js';
                                                   
 import { tfvarsExampleFor } from './layout.js';
+import { renderBlock } from './hcl.js';
+import { backendBlock,                  } from './scaffold.js';
 
 export { slug } from '../kit/stack.js';
                                                                              
@@ -241,6 +243,67 @@ function applyRenames(hcl        , renames                             )        
   return out;
 }
 
+/** How a stack is assembled. */
+                                        
+                                
+                              
+                                                                                                                 
+                                    
+                                                                                                  
+                                                  
+ 
+
+/** The names a `locals` block declares: its attributes one level in. */
+export function localNames(block        )           {
+  const open = block.indexOf('{');
+  if (open === -1) return [];
+  const inner = block.slice(open + 1, matchBrace(block, open) - 1);
+  const names           = [];
+  let depth = 0;
+  let i = 0;
+  let lineStart = true;
+  while (i < inner.length) {
+    const c = inner[i]          ;
+    if (c === '"') {
+      i = skipString(inner, i);
+      lineStart = false;
+      continue;
+    }
+    if (c === '#' || (c === '/' && inner[i + 1] === '/')) {
+      const nl = inner.indexOf('\n', i);
+      i = nl === -1 ? inner.length : nl;
+      continue;
+    }
+    if (c === '<' && inner[i + 1] === '<') {
+      i = skipHeredoc(inner, i);
+      continue;
+    }
+    if (c === '{' || c === '[' || c === '(') depth += 1;
+    else if (c === '}' || c === ']' || c === ')') depth -= 1;
+    else if (c === '\n') {
+      lineStart = true;
+      i += 1;
+      continue;
+    } else if (lineStart && depth === 0 && /[A-Za-z_]/.test(c)) {
+      const m = /^([A-Za-z_][A-Za-z0-9_-]*)\s*=(?!=)/.exec(inner.slice(i));
+      if (m) names.push(m[1]          );
+    }
+    if (c !== ' ' && c !== '\t' && c !== '\r') lineStart = false;
+    i += 1;
+  }
+  return names;
+}
+
+/**
+ * Where a non-.tf file an item writes goes in the stack: beside the item's own
+ * file, in a folder named after it. `*.tfvars.example` and `README.md` are not
+ * passed through; the stack writes one of each for everything.
+ */
+function passthroughPath(itemName        , file        )                {
+  if (/\.tf$/i.test(file) || /\.tfvars\.example$/i.test(file) || /^readme\.md$/i.test(file)) return null;
+  return `${itemName}/${file}`;
+}
+
 /**
  * Assemble the items into one configuration.
  *
@@ -250,7 +313,7 @@ function applyRenames(hcl        , renames                             )        
 export function buildStack(
   items                      ,
   blueprintFor                 ,
-  options                                                                 = {},
+  options                        = {},
 )             {
   const findings            = [];
   const files                         = {};
@@ -263,6 +326,8 @@ export function buildStack(
   const addresses = new Map                ();
   const usedVars = new Set        ();
   const names = new Set        ();
+  /** Local value name → the item that declared it. Locals are not renamed, so two of one name cannot stand. */
+  const locals = new Map                ();
 
   if (items.length === 0) {
     return { files: {}, findings: [info('tf.stack.empty', 'Nothing in the build list yet.', {})], references: [] };
@@ -336,6 +401,20 @@ export function buildStack(
         body.push(block.text.trimEnd());
         continue;
       }
+      if (block.kind === 'locals') {
+        for (const local of localNames(block.text.slice(block.text.search(/^locals\b/m)))) {
+          const seen = locals.get(local);
+          if (seen === undefined) locals.set(local, item.label);
+          else {
+            findings.push(
+              warning('tf.stack.duplicate-local', `${item.label} and ${seen} both declare local.${local}; Terraform refuses a local declared twice.`, {
+                path: fileNameFor(index, name),
+                remediation: 'Keep one of the two items, or rename the local in one of them.',
+              }),
+            );
+          }
+        }
+      }
 
       // Resources, data sources and modules stay with the item, under a name
       // nothing else in the stack has taken.
@@ -388,6 +467,16 @@ export function buildStack(
     for (const m of hcl.matchAll(/\bvar\.([A-Za-z_][A-Za-z0-9_]*)/g)) usedVars.add(m[1]          );
 
     files[fileNameFor(index, name)] = `# ${item.label} — ${blueprint.label}\n# ${blueprint.description}\n\n${applyRenames(body.join('\n\n').trim(), renames)}\n`;
+
+    // Everything else the item wrote (a CSV of what it sized, a script) goes
+    // beside it rather than being dropped. With one file in all, that file was
+    // read as the item's HCL above.
+    if (Object.keys(built.files).length > 1) {
+      for (const [file, text] of Object.entries(built.files)) {
+        const path = passthroughPath(name, file);
+        if (path !== null) files[path] = text;
+      }
+    }
   });
 
   // A `var.x` nothing declares stops `terraform validate`; declare it here.
@@ -407,14 +496,16 @@ export function buildStack(
 
   const stackName = options.stackName?.trim() || 'stack';
 
+  const backend = options.backend ? backendBlock(options.backend) : null;
   files['versions.tf'] = `${[
     '# Providers for every item in this stack, merged.',
     'terraform {',
-    '  required_version = ">= 1.5.0"',
+    `  required_version = "${(options.requiredVersion ?? '>= 1.5.0').replace(/"/g, '')}"`,
     '',
     '  required_providers {',
     ...[...providers.entries()].map(([name, p]) => `    ${name} = {\n      source  = "${p.source}"${p.version ? `\n      version = "${p.version}"` : ''}\n    }`),
     '  }',
+    ...(backend ? ['', renderBlock(backend, '  ')] : []),
     '}',
   ].join('\n')}\n`;
 

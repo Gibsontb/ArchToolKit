@@ -9,8 +9,8 @@
 import { describe, it } from 'node:test';
 import { expect } from '../testing/expect.ts';
 import { TERRAFORM_BLUEPRINTS } from './blueprints/index.ts';
-import { blueprintsFor } from '../kit/blueprint.ts';
-import { buildStack, slug, topLevelBlocks, type StackItem } from './stack.ts';
+import { blueprintsFor, type Blueprint } from '../kit/blueprint.ts';
+import { buildStack, localNames, slug, topLevelBlocks, type StackItem } from './stack.ts';
 
 const AWS = blueprintsFor(TERRAFORM_BLUEPRINTS, 'aws');
 const find = (id: string) => AWS.find((b) => b.id === id);
@@ -171,5 +171,77 @@ describe('every AWS blueprint', () => {
       expect([blueprint.id, errors.map((e) => e.message)]).toEqual([blueprint.id, []]);
       expect([blueprint.id, Object.keys(stack.files).includes('versions.tf')]).toEqual([blueprint.id, true]);
     }
+  });
+});
+
+describe('stack options the migration planner uses', () => {
+  /** A blueprint that writes exactly these files, for the cases no real blueprint shows on its own. */
+  const fake = (id: string, files: Record<string, string>): Blueprint => ({
+    id,
+    label: id,
+    description: 'A blueprint for the test.',
+    inputs: [],
+    emits: [],
+    build: () => ({ files }),
+  });
+  const lookup = (blueprints: readonly Blueprint[]) => (id: string) => blueprints.find((b) => b.id === id);
+  const tf = (body: string) => `terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "~> 6.65"\n    }\n  }\n}\n\n${body}\n`;
+
+  it('writes the required_version it is asked for, and >= 1.5.0 when not asked', () => {
+    const one = [fake('a', { 'main.tf': tf('resource "aws_vpc" "this" {\n  cidr_block = "10.0.0.0/16"\n}') })];
+    expect(buildStack([item('a', 'a')], lookup(one)).files['versions.tf']).toContain('required_version = ">= 1.5.0"');
+    expect(buildStack([item('a', 'a')], lookup(one), { requiredVersion: '>= 1.7.0' }).files['versions.tf']).toContain('required_version = ">= 1.7.0"');
+  });
+
+  it('writes the backend block the scaffold writes, inside the terraform block', () => {
+    const one = [fake('a', { 'main.tf': tf('resource "aws_vpc" "this" {\n  cidr_block = "10.0.0.0/16"\n}') })];
+    const versions = buildStack([item('a', 'a')], lookup(one), { backend: 's3' }).files['versions.tf'] as string;
+    expect(versions).toContain('backend "s3" {');
+    expect(versions).toContain('use_lockfile = true');
+    const blocks = topLevelBlocks(versions);
+    expect(blocks.filter((b) => b.kind === 'terraform').length).toBe(1);
+    expect(blocks[0]?.text.includes('backend "s3"')).toBe(true);
+    // No backend unless asked: local state.
+    expect(buildStack([item('a', 'a')], lookup(one)).files['versions.tf']).not.toContain('backend');
+  });
+
+  it('passes an item\'s other files through beside its own, and merges the README and tfvars example', () => {
+    const one = [
+      fake('a', {
+        'main.tf': tf('resource "aws_vpc" "this" {\n  cidr_block = "10.0.0.0/16"\n}\n\nvariable "x" {\n  type = string\n}'),
+        'rehost-plan.csv': 'vm,size\nweb01,m7i.large\n',
+        'scripts/bootstrap.ps1': 'Write-Output "hello from the bootstrap"\n',
+        'README.md': '# the item\'s own readme, replaced by the stack\'s\n',
+        'terraform.tfvars.example': 'x = "CHANGE_ME"\n',
+      }),
+    ];
+    const stack = buildStack([item('a', 'Web tier')], lookup(one));
+    expect(stack.files['web-tier/rehost-plan.csv']).toBe('vm,size\nweb01,m7i.large\n');
+    expect(stack.files['web-tier/scripts/bootstrap.ps1']).toContain('bootstrap');
+    expect(Object.keys(stack.files).some((f) => f.startsWith('web-tier/') && /readme|tfvars/i.test(f))).toBe(false);
+    expect(stack.files['README.md']).toContain('# stack');
+    expect(stack.files['terraform.tfvars.example']).toContain('x = ');
+  });
+
+  it('keeps a single-file item\'s file as its HCL, not as a passthrough', () => {
+    const one = [fake('a', { 'main.tf': tf('resource "aws_vpc" "this" {\n  cidr_block = "10.0.0.0/16"\n}') })];
+    const stack = buildStack([item('a', 'net')], lookup(one));
+    expect(Object.keys(stack.files).filter((f) => f.includes('/'))).toEqual([]);
+  });
+
+  it('reports two items declaring the same local, which Terraform refuses', () => {
+    const two = [
+      fake('a', { 'main.tf': tf('locals {\n  landing_zone = { prefix = "a" }\n  only_a       = 1\n}') }),
+      fake('b', { 'main.tf': tf('locals {\n  landing_zone = {\n    prefix = "b"\n    nested = { deeper = 1 }\n  }\n}') }),
+    ];
+    const stack = buildStack([item('a', 'first'), item('b', 'second')], lookup(two));
+    const dup = stack.findings.filter((f) => f.code === 'tf.stack.duplicate-local');
+    expect(dup.length).toBe(1);
+    expect(dup[0]?.message).toContain('local.landing_zone');
+    expect(dup[0]?.severity).toBe('warning');
+  });
+
+  it('does not mistake a nested key or a string for a local', () => {
+    expect(localNames('locals {\n  a = { b = 1, c = "d = e" }\n  f = <<-EOT\n    g = h\n  EOT\n  i = [\n    { j = 2 },\n  ]\n}')).toEqual(['a', 'f', 'i']);
   });
 });
