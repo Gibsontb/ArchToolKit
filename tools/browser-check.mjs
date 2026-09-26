@@ -13,7 +13,8 @@
  * toolkit has to build and run air-gapped. When it is absent this exits 0 and
  * says so: a check you cannot run is not a failure.
  *
- * Usage:  node tools/browser-check.mjs [--port 8140]
+ * Usage:  node --experimental-strip-types tools/browser-check.mjs [--port 8140]
+ *        (the flag is needed before Node 22.18, which strips .ts imports by default)
  */
 
 import { spawn } from 'node:child_process';
@@ -29,17 +30,29 @@ const portArg = args.indexOf('--port');
 const PORT = portArg >= 0 ? Number(args[portArg + 1]) : 8140;
 const BASE = `http://127.0.0.1:${PORT}`;
 
+// Playwright from this checkout, then the home folder; playwright-core works as
+// well, and PLAYWRIGHT_CORE may name a playwright-core folder (the Python
+// package ships one as playwright/driver/package, next to its browsers).
 let chromium;
-try {
-  chromium = createRequire(import.meta.url)('playwright').chromium;
-} catch {
+for (const [base, name] of [
+  [import.meta.url, 'playwright'],
+  [`${process.env.HOME ?? process.env.USERPROFILE}/`, 'playwright'],
+  [import.meta.url, 'playwright-core'],
+  [`${process.env.HOME ?? process.env.USERPROFILE}/`, 'playwright-core'],
+  ...(process.env.PLAYWRIGHT_CORE ? [[import.meta.url, process.env.PLAYWRIGHT_CORE]] : []),
+]) {
   try {
-    chromium = createRequire(`${process.env.HOME}/`)('playwright').chromium;
+    chromium = createRequire(base)(name).chromium;
+    if (chromium) break;
   } catch {
-    console.log('Playwright is not installed, so the browser checks were skipped.');
-    console.log('  npm install --no-save playwright && npx playwright install chromium');
-    process.exit(0);
+    // try the next
   }
+}
+if (!chromium) {
+  console.log('Playwright is not installed, so the browser checks were skipped.');
+  console.log('  npm install --no-save playwright && npx playwright install chromium');
+  console.log('  (or set PLAYWRIGHT_CORE to a playwright-core folder whose browsers are installed)');
+  process.exit(0);
 }
 
 const server = spawn(
@@ -60,6 +73,19 @@ const check = (label, ok, detail = '') => {
 };
 
 const browser = await chromium.launch();
+
+/**
+ * One block of checks. A step that throws (a selector that no longer
+ * matches, a timeout) fails the block with its message instead of ending
+ * the run, so every other block still reports.
+ */
+async function section(name, body) {
+  try {
+    await body();
+  } catch (error) {
+    check(`${name}: ran to the end`, false, String(error?.message ?? error).split('\n')[0]);
+  }
+}
 
 /** The synthetic RVTools workbook, written by the chain block and reused after it. */
 let fixture;
@@ -88,11 +114,11 @@ for (const [name, path] of [
 }
 
 // --- editing a field must not break the buttons ---------------------------
-{
+await section('editing a field must not break the buttons', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/vcf-sizing.html`, { waitUntil: 'networkidle' });
-  const hosts = page.locator('.field', { hasText: 'Hosts in mgmt cluster' }).locator('input').first();
+  const hosts = page.locator('.field', { hasText: 'Hosts in management cluster' }).locator('input').first();
   await hosts.fill('7');
   await hosts.dispatchEvent('change');
   await page.waitForTimeout(400);
@@ -116,10 +142,10 @@ for (const [name, path] of [
     (await page.locator('text=Prefilled from your sizing').count()) === 0,
   );
   await ctx.close();
-}
+});
 
 // --- the whole chain, from an RVTools workbook to a document --------------
-{
+await section('the whole chain, from an RVTools workbook to a document', async () => {
   // A synthetic RVTools workbook (src/testing/estate-fixture.ts): two vCenters,
   // a four-host vSAN management cluster, and clusters that share a name. It
   // goes in as the .xlsx RVTools writes, and has to come out the far end as a
@@ -145,7 +171,7 @@ for (const [name, path] of [
   const sizingText = await page.locator('body').innerText();
   check('sizing reads the estate without being handed it', /VCF fleet from the estate/.test(sizingText));
   check('sizing lays out a workload domain per vCenter', /wld-vc01/.test(sizingText) && /wld-vc02/.test(sizingText));
-  const mgmtHosts = await page.locator('.field', { hasText: 'Hosts in mgmt cluster' }).locator('input').first().inputValue();
+  const mgmtHosts = await page.locator('.field', { hasText: 'Hosts in management cluster' }).locator('input').first().inputValue();
   check('the management cluster is converged with its own hosts', mgmtHosts === '4', `got ${mgmtHosts}`);
   const ram = await page.locator('.field', { hasText: 'RAM (GiB)' }).locator('input').first().inputValue();
   check('its hosts set the per-host profile', ram === '1024', `got ${ram}`);
@@ -195,25 +221,28 @@ for (const [name, path] of [
   const tf = (await page.locator('pre.code-block').allInnerTexts()).join('\n');
   check('Terraform builds the landing zone from the estate', /vsphere_distributed_port_group/.test(tf) && /vlan_id\s+= 110/.test(tf), tf.slice(0, 120));
 
-  await page.goto(`${BASE}/app/multicloud.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(800);
-  await page.locator('button', { hasText: 'Answer from the estate' }).click();
-  await page.waitForTimeout(300);
-  check(
-    'the decision wizard answers from the estate',
-    (await page.locator('#sourceEnv').inputValue()) === 'onprem-vmware' &&
-      (await page.locator('#initiativeType').inputValue()) === 'migration',
-  );
+  check('the inventory hands over to Application Migration', (await page.locator('a[href="migration.html#sources"]', { hasText: 'Plan the applications' }).count()) === 1);
+  await page.goto(`${BASE}/app/migration.html#sources`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1200);
+  await page.locator('[data-control="estate-load"]').click();
+  await page.waitForTimeout(1000);
+  check('Application Migration reads the estate on Sources', /Read \d+ VM\(s\) from/.test(await page.locator('body').innerText()));
+  await page.goto(`${BASE}/app/migration.html`, { waitUntil: 'networkidle' });
+  await page.locator('[data-control="settings-clear"]').first().click();
+  await page.locator('[data-control="settings-clear"]').first().click();
+  await page.waitForTimeout(500);
 
   await page.goto(`${BASE}/app/inventory.html`, { waitUntil: 'networkidle' });
   await page.locator('.estate-bar button', { hasText: 'Forget' }).click();
   await page.waitForTimeout(500);
   check('forgetting the estate clears it', /No estate loaded/.test(await page.locator('body').innerText()));
   await ctx.close();
-}
+});
 
 // --- the data editor: a VCF export, then the other kinds of file -----------
-{
+await section('the data editor: a VCF export, then the other kinds of file', async () => {
   const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
   const dir = mkdtempSync(join(tmpdir(), 'atk-'));
   const labFile = join(dir, 'VCF-deployment-spec-9.1.1.0.json');
@@ -264,9 +293,9 @@ for (const [name, path] of [
   await page.waitForTimeout(800);
   check('Editor: the builder opens its spec in the editor', /data-editor\.html/.test(page.url()) && (await page.locator('[data-path="sddcId"]').count()) === 1);
   await ctx.close();
-}
+});
 
-{
+await section('the data editor: a VCF export, then the other kinds of file', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'atk-'));
   const playbook = join(dir, 'site.yml');
   writeFileSync(
@@ -308,10 +337,10 @@ for (const [name, path] of [
   const k8sText = await page.locator('.de-textarea').inputValue();
   check('Editor: a form edit writes both documents back', (k8sText.match(/^---$/gm) ?? []).length === 2 && k8sText.includes('IfNotPresent'));
   await ctx.close();
-}
+});
 
 // --- Load, Save and Clear on the builder and both generators ---------------
-{
+await section('Load, Save and Clear on the builder and both generators', async () => {
   const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
   const { readFileSync } = await import('node:fs');
   const dir = mkdtempSync(join(tmpdir(), 'atk-'));
@@ -379,10 +408,10 @@ for (const [name, path] of [
   await load(an.path);
   check('Ansible: Load restores its own TXT', (await page.getByPlaceholder('Used in comments, tags and the filename').inputValue()) === 'patching');
   await ctx.close();
-}
+});
 
 // --- the Terraform build list: several blueprints into one stack -----------
-{
+await section('the Terraform build list: several blueprints into one stack', async () => {
   const ctx = await browser.newContext({ acceptDownloads: true });
   const page = await ctx.newPage();
   const errors = [];
@@ -433,10 +462,10 @@ for (const [name, path] of [
   check('Stack: Load brings the whole list back', (await page.locator('.build-item').count()) === 2, await page.locator('[data-control="settings-status"]').innerText());
   check('Stack: no script errors', errors.length === 0, errors[0] ?? '');
   await ctx.close();
-}
+});
 
 // --- the Ansible build list: several playbooks into one site --------------
-{
+await section('the Ansible build list: several playbooks into one site', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const errors = [];
@@ -470,10 +499,10 @@ for (const [name, path] of [
   check('Site: it generated without errors', /Generated\. No errors\./.test(await page.locator('body').innerText()));
   check('Site: no script errors', errors.length === 0, errors[0] ?? '');
   await ctx.close();
-}
+});
 
 // --- clear all: every page has it, and it empties the toolkit ---------------
-{
+await section('clear all: every page has it, and it empties the toolkit', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const pages = ['index.html', 'app/inventory.html', 'app/vcf-sizing.html', 'app/vcf-spec.html', 'app/data-editor.html', 'app/multicloud.html', 'app/migration.html', 'app/network.html', 'app/terraform-map.html', 'app/terraform.html', 'app/ansible.html', 'app/manual.html'];
@@ -497,10 +526,10 @@ for (const [name, path] of [
   const left = await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('archtoolkit.')).length);
   check('Clear all: the second press empties the page and the saved work', left === 0 && (await page.locator('[data-path="a"]').count()) === 0, `left ${left}`);
   await ctx.close();
-}
+});
 
 // --- the pickers actually change the document -----------------------------
-{
+await section('the pickers actually change the document', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/vcf-spec.html`, { waitUntil: 'networkidle' });
@@ -527,10 +556,10 @@ for (const [name, path] of [
     (await page.getByText('NFS servers', { exact: false }).count()) > 0,
   );
   await ctx.close();
-}
+});
 
 // --- module blueprints: what most Terraform actually looks like ----------
-{
+await section('module blueprints: what most Terraform actually looks like', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
@@ -577,10 +606,10 @@ for (const [name, path] of [
   );
 
   await ctx.close();
-}
+});
 
 // --- a module's whole input table, and what the call will build ----------
-{
+await section("a module's whole input table, and what the call will build", async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
@@ -635,10 +664,10 @@ for (const [name, path] of [
   );
 
   await ctx.close();
-}
+});
 
 // --- the Terraform Map: the reference the generator does not replace ------
-{
+await section('the Terraform Map: the reference the generator does not replace', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform-map.html`, { waitUntil: 'networkidle' });
@@ -679,7 +708,7 @@ for (const [name, path] of [
   );
 
   await ctx.close();
-}
+});
 
 // --- the generators: platform once, then what to build -------------------
 for (const [kind, path, generateLabel, expect] of [
@@ -785,7 +814,7 @@ for (const [kind, path, generateLabel, expect] of [
 }
 
 // --- the platform is chosen once and carried ------------------------------
-{
+await section('the platform is chosen once and carried', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
@@ -799,249 +828,134 @@ for (const [kind, path, generateLabel, expect] of [
     (await page.locator('select:not([data-control])').first().inputValue()) === 'oci',
   );
   await ctx.close();
-}
+});
 
-// --- the decision wizard -------------------------------------------------
-{
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(`${BASE}/app/multicloud.html`, { waitUntil: 'networkidle' });
+// --- the two migration pages: every pane, the old addresses, a phone --------
+await section('the two migration pages: every pane, the old addresses, a phone', async () => {
+  // Application Migration (migration.html) and Multi-Cloud Migration &
+  // Utilities (multicloud.html). Every pane opens from its hash with no console
+  // error and no "could not be built" — first on an empty plan, then on the
+  // WP-10 end-to-end plan (a data-centre exit from every source), loaded
+  // through the page's own file bar. At 375 px no pane scrolls sideways.
+  const PANES = {
+    'migration.html': ['sources', 'servers', 'databases', 'applications', 'constraints', 'sizing', 'stack'],
+    'multicloud.html': ['overview', 'landing-zones', 'waves', 'waves:governance', 'generate', 'execute', 'board', 'timeline', 'capacity', 'raid', 'reports', 'utilities', 'datacentre'],
+  };
 
-  check('the wizard mounts without a script error', errors.length === 0, errors[0] ?? '');
-  check('the cloud is chosen once, at the top', (await page.locator('#cloudProvider').count()) === 1);
-  check('it opens on step 1', await page.locator('#step-1').isVisible());
-  check('and only step 1', !(await page.locator('#step-2').isVisible()));
+  const { buildE2e } = await import('../src/testing/multicloud-e2e.ts');
+  const { planEnvelope } = await import('../src/multicloud/plan/store.ts');
+  const { writeSettings } = await import('../src/kit/settings-file.ts');
+  const e2e = await buildE2e();
+  const planFile = join(mkdtempSync(join(tmpdir(), 'atk-')), 'dc1-exit.json');
+  writeFileSync(planFile, writeSettings(planEnvelope(e2e.plan), 'json'));
 
-  const selects = await page.locator('select').count();
-  check('the questions are dropdowns', selects > 30, `${selects} dropdowns`);
-  check(
-    'the F5 usage question is there, with all six answers',
-    (await page.locator('input[name=f5Usage]').count()) === 6,
-  );
-  check(
-    'the environments question is there, with all five',
-    (await page.locator('input[name=envScope]').count()) === 5,
-  );
-  const hints = await page.locator('.field-hint').count();
-  check('the questions keep their hints', hints > 20, `${hints} hints`);
-  check(
-    'and a step that has a sub-heading keeps it, which is what sets the field order',
-    (await page.locator('#step-4 .field-group-title').innerText()) === 'Sizing & environments',
-  );
+  /** Open a pane and wait until its module has mounted (or failed). */
+  const openPane = async (page, file, hash) => {
+    await page.goto('about:blank');
+    await page.goto(`${BASE}/app/${file}#${hash}`, { waitUntil: 'networkidle' });
+    const id = hash.split(':')[0];
+    await page
+      .waitForFunction((pane) => {
+        const body = document.getElementById(`pane-${pane}`);
+        if (!body) return false;
+        const text = body.innerText;
+        return text.length > 0 && !/Loading…/.test(text);
+      }, id, { timeout: 30000 })
+      .catch(() => undefined);
+    await page.waitForTimeout(250);
+    return page.evaluate((pane) => {
+      const body = document.getElementById(`pane-${pane}`);
+      const active = document.querySelector('.tab.active');
+      return {
+        active: active ? active.getAttribute('data-tab') : null,
+        text: body ? body.innerText : '',
+        broken: body ? Array.from(body.querySelectorAll('.tip.warn')).map((n) => n.innerText).filter((t) => /could not be built/.test(t)) : ['no pane body'],
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    }, id);
+  };
 
-  // Validation is advisory in the original — "soft validation only": it names
-  // what is missing and lets you carry on, because a generic recommendation is
-  // more use than a blocked form.
-  await page.locator('#nextBtn').click();
-  await page.waitForTimeout(300);
-  check('moving on with answers missing says what will suffer', /Missing:/.test(await page.locator('#error-step-1').innerText()));
-  check('and still lets you carry on', await page.locator('#step-2').isVisible());
-
-  await page.locator('#backBtn').click();
-  await page.waitForTimeout(200);
-  await page.selectOption('#initiativeType', 'migration');
-  await page.fill('#workloadName', 'Case Management');
-  await page.locator('#nextBtn').click();
-  await page.waitForTimeout(400);
-  check('answering step 1 moves to step 2', await page.locator('#step-2').isVisible());
-  check('picking an initiative type selects its questions', await page.locator('#path-migration').isVisible());
-  check('and hides the others', !(await page.locator('#path-new-service').isVisible()));
-
-  // Answer everything, then generate.
-  await page.evaluate(() => {
-    document.querySelectorAll('select').forEach((s) => {
-      if (s.id === 'cloudProvider') return;
-      if (s.options.length > 1) {
-        s.selectedIndex = 1;
-        s.dispatchEvent(new Event('change', { bubbles: true }));
+  const pass = async (label, { width, load }) => {
+    const ctx = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    if (load) {
+      await page.goto(`${BASE}/app/migration.html#sources`, { waitUntil: 'networkidle' });
+      await page.locator('[data-control="settings-file"]').first().setInputFiles(planFile);
+      await page.waitForFunction(() => /DC1 exit/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => undefined);
+      await page.waitForTimeout(1500);
+      check(`${label}: the end-to-end plan loads through the file bar`, /DC1 exit/.test(await page.locator('body').innerText()));
+    }
+    for (const [file, hashes] of Object.entries(PANES)) {
+      for (const hash of hashes) {
+        errors.length = 0;
+        const r = await openPane(page, file, hash);
+        const id = hash.split(':')[0];
+        const problems = [
+          ...errors.slice(0, 1),
+          ...r.broken.slice(0, 1),
+          ...(r.active === id ? [] : [`active tab ${r.active}`]),
+          ...(r.text.trim().length > 20 ? [] : ['empty pane']),
+          ...(width <= 400 && r.overflow > 1 ? [`scrolls sideways by ${r.overflow}px`] : []),
+        ];
+        check(`${label}: ${file}#${hash}`, problems.length === 0, problems.join('; '));
       }
-    });
-    document.querySelectorAll('input[type=text]').forEach((i) => {
-      i.value = 'Case Management';
-    });
-    document.querySelectorAll('input[type=number]').forEach((i) => {
-      i.value = '500';
-    });
-    document.querySelectorAll('textarea').forEach((t) => {
-      t.value = 'Line-of-business application.';
-    });
-    document.querySelectorAll('input[name=envScope]').forEach((c) => {
-      c.checked = true;
-    });
-  });
-  await page.locator('button', { hasText: 'Generate recommendation' }).click();
-  await page.waitForTimeout(900);
+    }
+    await ctx.close();
+  };
 
-  const results = await page.locator('#resultsContent').innerText();
-  check('generating produces a real recommendation', results.length > 3000, `${results.length} chars`);
-  for (const [id, label] of [
-    ['computeMain', 'compute pattern'],
-    ['dataMain', 'data and storage'],
-    ['securityMain', 'security controls'],
-    ['controlsMain', 'the cyber checklist'],
-    ['drPatternMain', 'the DR pattern'],
-    ['sizingMatrix', 'the sizing matrix'],
-    ['howToMain', 'the onboarding playbook'],
-  ]) {
-    const filled = (await page.locator(`#${id}`).innerText()).trim().length;
-    check(`it fills in ${label}`, filled > 20, `${filled} chars`);
-  }
-  check(
-    'the export buttons are live once there is something to export',
-    !(await page.locator('#exportWordBtn').isDisabled()),
-  );
+  await pass('Migration pages, empty plan', { width: 1280, load: false });
+  await pass('Migration pages, dc-exit plan', { width: 1280, load: true });
+  await pass('Migration pages at 375 px, dc-exit plan', { width: 375, load: true });
 
-  // Changing the cloud changes the recommendation.
-  await page.selectOption('#cloudProvider', 'aws');
-  await page.locator('button', { hasText: 'Generate recommendation' }).click();
-  await page.waitForTimeout(700);
-  const aws = await page.locator('#computeMain').innerText();
-  check('changing the cloud changes what is recommended', /EC2|AWS/i.test(aws), aws.slice(0, 60));
-
-  // And it reaches the generators without being retyped.
-  await page.goto(`${BASE}/app/terraform.html`, { waitUntil: 'networkidle' });
-  check(
-    'the wizard tells the generators which cloud to open on',
-    (await page.locator('select:not([data-control])').first().inputValue()) === 'aws',
-  );
-  check(
-    'and the generator says where that came from',
-    /chosen in the decision wizard/.test(await page.locator('body').innerText()),
-  );
-  await ctx.close();
-}
-
-// --- migration: evaluate, then the portfolio that holds it ----------------
-{
+  // The old addresses.
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(`${BASE}/app/migration.html`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(400);
-
-  check('the migration page loads clean', errors.length === 0, errors[0] ?? '');
-  const tabs = (await page.locator('.tab').allTextContents()).join(' ');
-  check('it offers the portfolio as a tab', /Intake.*Ratings.*Results.*Portfolio.*How it works/s.test(tabs), tabs);
-
-  await page.fill('#app-name', 'Case Management System');
-  await page.fill('#app-owner', 'Platform Team');
-  await page.selectOption('#app-criticality', 'Mission Critical');
-  await page.fill('#app-rto', '4');
-  await page.fill('#app-rpo', '1');
-  await page.selectOption('#app-standard-cloud', 'azure');
-  await page.locator('[data-control="evaluate"]').first().click();
-  await page.waitForTimeout(500);
-
-  const results = await page.locator('#sec-results').innerText();
-  check('it routes the application to one of the seven Rs', /Rehost|Replatform|Refactor|Repurchase|Retain|Retire/.test(results), results.slice(0, 40).replace(/\n/g, ' '));
-  check('it scores readiness out of 100', /readiness[\s\S]{0,40}out of 100/i.test(results));
-  check('it plans for the cloud the enterprise standardised on', /Azure/.test(results) && /standardised/.test(results));
-  check('it names services for that cloud', /Azure Monitor|Microsoft Entra ID|Azure Virtual Machines/.test(results));
-  check('it bands the risk and puts it in a wave', /migration risk/i.test(results) && /wave|blocked/i.test(results));
-
-  // Evaluating is what adds it: the portfolio tab should be holding it.
-  await page.locator('.tab', { hasText: 'Portfolio' }).click();
-  await page.waitForTimeout(300);
-  const portfolio = await page.locator('#sec-portfolio').innerText();
-  check('the evaluated application is in the portfolio', /Case Management System/.test(portfolio));
-  check('and the portfolio counts it as one row', (await page.locator('#sec-portfolio tbody tr').count()) === 1);
-
-  // The wave mode is the programme's choice, and it recalculates in place.
-  await page.selectOption('#sec-portfolio select', { index: 1 });
-  await page.waitForTimeout(300);
-  check('changing the planning mode recalculates without an error', errors.length === 0, errors[0] ?? '');
-
-  // It survives a reload, because the portfolio is kept in this browser.
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(600);
-  await page.locator('.tab', { hasText: 'Portfolio' }).click();
-  await page.waitForTimeout(300);
-  check('the portfolio is still there after a reload', /Case Management System/.test(await page.locator('#sec-portfolio').innerText()));
-
-  // A row opens out into the whole record, which is what makes the portfolio a
-  // compiled list rather than eight columns.
-  await page.locator('.row-toggle').first().click();
-  await page.waitForTimeout(300);
-  const detail = await page.locator('.entry-detail').first().innerText();
-  check('a row opens into the full record', /INTAKE/i.test(detail) && /RATINGS/i.test(detail) && /VERDICT/i.test(detail), detail.slice(0, 60).replace(/\n/g, ' '));
-  check('the record carries the answers given', /Platform Team/.test(detail) && /Mission Critical/.test(detail));
-
-  // A second application: the portfolio is what accumulates as you work through
-  // a list. (The page was reloaded above, so open the held row to get a result
-  // back on screen first — a reload keeps the portfolio, not the open form.)
-  await page.locator('button', { hasText: 'Open' }).first().click();
-  await page.waitForTimeout(300);
-  await page.locator('[data-control="evaluate"]').first().click();
-  await page.waitForTimeout(400);
-  await page.locator('button', { hasText: 'Next application' }).click();
-  await page.waitForTimeout(300);
-  check('starting the next application clears the form', (await page.inputValue('#app-name')) === '');
-
-  await page.locator('[data-control="evaluate"]').first().click();
-  await page.waitForTimeout(300);
-  check('and it will not evaluate an application with no name', /name/i.test(await page.locator('body').innerText()));
-
-  await page.fill('#app-name', 'Payroll');
-  await page.locator('[data-control="evaluate"]').first().click();
-  await page.waitForTimeout(400);
-  await page.locator('.tab', { hasText: 'Portfolio' }).click();
-  await page.waitForTimeout(300);
-  check('the portfolio now holds both', (await page.locator('#sec-portfolio tbody tr:not(.detail-row)').count()) === 2);
-
-  // The old dashboard address lands on the tab.
+  for (const [from, to] of [
+    ['multicloud.html#sources', 'migration.html#sources'],
+    ['multicloud.html#workloads', 'migration.html#servers'],
+    ['multicloud.html#databases', 'migration.html#databases'],
+    ['multicloud.html#apps', 'migration.html#applications'],
+    ['multicloud.html#requirements', 'migration.html#constraints'],
+    ['multicloud.html#decision', 'migration.html#applications'],
+    ['multicloud.html#design', 'migration.html#applications'],
+  ]) {
+    await page.goto('about:blank');
+    await page.goto(`${BASE}/app/${from}`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    check(`Old address ${from} goes to ${to}`, page.url().endsWith(`/app/${to}`), page.url());
+  }
+  for (const [from, pane] of [
+    ['migration.html#intake', 'applications'],
+    ['migration.html#ratings', 'applications'],
+    ['migration.html#results', 'applications'],
+    ['migration.html#portfolio', 'applications'],
+    ['migration.html#help', 'applications'],
+    ['migration.html#workloads', 'servers'],
+    ['migration.html#requirements', 'constraints'],
+    ['multicloud.html#changes', 'utilities'],
+    ['multicloud.html#waves', 'waves'],
+    ['multicloud.html#generate', 'generate'],
+  ]) {
+    await page.goto('about:blank');
+    await page.goto(`${BASE}/app/${from}`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const active = await page.locator('.tab.active').first().getAttribute('data-tab').catch(() => null);
+    check(`Old address ${from} opens ${pane}`, active === pane && page.url().includes(from.split('#')[0]), `${active} at ${page.url()}`);
+  }
   await page.goto(`${BASE}/app/migration-portfolio.html`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
-  check('the old portfolio address redirects to the tab', /migration\.html/.test(page.url()) && /Case Management System/.test(await page.locator('body').innerText()), page.url());
-
-  check('no script errors through any of it', errors.length === 0, errors[0] ?? '');
+  check('The old portfolio address lands on Sources', page.url().endsWith('/app/migration.html#sources'), page.url());
+  check('No script errors on the old addresses', errors.length === 0, errors[0] ?? '');
   await ctx.close();
-}
-
-// --- migration: importing an inventory as a backlog -----------------------
-{
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(`${BASE}/app/migration.html`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(400);
-  await page.locator('.tab', { hasText: 'Portfolio' }).click();
-  await page.waitForTimeout(200);
-
-  const csv = [
-    'name,owner,criticality,rtoHours,rpoHours,primaryStack,database,compliance',
-    'Claims,Ops,High,4,1,Java 17 (Spring Boot),PostgreSQL 15,pci',
-    'Payroll,Finance,Mission Critical,2,0.5,C# / .NET 8,Microsoft SQL Server 2019,sox',
-    'Archive,IT,Low,72,24,,,'
-  ].join('\n');
-  const csvPath = join(tmpdir(), 'atk-portfolio.csv');
-  writeFileSync(csvPath, csv, 'utf8');
-  await page.locator('[data-control="portfolio-import"]').setInputFiles(csvPath);
-  await page.waitForTimeout(600);
-
-  const portfolio = await page.locator('#sec-portfolio').innerText();
-  check('a CSV inventory imports as a backlog', /Claims/.test(portfolio) && /Payroll/.test(portfolio) && /Archive/.test(portfolio));
-  check('the imported rows are marked as drafts', /draft/i.test(portfolio));
-  check('and each one is routed to a cloud', /Azure/.test(portfolio) && /AWS/.test(portfolio), portfolio.slice(0, 120).replace(/\n/g, ' '));
-  check('the import says what it did', /imported/i.test(portfolio));
-
-  // Opening a row puts it back in the intake, where its ratings can be answered.
-  await page.locator('button', { hasText: 'Open' }).first().click();
-  await page.waitForTimeout(400);
-  check('opening a row loads it into the intake', (await page.inputValue('#app-name')).length > 0);
-
-  check('no script errors through the import', errors.length === 0, errors[0] ?? '');
-  await ctx.close();
-}
+});
 
 // --- network devices: a change, and a change list -------------------------
-{
+await section('network devices: a change, and a change list', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const errors = [];
@@ -1098,10 +1012,10 @@ for (const [kind, path, generateLabel, expect] of [
 
   check('no script errors through any of it', errors.length === 0, errors[0] ?? '');
   await ctx.close();
-}
+});
 
 // --- the imported estate fills the vSphere dropdowns ----------------------
-{
+await section('the imported estate fills the vSphere dropdowns', async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
 
@@ -1141,7 +1055,7 @@ for (const [kind, path, generateLabel, expect] of [
     );
   }
   await ctx.close();
-}
+});
 
 await browser.close();
 stop();

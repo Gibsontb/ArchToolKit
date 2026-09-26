@@ -143,8 +143,15 @@ export const sapEngine                         = {
     const answers = appPlanOf(c, plan)?.answers ?? {};
     const hanaHosts = servers.filter((w) => w.workloadType === 'sap-hana' || (isPattern(c) && c.workloadType === 'sap-hana'));
     const fromHosts = Math.max(0, ...hanaHosts.map((w) => w.facts?.nameplate?.ramGib ?? w.ramGib));
-    const mem = num(c, 'sap.hanaMemoryGib', Number(answers['hanaMemoryGib'] ?? answers['hana-memory'] ?? Number.NaN));
-    const saps = num(c, 'sap.saps', Number(answers['saps'] ?? Number.NaN));
+    const appServers = servers.filter((w) => !hanaHosts.includes(w));
+    // The app's answers describe the whole system: the HANA memory sizes the component that holds
+    // HANA, the SAPS the one that holds the application servers. A component with no typed server
+    // (answers only) takes both; a component's own setting always counts.
+    const typed = servers.length > 0 || (isPattern(c) && !!c.workloadType);
+    const holdsHana = hanaHosts.length > 0 || (isPattern(c) && c.workloadType === 'sap-hana');
+    const holdsApp = appServers.length > 0 || (isPattern(c) && (c.workloadType === 'sap-netweaver' || c.workloadType === 'sap-java'));
+    const mem = num(c, 'sap.hanaMemoryGib', holdsHana || !typed ? Number(answers['hanaMemoryGib'] ?? answers['hana-memory'] ?? Number.NaN) : Number.NaN);
+    const saps = num(c, 'sap.saps', holdsApp || !typed ? Number(answers['saps'] ?? Number.NaN) : Number.NaN);
     const use = str(c, 'sap.use', answers['use'] ?? '');
     return {
       component: c.id,
@@ -153,7 +160,7 @@ export const sapEngine                         = {
       ...(use === 'oltp' || use === 'olap' ? { use } : {}),
       ha: (str(c, 'sap.ha', answers['ha'] ?? 'no')) === 'yes',
       hanaHosts,
-      appServers: servers.filter((w) => !hanaHosts.includes(w)),
+      appServers,
       ...(str(c, 'sap.appType') ? { appType: str(c, 'sap.appType') } : {}),
     };
   },

@@ -15,6 +15,7 @@ declare module 'node:test' {
   type TestFn = () => void | Promise<void>;
   interface TestOptions {
     readonly skip?: boolean | string;
+    readonly todo?: boolean | string;
   }
   export function describe(name: string, fn: () => void): void;
   export function describe(name: string, options: TestOptions, fn: () => void): void;
