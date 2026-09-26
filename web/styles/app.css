@@ -273,6 +273,28 @@ code,
   }
 }
 
+/* A phone: the header scrolls away, and the page links are one row that
+   scrolls sideways inside itself instead of a column filling the screen. */
+@media (max-width: 760px) {
+  .app-header {
+    position: static;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+  }
+  .header-nav {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-left: 0;
+    scrollbar-width: thin;
+  }
+  .header-nav a {
+    white-space: nowrap;
+  }
+}
+
 /* ---------- Cards ---------- */
 
 .card {
