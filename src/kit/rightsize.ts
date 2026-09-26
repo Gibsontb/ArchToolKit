@@ -106,3 +106,115 @@ export function rightsize(cloud: RehostCloud, vcpu: number, ramGib: number): Fit
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// rightsizeFor: the planner's sizing, with memory basis and licence-optimised
+// hosts. `rightsize()` above stays as it is for terraform/estate.ts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Azure Edsv5 (memory-optimised, local disk): the parents the constrained
+ * sizes are cut from, and the ladder licence-optimised Azure hosts use.
+ * vCPU and memory are Microsoft's published figures for the series.
+ */
+export const AZURE_EDSV5: readonly MachineType[] = E_V5.map(([n, ram]) => ({
+  name: `Standard_E${n}ds_v5`,
+  vcpu: n,
+  ramGib: ram,
+  family: 'memory' as const,
+}));
+
+export interface ConstrainedSize {
+  /** e.g. `Standard_E16-8ds_v5`. */
+  readonly name: string;
+  /** The size it is constrained from, e.g. `Standard_E16ds_v5`: same memory, storage and price. */
+  readonly parent: string;
+  /** Active vCPUs: the number after the hyphen. */
+  readonly vcpu: number;
+  readonly parentVcpu: number;
+  readonly ramGib: number;
+}
+
+/**
+ * Azure constrained-vCPU sizes on Edsv5: the parent's memory, storage and I/O
+ * with fewer active vCPUs, so a per-core database licence counts fewer cores.
+ * Billing is the parent's (the saving is the licence, not the VM).
+ * https://learn.microsoft.com/en-us/azure/virtual-machines/constrained-vcpu
+ *
+ * These ids are not in `AZURE_VM_SIZE_GROUPS` (sizes-data.ts is generated from
+ * Microsoft's series ladders, which list only the parents), so the tests check
+ * each parent there and the constrained names here.
+ */
+export const AZURE_CONSTRAINED_LADDER: readonly ConstrainedSize[] = (
+  [
+    [4, 2],
+    [8, 2],
+    [8, 4],
+    [16, 4],
+    [16, 8],
+    [32, 8],
+    [32, 16],
+    [64, 16],
+    [64, 32],
+  ] as const
+).map(([parentVcpu, vcpu]) => {
+  const parent = AZURE_EDSV5.find((t) => t.vcpu === parentVcpu)!;
+  return { name: `Standard_E${parentVcpu}-${vcpu}ds_v5`, parent: parent.name, vcpu, parentVcpu, ramGib: parent.ramGib };
+});
+
+export interface RightsizeOptions {
+  /**
+   * `allocated` (default) sizes from the memory given. `active` treats the
+   * memory given as active memory: ×1.2 headroom, floor 2 GiB.
+   */
+  readonly memoryBasis?: 'allocated' | 'active';
+  /**
+   * Oracle / SQL Server BYOL hosts: the smallest memory-optimised type with the
+   * memory needed, with the active cores limited to ceil(vCPU / 2): AWS r7i +
+   * `cpu_options.core_count`, Azure a constrained-vCPU Edsv5 size, Google
+   * n2-highmem + `advanced_machine_features.visible_core_count`, OCI Flex with
+   * exact OCPUs.
+   */
+  readonly licenceOptimised?: boolean;
+  readonly minVcpu?: number;
+}
+
+export type RightsizeFit = Fit & {
+  /** Active physical cores (AWS core_count, Google visible_core_count, Azure the constrained size's active vCPUs). */
+  readonly coreCount?: number;
+  /** Azure: the parent size the constrained size is cut from. */
+  readonly constrained?: string;
+};
+
+const memoryFamily = (cloud: 'aws' | 'google'): readonly MachineType[] =>
+  cloud === 'aws'
+    ? LADDERS.aws.filter((t) => t.name.startsWith('r7i.'))
+    : LADDERS.google.filter((t) => t.name.startsWith('n2-highmem-'));
+
+/** The planner's sizing: `rightsize` plus memory basis, a vCPU floor and licence-optimised hosts. */
+export function rightsizeFor(cloud: RehostCloud, vcpu: number, ramGib: number, o: RightsizeOptions = {}): RightsizeFit | null {
+  const cpu = Math.max(1, Math.ceil(vcpu), Math.ceil(o.minVcpu ?? 0));
+  const ram = o.memoryBasis === 'active' ? Math.max(2, ramGib * 1.2) : ramGib;
+  if (!o.licenceOptimised) return rightsize(cloud, cpu, ram);
+
+  const needRam = Math.max(1, Math.ceil(ram));
+  const cores = Math.ceil(cpu / 2);
+  if (cloud === 'oci') {
+    const ocpus = Math.max(1, cores, Math.ceil(needRam / OCI_FLEX.maxGbPerOcpu));
+    if (ocpus > OCI_FLEX.maxOcpus || needRam > OCI_FLEX.maxMemoryGb) return null;
+    return { type: OCI_FLEX.name, vcpu: ocpus * 2, ramGib: needRam, ocpus };
+  }
+  if (cloud === 'azure') {
+    const parent = AZURE_EDSV5.filter((t) => t.ramGib >= needRam && t.vcpu >= cores).sort((a, b) => a.vcpu - b.vcpu)[0];
+    if (!parent) return null;
+    const variant = AZURE_CONSTRAINED_LADDER.filter((c) => c.parent === parent.name && c.vcpu >= cores).sort((a, b) => a.vcpu - b.vcpu)[0];
+    if (!variant) return { type: parent.name, vcpu: parent.vcpu, ramGib: parent.ramGib };
+    return { type: variant.name, vcpu: variant.vcpu, ramGib: variant.ramGib, coreCount: variant.vcpu, constrained: parent.name };
+  }
+  // Two threads per core: the type must have at least `cores` physical cores.
+  const fit = memoryFamily(cloud)
+    .filter((t) => t.ramGib >= needRam && t.vcpu >= cores * 2)
+    .sort((a, b) => a.vcpu - b.vcpu)[0];
+  if (!fit) return null;
+  return { type: fit.name, vcpu: cores * 2, ramGib: fit.ramGib, coreCount: cores };
+}

@@ -2,10 +2,11 @@
  * The one IndexedDB database the toolkit uses, and the two calls everything
  * makes against it.
  *
- * Two things outgrow sessionStorage: the imported estate (a large inventory is
- * over a hundred megabytes) and the migration portfolio (one record per
- * application, kept between visits). They share a database because a browser
- * opens a database at one version at a time: two stores in one `archtoolkit`
+ * Three things outgrow sessionStorage: the imported estate (a large inventory is
+ * over a hundred megabytes), the migration portfolio (one record per
+ * application, kept between visits) and the Multi-Cloud Planner's plan. They
+ * share a database because a browser opens a database at one version at a
+ * time: several stores in one `archtoolkit`
  * database avoids one page's open failing because another page created the
  * database at a different version.
  *
@@ -15,10 +16,11 @@
  */
 
 export const DB_NAME = 'archtoolkit';
-export const VERSION = 2;
+/** 3 added the Multi-Cloud Planner's `plan` store. An upgrade only ever adds stores. */
+export const VERSION = 3;
 
 /** Every store, created together on upgrade whatever the version came before. */
-export const STORES = ['estate', 'portfolio']         ;
+export const STORES = ['estate', 'portfolio', 'plan']         ;
                                                 
 
 export function open()                              {

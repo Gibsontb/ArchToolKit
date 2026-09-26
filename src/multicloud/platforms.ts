@@ -63,7 +63,7 @@ export const PLATFORM_INFO: Readonly<Record<Platform, PlatformInfo>> = {
   },
   google: {
     platform: 'google',
-    label: 'Google Cloud Platform (GCP)',
+    label: 'Google Cloud (GCP)',
     shortLabel: 'Google Cloud',
     terraform: 'google',
     ansible: 'google',

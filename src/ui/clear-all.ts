@@ -6,7 +6,7 @@
  * sizing feeds the spec builder, the builder feeds the editor — so clearing
  * one page's work while the next page reloads it from the estate would not
  * be clearing anything. The button therefore takes everything: the stored
- * estate (IndexedDB), every saved page state and handoff (session and local
+ * estate and the Multi-Cloud plan (IndexedDB), every saved page state and handoff (session and local
  * storage under `archtoolkit.`), and whatever the page is showing, by loading
  * it again fresh.
  *
@@ -17,7 +17,7 @@
  */
 
 import { forgetInventory, resetEstateCache } from '../kit/estate-store.ts';
-import { DB_NAME } from '../kit/idb.ts';
+import { DB_NAME, run } from '../kit/idb.ts';
 
 const PREFIX = 'archtoolkit.';
 
@@ -63,6 +63,11 @@ export async function clearEverything(): Promise<void> {
   }
   await forgetInventory();
   resetEstateCache();
+  // The Multi-Cloud Planner's plan. Deleting the database below takes it too;
+  // this is for when another open tab blocks that delete.
+  // (The store and key are plan/store.ts's PLAN_STORE and PLAN_KEY; not imported,
+  // so every page's header does not load the planner.)
+  await run('plan', 'readwrite', (store) => store.delete('current'));
   await deleteDatabase();
 }
 

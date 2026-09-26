@@ -164,4 +164,5 @@ export const SETTINGS_KINDS                                   = {
   'archtoolkit.vcf-spec-builder': 'the VCF spec builder',
   'archtoolkit.terraform-generator': 'the Terraform',
   'archtoolkit.ansible-generator': 'the Ansible',
+  'archtoolkit.multicloud-plan': 'the Multi-Cloud Planner',
 };

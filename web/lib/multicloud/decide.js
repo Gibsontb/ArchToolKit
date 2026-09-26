@@ -17,17 +17,23 @@
  *    Scoring on a stale region list would be a confident wrong answer, which is
  *    worse than an honest gap, so those rules raise a finding and move nothing.
  *
- * Nothing here is a substitute for a commercial conversation. What it does is
- * stop the same six considerations being rediscovered on every engagement, and
- * carry the answer into the Terraform and Ansible kits rather than leaving it
- * in a slide.
+ * Since the Multi-Cloud Planner, this is a wrapper: the profile becomes a
+ * one-workload plan (plus a database row per engine named), the planner's
+ * per-item rules score it (`plan/decide/engine.ts`), and the result is mapped
+ * back to the `Decision` shape. Rule ids decide.ts always emitted are kept:
+ * where a planner rule has a new id, its decide.ts id is its alias.
  */
 
 import { info, warning,              } from '../core/findings.js';
                                                          
 import { PLATFORMS, platformInfo, isHyperscaler,               } from './platforms.js';
-import { gapsFor } from './services.js';
 import { vmwareCloudService } from './vmware-on-cloud.js';
+import { defaultRequirements, RESIDENCY_OPTIONS } from './plan/options.js';
+import { PLAN_KIND } from './plan/types.js';
+             
+                                                                                                        
+                         
+import { createContext, evaluateItem,                     } from './plan/decide/engine.js';
 
                                                                           
 
@@ -100,330 +106,212 @@ import { vmwareCloudService } from './vmware-on-cloud.js';
     
  
 
-/** Every hyperscaler at once, for a rule that treats them alike. */
-function allHyperscalers(weight        )                                    {
-  return { aws: weight, azure: weight, google: weight, oci: weight };
+// ---------------------------------------------------------------------------
+// Profile to plan
+// ---------------------------------------------------------------------------
+
+/** decide.ts "rehost" moved the VM unchanged onto VMware or a VMware service: the planner's relocate. */
+const ROUTE                                                 = {
+  retain: 'retain',
+  rehost: 'relocate',
+  replatform: 'replatform',
+  refactor: 'refactor',
+};
+
+const AGREEMENT                                        = {
+  aws: 'edp',
+  azure: 'macc',
+  google: 'google-commit',
+  oci: 'oci-uc',
+  vmware: 'vcf-subscription',
+};
+
+/** The one special the planner's App carries: the most restrictive wins. */
+const SPECIAL_ORDER                             = ['physical-dongle', 'large-memory', 'gpu'];
+
+function residencyFrom(text        )            {
+  const t = text.trim().toLowerCase();
+  const hit = RESIDENCY_OPTIONS.find((o) => o.value === t || o.label.toLowerCase() === t);
+  // The finding's wording is replaced with the caller's text below, so an
+  // unlisted place only needs to be "not any".
+  return hit ? hit.value : 'eu';
+}
+
+function legacyPlan(profile                 , constraints             , special         )       {
+  const name = profile.name ?? 'workload';
+  const req = defaultRequirements();
+  const excluded = constraints.excluded ?? [];
+  const residency            = constraints.dataResidency ? residencyFrom(constraints.dataResidency) : 'any';
+  const app      = {
+    id: 'a:profile',
+    name,
+    criticality: 'tier2',
+    residency,
+    latencyToOnPrem: profile.latencyToOnPrem ?? 'tolerant',
+    ...(profile.timelineMonths !== undefined ? { deadlineMonths: profile.timelineMonths } : {}),
+    special,
+  };
+  const windows = profile.osFamily === 'windows' || profile.osFamily === 'mixed';
+  const workload           = {
+    id: 'w:profile',
+    name,
+    app: name,
+    env: 'prod',
+    role: 'app',
+    // A current OS with an image everywhere, so no image or support-date rule fires on a profile that named none.
+    os: windows ? 'win-2022' : 'ubuntu-24.04',
+    vcpu: 4,
+    ramGib: 16,
+    disksGib: [100],
+    criticality: 'tier2',
+    rpo: '4h',
+    rto: '4h',
+    licence: windows ? 'li' : 'free',
+    disposition: ROUTE[profile.disposition],
+    dependsOn: [],
+    source: 'manual',
+  };
+  const sa = !!constraints.microsoftSoftwareAssurance;
+  const databases             = [...new Set(profile.databases ?? [])].map((engine) => ({
+    id: `d:${engine}`,
+    name: `${name}-${engine}`,
+    engine,
+    edition: engine === 'oracle' ? 'oracle-ee' : engine === 'sqlserver' ? 'sql-enterprise' : engine === 'other' ? 'commercial' : 'community',
+    version: 'other',
+    hosts: [],
+    vcpu: 4,
+    ramGib: 16,
+    sizeGib: 100,
+    ha: 'none',
+    dr: 'none',
+    features: [],
+    licence: engine === 'sqlserver' ? (sa ? 'byol-sa' : 'li') : engine === 'oracle' ? 'li' : engine === 'other' ? 'commercial-other' : 'community',
+    app: name,
+    source: 'manual',
+  }));
+  return {
+    kind: PLAN_KIND,
+    version: 1,
+    id: 'decide-profile',
+    name,
+    savedAt: '',
+    workloads: [workload],
+    databases,
+    apps: [app],
+    edges: [],
+    requirements: {
+      ...req,
+      allowed: PLATFORMS.filter((p) => !excluded.includes(p)),
+      maxPlatforms: 5,
+      ...(profile.timelineMonths !== undefined ? { timelineMonths: profile.timelineMonths } : {}),
+      sovereignty: constraints.sovereigntyRequired ? 'sovereign-region' : 'none',
+      defaultResidency: residency,
+      commitments: [...new Set(constraints.existingCommitment ?? [])].map((platform) => ({ platform, agreement: AGREEMENT[platform] })),
+      skills: Object.fromEntries((constraints.skills ?? []).map((p) => [p, 'strong'         ])),
+      licensing: {
+        ...req.licensing,
+        microsoftSa: sa ? 'yes-all' : 'no',
+        portableVcf: !!constraints.portableVcfSubscription,
+      },
+    },
+    designOverrides: {},
+    waveSettings: { mode: 'default', maxPerWave: 50, parallel: 1, weeks: 2, freezes: [] },
+  };
+}
+
+const legacyId = (h         )         => h.aliases?.[0] ?? h.rule;
+
+function evaluateProfile(profile                 , constraints             , special         )                                                            {
+  const plan = legacyPlan(profile, constraints, special);
+  const ctx = createContext(plan, { workloadCount: profile.vmCount ?? 0 });
+  return {
+    workload: evaluateItem(plan.workloads[0] , ctx),
+    databases: plan.databases.map((d) => evaluateItem(d, ctx)),
+  };
 }
 
 function evaluate(profile                 , constraints             )   
+                          
                        
                       
   {
-  const rules                = [];
-  const findings            = [];
-  const latency = profile.latencyToOnPrem ?? 'tolerant';
-  const vmCount = profile.vmCount ?? 0;
+  const specials = SPECIAL_ORDER.filter((s) => profile.specialHardware?.includes(s));
+  const primary = specials[0] ?? 'none';
+  const { workload, databases } = evaluateProfile(profile, constraints, primary);
 
-  // --- eliminations ---------------------------------------------------------
-
-  if (constraints.excluded && constraints.excluded.length > 0) {
-    rules.push({
-      id: 'excluded-by-policy',
-      reason: `Policy rules out ${constraints.excluded.map((p) => platformInfo(p).shortLabel).join(', ')}.`,
-      verification: 'I',
-      effects: {},
-      eliminates: constraints.excluded,
-    });
-  }
-
-  if (profile.specialHardware?.includes('physical-dongle')) {
-    // The one constraint that genuinely admits no cloud answer: a licence dongle
-    // has to be plugged into something, and no hyperscaler will plug it in.
-    rules.push({
-      id: 'physical-dongle',
-      reason:
-        'A physical licence dongle has to be attached to a host, which no hyperscaler offers. The workload stays on hardware you control.',
-      verification: 'I',
-      effects: { vmware: 4 },
-      eliminates: ['aws', 'azure', 'google', 'oci'],
-    });
-  }
-
-  // --- shape of the workload ------------------------------------------------
-
-  if (profile.disposition === 'retain') {
-    rules.push({
-      id: 'retain',
-      reason: 'The workload is being kept where it is, so the question is capacity rather than platform.',
-      verification: 'I',
-      effects: { vmware: 5 },
-    });
-  }
-
-  if (profile.disposition === 'rehost') {
-    // Rehosting is precisely the case the VMware services exist for: the guest
-    // does not change, the hypervisor does not change, and the tooling around
-    // it does not change either.
-    rules.push({
-      id: 'rehost-suits-vmware-services',
-      reason:
-        'A rehost keeps the guest, the hypervisor and the operational tooling, which is what the hyperscalers’ VMware services are for.',
-      verification: 'I',
-      effects: { vmware: 2, ...allHyperscalers(1) },
-    });
-
-    if (vmCount >= 200) {
-      rules.push({
-        id: 'rehost-at-scale',
-        reason: `${vmCount} virtual machines is too many to re-platform one at a time; a VMware service moves them as they are.`,
-        verification: 'I',
-        effects: { vmware: 2, aws: 2, azure: 2, google: 1, oci: 1 },
-      });
+  const outcomes = new Map                                                                                                                                             ();
+  const outcome = (h         ) => {
+    const id = legacyId(h);
+    let o = outcomes.get(id);
+    if (!o) {
+      o = { reason: h.reason, verification: h.verification, ...(h.source ? { source: h.source } : {}), effects: {}, eliminates: [] };
+      outcomes.set(id, o);
     }
-  }
-
-  if (profile.disposition === 'refactor') {
-    // Breadth is measured from the capability table rather than asserted, so
-    // this rule moves when the table does.
-    const gaps = Object.fromEntries(PLATFORMS.map((p) => [p, gapsFor(p).length]))                            ;
-    const effects                                    = {};
-    for (const platform of PLATFORMS) {
-      if (platform === 'vmware') continue;
-      // Fewer gaps in the capability table, more managed services to refactor on to.
-      effects[platform] = Math.max(0, 3 - gaps[platform]);
-    }
-    rules.push({
-      id: 'refactor-needs-managed-services',
-      reason:
-        'Refactoring trades virtual machines for managed services, so the platform with fewer gaps in the capability table has more to land on.',
-      verification: 'I',
-      source: 'ArchToolKit capability table',
-      effects: { ...effects, vmware: -2 },
-    });
-  }
-
-  // --- latency --------------------------------------------------------------
-
-  if (latency === 'critical') {
-    rules.push({
-      id: 'latency-critical',
-      reason:
-        'A latency-critical dependency on something staying on premises is the one thing a private circuit cannot remove; the round trip is the distance.',
-      verification: 'I',
-      effects: { vmware: 4, ...allHyperscalers(-1) },
-    });
-    findings.push(
-      warning(
-        'multicloud.latency.measure-first',
-        'Measure the actual round trip to the nearest region of each candidate before ruling any of them out.',
-        {
-          remediation:
-            'A circuit to a region 20 ms away is fine for most applications and fatal for a few. Which of the two this is should be measured, not assumed.',
-          source: 'ArchToolKit',
-        },
-      ),
-    );
-  } else if (latency === 'sensitive') {
-    rules.push({
-      id: 'latency-sensitive',
-      reason:
-        'A latency-sensitive dependency needs a private circuit on day one, which is the longest lead item in the plan.',
-      verification: 'I',
-      effects: { vmware: 1 },
-    });
-    findings.push(
-      info(
-        'multicloud.latency.circuit-lead-time',
-        'A private circuit is the long-lead item and usually sets the cutover date, not the migration tooling.',
-        { source: 'ArchToolKit' },
-      ),
-    );
-  }
-
-  // --- timeline -------------------------------------------------------------
-
-  if (profile.timelineMonths !== undefined && profile.timelineMonths <= 6) {
-    rules.push({
-      id: 'short-timeline',
-      reason: `${profile.timelineMonths} months does not allow applications to be rewritten, so the answer has to be one that moves them unchanged.`,
-      verification: 'I',
-      effects: { vmware: 2, ...allHyperscalers(1) },
-    });
-    if (profile.disposition === 'refactor') {
-      findings.push(
-        warning(
-          'multicloud.timeline.refactor-unrealistic',
-          `A refactor in ${profile.timelineMonths} months is the plan that most often becomes a rushed rehost.`,
-          {
-            remediation:
-              'Rehost first to get off the hardware, then refactor from a position where the deadline has passed.',
-            source: 'ArchToolKit',
-          },
-        ),
-      );
-    }
-  }
-
-  // --- commercial ----------------------------------------------------------
-
-  if (constraints.existingCommitment && constraints.existingCommitment.length > 0) {
-    const effects                                    = {};
-    for (const platform of constraints.existingCommitment) effects[platform] = 3;
-    rules.push({
-      id: 'existing-commitment',
-      reason:
-        'Spend already committed on a platform is spend that has to be used, and a second platform rarely earns its second set of guardrails.',
-      verification: 'I',
-      effects,
-    });
-  }
-
-  if (constraints.skills && constraints.skills.length > 0) {
-    const effects                                    = {};
-    for (const platform of constraints.skills) effects[platform] = 2;
-    rules.push({
-      id: 'operational-skills',
-      reason: 'A platform the team can already operate is worth more than one that scores better on paper.',
-      verification: 'I',
-      effects,
-    });
-  }
-
-  // --- licensing -----------------------------------------------------------
-
-  if (constraints.portableVcfSubscription) {
-    // AVS is the one confirmed in writing; EVS follows from being self-managed
-    // VCF; the other two were not confirmed, and saying so is the point.
-    rules.push({
-      id: 'portable-vcf-subscription',
-      reason:
-        'VCF subscriptions bought from Broadcom can be carried onto Azure VMware Solution rather than repurchased, and Amazon EVS is self-managed VCF, so the licence is yours there by construction.',
-      verification: 'V-DOC',
-      source:
-        'Microsoft Azure blog: run VCF private clouds in AVS with support for portable VCF subscriptions.',
-      effects: { azure: 2, aws: 2, vmware: 1 },
-    });
-    findings.push(
-      warning(
-        'multicloud.licensing.portability-unconfirmed',
-        'Whether a portable VCF subscription can be carried onto Google Cloud VMware Engine or Oracle Cloud VMware Solution was not confirmed against either vendor.',
-        {
-          remediation: 'Confirm with the provider before pricing either of them on a carried licence.',
-          source: 'ArchToolKit',
-        },
-      ),
-    );
-  }
-
-  if (constraints.microsoftSoftwareAssurance && (profile.osFamily === 'windows' || profile.osFamily === 'mixed')) {
-    rules.push({
-      id: 'microsoft-licensing',
-      reason:
-        'Windows Server and SQL Server licences with active Software Assurance can be applied to Azure compute, which the other platforms cannot do for you.',
-      verification: 'C',
-      source: 'Microsoft Azure Hybrid Benefit.',
-      effects: { azure: 3 },
-    });
-  }
-
-  if (profile.databases?.includes('oracle')) {
-    // The rule most often repeated out of date. Oracle Database is now a
-    // first-party service inside AWS, Azure and Google Cloud, so an Oracle
-    // estate no longer forces OCI — it constrains which regions are usable.
-    rules.push({
-      id: 'oracle-database',
-      reason:
-        'Oracle Database no longer forces OCI: Oracle Database@AWS, @Azure and @Google Cloud run Oracle hardware inside those clouds. OCI still avoids the region constraint those services carry.',
-      verification: 'V-DOC',
-      source: 'Oracle: Oracle Database@AWS generally available, July 2025, now in 20 regions.',
-      effects: { oci: 2, aws: 1, azure: 1, google: 1 },
-    });
-    findings.push(
-      warning(
-        'multicloud.oracle.region-constrained',
-        'Oracle Database@AWS, @Azure and @Google Cloud are available only in specific regions, which may not include the one the rest of the estate needs.',
-        {
-          remediation:
-            "Check Oracle's multicloud regional availability list against the region this workload has to sit in.",
-          source: 'Oracle multicloud regional availability.',
-        },
-      ),
-    );
-  }
-
-  if (profile.databases?.includes('sqlserver') && !constraints.microsoftSoftwareAssurance) {
-    findings.push(
-      info(
-        'multicloud.sqlserver.licensing',
-        'SQL Server licensing dominates the cost of a Windows estate, and the answer differs per platform depending on whether Software Assurance is current.',
-        {
-          remediation: 'Establish the Software Assurance position before comparing prices.',
-          source: 'ArchToolKit',
-        },
-      ),
-    );
-  }
-
-  // --- things that must be reported rather than scored ---------------------
-
-  if (constraints.dataResidency) {
-    findings.push(
-      warning(
-        'multicloud.residency.check-regions',
-        `Data must stay in ${constraints.dataResidency}, and region coverage differs per platform and changes constantly.`,
-        {
-          remediation:
-            'Check each candidate’s current region list; this toolkit is offline and deliberately does not carry one.',
-          source: 'ArchToolKit',
-        },
-      ),
-    );
-  }
-
-  if (constraints.sovereigntyRequired) {
-    findings.push(
-      warning(
-        'multicloud.sovereignty.differs-in-shape',
-        'All four hyperscalers offer something called sovereign, and the four offerings differ in who holds the keys, who operates the hardware and which law applies.',
-        {
-          remediation:
-            'Compare the operating model rather than the label, and involve whoever owns the regulatory obligation.',
-          source: 'ArchToolKit',
-        },
-      ),
-    );
-  }
-
-  if (profile.specialHardware?.includes('gpu')) {
-    findings.push(
-      info(
-        'multicloud.gpu.availability-not-capability',
-        'Every platform has GPU instances; the question is whether the model you need is obtainable in the region you need, which changes week to week.',
-        { source: 'ArchToolKit' },
-      ),
-    );
-  }
-
-  if (profile.specialHardware?.includes('large-memory')) {
-    findings.push(
-      info(
-        'multicloud.large-memory.check-shapes',
-        'Very large memory footprints narrow the instance shapes available, and the largest shapes are not in every region.',
-        { source: 'ArchToolKit' },
-      ),
-    );
-  }
-
-  return { rules, findings };
-}
-
-export function decide(profile                 , constraints              = {})           {
-  const { rules, findings } = evaluate(profile, constraints);
-
-  const eliminated = new Set          ();
-  for (const rule of rules) for (const platform of rule.eliminates ?? []) eliminated.add(platform);
+    return o;
+  };
 
   const ranked                  = PLATFORMS.map((platform) => {
-    const reasons = rules
-      .filter((rule) => (rule.effects[platform] ?? 0) !== 0)
-      .map((rule) => ({ rule: rule.id, delta: rule.effects[platform]          , reason: rule.reason }))
+    const w = workload.options.find((o) => o.platform === platform) ;
+    // Each database lands on its best surviving service on this platform.
+    const dbHits = databases.flatMap((ev) => ev.options.find((o) => o.platform === platform && !o.eliminated)?.hits ?? []);
+    const hits = [...w.hits, ...dbHits];
+    for (const h of hits) {
+      if (h.delta !== 0) {
+        const o = outcome(h);
+        o.effects[platform] = (o.effects[platform] ?? 0) + h.delta;
+      }
+    }
+    if (w.eliminated) {
+      const h = w.hits.find((x) => x.rule === w.eliminated);
+      if (h) outcome(h).eliminates.push(platform);
+    }
+    const reasons = hits
+      .filter((h) => h.delta !== 0)
+      .map((h) => ({ rule: legacyId(h), delta: h.delta, reason: h.reason }))
       .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
     const score = reasons.reduce((sum, r) => sum + r.delta, 0);
-    return { platform, score, eliminated: eliminated.has(platform), reasons };
+    return { platform, score, eliminated: w.eliminated !== undefined, reasons };
   }).sort((a, b) => {
     if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
     return b.score - a.score;
   });
+
+  const rules                = [];
+  for (const [id, o] of outcomes) {
+    rules.push({
+      id,
+      reason: o.reason,
+      verification: o.verification,
+      ...(o.source ? { source: o.source } : {}),
+      effects: o.effects,
+      ...(o.eliminates.length > 0 ? { eliminates: o.eliminates } : {}),
+    });
+  }
+
+  let raw            = [...workload.findings, ...databases.flatMap((d) => d.findings)];
+  // Specials beyond the first report their findings too.
+  for (const extra of specials.slice(1)) {
+    raw.push(...evaluateProfile({ ...profile, databases: [] }, constraints, extra).workload.findings);
+  }
+  if (constraints.dataResidency) {
+    raw = raw.map((f) =>
+      f.code === 'multicloud.residency.check-regions'
+        ? { ...f, message: `Data must stay in ${constraints.dataResidency}, and region coverage differs per platform and changes constantly.` }
+        : f,
+    );
+  }
+  const seen = new Set        ();
+  const findings = raw.filter((f) => {
+    const key = `${f.code}\u0000${f.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { ranked, rules, findings };
+}
+
+export function decide(profile                 , constraints              = {})           {
+  const { ranked, rules, findings } = evaluate(profile, constraints);
 
   const surviving = ranked.filter((r) => !r.eliminated);
   const leader = surviving[0];

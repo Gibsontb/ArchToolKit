@@ -20,8 +20,20 @@
                          
                          
                     
-                             
-                     
+                    
+                                                                                                    
+                       
+                                                                   
+                      
+
+/** Every kind, for tests and for anything that sweeps them. */
+export const HANDOFF_KINDS                         = [
+  'inventory-to-sizing',
+  'sizing-to-spec',
+  'spec-to-editor',
+  'plan-to-terraform',
+  'plan-to-ansible',
+];
 
 /** Bumped when a payload shape changes, so a stale entry is discarded. */
 const HANDOFF_VERSION = 1;

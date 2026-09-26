@@ -14,6 +14,7 @@
 import { info, warning, type Finding } from '../core/findings.ts';
 import type { Inventory, InventoryVm } from '../vmware/inventory.ts';
 import type { Disposition, WorkloadProfile } from './decide.ts';
+import { classifyVm, osKind } from './plan/os.ts';
 
 /** Memory beyond which the instance shapes available start to narrow. */
 const LARGE_MEMORY_GIB = 384;
@@ -23,25 +24,14 @@ const LARGE_MEMORY_GIB = 384;
  *
  * RVTools reports the configured guest OS, which is a VMware identifier
  * (`windows2019srvNext_64Guest`) or a human string ("Microsoft Windows Server
- * 2019"). Both contain the word, so matching on it is enough, and a guest
- * nobody configured correctly is counted as neither rather than guessed.
+ * 2019"), and VMware Tools may report its own view. `classifyVm` reads all of
+ * them as whole words and versions (so "Darwin" is not Windows and "Oracle
+ * Solaris" is not Linux), and a guest nobody configured correctly is counted
+ * as neither rather than guessed.
  */
 function osFamilyOf(vm: InventoryVm): 'linux' | 'windows' | undefined {
-  const text = (vm.guestOs ?? '').toLowerCase();
-  if (!text) return undefined;
-  if (text.includes('windows') || text.includes('win')) return 'windows';
-  if (
-    text.includes('linux') ||
-    text.includes('rhel') ||
-    text.includes('centos') ||
-    text.includes('ubuntu') ||
-    text.includes('debian') ||
-    text.includes('suse') ||
-    text.includes('oracle')
-  ) {
-    return 'linux';
-  }
-  return undefined;
+  const kind = osKind(classifyVm(vm));
+  return kind === 'other' ? undefined : kind;
 }
 
 export interface InventoryProfileOptions {

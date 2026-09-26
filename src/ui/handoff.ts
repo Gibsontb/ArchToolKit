@@ -20,8 +20,20 @@
 export type HandoffKind =
   | 'inventory-to-sizing'
   | 'sizing-to-spec'
-  | 'inventory-to-multicloud'
-  | 'spec-to-editor';
+  | 'spec-to-editor'
+  /** The Multi-Cloud Planner's Terraform settings envelope for one platform, for terraform.html. */
+  | 'plan-to-terraform'
+  /** The planner's Ansible settings envelope, for ansible.html. */
+  | 'plan-to-ansible';
+
+/** Every kind, for tests and for anything that sweeps them. */
+export const HANDOFF_KINDS: readonly HandoffKind[] = [
+  'inventory-to-sizing',
+  'sizing-to-spec',
+  'spec-to-editor',
+  'plan-to-terraform',
+  'plan-to-ansible',
+];
 
 /** Bumped when a payload shape changes, so a stale entry is discarded. */
 const HANDOFF_VERSION = 1;
