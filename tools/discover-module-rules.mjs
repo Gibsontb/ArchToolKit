@@ -132,6 +132,8 @@ try {
       failures = JSON.parse(readFileSync(report, 'utf8'));
     } catch {
       console.log('  No report was written; stopping.');
+      // A round that could not run is a failure, not "nothing new".
+      process.exitCode = 1;
       break;
     }
     const rules = readRules();
