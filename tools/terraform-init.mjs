@@ -11,11 +11,11 @@
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { WORK_CACHE } from './work.mjs';
 
 /** One provider cache for every tool, kept between runs. */
-export const PLUGIN_CACHE = join(tmpdir(), 'archtoolkit-tf-plugin-cache');
+export const PLUGIN_CACHE = join(WORK_CACHE, 'tf-plugin-cache');
 
 /** The environment to run terraform with: the shared cache and more registry retries. */
 export function terraformEnv(extra = {}) {
@@ -24,6 +24,8 @@ export function terraformEnv(extra = {}) {
     ...process.env,
     TF_PLUGIN_CACHE_DIR: PLUGIN_CACHE,
     TF_IN_AUTOMATION: '1',
+    // No update check, so nothing is written to ~/.terraform.d.
+    CHECKPOINT_DISABLE: '1',
     // Terraform's own retry of registry requests (it counts 429 among them).
     TF_REGISTRY_DISCOVERY_RETRY: '8',
     ...extra,

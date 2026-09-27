@@ -31,18 +31,18 @@
  *   npm run splunk:validate -- --no-appinspect     # skip AppInspect
  *   npm run splunk:validate -- --warnings          # list AppInspect warnings too
  *
- * AppInspect needs the ~/archtoolkit-ansible environment
+ * AppInspect needs the .work/ansible environment
  * (tools/setup-ansible-wsl.sh installs splunk-appinspect there); on Windows, in WSL.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SPLUNK_APPS } from '../src/splunk/blueprints/index.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 import { checkAgainstSpec, compileSpec, confTypeOf, credentialProblems, mergeSpecs, parseConf, parseSpec } from '../src/splunk/conf-check.ts';
 import { SPLUNK_CONF_SPECS, SPLUNK_SPEC_SOURCE } from '../src/splunk/conf-spec-data.ts';
+import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const argv = process.argv.slice(2);
 const many = (flag) => argv.flatMap((a, i) => (a === flag && argv[i + 1] ? [argv[i + 1]] : []));
@@ -50,7 +50,7 @@ const only = many('--only');
 const tiers = many('--tier');
 const noAppInspect = argv.includes('--no-appinspect');
 const showWarnings = argv.includes('--warnings');
-const VENV = process.env.ARCHTOOLKIT_ANSIBLE_VENV ?? '~/archtoolkit-ansible';
+const VENV = ANSIBLE_VENV;
 
 /** Blueprints that refuse at their defaults on purpose, until you confirm something. */
 const REFUSE_BY_DESIGN = new Set([]);
@@ -260,7 +260,7 @@ function fileProblems(files) {
 
 const problems = new Map();
 const fail = (label, message) => problems.set(label, [...(problems.get(label) ?? []), message]);
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-splunk-validate-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-splunk-validate-'));
 const packaged = [];
 let builds = 0;
 let confFiles = 0;
@@ -303,16 +303,12 @@ for (const blueprint of blueprints) {
 }
 
 // AppInspect, on each real app packaged as a .tgz.
-function wslPath(path) {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(path);
-  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : path;
-}
 function findDistro() {
   if (process.env.ARCHTOOLKIT_WSL_DISTRO) return process.env.ARCHTOOLKIT_WSL_DISTRO;
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `test -x ${VENV}/bin/splunk-appinspect`]).status === 0) return distro;
+    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/splunk-appinspect`]).status === 0) return distro;
   }
   return null;
 }
@@ -331,7 +327,7 @@ if (!noAppInspect && packaged.length > 0) {
     join(work, 'appinspect.sh'),
     `#!/bin/bash
 set -uo pipefail
-export PATH=${VENV}/bin:$PATH
+${ANSIBLE_EXPORTS}
 src='${root}'
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

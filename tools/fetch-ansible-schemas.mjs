@@ -15,28 +15,22 @@
  *
  *   npm run ansible:schemas
  *
- * Needs Ansible in ~/archtoolkit-ansible (tools/setup-ansible-wsl.sh sets it
+ * Needs Ansible in .work/ansible (tools/setup-ansible-wsl.sh sets it
  * up). On Windows that is inside WSL, found in whichever distro has it.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const DATA_DIR = join(ROOT, 'web', 'data', 'ansible');
 const INDEX = join(ROOT, 'src', 'ansible', 'module-schema-index.ts');
 const CHUNK_SIZE = 40;
-const VENV = process.env.ARCHTOOLKIT_ANSIBLE_VENV ?? '~/archtoolkit-ansible';
-
-/** `E:\Repos\x` → `/mnt/e/Repos/x`, for a path handed to WSL. */
-function wslPath(path) {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(path);
-  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : path;
-}
+const VENV = ANSIBLE_VENV;
 
 /** The WSL distro that has the Ansible environment in it. */
 function findDistro() {
@@ -44,7 +38,7 @@ function findDistro() {
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    const probe = spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `test -x ${VENV}/bin/ansible-doc`]);
+    const probe = spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/ansible-doc`]);
     if (probe.status === 0) return distro;
   }
   return null;
@@ -70,13 +64,13 @@ function slug(text) {
   return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'other';
 }
 
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-ansible-schemas-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-ansible-schemas-'));
 try {
   const out = join(work, 'modules.json');
   const onHost = process.platform === 'win32' ? wslPath : (p) => p;
   console.log('Reading every module\u2019s documentation (ansible-doc)…');
   bash(
-    `export PATH=${VENV}/bin:$PATH ANSIBLE_COLLECTIONS_PATH=${VENV}/collections:~/.ansible/collections; ` +
+    `${ANSIBLE_EXPORTS}; ` +
       `python3 '${onHost(join(HERE, 'ansible-doc-dump.py'))}' '${onHost(out)}' --ansible-doc ${VENV}/bin/ansible-doc`,
   );
   const dump = JSON.parse(readFileSync(out, 'utf8'));

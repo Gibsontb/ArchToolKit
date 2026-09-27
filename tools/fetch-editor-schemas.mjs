@@ -24,9 +24,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_TMP } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'src', 'editor', 'f5-schema-data.ts');
@@ -45,7 +45,7 @@ const SOURCES = [
 ];
 
 function sparseClone(repo, dir) {
-  const into = mkdtempSync(join(tmpdir(), 'atk-schema-'));
+  const into = mkdtempSync(join(WORK_TMP, 'atk-schema-'));
   const git = (...args) => execFileSync('git', args, { cwd: into, stdio: ['ignore', 'pipe', 'inherit'] }).toString();
   execFileSync('git', ['clone', '-q', '--depth', '1', '--filter=blob:none', '--sparse', repo, into], { stdio: 'inherit' });
   git('sparse-checkout', 'set', dir);

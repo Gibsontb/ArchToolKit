@@ -26,18 +26,18 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { profileById } from '../src/editor/profiles/index.ts';
 import { perDocument } from '../src/editor/profile.ts';
 import { readYaml } from '../src/core/yaml-read.ts';
 import { terraformEnv, terraformInit } from './terraform-init.mjs';
+import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORPUS = join(HERE, 'editor-corpus');
 const noTools = process.argv.includes('--no-tools');
-const VENV = process.env.ARCHTOOLKIT_ANSIBLE_VENV ?? '~/archtoolkit-ansible';
+const VENV = ANSIBLE_VENV;
 
 /** Every corpus file, with what the editor makes of it. */
 const files = [];
@@ -63,23 +63,19 @@ for (const profileId of readdirSync(CORPUS)) {
 }
 
 // ---------------------------------------------------------------- the tools
-function wslPath(path) {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(path);
-  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : path;
-}
 function findDistro() {
   if (process.env.ARCHTOOLKIT_WSL_DISTRO) return process.env.ARCHTOOLKIT_WSL_DISTRO;
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `test -x ${VENV}/bin/cfn-lint`]).status === 0) return distro;
+    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/cfn-lint`]).status === 0) return distro;
   }
   return null;
 }
 /** Run a bash script where the Linux tools are; returns stdout. */
 function linux(script, work) {
   const file = join(work, `run-${Math.random().toString(36).slice(2)}.sh`);
-  writeFileSync(file, `#!/bin/bash\nexport PATH=${VENV}/bin:$PATH ANSIBLE_COLLECTIONS_PATH=${VENV}/collections:~/.ansible/collections ANSIBLE_NOCOLOR=1\n${script}\n`);
+  writeFileSync(file, `#!/bin/bash\n${ANSIBLE_EXPORTS} ANSIBLE_NOCOLOR=1\n${script}\n`);
   if (process.platform !== 'win32') return execFileSync('bash', [file], { encoding: 'utf8', maxBuffer: 64 << 20 });
   const distro = findDistro();
   if (!distro) throw new Error(`no WSL distro has cfn-lint in ${VENV}: wsl -d Ubuntu-24.04 -- bash tools/setup-ansible-wsl.sh`);
@@ -88,7 +84,7 @@ function linux(script, work) {
 const here = (p) => (process.platform === 'win32' ? wslPath(p) : p);
 
 if (!noTools) {
-  const work = mkdtempSync(join(tmpdir(), 'archtoolkit-editor-validate-'));
+  const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-editor-validate-'));
   try {
     // Terraform: one root, each file a module of its own, one init.
     const tf = files.filter((f) => f.profileId === 'terraform-json');

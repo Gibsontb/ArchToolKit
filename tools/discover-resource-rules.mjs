@@ -22,9 +22,9 @@
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_TMP } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'src', 'terraform', 'resource-rules-data.ts');
@@ -187,7 +187,7 @@ function merge(into, found) {
   return { rule, added };
 }
 
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-rules-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-rules-'));
 try {
   let ids = null;
   for (let round = 1; round <= 6; round++) {

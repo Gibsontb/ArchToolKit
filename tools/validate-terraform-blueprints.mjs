@@ -44,11 +44,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { PLUGIN_CACHE, terraformEnv, terraformInit } from './terraform-init.mjs';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TERRAFORM_BLUEPRINTS, findTerraformBlueprint } from '../src/terraform/blueprints/index.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 import { buildStack } from '../src/terraform/stack.ts';
+import { USER_VALUES } from '../src/testing/blueprint-user-values.ts';
+import { WORK_TMP } from './work.mjs';
 
 const argv = process.argv.slice(2);
 /** --only <text>, repeatable: ids containing any of them. */
@@ -90,7 +91,7 @@ if (blueprints.length === 0) {
   process.exit(1);
 }
 
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-terraform-validate-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-terraform-validate-'));
 const cache = PLUGIN_CACHE;
 mkdirSync(cache, { recursive: true });
 
@@ -108,7 +109,9 @@ function requiredVariables(hcl) {
 
 /** Defaults, then each other value of each closed choice, one at a time. */
 function variants(blueprint) {
-  const base = defaultValues(blueprint);
+  // What a user must enter before some blueprints build anything (networks,
+  // domain controllers): the same sample entries the tests use.
+  const base = { ...defaultValues(blueprint), ...(USER_VALUES[blueprint.id] ?? {}) };
   const out = [{ label: blueprint.id, values: base }];
   if (PER_RESOURCE.test(blueprint.id)) return out;
   for (const input of blueprint.inputs) {
@@ -125,6 +128,14 @@ function variants(blueprint) {
   }
   return out;
 }
+
+/**
+ * How many child modules one `terraform validate` loads at a time. Terraform
+ * starts a provider process for every module that configures its own
+ * provider, so one root holding every build started thousands of them at once
+ * and ran the machine out of memory. ARCHTOOLKIT_TF_BATCH changes it.
+ */
+const BATCH = Math.max(1, Number(process.env.ARCHTOOLKIT_TF_BATCH) || 40);
 
 const modular = blueprints.filter((b) => !MIGRATION.test(b.id));
 const migration = blueprints.filter((b) => MIGRATION.test(b.id));
@@ -147,10 +158,21 @@ function record(id, d, file) {
 if (modular.length > 0) validateAsModules(modular);
 if (migration.length > 0) validateAsRoots(migration);
 
-/** Every build a child module of one root: one init, one validate. */
+/**
+ * Stop any provider process a finished terraform left behind: on Windows they
+ * outlive it. Only the ones that terraform (by process id) started are touched.
+ */
+function stopLeftoverProviders(pid) {
+  if (process.platform !== 'win32' || !pid) return;
+  const script = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}" | Where-Object { $_.Name -like 'terraform-provider-*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+  spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'ignore' });
+}
+
+/** Every build a child module of one root: one init, then validated BATCH modules at a time. */
 function validateAsModules(list) {
   const modules = [];
   const root = [];
+  const blocks = new Map();
   list.flatMap((blueprint) => variants(blueprint).map((variant) => ({ blueprint, ...variant }))).forEach(({ blueprint, label, values }, i) => {
     const dir = `m${i}`;
     let files;
@@ -169,8 +191,10 @@ function validateAsModules(list) {
     }
     const required = requiredVariables(all);
     const args = [...required.keys()].map((v) => `  ${v} = var.${dir}__${v}`);
-    root.push(`module "${dir}" {\n  source = "./${dir}"\n${args.join('\n')}\n}`);
-    for (const [v, type] of required) root.push(`variable "${dir}__${v}" {\n  type = ${type}\n}`);
+    const own = [`module "${dir}" {\n  source = "./${dir}"\n${args.join('\n')}\n}`];
+    for (const [v, type] of required) own.push(`variable "${dir}__${v}" {\n  type = ${type}\n}`);
+    root.push(...own);
+    blocks.set(dir, own);
     modules.push({ dir, id: label });
   });
   writeFileSync(join(work, 'main.tf'), `${root.join('\n\n')}\n`);
@@ -180,8 +204,23 @@ function validateAsModules(list) {
     console.error('terraform init failed.');
     process.exit(1);
   }
-  const run = spawnSync('terraform', ['validate', '-json', '-no-color'], { cwd: work, env, maxBuffer: 256 * 1024 * 1024 });
-  const result = JSON.parse(run.stdout.toString() || '{}');
+  // Init saw every module; each validate sees one batch of them.
+  const dirs = modules.filter((m) => blocks.has(m.dir)).map((m) => m.dir);
+  const diagnostics = [];
+  for (let at = 0; at < dirs.length; at += BATCH) {
+    const batch = dirs.slice(at, at + BATCH);
+    writeFileSync(join(work, 'main.tf'), `${batch.flatMap((d) => blocks.get(d)).join('\n\n')}\n`);
+    const run = spawnSync('terraform', ['validate', '-json', '-no-color'], { cwd: work, env, maxBuffer: 256 * 1024 * 1024 });
+    stopLeftoverProviders(run.pid);
+    try {
+      diagnostics.push(...(JSON.parse(run.stdout.toString() || '{}').diagnostics ?? []));
+    } catch {
+      const why = run.stderr.toString().split('\n')[0];
+      for (const d of batch) diagnostics.push({ severity: 'error', summary: 'terraform validate gave no JSON', detail: why, address: `module.${d}` });
+    }
+    console.log(`  ${Math.min(at + BATCH, dirs.length)} of ${dirs.length} builds`);
+  }
+  const result = { diagnostics };
 
   const byDir = new Map(modules.map((m) => [m.dir, m]));
   builds += modules.length;
@@ -210,7 +249,7 @@ function sampleStack(target, list) {
   const rank = (id) => order.findIndex((o) => id.endsWith(`_mig_${o}`));
   const items = ids
     .sort((a, b) => rank(a) - rank(b))
-    .map((id) => ({ id, blueprintId: id, label: id.replace(/^[a-z]+_mig_/, '').replace(/_/g, '-'), values: { landing_zone_source: 'stack' } }));
+    .map((id) => ({ id, blueprintId: id, label: id.replace(/^[a-z]+_mig_/, '').replace(/_/g, '-'), values: { ...(USER_VALUES[id] ?? {}), landing_zone_source: 'stack' } }));
   return items.length > 0 ? buildStack(items, findTerraformBlueprint, { target, stackName: `${target}-sample`, requiredVersion: '>= 1.7.0' }) : null;
 }
 
@@ -258,6 +297,7 @@ function validateAsRoots(list) {
     for (const f of readdirSync(dir)) if (f.endsWith('.tf')) rmSync(join(dir, f));
     for (const [name, content] of Object.entries(r.files)) if (name.endsWith('.tf')) writeFileSync(join(dir, name), content);
     const run = spawnSync('terraform', ['validate', '-json', '-no-color'], { cwd: dir, env, maxBuffer: 256 * 1024 * 1024 });
+    stopLeftoverProviders(run.pid);
     let result = {};
     try {
       result = JSON.parse(run.stdout.toString() || '{}');

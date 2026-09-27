@@ -18,16 +18,16 @@
  *
  * A hand-written playbook is also built once per other choice of each
  * dropdown and yes/no, as the Terraform checker does. Needs the Ansible in
- * ~/archtoolkit-ansible (tools/setup-ansible-wsl.sh); on Windows, in WSL.
+ * .work/ansible (tools/setup-ansible-wsl.sh); on Windows, in WSL.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ANSIBLE_BLUEPRINTS } from '../src/ansible/blueprints/index.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 import { checkPlaybook } from '../src/ansible/args-check.ts';
+import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const argv = process.argv.slice(2);
 const many = (flag) => argv.flatMap((a, i) => (a === flag && argv[i + 1] ? [argv[i + 1]] : []));
@@ -40,7 +40,7 @@ const reportAt = argv.indexOf('--report');
 const reportFile = reportAt === -1 ? null : argv[reportAt + 1];
 const idsAt = argv.indexOf('--ids');
 const ids = idsAt === -1 ? null : new Set(readFileSync(argv[idsAt + 1], 'utf8').split(/\r?\n/).filter(Boolean));
-const VENV = process.env.ARCHTOOLKIT_ANSIBLE_VENV ?? '~/archtoolkit-ansible';
+const VENV = ANSIBLE_VENV;
 const PER_MODULE = /^mod_/;
 
 const blueprints = ANSIBLE_BLUEPRINTS.filter((g) => platforms.length === 0 || platforms.includes(g.target))
@@ -69,22 +69,18 @@ function variants(blueprint) {
   return out;
 }
 
-function wslPath(path) {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(path);
-  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : path;
-}
 
 function findDistro() {
   if (process.env.ARCHTOOLKIT_WSL_DISTRO) return process.env.ARCHTOOLKIT_WSL_DISTRO;
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `test -x ${VENV}/bin/ansible-lint`]).status === 0) return distro;
+    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/ansible-lint`]).status === 0) return distro;
   }
   return null;
 }
 
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-ansible-validate-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-ansible-validate-'));
 const projects = [];
 for (const { target, blueprint } of blueprints) {
   for (const { label, values } of variants(blueprint)) {
@@ -133,6 +129,9 @@ for i in range(0, len(books), BATCH):
     run = subprocess.run(['ansible-lint', '--offline', '--nocolor', '-q', '-f', 'json', '--skip-list', skip, *part],
                          cwd=work, capture_output=True, text=True)
     try:
+        # A run that failed and said nothing did not lint anything: not a pass.
+        if run.returncode != 0 and not run.stdout.strip():
+            raise json.JSONDecodeError('no output', '', 0)
         found = json.loads(run.stdout or '[]')
     except json.JSONDecodeError:
         found = [{'check_name': 'lint', 'description': (run.stderr or run.stdout)[-400:], 'location': {'path': p}} for p in part]
@@ -146,7 +145,7 @@ json.dump(out, open(os.path.join(work, 'lint.json'), 'w'))
 );
 
 console.log(`Validating ${blueprints.length} Ansible blueprints (${projects.length} builds) in ${work}`);
-const setup = `export PATH=${VENV}/bin:$PATH ANSIBLE_COLLECTIONS_PATH=${VENV}/collections:~/.ansible/collections ANSIBLE_NOCOLOR=1 ANSIBLE_DEPRECATION_WARNINGS=0`;
+const setup = `${ANSIBLE_EXPORTS} ANSIBLE_NOCOLOR=1 ANSIBLE_DEPRECATION_WARNINGS=0`;
 if (process.platform === 'win32') {
   const distro = findDistro();
   if (!distro) {

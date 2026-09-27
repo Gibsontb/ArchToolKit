@@ -28,9 +28,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_TMP } from './work.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'src/terraform/module-catalog-data.ts');
@@ -111,7 +111,7 @@ function git(args, cwd) {
  */
 function cloneAtVersion(namespace, name, provider, version) {
   const repo = `https://github.com/${namespace}/terraform-${REPO_PROVIDER[provider]}-${name}.git`;
-  const dir = mkdtempSync(join(tmpdir(), 'tfmod-'));
+  const dir = mkdtempSync(join(WORK_TMP, 'tfmod-'));
   for (const tag of [`v${version}`, version]) {
     try {
       git(['clone', '--depth', '1', '--branch', tag, '--single-branch', repo, dir]);
@@ -378,7 +378,8 @@ function readModule(dir) {
   const resources = [];
   const locals = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.tf')).sort()) {
-    const text = readFileSync(join(dir, file), 'utf8');
+    // A checkout with core.autocrlf=true has CRLF line endings; the parsers read lines.
+    const text = readFileSync(join(dir, file), 'utf8').replace(/\r\n/g, '\n');
     inputs.push(...parseVariables(text));
     outputs.push(...parseOutputs(text));
     resources.push(...parseResources(text));

@@ -14,14 +14,14 @@
  *   npm run ansible:rules -- mod_cisco_      # ids containing this
  *
  * Runs in rounds until one finds nothing new. Needs the Ansible in
- * ~/archtoolkit-ansible; see tools/validate-ansible-blueprints.mjs.
+ * .work/ansible; see tools/validate-ansible-blueprints.mjs.
  */
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_TMP } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'src', 'ansible', 'module-rules-data.ts');
@@ -106,7 +106,7 @@ function fqcnOf(id, known) {
   return known.get(id);
 }
 
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-module-rules-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-module-rules-'));
 try {
   // Blueprint id → FQCN, from the index (ids flatten the dots).
   const indexText = readFileSync(join(HERE, '..', 'src', 'ansible', 'module-schema-index.ts'), 'utf8');

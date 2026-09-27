@@ -23,3 +23,6 @@ desktop/ArchPad/publish/
 
 # Python bytecode from the tools run in WSL
 __pycache__/
+
+# What the tools download, cache and build while they run (tools/work.mjs)
+.work/

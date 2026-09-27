@@ -34,9 +34,9 @@
 import { execFileSync } from 'node:child_process';
 import { terraformEnv, terraformInit } from './terraform-init.mjs';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_CACHE, WORK_TMP } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** Each generated file: its export prefix and local name → registry source, in page order. */
@@ -165,7 +165,7 @@ async function resourceDocs(id) {
  * changes: kept under the temp directory, a re-run reads it from disk instead
  * of spending thousands of requests of the registry's rate limit on it.
  */
-const DOC_CACHE = join(tmpdir(), 'archtoolkit-registry-docs');
+const DOC_CACHE = join(WORK_CACHE, 'registry-docs');
 
 async function docContent(id) {
   const cached = join(DOC_CACHE, `${id}.md`);
@@ -356,7 +356,7 @@ function compact(block, docs, depth = 0, maxDepth = Infinity) {
 // ------------------------------------------------------------------- main ---
 
 async function generate(set) {
-  const work = mkdtempSync(join(tmpdir(), 'archtoolkit-provider-schemas-'));
+  const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-provider-schemas-'));
   try {
     console.log(`\n${set.title}`);
     const versions = {};

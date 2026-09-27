@@ -19,26 +19,26 @@
  *   npm run network:validate -- --only fmc_           # ids containing this
  *   npm run network:validate -- --no-ansible          # skip the syntax check
  *
- * The syntax check needs the Ansible in ~/archtoolkit-ansible
+ * The syntax check needs the Ansible in .work/ansible
  * (tools/setup-ansible-wsl.sh); on Windows, in WSL.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NETWORK_BLUEPRINTS, networkChange } from '../src/network/blueprints/index.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 import { checkPlaybook } from '../src/ansible/args-check.ts';
 import { readYaml } from '../src/core/yaml-read.ts';
 import { fullConfig } from '../src/network/full-config.ts';
+import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const argv = process.argv.slice(2);
 const many = (flag) => argv.flatMap((a, i) => (a === flag && argv[i + 1] ? [argv[i + 1]] : []));
 const only = many('--only');
 const platforms = many('--platform');
 const noAnsible = argv.includes('--no-ansible');
-const VENV = process.env.ARCHTOOLKIT_ANSIBLE_VENV ?? '~/archtoolkit-ansible';
+const VENV = ANSIBLE_VENV;
 
 /**
  * Options of the config modules args-check has no documentation for, read
@@ -95,7 +95,7 @@ function ownOptionProblems(playbook) {
 
 const problems = new Map();
 const fail = (label, message) => problems.set(label, [...(problems.get(label) ?? []), message]);
-const work = mkdtempSync(join(tmpdir(), 'archtoolkit-network-validate-'));
+const work = mkdtempSync(join(WORK_TMP, 'archtoolkit-network-validate-'));
 const playbooks = [];
 let builds = 0;
 
@@ -142,16 +142,12 @@ for (const group of groups) {
 }
 
 // The syntax check, with the real collections.
-function wslPath(path) {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(path);
-  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : path;
-}
 function findDistro() {
   if (process.env.ARCHTOOLKIT_WSL_DISTRO) return process.env.ARCHTOOLKIT_WSL_DISTRO;
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `test -x ${VENV}/bin/ansible-playbook`]).status === 0) return distro;
+    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/ansible-playbook`]).status === 0) return distro;
   }
   return null;
 }
@@ -165,7 +161,7 @@ if (!noAnsible && playbooks.length > 0) {
   writeFileSync(
     join(work, 'syntax.sh'),
     `#!/bin/bash
-export PATH=${VENV}/bin:$PATH ANSIBLE_COLLECTIONS_PATH=${VENV}/collections:~/.ansible/collections ANSIBLE_NOCOLOR=1 ANSIBLE_DEPRECATION_WARNINGS=0
+${ANSIBLE_EXPORTS} ANSIBLE_NOCOLOR=1 ANSIBLE_DEPRECATION_WARNINGS=0
 cd '${root}'
 : > syntax.txt
 n=0

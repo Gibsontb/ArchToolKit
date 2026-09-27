@@ -41,9 +41,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_CACHE } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -268,7 +268,7 @@ async function main() {
   const commit = branch?.commit?.sha ?? tree.sha;
   const commitDate = branch?.commit?.commit?.committer?.date?.slice(0, 10);
   const raw = (path) => `https://raw.githubusercontent.com/${REPO}/${commit}/${path}`;
-  const cacheDir = join(tmpdir(), 'atk-arm-schemas', commit.slice(0, 12));
+  const cacheDir = join(WORK_CACHE, 'arm-schemas', commit.slice(0, 12));
   mkdirSync(cacheDir, { recursive: true });
   const fetchCached = async (path) => {
     const at = join(cacheDir, path.replace(/[\\/]/g, '__'));

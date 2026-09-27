@@ -222,6 +222,17 @@ schemas, rule discovery, `terraform validate` over every blueprint on every
 platform — then the rebuild and the tests, and asks before it commits and
 pushes. About two hours; needs Node, terraform and git.
 
+Whatever area it runs, `update.bat` skips what is current: a download that
+passed in the last 20 hours, and a check whose inputs have not changed since it
+last passed (`update.bat all /yes /force` runs everything). `terraform validate`
+loads 40 blueprints at a time (`ARCHTOOLKIT_TF_BATCH`) and stops the provider
+processes each round leaves, so memory stays flat. Everything the update and
+the tools download, cache and build — the Ansible environment in WSL, the
+Terraform provider cache, working directories, the test log — stays in `.work/`
+inside the toolkit's folder, found from where the folder is: nothing in a home
+directory or the system temp directory, and no fixed drive. Deleting `.work/`
+removes all of it.
+
 ### Linux and Windows
 
 Terraform does not configure an operating system the way Ansible does, but it

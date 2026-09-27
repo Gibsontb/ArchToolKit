@@ -19,10 +19,10 @@
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORK_TMP } from './work.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -151,7 +151,7 @@ await section('the whole chain, from an RVTools workbook to a document', async (
   // goes in as the .xlsx RVTools writes, and has to come out the far end as a
   // spec with the management cluster's own hosts, DNS and networks in it.
   const { estateWorkbook } = await import('../src/testing/estate-fixture.ts');
-  fixture = join(mkdtempSync(join(tmpdir(), 'atk-')), 'estate.xlsx');
+  fixture = join(mkdtempSync(join(WORK_TMP, 'atk-')), 'estate.xlsx');
   writeFileSync(fixture, await estateWorkbook());
 
   const ctx = await browser.newContext();
@@ -244,7 +244,7 @@ await section('the whole chain, from an RVTools workbook to a document', async (
 // --- the data editor: a VCF export, then the other kinds of file -----------
 await section('the data editor: a VCF export, then the other kinds of file', async () => {
   const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
-  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const dir = mkdtempSync(join(WORK_TMP, 'atk-'));
   const labFile = join(dir, 'VCF-deployment-spec-9.1.1.0.json');
   writeFileSync(labFile, JSON.stringify(LAB_911_THREE_HOST_FC));
 
@@ -296,7 +296,7 @@ await section('the data editor: a VCF export, then the other kinds of file', asy
 });
 
 await section('the data editor: a VCF export, then the other kinds of file', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const dir = mkdtempSync(join(WORK_TMP, 'atk-'));
   const playbook = join(dir, 'site.yml');
   writeFileSync(
     playbook,
@@ -343,7 +343,7 @@ await section('the data editor: a VCF export, then the other kinds of file', asy
 await section('Load, Save and Clear on the builder and both generators', async () => {
   const { LAB_911_THREE_HOST_FC } = await import('../src/vcf/__fixtures__/real-specs.ts');
   const { readFileSync } = await import('node:fs');
-  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const dir = mkdtempSync(join(WORK_TMP, 'atk-'));
   const ctx = await browser.newContext({ acceptDownloads: true });
   const page = await ctx.newPage();
   const save = async (format) => {
@@ -449,7 +449,7 @@ await section('the Terraform build list: several blueprints into one stack', asy
   check('Stack: it generated without errors', /Generated\. No errors\./.test(await page.locator('body').innerText()));
 
   // The list saves and loads with the rest of the form.
-  const dir = mkdtempSync(join(tmpdir(), 'atk-'));
+  const dir = mkdtempSync(join(WORK_TMP, 'atk-'));
   const [download] = await Promise.all([page.waitForEvent('download'), page.locator('[data-control="settings-save"]').click()]);
   const path = join(dir, download.suggestedFilename());
   await download.saveAs(path);
@@ -846,7 +846,7 @@ await section('the two migration pages: every pane, the old addresses, a phone',
   const { planEnvelope } = await import('../src/multicloud/plan/store.ts');
   const { writeSettings } = await import('../src/kit/settings-file.ts');
   const e2e = await buildE2e();
-  const planFile = join(mkdtempSync(join(tmpdir(), 'atk-')), 'dc1-exit.json');
+  const planFile = join(mkdtempSync(join(WORK_TMP, 'atk-')), 'dc1-exit.json');
   writeFileSync(planFile, writeSettings(planEnvelope(e2e.plan), 'json'));
 
   /** Open a pane and wait until its module has mounted (or failed). */

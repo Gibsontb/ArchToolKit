@@ -22,20 +22,34 @@ rem
 rem  Unattended:  update.bat all /yes      (or letters, e.g.  update.bat NSV /yes)
 rem  picks the areas without asking, starts at once, commits and pushes only if
 rem  everything passed, and never waits for a key.
+rem
+rem  What is current is skipped: a download that passed in the last 20 hours,
+rem  and a check whose inputs have not changed since it last passed
+rem  (tools\update-state.mjs). /force runs every step anyway.
+rem
+rem  Everything it downloads, caches and builds stays in .work\ in this folder.
 rem ---------------------------------------------------------------------------
 
 set "NODE_NO_WARNINGS=1"
 set "NODE=node --experimental-strip-types --no-warnings"
 set "STARTED=%TIME%"
+set "WORKDIR=%~dp0.work"
+if not exist "%WORKDIR%\tmp" mkdir "%WORKDIR%\tmp"
 if not defined ARCHTOOLKIT_WSL_DISTRO set "ARCHTOOLKIT_WSL_DISTRO=Ubuntu-24.04"
 set "FAILED="
 set "SKIPPED="
 set "DONE="
 set "AUTO="
+set "FORCE="
 set "ARGPICK="
+set "KEY="
+set "CHECK="
 for %%x in (%*) do (
-  if /i "%%~x"=="/yes" ( set "AUTO=1" ) else if /i "%%~x"=="all" ( set "ARGPICK=T A N S E V C L" ) else ( set "ARGPICK=%%~x" )
+  if /i "%%~x"=="/yes" ( set "AUTO=1" ) else if /i "%%~x"=="/force" ( set "FORCE=1" ) else if /i "%%~x"=="all" ( set "ARGPICK=T A N S E V C L" ) else ( set "ARGPICK=%%~x" )
 )
+rem How long a download stays current, and what each check reads.
+set "FRESH=--within 20"
+set "VERSIONS=.work/ansible/versions.txt"
 
 rem --- Node 22.6 or newer is required for everything ------------------------
 where node >nul 2>&1
@@ -111,81 +125,99 @@ rem ===========================================================================
 if defined NEEDWSL (
   set "LABEL=WSL tools (Ansible, collections, ansible-lint, cfn-lint, kubeconform, AppInspect)"
   set "CMD=wsl -d %ARCHTOOLKIT_WSL_DISTRO% -- bash tools/setup-ansible-wsl.sh"
+  set "KEY=wsl-tools" & set "CHECK=!FRESH! --inputs tools/setup-ansible-wsl.sh !VERSIONS!"
   call :step
 )
 
 rem ===========================================================================
-rem  2. Downloads, each once
+rem  2. Downloads, each once (current for 20 hours after it passes)
 rem ===========================================================================
 if defined DO_T (
-  set "LABEL=Terraform resource catalog" & set "CMD=%NODE% tools\fetch-provider-catalog.mjs" & call :step
-  set "LABEL=Terraform provider schemas" & set "CMD=%NODE% tools\fetch-provider-schemas.mjs" & call :step
+  set "LABEL=Terraform resource catalog" & set "CMD=%NODE% tools\fetch-provider-catalog.mjs" & set "KEY=tf-catalog" & set "CHECK=!FRESH!" & call :step
+  set "LABEL=Terraform provider schemas" & set "CMD=%NODE% tools\fetch-provider-schemas.mjs" & set "KEY=tf-schemas" & set "CHECK=!FRESH!" & call :step
 )
 if defined DO_C (
   if defined HASGIT (
-    set "LABEL=Terraform registry modules" & set "CMD=%NODE% tools\fetch-module-catalog.mjs" & call :step
+    set "LABEL=Terraform registry modules" & set "CMD=%NODE% tools\fetch-module-catalog.mjs" & set "KEY=tf-modules" & set "CHECK=!FRESH!" & call :step
   ) else ( set "SKIPPED=!SKIPPED! Terraform-modules-needs-git" )
   call :sizes
 )
 if defined DO_A (
-  set "LABEL=Ansible module catalog" & set "CMD=%NODE% tools\fetch-ansible-catalog.mjs" & call :step
-  set "LABEL=Ansible module schemas" & set "CMD=%NODE% tools\fetch-ansible-schemas.mjs" & call :step
+  set "LABEL=Ansible module catalog" & set "CMD=%NODE% tools\fetch-ansible-catalog.mjs" & set "KEY=ansible-catalog" & set "CHECK=!FRESH!" & call :step
+  set "LABEL=Ansible module schemas" & set "CMD=%NODE% tools\fetch-ansible-schemas.mjs" & set "KEY=ansible-schemas" & set "CHECK=!FRESH! --inputs !VERSIONS!" & call :step
 )
 if defined DO_E (
-  set "LABEL=F5 AS3 and DO schemas" & set "CMD=%NODE% tools\fetch-editor-schemas.mjs" & call :step
-  set "LABEL=CloudFormation schemas" & set "CMD=%NODE% tools\fetch-editor-cloudformation.mjs" & call :step
-  set "LABEL=Kubernetes schemas" & set "CMD=%NODE% tools\fetch-editor-kubernetes.mjs" & call :step
-  set "LABEL=Azure ARM schemas" & set "CMD=%NODE% tools\fetch-editor-arm.mjs" & call :step
+  set "LABEL=F5 AS3 and DO schemas" & set "CMD=%NODE% tools\fetch-editor-schemas.mjs" & set "KEY=editor-f5" & set "CHECK=!FRESH!" & call :step
+  set "LABEL=CloudFormation schemas" & set "CMD=%NODE% tools\fetch-editor-cloudformation.mjs" & set "KEY=editor-cfn" & set "CHECK=!FRESH!" & call :step
+  set "LABEL=Kubernetes schemas" & set "CMD=%NODE% tools\fetch-editor-kubernetes.mjs" & set "KEY=editor-k8s" & set "CHECK=!FRESH!" & call :step
+  set "LABEL=Azure ARM schemas" & set "CMD=%NODE% tools\fetch-editor-arm.mjs" & set "KEY=editor-arm" & set "CHECK=!FRESH!" & call :step
 )
 if defined DO_S (
-  set "LABEL=Splunk spec files" & set "CMD=%NODE% tools\fetch-splunk-specs.mjs" & call :step
-  set "LABEL=Splunk releases" & set "CMD=%NODE% tools\check-splunk-versions.mjs" & call :step
+  set "LABEL=Splunk spec files" & set "CMD=%NODE% tools\fetch-splunk-specs.mjs" & set "KEY=splunk-specs" & set "CHECK=!FRESH!" & call :step
+  set "LABEL=Splunk releases" & set "CMD=%NODE% tools\check-splunk-versions.mjs" & set "KEY=splunk-releases" & set "CHECK=!FRESH!" & call :step
 )
 if defined DO_V (
-  set "LABEL=VCF sizing workbook" & set "CMD=%NODE% tools\fetch-vcf-workbook.mjs" & call :step
+  set "LABEL=VCF sizing workbook" & set "CMD=%NODE% tools\fetch-vcf-workbook.mjs" & set "KEY=vcf-workbook" & set "CHECK=!FRESH!" & call :step
 )
 rem Last of the downloads: it reads the Terraform catalog and the CloudFormation
 rem and ARM schemas that the steps above may just have refreshed.
 if defined DO_L (
-  set "LABEL=Cloud services: AWS" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud aws" & call :step
-  set "LABEL=Cloud services: Azure" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud azure" & call :step
-  set "LABEL=Cloud services: Google Cloud" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud google" & call :step
-  set "LABEL=Cloud services: OCI" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud oci" & call :step
+  for %%c in (aws azure google oci) do (
+    set "LABEL=Cloud services: %%c" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud %%c" & set "KEY=services-%%c" & set "CHECK=!FRESH!" & call :step
+  )
 )
 
 rem ===========================================================================
-rem  3. Rule discovery (the slow part)
+rem  3. Rule discovery (the slow part; skipped when nothing it reads changed)
 rem ===========================================================================
 if defined DO_T (
-  set "LABEL=Terraform provider rules (about an hour)" & set "CMD=%NODE% tools\discover-resource-rules.mjs" & call :step
+  set "LABEL=Terraform provider rules (about an hour)" & set "CMD=%NODE% tools\discover-resource-rules.mjs"
+  set "KEY=tf-rules" & set "CHECK=--inputs src/terraform src/kit tools/discover-resource-rules.mjs tools/validate-terraform-blueprints.mjs tools/terraform-init.mjs"
+  call :step
 )
 if defined DO_A (
-  set "LABEL=Ansible module rules (about an hour)" & set "CMD=%NODE% tools\discover-module-rules.mjs" & call :step
+  set "LABEL=Ansible module rules (about an hour)" & set "CMD=%NODE% tools\discover-module-rules.mjs"
+  set "KEY=ansible-rules" & set "CHECK=--inputs src/ansible src/kit tools/discover-module-rules.mjs tools/validate-ansible-blueprints.mjs !VERSIONS!"
+  call :step
 )
 
 rem ===========================================================================
-rem  4. Validation with the real tools
+rem  4. Validation with the real tools (skipped when nothing it checks changed)
 rem ===========================================================================
 if defined DO_T (
   for %%p in (vsphere vcf linux windows oci azure google aws) do (
-    set "LABEL=terraform validate: %%p" & set "CMD=%NODE% tools\validate-terraform-blueprints.mjs --platform %%p" & call :step
+    set "LABEL=terraform validate: %%p" & set "CMD=%NODE% tools\validate-terraform-blueprints.mjs --platform %%p"
+    set "KEY=tf-validate-%%p" & set "CHECK=--inputs src/terraform src/kit tools/validate-terraform-blueprints.mjs tools/terraform-init.mjs"
+    call :step
   )
-  set "LABEL=Generated Terraform against the provider schemas" & set "CMD=%NODE% tools\verify-foundation-schemas.mjs" & call :step
+  set "LABEL=Generated Terraform against the provider schemas" & set "CMD=%NODE% tools\verify-foundation-schemas.mjs"
+  set "KEY=tf-foundation" & set "CHECK=--inputs src/terraform src/kit tools/verify-foundation-schemas.mjs"
+  call :step
 )
 if defined DO_A (
-  set "LABEL=ansible-lint over every blueprint (about an hour)" & set "CMD=%NODE% tools\validate-ansible-blueprints.mjs" & call :step
+  set "LABEL=ansible-lint over every blueprint (about an hour)" & set "CMD=%NODE% tools\validate-ansible-blueprints.mjs"
+  set "KEY=ansible-lint" & set "CHECK=--inputs src/ansible src/kit tools/validate-ansible-blueprints.mjs !VERSIONS!"
+  call :step
 )
 if defined DO_N (
-  set "LABEL=Every network blueprint" & set "CMD=%NODE% tools\validate-network-blueprints.mjs" & call :step
+  set "LABEL=Every network blueprint" & set "CMD=%NODE% tools\validate-network-blueprints.mjs"
+  set "KEY=network" & set "CHECK=--inputs src/network src/ansible src/kit tools/validate-network-blueprints.mjs !VERSIONS!"
+  call :step
 )
 if defined DO_S (
-  set "LABEL=Every Splunk app" & set "CMD=%NODE% tools\validate-splunk-blueprints.mjs" & call :step
+  set "LABEL=Every Splunk app" & set "CMD=%NODE% tools\validate-splunk-blueprints.mjs"
+  set "KEY=splunk" & set "CHECK=--inputs src/splunk src/kit tools/validate-splunk-blueprints.mjs !VERSIONS!"
+  call :step
 )
 if defined DO_E (
-  set "LABEL=The Data Editor against the real tools" & set "CMD=%NODE% tools\validate-data-editor.mjs" & call :step
+  set "LABEL=The Data Editor against the real tools" & set "CMD=%NODE% tools\validate-data-editor.mjs"
+  set "KEY=editor" & set "CHECK=--inputs src/editor web/data/editor tools/validate-data-editor.mjs !VERSIONS!"
+  call :step
 )
 if defined DO_V (
-  set "LABEL=Spec Builder against the published installer schema" & set "CMD=%NODE% tools\check-vcf-installer-schema.mjs" & call :step
+  set "LABEL=Spec Builder against the published installer schema" & set "CMD=%NODE% tools\check-vcf-installer-schema.mjs"
+  set "KEY=vcf-installer" & set "CHECK=!FRESH! --inputs src/vcf tools/check-vcf-installer-schema.mjs"
+  call :step
 )
 
 rem ===========================================================================
@@ -193,14 +225,14 @@ rem  5. Rebuild and test, once
 rem ===========================================================================
 set "LABEL=Rebuild the pages" & set "CMD=%NODE% tools\build.mjs" & call :step
 echo.
-echo   ---- Tests (the full output goes to %TEMP%\archtoolkit-tests.log)
-%NODE% --test "src/**/*.test.ts" > "%TEMP%\archtoolkit-tests.log" 2>&1
+echo   ---- Tests (the full output goes to .work\tests.log)
+%NODE% --test "src/**/*.test.ts" > "%WORKDIR%\tests.log" 2>&1
 if errorlevel 1 (
-  set "FAILED=!FAILED!;Tests (see %TEMP%\archtoolkit-tests.log)"
+  set "FAILED=!FAILED!;Tests (see .work\tests.log)"
 ) else (
   set "DONE=!DONE!;Tests"
 )
-for /f "tokens=2,3" %%a in ('findstr /b /c:"# pass" /c:"# fail" "%TEMP%\archtoolkit-tests.log"') do echo   %%a %%b
+for /f "tokens=2,3" %%a in ('findstr /b /c:"# pass" /c:"# fail" "%WORKDIR%\tests.log"') do echo   %%a %%b
 
 rem ===========================================================================
 rem  6. Summary, and one commit
@@ -233,8 +265,8 @@ if /i not "!TOP!\"=="%~dp0" (
   echo   is committed. Commit the changes by hand.
   goto :finished
 )
-git status --short > "%TEMP%\archtoolkit-status.txt"
-for %%s in ("%TEMP%\archtoolkit-status.txt") do if %%~zs==0 (
+git status --short > "%WORKDIR%\status.txt"
+for %%s in ("%WORKDIR%\status.txt") do if %%~zs==0 (
   echo.
   echo   Nothing changed - everything is current. Nothing to commit.
   goto :finished
@@ -278,16 +310,31 @@ goto :done
 rem ---------------------------------------------------------------------------
 rem  :step - run CMD under LABEL, record OK or FAILED, and carry on.
 rem ---------------------------------------------------------------------------
+rem  With KEY set, a step that is current (tools\update-state.mjs check KEY
+rem  CHECK) is skipped, and a step that passes is recorded as current.
+rem ---------------------------------------------------------------------------
 :step
 echo.
 echo   ---- !LABEL!
+if defined KEY if not defined FORCE (
+  %NODE% tools\update-state.mjs check !KEY! !CHECK!
+  if not errorlevel 1 (
+    set "DONE=!DONE!;!LABEL! - current, skipped"
+    set "KEY=" & set "CHECK="
+    exit /b 0
+  )
+)
 echo.
+rem Clear the check's exit code, so only the step's own decides.
+(call )
 !CMD!
 if errorlevel 1 (
   set "FAILED=!FAILED!;!LABEL!"
 ) else (
   set "DONE=!DONE!;!LABEL!"
+  if defined KEY %NODE% tools\update-state.mjs record !KEY! !CHECK!
 )
+set "KEY=" & set "CHECK="
 exit /b 0
 
 rem ---------------------------------------------------------------------------
@@ -296,14 +343,25 @@ rem  ladders. Without git the AWS list already committed is kept.
 rem ---------------------------------------------------------------------------
 :sizes
 set "BOTOARG="
+if not defined FORCE (
+  %NODE% tools\update-state.mjs check sizes !FRESH! >nul
+  if not errorlevel 1 (
+    echo.
+    echo   ---- Machine sizes
+    echo   Current - skipped.
+    set "DONE=!DONE!;Machine sizes - current, skipped"
+    exit /b 0
+  )
+)
 if not defined HASGIT (
   set "SKIPPED=!SKIPPED! AWS-sizes-need-git"
 ) else (
-  set "BOTO=%TEMP%\archtoolkit-botocore-%RANDOM%%RANDOM%"
+  set "BOTO=%WORKDIR%\tmp\botocore-%RANDOM%%RANDOM%"
   git clone -q --depth 1 --filter=blob:none --no-checkout https://github.com/boto/botocore.git "!BOTO!" && git -C "!BOTO!" sparse-checkout set botocore/data/ec2 && git -C "!BOTO!" checkout -q && set "BOTOARG=--botocore "!BOTO!""
   if not defined BOTOARG set "FAILED=!FAILED!;AWS machine sizes (could not fetch botocore)"
 )
-set "LABEL=Machine sizes" & set "CMD=%NODE% tools\fetch-compute-catalog.mjs !BOTOARG!" & call :step
+set "LABEL=Machine sizes" & set "CMD=%NODE% tools\fetch-compute-catalog.mjs !BOTOARG!" & set "KEY=sizes" & set "CHECK=!FRESH!" & set "FORCE_WAS=!FORCE!" & set "FORCE=1" & call :step
+set "FORCE=!FORCE_WAS!"
 if defined BOTO if exist "!BOTO!" rmdir /s /q "!BOTO!"
 exit /b 0
 

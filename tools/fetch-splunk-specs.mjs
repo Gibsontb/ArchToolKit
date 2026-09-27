@@ -24,7 +24,6 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSpec } from '../src/splunk/conf-check.ts';
@@ -53,7 +52,7 @@ const argv = process.argv.slice(2);
 const at = argv.indexOf('--version');
 const wanted = at === -1 ? null : argv[at + 1];
 
-const into = mkdtempSync(join(tmpdir(), 'atk-splunk-spec-'));
+const into = mkdtempSync(join(WORK_TMP, 'atk-splunk-spec-'));
 const git = (...args) => execFileSync('git', args, { cwd: into, stdio: ['ignore', 'pipe', 'inherit'] }).toString();
 try {
   execFileSync('git', ['clone', '-q', '--depth', '1', '--filter=blob:none', '--sparse', REPO, into], { stdio: 'inherit' });
@@ -110,6 +109,7 @@ try {
  */
 
 import type { ConfSpec } from './conf-check.ts';
+import { WORK_TMP } from './work.mjs';
 
 export const SPLUNK_SPEC_SOURCE = ${JSON.stringify({ release, version, repo: REPO.replace(/\.git$/, ''), path: `${DIR}/${version}`, commit, fetched: today })} as const;
 
