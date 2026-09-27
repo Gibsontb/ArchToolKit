@@ -749,6 +749,12 @@ tbody tr:hover {
   border-color: color-mix(in srgb, var(--ok) 35%, transparent);
   background: var(--ok-dim);
 }
+.tile-note {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--warn);
+  text-align: center;
+}
 .tag-not-ready {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
