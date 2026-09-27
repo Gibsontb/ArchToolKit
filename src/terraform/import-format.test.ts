@@ -17,10 +17,14 @@ import { defaultValues, type Blueprint, type BlueprintValues } from '../kit/blue
 import { TERRAFORM_BLUEPRINTS } from './blueprints/index.ts';
 import { asRootModule } from './layout.ts';
 import { buildStack, topLevelBlocks } from './stack.ts';
+import { USER_VALUES } from '../testing/blueprint-user-values.ts';
+
+/** A blueprint's defaults, with the values a user must give (networks, ranges) where it has no default for them. */
+const withUser = (blueprint: Blueprint): BlueprintValues => ({ ...defaultValues(blueprint), ...(USER_VALUES[blueprint.id] ?? {}) });
 
 /** Defaults, then each select option and each toggle flipped, one at a time. */
 function variants(blueprint: Blueprint): BlueprintValues[] {
-  const base = defaultValues(blueprint);
+  const base = withUser(blueprint);
   const out: BlueprintValues[] = [base];
   for (const input of blueprint.inputs) {
     if (input.control === 'toggle') out.push({ ...base, [input.id]: !(base[input.id] === true || base[input.id] === 'true') });
@@ -93,11 +97,11 @@ describe('every Terraform blueprint, as a root module', () => {
 
   it('has the conventional layout: versions.tf, main.tf and a README', () => {
     for (const { blueprint } of all) {
-      const names = Object.keys(blueprint.build(defaultValues(blueprint), '').files);
+      const names = Object.keys(blueprint.build(withUser(blueprint), '').files);
       expect([blueprint.id, names.includes('versions.tf'), names.includes('main.tf'), names.includes('README.md')]).toEqual([blueprint.id, true, true, true]);
       // Every block has a home; none is left in a file of its own kind by mistake.
       for (const name of names.filter((n) => n.endsWith('.tf'))) {
-        const kinds = new Set(topLevelBlocks(blueprint.build(defaultValues(blueprint), '').files[name] ?? '').map((b) => b.kind));
+        const kinds = new Set(topLevelBlocks(blueprint.build(withUser(blueprint), '').files[name] ?? '').map((b) => b.kind));
         if (name === 'versions.tf') expect([blueprint.id, [...kinds].every((k) => k === 'terraform' || k === 'comment')]).toEqual([blueprint.id, true]);
         if (name === 'variables.tf') expect([blueprint.id, [...kinds].every((k) => k === 'variable' || k === 'comment')]).toEqual([blueprint.id, true]);
         if (name === 'outputs.tf') expect([blueprint.id, [...kinds].every((k) => k === 'output' || k === 'comment')]).toEqual([blueprint.id, true]);
@@ -116,7 +120,7 @@ describe('every Terraform blueprint, as a root module', () => {
 
   it('lists every variable without a default in terraform.tfvars.example, and no credential', () => {
     for (const { blueprint } of all) {
-      const files = blueprint.build(defaultValues(blueprint), '').files;
+      const files = blueprint.build(withUser(blueprint), '').files;
       const variables = topLevelBlocks(files['variables.tf'] ?? '').filter((b) => b.kind === 'variable');
       const required = variables.filter((b) => !/^ {2}default\s*=/m.test(b.text)).map((b) => b.labels[0] ?? '');
       if (variables.length === 0) {
@@ -132,7 +136,7 @@ describe('every Terraform blueprint, as a root module', () => {
   it('leaves the provider version to a module call, so a root pin cannot contradict the module', () => {
     for (const { blueprint } of all) {
       if (blueprint.group !== 'Terraform Registry modules') continue;
-      const versions = blueprint.build(defaultValues(blueprint), '').files['versions.tf'] ?? '';
+      const versions = blueprint.build(withUser(blueprint), '').files['versions.tf'] ?? '';
       const providerBlock = /required_providers\s*\{([\s\S]*?)\n {2}\}/.exec(versions)?.[1] ?? '';
       expect([blueprint.id, /version\s*=/.test(providerBlock)]).toEqual([blueprint.id, false]);
     }
@@ -140,7 +144,7 @@ describe('every Terraform blueprint, as a root module', () => {
 
   it('configures azurerm with a features block, without which it will not plan', () => {
     for (const { blueprint } of all) {
-      const files = blueprint.build(defaultValues(blueprint), '').files;
+      const files = blueprint.build(withUser(blueprint), '').files;
       if (!(files['versions.tf'] ?? '').includes('hashicorp/azurerm')) continue;
       expect([blueprint.id, /provider "azurerm" \{[\s\S]*features \{\}/.test(files['providers.tf'] ?? '')]).toEqual([blueprint.id, true]);
     }

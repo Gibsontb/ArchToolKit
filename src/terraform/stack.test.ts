@@ -11,6 +11,7 @@ import { expect } from '../testing/expect.ts';
 import { TERRAFORM_BLUEPRINTS } from './blueprints/index.ts';
 import { blueprintsFor, type Blueprint } from '../kit/blueprint.ts';
 import { buildStack, localNames, slug, topLevelBlocks, type StackItem } from './stack.ts';
+import { USER_VALUES } from '../testing/blueprint-user-values.ts';
 
 const AWS = blueprintsFor(TERRAFORM_BLUEPRINTS, 'aws');
 const find = (id: string) => AWS.find((b) => b.id === id);
@@ -166,7 +167,7 @@ describe('a module item', () => {
 describe('every AWS blueprint', () => {
   it('can be put in a stack on its own without an error', () => {
     for (const blueprint of AWS) {
-      const stack = buildStack([item(blueprint.id, blueprint.id)], byId);
+      const stack = buildStack([item(blueprint.id, blueprint.id, { ...(USER_VALUES[blueprint.id] ?? {}) } as Record<string, string>)], byId);
       const errors = stack.findings.filter((f) => f.severity === 'error');
       expect([blueprint.id, errors.map((e) => e.message)]).toEqual([blueprint.id, []]);
       expect([blueprint.id, Object.keys(stack.files).includes('versions.tf')]).toEqual([blueprint.id, true]);

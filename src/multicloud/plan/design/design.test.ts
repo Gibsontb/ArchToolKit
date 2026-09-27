@@ -9,9 +9,10 @@ import type {
   Database, DbServiceId, ItemDecision, Method, Plan, PlanDecision, Platform, PlatformDesign, Requirements, TargetDesign, Workload,
 } from '../types.ts';
 import {
-  carveSubnets, classFor, classInCatalog, cloudSqlTier, designPlan, designWorkloads, DESIGN_MAPPERS, foundationPlansFor, insertMapper,
+  classFor, classInCatalog, cloudSqlTier, designPlan, designWorkloads, DESIGN_MAPPERS, foundationPlansFor, identityKey, insertMapper,
   rdsClass, sizeInCatalog, ula48, type DesignMapper,
 } from './index.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -66,14 +67,15 @@ function decisionFor(plan: Plan, platform: Platform): PlanDecision {
   return { engineVersion: 'test', platforms: [platform], subsetScores: [], items, findings: [] };
 }
 
+/** The fixture plan, with the network rows a user built on every cloud (web, app, db and mgmt subnets; see testing/network-rows.ts). */
 function planWith(over: Partial<Plan> = {}, req: Partial<Requirements> = {}): Plan {
-  return {
+  const base: Plan = {
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-1234', name: 'Shop Move', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: WORKLOADS, databases: DATABASES, apps: [], edges: [],
     requirements: { ...defaultRequirements(), ...req },
     designOverrides: {}, waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
-    ...over,
   };
+  return { ...withUserNetworks(base, ['aws', 'azure', 'google', 'oci', 'vmware']), ...over };
 }
 
 const designOn = (platform: Platform, plan: Plan = planWith()): { design: TargetDesign; pd: PlatformDesign } => {
@@ -91,43 +93,35 @@ const CATALOG: Readonly<Record<Exclude<Platform, 'vmware'>, Set<string>>> = {
 // Network
 // ---------------------------------------------------------------------------
 
-describe('design/network: carveSubnets', () => {
-  it("carves 12 non-overlapping /22s from 10.10.0.0/16, tier-major", () => {
-    const s = carveSubnets('10.10.0.0/16', ['web', 'app', 'db', 'mgmt'], 3, 22);
-    expect(s).toHaveLength(12);
-    expect(s.map((x) => `${x.tier}-${x.zone}`)).toEqual([
-      'web-a', 'web-b', 'web-c', 'app-a', 'app-b', 'app-c', 'db-a', 'db-b', 'db-c', 'mgmt-a', 'mgmt-b', 'mgmt-c',
-    ]);
-    expect(s[0]!.cidr).toBe('10.10.0.0/22');
-    expect(s[1]!.cidr).toBe('10.10.4.0/22');
-    expect(s[3]!.cidr).toBe('10.10.12.0/22');
-    expect(s[11]!.cidr).toBe('10.10.44.0/22');
-    for (let i = 0; i < s.length; i += 1) {
-      expect(parseCidrAny(s[i]!.cidr)!.prefix).toBe(22);
-      expect(containsAny('10.10.0.0/16', s[i]!.cidr.split('/')[0]!)).toBe(true);
-      for (let j = i + 1; j < s.length; j += 1) expect(overlapsAny(s[i]!.cidr, s[j]!.cidr)).toBe(false);
+describe('design/network: exactly the user\'s rows', () => {
+  it('with no rows there is no network, and a blocking finding', () => {
+    for (const p of HYPERSCALERS) {
+      const { pd, design } = designOn(p, planWith({ networks: {} }));
+      expect(pd.networks).toEqual([]);
+      const none = design.findings.filter((f) => f.code === 'design.network.none');
+      expect(none).toHaveLength(1);
+      expect(none[0]!.severity).toBe('error');
+      // Nothing is placed without a subnet, and no domain controller is invented.
+      expect(pd.compute).toEqual([]);
+      expect(pd.identity.dcNames).toEqual([]);
     }
   });
 
-  it('takes zone names, and refuses what does not fit', () => {
-    expect(carveSubnets('10.0.0.0/24', ['web'], ['1', '2'], 26).map((x) => `${x.zone}=${x.cidr}`)).toEqual(['1=10.0.0.0/26', '2=10.0.0.64/26']);
-    expect(() => carveSubnets('10.0.0.0/24', ['web', 'app', 'db', 'mgmt'], 3, 26)).toThrow(RangeError);
-    expect(() => carveSubnets('2001:db8::/48', ['web'], 1, 64)).toThrow(RangeError);
-  });
-});
-
-describe('design/network: networks, dual stack and the site check', () => {
-  it('gives every hyperscaler a prod network (and nonprod for the dev workload), IPv6 on', () => {
+  it('builds the networks and subnets the rows give, and nothing else (no mgmt tier the rows do not have)', () => {
     for (const p of HYPERSCALERS) {
-      const { pd } = designOn(p);
+      const plan = planWith({ networks: withUserNetworks(planWith(), [p], { tiers: ['web', 'app', 'db'] }).networks! });
+      const { pd } = designOn(p, plan);
       expect(pd.networks.map((n) => n.name)).toEqual(['prod', 'nonprod']);
-      for (const n of pd.networks) expect(n.ipv6).toBe(true);
       const base = { aws: 10, azure: 20, google: 30, oci: 40 }[p as 'aws'];
       expect(pd.networks[0]!.cidr).toBe(`10.${base}.0.0/16`);
       expect(pd.networks[1]!.cidr).toBe(`10.${base + 1}.0.0/16`);
-      // prod: 4 tiers × 3 zones; nonprod: 4 tiers × 1 zone.
-      expect(pd.networks[0]!.subnets.filter((s) => pd.networks[0]!.tiers.includes(s.tier as 'web'))).toHaveLength(12);
-      expect(pd.networks[1]!.subnets).toHaveLength(4);
+      // AWS: a subnet per tier per zone (zonal); the others one regional subnet per tier.
+      expect(pd.networks[0]!.subnets).toHaveLength(p === 'aws' ? 9 : 3);
+      for (const n of pd.networks) {
+        expect(n.tiers).toEqual(['web', 'app', 'db']);
+        expect(n.subnets.some((s) => s.tier === 'mgmt')).toBe(false);
+        for (const s of n.subnets) expect(s.zone === '').toBe(p !== 'aws');
+      }
     }
   });
 
@@ -141,7 +135,7 @@ describe('design/network: networks, dual stack and the site check', () => {
     }
   });
 
-  it('Azure gets a ULA /48 per network, stable for the plan id, with a /64 per subnet inside it', () => {
+  it('Azure gets a ULA /48 per network, stable for the plan id, with a /64 per IPv6 subnet inside it', () => {
     const a = designOn('azure').pd;
     const again = designOn('azure').pd;
     const other = designOn('azure', planWith({ id: 'another-plan' })).pd;
@@ -150,7 +144,7 @@ describe('design/network: networks, dual stack and the site check', () => {
       expect(c.family).toBe(6);
       expect(c.prefix).toBe(48);
       expect(/^fd[0-9a-f]{2}:/.test(n.ipv6Cidr!)).toBe(true);
-      for (const s of n.subnets.filter((x) => n.tiers.includes(x.tier as 'web'))) {
+      for (const s of n.subnets) {
         expect(parseCidrAny(s.ipv6Cidr!)!.prefix).toBe(64);
         expect(overlapsAny(n.ipv6Cidr!, s.ipv6Cidr!)).toBe(true);
       }
@@ -161,29 +155,17 @@ describe('design/network: networks, dual stack and the site check', () => {
     expect(ula48('plan-1234', 'azure', 'prod')).toBe(a.networks[0]!.ipv6Cidr!);
   });
 
-  it('Azure reserves AzureBastionSubnet (/26) and, with sites, GatewaySubnet (/27) after the tier subnets', () => {
-    const site = { name: 'dc1', vpnPeer: '203.0.113.10', bgpAsn: 65010, cidrs: ['192.168.0.0/16'], bandwidth: '1g' as const, circuit: 'none' as const };
-    const pd = designOn('azure', planWith({}, { sites: [site] })).pd;
-    const prod = pd.networks[0]!;
-    const bastion = prod.subnets.find((s) => s.tier === 'AzureBastionSubnet')!;
-    const gateway = prod.subnets.find((s) => s.tier === 'GatewaySubnet')!;
-    expect(bastion.cidr).toBe('10.20.48.0/26');
-    expect(gateway.cidr).toBe('10.20.48.64/27');
-    // Kept out of the FoundationPlan (the landing zone adds them by their exact names).
-    for (const fp of foundationPlansFor(pd, 'azure')) expect(fp.subnets.some((s) => s.name.includes('Subnet'))).toBe(false);
-  });
-
   it('an overlap with a site CIDR is an error finding; no overlap, none', () => {
     const clash = { name: 'hq', vpnPeer: '203.0.113.10', bgpAsn: 65010, cidrs: ['10.10.8.0/24', 'fd00::/8'], bandwidth: '1g' as const, circuit: 'none' as const };
     const bad = designOn('aws', planWith({}, { sites: [clash] })).design;
-    const hit = bad.findings.filter((f) => f.code === 'design.network.site-overlap');
+    const hit = bad.findings.filter((f) => f.code === 'design.net.network-avoid-overlap');
     expect(hit).toHaveLength(1);
     expect(hit[0]!.severity).toBe('error');
     // Azure's ULA is inside fd00::/8, so the IPv6 side overlaps too.
-    const az = designOn('azure', planWith({}, { sites: [clash] })).design;
-    expect(az.findings.filter((f) => f.code === 'design.network.site-overlap').length).toBeGreaterThanOrEqual(2);
+    const az = designOn('azure', planWith({}, { sites: [{ ...clash, cidrs: ['10.20.8.0/24', 'fd00::/8'] }] })).design;
+    expect(az.findings.filter((f) => f.code === 'design.net.network-avoid-overlap').length).toBeGreaterThanOrEqual(2);
     const fine = designOn('aws', planWith({}, { sites: [{ ...clash, cidrs: ['192.168.0.0/16'] }] })).design;
-    expect(fine.findings.some((f) => f.code === 'design.network.site-overlap')).toBe(false);
+    expect(fine.findings.some((f) => f.code === 'design.net.network-avoid-overlap')).toBe(false);
   });
 
   it('foundationPlansFor gives plans emitFoundation takes without error', () => {
@@ -387,24 +369,39 @@ describe('design/database', () => {
 // ---------------------------------------------------------------------------
 
 describe('design/identity', () => {
-  it('extend-dcs adds two DCs per platform, in different zones, mgmt tier, Windows Server 2025', () => {
+  it('extend-dcs builds no domain controller unless the user extends AD into the cloud and names them', () => {
     for (const p of HYPERSCALERS) {
       const plan = planWith();
       const design = designPlan(plan, decisionFor(plan, p));
       const pd = design.platforms[0]!;
       expect(pd.identity.strategy).toBe('extend-dcs');
-      expect(pd.identity.dcNames).toEqual([`shop-move-${{ aws: 'aws', azure: 'az', google: 'gcp', oci: 'oci' }[p as 'aws']}-dc01`, `${pd.prefix}-dc02`]);
+      expect(pd.identity.dcNames).toEqual([]);
+      expect(pd.compute.some((c) => /dc0\d$/.test(c.workload))).toBe(false);
+      expect(designWorkloads(plan, design).filter((w) => w.role === 'ad-dc')).toEqual([]);
+      expect(design.findings.some((f) => f.code === 'design.identity.not-extended')).toBe(true);
+    }
+  });
+
+  it('extend AD into this cloud: yes, with the user\'s names: those DCs, in different zones, mgmt subnets', () => {
+    for (const p of HYPERSCALERS) {
+      const plan = planWith({ designOverrides: { [identityKey(p, 'extend-ad')]: 'yes', [identityKey(p, 'dc-names')]: 'corpdc-a1, corpdc-b1' } });
+      const design = designPlan(plan, decisionFor(plan, p));
+      const pd = design.platforms[0]!;
+      expect(pd.identity.dcNames).toEqual(['corpdc-a1', 'corpdc-b1']);
       const dcs = pd.identity.dcNames.map((n) => pd.compute.find((c) => c.workload === itemId('workload', n))!);
       expect(dcs).toHaveLength(2);
       expect(dcs[0]!.zone === dcs[1]!.zone).toBe(false);
       for (const dc of dcs) {
         expect(dc.tier).toBe('mgmt');
         expect(dc.backupTier).toBe('gold');
-        expect(dc.image.kind === 'replicated').toBe(false);
         expect(sizeInCatalog(p, dc.size)).toBe(true);
       }
-      const added = designWorkloads(plan, design).filter((w) => w.role === 'ad-dc');
-      expect(added.map((w) => w.os)).toEqual(['win-2025', 'win-2025']);
+      expect(designWorkloads(plan, design).filter((w) => w.role === 'ad-dc').map((w) => w.os)).toEqual(['win-2025', 'win-2025']);
+      // Yes without names: an error, and nothing built.
+      const nameless = planWith({ designOverrides: { [identityKey(p, 'extend-ad')]: 'yes' } });
+      const d2 = designPlan(nameless, decisionFor(nameless, p));
+      expect(d2.platforms[0]!.identity.dcNames).toEqual([]);
+      expect(d2.findings.some((f) => f.code === 'design.identity.no-dc-names' && f.severity === 'error')).toBe(true);
     }
   });
 
@@ -418,13 +415,14 @@ describe('design/identity', () => {
     expect(targetOf(pd, 'corp-dc1')!.zone === targetOf(pd, 'corp-dc2')!.zone).toBe(false);
   });
 
-  it('managed-ad: no DCs added; OCI falls back to extend-dcs with a finding', () => {
+  it('managed-ad: no DCs added; OCI (no managed AD) builds none either, with a finding', () => {
     const plan = planWith({}, { identity: { ...defaultRequirements().identity, adStrategy: 'managed-ad' } });
     const aws = designPlan(plan, decisionFor(plan, 'aws'));
     expect(aws.platforms[0]!.identity).toEqual({ strategy: 'managed-ad', dcNames: [] });
     const oci = designPlan(plan, decisionFor(plan, 'oci'));
     expect(oci.platforms[0]!.identity.strategy).toBe('extend-dcs');
-    expect(oci.platforms[0]!.identity.dcNames).toHaveLength(2);
+    // No DC is invented on OCI either: only when the user extends AD there and names them.
+    expect(oci.platforms[0]!.identity.dcNames).toEqual([]);
     expect(oci.findings.some((f) => f.code === 'design.identity.oci-no-managed-ad')).toBe(true);
   });
 });
@@ -488,14 +486,14 @@ describe('design/index: the mapper pipeline', () => {
       },
     };
     const mappers = insertMapper(hana, { after: 'compute' });
-    expect(mappers.map((m) => m.id)).toEqual(['network', 'compute', 'sap-hana', 'database', 'identity', 'connectivity', 'backup', 'relocate', 'overrides']);
+    expect(mappers.map((m) => m.id)).toEqual(['network', 'compute', 'sap-hana', 'database', 'identity', 'connectivity', 'backup', 'relocate', 'network-checks', 'overrides']);
     expect(insertMapper(hana).map((m) => m.id).slice(-2)).toEqual(['sap-hana', 'overrides']);
     const plan = planWith();
     const pd = designPlan(plan, decisionFor(plan, 'aws'), mappers).platforms[0]!;
     const app = pd.compute.filter((c) => c.workload === itemId('workload', 'app01'));
     expect(app).toHaveLength(1);
     expect(app[0]!.size).toBe('x2iedn.8xlarge');
-    expect(DESIGN_MAPPERS).toHaveLength(8);
+    expect(DESIGN_MAPPERS).toHaveLength(9);
   });
 
   it('designs only the decision\'s platforms, and is deterministic', () => {

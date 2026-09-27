@@ -13,6 +13,7 @@ import {
 } from './index.ts';
 import { modulesOf } from './utilities/common.ts';
 import { diffFileSets, unifiedDiff } from './utilities/diff.ts';
+import { withUserNetworks } from '../../testing/network-rows.ts';
 
 const DATE = '2026-09-26';
 const PLATFORMS: readonly Platform[] = ['vmware', 'aws', 'azure', 'google', 'oci'];
@@ -30,7 +31,7 @@ function workload(name: string, app: string, over: Partial<Workload> = {}): Work
 function app(name: string): App {
   return { id: itemId('app', name), name, criticality: 'tier1', residency: 'any', latencyToOnPrem: 'tolerant', special: 'none' };
 }
-const BASE: Plan = {
+const BASE: Plan = withUserNetworks({
   kind: PLAN_KIND, version: 1, id: 'plan-wp20', name: 'Utilities', savedAt: `${DATE}T00:00:00.000Z`,
   workloads: [workload('shop-app01', 'shop'), workload('shop-web01', 'shop', { role: 'web', os: 'win-2022' }), workload('legacy01', 'legacy')],
   databases: [], apps: [app('shop'), app('legacy')], edges: [],
@@ -41,7 +42,7 @@ const BASE: Plan = {
   },
   designOverrides: { 'vmware:lz:datacenter': 'dc01', 'vmware:lz:cluster': 'cl01', 'vmware:lz:datastore': 'vsan01' },
   waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] }, appPlans: [],
-};
+}, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
 
 const plans = new Map<Platform, Plan>();
 /** `shop` planned on the platform (its stack manages shop-app01), and a new app `portal`, planned, with smoke checks. */

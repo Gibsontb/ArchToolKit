@@ -37,7 +37,7 @@ import {
   attrs,
   blk,
   carve,
-  carveNetwork,
+  subnetKeyMap,
   cloudInit,
   consumerPreamble,
   cutoverVariable,
@@ -217,7 +217,7 @@ function googleLandingZone()            {
     ],
     build: (values                 ) => {
       const findings            = [];
-      const lz = parseLandingZone(values, REGION, findings);
+      const lz = parseLandingZone(values, REGION, findings, 'google');
       if (findings.some((f) => f.severity === 'error')) return failed('google_mig_landing_zone', findings);
       const cmk = lz.keys !== 'provider-managed';
       const project = lz.scope ? q(lz.scope) : 'var.project_id';
@@ -228,11 +228,16 @@ function googleLandingZone()            {
         dat('google_compute_zones', 'available', { project: x(project), region: lz.region, status: 'UP' }),
       ];
 
+      // Exactly the user's subnets: ordinary ones through the network foundation, the proxy-only and
+      // Private Service Connect ones as their own subnetworks with the purpose Google requires.
+      const SPECIAL                                                                  = { 'proxy-only': ['REGIONAL_MANAGED_PROXY', 'ACTIVE'], psc: ['PRIVATE_SERVICE_CONNECT', undefined] };
       const subnetsByNet = new Map                      ();
       for (const n of lz.networks) {
-        const subnets = carveNetwork(n, lz.prefixLen, false, [], findings);
-        if (subnets.length === 0) continue;
-        subnetsByNet.set(n.id, subnets);
+        const all = lz.subnets.filter((s) => s.network.name === n.name);
+        if (all.length === 0) continue;
+        const subnets = all.filter((s) => !SPECIAL[s.tier          ]);
+        subnetsByNet.set(n.id, all);
+        const v4only = new Set(subnets.filter((s) => !s.ipv6).map((s) => s.label));
         const out = emitFoundation('google', {
           name: rname(lz.prefix, n.name),
           cidr: n.cidr,
@@ -246,10 +251,39 @@ function googleLandingZone()            {
           reworkFoundation(out.files['main.tf'] ?? '', n.id, {
             // The emitter's own firewall rules give way to the per-tier ones below.
             drop: (_kind, [type = '']) => type === 'google_compute_firewall',
-            edit: (type, _label, text) => (type === 'google_compute_subnetwork' ? insertBeforeClose(text, SUBNET_FLOW_LOGS) : text),
+            edit: (type, label, text) => {
+              if (type !== 'google_compute_subnetwork') return text;
+              const own = v4only.has(label) ? text.split('\n').filter((l) => !/^\s*(stack_type|ipv6_access_type)\s*=/.test(l)).join('\n') : text;
+              return insertBeforeClose(own, SUBNET_FLOW_LOGS);
+            },
           }),
         );
+        for (const sp of all.filter((x) => SPECIAL[x.tier          ])) {
+          const [purpose, role] = SPECIAL[sp.tier          ] ;
+          blocks.push(res('google_compute_subnetwork', sp.label, {
+            name: rname(lz.prefix, n.name, sp.short),
+            network: x(`google_compute_network.${n.id}.id`),
+            ip_cidr_range: sp.cidr,
+            region: lz.region,
+            purpose,
+            role,
+          }, [], sp.tier === 'proxy-only' ? 'Proxy-only: the Envoy proxies of the regional load balancers take their addresses from it.' : 'Private Service Connect: addresses for the endpoints published or consumed here.'));
+        }
         blocks.push(...firewalls(lz.prefix, n, lz.siteV4, n.ipv6 ? lz.siteV6 : [], lz.bastion === 'cloud-native'));
+      }
+      // An existing landing zone: each new VPC peers with the existing hub network (its self link); no hub is built.
+      for (const hub of lz.existing.filter((e) => e.role === 'hub')) {
+        for (const n of lz.networks) {
+          if (!subnetsByNet.has(n.id)) continue;
+          blocks.push(res('google_compute_network_peering', `${n.id}_to_${hub.id}`, {
+            name: rname(n.name, 'to', hub.name),
+            network: x(`google_compute_network.${n.id}.self_link`),
+            peer_network: hub.existingId,
+            export_custom_routes: true,
+            import_custom_routes: true,
+          }, [], `Peers ${n.name} with the existing hub ${hub.name}; the hub's owner adds the peering back.`));
+        }
+        findings.push(info('tf.mig.google-existing-hub', `${hub.name} exists already: no hub is built; each new VPC peers with it. The hub's owner adds the peering back.`, { path: 'networks' }));
       }
       if (findings.some((f) => f.severity === 'error')) return failed('google_mig_landing_zone', findings);
 
@@ -328,9 +362,9 @@ function googleLandingZone()            {
       const tags                         = {};
       const mgmt           = lz.siteV4.map(q);
       if (lz.anyV6) mgmt.push(...lz.siteV6.map(q));
+      for (const [k, s] of subnetKeyMap(lz.subnets)) subnetIds[k] = `google_compute_subnetwork.${s.label}.id`;
       for (const n of lz.networks) {
         for (const s of subnetsByNet.get(n.id) ?? []) {
-          for (let z = 0; z < n.zones; z++) subnetIds[`${n.name}/${s.tier}/${ZONE_LETTERS[z]}`] = `google_compute_subnetwork.${s.label}.id`;
           if (s.tier === 'mgmt') {
             mgmt.push(q(s.cidr));
             if (n.ipv6) mgmt.push(`google_compute_subnetwork.${s.label}.ipv6_cidr_range`);
@@ -349,7 +383,7 @@ function googleLandingZone()            {
           kms_key_id: cmk ? 'google_kms_crypto_key.landing_zone.id' : 'null',
           log_destination: 'google_storage_bucket.logs.name',
           resource_group: 'null',
-          zones: `slice(data.google_compute_zones.available.names, 0, ${lz.maxZones})`,
+          zones: 'slice(data.google_compute_zones.available.names, 0, 3)',
           mgmt_cidrs: `[${mgmt.join(', ')}]`,
           ipv6: byNet((n) => String(n.ipv6)),
           project,
@@ -384,8 +418,8 @@ function googleIdentity()            {
     inputs: [
       { id: 'strategy', label: 'Strategy', control: 'select', default: 'resolver-only', options: [{ value: 'managed-ad', label: 'Managed Microsoft AD' }, { value: 'resolver-only', label: 'Forward DNS to our own DCs (extend-dcs)' }] },
       { id: 'domain', label: 'Domain', control: 'text', default: 'corp.example.com' },
-      { id: 'dns_forwarders', label: 'Domain controller addresses', control: 'text', default: '10.0.0.10 10.0.0.11', hint: 'Space-separated, either family.', showWhen: { input: 'strategy', equals: ['resolver-only'] } },
-      { id: 'reserved_ip_range', label: 'Directory range', control: 'text', default: '10.99.0.0/24', hint: 'A /24 used by nothing else, on-premises or in the cloud.', showWhen: { input: 'strategy', equals: ['managed-ad'] } },
+      { id: 'dns_forwarders', label: 'Domain controller addresses', control: 'text', default: '', hint: 'Space-separated, either family.', showWhen: { input: 'strategy', equals: ['resolver-only'] } },
+      { id: 'reserved_ip_range', label: 'Directory range', control: 'text', default: '', hint: 'A /24 used by nothing else, on-premises or in the cloud.', showWhen: { input: 'strategy', equals: ['managed-ad'] } },
       { id: 'network', label: 'Network', control: 'text', default: 'prod', hint: 'The landing-zone network the directory or forwarding zone serves; blank for every network.' },
       LANDING_ZONE_SOURCE,
     ],
@@ -399,7 +433,7 @@ function googleIdentity()            {
       const networks = net ? `[${lz}.network_ids[${q(net)}]]` : `values(${lz}.network_ids)`;
       const blocks             = [TF(), ...consumerPreamble('google', values)];
       if (managed) {
-        const range = valueOf(values, 'reserved_ip_range', '10.99.0.0/24');
+        const range = valueOf(values, 'reserved_ip_range');
         if (familyOf(range) !== 4 || !range.endsWith('/24')) {
           findings.push(error('tf.mig.google-ad-range', `"${range}" is not an IPv4 /24; Managed Microsoft AD needs one.`, { path: 'reserved_ip_range' }));
           return failed('google_mig_identity', findings);
@@ -1132,7 +1166,7 @@ function googleOracleDatabase()            {
       const findings            = [oracleRegionFinding('Google Cloud', 'the landing-zone region')];
       const lz = lzRef(values);
       const net = rname(valueOf(values, 'network', 'prod')) || 'prod';
-      const cidr = valueOf(values, 'odb_network_cidr', '10.60.0.0/24');
+      const cidr = valueOf(values, 'odb_network_cidr');
       const [p = '24'] = cidr.split('/').slice(1);
       const halves = familyOf(cidr) === 4 ? carve(cidr, [Number(p) + 1, Number(p) + 1]) : null;
       if (!halves) {

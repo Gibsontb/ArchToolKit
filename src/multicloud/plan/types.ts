@@ -458,14 +458,99 @@ export type Bastion = 'cloud-native' | 'jump-vm' | 'none';
 export type SubnetPrefix = '/20' | '/21' | '/22' | '/23' | '/24';
 export type ZoneCount = 1 | 2 | 3;
 export type LogRetentionDays = 90 | 180 | 365 | 400 | 730 | 2555;
-export interface NetworkDesign {
+
+// ---------- the user's network rows (Landing zones, wizard step 6) ----------
+
+/** What a network is for, in the cloud's reference landing zone. */
+export type NetworkRole = 'hub' | 'spoke' | 'shared-services' | 'inspection' | 'egress';
+/** The environment class a network serves. `shared` is a hub or shared-services network. */
+export type NetworkEnv = 'prod' | 'nonprod' | 'dr' | 'shared';
+
+/**
+ * One network the user added (Landing zones / wizard step 6). Every field
+ * starts empty: the toolkit never fills one in. `base` + `prefix` is the
+ * IPv4 range; `existingId` is the provider's id of a network that already
+ * exists (then it is attached to, not built).
+ */
+export interface NetworkRow {
+  /** Stable row id (never shown). */
+  readonly id: string;
   readonly name: string;
+  readonly role: NetworkRole | '';
+  readonly region: string;
+  readonly env: NetworkEnv | '';
+  readonly state: 'new' | 'existing' | '';
+  readonly existingId?: string;
+  /** The IPv4 base address, typed. */
+  readonly base: string;
+  /** The prefix length from the dropdown (0 = not chosen). */
+  readonly prefix: number;
+  readonly ipv6: 'yes' | 'no' | '';
+}
+
+/**
+ * One subnet the user added. `purpose` is a workload tier (web, app, db,
+ * mgmt, container) or one of the cloud's platform subnets (GatewaySubnet,
+ * tgw-attachment, proxy-only …). `zone` is a zone name, or `regional`.
+ * `base` is a typed IPv4 address, or `next` for the next free block in the
+ * network (in row order).
+ */
+export interface SubnetRow {
+  readonly id: string;
+  /** The NetworkRow id. */
+  readonly network: string;
+  /** Optional: blank builds `<purpose>` or `<purpose>-<zone letter>` (Azure's platform subnets keep their fixed names). */
+  readonly name: string;
+  readonly purpose: string;
+  readonly zone: string;
+  readonly prefix: number;
+  readonly base: string;
+  readonly ipv6: 'yes' | 'no' | '';
+}
+
+/** One cloud's network rows. An empty list means no network: nothing is built. */
+export interface CloudNetworkPlan {
+  readonly networks: readonly NetworkRow[];
+  readonly subnets: readonly SubnetRow[];
+}
+export type NetworkPlans = Readonly<Partial<Record<Platform, CloudNetworkPlan>>>;
+
+/** A subnet of the design: exactly one of the user's subnet rows, resolved. */
+export interface SubnetDesign {
+  /** The SubnetRow id. */
+  readonly id: string;
+  /** The name it is built with. */
+  readonly name: string;
+  /** Its purpose: a workload tier (web, app, db, mgmt, container) or a platform subnet. */
+  readonly tier: string;
+  /** Its zone; '' for a regional subnet. */
+  readonly zone: string;
+  readonly cidr: string;
+  readonly ipv6Cidr?: string;
+  readonly ipv6?: boolean;
+  /** Addresses left after the cloud's reservation. */
+  readonly usable: number;
+}
+
+/** A network of the design: exactly one of the user's network rows, resolved. */
+export interface NetworkDesign {
+  /** The NetworkRow id (absent on hand-built designs). */
+  readonly id?: string;
+  readonly name: string;
+  readonly role?: NetworkRole;
+  readonly region?: string;
+  readonly env?: NetworkEnv;
+  /** Set when the network exists already: it is attached to, never built. */
+  readonly existingId?: string;
   readonly envs: readonly Env[];
   readonly cidr: string;
   readonly ipv6: boolean;
   readonly ipv6Cidr?: string;
+  /** The workload tiers among its subnets (web, app, db, mgmt), in that order. */
   readonly tiers: readonly NetworkTier[];
-  readonly subnets: readonly { readonly tier: string; readonly zone: string; readonly cidr: string; readonly ipv6Cidr?: string }[];
+  /** The zones a VM in it can use: the subnets' zones on a zonal cloud, the region's zones on a regional one. */
+  readonly zones?: readonly string[];
+  readonly subnets: readonly SubnetDesign[];
 }
 export interface ComputeTarget {
   readonly workload: ItemId;
@@ -524,7 +609,8 @@ export interface PlatformDesign {
   readonly compute: readonly ComputeTarget[];
   readonly databases: readonly DbTarget[];
   readonly connectivity: readonly { readonly site: string; readonly method: Connection; readonly cloudAsn: number }[];
-  readonly identity: { readonly strategy: AdStrategy; readonly dcNames: readonly string[] };
+  /** `builds`: the design builds the DCs in `dcNames` (the user extended AD into this cloud and named them). */
+  readonly identity: { readonly strategy: AdStrategy; readonly dcNames: readonly string[]; readonly builds?: boolean };
   readonly backup: { readonly tiers: readonly BackupTier[] };
   readonly relocate?: { readonly service: string; readonly nodes: number };
   /** Workloads the design adds that the plan does not have (domain controllers, jump hosts). */
@@ -1319,6 +1405,8 @@ export interface Plan {
   readonly execution?: ExecutionSettings;
   readonly governance?: Governance;
   readonly dcExit?: DcExit;
+  /** The networks and subnets the user built, per cloud (Landing zones, wizard step 6). Absent: none. */
+  readonly networks?: NetworkPlans;
 }
 /** The A.11.1 `PlanDelta`. */
 export type PlanDelta = Pick<Plan, 'mode' | 'appPlans' | 'sizing' | 'execution' | 'governance' | 'dcExit'>;

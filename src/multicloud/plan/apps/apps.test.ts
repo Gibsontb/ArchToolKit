@@ -14,6 +14,7 @@ import {
   setTierPattern,
 } from './recommend.ts';
 import { appSlice, sliceFolder } from './slice.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -42,7 +43,7 @@ export const app = (name: string, over: Partial<App> = {}): App => ({
 export function appsFixture(over: Partial<Plan> = {}): Plan {
   const big = Array.from({ length: 25 }, (_, i) => workload(`big${String(i).padStart(2, '0')}`, 'big', { role: i % 3 === 0 ? 'web' : 'app' }));
   const base = defaultRequirements();
-  return {
+  return withUserNetworks({
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-wp19', name: 'Apps Move', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: [
       workload('crm-web01', 'crm', { role: 'web', os: 'win-2022', licence: 'byol-sa' }),
@@ -69,7 +70,7 @@ export function appsFixture(over: Partial<Plan> = {}): Plan {
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
     appPlans: [],
     ...over,
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
 }
 
 const LOAD: LoadProfile = { environments: ['prod'], nonprodPct: 25, peakRps: 200, dataGib: 100, tps: 50, slo: '99.9' };

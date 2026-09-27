@@ -21,7 +21,7 @@
  * reads them from `ctx.claimedWorkloads` / `ctx.claimedDatabases`.
  */
 
-import { info, warning, type Finding } from '../../../core/findings.ts';
+import { error, info, warning, type Finding } from '../../../core/findings.ts';
 import { overlapsAny as overlaps } from '../../../core/ip.ts';
 import { DEFAULT_REGIONS, overrideKey, PLATFORM_VALUES } from '../options.ts';
 import type {
@@ -33,15 +33,21 @@ import { computeMapper, sizeInCatalog } from './compute.ts';
 import { connectivityMapper } from './connectivity.ts';
 import { classInCatalog, databaseMapper } from './database.ts';
 import { identityMapper, strategyFor } from './identity.ts';
-import { landingZoneSettings, networkMapper, networkZones, type LandingZoneSettings } from './network.ts';
+import { landingZoneSettings, networkChecksMapper, networkMapper, networkZones, type LandingZoneSettings } from './network.ts';
+import { rowPath } from './net-rows.ts';
 import { relocateMapper } from './relocate.ts';
 
-export { carveSubnets, foundationPlansFor, ula48, zoneNames, landingZoneSettings, siteCidrs, networkForEnv } from './network.ts';
-export type { CarvedSubnet, LandingZoneSettings } from './network.ts';
+export { foundationPlansFor, ula48, zoneNames, landingZoneSettings, siteCidrs, networkForEnv, noNetworkFinding, placeWorkload, platformRegions } from './network.ts';
+export type { LandingZoneSettings } from './network.ts';
+export {
+  CLOUD_NETWORK, NETWORK_ENV_CHOICES, blankNetworkRow, blankSubnetRow, cloudNetworksOf, hostsHint, hubOf, moveRow, networkPrefixChoices,
+  placementNetwork, purposeOf, regionChoices, resolveCloudNetworks, rowPath, subnetName, subnetPrefixChoices, subnetZoneChoices, tierZones,
+  usableOf, withCloudNetworks,
+} from './net-rows.ts';
 export { computeTargetFor, sizeInCatalog, tierForRole, diskTypes, licenceKeyOf, LICENCE_HANDLING_TEXT, isIaasService } from './compute.ts';
 export type { LicenceHandlingKey } from './compute.ts';
 export { classFor, classInCatalog, rdsClass, cloudSqlTier } from './database.ts';
-export { dcWorkloads, designWorkloads, MANAGED_AD } from './identity.ts';
+export { dcWorkloads, designWorkloads, MANAGED_AD, CLOUD_SIGN_IN_TEXT, dcNamesFor, extendsAd, identityKey, signInText } from './identity.ts';
 export { tunnelsFor, methodFor, CIRCUITS_FOR } from './connectivity.ts';
 export { backupSchedule } from './backup.ts';
 export { relocateNodes, relocateService, RELOCATE_HOSTS } from './relocate.ts';
@@ -120,7 +126,8 @@ export const overridesMapper: DesignMapper = {
       const zone = get('compute', c.workload, 'zone');
       if (zone !== undefined) {
         const net = design.networks.find((n) => n.name === t.network);
-        if (net && !networkZones(net).includes(zone)) {
+        const allowed = net ? (ctx.platform === 'aws' ? net.subnets.filter((s) => s.tier === t.tier).map((s) => s.zone) : networkZones(net)) : [];
+        if (net && !allowed.includes(zone)) {
           findings.push(warning('design.override.unknown-zone', `${c.workload}: zone ${zone} is not one of the ${t.network} network's.`, { path: overrideKey('compute', c.workload, 'zone') }));
         } else {
           t = { ...t, zone };
@@ -165,6 +172,7 @@ export const DESIGN_MAPPERS: readonly DesignMapper[] = Object.freeze([
   connectivityMapper,
   backupMapper,
   relocateMapper,
+  networkChecksMapper,
   overridesMapper,
 ]);
 
@@ -300,8 +308,8 @@ export function designPlan(plan: Plan, decision: PlanDecision, mappers: readonly
       const a = nets[i]!;
       const b = nets[j]!;
       if (a.platform !== b.platform && overlaps(a.n.cidr, b.n.cidr)) {
-        findings.push(warning('design.network.cross-platform-overlap', `${a.platform} ${a.n.name} (${a.n.cidr}) overlaps ${b.platform} ${b.n.name} (${b.n.cidr}); they cannot be routed to each other.`, {
-          path: overrideKey(b.platform, `network-${b.n.name}`, 'cidr'),
+        findings.push(error('design.network.cross-platform-overlap', `${a.platform} ${a.n.name} (${a.n.cidr}) overlaps ${b.platform} ${b.n.name} (${b.n.cidr}); they cannot be routed to each other.`, {
+          path: rowPath(b.platform, b.n.id ?? ''),
         }));
       }
     }

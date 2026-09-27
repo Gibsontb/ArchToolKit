@@ -222,13 +222,16 @@ describe('cloudFormationFiles', () => {
     const prod = aws?.networks.find((n) => n.name === 'prod');
     expect(((res.VpcProd as Obj).Properties as Obj).CidrBlock).toBe(prod?.cidr);
     expect((res.VpcProdIpv6 as Obj).Type).toBe('AWS::EC2::VPCCidrBlock');
+    // Exactly the user's subnets, in their own zones, IPv6 where the row says so: nothing carved or added.
     const subnets = Object.values(res).filter((r) => r.Type === 'AWS::EC2::Subnet');
-    expect(subnets).toHaveLength(prod?.subnets.length ?? 0);
+    const designed = (aws?.networks ?? []).flatMap((n) => n.subnets);
+    expect(subnets).toHaveLength(designed.length);
     for (const sn of subnets) {
       const p = sn.Properties as Obj;
-      expect(p.Ipv6CidrBlock).toBeDefined();
-      expect(p.AssignIpv6AddressOnCreation).toBe(true);
-      expect(prod?.subnets.some((x) => x.cidr === p.CidrBlock)).toBe(true);
+      const row = designed.find((x) => x.cidr === p.CidrBlock)!;
+      expect(row).toBeDefined();
+      expect(p.AvailabilityZone).toBe(row.zone);
+      expect(p.Ipv6CidrBlock !== undefined).toBe(!!row.ipv6);
     }
     for (const tier of ['Web', 'App', 'Db', 'Mgmt']) expect((res[`SgProd${tier}`] as Obj).Type).toBe('AWS::EC2::SecurityGroup');
     expect((res.VpcProdFlowLog as Obj).Type).toBe('AWS::EC2::FlowLog');
@@ -366,7 +369,12 @@ describe('bicepFiles', () => {
       expect(((sn.properties as Obj).addressPrefixes as string[]).length).toBe(2);
     }
     expect(subnets.some((x) => x.name === 'GatewaySubnet')).toBe(true);
-    expect(lz.resources.filter((x) => x.type === 'Microsoft.Network/networkSecurityGroups').length).toBe(4);
+    // Exactly the user's subnets; a security group per tier of each network (and the ones SQL MI and Entra DS subnets carry).
+    const azure = s.design.platforms.find((p) => p.platform === 'azure')!;
+    expect(subnets.length).toBe(prod?.subnets.length ?? 0);
+    const tierNsgs = azure.networks.reduce((n, x) => n + x.tiers.length, 0);
+    const special = azure.networks.reduce((n, x) => n + x.subnets.filter((y) => y.tier === 'sqlmi' || y.tier === 'aadds').length, 0);
+    expect(lz.resources.filter((x) => x.type === 'Microsoft.Network/networkSecurityGroups').length).toBe(tierNsgs + special);
     const kv = lz.resources.find((x) => x.type === 'Microsoft.KeyVault/vaults') as Obj;
     expect((kv.properties as Obj).enablePurgeProtection).toBe(true);
     expect(lz.resources.some((x) => x.type === 'Microsoft.Compute/diskEncryptionSets')).toBe(true);

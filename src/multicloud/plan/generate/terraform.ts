@@ -58,9 +58,10 @@ import type { BackendKind } from '../../../terraform/scaffold.ts';
 import { buildStack } from '../../../terraform/stack.ts';
 import { DB_SERVICES_EXTRA } from '../db-catalog-extra.ts';
 import { designWorkloads, isIaasService, licenceKeyOf, siteCidrs } from '../design/index.ts';
-import { networkForEnv, networkZones } from '../design/network.ts';
+import { networkZones, noNetworkFinding } from '../design/network.ts';
+import { builtIn, envClassOf, hubOf } from '../design/net-rows.ts';
 import { RELOCATE_HOSTS } from '../design/relocate.ts';
-import { NETWORK_BASE, overrideKey, PLATFORM_LABELS, PLATFORM_VALUES, slugName } from '../options.ts';
+import { overrideKey, PLATFORM_LABELS, PLATFORM_VALUES, slugName } from '../options.ts';
 import type {
   App, ComputeTarget, Database, DbTarget, Env, GeneratedProject, ItemId, NetworkDesign, Plan, PlanDecision, Platform,
   PlatformDesign, StateBackend, TargetDesign, TerraformSettingsEnvelope, Workload,
@@ -225,14 +226,25 @@ export function backendFor(platform: Platform, setting: StateBackend | undefined
   return ({ aws: 's3', azure: 'azurerm', google: 'gcs', oci: 'oci', vmware: 'local' } as const)[platform];
 }
 
-/** A /prefix inside 10.0.0.0/8 that overlaps nothing in `used`, scanning second octets from `seed`. */
-function freeBlock(used: readonly string[], prefix: number, seed: number): string | undefined {
-  for (let i = 0; i < 256; i += 1) {
-    const o = (seed + i) % 256;
-    const c = `10.${o}.0.0/${prefix}`;
-    if (!used.some((u) => familyOf(u.split('/')[0] ?? '') === 4 && overlapsAny(c, u))) return c;
+/**
+ * An address range the user assigned for a service outside the landing zone's
+ * networks (`<platform>:range:<what>`: Google's Managed Microsoft AD /24, the
+ * ODB network, the relocate target's management range). Nothing is picked
+ * for them: an unset or overlapping range is an error finding.
+ */
+function userRange(ctx: Ctx, what: 'managed-ad' | 'odb' | 'relocate', label: string): string | undefined {
+  const key = overrideKey(ctx.platform, 'range', what);
+  const cidr = ctx.plan.designOverrides[key]?.trim() ?? '';
+  if (!cidr) {
+    ctx.findings.push(error('plan.tf.range-not-set', `${PLATFORM_LABELS[ctx.platform]}: ${label} needs an address range your network team assigns; give it on Landing zones (nothing is picked for you).`, { path: key }));
+    return undefined;
   }
-  return undefined;
+  const clash = ctx.used.find((u) => familyOf(u.split('/')[0] ?? '') === 4 && familyOf(cidr.split('/')[0] ?? '') === 4 && overlapsAny(cidr, u));
+  if (clash) {
+    ctx.findings.push(error('plan.tf.range-overlap', `${PLATFORM_LABELS[ctx.platform]}: ${label}'s range ${cidr} overlaps ${clash}.`, { path: key }));
+  }
+  ctx.used.push(cidr);
+  return cidr;
 }
 
 /** Keep only the values a blueprint declares, when it declares its inputs (a lazy blueprint keeps them all). */
@@ -416,32 +428,45 @@ function contextFor(plan: Plan, decision: PlanDecision, design: TargetDesign, pd
 /** `stack`, or `variables` when the landing zone is shared from another project. */
 const lzSource = (ctx: Ctx): string => (ctx.shared ? 'variables' : 'stack');
 
-/** The network a database sits in: its first host's environment, else prod. */
+/**
+ * The network a database sits in: its first host's (as the design placed it),
+ * else a built network of the host's environment with a data-tier subnet,
+ * else the hub.
+ */
 function dbNetwork(ctx: Ctx, db: Database | undefined): string {
-  const names = ctx.pd.networks.map((n) => n.name);
+  const built = builtIn(ctx.pd.networks, ctx.pd.region);
+  const hostTarget = db?.hosts.map((h) => ctx.pd.compute.find((c) => ctx.workloadById.get(c.workload)?.name === h)).find(Boolean);
+  if (hostTarget) return hostTarget.network;
   const host = db?.hosts.map((h) => [...ctx.workloadById.values()].find((w) => w.name === h)).find(Boolean);
-  const want = host ? networkForEnv(host.env) : 'prod';
-  return names.includes(want) ? want : (names[0] ?? 'prod');
+  const want = host ? envClassOf(host.env) : 'prod';
+  const withDb = built.filter((n) => n.subnets.some((s) => s.tier === 'db'));
+  return (withDb.find((n) => n.env === want) ?? withDb[0] ?? hubOf(ctx.pd.networks, ctx.pd.region) ?? built[0])?.name ?? '';
 }
+
+/** The network the landing zone's shared services (directory, gateways) use: the hub, else the first built one. */
+const hubName = (ctx: Ctx): string => hubOf(ctx.pd.networks, ctx.pd.region)?.name ?? '';
 
 // ---------------------------------------------------------------------------
 // Rows
 // ---------------------------------------------------------------------------
 
+/** The networks grid: exactly the user's networks (existing ones carry their id, and are attached to, not built). */
 function networksGrid(ctx: Ctx, networks: readonly NetworkDesign[]): string {
   return grid(networks.map((n) => [
     n.name,
     n.envs.join(' '),
     n.cidr,
     n.ipv6 ? (ctx.platform === 'azure' && n.ipv6Cidr ? n.ipv6Cidr : 'yes') : 'no',
-    n.tiers.join(' '),
-    String(Math.max(1, Math.min(3, networkZones(n).length || 1))),
+    n.role ?? 'spoke',
+    n.existingId ?? '',
   ]));
 }
 
-function subnetPrefix(pd: PlatformDesign): string {
-  const p = pd.networks[0]?.subnets[0]?.cidr.split('/')[1];
-  return p && Number(p) >= 20 && Number(p) <= 24 ? p : '22';
+/** The subnets grid: exactly the user's subnets, nothing added. */
+function subnetsGrid(networks: readonly NetworkDesign[]): string {
+  return grid(networks.filter((n) => !n.existingId).flatMap((n) => n.subnets.map((s) => [
+    n.name, s.name, s.tier, s.zone || 'regional', s.cidr, s.ipv6 ? 'yes' : 'no',
+  ])));
 }
 
 /** The compute grid's image key. */
@@ -458,7 +483,9 @@ function methodOf(ctx: Ctx, t: ComputeTarget): 'replicate' | 'rebuild' {
   return ctx.decision.items[t.workload]?.method === 'replicate' ? 'replicate' : 'rebuild';
 }
 
+/** The compute grid's zone letter: the AZ's own letter on AWS (its subnets are zonal), else the zone's place in the region. */
 function zoneLetter(ctx: Ctx, t: ComputeTarget): string {
+  if (ctx.platform === 'aws' && t.zone) return t.zone.slice(-1).toLowerCase();
   const n = ctx.pd.networks.find((x) => x.name === t.network);
   const i = n ? networkZones(n).indexOf(t.zone) : -1;
   return ZONE_LETTERS[i >= 0 && i < 3 ? i : 0] ?? 'a';
@@ -527,7 +554,9 @@ function vsphereRows(ctx: Ctx, rows: readonly ComputeTarget[]): string {
   }));
 }
 
-const portGroup = (ctx: Ctx, network: string, tier: string): string => `${ctx.pd.prefix}-${network}-${tier}`;
+/** The NSX segment (port group) a VCF VM attaches to: the user's subnet of its tier in its network. */
+const portGroup = (ctx: Ctx, network: string, tier: string): string =>
+  ctx.pd.networks.find((n) => n.name === network)?.subnets.find((s) => s.tier === tier)?.name ?? `${network}-${tier}`;
 
 /** The engine cell per platform: the provider's own spelling where the blueprint wants it. */
 function engineCell(ctx: Ctx, t: DbTarget, db: Database | undefined): string {
@@ -626,20 +655,21 @@ function optional(ctx: Ctx, key: string, blueprintId: string, label: string, val
   return item(ctx, key, blueprintId, label, declared(bp, values));
 }
 
-function landingZoneItem(ctx: Ctx, pd: PlatformDesign, delegations: string): StackItem | null {
-  if (ctx.platform === 'vmware' || pd.networks.length === 0) return null;
+/** The landing zone of one region: exactly the user's networks and subnets there; none, no item. */
+function landingZoneItem(ctx: Ctx, pd: PlatformDesign): StackItem | null {
+  const here = pd.networks.filter((n) => !n.region || n.region === pd.region);
+  if (ctx.platform === 'vmware' || here.filter((n) => !n.existingId).length === 0) return null;
   const values: Record<string, string> = {
     prefix: pd.prefix,
     region: pd.region,
-    networks: networksGrid(ctx, pd.networks),
-    subnet_prefix: subnetPrefix(pd),
+    networks: networksGrid(ctx, here),
+    subnets: subnetsGrid(here),
     site_cidrs: siteCidrs(ctx.plan).join(' '),
     bastion: pd.bastion,
     log_retention_days: String(pd.logRetentionDays),
     keys: ctx.plan.requirements.keys,
     scope: pd.scope ?? '',
   };
-  if (ctx.platform === 'azure') values.delegations = delegations;
   return item(ctx, 'landing-zone', `${ctx.bp}_mig_landing_zone`, 'Landing zone', values);
 }
 
@@ -655,16 +685,13 @@ function identityItem(ctx: Ctx): StackItem | null {
   const strategy = pd.identity.strategy;
   if (strategy === 'none') return null;
   const domain = plan.requirements.identity.domain?.trim() || 'corp.example.com';
-  const values: Record<string, string> = { domain, network: 'prod', landing_zone_source: lzSource(ctx) };
+  const values: Record<string, string> = { domain, network: hubName(ctx), landing_zone_source: lzSource(ctx) };
   if (strategy === 'managed-ad') {
     values.strategy = 'managed-ad';
     if (platform === 'aws' || platform === 'azure') values.edition = 'Enterprise';
     if (platform === 'google') {
-      const range = freeBlock(ctx.used, 24, 99);
-      if (range) {
-        values.reserved_ip_range = range;
-        ctx.used.push(range);
-      }
+      const range = userRange(ctx, 'managed-ad', 'Managed Service for Microsoft AD (a /24)');
+      if (range) values.reserved_ip_range = range;
     }
   } else {
     const dcs = onPremDcAddresses(plan);
@@ -683,6 +710,11 @@ function identityItem(ctx: Ctx): StackItem | null {
 function connectivityItem(ctx: Ctx): StackItem | null {
   const { platform, pd, plan } = ctx;
   if (platform === 'vmware' || pd.connectivity.length === 0) return null;
+  const existingHub = pd.networks.find((n) => n.existingId && n.role === 'hub');
+  if (existingHub) {
+    ctx.findings.push(info('plan.tf.connectivity-existing-hub', `${PLATFORM_LABELS[platform]}: the existing landing zone's hub (${existingHub.name}, ${existingHub.existingId}) carries the link to the data centre, so no connectivity is built here.`));
+    return null;
+  }
   const rows = pd.connectivity.map((c) => {
     const site = plan.requirements.sites.find((s) => s.name === c.site);
     return [c.site, site?.vpnPeer ?? '', site?.bgpAsn ?? '', (site?.cidrs ?? []).join(' '), c.method, ''];
@@ -692,8 +724,8 @@ function connectivityItem(ctx: Ctx): StackItem | null {
     cloud_asn: String(pd.connectivity[0]?.cloudAsn ?? ''),
     landing_zone_source: lzSource(ctx),
   };
-  if (platform === 'aws') values.gateway = pd.networks.length >= 2 ? 'transit-gateway' : 'vpn-gateway';
-  if (platform === 'azure' || platform === 'google') values.network = 'prod';
+  if (platform === 'aws') values.gateway = builtIn(pd.networks, pd.region).length >= 2 ? 'transit-gateway' : 'vpn-gateway';
+  if (platform === 'azure' || platform === 'google') values.network = hubName(ctx);
   return item(ctx, 'connectivity', `${ctx.bp}_mig_connectivity`, 'Connectivity', values);
 }
 
@@ -832,11 +864,8 @@ function oracleAtItem(ctx: Ctx): StackItem | null {
     ctx.findings.push(info('plan.tf.odb-oci-region', `Oracle Database@${CLOUD_NAME[platform]}: the OCI region paired with ${ctx.pd.region} is not set, so the item's default is used; set it before applying.`));
   }
   if (platform !== 'azure') {
-    const cidr = freeBlock(ctx.used, 24, 60);
-    if (cidr) {
-      values.odb_network_cidr = cidr;
-      ctx.used.push(cidr);
-    }
+    const cidr = userRange(ctx, 'odb', `the Oracle Database@${CLOUD_NAME[platform]} ODB network`);
+    if (cidr) values.odb_network_cidr = cidr;
   }
   if (platform === 'aws') {
     ctx.findings.push(info('plan.tf.odb-zone-id', `Oracle Database@AWS: check that the availability zone id in the item is one where it is offered in ${ctx.pd.region}.`));
@@ -900,14 +929,11 @@ function relocateItem(ctx: Ctx): StackItem | null {
   const values: Record<string, string> = {
     ...(sku ? { sku_name: sku } : {}),
     node_count: String(nodes),
-    network: 'prod',
+    network: hubName(ctx),
     landing_zone_source: lzSource(ctx),
   };
-  const cidr = freeBlock(ctx.used, r.prefix, 200);
-  if (cidr) {
-    values.management_cidr = cidr;
-    ctx.used.push(cidr);
-  }
+  const cidr = userRange(ctx, 'relocate', `${pd.relocate.service}'s management range (a /${r.prefix})`);
+  if (cidr) values.management_cidr = cidr;
   if (platform === 'oci') {
     values.workload_hosts = '0';
     if (ctx.plan.requirements.licensing.portableVcf) {
@@ -1010,20 +1036,6 @@ function appItems(ctx: Ctx, options: PlanToStacksOptions): { head: StackItem[]; 
   return { head, monitoring };
 }
 
-/** Azure's delegated subnets: one per managed service (and directory or resolver) that needs one. */
-function azureDelegations(ctx: Ctx, identity: StackItem | null, oracleAt: StackItem | null): string {
-  const rows: string[][] = [];
-  const add = (network: string, kind: string): void => {
-    if (!rows.some((r) => r[0] === network && r[1] === kind)) rows.push([network, kind, '']);
-  };
-  for (const t of ctx.databases) {
-    const kind = t.service === 'azure-sqlmi' ? 'sqlmi' : t.service === 'azure-pg-flex' ? 'postgres' : t.service === 'azure-mysql-flex' ? 'mysql' : undefined;
-    if (kind) add(dbNetwork(ctx, ctx.dbById.get(t.database)), kind);
-  }
-  if (oracleAt) add(oracleAt.values.network as string, 'oracle');
-  if (identity) add('prod', identity.values.strategy === 'managed-ad' ? 'aadds' : 'dns-resolver');
-  return grid(rows);
-}
 
 /** Does a stack carry a write-only argument (Terraform 1.11)? Cloud SQL for SQL Server and AlloyDB passwords, Azure MySQL flexible server. */
 export function needsWriteOnly(items: readonly StackItem[]): boolean {
@@ -1042,25 +1054,14 @@ export function needsWriteOnly(items: readonly StackItem[]): boolean {
 function drStack(ctx: Ctx, backend: Exclude<BackendKind, 'none'>): PlatformStack | null {
   const { pd, platform, plan } = ctx;
   if (platform === 'vmware' || !pd.drRegion || ctx.scope === 'apps') return null;
-  const prod = pd.networks.find((n) => n.name === 'prod') ?? pd.networks[0];
-  if (!prod) return null;
-  const key = overrideKey(platform, 'network-prod-dr', 'cidr');
-  const cidr = plan.designOverrides[key]?.trim() || freeBlock(ctx.used, 16, NETWORK_BASE[platform] + 100);
-  if (!cidr) {
-    ctx.findings.push(error('plan.tf.dr-no-range', `${PLATFORM_LABELS[platform]}: no free /16 is left in 10.0.0.0/8 for the DR network.`, { path: key }));
+  // Exactly the user's networks in the DR region: none, no DR stack (and a finding says so).
+  const drNetworks = pd.networks.filter((n) => n.region === pd.drRegion);
+  if (drNetworks.filter((n) => !n.existingId).length === 0) {
+    ctx.findings.push(warning('plan.tf.dr-no-network', `${PLATFORM_LABELS[platform]}: the DR region ${pd.drRegion} has no network, so no DR landing zone is generated; add its networks and subnets on Landing zones.`, { path: `net:${platform}:` }));
     return null;
   }
-  ctx.used.push(cidr);
-  // No IPv6 range is carried over: Azure's DR range is derived by the blueprint from the DR prefix.
-  const { ipv6Cidr: _v6, ...rest } = prod;
-  const drNetwork: NetworkDesign = {
-    ...rest,
-    envs: ['dr'],
-    cidr,
-    subnets: prod.subnets.filter((s) => (prod.tiers as readonly string[]).includes(s.tier)).map(({ ipv6Cidr: _s, ...s }) => s),
-  };
-  const drDesign: PlatformDesign = { ...pd, prefix: `${pd.prefix}-dr`, region: pd.drRegion, networks: [drNetwork] };
-  const lz = landingZoneItem({ ...ctx, pd: drDesign }, drDesign, '');
+  const drDesign: PlatformDesign = { ...pd, prefix: `${pd.prefix}-dr`, region: pd.drRegion, networks: drNetworks };
+  const lz = landingZoneItem({ ...ctx, pd: drDesign }, drDesign);
   if (!lz) return null;
   return {
     platform,
@@ -1098,6 +1099,11 @@ export function planToStacks(plan: Plan, decision: PlanDecision, design: TargetD
   const ordered = PLATFORM_VALUES.flatMap((p) => design.platforms.filter((d) => d.platform === p));
   for (const pd of ordered) {
     const platform = pd.platform;
+    if (builtIn(pd.networks, pd.region).length === 0 && !(scope === 'apps' && options.landingZone === 'shared')) {
+      // No network defined for this cloud: nothing is generated for it.
+      findings.push(noNetworkFinding(platform));
+      continue;
+    }
     const ctx = contextFor(plan, decision, design, pd, options, used, findings);
     const withLz = scope !== 'apps' || !ctx.shared;
     const withWorkloads = scope !== 'landing-zone';
@@ -1119,7 +1125,7 @@ export function planToStacks(plan: Plan, decision: PlanDecision, design: TargetD
       // Nothing of the selected apps lands here: no stack, not even a landing zone.
       continue;
     }
-    const lz = withLz ? landingZoneItem(ctx, pd, platform === 'azure' ? azureDelegations(ctx, identity, oracleAt) : '') : null;
+    const lz = withLz ? landingZoneItem(ctx, pd) : null;
 
     const items = [lz, identity, connectivity, governance, compute, databases, oracleAt, ...app.head, backup, monitoring, ...app.monitoring, relocate, replication]
       .filter((i): i is StackItem => i !== null);

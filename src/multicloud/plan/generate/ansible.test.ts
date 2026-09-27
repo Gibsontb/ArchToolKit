@@ -15,6 +15,7 @@ import { ansibleFiles, planToSite, siteEnvelope } from './ansible.ts';
 import {
   DYNAMIC_FILES, DYNAMIC_PLUGINS, groupsInPattern, hostsMatching, KNOWN_VAULT_NAMES, NAME_VAR, TAG_VAR, type DynamicPlatform,
 } from './inventory.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 // ---------------------------------------------------------------------------
 // The fixture: every platform, every engine the site installs
@@ -99,7 +100,7 @@ const EDR: InfraItem = {
 
 function fixture(over: Partial<Plan> = {}): { plan: Plan; decision: PlanDecision; design: TargetDesign } {
   const base = defaultRequirements();
-  const plan: Plan = {
+  const plan: Plan = withUserNetworks({
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-wp8', name: 'Mixed Move', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: W.map(([w]) => w),
     databases: D.map(([d]) => d),
@@ -114,12 +115,16 @@ function fixture(over: Partial<Plan> = {}): { plan: Plan; decision: PlanDecision
       connection: 'vpn',
       siem: 'splunk',
     },
-    designOverrides: { 'google:lz:scope': 'my-project' },
+    // The user extends AD into each cloud, with their own DC names (nothing is built for identity otherwise).
+    designOverrides: {
+      'google:lz:scope': 'my-project',
+      ...Object.fromEntries((['aws', 'azure', 'google', 'oci'] as const).flatMap((c) => [[`${c}:identity:extend-ad`, 'yes'], [`${c}:identity:dc-names`, `${c}dc01, ${c}dc02`]])),
+    },
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
     appPlans: [SHOP_PLAN],
     dcExit: { dualRunningDays: 30, hardwareRemovalDays: 30, infra: [EDR], external: [], contracts: [], assets: [] } as unknown as Plan['dcExit'],
     ...over,
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
   const items: Record<string, ItemDecision> = {};
   for (const [w, p] of W) items[w.id] = decisionItem(w.id, 'workload', p);
   for (const [d, p] of D) items[d.id] = decisionItem(d.id, 'database', p);

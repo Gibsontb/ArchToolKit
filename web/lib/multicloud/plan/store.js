@@ -29,7 +29,8 @@ import {
   defaultRequirements,
 } from './options.js';
 import {
-  PLAN_KIND, RATECARD_KIND, TRACKER_KIND,                                                                         
+  PLAN_KIND, RATECARD_KIND, TRACKER_KIND,                                                                                                
+                                                     
                                                                                                               
 } from './types.js';
 
@@ -435,6 +436,7 @@ export function planFromEnvelope(value      )                                   
     ...(isRecord(v.execution) ? { execution: executionFrom(v.execution) } : {}),
     ...(isRecord(v.governance) ? { governance: governanceFrom(v.governance) } : {}),
     ...(isRecord(v.dcExit) ? { dcExit: dcExitFrom(v.dcExit) } : {}),
+    ...(isRecord(v.networks) ? { networks: networksFrom(v.networks) } : {}),
   };
   return { ok: plan };
 }
@@ -480,6 +482,16 @@ function governanceFrom(x                      )             {
     comms: { ...d.comms, ...(obj(x.comms)                                ) },
     environments: Array.isArray(x.environments) ? (x.environments                                         ) : d.environments,
   };
+}
+
+/** The user's network rows per cloud: lists only, rows kept as saved. */
+function networksFrom(x                      )               {
+  const out                                            = {};
+  for (const [cloud, v] of Object.entries(x)) {
+    if (!isRecord(v)) continue;
+    out[cloud] = { networks: list(v.networks)                           , subnets: list(v.subnets)                           };
+  }
+  return out                ;
 }
 
 function dcExitFrom(x                      )         {

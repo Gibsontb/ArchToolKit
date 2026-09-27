@@ -435,22 +435,43 @@ export function uniqueNames(rows: readonly GridRow[], column: string, input: str
 }
 
 // ---------------------------------------------------------------------------
-// Networks: the landing zone's grid, and carving subnets out of it
+// Networks and subnets: the landing zone's two grids, built exactly as given
 // ---------------------------------------------------------------------------
 
+/**
+ * The networks grid: one row per network the user built. Nothing is carved
+ * from it: the subnets are the subnets grid's rows. `Existing ID` marks a
+ * network that exists already (a hub), which new networks attach to and
+ * which is never built.
+ */
 export const NETWORK_COLUMNS: readonly GridColumn[] = [
   { name: 'Network' },
   { name: 'Environments' },
   { name: 'IPv4 CIDR' },
   { name: 'IPv6', options: ['yes', 'no'] },
-  { name: 'Tiers', options: ['web app db mgmt', 'web app db', 'app db', 'mgmt'] },
-  { name: 'Zones', options: ['1', '2', '3'] },
+  { name: 'Role', options: ['hub', 'spoke', 'shared-services', 'inspection', 'egress'] },
+  { name: 'Existing ID' },
 ];
 
-export const DEFAULT_NETWORKS: readonly (readonly string[])[] = [
-  ['prod', 'prod', '10.40.0.0/16', 'yes', 'web app db mgmt', '3'],
-  ['nonprod', 'dev test', '10.41.0.0/16', 'yes', 'web app db mgmt', '2'],
+/** No network by default: the landing zone builds only what the user gives. */
+export const DEFAULT_NETWORKS: readonly (readonly string[])[] = [];
+
+/**
+ * The subnets grid: one row per subnet, exactly as built. Purpose is a tier
+ * (web, app, db, mgmt, container) or one of the cloud's platform subnets
+ * (GatewaySubnet, tgw-attachment, proxy-only, public …). Zone is the zone
+ * name on AWS (or an OCI availability domain), `regional` elsewhere.
+ */
+export const SUBNET_COLUMNS: readonly GridColumn[] = [
+  { name: 'Network' },
+  { name: 'Subnet' },
+  { name: 'Purpose' },
+  { name: 'Zone' },
+  { name: 'IPv4 CIDR' },
+  { name: 'IPv6', options: ['yes', 'no'] },
 ];
+
+export const DEFAULT_SUBNETS: readonly (readonly string[])[] = [];
 
 export interface NetworkSpec {
   readonly name: string;
@@ -460,8 +481,34 @@ export interface NetworkSpec {
   readonly ipv6: boolean;
   /** An explicit IPv6 range from the IPv6 cell (a /48 for Azure), when one was given instead of "yes". */
   readonly ipv6Cidr?: string;
+  readonly role: string;
+  /** Set on a network that exists already: attached to, never built. */
+  readonly existingId?: string;
+  /** The workload tiers among its subnets, in the order web, app, db, mgmt. */
   readonly tiers: readonly Tier[];
+  /** How many zones its subnets use (1 for regional subnets). */
   readonly zones: number;
+}
+
+const v4ToInt = (a: string): number => a.split('.').reduce((n, o) => n * 256 + Number(o), 0);
+const intToV4 = (n: number): string => [24, 16, 8, 0].map((s) => Math.floor(n / 2 ** s) % 256).join('.');
+
+const v4Range = (cidr: string): [number, number] | null => {
+  const [base = '', p = ''] = cidr.split('/');
+  if (familyOf(base) !== 4 || !/^\d+$/.test(p)) return null;
+  const size = 2 ** (32 - Number(p));
+  const start = v4ToInt(base) - (v4ToInt(base) % size);
+  return [start, start + size];
+};
+function cidrOverlap(a: string, b: string): boolean {
+  const x = v4Range(a);
+  const y = v4Range(b);
+  return !!x && !!y && x[0] < y[1] && y[0] < x[1];
+}
+function cidrInside(inner: string, outer: string): boolean {
+  const x = v4Range(inner);
+  const y = v4Range(outer);
+  return !!x && !!y && x[0] >= y[0] && x[1] <= y[1];
 }
 
 export function parseNetworks(text: string, findings: Finding[]): NetworkSpec[] {
@@ -476,10 +523,7 @@ export function parseNetworks(text: string, findings: Finding[]): NetworkSpec[] 
     }
     const v6cell = r['IPv6'] ?? '';
     const v6cidr = familyOf(v6cell) === 6 && v6cell.includes('/') ? v6cell : undefined;
-    const tiers = words(r['Tiers'] ?? '').filter((t): t is Tier => (TIERS as readonly string[]).includes(t));
-    if (tiers.length === 0) {
-      findings.push(warning('tf.mig.network-no-tiers', `Network ${name} names no tier of web, app, db or mgmt; it gets all four.`, { path: 'networks' }));
-    }
+    const existingId = (r['Existing ID'] ?? '').trim();
     out.push({
       name,
       id: ident(name),
@@ -487,23 +531,30 @@ export function parseNetworks(text: string, findings: Finding[]): NetworkSpec[] 
       cidr,
       ipv6: v6cidr !== undefined || yes(v6cell),
       ...(v6cidr ? { ipv6Cidr: v6cidr } : {}),
-      tiers: tiers.length > 0 ? tiers : [...TIERS],
-      zones: Math.min(3, cellNumber(r['Zones'], 1)),
+      role: (r['Role'] ?? '').trim() || 'spoke',
+      ...(existingId ? { existingId } : {}),
+      tiers: [],
+      zones: 1,
     });
   }
-  if (out.length === 0 && !findings.some((f) => f.severity === 'error')) {
-    findings.push(error('tf.mig.no-networks', 'The networks grid has no rows, so there is nothing to build.', { path: 'networks' }));
+  for (let i = 0; i < out.length; i++) {
+    for (let j = i + 1; j < out.length; j++) {
+      if (cidrOverlap(out[i]!.cidr, out[j]!.cidr)) {
+        findings.push(error('tf.mig.network-overlap', `Networks ${out[i]!.name} (${out[i]!.cidr}) and ${out[j]!.name} (${out[j]!.cidr}) overlap.`, { path: 'networks' }));
+      }
+    }
+  }
+  if (out.filter((n) => !n.existingId).length === 0 && !findings.some((f) => f.severity === 'error')) {
+    findings.push(error('tf.mig.no-networks', 'The networks grid has no network to build: add the networks and their subnets (nothing is built by default).', { path: 'networks' }));
   }
   return out;
 }
 
-const v4ToInt = (a: string): number => a.split('.').reduce((n, o) => n * 256 + Number(o), 0);
-const intToV4 = (n: number): string => [24, 16, 8, 0].map((s) => Math.floor(n / 2 ** s) % 256).join('.');
-
 /**
  * `count` subnets of `/prefix`, carved in order from the start of `cidr`, then
  * (when asked) extra blocks of other sizes after them, each aligned to its size.
- * Returns null when they do not fit.
+ * Returns null when they do not fit. (Used for the ODB and OCVS ranges the
+ * user gives; never for the landing zone's subnets.)
  */
 export function carve(cidr: string, sizes: readonly number[]): string[] | null {
   const [base = '', p = '0'] = cidr.split('/');
@@ -541,47 +592,131 @@ export function ulaFor(seed: string): string {
 
 export interface SubnetSpec {
   readonly network: NetworkSpec;
+  /** Its purpose: a tier (web, app, db, mgmt, container) or a platform subnet. */
   readonly tier: Tier | string;
-  /** The zone letter, for a zonal subnet; undefined for a regional one. */
+  /** The zone name (AWS Availability Zone, OCI availability domain); undefined for a regional subnet. */
   readonly zone?: string;
+  /** The zone letter the contract's keys end in (AWS: the zone name's last letter). */
+  readonly letter?: string;
   readonly cidr: string;
-  /** The emitter's short name, `web-a` or `web`. */
+  /** Dual-stack subnet. */
+  readonly ipv6: boolean;
+  /** Its name, exactly as the user gave it (Azure's platform subnets keep Azure's names). */
   readonly short: string;
   /** Its Terraform label once renamed: `prod_web_a`. */
   readonly label: string;
 }
 
 /**
- * The subnets of each network: tier-major, zone-minor. Zonal clouds (AWS) get
- * one per tier per zone; regional ones (Azure, Google, OCI) one per tier.
+ * The subnets grid, against the networks: every row exactly as given, and
+ * nothing more. A row is an error when its network is unknown or exists
+ * already, its CIDR is not IPv4, lies outside its network or overlaps
+ * another row; on a zonal cloud (AWS) it needs its zone, on a regional one
+ * (Azure, Google) it must not have one (OCI takes an availability domain).
+ * Each network's `tiers` and `zones` are set from its subnets (the array is
+ * updated in place).
  */
-export function carveNetwork(
-  network: NetworkSpec,
-  prefixLen: number,
-  zonal: boolean,
-  extras: readonly { tier: string; size: number }[],
-  findings: Finding[],
-): SubnetSpec[] {
-  const plan: { tier: string; zone?: string; size: number }[] = [];
-  for (const tier of network.tiers) {
-    if (zonal) for (let z = 0; z < network.zones; z++) plan.push({ tier, zone: ZONE_LETTERS[z], size: prefixLen });
-    else plan.push({ tier, size: prefixLen });
+export function parseSubnets(text: string, networks: NetworkSpec[], zonal: boolean, findings: Finding[], cloud?: MigCloud): SubnetSpec[] {
+  const rows = parseGrid(text, SUBNET_COLUMNS.map((c) => c.name));
+  const out: SubnetSpec[] = [];
+  for (const r of rows) {
+    const net = networks.find((n) => n.name === rname(r['Network'] ?? ''));
+    const short = (r['Subnet'] ?? '').trim();
+    const tier = (r['Purpose'] ?? '').trim();
+    const cidr = (r['IPv4 CIDR'] ?? '').trim();
+    const zoneCell = (r['Zone'] ?? '').trim();
+    const zone = zoneCell === '' || zoneCell === 'regional' ? undefined : zoneCell;
+    const where = `Subnet ${short || '(no name)'}`;
+    if (!net) {
+      findings.push(error('tf.mig.subnet-network', `${where}: there is no network called ${r['Network'] ?? ''}.`, { path: 'subnets' }));
+      continue;
+    }
+    if (net.existingId) {
+      findings.push(error('tf.mig.subnet-existing-network', `${where}: ${net.name} exists already (${net.existingId}); its subnets are not built here.`, { path: 'subnets' }));
+      continue;
+    }
+    if (!short || !tier) {
+      findings.push(error('tf.mig.subnet-row', `${where} in ${net.name}: a subnet needs its name and purpose.`, { path: 'subnets' }));
+      continue;
+    }
+    if (familyOf(cidr) !== 4 || !cidr.includes('/')) {
+      findings.push(error('tf.mig.subnet-cidr', `${where} in ${net.name}: "${cidr}" is not an IPv4 CIDR.`, { path: 'subnets' }));
+      continue;
+    }
+    if (!cidrInside(cidr, net.cidr)) {
+      findings.push(error('tf.mig.subnet-outside', `${where}: ${cidr} is outside its network ${net.name} (${net.cidr}).`, { path: 'subnets' }));
+      continue;
+    }
+    const clash = out.find((o) => o.network.name === net.name && cidrOverlap(o.cidr, cidr));
+    if (clash) {
+      findings.push(error('tf.mig.subnet-overlap', `${where}: ${cidr} overlaps ${clash.short} (${clash.cidr}) in ${net.name}.`, { path: 'subnets' }));
+      continue;
+    }
+    if (out.some((o) => o.network.name === net.name && o.short === short)) {
+      findings.push(error('tf.mig.subnet-duplicate', `${where}: ${net.name} already has a subnet called ${short}.`, { path: 'subnets' }));
+      continue;
+    }
+    if (zonal && !zone) {
+      findings.push(error('tf.mig.subnet-zonal', `${where} in ${net.name}: AWS subnets are zonal; give its Availability Zone.`, { path: 'subnets' }));
+      continue;
+    }
+    if (!zonal && zone && cloud !== 'oci') {
+      findings.push(error('tf.mig.subnet-regional', `${where} in ${net.name}: subnets here are regional; "${zone}" cannot be a subnet's zone.`, { path: 'subnets' }));
+      continue;
+    }
+    const v6 = yes(r['IPv6'] ?? '');
+    if (v6 && !net.ipv6) {
+      findings.push(error('tf.mig.subnet-ipv6', `${where}: IPv6 is on, but ${net.name} is IPv4 only.`, { path: 'subnets' }));
+      continue;
+    }
+    const letter = zone ? (zonal ? zone.slice(-1).toLowerCase() : undefined) : undefined;
+    out.push({ network: net, tier, ...(zone ? { zone } : {}), ...(letter ? { letter } : {}), cidr, ipv6: v6, short, label: ident(net.id, short) });
   }
-  for (const e of extras) plan.push({ tier: e.tier, size: e.size });
-  const cidrs = carve(network.cidr, plan.map((p) => p.size));
-  if (!cidrs) {
-    findings.push(
-      error('tf.mig.subnets-do-not-fit', `Network ${network.name}: ${plan.length} subnets (${plan.map((p) => `/${p.size}`).join(' ')}) do not fit in ${network.cidr}.`, {
-        path: 'networks',
-        remediation: 'Use a larger network, fewer zones or tiers, or a smaller subnet size.',
-      }),
-    );
-    return [];
+  // Each network's tiers and zone count, from its subnets.
+  for (let i = 0; i < networks.length; i++) {
+    const n = networks[i]!;
+    const mine = out.filter((s) => s.network.name === n.name);
+    const tiers = TIERS.filter((t) => mine.some((s) => s.tier === t));
+    const zones = new Set(mine.map((s) => s.zone).filter(Boolean)).size || 1;
+    const next: NetworkSpec = { ...n, tiers, zones };
+    networks[i] = next;
+    for (let j = 0; j < out.length; j++) if (out[j]!.network.name === n.name) out[j] = { ...out[j]!, network: next };
   }
-  return plan.map((p, i) => {
-    const short = p.zone ? `${p.tier}-${p.zone}` : p.tier;
-    return { network, tier: p.tier, zone: p.zone, cidr: cidrs[i] as string, short, label: ident(network.id, short) };
-  });
+  return out;
+}
+
+/**
+ * The contract's subnet keys for one subnet: `<network>/<purpose>/<zone
+ * letter>` (a regional subnet is keyed for every zone letter), then
+ * `<network>/<purpose>` and `<network>/<name>`; the first subnet wins a key.
+ */
+export function subnetKeys(s: SubnetSpec): string[] {
+  const n = s.network.name;
+  const keys = s.letter ? [`${n}/${s.tier}/${s.letter}`] : ZONE_LETTERS.map((z) => `${n}/${s.tier}/${z}`);
+  return [...keys, `${n}/${s.tier}`, `${n}/${s.short}`];
+}
+
+/** Key → subnet for a landing zone's subnets (the first subnet wins each key). */
+export function subnetKeyMap(subnets: readonly SubnetSpec[]): Map<string, SubnetSpec> {
+  const out = new Map<string, SubnetSpec>();
+  for (const s of subnets) for (const k of subnetKeys(s)) if (!out.has(k)) out.set(k, s);
+  return out;
+}
+
+/** One subnet per zone of a network, the first of each zone in the order given (or all regional ones): what endpoints and attachments sit in. */
+export function onePerZone(subnets: readonly SubnetSpec[], prefer?: string): SubnetSpec[] {
+  const preferred = prefer ? subnets.filter((s) => s.tier === prefer) : [];
+  const pool = preferred.length > 0 ? preferred : subnets.filter((s) => (TIERS as readonly string[]).includes(s.tier));
+  const list = pool.length > 0 ? pool : subnets;
+  const seen = new Set<string>();
+  const out: SubnetSpec[] = [];
+  for (const s of list) {
+    const z = s.zone ?? '';
+    if (seen.has(z)) continue;
+    seen.add(z);
+    out.push(s);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1301,16 +1436,15 @@ export function landingZoneInputs(cloud: MigCloud, regions: readonly string[], d
       default: regions.includes(defaultRegion) ? defaultRegion : regions[0],
       options: opts(regions),
     },
-    gridInput('networks', 'Networks', NETWORK_COLUMNS, DEFAULT_NETWORKS, 'One row per network. Tiers are any of web, app, db and mgmt; Zones is how many zones each tier spans. IPv6 yes makes the network dual-stack.'),
-    {
-      id: 'subnet_prefix',
-      label: 'Subnet size',
-      control: 'select',
-      default: '22',
-      options: ['20', '21', '22', '23', '24'].map((p) => ({ value: p, label: `/${p}` })),
-      hint: 'Each tier (and zone) gets one subnet this size, carved in order from the network.',
-    },
-    { id: 'site_cidrs', label: 'On-premises ranges', control: 'text', default: '10.0.0.0/16 fd00:10::/48', hint: 'Space-separated, either family. Management and WinRM are allowed from these only.' },
+    gridInput('networks', 'Networks', NETWORK_COLUMNS, DEFAULT_NETWORKS, 'One row per network, as your network team assigned it. Role: hub, spoke, shared-services, inspection or egress. Existing ID: a network that exists already (the hub), which the new ones attach to; it is not built. IPv6 yes makes the network dual-stack.'),
+    gridInput('subnets', 'Subnets', SUBNET_COLUMNS, DEFAULT_SUBNETS, cloud === 'aws'
+      ? 'One row per subnet, built exactly as given. Purpose: web, app, db, mgmt, container, tgw-attachment, public, firewall or endpoints. Zone: the Availability Zone (AWS subnets are zonal).'
+      : cloud === 'azure'
+        ? 'One row per subnet, built exactly as given. Purpose: web, app, db, mgmt, container, GatewaySubnet, AzureFirewallSubnet, AzureFirewallManagementSubnet, AzureBastionSubnet, private-endpoints, or a delegation (sqlmi, postgres, mysql, dns-resolver, aadds, oracle, functions, webapp). Zone: regional.'
+        : cloud === 'google'
+          ? 'One row per subnet, built exactly as given. Purpose: web, app, db, mgmt, container, proxy-only or psc. Zone: regional.'
+          : 'One row per subnet, built exactly as given. Purpose: web, app, db, mgmt, container, public, firewall or lb. Zone: regional, or AD-1/2/3 for an availability-domain-specific subnet.'),
+    { id: 'site_cidrs', label: 'On-premises ranges', control: 'text', default: '', hint: 'Space-separated, either family. Management and WinRM are allowed from these only.' },
     {
       id: 'bastion',
       label: 'Administrative access',
@@ -1347,8 +1481,12 @@ export function landingZoneInputs(cloud: MigCloud, regions: readonly string[], d
 export interface LandingZoneSpec {
   readonly prefix: string;
   readonly region: string;
+  /** The networks built here (the rows without an Existing ID). */
   readonly networks: readonly NetworkSpec[];
-  readonly prefixLen: number;
+  /** The networks that exist already: attached to, never built. */
+  readonly existing: readonly NetworkSpec[];
+  /** Every subnet row, as given. */
+  readonly subnets: readonly SubnetSpec[];
   readonly siteV4: readonly string[];
   readonly siteV6: readonly string[];
   readonly bastion: 'cloud-native' | 'jump-vm' | 'none';
@@ -1359,8 +1497,16 @@ export interface LandingZoneSpec {
   readonly maxZones: number;
 }
 
-export function parseLandingZone(values: BlueprintValues, defaultRegion: string, findings: Finding[]): LandingZoneSpec {
-  const networks = parseNetworks(valueOf(values, 'networks', DEFAULT_NETWORKS.map((r) => r.join(' | ')).join('\n')), findings);
+export function parseLandingZone(values: BlueprintValues, defaultRegion: string, findings: Finding[], cloud: MigCloud): LandingZoneSpec {
+  const all = parseNetworks(valueOf(values, 'networks'), findings);
+  const subnets = parseSubnets(valueOf(values, 'subnets'), all, cloud === 'aws', findings, cloud);
+  const networks = all.filter((n) => !n.existingId);
+  const existing = all.filter((n) => !!n.existingId);
+  for (const n of networks) {
+    if (!subnets.some((s) => s.network.name === n.name)) {
+      findings.push(error('tf.mig.network-no-subnets', `Network ${n.name} has no subnet rows: add the subnets it needs.`, { path: 'subnets' }));
+    }
+  }
   const site = words(valueOf(values, 'site_cidrs'));
   const siteV4 = site.filter((c) => familyOf(c) === 4);
   const siteV6 = site.filter((c) => familyOf(c) === 6);
@@ -1377,7 +1523,8 @@ export function parseLandingZone(values: BlueprintValues, defaultRegion: string,
     prefix: rname(valueOf(values, 'prefix', 'mig')) || 'mig',
     region: valueOf(values, 'region', defaultRegion),
     networks,
-    prefixLen: Math.min(28, Math.max(16, Number(valueOf(values, 'subnet_prefix', '22')) || 22)),
+    existing,
+    subnets,
     siteV4,
     siteV6,
     bastion: bastion === 'jump-vm' || bastion === 'none' ? bastion : 'cloud-native',
@@ -1463,7 +1610,7 @@ export function odbInputs(cloud: 'aws' | 'azure' | 'google'): Blueprint['inputs'
     { id: 'storage_count', label: 'Storage servers', control: 'number', default: 3, min: 3, max: 64 },
     { id: 'vm_cluster_cores', label: 'VM cluster cores (OCPUs)', control: 'number', default: 16, min: 4 },
     { id: 'databases', label: 'Databases', control: 'text', default: 'erp crm', hint: 'Names, space-separated. The container databases created in the VM cluster.' },
-    ...(cloud !== 'azure' ? [{ id: 'odb_network_cidr', label: 'ODB network range', control: 'text' as const, default: '10.60.0.0/24', hint: 'Client and backup subnets are carved from it.' }] : []),
+    ...(cloud !== 'azure' ? [{ id: 'odb_network_cidr', label: 'ODB network range', control: 'text' as const, default: '', hint: 'Client and backup subnets are carved from it.' }] : []),
     { id: 'admin_password_var', label: 'Admin password variable', control: 'text', default: 'odb_admin_password', hint: 'A sensitive variable, set as TF_VAR_… and never written.' },
     { id: 'create_databases', label: 'Create databases through OCI', control: 'select', default: 'yes', options: YES_NO },
     { id: 'licence', label: 'Licence', control: 'select', default: 'BRING_YOUR_OWN_LICENSE', options: [{ value: 'BRING_YOUR_OWN_LICENSE', label: 'Bring your own licence' }, { value: 'LICENSE_INCLUDED', label: 'Licence included' }] },

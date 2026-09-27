@@ -9,6 +9,7 @@
  * for the other migration blueprints.
  */
 
+import { USER_VALUES } from '../../../testing/blueprint-user-values.ts';
 import { describe, it } from 'node:test';
 import { expect } from '../../../testing/expect.ts';
 import { defaultValues, type Blueprint, type BlueprintValues } from '../../../kit/blueprint.ts';
@@ -232,7 +233,7 @@ describe('replication blueprints: stacked with their landing zone', () => {
   for (const c of ['aws', 'google', 'oci'] as const) {
     it(`${c}: landing zone + replication builds with no tf.stack warning`, () => {
       const items: StackItem[] = [`${c}_mig_landing_zone`, `${c}_mig_replication`].map((id) => ({
-        id, blueprintId: id, label: id.includes('landing') ? 'landing-zone' : 'replication', values: { landing_zone_source: 'stack', ...(c === 'oci' ? { vcenter: 'vc01.corp.example' } : {}) },
+        id, blueprintId: id, label: id.includes('landing') ? 'landing-zone' : 'replication', values: { ...(USER_VALUES[id] ?? {}), landing_zone_source: 'stack', ...(c === 'oci' ? { vcenter: 'vc01.corp.example' } : {}) } as Record<string, string>,
       }));
       const stack = buildStack(items, lookup, { target: c, stackName: `${c}-test`, requiredVersion: '>= 1.7.0' });
       const warned = stack.findings.filter((f) => f.code.startsWith('tf.stack.') && f.severity !== 'info');

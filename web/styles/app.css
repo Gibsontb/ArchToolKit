@@ -3071,3 +3071,22 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .dbb-setting-key { font-size: 0.7rem; color: var(--text-muted); font-weight: 400; }
 .dbb-doc { font-size: 0.72rem; }
 .file-bar-label { align-self: center; }
+
+/* The network row editor (Landing zones, wizard step 6): compact inputs in table cells. */
+.net-rows td input[type='text'],
+.net-rows td select {
+  padding: 0.3rem 0.4rem;
+  font-size: 0.85rem;
+}
+.net-rows td { vertical-align: top; }
+.net-rows .net-row-error { color: var(--danger); }
+.net-rows .net-row-warn { color: var(--warn); }
+.net-rows .net-row-ok { color: var(--ok); }
+.net-rows .tip {
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--info);
+  background: var(--bg-sunken);
+  border-radius: var(--radius-sm);
+  margin: var(--space-1) 0;
+}
+.net-rows .tip.warn { border-left-color: var(--danger); }

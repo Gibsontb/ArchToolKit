@@ -31,7 +31,8 @@
 import { info, warning,              } from '../../../../core/findings.js';
 import { renderYaml,                } from '../../../../ansible/yaml.js';
 import { isIaasService } from '../../design/index.js';
-import { networkZones } from '../../design/network.js';
+import { noNetworkFinding } from '../../design/network.js';
+import { builtIn, hubOf } from '../../design/net-rows.js';
 import { DB_SERVICES_EXTRA } from '../../db-catalog-extra.js';
 import { slugName } from '../../options.js';
                                                                                                           
@@ -146,8 +147,10 @@ class Template {
                        
                        
                               
-                                                  
+                                                               
                                           
+                                                   
+                                       
                                           
                                     
  
@@ -257,21 +260,29 @@ function network(b       , n               )         {
   if (v6) {
     t.add(`Route${N}Ipv6Default`, 'AWS::EC2::Route', { RouteTableId: Ref(routeTable), DestinationIpv6CidrBlock: '::/0', EgressOnlyInternetGatewayId: Ref(`Vpc${N}EgressOnlyGateway`) });
   }
-  const zones = networkZones(n);
-  const tierSubnets = n.subnets.filter((s) => (n.tiers                     ).includes(s.tier));
+  // Exactly the user's subnets, each in its own Availability Zone; nothing is carved or added.
   const subnets = new Map                  ();
-  tierSubnets.forEach((s, i) => {
-    const zi = Math.max(0, zones.indexOf(s.zone));
-    const letter = 'abc'[zi] ?? 'a';
-    const id = `Subnet${N}${pascal(s.tier)}${letter.toUpperCase()}`;
+  const zoneOf = new Map                ();
+  const publicOnes = n.subnets.filter((s) => s.tier === 'public');
+  let publicRoutes                    ;
+  if (publicOnes.length > 0) {
+    const igw = t.add(`Vpc${N}InternetGateway`, 'AWS::EC2::InternetGateway', {}, { ...netTags, ...nameTag(`${prefix}-${n.name}-igw`) });
+    t.add(`Vpc${N}InternetGatewayAttachment`, 'AWS::EC2::VPCGatewayAttachment', { VpcId: Ref(vpc), InternetGatewayId: Ref(igw) });
+    publicRoutes = t.add(`RouteTable${N}Public`, 'AWS::EC2::RouteTable', { VpcId: Ref(vpc) }, { ...netTags, ...nameTag(`${prefix}-${n.name}-public`) });
+    t.add(`Route${N}PublicDefault`, 'AWS::EC2::Route', { RouteTableId: Ref(publicRoutes), DestinationCidrBlock: '0.0.0.0/0', GatewayId: Ref(igw) }, undefined, { DependsOn: [`Vpc${N}InternetGatewayAttachment`] });
+  }
+  n.subnets.forEach((s, i) => {
+    const id = `Subnet${N}${pascal(s.name)}`;
     t.add(id, 'AWS::EC2::Subnet', {
       VpcId: Ref(vpc),
       CidrBlock: s.cidr,
-      AvailabilityZone: AZ(zi),
-      ...(v6 ? { Ipv6CidrBlock: Select(i, { 'Fn::Cidr': [vpcV6, Math.max(tierSubnets.length, 1), '64'] }), AssignIpv6AddressOnCreation: true } : {}),
-    }, { ...netTags, ...nameTag(`${prefix}-${n.name}-${s.tier}-${letter}`), atk_network: n.name, atk_tier: s.tier }, v6 ? { DependsOn: [v6] } : {});
-    t.add(`${id}Routes`, 'AWS::EC2::SubnetRouteTableAssociation', { SubnetId: Ref(id), RouteTableId: Ref(routeTable) });
+      AvailabilityZone: s.zone,
+      ...(v6 && s.ipv6 ? { Ipv6CidrBlock: Select(i, { 'Fn::Cidr': [vpcV6, Math.max(n.subnets.length, 1), '64'] }), AssignIpv6AddressOnCreation: true } : {}),
+      ...(s.tier === 'public' ? { MapPublicIpOnLaunch: true } : {}),
+    }, { ...netTags, ...nameTag(`${prefix}-${n.name}-${s.name}`), atk_network: n.name, atk_tier: s.tier }, v6 && s.ipv6 ? { DependsOn: [v6] } : {});
+    t.add(`${id}Routes`, 'AWS::EC2::SubnetRouteTableAssociation', { SubnetId: Ref(id), RouteTableId: Ref(s.tier === 'public' && publicRoutes ? publicRoutes : routeTable) });
     subnets.set(s.tier, [...(subnets.get(s.tier) ?? []), id]);
+    zoneOf.set(id, s.zone);
   });
 
   // A security group per tier; rules between groups are resources of their own (a group may name itself).
@@ -330,7 +341,7 @@ function network(b       , n               )         {
       ...(v6 ? [{ IpProtocol: 'tcp', FromPort: 443, ToPort: 443, CidrIpv6: vpcV6, Description: 'HTTPS from the VPC, IPv6' }] : []),
     ],
   }, { ...netTags, ...nameTag(`${prefix}-${n.name}-endpoints`) }, v6 ? { DependsOn: [v6] } : {});
-  const zoneTier = n.tiers.includes('mgmt') ? 'mgmt' : n.tiers[0] ?? 'app';
+  const endpointSubnets = onePerZone(subnets, zoneOf, 'endpoints');
   for (const svc of ['ssm', 'ssmmessages', 'ec2messages', 'logs', 'monitoring']) {
     t.add(`Vpc${N}${pascal(svc)}Endpoint`, 'AWS::EC2::VPCEndpoint', {
       VpcId: Ref(vpc),
@@ -340,16 +351,30 @@ function network(b       , n               )         {
       // IPv4: not every one of these services offers a dual-stack endpoint in every region.
       IpAddressType: 'ipv4',
       DnsOptions: { DnsRecordIpType: 'ipv4' },
-      SubnetIds: (subnets.get(zoneTier) ?? []).map(Ref),
+      SubnetIds: endpointSubnets.map(Ref),
       SecurityGroupIds: [Ref(endpointSg)],
     }, { ...netTags, ...nameTag(`${prefix}-${n.name}-${svc}`) });
   }
   t.add(`Vpc${N}FlowLog`, 'AWS::EC2::FlowLog', {
     ResourceId: Ref(vpc), ResourceType: 'VPC', TrafficType: 'ALL', LogDestinationType: 's3', LogDestination: GetAtt('LogBucket', 'Arn'), MaxAggregationInterval: 600,
   }, { ...netTags, ...nameTag(`${prefix}-${n.name}-flow-log`) }, { DependsOn: ['LogBucketPolicy'] });
-  const ids         = { net: n, vpc, ...(v6 ? { v6 } : {}), routeTable, subnets, sgs };
+  const ids         = { net: n, vpc, ...(v6 ? { v6 } : {}), routeTable, subnets, zoneOf, sgs };
   b.nets.set(n.name, ids);
   return ids;
+}
+
+/** One subnet per Availability Zone: the `prefer` purpose's where there are some, else the workload tiers', first of each zone. */
+function onePerZone(subnets                                        , zoneOf                             , prefer        )           {
+  const tiers = ['web', 'app', 'db', 'mgmt'];
+  const pool = subnets.get(prefer)?.length ? [...subnets.get(prefer) ] : tiers.flatMap((t) => subnets.get(t) ?? []);
+  const list = pool.length > 0 ? pool : [...subnets.values()].flat();
+  const seen = new Set        ();
+  return list.filter((id) => {
+    const z = zoneOf.get(id) ?? '';
+    if (seen.has(z)) return false;
+    seen.add(z);
+    return true;
+  });
 }
 
 function keysAndLogs(b       )       {
@@ -442,10 +467,10 @@ function identity(b       )       {
   const { ctx, t, prefix } = b;
   const strategy = ctx.pd.identity.strategy;
   if (strategy === 'none') return;
-  const prod = b.nets.get('prod') ?? [...b.nets.values()][0];
+  const prod = b.nets.get(hubOf(ctx.pd.networks, ctx.pd.region)?.name ?? '') ?? [...b.nets.values()][0];
   if (!prod) return;
   const domain = ctx.plan.requirements.identity.domain?.trim() || 'corp.example.com';
-  const mgmt = (prod.subnets.get('mgmt') ?? [...prod.subnets.values()][0] ?? []).slice(0, 2);
+  const mgmt = onePerZone(prod.subnets, prod.zoneOf, 'mgmt').slice(0, 2);
   const tags = b.tags();
   if (mgmt.length < 2) {
     terraformOnly(ctx, 'DNS forwarding to the domain', 'the Route 53 Resolver endpoint and Managed Microsoft AD need two subnets in different zones, and the network has one.');
@@ -514,7 +539,7 @@ function connectivity(b       )       {
   const tgw = nets.length >= 2;
   const asn = ctx.pd.connectivity[0]?.cloudAsn ?? 64512;
   const tags = b.tags();
-  const zoneSubnets = (n        )           => n.subnets.get(n.net.tiers.includes('mgmt') ? 'mgmt' : n.net.tiers[0] ?? 'app') ?? [];
+  const zoneSubnets = (n        )           => onePerZone(n.subnets, n.zoneOf, 'tgw-attachment');
   if (tgw) {
     t.add('TransitGateway', 'AWS::EC2::TransitGateway', {
       Description: `${prefix} hub`,
@@ -691,8 +716,8 @@ function compute(b       )       {
     const name = vmName(ctx, vm);
     const net = b.nets.get(vm.network) ?? [...b.nets.values()][0];
     if (!net) continue;
-    const zi = zoneIndexOf(ctx.pd, vm);
-    const subnet = (net.subnets.get(vm.tier) ?? [])[zi] ?? (net.subnets.get(vm.tier) ?? [])[0];
+    const tierSubnets = net.subnets.get(vm.tier) ?? [];
+    const subnet = tierSubnets.find((id) => net.zoneOf.get(id) === vm.zone) ?? tierSubnets[0];
     const sg = net.sgs.get(vm.tier);
     if (!subnet || !sg) {
       ctx.findings.push(warning('plan.native.aws-vm-tier', `${name}: the ${vm.network} network has no ${vm.tier} tier, so the VM is left out.`));
@@ -706,10 +731,11 @@ function compute(b       )       {
     let hostId                    ;
     if (vm.dedicatedHost) {
       const family = vm.size.split('.')[0] ?? vm.size;
-      const key = `${family}-${zi}`;
+      const zone = net.zoneOf.get(subnet) ?? vm.zone;
+      const key = `${family}-${zone.slice(-1)}`;
       hostId = hosts.get(key);
       if (!hostId) {
-        hostId = t.add(`Host${pascal(family)}${'ABC'[zi]}`, 'AWS::EC2::Host', { AvailabilityZone: AZ(zi), InstanceFamily: family, AutoPlacement: 'off', HostRecovery: 'on' }, { ...b.tags(), ...nameTag(`${prefix}-${key}`) });
+        hostId = t.add(`Host${pascal(family)}${zone.slice(-1).toUpperCase()}`, 'AWS::EC2::Host', { AvailabilityZone: zone, InstanceFamily: family, AutoPlacement: 'off', HostRecovery: 'on' }, { ...b.tags(), ...nameTag(`${prefix}-${key}`) });
         hosts.set(key, hostId);
         terraformOnly(ctx, 'License Manager association of dedicated hosts', 'CloudFormation has no resource associating a host with a License Manager configuration; associate the hosts in License Manager (the Terraform stack does it with aws_licensemanager_association).');
       }
@@ -1450,13 +1476,24 @@ function stackNameOf(plan      , ctx           , options               )        
 
 function build(plan      , decision              , design              , options               )               {
   const pd = design.platforms.find((p) => p.platform === 'aws');
-  if (!pd) return null;
+  if (!pd || builtIn(pd.networks, pd.region).length === 0) return null;
   const ctx = nativeContext(plan, decision, design, pd, options);
   if (!ctx) return null;
   const t = new Template();
   t.param(OWNER, { Type: 'String', Default: 'unassigned', Description: 'The atk_owner tag of what has no app owner in the plan (the landing zone, shared items).' }, 'Tags');
   const b = makeBuild(ctx, t);
-  for (const n of pd.networks) network(b, n);
+  for (const n of builtIn(pd.networks, pd.region)) network(b, n);
+  // An existing landing zone: each new VPC attaches to its Transit Gateway (the hub's id); no hub is built.
+  for (const hub of pd.networks.filter((n) => n.existingId && n.role === 'hub')) {
+    for (const n of b.nets.values()) {
+      t.add(`TransitGatewayAttachment${pascal(n.net.name)}To${pascal(hub.name)}`, 'AWS::EC2::TransitGatewayVpcAttachment', {
+        TransitGatewayId: hub.existingId,
+        VpcId: Ref(n.vpc),
+        SubnetIds: onePerZone(n.subnets, n.zoneOf, 'tgw-attachment').map(Ref),
+        Options: { Ipv6Support: n.v6 ? 'enable' : 'disable', DnsSupport: 'enable' },
+      }, { ...b.tags(), ...nameTag(`${b.prefix}-${n.net.name}-to-${hub.name}`) });
+    }
+  }
   keysAndLogs(b);
   if (ctx.scope !== 'apps') {
     identity(b);
@@ -1575,6 +1612,8 @@ function readme(built       )         {
  * a DR region) and a README with the exact deploy command.
  */
 export function cloudFormationFiles(plan      , decision              , design              , options                = {})              {
+  const aws = design.platforms.find((p) => p.platform === 'aws');
+  if (aws && builtIn(aws.networks, aws.region).length === 0) return { files: {}, findings: [noNetworkFinding('aws')] };
   const built = build(plan, decision, design, options);
   if (!built) {
     return { files: {}, findings: [info('plan.native.cfn-nothing', 'Nothing in this plan (or the selected apps) is placed on AWS, so there is no CloudFormation template.')] };

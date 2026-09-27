@@ -33,7 +33,7 @@ import { writeSettings } from '../../../kit/settings-file.js';
 import { findTerraformBlueprint } from '../../../terraform/blueprints/index.js';
                                                                   
 import { buildStack } from '../../../terraform/stack.js';
-import { NETWORK_ENVS } from '../design/network.js';
+
 import { PLATFORM_LABELS, PLATFORM_VALUES, slugName } from '../options.js';
                                                                                  
 import { stackEnvelope,                                     } from '../generate/terraform.js';
@@ -83,7 +83,7 @@ import { stackEnvelope,                                     } from '../generate/
 export const PROMOTION_ORDER                 = ['dev', 'test', 'preprod', 'prod'];
 
 /** Prod-sized, prod-HA environments: the prod network's (`prod`, `dr`). */
-export const isNonprod = (env     )          => !NETWORK_ENVS.prod.includes(env);
+export const isNonprod = (env     )          => env !== 'prod' && env !== 'dr';
 
 /** The environments in promotion order, `dr` left out, each once. */
 export function promotionOrder(envs                )        {
@@ -402,14 +402,18 @@ export function environmentStacks(
   for (const platform of PLATFORM_VALUES) {
     const stack = stacks.perPlatform[platform];
     if (!stack) continue;
+    let perPlatform = options;
     if (shared && design && platform !== 'vmware' && envs.some(isNonprod)) {
       const pd = design.platforms.find((p) => p.platform === platform);
-      const net = options.nonprodNetwork ?? 'nonprod';
+      // The user's non-production network (their name for it), unless one is named here.
+      const own = pd?.networks.find((n) => n.env === 'nonprod' && !n.existingId)?.name;
+      const net = options.nonprodNetwork ?? own ?? 'nonprod';
       if (pd && !pd.networks.some((n) => n.name === net)) {
-        findings.push(warning('plan.build.env-no-nonprod-network', `${PLATFORM_LABELS[platform]}: the shared landing zone has no ${net} network for the nonprod environments; add one on the design screen (or give each environment its own account).`));
+        findings.push(warning('plan.build.env-no-nonprod-network', `${PLATFORM_LABELS[platform]}: the shared landing zone has no ${net} network for the nonprod environments; add one on Landing zones (or give each environment its own account).`));
       }
+      perPlatform = { ...options, nonprodNetwork: net };
     }
-    for (const env of envs) out.push(environmentStack(stack, env, options, findings));
+    for (const env of envs) out.push(environmentStack(stack, env, perPlatform, findings));
   }
   return { stacks: out, findings: dedupe(findings) };
 }

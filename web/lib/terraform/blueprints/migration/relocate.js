@@ -67,14 +67,14 @@ function azureAvs()            {
     group: MIGRATION_GROUP,
     description: 'An Azure VMware Solution private cloud for the VMs that move unchanged with HCX, and an ExpressRoute authorisation key to connect it to the hub\'s ExpressRoute gateway (Global Reach to on-premises is configured on the circuit).',
     inputs: [
-      ...commonInputs({ label: 'Host SKU', options: ['av36p', 'av52', 'av64', 'av36', 'av48'], default: 'av36p' }, '10.200.0.0/22', 'A /22 for vCenter, NSX Manager, HCX and the hosts; it must not overlap anything.'),
+      ...commonInputs({ label: 'Host SKU', options: ['av36p', 'av52', 'av64', 'av36', 'av48'], default: 'av36p' }, '', 'A /22 for vCenter, NSX Manager, HCX and the hosts; it must not overlap anything.'),
       LANDING_ZONE_SOURCE,
     ],
     emits: ['azurerm_vmware_private_cloud', 'azurerm_vmware_express_route_authorization'],
     build: (values                 ) => {
       const findings            = [];
       const lz = lzRef(values);
-      const cidr = valueOf(values, 'management_cidr', '10.200.0.0/22');
+      const cidr = valueOf(values, 'management_cidr');
       if (familyOf(cidr) !== 4 || !cidr.endsWith('/22')) findings.push(error('tf.mig.avs-cidr', `"${cidr}" is not an IPv4 /22, which is what Azure VMware Solution takes.`, { path: 'management_cidr' }));
       if (findings.length > 0) return failed('azure_mig_avs', findings);
       const blocks             = [
@@ -111,14 +111,14 @@ function googleGcve()            {
     group: MIGRATION_GROUP,
     description: 'A VMware Engine network, a private cloud for the VMs that move unchanged with HCX, and the peering that joins it to the landing zone\'s VPC.',
     inputs: [
-      ...commonInputs({ label: 'Node type', options: ['standard-72', 've1-standard-72', 've2-standard-128'], default: 'standard-72' }, '10.200.0.0/22', 'The management range (a /22 or larger); it must not overlap anything.'),
+      ...commonInputs({ label: 'Node type', options: ['standard-72', 've1-standard-72', 've2-standard-128'], default: 'standard-72' }, '', 'The management range (a /22 or larger); it must not overlap anything.'),
       LANDING_ZONE_SOURCE,
     ],
     emits: ['google_vmwareengine_network', 'google_vmwareengine_private_cloud', 'google_vmwareengine_network_peering'],
     build: (values                 ) => {
       const findings            = [];
       const lz = lzRef(values);
-      const cidr = valueOf(values, 'management_cidr', '10.200.0.0/22');
+      const cidr = valueOf(values, 'management_cidr');
       const net = rname(valueOf(values, 'network', 'prod'));
       if (familyOf(cidr) !== 4 || Number(cidr.split('/')[1]) > 22) findings.push(error('tf.mig.gcve-cidr', `"${cidr}" is not an IPv4 /22 or larger.`, { path: 'management_cidr' }));
       if (findings.length > 0) return failed('google_mig_gcve', findings);
@@ -175,7 +175,7 @@ function ociOcvs()            {
     group: MIGRATION_GROUP,
     description: 'An Oracle Cloud VMware Solution SDDC for the VMs that move unchanged with HCX, with its VLANs and provisioning subnet carved in the landing zone\'s VCN, and a workload cluster when asked.',
     inputs: [
-      ...commonInputs({ label: 'Host shape', options: ['BM.DenseIO.E5.128', 'BM.DenseIO.E4.128', 'BM.DenseIO2.52'], default: 'BM.DenseIO.E5.128' }, '10.200.0.0/21', 'A /21: ten VLANs and the provisioning subnet each take a /25 of it.'),
+      ...commonInputs({ label: 'Host shape', options: ['BM.DenseIO.E5.128', 'BM.DenseIO.E4.128', 'BM.DenseIO2.52'], default: 'BM.DenseIO.E5.128' }, '', 'A /21: ten VLANs and the provisioning subnet each take a /25 of it.'),
       { id: 'vmware_software_version', label: 'VMware software version', control: 'text', default: '8.0 update 3', hint: 'As OCVS lists it for the region (oci ocvs supported-vmware-software-version-summary list).' },
       { id: 'workload_hosts', label: 'Workload cluster hosts', control: 'number', default: 0, min: 0, max: 64, hint: '0: management cluster only.' },
       { id: 'vcf_byol_allocation_id', label: 'VCF BYOL allocation', control: 'text', default: '', hint: 'The OCID of a portable VCF subscription allocation, when the licence is brought.' },
@@ -186,7 +186,7 @@ function ociOcvs()            {
     build: (values                 ) => {
       const findings            = [];
       const lz = lzRef(values);
-      const cidr = valueOf(values, 'management_cidr', '10.200.0.0/21');
+      const cidr = valueOf(values, 'management_cidr');
       const net = rname(valueOf(values, 'network', 'prod'));
       const prefix = Number(cidr.split('/')[1]);
       const pieces = familyOf(cidr) === 4 && prefix <= 21 ? carve(cidr, [...OCVS_VLANS.map(() => 25), 25]) : null;

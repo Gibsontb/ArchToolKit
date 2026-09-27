@@ -8,6 +8,7 @@ import { parseGrid, VM_COLUMN_NAMES } from '../../../terraform/blueprints/migrat
 import { findTerraformBlueprint } from '../../../terraform/blueprints/index.ts';
 import { buildStack } from '../../../terraform/stack.ts';
 import { designPlan, designWorkloads } from '../design/index.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 import { defaultRequirements, DEFAULT_WAVE_SETTINGS, itemId } from '../options.ts';
 import type {
   App, Database, DbServiceId, ItemDecision, Method, Plan, PlanDecision, Platform, Requirements, TargetDesign, Workload,
@@ -86,7 +87,7 @@ function decisionItem(id: string, kind: 'workload' | 'database', p: Placement | 
 
 export function fixture(req: Partial<Requirements> = {}, over: Partial<Plan> = {}): { plan: Plan; decision: PlanDecision; design: TargetDesign } {
   const base = defaultRequirements();
-  const plan: Plan = {
+  const bare: Plan = {
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-wp6', name: 'Mixed Move', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: W.map(([w]) => w),
     databases: D.map(([d]) => d),
@@ -101,10 +102,12 @@ export function fixture(req: Partial<Requirements> = {}, over: Partial<Plan> = {
       connection: 'vpn',
       ...req,
     },
-    designOverrides: {},
+    // The ranges a user assigns for the ODB networks and the Azure VMware Solution private cloud.
+    designOverrides: { 'aws:range:odb': '10.60.0.0/24', 'google:range:odb': '10.61.0.0/24', 'azure:range:relocate': '10.200.0.0/22' },
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
-    ...over,
   };
+  // The networks a user built on every cloud (with the platform subnets the fixture's services need), unless the test gives its own.
+  const plan: Plan = { ...withUserNetworks(bare, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true }), ...over };
   const items: Record<string, ItemDecision> = {};
   for (const [w, p] of W) items[w.id] = decisionItem(w.id, 'workload', p);
   for (const [d, p] of D) items[d.id] = decisionItem(d.id, 'database', p);
@@ -235,15 +238,20 @@ describe('generate/terraform: compute rows', () => {
     expect(MIXED.design.platforms.find((p) => p.platform === 'aws')!.compute.some((c) => c.workload === itemId('workload', 'pg01'))).toBe(false);
   });
 
-  it('writes the method, zone letter, licence, the engine as the role of a database host, and the added domain controllers', () => {
+  it('writes the method, zone letter, licence, the engine as the role of a database host, and domain controllers only where the user extends AD', () => {
     const aws = rows(itemOf(STACKS.perPlatform.aws, '_mig_compute')?.values.vms);
     const web01 = aws.find((r) => r[0] === 'web01')!;
     expect(web01[2]).toBe('replicated');
     expect(web01[11]).toBe('replicate');
     expect(['a', 'b', 'c']).toContain(web01[8]);
     expect(aws.find((r) => r[0] === 'app01')![11]).toBe('rebuild');
-    // extend-dcs adds two domain controllers on each hyperscaler.
-    expect(aws.filter((r) => r[13] === 'ad-dc').length).toBe(2);
+    // extend-dcs builds no domain controller of its own…
+    expect(aws.filter((r) => r[13] === 'ad-dc').length).toBe(0);
+    // …only the ones the user names, where they extend AD into the cloud.
+    const extended = fixture({}, { designOverrides: { ...MIXED.plan.designOverrides, 'aws:identity:extend-ad': 'yes', 'aws:identity:dc-names': 'awsdc01, awsdc02' } });
+    const dcs = rows(itemOf(planToStacks(extended.plan, extended.decision, extended.design).perPlatform.aws, '_mig_compute')?.values.vms).filter((r) => r[13] === 'ad-dc');
+    expect(dcs.map((r) => r[0])).toEqual(['awsdc01', 'awsdc02']);
+    expect(dcs.every((r) => r[7] === 'mgmt')).toBe(true);
     const azure = rows(itemOf(STACKS.perPlatform.azure, '_mig_compute')?.values.vms);
     expect(azure.find((r) => r[0] === 'sql01')![13]).toBe('sqlserver');
     const oci = rows(itemOf(STACKS.perPlatform.oci, '_mig_compute')?.values.vms);
@@ -311,8 +319,12 @@ describe('generate/terraform: databases', () => {
     const readme = FILES.files['terraform/azure/README.md']!;
     expect(readme).toContain('availability group');
     expect(readme).toContain('mssql_ag');
-    // The landing zone gets the delegated subnets the services need, and only those.
-    expect(rows(itemOf(STACKS.perPlatform.azure, '_mig_landing_zone')?.values.delegations).map((r) => r[1]).sort()).toEqual(['dns-resolver', 'mysql', 'sqlmi']);
+    // The landing zone gets exactly the user's subnets (the delegated ones among them), nothing added.
+    const subnets = rows(itemOf(STACKS.perPlatform.azure, '_mig_landing_zone')?.values.subnets);
+    const azure = MIXED.design.platforms.find((p) => p.platform === 'azure')!;
+    expect(subnets.length).toBe(azure.networks.reduce((s, n) => s + n.subnets.length, 0));
+    expect(subnets.map((r) => r[2])).toContain('sqlmi');
+    expect(subnets.map((r) => r[2])).toContain('mysql');
   });
 
   it('puts Base Database on Oracle Database@Google Cloud in the README, not Terraform', () => {
@@ -344,17 +356,17 @@ describe('generate/terraform: omitted when empty', () => {
     }
   });
 
-  it('asks for managed AD where it is chosen, and falls back to DCs on OCI', () => {
+  it('asks for managed AD where it is chosen, and builds nothing on OCI (no managed AD there)', () => {
     const f = fixture({ identity: { ...defaultRequirements().identity, adStrategy: 'managed-ad' } });
     const s = planToStacks(f.plan, f.decision, f.design);
     expect(itemOf(s.perPlatform.aws, '_mig_identity')?.values.strategy).toBe('managed-ad');
     expect(itemOf(s.perPlatform.oci, '_mig_identity')).toBeUndefined();
-    expect(rows(itemOf(s.perPlatform.azure, '_mig_landing_zone')?.values.delegations).map((r) => r[1])).toContain('aadds');
+    expect(rows(itemOf(s.perPlatform.azure, '_mig_landing_zone')?.values.subnets).map((r) => r[2])).toContain('aadds');
   });
 });
 
 describe('generate/terraform: the DR region', () => {
-  it('gives terraform/<p>-dr/ a landing zone in the DR region, on a range that overlaps nothing', () => {
+  it('gives terraform/<p>-dr/ a landing zone of exactly the user’s DR-region networks', () => {
     const dr = STACKS.dr.aws!;
     expect(dr.folder).toBe('aws-dr');
     expect(dr.items.map((i) => i.blueprintId)).toEqual(['aws_mig_landing_zone']);
@@ -362,8 +374,10 @@ describe('generate/terraform: the DR region', () => {
     expect(FILES.files['terraform/aws-dr/01-landing-zone.tf']).toBeDefined();
     expect(FILES.files['terraform/aws-dr/archtoolkit-terraform-settings.json']).toBeDefined();
     const cidr = rows(dr.items[0]!.values.networks)[0]![2]!;
-    const primary = MIXED.design.platforms.flatMap((p) => p.networks.map((n) => n.cidr));
-    expect(primary).not.toContain(cidr);
+    const aws = MIXED.design.platforms.find((p) => p.platform === 'aws')!;
+    expect(aws.networks.filter((n) => n.region === 'us-west-2').map((n) => n.cidr)).toEqual([cidr]);
+    // The primary region's landing zone does not carry the DR network.
+    expect(rows(itemOf(STACKS.perPlatform.aws, '_mig_landing_zone')?.values.networks).map((r) => r[2])).not.toContain(cidr);
     // The backup item copies there.
     expect(itemOf(STACKS.perPlatform.aws, '_mig_backup')?.values.dr_region).toBe('us-west-2');
     expect(STACKS.dr.azure).toBeUndefined();

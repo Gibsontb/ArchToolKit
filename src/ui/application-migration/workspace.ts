@@ -57,6 +57,9 @@ import {
   PLATFORM_NAME, appBySlug, appEdgeRows, appHash, appPlanOrDraft, appReadiness, parseAppArg, providerReadiness, recommendationOf, setAppField, setEdgeKind, shownPlatform,
 } from './app-model.ts';
 import { renderAssessment } from './assessment.ts';
+import { networkEditor } from '../multicloud/network-rows.ts';
+import { planModel, platformDesignFor } from '../multicloud/plan-model.ts';
+import { hostsHint, platformRegions, tierForRole } from '../../multicloud/plan/design/index.ts';
 import { renderComponents } from './components.ts';
 import { renderConfiguration } from './configuration.ts';
 import { renderCoupling } from './coupling.ts';
@@ -304,6 +307,9 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
         live(() => last ? sizingPlanHtml(last) : ''),
         adv('sizing grid, policy and overrides', renderSizingTab, 'design-sizing')),
       6: () => el('div', {},
+        el('h3', { class: 'wizard-extra-title', text: `Networks and subnets on ${cloudName}` }),
+        note('The same rows as Landing zones on Migration & Utilities: the landing zone this application builds (or attaches to). Nothing is filled in for you.'),
+        networkRows(),
         live(() => last ? connectivityHtml(last) : ''),
         el('h3', { class: 'wizard-extra-title', text: 'Dependencies' }),
         live(() => dependenciesBlock()),
@@ -324,6 +330,31 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       17: () => el('div', {},
         note('Record the change: the Utilities page keeps the utility log (generated, applied, rolled back) with the change request number; the scripts\' status events import into it.'),
         buttonRow(el('a', { class: 'btn', text: 'Open the utility log →', attrs: { href: 'multicloud.html#utilities', 'data-control': 'design-utility-log' } }))),
+    };
+
+    /** The shared network row editor for the header's cloud (the landing zone this app builds or reuses). */
+    const networkRows = (): HTMLElement => {
+      const editor = networkEditor({
+        platform,
+        plan: () => ctx.session.plan(),
+        edit: (fn) => {
+          watcher.edit(fn, { immediate: true });
+          editor.refresh();
+        },
+        design: () => {
+          const cur = ctx.session.plan();
+          const one = platformDesignFor(cur, platform);
+          return { ...(one ? { design: one.design } : {}), findings: [...(one?.findings ?? []), ...planModel(cur).design.findings.filter((f) => (f.path ?? '').startsWith(`net:${platform}:`))] };
+        },
+        hint: () => hostsHint(ctx.session.plan(), planModel(ctx.session.plan()).decision, platform, tierForRole, new Set([app.name])),
+        regions: () => {
+          const pd = platformDesignFor(ctx.session.plan(), platform)?.design;
+          return pd ? platformRegions(pd) : [];
+        },
+        control: `design-networks-${platform}`,
+      });
+      refreshers.push(editor.refresh);
+      return editor.node;
     };
 
     const nfForm = (): HTMLElement => {

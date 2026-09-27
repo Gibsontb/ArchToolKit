@@ -23,6 +23,7 @@ import {
 } from './app-model.ts';
 import { buildStack, fileTree, moduleOfBlueprint } from './generate-model.ts';
 import { equivalentsText, filterModules, filterTypes, moduleIndex, resourceTypeIndex, sectionsOf } from './pickers.ts';
+import { withUserNetworks } from '../../testing/network-rows.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures: a Windows / SQL Server app, a Linux web app, and (later) a new one
@@ -42,7 +43,7 @@ const app = (name: string, over: Partial<App> = {}): App => ({
 
 function fixture(): Plan {
   const base = defaultRequirements();
-  return {
+  return withUserNetworks({
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-uid', name: 'UI-D sample', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: [
       workload('fin-web01', 'finance', { role: 'web', os: 'win-2022', licence: 'byol-sa' }),
@@ -66,7 +67,7 @@ function fixture(): Plan {
     designOverrides: {},
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
     appPlans: [],
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
 }
 
 const PLAN = fixture();

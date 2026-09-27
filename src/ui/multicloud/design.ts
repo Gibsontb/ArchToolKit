@@ -33,11 +33,12 @@ import type { PaneContext } from '../plan-shell.ts';
 import type { BlueprintInput, BlueprintValues, SelectOption } from '../../kit/blueprint.ts';
 import type { Finding } from '../../core/findings.ts';
 import { zip } from '../../kit/archive.ts';
-import { foundationPlansFor, landingZoneSettings } from '../../multicloud/plan/design/index.ts';
+import { hostsHint, landingZoneSettings, platformRegions, tierForRole } from '../../multicloud/plan/design/index.ts';
+import { networkEditor } from './network-rows.ts';
 import { terraformFiles } from '../../multicloud/plan/generate/terraform.ts';
 import {
   BASTION_OPTIONS, CONNECTION_OPTIONS, DEFAULT_LANDING_ZONE, FRAMEWORK_OPTIONS, KEY_MANAGEMENT_OPTIONS, LANDING_ZONE_MODE_OPTIONS,
-  LOG_RETENTION_OPTIONS, NETWORK_BASE, PLATFORM_LABELS, SECURITY_BASELINE_OPTIONS, SUBNET_PREFIX_OPTIONS, ZONE_COUNT_OPTIONS,
+  LOG_RETENTION_OPTIONS, PLATFORM_LABELS, SECURITY_BASELINE_OPTIONS,
   AD_STRATEGY_OPTIONS, CLOUD_SIGN_IN_OPTIONS, DNS_STRATEGY_OPTIONS, defaultExecution, overrideKey, slugName,
 } from '../../multicloud/plan/options.ts';
 import type { Framework, KeyManagement, Plan, Platform, PlatformDesign, SecurityBaseline } from '../../multicloud/plan/types.ts';
@@ -97,7 +98,6 @@ const opts = (list: readonly { value: string; label: string }[]): SelectOption[]
 export function landingZoneInputs(plan: Plan, pd: PlatformDesign): { inputs: BlueprintInput[]; defaults: Record<string, string> } {
   const p = pd.platform;
   const lz = (field: string) => overrideKey(p, 'lz', field);
-  const net = (name: string, field: string) => overrideKey(p, `network-${name}`, field);
   const defaultPrefix = `${slugName(plan.name) || 'plan'}-${{ aws: 'aws', azure: 'az', google: 'gcp', oci: 'oci', vmware: 'vcf' }[p]}`;
   const inputs: BlueprintInput[] = [
     { id: `${p}:region:primary`, label: REGION_LABEL[p], control: 'text', placeholder: pd.region, hint: p === 'vmware' ? 'The workload domain vCenter' : 'Primary region' },
@@ -114,14 +114,6 @@ export function landingZoneInputs(plan: Plan, pd: PlatformDesign): { inputs: Blu
       defaults[lz(field)] = '';
     }
   }
-  inputs.push(
-    { id: lz('subnet-size'), label: 'Subnet size per tier', control: 'select', options: opts(SUBNET_PREFIX_OPTIONS) },
-    { id: lz('zones-prod'), label: 'Zones (production)', control: 'select', options: opts(ZONE_COUNT_OPTIONS) },
-    { id: lz('zones-nonprod'), label: 'Zones (non-production)', control: 'select', options: opts(ZONE_COUNT_OPTIONS) },
-  );
-  defaults[lz('subnet-size')] = DEFAULT_LANDING_ZONE.subnetPrefix;
-  defaults[lz('zones-prod')] = String(DEFAULT_LANDING_ZONE.zonesProd);
-  defaults[lz('zones-nonprod')] = String(DEFAULT_LANDING_ZONE.zonesNonprod);
   if (p !== 'vmware') {
     inputs.push(
       { id: lz('bastion'), label: 'Bastion', control: 'select', options: opts(BASTION_OPTIONS) },
@@ -130,16 +122,15 @@ export function landingZoneInputs(plan: Plan, pd: PlatformDesign): { inputs: Blu
     defaults[lz('bastion')] = DEFAULT_LANDING_ZONE.bastion;
     defaults[lz('log-retention')] = String(DEFAULT_LANDING_ZONE.logRetentionDays);
   }
-  const names = pd.networks.length > 0 ? pd.networks.map((n) => n.name) : ['prod'];
-  names.forEach((name) => {
-    const base = NETWORK_BASE[p] + (name === 'nonprod' ? 1 : 0);
-    inputs.push(
-      { id: net(name, 'cidr'), label: `${name === 'prod' ? 'Production' : 'Non-production'} network (IPv4)`, control: 'text', placeholder: `10.${base}.0.0/16`, hint: `Blank: 10.${base}.0.0/16` },
-      { id: net(name, 'ipv6'), label: `${name === 'prod' ? 'Production' : 'Non-production'} network: IPv6 (dual stack)`, control: 'select', options: YES_NO },
-    );
-    defaults[net(name, 'cidr')] = '';
-    defaults[net(name, 'ipv6')] = 'yes';
-  });
+  // Address ranges for services outside the landing zone's networks: the user's, never picked.
+  const range = (what: string, label: string, hint: string): void => {
+    const id = overrideKey(p, 'range', what);
+    inputs.push({ id, label, control: 'text', placeholder: 'your range', hint });
+    defaults[id] = '';
+  };
+  if (p === 'google') range('managed-ad', 'Managed Microsoft AD range (/24)', 'Only with Managed Microsoft AD: a /24 nothing else uses');
+  if (p === 'aws' || p === 'google') range('odb', 'Oracle Database@ ODB network range', 'Only with Oracle Database@: the ODB network');
+  if (p !== 'vmware') range('relocate', 'VMware service management range', 'Only when VMs relocate to the cloud’s VMware service');
   return { inputs, defaults };
 }
 
@@ -397,7 +388,21 @@ function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () =>
   };
 
   const state = el('p', { class: 'small', attrs: { 'data-control': `lz-state-${p}` }, style: { overflowWrap: 'anywhere' } });
-  const subnets = el('div', { attrs: { 'data-control': `subnets-${p}` } });
+  const editorDesign = () => {
+    const cur = ctx.session.plan();
+    const model = planModel(cur);
+    const one = platformDesignFor(cur, p);
+    return { ...(one ? { design: one.design } : {}), findings: [...(one?.findings ?? []), ...model.design.findings.filter((f) => (f.path ?? '').startsWith(`net:${p}:`))] };
+  };
+  const editor = networkEditor({
+    platform: p,
+    plan: () => ctx.session.plan(),
+    edit: (fn) => ctx.session.update(fn),
+    design: editorDesign,
+    hint: () => hostsHint(ctx.session.plan(), planModel(ctx.session.plan()).decision, p, tierForRole),
+    regions: () => platformRegions(platformDesignFor(ctx.session.plan(), p)?.design ?? pd),
+    control: `lz-networks-${p}`,
+  });
   const foundation = el('div');
   const placement = el('div');
   const findings = el('div', { style: { overflowWrap: 'anywhere', wordBreak: 'break-word' } });
@@ -409,10 +414,9 @@ function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () =>
     const one = platformDesignFor(cur, p);
     const d = one?.design ?? pd;
     state.textContent = landingZoneBuildText(landingZoneBuild(cur, p, model.decision), p);
-    const rows = d.networks.flatMap((n) => n.subnets.map((s) => [n.name, s.tier, s.zone || '—', s.cidr, s.ipv6Cidr ?? (n.ipv6 ? 'allocated by the platform' : '')]));
-    fill(subnets, rows.length === 0 ? note('No networks are carved for this cloud (see the findings).') : rowsTable(['Network', 'Tier', 'Zone', 'IPv4', 'IPv6'], rows));
-    const fps = foundationPlansFor(d, p, cur);
-    fill(foundation, fps.length === 0 ? null : note(`Foundation: ${fps.map((f) => `${f.name} (${f.cidr}${f.ipv6 ? ', dual stack' : ''}, ${f.subnets.length} subnets)`).join('; ')}. Region ${d.region}${d.drRegion ? `, DR ${d.drRegion}` : ''}.`));
+    editor.refresh();
+    const built = d.networks.filter((n) => !n.existingId);
+    fill(foundation, built.length === 0 ? null : note(`Builds: ${built.map((n) => `${n.name} (${n.cidr}${n.ipv6 ? ', dual stack' : ''}, ${n.subnets.length} subnet${n.subnets.length === 1 ? '' : 's'})`).join('; ')}${d.networks.some((n) => n.existingId) ? `; attaches to ${d.networks.filter((n) => n.existingId).map((n) => n.name).join(', ')}` : ''}. Region ${d.region}${d.drRegion ? `, DR ${d.drRegion}` : ''}.`, `lz-builds-${p}`));
     fill(
       placement,
       subhead(`Connectivity back to the data centre (${DC_LINK_NAMES[p]})`),
@@ -477,9 +481,9 @@ function platformCard(ctx: PaneContext, pd: PlatformDesign, onRefresh: (r: () =>
     ...renderBlueprintForm({ inputs: [modeInput] }, binding),
     subhead('Settings'),
     twoColumns(renderBlueprintForm({ inputs: lz.inputs }, binding)),
-    foundation,
     subhead('Networks and subnets'),
-    subnets,
+    editor.node,
+    foundation,
     placement,
     subhead('Governance'),
     note(`Enforced with ${POLICY_ENGINE[p]}.`),

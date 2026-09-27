@@ -87,7 +87,7 @@ const SERVERS: readonly Server[] = [
 
 function network(name: string, envs: NetworkDesign['envs'], ipv6: boolean, zones: readonly string[]): NetworkDesign {
   const tiers = ['web', 'app', 'db', 'mgmt'] as const;
-  return { name, envs, cidr: name === 'prod' ? '10.40.0.0/16' : '10.41.0.0/16', ipv6, tiers: [...tiers], subnets: zones.flatMap((zone) => tiers.map((tier) => ({ tier, zone, cidr: '10.40.0.0/24' }))) };
+  return { name, envs, cidr: name === 'prod' ? '10.40.0.0/16' : '10.41.0.0/16', ipv6, tiers: [...tiers], subnets: zones.flatMap((zone) => tiers.map((tier) => ({ id: `${tier}-${zone}`, name: `${tier}-${zone}`, tier, zone, cidr: '10.40.0.0/24', usable: 251 }))) };
 }
 
 function fixture(servers: readonly Server[] = SERVERS, execution: Partial<ExecutionSettings> = {}): { plan: Plan; decision: PlanDecision; design: TargetDesign; waves: WavePlan } {

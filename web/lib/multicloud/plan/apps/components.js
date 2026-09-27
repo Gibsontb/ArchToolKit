@@ -401,11 +401,15 @@ export function serviceSyntheticIds(plan                                      , 
 /** The design without the compute targets of `serviceSyntheticIds` (for Ansible, Compare and capacity). */
 export function withoutServiceSynthetics(plan                                      , design              )               {
   let changed = false;
+  const names = new Set        ();
   const platforms = design.platforms.map((pd) => {
     const drop = serviceSyntheticIds(plan, pd.platform);
     if (drop.size === 0) return pd;
     changed = true;
+    for (const w of plan.workloads) if (drop.has(w.id)) names.add(w.name);
     return { ...pd, compute: pd.compute.filter((c) => !drop.has(c.workload)) };
   });
-  return changed ? { ...design, platforms } : design;
+  // A service the pattern item builds (not a VM) needs no VM subnet: its "no subnet" finding goes too.
+  const findings = design.findings.filter((f) => f.code !== 'design.compute.no-subnet' || ![...names].some((n) => f.message.startsWith(`${n}:`)));
+  return changed ? { ...design, platforms, findings } : design;
 }

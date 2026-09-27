@@ -17,6 +17,7 @@ import { deployPaths, resourceManagerSchema, terraformNeeded } from './deploy-pa
 import { assignLandingZones, designAnswers, designCloud, landingZoneBuilder, setDesignAnswer, setDesignCloud } from './design.ts';
 import { generateAppStack } from './generate.ts';
 import { WIZARD_MAP, applyWizard, mapRow } from './wizard-map.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 
 const w = (name: string, app: string, o: Partial<Workload> = {}): Workload => ({
@@ -24,7 +25,7 @@ const w = (name: string, app: string, o: Partial<Workload> = {}): Workload => ({
 });
 
 function fixture(): Plan {
-  const base: Plan = {
+  const base: Plan = withUserNetworks({
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-design', name: 'Design test', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: [
       w('crm-web01', 'crm', { role: 'web', os: 'win-2022', licence: 'byol-sa', env: 'prod' }),
@@ -46,7 +47,7 @@ function fixture(): Plan {
     designOverrides: { 'vmware:lz:datacenter': 'dc01', 'vmware:lz:cluster': 'cl01', 'vmware:lz:datastore': 'vsan01' },
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
     appPlans: [],
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
   return base;
 }
 

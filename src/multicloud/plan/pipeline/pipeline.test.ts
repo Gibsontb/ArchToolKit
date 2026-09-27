@@ -31,6 +31,7 @@ import {
   scaleComputeSize, scaleDbClass, stateKey, type EnvironmentOptions,
 } from './environments.ts';
 import { goldenImagesFor, imageVariable, packerFiles, PACKER_BUILDER, withGoldenImages } from './packer.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 // ---------------------------------------------------------------------------
 // The fixture: every platform, rebuilt and replicated rows, managed databases
@@ -79,7 +80,7 @@ function decisionItem(id: string, kind: 'workload' | 'database', p: Placement | 
 
 function fixture(): { plan: Plan; decision: PlanDecision; design: TargetDesign } {
   const base = defaultRequirements();
-  const plan: Plan = {
+  const plan: Plan = withUserNetworks({
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-wp24', name: 'Build Test', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: W.map(([w]) => w),
     databases: D.map(([d]) => d),
@@ -95,7 +96,7 @@ function fixture(): { plan: Plan; decision: PlanDecision; design: TargetDesign }
     },
     designOverrides: {},
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
   const items: Record<string, ItemDecision> = {};
   for (const [w, p] of W) items[w.id] = decisionItem(w.id, 'workload', p);
   for (const [d, p] of D) items[d.id] = decisionItem(d.id, 'database', p);

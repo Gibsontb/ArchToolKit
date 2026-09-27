@@ -11,6 +11,7 @@ import { designCounts, estimate, estimateDesign, NO_RATE_CARD } from './estimate
 import { fetchQuotasScript } from './fetch-quotas.ts';
 import { QUOTA_DEFAULTS } from './quota-data.ts';
 import { offlineOptions, OFFLINE_DEVICES, transferDays, transferPlan } from './transfer.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 const TODAY = '2026-09-26';
 const ENGINE = { today: TODAY };
@@ -28,7 +29,7 @@ const app = (name: string, over: Partial<App> = {}): App => ({
 });
 
 function estate(over: Partial<Plan> = {}): Plan {
-  return {
+  return withUserNetworks({
     kind: 'archtoolkit.multicloud-plan', version: 1, id: 'plan-estate', name: 'Estate', savedAt: '2026-09-26T00:00:00.000Z',
     workloads: [
       ...Array.from({ length: 8 }, (_, i) => workload(`erp${i}`, 'erp', { disksGib: [100, 500], dependsOn: i === 0 ? ['hr0'] : [] })),
@@ -47,7 +48,7 @@ function estate(over: Partial<Plan> = {}): Plan {
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
     appPlans: [],
     ...over,
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
 }
 
 /** erp and hr both on AWS by choice. */

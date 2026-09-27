@@ -44,11 +44,13 @@ const EXPECTED_IDS = [
   'oci_mig_ocvs',
 ];
 
-const build = (b: Blueprint, values: BlueprintValues = {}) => b.build({ ...defaultValues(b), ...values }, 'check');
+import { USER_VALUES } from '../../../testing/blueprint-user-values.ts';
 
-/** Defaults, then every other choice of every dropdown, one at a time: every branch a planner can take. */
+const build = (b: Blueprint, values: BlueprintValues = {}) => b.build({ ...defaultValues(b), ...(USER_VALUES[b.id] ?? {}), ...values }, 'check');
+
+/** Defaults (with the user's values), then every other choice of every dropdown, one at a time: every branch a planner can take. */
 function variants(b: Blueprint): BlueprintValues[] {
-  const base = defaultValues(b);
+  const base = { ...defaultValues(b), ...(USER_VALUES[b.id] ?? {}) };
   const out: BlueprintValues[] = [base];
   for (const input of b.inputs) {
     if (input.control !== 'select' || input.id === 'region') continue;
@@ -106,7 +108,7 @@ describe('migration blueprints: the set', () => {
       for (const input of inputs) expect([id, input, ids.includes(input)]).toEqual([id, input, true]);
     };
     for (const c of CLOUDS) {
-      has(`${c}_mig_landing_zone`, ['prefix', 'region', 'networks', 'subnet_prefix', 'site_cidrs', 'bastion', 'log_retention_days', 'keys', 'scope']);
+      has(`${c}_mig_landing_zone`, ['prefix', 'region', 'networks', 'subnets', 'site_cidrs', 'bastion', 'log_retention_days', 'keys', 'scope']);
       has(`${c}_mig_connectivity`, ['sites', 'cloud_asn', 'landing_zone_source']);
       has(`${c}_mig_compute`, ['vms', 'ssh_public_key_var', 'landing_zone_source']);
       has(`${c}_mig_databases`, ['databases', 'landing_zone_source']);
@@ -131,7 +133,8 @@ describe('migration blueprints: the set', () => {
     const hint = (id: string, input: string) => findTerraformBlueprint(id)?.inputs.find((i) => i.id === input)?.hint;
     for (const c of CLOUDS) {
       if (!findTerraformBlueprint(`${c}_mig_landing_zone`)) continue;
-      expect(hint(`${c}_mig_landing_zone`, 'networks')).toBe('Network | Environments | IPv4 CIDR | IPv6 | Tiers | Zones');
+      expect(hint(`${c}_mig_landing_zone`, 'networks')).toBe('Network | Environments | IPv4 CIDR | IPv6 | Role | Existing ID');
+      expect(hint(`${c}_mig_landing_zone`, 'subnets')).toBe('Network | Subnet | Purpose | Zone | IPv4 CIDR | IPv6');
       expect(hint(`${c}_mig_connectivity`, 'sites')).toBe('Site | VPN peer address | BGP ASN | On-prem CIDRs | Method | Circuit id or service key');
       expect(hint(`${c}_mig_compute`, 'vms')).toBe('Name | OS | Image | Size | Cores | Disks | Network | Tier | Zone | Licence | Backup | Method | App | Role | Env | Wave | Component');
       expect(hint(`${c}_mig_databases`, 'databases')).toBe('Name | Service | Engine | Edition | Version | Class | Storage GiB | HA | Licence | Backup days | Network | App');
@@ -142,7 +145,42 @@ describe('migration blueprints: the set', () => {
 });
 
 describe('migration blueprints: every build', () => {
-  it('builds with its defaults, and every .tf reads as whole top-level blocks', () => {
+  it('refuses to invent: with no networks, ranges or addresses given, the blueprints that need them build nothing', () => {
+    const bare = (id: string) => {
+      const b = findTerraformBlueprint(id)!;
+      return (b.build(defaultValues(b), 'check').findings ?? []).filter((f) => f.severity === 'error').map((f) => f.code);
+    };
+    for (const c of CLOUDS) expect([c, bare(`${c}_mig_landing_zone`)]).toEqual([c, ['tf.mig.no-networks']]);
+    expect(bare('aws_mig_oracle_database')).toEqual(['tf.mig.odb-cidr']);
+    expect(bare('azure_mig_avs')).toEqual(['tf.mig.avs-cidr']);
+    for (const b of MIGRATION.map((m) => m.blueprint)) {
+      const text = Object.values(b.build(defaultValues(b), 'check').files).join('\n');
+      // No default address range anywhere: 10.40/16, 10.60/24, 10.200/2x, 10.0.0.10 were the old invented ones.
+      expect([b.id, /\b10\.(40|41|60|99|200)\.0\.0\//.test(text)]).toEqual([b.id, false]);
+    }
+  });
+
+  it('builds exactly the subnets the grid gives: no carving, no tier or zone of its own', () => {
+    const aws = tfText(build(findTerraformBlueprint('aws_mig_landing_zone')!, {
+      networks: 'app1 | prod | 10.40.0.0/24 | no | spoke | ',
+      subnets: ['app1 | web-a | web | us-east-1a | 10.40.0.0/28 | no', 'app1 | web-b | web | us-east-1b | 10.40.0.16/28 | no'].join('\n'),
+    }).files);
+    expect((aws.match(/^resource "aws_subnet"/gm) ?? []).length).toBe(2);
+    expect(aws).toContain('availability_zone = "us-east-1a"');
+    expect(aws).toContain('cidr_block        = "10.40.0.16/28"');
+    const az = tfText(build(findTerraformBlueprint('azure_mig_landing_zone')!, {
+      networks: 'app1 | prod | 10.40.0.0/24 | no | spoke | ',
+      subnets: 'app1 | web | web | regional | 10.40.0.0/28 | no',
+      bastion: 'none',
+    }).files);
+    expect((az.match(/^resource "azurerm_subnet"/gm) ?? []).length).toBe(1);
+    const zonal = findTerraformBlueprint('azure_mig_landing_zone')!.build({ ...defaultValues(findTerraformBlueprint('azure_mig_landing_zone')!), networks: 'app1 | prod | 10.40.0.0/24 | no | spoke | ', subnets: 'app1 | web | web | 1 | 10.40.0.0/28 | no' }, 'check');
+    expect((zonal.findings ?? []).some((f) => f.code === 'tf.mig.subnet-regional')).toBe(true);
+    const outside = findTerraformBlueprint('aws_mig_landing_zone')!.build({ ...defaultValues(findTerraformBlueprint('aws_mig_landing_zone')!), networks: 'app1 | prod | 10.40.0.0/24 | no | spoke | ', subnets: 'app1 | web | web | us-east-1a | 10.41.0.0/28 | no' }, 'check');
+    expect((outside.findings ?? []).some((f) => f.code === 'tf.mig.subnet-outside')).toBe(true);
+  });
+
+  it('builds with its defaults and the user\'s values, and every .tf reads as whole top-level blocks', () => {
     for (const { blueprint } of MIGRATION) {
       const out = build(blueprint);
       const errors = (out.findings ?? []).filter((f) => f.severity === 'error');
@@ -242,8 +280,9 @@ describe('migration blueprints: the landing-zone contract', () => {
   });
 
   it('is dual-stack when a network says IPv6 yes, on all four clouds', () => {
-    const v6 = { networks: 'prod | prod | 10.40.0.0/16 | yes | web app db mgmt | 2' };
-    const v4 = { networks: 'prod | prod | 10.40.0.0/16 | no | web app db mgmt | 2' };
+    const subnets = 'prod | app | app | regional | 10.40.0.0/24 | yes';
+    const v6 = { networks: 'prod | prod | 10.40.0.0/16 | yes | spoke | ', subnets, bastion: 'none' };
+    const v4 = { networks: 'prod | prod | 10.40.0.0/16 | no | spoke | ', subnets: subnets.replace(/yes$/, 'no'), bastion: 'none' };
     const marker: Record<string, RegExp> = {
       aws: /assign_generated_ipv6_cidr_block\s*=\s*true/,
       azure: /address_space\s*=\s*\["10\.40\.0\.0\/16", "fd[0-9a-f]{2}:[0-9a-f]{0,4}:[0-9a-f]{0,4}::\/48"\]/,
@@ -253,8 +292,9 @@ describe('migration blueprints: the landing-zone contract', () => {
     for (const c of CLOUDS) {
       const b = findTerraformBlueprint(`${c}_mig_landing_zone`);
       if (!b) continue;
-      expect([c, (marker[c] as RegExp).test(tfText(build(b, v6).files))]).toEqual([c, true]);
-      expect([c, (marker[c] as RegExp).test(tfText(build(b, v4).files))]).toEqual([c, false]);
+      const zoned = (v: Record<string, string>) => (c === 'aws' ? { ...v, subnets: v.subnets!.replace('regional', 'us-east-1a') } : v);
+      expect([c, (marker[c] as RegExp).test(tfText(build(b, zoned(v6)).files))]).toEqual([c, true]);
+      expect([c, (marker[c] as RegExp).test(tfText(build(b, zoned(v4)).files))]).toEqual([c, false]);
     }
   });
 });
@@ -264,7 +304,7 @@ describe('migration blueprints: stacked as the planner stacks them', () => {
     const items: StackItem[] = parts
       .map((p) => `${c}_mig_${p}`)
       .filter((id) => findTerraformBlueprint(id))
-      .map((id) => ({ id, blueprintId: id, label: id.replace(/^[a-z]+_mig_/, '').replace(/_/g, '-'), values: { landing_zone_source: 'stack', ...extra } }));
+      .map((id) => ({ id, blueprintId: id, label: id.replace(/^[a-z]+_mig_/, '').replace(/_/g, '-'), values: { ...(USER_VALUES[id] ?? {}), landing_zone_source: 'stack', ...extra } }));
     return { items, stack: buildStack(items, findTerraformBlueprint, { target: c as never, stackName: `${c}-test`, requiredVersion: '>= 1.7.0' }) };
   };
 

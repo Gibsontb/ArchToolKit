@@ -29,7 +29,8 @@ import {
   defaultRequirements,
 } from './options.ts';
 import {
-  PLAN_KIND, RATECARD_KIND, TRACKER_KIND, type AuditEntry, type ChangeRecord, type DcExit, type ExecutionSettings,
+  PLAN_KIND, RATECARD_KIND, TRACKER_KIND, type AuditEntry, type ChangeRecord, type CloudNetworkPlan, type DcExit, type ExecutionSettings,
+  type NetworkPlans, type NetworkRow, type SubnetRow,
   type Governance, type Plan, type PlanMode, type RateCard, type Requirements, type SizingState, type Tracker,
 } from './types.ts';
 
@@ -435,6 +436,7 @@ export function planFromEnvelope(value: Json): { ok: Plan } | { error: string } 
     ...(isRecord(v.execution) ? { execution: executionFrom(v.execution) } : {}),
     ...(isRecord(v.governance) ? { governance: governanceFrom(v.governance) } : {}),
     ...(isRecord(v.dcExit) ? { dcExit: dcExitFrom(v.dcExit) } : {}),
+    ...(isRecord(v.networks) ? { networks: networksFrom(v.networks) } : {}),
   };
   return { ok: plan };
 }
@@ -480,6 +482,16 @@ function governanceFrom(x: Record<string, Json>): Governance {
     comms: { ...d.comms, ...(obj(x.comms) as Partial<Governance['comms']>) },
     environments: Array.isArray(x.environments) ? (x.environments as unknown as Governance['environments']) : d.environments,
   };
+}
+
+/** The user's network rows per cloud: lists only, rows kept as saved. */
+function networksFrom(x: Record<string, Json>): NetworkPlans {
+  const out: Partial<Record<string, CloudNetworkPlan>> = {};
+  for (const [cloud, v] of Object.entries(x)) {
+    if (!isRecord(v)) continue;
+    out[cloud] = { networks: list(v.networks) as unknown as NetworkRow[], subnets: list(v.subnets) as unknown as SubnetRow[] };
+  }
+  return out as NetworkPlans;
 }
 
 function dcExitFrom(x: Record<string, Json>): DcExit {

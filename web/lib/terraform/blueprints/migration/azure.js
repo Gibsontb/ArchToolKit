@@ -30,7 +30,7 @@ import {
   attrs,
   backupInputs,
   blk,
-  carveNetwork,
+  subnetKeyMap,
   cloudInit,
   consumerPreamble,
   dat,
@@ -110,22 +110,19 @@ const DELEGATIONS                                                               
   oracle: { service: 'Oracle.Database/networkAttachments', actions: ['Microsoft.Network/networkinterfaces/*', 'Microsoft.Network/virtualNetworks/subnets/join/action'], label: 'Oracle Database@Azure' },
   'dns-resolver': { service: 'Microsoft.Network/dnsResolvers', actions: ['Microsoft.Network/virtualNetworks/subnets/join/action'], label: 'DNS resolver outbound endpoint' },
   aadds: { label: 'Microsoft Entra Domain Services (dedicated, not delegated)' },
+  functions: { service: 'Microsoft.App/environments', actions: ['Microsoft.Network/virtualNetworks/subnets/join/action'], label: 'Functions / Container Apps integration' },
+  webapp: { service: 'Microsoft.Web/serverFarms', actions: ['Microsoft.Network/virtualNetworks/subnets/action'], label: 'App Service integration' },
 };
 
-const DELEGATION_COLUMNS                        = [{ name: 'Network' }, { name: 'Delegation', options: Object.keys(DELEGATIONS) }, { name: 'IPv4 CIDR' }];
-const DEFAULT_DELEGATIONS                                 = [
-  ['prod', 'sqlmi', ''],
-  ['prod', 'postgres', ''],
-  ['prod', 'mysql', ''],
-  ['prod', 'oracle', ''],
-  ['prod', 'dns-resolver', ''],
-];
+/** Azure's platform subnets: fixed names, no security group or NAT from the landing zone. */
+const AZURE_FIXED                      = new Set(['GatewaySubnet', 'AzureFirewallSubnet', 'AzureFirewallManagementSubnet', 'AzureBastionSubnet']);
 
                      
                                 
                         
                         
                          
+                        
  
 
 /** Ports a domain controller in the mgmt tier needs open. */
@@ -207,7 +204,6 @@ function azureLandingZone()            {
     description: `Dual-stack virtual networks from the networks grid (built on the network foundation), a network security group per tier, NAT for outbound IPv4, the gateway and Bastion subnets, delegated subnets for managed databases, Key Vault with a disk encryption set, Log Analytics, VNet flow logs and a user-assigned identity for the VMs. ${landingZoneNote}`,
     inputs: [
       ...landingZoneInputs('azure', AZURE_REGIONS, REGION),
-      gridInput('delegations', 'Delegated subnets', DELEGATION_COLUMNS, DEFAULT_DELEGATIONS, 'A dedicated subnet per managed service that needs one. IPv4 CIDR blank: a /24 carved after the tiers. Keyed "<network>/<delegation>" in the contract.'),
     ],
     emits: [
       'azurerm_resource_group', 'azurerm_virtual_network', 'azurerm_subnet', 'azurerm_network_security_group', 'azurerm_subnet_network_security_group_association',
@@ -218,10 +214,10 @@ function azureLandingZone()            {
     ],
     build: (values                 ) => {
       const findings            = [];
-      const lz = parseLandingZone(values, REGION, findings);
+      const lz = parseLandingZone(values, REGION, findings, 'azure');
       if (findings.some((f) => f.severity === 'error')) return failed('azure_mig_landing_zone', findings);
       const cmk = lz.keys !== 'provider-managed';
-      const hub = lz.networks[0]               ;
+      const hub = (lz.networks.find((n) => n.role === 'hub') ?? lz.networks.find((n) => n.role === 'shared-services') ?? lz.networks[0])               ;
       const location = lz.region;
       const shared = 'azurerm_resource_group.shared';
       const suffix = '${substr(md5(data.azurerm_client_config.current.subscription_id), 0, 6)}';
@@ -233,41 +229,17 @@ function azureLandingZone()            {
         res('azurerm_resource_group', 'shared', { name: `${lz.prefix}-shared-rg`, location }),
       ];
 
-      // Delegated subnets, by network.
-      const delegationRows = parseGrid(valueOf(values, 'delegations'), DELEGATION_COLUMNS.map((c) => c.name));
-      const wanted = new Map                                          ();
-      for (const r of delegationRows) {
-        const net = rname(r['Network'] ?? '');
-        const kind = (r['Delegation'] ?? '').toLowerCase();
-        if (!DELEGATIONS[kind]) {
-          findings.push(warning('tf.mig.azure-delegation', `"${r['Delegation']}" is not a delegation this knows (${Object.keys(DELEGATIONS).join(', ')}); left out.`, { path: 'delegations' }));
-          continue;
-        }
-        if (!lz.networks.some((n) => n.name === net)) {
-          findings.push(warning('tf.mig.azure-delegation-network', `Delegation ${kind}: there is no network called ${net}; left out.`, { path: 'delegations' }));
-          continue;
-        }
-        const list = wanted.get(net) ?? [];
-        if (!list.some((d) => d.kind === kind)) list.push({ kind, cidr: r['IPv4 CIDR'] ?? '' });
-        wanted.set(net, list);
-      }
-
+      // Exactly the user's subnets: tier and ordinary subnets through the network foundation, Azure's
+      // fixed-name platform subnets and the delegated ones as their own resources. Nothing is carved.
       const subnetsByNet = new Map                      ();
       const delegated              = [];
-      const platform = new Map                                               ();
+      const platform = new Map                             ();
       const v6RangeOf = new Map                ();
       for (const n of lz.networks) {
-        const isHub = n === hub;
-        const own = (wanted.get(n.name) ?? []).filter((d) => d.cidr === '');
-        const extras = [
-          ...(isHub && lz.bastion === 'cloud-native' ? [{ tier: 'AzureBastionSubnet', size: 26 }] : []),
-          ...(isHub ? [{ tier: 'GatewaySubnet', size: 27 }] : []),
-          ...own.map((d) => ({ tier: `d:${d.kind}`, size: Math.max(lz.prefixLen, 24) })),
-        ];
-        const carved = carveNetwork(n, lz.prefixLen, false, extras, findings);
-        if (carved.length === 0) continue;
-        const tiers = carved.filter((s) => (n.tiers                     ).includes(s.tier          ));
-        subnetsByNet.set(n.id, tiers);
+        const all = lz.subnets.filter((s) => s.network.name === n.name);
+        if (all.length === 0) continue;
+        const ordinary = all.filter((s) => !AZURE_FIXED.has(s.tier          ) && !DELEGATIONS[s.tier          ]);
+        subnetsByNet.set(n.id, ordinary);
         const ipv6Cidr = n.ipv6 ? (n.ipv6Cidr ?? ulaFor(`${lz.prefix}/${n.name}`)) : undefined;
         if (ipv6Cidr) v6RangeOf.set(n.id, ipv6Cidr);
         const plan                 = {
@@ -276,52 +248,55 @@ function azureLandingZone()            {
           region: location,
           ipv6: n.ipv6,
           ...(ipv6Cidr ? { ipv6Cidr } : {}),
-          subnets: tiers.map((s) => ({ name: s.short, cidr: s.cidr })),
+          subnets: ordinary.map((s) => ({ name: s.short, cidr: s.cidr })),
           tags: { atk_network: n.name, atk_env: n.envs.join(' ') },
         };
-        const out = emitFoundation('azure', plan);
-        findings.push(...out.findings.filter((f) => f.severity !== 'info'));
-        // The VNet's address space also holds the platform and delegated subnets carved outside the tiers.
-        blocks.push(
-          reworkFoundation(out.files['main.tf'] ?? '', n.id, {
-            drop: (_kind, [type = '']) => type === 'azurerm_network_security_group' || type === 'azurerm_subnet_network_security_group_association',
-          }),
-        );
-        const v6 = ipv6Cidr ? subnetIpv6Ranges(plan, 'azure').ranges : [];
-        const cidrOf = (t        ) => tiers.flatMap((s, i) => (s.tier === t ? [s.cidr, ...(v6[i] ? [v6[i]          ] : [])] : []));
-        const bastionCidr = carved.find((s) => s.tier === 'AzureBastionSubnet')?.cidr;
+        const v4only = new Set(ordinary.filter((s) => !s.ipv6).map((s) => s.label));
+        const out = ordinary.length > 0 ? emitFoundation('azure', plan) : null;
+        if (out) {
+          findings.push(...out.findings.filter((f) => f.severity !== 'info'));
+          blocks.push(
+            reworkFoundation(out.files['main.tf'] ?? '', n.id, {
+              drop: (_kind, [type = '']) => type === 'azurerm_network_security_group' || type === 'azurerm_subnet_network_security_group_association',
+              // A subnet the user left IPv4-only in a dual-stack network keeps its IPv4 range only.
+              edit: (type, label, text) => (type === 'azurerm_subnet' && v4only.has(label) ? text.replace(/(address_prefixes\s*=\s*\[\s*"[^"]+")\s*,\s*"[^"]*:[^"]*"\s*\]/, '$1]') : text),
+            }),
+          );
+        } else {
+          // Only platform or delegated subnets: the network itself, without the foundation's tier subnets.
+          blocks.push(
+            res('azurerm_resource_group', n.id, { name: rname(lz.prefix, n.name, 'rg'), location }),
+            res('azurerm_virtual_network', n.id, { name: rname(lz.prefix, n.name, 'vnet'), location, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), address_space: [n.cidr, ...(ipv6Cidr ? [ipv6Cidr] : [])] }),
+          );
+        }
+        const v6 = ipv6Cidr && ordinary.length > 0 ? subnetIpv6Ranges(plan, 'azure').ranges : [];
+        const cidrOf = (t        ) => ordinary.flatMap((s, i) => (s.tier === t ? [s.cidr, ...(v6[i] && s.ipv6 ? [v6[i]          ] : [])] : []));
+        const bastionCidr = all.find((s) => s.tier === 'AzureBastionSubnet')?.cidr;
         for (const tier of n.tiers) {
           blocks.push(nsgBlock(lz.prefix, n, tier, tierNsgRules(n, tier, siteSources(lz, n), cidrOf, ipv6Cidr, bastionCidr)));
         }
-        for (const s of tiers) {
+        for (const s of ordinary.filter((x) => (n.tiers                     ).includes(x.tier          ))) {
           blocks.push(res('azurerm_subnet_network_security_group_association', s.label, { subnet_id: x(`azurerm_subnet.${s.label}.id`), network_security_group_id: x(`azurerm_network_security_group.${n.id}_${s.tier}.id`) }));
         }
         // Outbound IPv4: new virtual networks have no default outbound access.
-        blocks.push(
-          res('azurerm_public_ip', `${n.id}_nat`, { name: rname(lz.prefix, n.name, 'nat-pip'), location, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), allocation_method: 'Static', sku: 'Standard', zones: ['1', '2', '3'] }),
-          res('azurerm_nat_gateway', n.id, { name: rname(lz.prefix, n.name, 'nat'), location, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), sku_name: 'Standard' }),
-          res('azurerm_nat_gateway_public_ip_association', n.id, { nat_gateway_id: x(`azurerm_nat_gateway.${n.id}.id`), public_ip_address_id: x(`azurerm_public_ip.${n.id}_nat.id`) }),
-        );
-        for (const s of tiers) blocks.push(res('azurerm_subnet_nat_gateway_association', s.label, { subnet_id: x(`azurerm_subnet.${s.label}.id`), nat_gateway_id: x(`azurerm_nat_gateway.${n.id}.id`) }));
+        const natted = ordinary.filter((s) => s.tier !== 'private-endpoints');
+        if (natted.length > 0) {
+          blocks.push(
+            res('azurerm_public_ip', `${n.id}_nat`, { name: rname(lz.prefix, n.name, 'nat-pip'), location, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), allocation_method: 'Static', sku: 'Standard', zones: ['1', '2', '3'] }),
+            res('azurerm_nat_gateway', n.id, { name: rname(lz.prefix, n.name, 'nat'), location, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), sku_name: 'Standard' }),
+            res('azurerm_nat_gateway_public_ip_association', n.id, { nat_gateway_id: x(`azurerm_nat_gateway.${n.id}.id`), public_ip_address_id: x(`azurerm_public_ip.${n.id}_nat.id`) }),
+          );
+          for (const s of natted) blocks.push(res('azurerm_subnet_nat_gateway_association', s.label, { subnet_id: x(`azurerm_subnet.${s.label}.id`), nat_gateway_id: x(`azurerm_nat_gateway.${n.id}.id`) }));
+        }
 
-        // Platform subnets in the hub, named as Azure requires.
-        const plat                                        = { gateway: '' };
-        for (const s of carved.filter((c) => c.tier === 'GatewaySubnet' || c.tier === 'AzureBastionSubnet')) {
-          const label = `${n.id}_${s.tier === 'GatewaySubnet' ? 'gateway' : 'bastion'}`;
-          blocks.push(res('azurerm_subnet', label, { name: s.tier, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), virtual_network_name: x(`azurerm_virtual_network.${n.id}.name`), address_prefixes: [s.cidr] }));
-          if (s.tier === 'GatewaySubnet') plat.gateway = label;
-          else plat.bastion = label;
+        // Azure's platform subnets, named as Azure requires.
+        const plat = new Map                ();
+        for (const s of all.filter((c) => AZURE_FIXED.has(c.tier          ))) {
+          blocks.push(res('azurerm_subnet', s.label, { name: s.tier, resource_group_name: x(`azurerm_resource_group.${n.id}.name`), virtual_network_name: x(`azurerm_virtual_network.${n.id}.name`), address_prefixes: [s.cidr] }));
+          plat.set(s.tier          , s.label);
         }
         platform.set(n.id, plat);
-        // Delegated subnets: carved ones, and the ones given a range.
-        for (const d of wanted.get(n.name) ?? []) {
-          const cidr = d.cidr || carved.find((s) => s.tier === `d:${d.kind}`)?.cidr || '';
-          if (familyOf(cidr) !== 4) {
-            findings.push(error('tf.mig.azure-delegation-cidr', `Delegation ${d.kind} in ${n.name}: "${cidr}" is not an IPv4 CIDR.`, { path: 'delegations' }));
-            continue;
-          }
-          delegated.push({ network: n, kind: d.kind, cidr, label: ident(n.id, d.kind) });
-        }
+        for (const s of all.filter((c) => !!DELEGATIONS[c.tier          ])) delegated.push({ network: n, kind: s.tier          , cidr: s.cidr, label: s.label, name: s.short });
       }
       if (findings.some((f) => f.severity === 'error')) return failed('azure_mig_landing_zone', findings);
 
@@ -329,7 +304,7 @@ function azureLandingZone()            {
         const spec = DELEGATIONS[d.kind] ?? { label: d.kind };
         blocks.push(
           res('azurerm_subnet', d.label, {
-            name: rname(lz.prefix, d.network.name, d.kind),
+            name: d.name,
             resource_group_name: x(`azurerm_resource_group.${d.network.id}.name`),
             virtual_network_name: x(`azurerm_virtual_network.${d.network.id}.name`),
             address_prefixes: [d.cidr],
@@ -338,12 +313,28 @@ function azureLandingZone()            {
         if (d.kind === 'sqlmi') {
           // A managed instance's subnet must carry a security group and a route table; the service adds its own rules to both.
           blocks.push(
-            res('azurerm_network_security_group', d.label, { name: rname(lz.prefix, d.network.name, 'sqlmi', 'nsg'), location, resource_group_name: x(`azurerm_resource_group.${d.network.id}.name`) }),
+            res('azurerm_network_security_group', d.label, { name: rname(lz.prefix, d.network.name, d.name, 'nsg'), location, resource_group_name: x(`azurerm_resource_group.${d.network.id}.name`) }),
             res('azurerm_subnet_network_security_group_association', d.label, { subnet_id: x(`azurerm_subnet.${d.label}.id`), network_security_group_id: x(`azurerm_network_security_group.${d.label}.id`) }),
-            res('azurerm_route_table', d.label, { name: rname(lz.prefix, d.network.name, 'sqlmi', 'rt'), location, resource_group_name: x(`azurerm_resource_group.${d.network.id}.name`) }),
+            res('azurerm_route_table', d.label, { name: rname(lz.prefix, d.network.name, d.name, 'rt'), location, resource_group_name: x(`azurerm_resource_group.${d.network.id}.name`) }),
             res('azurerm_subnet_route_table_association', d.label, { subnet_id: x(`azurerm_subnet.${d.label}.id`), route_table_id: x(`azurerm_route_table.${d.label}.id`) }),
           );
         }
+      }
+
+      // An existing landing zone: each new virtual network peers with the existing hub (its resource id); no hub is built.
+      for (const hubNet of lz.existing.filter((e) => e.role === 'hub')) {
+        for (const n of lz.networks) {
+          if (!subnetsByNet.has(n.id) && !platform.has(n.id)) continue;
+          blocks.push(res('azurerm_virtual_network_peering', `${n.id}_to_${hubNet.id}`, {
+            name: rname(n.name, 'to', hubNet.name),
+            resource_group_name: x(`azurerm_resource_group.${n.id}.name`),
+            virtual_network_name: x(`azurerm_virtual_network.${n.id}.name`),
+            remote_virtual_network_id: hubNet.existingId,
+            allow_forwarded_traffic: true,
+            use_remote_gateways: false,
+          }, [], `Peers ${n.name} with the existing hub ${hubNet.name}; the hub's owner adds the peering back (and "use remote gateways" once the hub has a gateway).`));
+        }
+        findings.push(info('tf.mig.azure-existing-hub', `${hubNet.name} exists already: no hub is built; each new virtual network peers with it. The hub's owner adds the peering back.`, { path: 'networks' }));
       }
 
       // Keys: a vault always (secrets live there); a key and a disk encryption set when keys are customer-managed.
@@ -421,12 +412,15 @@ function azureLandingZone()            {
       findings.push(info('tf.mig.azure-network-watcher', `VNet flow logs are written through NetworkWatcher_${location} in NetworkWatcherRG, which Azure creates with the first virtual network in a region.`, { path: 'networks' }));
 
       // Bastion.
-      const hubPlat = platform.get(hub.id);
-      if (lz.bastion === 'cloud-native' && hubPlat?.bastion) {
+      const hubBastion = platform.get(hub.id)?.get('AzureBastionSubnet');
+      if (lz.bastion === 'cloud-native' && !hubBastion) {
+        findings.push(warning('tf.mig.azure-no-bastion-subnet', `Administrative access is Azure Bastion, but ${hub.name} has no AzureBastionSubnet row, so no Bastion host is built.`, { path: 'subnets' }));
+      }
+      if (lz.bastion === 'cloud-native' && hubBastion) {
         blocks.push(
           res('azurerm_public_ip', 'bastion', { name: `${lz.prefix}-bastion-pip`, location, resource_group_name: x(`azurerm_resource_group.${hub.id}.name`), allocation_method: 'Static', sku: 'Standard', zones: ['1', '2', '3'] }),
           res('azurerm_bastion_host', 'landing_zone', { name: `${lz.prefix}-bastion`, location, resource_group_name: x(`azurerm_resource_group.${hub.id}.name`), sku: 'Standard', tunneling_enabled: true }, [
-            blk('ip_configuration', { name: 'bastion', subnet_id: x(`azurerm_subnet.${hubPlat.bastion}.id`), public_ip_address_id: x('azurerm_public_ip.bastion.id') }),
+            blk('ip_configuration', { name: 'bastion', subnet_id: x(`azurerm_subnet.${hubBastion}.id`), public_ip_address_id: x('azurerm_public_ip.bastion.id') }),
           ]),
         );
       }
@@ -437,18 +431,11 @@ function azureLandingZone()            {
       const sgIds                         = {};
       const mgmt           = lz.siteV4.map(q);
       if (lz.anyV6) mgmt.push(...lz.siteV6.map(q));
+      for (const [k, s] of subnetKeyMap(lz.subnets)) subnetIds[k] = `azurerm_subnet.${s.label}.id`;
       for (const n of lz.networks) {
-        const tiers = subnetsByNet.get(n.id) ?? [];
-        for (const s of tiers) {
-          for (let z = 0; z < n.zones; z++) subnetIds[`${n.name}/${s.tier}/${ZONE_LETTERS[z]}`] = `azurerm_subnet.${s.label}.id`;
-          if (s.tier === 'mgmt') mgmt.push(q(s.cidr));
-        }
-        const plat = platform.get(n.id);
-        if (plat?.gateway) subnetIds[`${n.name}/GatewaySubnet`] = `azurerm_subnet.${plat.gateway}.id`;
-        if (plat?.bastion) subnetIds[`${n.name}/AzureBastionSubnet`] = `azurerm_subnet.${plat.bastion}.id`;
+        for (const s of subnetsByNet.get(n.id) ?? []) if (s.tier === 'mgmt') mgmt.push(q(s.cidr));
         for (const t of n.tiers) sgIds[`${n.name}/${t}`] = `azurerm_network_security_group.${n.id}_${t}.id`;
       }
-      for (const d of delegated) subnetIds[`${d.network.name}/${d.kind}`] = `azurerm_subnet.${d.label}.id`;
       const byNet = (f                            , extra                         = {}) =>
         hcl({ ...Object.fromEntries(lz.networks.map((n) => [n.name, e(f(n))])), ...Object.fromEntries(Object.entries(extra).map(([k, v]) => [k, e(v)])) }, 2);
       blocks.push(
@@ -461,7 +448,7 @@ function azureLandingZone()            {
           kms_key_id: cmk ? 'azurerm_disk_encryption_set.landing_zone.id' : 'null',
           log_destination: 'azurerm_log_analytics_workspace.landing_zone.id',
           resource_group: byNet((n) => `azurerm_resource_group.${n.id}.name`, { shared: `${shared}.name` }),
-          zones: hcl(['1', '2', '3'].slice(0, lz.maxZones)),
+          zones: hcl(['1', '2', '3']),
           mgmt_cidrs: `[${mgmt.join(', ')}]`,
           ipv6: byNet((n) => String(n.ipv6)),
           location: q(location),
@@ -473,7 +460,7 @@ function azureLandingZone()            {
         ...['network_ids', 'subnet_ids', 'security_group_ids', 'kms_key_id', 'log_destination', 'resource_group'].map((k) => output(k, `local.landing_zone.${k}`)),
         output('key_vault_id', 'azurerm_key_vault.landing_zone.id', 'The vault secrets go in.'),
       );
-      findings.push(info('tf.mig.azure-ipv6-gateway', 'GatewaySubnet and AzureBastionSubnet are IPv4 only; the tier subnets are dual-stack where the network is.', { path: 'networks' }));
+      findings.push(info('tf.mig.azure-ipv6-gateway', 'Azure\'s platform subnets (GatewaySubnet, AzureFirewallSubnet, AzureBastionSubnet) and the delegated ones are IPv4 only; the others are dual-stack where their row says so.', { path: 'subnets' }));
       return { files: { 'main.tf': mainTf(blocks, `Azure landing zone: ${lz.prefix} in ${location}`) }, findings };
     },
   };
@@ -493,7 +480,7 @@ function azureIdentity()            {
       { id: 'strategy', label: 'Strategy', control: 'select', default: 'resolver-only', options: [{ value: 'managed-ad', label: 'Microsoft Entra Domain Services' }, { value: 'resolver-only', label: 'Forward DNS to our own DCs (extend-dcs)' }] },
       { id: 'domain', label: 'Domain', control: 'text', default: 'corp.example.com' },
       { id: 'edition', label: 'SKU', control: 'select', default: 'Enterprise', options: opts(['Standard', 'Enterprise', 'Premium']), showWhen: { input: 'strategy', equals: ['managed-ad'] } },
-      { id: 'dns_forwarders', label: 'Domain controller addresses', control: 'text', default: '10.0.0.10 10.0.0.11', hint: 'Space-separated.', showWhen: { input: 'strategy', equals: ['resolver-only'] } },
+      { id: 'dns_forwarders', label: 'Domain controller addresses', control: 'text', default: '', hint: 'Space-separated.', showWhen: { input: 'strategy', equals: ['resolver-only'] } },
       { id: 'network', label: 'Network', control: 'text', default: 'prod', hint: 'Where the directory or resolver sits: its aadds or dns-resolver delegated subnet.' },
       LANDING_ZONE_SOURCE,
     ],

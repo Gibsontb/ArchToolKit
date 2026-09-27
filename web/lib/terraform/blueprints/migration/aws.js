@@ -31,7 +31,8 @@ import {
   attrs,
   blk,
   carve,
-  carveNetwork,
+  onePerZone,
+  subnetKeyMap,
   cloudInit,
   consumerPreamble,
   cutoverVariable,
@@ -213,7 +214,7 @@ function awsLandingZone()            {
     ],
     build: (values                 ) => {
       const findings            = [];
-      const lz = parseLandingZone(values, REGION, findings);
+      const lz = parseLandingZone(values, REGION, findings, 'aws');
       if (findings.some((f) => f.severity === 'error')) return failed('aws_mig_landing_zone', findings);
       const cmk = lz.keys !== 'provider-managed';
       const account = 'data.aws_caller_identity.current.account_id';
@@ -233,25 +234,28 @@ function awsLandingZone()            {
 
       const subnetsByNet = new Map                      ();
       for (const n of lz.networks) {
-        const subnets = carveNetwork(n, lz.prefixLen, true, [], findings);
+        // Exactly the user's subnets: nothing is carved or added.
+        const subnets = lz.subnets.filter((s) => s.network.name === n.name);
         if (subnets.length === 0) continue;
         subnetsByNet.set(n.id, subnets);
+        const v4only = new Set(subnets.filter((s) => !s.ipv6).map((s) => s.label));
         const out = emitFoundation('aws', {
           name: rname(lz.prefix, n.name),
           cidr: n.cidr,
           ipv6: n.ipv6,
-          subnets: subnets.map((s) => ({ name: s.short, cidr: s.cidr, zone: `${lz.region}${s.zone}` })),
+          subnets: subnets.map((s) => ({ name: s.short, cidr: s.cidr, ...(s.zone ? { zone: s.zone } : {}), ...(s.tier === 'public' ? { public: true } : {}) })),
           tags: { atk_network: n.name, atk_env: n.envs.join(' ') },
         });
         findings.push(...out.findings.filter((f) => f.severity !== 'info'));
         blocks.push(
           reworkFoundation(out.files['main.tf'] ?? '', n.id, {
-            // The emitter's single security group and private route table give way to a group per tier and a table routes can be added to.
-            drop: (_kind, [type = '']) => type === 'aws_security_group' || type.startsWith('aws_vpc_security_group_') || type === 'aws_route_table' || type === 'aws_route_table_association',
-            edit: (type, _label, text) =>
-              type === 'aws_subnet'
-                ? text.replace(/availability_zone(\s*)= "[^"]*?([abc])"/, (_m, sp        , z        ) => `availability_zone${sp}= data.aws_availability_zones.available.names[${ZONE_LETTERS.indexOf(z       )}]`)
-                : text,
+            // The emitter's single security group and private route table give way to a group per tier and a table routes can be added to; a public subnet keeps the internet route.
+            drop: (_kind, [type = '', label = '']) =>
+              type === 'aws_security_group' || type.startsWith('aws_vpc_security_group_') || (type === 'aws_route_table' && label === 'private')
+              || (type === 'aws_route_table_association' && !subnets.some((s) => s.tier === 'public' && ident(s.short) === label)),
+            // A subnet the user left IPv4-only in a dual-stack VPC gets no IPv6 range.
+            edit: (type, label, text) =>
+              type === 'aws_subnet' && v4only.has(label) ? text.split('\n').filter((l) => !/^\s*(ipv6_cidr_block|assign_ipv6_address_on_creation)\s*=/.test(l)).join('\n') : text,
           }),
         );
 
@@ -262,7 +266,7 @@ function awsLandingZone()            {
         if (n.ipv6) {
           blocks.push(res('aws_route', `${n.id}_ipv6_default`, { route_table_id: x(rt), destination_ipv6_cidr_block: '::/0', egress_only_gateway_id: x(`aws_egress_only_internet_gateway.${n.id}.id`) }));
         }
-        for (const s of subnets) blocks.push(res('aws_route_table_association', s.label, { subnet_id: x(`aws_subnet.${s.label}.id`), route_table_id: x(rt) }));
+        for (const s of subnets.filter((x) => x.tier !== 'public')) blocks.push(res('aws_route_table_association', s.label, { subnet_id: x(`aws_subnet.${s.label}.id`), route_table_id: x(rt) }));
 
         blocks.push(...securityGroups(lz.prefix, n, siteSources(lz, n)));
 
@@ -273,7 +277,7 @@ function awsLandingZone()            {
         if (n.ipv6) {
           blocks.push(res('aws_vpc_security_group_ingress_rule', `${n.id}_endpoints_443_v6`, { security_group_id: x(`aws_security_group.${n.id}_endpoints.id`), cidr_ipv6: x(`aws_vpc.${n.id}.ipv6_cidr_block`), ip_protocol: 'tcp', from_port: 443, to_port: 443, description: 'HTTPS from the VPC, IPv6' }));
         }
-        const zoneSubnets = zoneSubnetLabels(n, subnets);
+        const zoneSubnets = onePerZone(subnets, 'endpoints').map((x) => x.label);
         for (const svc of ENDPOINTS) {
           blocks.push(
             res(
@@ -306,6 +310,22 @@ function awsLandingZone()            {
         );
       }
       if (findings.some((f) => f.severity === 'error')) return failed('aws_mig_landing_zone', findings);
+
+      // An existing landing zone: each new VPC attaches to its Transit Gateway (the hub's id); no hub is built.
+      for (const hub of lz.existing.filter((e) => e.role === 'hub')) {
+        for (const n of lz.networks) {
+          const attach = onePerZone(subnetsByNet.get(n.id) ?? [], 'tgw-attachment');
+          if (attach.length === 0) continue;
+          blocks.push(res('aws_ec2_transit_gateway_vpc_attachment', `${n.id}_to_${hub.id}`, {
+            transit_gateway_id: hub.existingId,
+            vpc_id: x(`aws_vpc.${n.id}.id`),
+            subnet_ids: x(hlist(attach.map((a) => `aws_subnet.${a.label}.id`))),
+            ipv6_support: n.ipv6 ? 'enable' : 'disable',
+            tags: x(hcl({ Name: rname(lz.prefix, n.name, 'to', hub.name) })),
+          }, [], `Attaches ${n.name} to the existing hub ${hub.name} (${hub.existingId}); its owner accepts the attachment and routes it.`));
+        }
+        findings.push(info('tf.mig.aws-existing-hub', `${hub.name} exists already (${hub.existingId}): no hub is built; each new VPC attaches to it. Its Transit Gateway owner accepts the attachments and adds the routes.`, { path: 'networks' }));
+      }
 
       // The key everything is encrypted with.
       if (cmk) {
@@ -392,9 +412,9 @@ function awsLandingZone()            {
       const sgIds                         = {};
       const mgmt           = lz.siteV4.map(q);
       if (lz.anyV6) mgmt.push(...lz.siteV6.map(q));
+      for (const [k, s] of subnetKeyMap(lz.subnets)) subnetIds[k] = `aws_subnet.${s.label}.id`;
       for (const n of lz.networks) {
         for (const s of subnetsByNet.get(n.id) ?? []) {
-          subnetIds[`${n.name}/${s.tier}/${s.zone}`] = `aws_subnet.${s.label}.id`;
           if (s.tier === 'mgmt') {
             mgmt.push(q(s.cidr));
             if (n.ipv6) mgmt.push(`aws_subnet.${s.label}.ipv6_cidr_block`);
@@ -413,12 +433,12 @@ function awsLandingZone()            {
           kms_key_id: cmk ? 'aws_kms_key.landing_zone.arn' : 'null',
           log_destination: bucketArn,
           resource_group: 'null',
-          zones: `slice(data.aws_availability_zones.available.names, 0, ${lz.maxZones})`,
+          zones: hlist([...new Set(lz.subnets.map((x) => x.zone ?? ''))].filter(Boolean).sort().map(q)),
           mgmt_cidrs: `[${mgmt.join(', ')}]`,
           ipv6: byNet((n) => String(n.ipv6)),
           instance_profile: 'aws_iam_instance_profile.instance.name',
           route_table_ids: byNet((n) => `aws_route_table.${n.id}_private.id`),
-          zone_subnet_ids: byNet((n) => hlist(zoneSubnetLabels(n, subnetsByNet.get(n.id) ?? []).map((l) => `aws_subnet.${l}.id`))),
+          zone_subnet_ids: byNet((n) => hlist(onePerZone(subnetsByNet.get(n.id) ?? [], 'tgw-attachment').map((l) => `aws_subnet.${l.label}.id`))),
           network_cidrs: byNet((n) => hlist([q(n.cidr), ...(n.ipv6 ? [`aws_vpc.${n.id}.ipv6_cidr_block`] : [])])),
         }),
         output('landing_zone', 'local.landing_zone', 'The landing-zone contract: the value of the landing_zone variable of a blueprint used on its own.'),
@@ -427,17 +447,12 @@ function awsLandingZone()            {
       if (lz.bastion === 'cloud-native') {
         findings.push(info('tf.mig.aws-session-manager', 'Administrative access is Session Manager through the interface endpoints: no bastion host and no inbound port from the internet.', { path: 'bastion' }));
       }
-      findings.push(info('tf.mig.aws-no-nat', 'The subnets are private with no NAT gateway: IPv4 out goes through the VPC endpoints and on-premises; IPv6 out through the egress-only gateway. Add a NAT gateway if a VM needs the IPv4 internet.', { path: 'networks' }));
+      findings.push(info('tf.mig.aws-no-nat', 'No NAT gateway is built: private subnets reach IPv4 through the VPC endpoints and on-premises, IPv6 through the egress-only gateway; a public subnet routes to the internet gateway.', { path: 'networks' }));
       return { files: { 'main.tf': mainTf(blocks, `AWS landing zone: ${lz.prefix} in ${lz.region}`) }, findings };
     },
   };
 }
 
-/** One subnet per zone of the network's first tier (mgmt when it has one): what endpoints and attachments sit in. */
-function zoneSubnetLabels(n             , subnets                       )           {
-  const tier = n.tiers.includes('mgmt') ? 'mgmt' : n.tiers[0];
-  return subnets.filter((s) => s.tier === tier).map((s) => s.label);
-}
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -453,7 +468,7 @@ function awsIdentity()            {
       { id: 'strategy', label: 'Strategy', control: 'select', default: 'resolver-only', options: [{ value: 'managed-ad', label: 'AWS Managed Microsoft AD' }, { value: 'resolver-only', label: 'Forward DNS to our own DCs (extend-dcs)' }] },
       { id: 'domain', label: 'Domain', control: 'text', default: 'corp.example.com' },
       { id: 'edition', label: 'Edition', control: 'select', default: 'Enterprise', options: opts(['Standard', 'Enterprise']), showWhen: { input: 'strategy', equals: ['managed-ad'] } },
-      { id: 'dns_forwarders', label: 'Domain controller addresses', control: 'text', default: '10.0.0.10 10.0.0.11', hint: 'Space-separated, either family.', showWhen: { input: 'strategy', equals: ['resolver-only'] } },
+      { id: 'dns_forwarders', label: 'Domain controller addresses', control: 'text', default: '', hint: 'Space-separated, either family.', showWhen: { input: 'strategy', equals: ['resolver-only'] } },
       { id: 'network', label: 'Network', control: 'text', default: 'prod', hint: 'The landing-zone network the directory and resolver sit in.' },
       LANDING_ZONE_SOURCE,
     ],
@@ -1078,7 +1093,7 @@ function awsOracleDatabase()            {
       const findings            = [oracleRegionFinding('AWS', 'the region')];
       const lz = lzRef(values);
       const net = rname(valueOf(values, 'network', 'prod'));
-      const cidr = valueOf(values, 'odb_network_cidr', '10.60.0.0/24');
+      const cidr = valueOf(values, 'odb_network_cidr');
       const [p = '24'] = cidr.split('/').slice(1);
       const halves = familyOf(cidr) === 4 ? carve(cidr, [Number(p) + 1, Number(p) + 1]) : null;
       if (!halves) {

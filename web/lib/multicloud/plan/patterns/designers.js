@@ -22,7 +22,7 @@ import { error, info,              } from '../../../core/findings.js';
 import { createContext } from '../decide/engine.js';
 import { DB_SERVICES } from '../db-catalog.js';
 import {
-  computeTargetFor, diskTypes, DESIGN_MAPPERS, insertMapper, networkForEnv,                   
+  computeTargetFor, diskTypes, DESIGN_MAPPERS, insertMapper, placeWorkload,                   
 } from '../design/index.js';
 import { networkZones } from '../design/network.js';
 import { networkOf, hash32 } from '../design/compute.js';
@@ -67,12 +67,12 @@ export const sapCertifiedMapper               = {
     for (const w of ctx.claimedWorkloads) {
       const d = ctx.decisionOf(w.id);
       if (!d || !MOVES.has(d.method)) continue;
-      const network = networkOf(design, networkForEnv(w.env));
-      if (!network) {
-        findings.push(error('pattern.sap.no-network', `${w.name}: ${ctx.platform} has no network to place it in.`));
+      const placed = placeWorkload(design, w.env, 'db');
+      if (!placed) {
+        findings.push(error('pattern.sap.no-network', `${w.name}: ${ctx.platform} has no data-tier subnet in a network of its environment to place it in: add one on Landing zones.`));
         continue;
       }
-      const zones = networkZones(network);
+      const { network, zones } = placed;
       const zone = zones.length > 0 ? zones[(hash32(w.app) + n++) % zones.length]  : '';
       const base = computeTargetFor(ctx, w, { network, zone, replicate: d.method === 'replicate' });
       const need = hanaMemoryOf(w, rctx);

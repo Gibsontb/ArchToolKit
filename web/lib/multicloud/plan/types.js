@@ -458,14 +458,99 @@
                                                                  
                                   
                                                                  
-                                
+
+// ---------- the user's network rows (Landing zones, wizard step 6) ----------
+
+/** What a network is for, in the cloud's reference landing zone. */
+                                                                                        
+/** The environment class a network serves. `shared` is a hub or shared-services network. */
+                                                              
+
+/**
+ * One network the user added (Landing zones / wizard step 6). Every field
+ * starts empty: the toolkit never fills one in. `base` + `prefix` is the
+ * IPv4 range; `existingId` is the provider's id of a network that already
+ * exists (then it is attached to, not built).
+ */
+                             
+                                     
+                      
                         
+                                  
+                          
+                                
+                                          
+                               
+                                      
+                        
+                                                              
+                          
+                                   
+ 
+
+/**
+ * One subnet the user added. `purpose` is a workload tier (web, app, db,
+ * mgmt, container) or one of the cloud's platform subnets (GatewaySubnet,
+ * tgw-attachment, proxy-only …). `zone` is a zone name, or `regional`.
+ * `base` is a typed IPv4 address, or `next` for the next free block in the
+ * network (in row order).
+ */
+                            
+                      
+                           
+                           
+                                                                                                                           
+                        
+                           
+                        
+                          
+                        
+                                   
+ 
+
+/** One cloud's network rows. An empty list means no network: nothing is built. */
+                                   
+                                           
+                                         
+ 
+                                                                                 
+
+/** A subnet of the design: exactly one of the user's subnet rows, resolved. */
+                               
+                          
+                      
+                                   
+                        
+                                                                                           
+                        
+                                            
+                        
+                        
+                             
+                          
+                                                      
+                          
+ 
+
+/** A network of the design: exactly one of the user's network rows, resolved. */
+                                
+                                                          
+                       
+                        
+                              
+                           
+                            
+                                                                             
+                               
                                 
                         
                          
                              
+                                                                                  
                                          
-                                                                                                                                   
+                                                                                                                 
+                                     
+                                            
  
                                 
                             
@@ -524,7 +609,8 @@
                                              
                                           
                                                                                                                       
-                                                                                            
+                                                                                                                
+                                                                                                                       
                                                              
                                                                            
                                                                                                 
@@ -1319,6 +1405,8 @@ export const PLAN_KIND = 'archtoolkit.multicloud-plan';
                                          
                                    
                            
+                                                                                                         
+                                   
  
 /** The A.11.1 `PlanDelta`. */
                                                                                                            

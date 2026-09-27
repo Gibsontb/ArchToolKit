@@ -29,9 +29,11 @@
  * parameter that main.bicepparam reads from the environment.
  */
 
-import { info, warning, type Finding } from '../../../../core/findings.ts';
-import { carve, ulaFor } from '../../../../terraform/blueprints/migration/common.ts';
+import { error, info, warning, type Finding } from '../../../../core/findings.ts';
+
 import { isIaasService } from '../../design/index.ts';
+import { builtIn, hubOf } from '../../design/net-rows.ts';
+import { noNetworkFinding } from '../../design/network.ts';
 import { DB_SERVICES_EXTRA } from '../../db-catalog-extra.ts';
 import { slugName } from '../../options.ts';
 import type { ComputeTarget, NetworkDesign, Plan, PlanDecision, TargetDesign } from '../../types.ts';
@@ -663,14 +665,17 @@ interface Build {
   readonly zones: Map<string, Res>;
 }
 
-/** Subnets the landing zone carves after the tiers, in the order the Terraform landing zone carves them. */
-interface Extra { readonly kind: string; readonly size: number; readonly delegation?: string }
+/** Azure's platform subnets: fixed names, no security group or NAT from the landing zone. */
+const AZURE_FIXED: ReadonlySet<string> = new Set(['GatewaySubnet', 'AzureFirewallSubnet', 'AzureFirewallManagementSubnet', 'AzureBastionSubnet']);
+/** The delegated (or dedicated) subnet purposes. */
+const DELEGATED_KINDS: ReadonlySet<string> = new Set(['sqlmi', 'postgres', 'mysql', 'dns-resolver', 'aadds', 'oracle', 'functions', 'webapp']);
 
 const DELEGATION: Readonly<Record<string, string>> = {
   sqlmi: 'Microsoft.Sql/managedInstances',
   postgres: 'Microsoft.DBforPostgreSQL/flexibleServers',
   mysql: 'Microsoft.DBforMySQL/flexibleServers',
   'dns-resolver': 'Microsoft.Network/dnsResolvers',
+  oracle: 'Oracle.Database/networkAttachments',
   functions: 'Microsoft.App/environments',
   webapp: 'Microsoft.Web/serverFarms',
 };
@@ -678,34 +683,6 @@ const DELEGATION: Readonly<Record<string, string>> = {
 function v6Subnet(range48: string, i: number): string {
   const head = range48.split('::')[0] ?? range48;
   return i === 0 ? `${head}::/64` : `${head}:${i.toString(16)}::/64`;
-}
-
-/** Which extra subnets each network needs, from the design. */
-function extrasFor(b: Build, n: NetworkDesign, hub: boolean): Extra[] {
-  const { ctx } = b;
-  const prefixLen = Number(n.subnets[0]?.cidr.split('/')[1] ?? 22);
-  const delegated = Math.max(prefixLen, 24);
-  const out: Extra[] = [];
-  if (hub && ctx.pd.bastion === 'cloud-native' && ctx.scope !== 'apps') out.push({ kind: 'AzureBastionSubnet', size: 26 });
-  if (hub && ctx.scope !== 'apps') out.push({ kind: 'GatewaySubnet', size: 27 });
-  const add = (kind: string): void => {
-    if (!out.some((x) => x.kind === kind)) out.push({ kind, size: delegated, ...(DELEGATION[kind] ? { delegation: DELEGATION[kind] } : {}) });
-  };
-  for (const t of ctx.databases) {
-    if (dbNetwork(ctx, ctx.dbById.get(t.database)) !== n.name) continue;
-    if (t.service === 'azure-sqlmi') add('sqlmi');
-    if (t.service === 'azure-pg-flex') add('postgres');
-    if (t.service === 'azure-mysql-flex') add('mysql');
-  }
-  if (hub && ctx.scope !== 'apps' && ctx.pd.identity.strategy !== 'none') add(ctx.pd.identity.strategy === 'managed-ad' ? 'aadds' : 'dns-resolver');
-  for (const a of ctx.apps) {
-    for (const c of a.components) {
-      if (c.kind !== 'pattern' || (c.settings?.network?.trim() || 'prod') !== n.name) continue;
-      if (c.tierPattern === 'serverless') out.push({ kind: `app:${c.id}`, size: Math.max(prefixLen, 26), delegation: DELEGATION.functions });
-      if (c.tierPattern === 'paas-web') out.push({ kind: `app:${c.id}`, size: Math.max(prefixLen, 26), delegation: DELEGATION.webapp });
-    }
-  }
-  return out;
 }
 
 interface NsgRule {
@@ -839,7 +816,7 @@ function landingZone(b: Build): void {
   b.lz = { law, kv, ...(des ? { des } : {}), uami };
 
   // Networks.
-  const hub = ctx.pd.networks.find((n) => n.name === 'prod') ?? ctx.pd.networks[0];
+  const hub = hubOf(ctx.pd.networks, ctx.pd.region);
   const flowStorage = d.add({
     sym: 'flowLogStorage', type: 'Microsoft.Storage/storageAccounts', module: M, name: call('take', str(`${prefix.replace(/[^a-z0-9]/g, '').slice(0, 10)}fl`, SUFFIX), 24),
     body: {
@@ -847,23 +824,14 @@ function landingZone(b: Build): void {
       properties: { minimumTlsVersion: 'TLS1_2', supportsHttpsTrafficOnly: true, allowBlobPublicAccess: false, allowSharedKeyAccess: false, publicNetworkAccess: 'Enabled', networkAcls: { bypass: 'AzureServices', defaultAction: 'Allow' } },
     },
   });
-  for (const n of ctx.pd.networks) {
+  for (const n of builtIn(ctx.pd.networks, ctx.pd.region)) {
+    // Exactly the user's subnets: nothing is carved or added.
     const isHub = n === hub;
     const N = camel(n.name);
     const netTags = b.tags(undefined, n.envs.join(' '), undefined, { atk_network: n.name });
-    const prefixLen = Number(n.subnets[0]?.cidr.split('/')[1] ?? 22);
-    const extras = extrasFor(b, n, isHub);
-    const cidrs = carve(n.cidr, [...n.tiers.map(() => prefixLen), ...extras.map((x) => x.size)]);
-    if (!cidrs) {
-      ctx.findings.push(warning('plan.native.azure-carve', `${n.name}: ${n.tiers.length + extras.length} subnets do not fit in ${n.cidr}; the network is left out.`));
-      continue;
-    }
-    const v6range = n.ipv6 ? (n.ipv6Cidr ?? ulaFor(`${prefix}/${n.name}`)) : undefined;
-    const tierCidr = new Map<string, { v4: string; v6?: string }>();
-    n.tiers.forEach((t, i) => tierCidr.set(t, { v4: cidrs[i] as string, ...(v6range ? { v6: v6Subnet(v6range, i) } : {}) }));
-    const cidrOf = (t: string): string[] => { const c = tierCidr.get(t); return c ? [c.v4, ...(c.v6 ? [c.v6] : [])] : []; };
-    const bastionCidr = extras.findIndex((x) => x.kind === 'AzureBastionSubnet');
-    const bastion = bastionCidr >= 0 ? cidrs[n.tiers.length + bastionCidr] : undefined;
+    const v6range = n.ipv6 ? n.ipv6Cidr : undefined;
+    const cidrOf = (t: string): string[] => n.subnets.filter((s) => s.tier === t).flatMap((s) => [s.cidr, ...(s.ipv6Cidr ? [s.ipv6Cidr] : [])]);
+    const bastion = n.subnets.find((s) => s.tier === 'AzureBastionSubnet')?.cidr;
     const nsgs = new Map<string, Res>();
     for (const t of n.tiers) {
       nsgs.set(t, d.add({
@@ -871,64 +839,81 @@ function landingZone(b: Build): void {
         body: { location, tags: { ...netTags, atk_tier: t }, properties: { securityRules: nsgRulesJson(tierNsgRules(ctx.plan, n, t, cidrOf, v6range, bastion)) } },
       }));
     }
-    const pip = d.add({
-      sym: camel('natIp', n.name), type: 'Microsoft.Network/publicIPAddresses', module: M, name: `${prefix}-${n.name}-nat-pip`,
-      body: { location, tags: netTags, sku: { name: 'Standard', tier: 'Regional' }, zones: ['1', '2', '3'], properties: { publicIPAllocationMethod: 'Static', publicIPAddressVersion: 'IPv4' } },
-    });
-    const nat = d.add({
-      sym: camel('nat', n.name), type: 'Microsoft.Network/natGateways', module: M, name: `${prefix}-${n.name}-nat`,
-      body: { location, tags: netTags, sku: { name: 'Standard' }, properties: { idleTimeoutInMinutes: 4, publicIpAddresses: [{ id: id(pip) }] } },
-    });
+    const natted = n.subnets.filter((s) => !AZURE_FIXED.has(s.tier) && !DELEGATED_KINDS.has(s.tier) && s.tier !== 'private-endpoints');
+    let nat: Res | undefined;
+    if (natted.length > 0) {
+      const pip = d.add({
+        sym: camel('natIp', n.name), type: 'Microsoft.Network/publicIPAddresses', module: M, name: `${prefix}-${n.name}-nat-pip`,
+        body: { location, tags: netTags, sku: { name: 'Standard', tier: 'Regional' }, zones: ['1', '2', '3'], properties: { publicIPAllocationMethod: 'Static', publicIPAddressVersion: 'IPv4' } },
+      });
+      nat = d.add({
+        sym: camel('nat', n.name), type: 'Microsoft.Network/natGateways', module: M, name: `${prefix}-${n.name}-nat`,
+        body: { location, tags: netTags, sku: { name: 'Standard' }, properties: { idleTimeoutInMinutes: 4, publicIpAddresses: [{ id: id(pip) }] } },
+      });
+    }
     const tiers = new Map<string, string>();
     const extra = new Map<string, string>();
     const subnets: Val[] = [];
-    for (const t of n.tiers) {
-      const c = tierCidr.get(t) as { v4: string; v6?: string };
-      const name = `${prefix}-${n.name}-${t}`;
-      tiers.set(t, name);
+    for (const s of n.subnets) {
+      if (AZURE_FIXED.has(s.tier)) {
+        // Azure's platform subnets: the name Azure requires, no security group or NAT from the landing zone.
+        extra.set(s.tier, s.tier);
+        subnets.push({ name: s.tier, properties: { addressPrefix: s.cidr } });
+        continue;
+      }
+      const name = `${prefix}-${n.name}-${s.name}`;
+      if (DELEGATED_KINDS.has(s.tier)) {
+        if (!extra.has(s.tier)) extra.set(s.tier, name);
+        const props: Record<string, Val> = { addressPrefix: s.cidr, defaultOutboundAccess: false };
+        const delegation = DELEGATION[s.tier];
+        if (delegation) props.delegations = [{ name: delegation.split('/').pop() as string, properties: { serviceName: delegation } }];
+        if (s.tier === 'sqlmi') {
+          // A managed instance's subnet carries a security group and a route table; the service adds its own rules to both.
+          const nsg = d.add({ sym: camel('nsg', n.name, s.name), type: 'Microsoft.Network/networkSecurityGroups', module: M, name: `${prefix}-${n.name}-${s.name}-nsg`, body: { location, tags: netTags, properties: { securityRules: [] } } });
+          const rt = d.add({ sym: camel('routes', n.name, s.name), type: 'Microsoft.Network/routeTables', module: M, name: `${prefix}-${n.name}-${s.name}-rt`, body: { location, tags: netTags, properties: { disableBgpRoutePropagation: false } } });
+          props.networkSecurityGroup = { id: id(nsg) };
+          props.routeTable = { id: id(rt) };
+        }
+        if (s.tier === 'aadds') {
+          const nsg = d.add({
+            sym: camel('nsg', n.name, s.name), type: 'Microsoft.Network/networkSecurityGroups', module: M, name: `${prefix}-${n.name}-${s.name}-nsg`,
+            body: {
+              location, tags: netTags,
+              properties: {
+                securityRules: [
+                  { name: 'AllowSyncWithAzureAD', properties: { priority: 101, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourcePortRange: '*', destinationPortRange: '443', sourceAddressPrefix: 'AzureActiveDirectoryDomainServices', destinationAddressPrefix: '*' } },
+                  { name: 'AllowPSRemoting', properties: { priority: 301, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourcePortRange: '*', destinationPortRange: '5986', sourceAddressPrefix: 'AzureActiveDirectoryDomainServices', destinationAddressPrefix: '*' } },
+                ],
+              },
+            },
+          });
+          props.networkSecurityGroup = { id: id(nsg) };
+        }
+        subnets.push({ name, properties: props });
+        continue;
+      }
+      if (!tiers.has(s.tier)) tiers.set(s.tier, name);
+      const nsg = nsgs.get(s.tier);
       subnets.push({
         name,
         properties: {
-          ...(c.v6 ? { addressPrefixes: [c.v4, c.v6] } : { addressPrefix: c.v4 }),
-          networkSecurityGroup: { id: id(nsgs.get(t) as Res) },
-          natGateway: { id: id(nat) },
+          ...(s.ipv6Cidr ? { addressPrefixes: [s.cidr, s.ipv6Cidr] } : { addressPrefix: s.cidr }),
+          ...(nsg ? { networkSecurityGroup: { id: id(nsg) } } : {}),
+          ...(nat && s.tier !== 'private-endpoints' ? { natGateway: { id: id(nat) } } : {}),
           defaultOutboundAccess: false,
           privateEndpointNetworkPolicies: 'Enabled',
         },
       });
     }
-    const special: Res[] = [];
-    extras.forEach((x, i) => {
-      const cidr = cidrs[n.tiers.length + i] as string;
-      const name = x.kind === 'AzureBastionSubnet' || x.kind === 'GatewaySubnet' ? x.kind : `${prefix}-${n.name}-${x.kind.startsWith('app:') ? kebab(x.kind.slice(4).replace(/^c:/, '')) : x.kind}`;
-      extra.set(x.kind, name);
-      const props: Record<string, Val> = { addressPrefix: cidr, defaultOutboundAccess: false };
-      if (x.delegation) props.delegations = [{ name: x.delegation.split('/').pop() as string, properties: { serviceName: x.delegation } }];
-      if (x.kind === 'sqlmi') {
-        // A managed instance's subnet carries a security group and a route table; the service adds its own rules to both.
-        const nsg = d.add({ sym: camel('nsg', n.name, 'sqlmi'), type: 'Microsoft.Network/networkSecurityGroups', module: M, name: `${prefix}-${n.name}-sqlmi-nsg`, body: { location, tags: netTags, properties: { securityRules: [] } } });
-        const rt = d.add({ sym: camel('routes', n.name, 'sqlmi'), type: 'Microsoft.Network/routeTables', module: M, name: `${prefix}-${n.name}-sqlmi-rt`, body: { location, tags: netTags, properties: { disableBgpRoutePropagation: false } } });
-        props.networkSecurityGroup = { id: id(nsg) };
-        props.routeTable = { id: id(rt) };
-        special.push(nsg, rt);
+    // An app's serverless or App Service component uses the user's integration subnet of its network.
+    for (const a of ctx.apps) {
+      for (const c of a.components) {
+        if (c.kind !== 'pattern') continue;
+        const kind = c.tierPattern === 'serverless' ? 'functions' : c.tierPattern === 'paas-web' ? 'webapp' : undefined;
+        const own = kind ? extra.get(kind) : undefined;
+        if (own && (c.settings?.network?.trim() || n.name) === n.name) extra.set(`app:${c.id}`, own);
       }
-      if (x.kind === 'aadds') {
-        const nsg = d.add({
-          sym: camel('nsg', n.name, 'aadds'), type: 'Microsoft.Network/networkSecurityGroups', module: M, name: `${prefix}-${n.name}-aadds-nsg`,
-          body: {
-            location, tags: netTags,
-            properties: {
-              securityRules: [
-                { name: 'AllowSyncWithAzureAD', properties: { priority: 101, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourcePortRange: '*', destinationPortRange: '443', sourceAddressPrefix: 'AzureActiveDirectoryDomainServices', destinationAddressPrefix: '*' } },
-                { name: 'AllowPSRemoting', properties: { priority: 301, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourcePortRange: '*', destinationPortRange: '5986', sourceAddressPrefix: 'AzureActiveDirectoryDomainServices', destinationAddressPrefix: '*' } },
-              ],
-            },
-          },
-        });
-        props.networkSecurityGroup = { id: id(nsg) };
-      }
-      subnets.push({ name, properties: props });
-    });
+    }
     const vnet = d.add({
       sym: camel('vnet', n.name), type: 'Microsoft.Network/virtualNetworks', module: M, name: `${prefix}-${n.name}-vnet`,
       body: {
@@ -936,12 +921,18 @@ function landingZone(b: Build): void {
         properties: { addressSpace: { addressPrefixes: [n.cidr, ...(v6range ? [v6range] : [])] }, subnets },
       },
     });
-    void special;
     d.add({
       sym: camel('vnetLogs', n.name), type: 'Microsoft.Insights/diagnosticSettings', module: M, scope: vnet, name: 'to-log-analytics',
       body: { properties: { workspaceId: id(law), logs: [{ categoryGroup: 'allLogs', enabled: true }], metrics: [{ category: 'AllMetrics', enabled: true }] } },
     });
     b.vnets.set(n.name, { net: n, res: vnet, tiers, extra, v6: !!v6range });
+    for (const existingHub of ctx.pd.networks.filter((x) => x.existingId && x.role === 'hub')) {
+      // An existing landing zone: peer with its hub (the hub's owner adds the peering back); no hub is built.
+      d.add({
+        sym: camel('peering', n.name, existingHub.name), type: 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings', module: M, parent: vnet, name: `${n.name}-to-${existingHub.name}`,
+        body: { properties: { remoteVirtualNetwork: { id: existingHub.existingId }, allowForwardedTraffic: true, allowVirtualNetworkAccess: true, useRemoteGateways: false } },
+      });
+    }
     if (isHub && ctx.pd.bastion === 'cloud-native' && extra.has('AzureBastionSubnet')) {
       const bip = d.add({
         sym: 'bastionIp', type: 'Microsoft.Network/publicIPAddresses', module: M, name: `${prefix}-bastion-pip`,
@@ -995,7 +986,7 @@ function identity(b: Build): void {
   const { d, ctx, prefix, location } = b;
   const strategy = ctx.pd.identity.strategy;
   if (strategy === 'none') return;
-  const hub = b.vnets.get('prod') ?? [...b.vnets.values()][0];
+  const hub = b.vnets.get(hubOf(b.ctx.pd.networks, b.ctx.pd.region)?.name ?? '') ?? [...b.vnets.values()][0];
   if (!hub) return;
   const domain = ctx.plan.requirements.identity.domain?.trim() || 'corp.example.com';
   const M = d.module({ name: 'identity', description: `${ctx.plan.name}: ${strategy === 'managed-ad' ? 'Microsoft Entra Domain Services' : 'DNS forwarding'} for ${domain}.` });
@@ -1047,7 +1038,7 @@ function identity(b: Build): void {
 
 function connectivity(b: Build): void {
   const { d, ctx, prefix, location } = b;
-  const hub = b.vnets.get('prod') ?? [...b.vnets.values()][0];
+  const hub = b.vnets.get(hubOf(b.ctx.pd.networks, b.ctx.pd.region)?.name ?? '') ?? [...b.vnets.values()][0];
   if (!hub) return;
   const spokes = [...b.vnets.values()].filter((v) => v !== hub);
   const sites = ctx.pd.connectivity.map((c) => ({ c, site: ctx.plan.requirements.sites.find((s) => s.name === c.site) })).filter((x) => x.site);
@@ -1158,13 +1149,15 @@ function relocate(b: Build): void {
   const r = ctx.pd.relocate;
   if (!r || r.nodes <= 0) return;
   const nodes = Math.min(16, Math.max(3, r.nodes));
-  const used = [...ctx.pd.networks.map((n) => n.cidr), ...ctx.plan.requirements.sites.flatMap((s) => s.cidrs)];
-  let block: string | undefined;
-  for (let o = 200; o < 456 && !block; o += 1) {
-    const c = `10.${o % 256}.0.0/22`;
-    if (!used.some((u) => !isV6(u) && overlaps(c, u))) block = c;
+  // The management /22 is the user's (Landing zones, azure:range:relocate): never picked here.
+  const block = ctx.plan.designOverrides['azure:range:relocate']?.trim() ?? '';
+  if (!block) {
+    ctx.findings.push(error('plan.tf.range-not-set', `Azure: ${r.service}'s management range (a /22) needs an address range your network team assigns; give it on Landing zones (nothing is picked for you).`, { path: 'azure:range:relocate' }));
+    return;
   }
-  if (!block) return;
+  const used = [...ctx.pd.networks.map((n) => n.cidr), ...ctx.plan.requirements.sites.flatMap((s) => s.cidrs)];
+  const clash = used.find((u) => !isV6(u) && overlaps(block, u));
+  if (clash) ctx.findings.push(error('plan.tf.range-overlap', `Azure: ${r.service}'s management range ${block} overlaps ${clash}.`, { path: 'azure:range:relocate' }));
   const M = d.module({ name: 'relocate', description: `${ctx.plan.name}: ${r.service} for the VMs that relocate with HCX.` });
   d.add({
     sym: 'privateCloud', type: 'Microsoft.AVS/privateClouds', module: M, name: `${prefix}-avs`,
@@ -1910,7 +1903,7 @@ interface Built {
 
 function build(plan: Plan, decision: PlanDecision, design: TargetDesign, options: NativeOptions): Built | null {
   const pd = design.platforms.find((p) => p.platform === 'azure');
-  if (!pd) return null;
+  if (!pd || builtIn(pd.networks, pd.region).length === 0) return null;
   const ctx = nativeContext(plan, decision, design, pd, options);
   if (!ctx) return null;
   const scopeName = ctx.scope === 'estate' ? '' : ctx.scope === 'landing-zone' ? '-lz' : `-${(options.apps ?? []).length === 1 ? slugName(plan.apps.find((x) => x.id === options.apps?.[0] || x.name === options.apps?.[0])?.name ?? 'apps') : 'apps'}`;
@@ -2011,6 +2004,8 @@ function readme(d: Deployment, ctx: NativeCtx, files: Record<string, string>): s
  * and a README with the portal and az commands.
  */
 export function bicepFiles(plan: Plan, decision: PlanDecision, design: TargetDesign, options: NativeOptions = {}): NativeFiles {
+  const azure = design.platforms.find((p) => p.platform === 'azure');
+  if (azure && builtIn(azure.networks, azure.region).length === 0) return { files: {}, findings: [noNetworkFinding('azure')] };
   const built = build(plan, decision, design, options);
   if (!built) {
     return { files: {}, findings: [info('plan.native.bicep-nothing', 'Nothing in this plan (or the selected apps) is placed on Azure, so there is no Bicep.')] };

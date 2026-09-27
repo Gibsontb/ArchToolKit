@@ -833,8 +833,6 @@ export const LOG_RETENTION_OPTIONS = table(LOG_RETENTION_VALUES, {
 
 export const IMAGE_KIND_VALUES = all           ()(['aws-ssm', 'aws-ami-filter', 'azure-marketplace', 'gcp-family', 'oci-platform', 'vsphere-template', 'replicated', 'custom']);
 
-/** The first octet pair of each platform's networks: prod `10.{n}.0.0/16`, nonprod `10.{n+1}.0.0/16`. */
-export const NETWORK_BASE                                     = { aws: 10, azure: 20, google: 30, oci: 40, vmware: 50 };
 
 /**
  * The cloud side's BGP ASN. Azure's 65515 is fixed by Azure. OCI's 31898 is
@@ -2434,12 +2432,8 @@ export const DEFAULT_GENERATE                   = Object.freeze({
   archive: 'zip',
 });
 
-/** Screen 7 landing-zone defaults. */
+/** Screen 7 landing-zone defaults. No network, subnet size, zone count or tier: the user builds the networks row by row. */
 export const DEFAULT_LANDING_ZONE = Object.freeze({
-  subnetPrefix: '/22'                ,
-  zonesProd: 3             ,
-  zonesNonprod: 1             ,
   bastion: 'cloud-native'           ,
   logRetentionDays: 365                    ,
-  tiers: Object.freeze(['web', 'app', 'db', 'mgmt']         ),
 });

@@ -11,6 +11,7 @@
  * loads the plan into both pages).
  */
 
+import { withUserNetworks } from './network-rows.ts';
 import {
   ASA_CONFIG, AWS_DISCOVERY, FIXTURE_DATE, FORTIGATE_CONFIG, HYPERV_DISCOVERY, PHYSICAL_DISCOVERY, fixtureDcExit, twentyDeployments, vsphereWorkbook,
 } from './multicloud-fixture.ts';
@@ -99,6 +100,11 @@ export interface E2e {
 
 export function basePlan(): Plan {
   const base = defaultRequirements();
+  // The networks the user built on every cloud (Landing zones), with the platform subnets the services need.
+  return withUserNetworks(bare(base), ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
+}
+
+function bare(base: ReturnType<typeof defaultRequirements>): Plan {
   return {
     kind: PLAN_KIND, version: 1, id: 'e2e-dc1-exit-0001', name: 'DC1 exit', savedAt: SAVED_AT,
     workloads: [], databases: [], apps: [], edges: [],
@@ -113,7 +119,11 @@ export function basePlan(): Plan {
       connection: 'circuit-with-vpn-backup',
       licensing: { ...base.licensing, microsoftSa: 'yes-some', oracle: 'processor' },
     },
-    designOverrides: {},
+    // The ranges the user assigns for the ODB networks and the relocate targets (never picked by the toolkit).
+    designOverrides: {
+      'aws:range:odb': '10.60.0.0/24', 'google:range:odb': '10.61.0.0/24', 'google:range:managed-ad': '10.99.0.0/24',
+      'aws:range:relocate': '10.200.0.0/22', 'azure:range:relocate': '10.204.0.0/22', 'google:range:relocate': '10.208.0.0/22', 'oci:range:relocate': '10.216.0.0/21',
+    },
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, start: '2026-11-02', freezes: [] },
     mode: 'dc-exit',
     appPlans: [],

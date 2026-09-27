@@ -18,7 +18,7 @@
  *   brings the disk.
  */
 
-import { info, warning,              } from '../../../core/findings.js';
+import { error, info, warning,              } from '../../../core/findings.js';
 import { rightsizeFor,                                     } from '../../../kit/rightsize.js';
 import { inCatalog } from '../../../kit/instance-specs.js';
 import {
@@ -34,7 +34,8 @@ import { osKind } from '../os.js';
                                  
                      
                                                               
-import { networkForEnv, networkZones } from './network.js';
+import { placeWorkload } from './network.js';
+import { tierZones } from './net-rows.js';
 
 // ---------------------------------------------------------------------------
 // Tier
@@ -349,30 +350,39 @@ export function hash32(text        )         {
   return h >>> 0;
 }
 
-/** Find a design network by name, else the first. */
+/** Find a design network by name. */
 export function networkOf(design                , name        )                            {
-  return design.networks.find((n) => n.name === name) ?? design.networks[0];
+  return design.networks.find((n) => n.name === name);
 }
 
 /**
- * Put the named targets in different zones of their network, in the order
- * given. Returns the targets and a finding when there are fewer zones than
- * members.
+ * Put the named targets in different zones, in the order given: the zones
+ * their tier has a subnet in (AWS), else the network's. Returns the targets
+ * and a finding when there are fewer zones than members.
  */
 export function spreadAcrossZones(design                , ids                   , what        )                                                    {
   const findings            = [];
   const members = ids.map((id) => design.compute.find((c) => c.workload === id)).filter((c)                     => !!c);
   const byId = new Map                ();
-  const perNetwork = new Map                         ();
-  for (const m of members) perNetwork.set(m.network, [...(perNetwork.get(m.network) ?? []), m]);
-  for (const [name, group] of perNetwork) {
-    const zones = networkZones(networkOf(design, name) );
+  const perGroup = new Map                         ();
+  for (const m of members) perGroup.set(`${m.network}|${m.tier}`, [...(perGroup.get(`${m.network}|${m.tier}`) ?? []), m]);
+  for (const group of perGroup.values()) {
+    const net = networkOf(design, group[0] .network);
+    const zones = net ? tierZones(net, group[0] .tier) : [];
     if (group.length > 1 && zones.length < 2) {
-      findings.push(info('design.compute.ha-single-zone', `${what}: the ${name} network has one zone, so its ${group.length} members share it; spread them with an anti-affinity rule (placement group / availability set / fault domains).`));
+      findings.push(info('design.compute.ha-single-zone', `${what}: the ${group[0] .network} network has one zone for them, so its ${group.length} members share it; add a subnet in another zone, or spread them with an anti-affinity rule (placement group / availability set / fault domains).`));
     }
-    group.forEach((m, i) => byId.set(m.workload, zones[i % zones.length] ?? m.zone));
+    group.forEach((m, i) => byId.set(m.workload, zones.length > 0 ? zones[i % zones.length]  : m.zone));
   }
   return { compute: design.compute.map((c) => (byId.has(c.workload) ? { ...c, zone: byId.get(c.workload)  } : c)), findings };
+}
+
+/** The finding for a workload with nowhere to go: the user has no subnet of its tier. */
+export function noSubnetFinding(platform          , w          , tier        )          {
+  return error('design.compute.no-subnet', `${w.name}: ${platform} has no ${tier === 'db' ? 'data' : tier}-tier subnet in a ${w.env === 'prod' ? 'production' : w.env === 'dr' ? 'DR (or production)' : 'non-production'} (or shared) network to place it in: add one on Landing zones.`, {
+    path: `net:${platform}:`,
+    remediation: `Add a subnet with purpose "${tier}" to a network of that environment.`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -387,12 +397,13 @@ export const computeMapper               = {
     const counters = new Map                ();
     const compute                  = [];
     for (const w of ctx.workloads) {
-      const network = networkOf(design, networkForEnv(w.env));
-      if (!network) {
-        findings.push(warning('design.compute.no-network', `${w.name}: ${ctx.platform} has no network to place it in.`));
+      const tier = tierForRole(w.role);
+      const placed = placeWorkload(design, w.env, tier);
+      if (!placed) {
+        findings.push(noSubnetFinding(ctx.platform, w, tier));
         continue;
       }
-      const zones = networkZones(network);
+      const { network, zones } = placed;
       const key = `${network.name}\u0000${w.app}`;
       const n = counters.get(key) ?? 0;
       counters.set(key, n + 1);

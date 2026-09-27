@@ -52,10 +52,8 @@ const COLUMNS: readonly GridColumn[] = [
   { name: 'Wave' },
 ];
 
-const DEFAULT_ROWS: readonly (readonly string[])[] = [
-  ['web01', 'win-2022', 'tpl-win2022', '2', '8', '100', 'wld01-web', '10.50.10.21/24', 'fd00:50:10::21/64', '10.50.10.1 fd00:50:10::1', '1'],
-  ['app01', 'rhel-9', 'tpl-rhel9', '4', '16', '60 200', 'wld01-app', '10.50.20.21/24', 'fd00:50:20::21/64', '10.50.20.1 fd00:50:20::1', '1'],
-];
+/** No VM by default: the rows come from the plan (or the user). */
+const DEFAULT_ROWS: readonly (readonly string[])[] = [];
 
 interface VsphereVm {
   readonly name: string;
@@ -122,7 +120,7 @@ function vsphereVms(): Blueprint {
       { id: 'folder', label: 'VM folder', control: 'text', default: 'migrated', hint: 'Relative to the datacenter\'s VM folder; blank for the root.' },
       gridInput('vms', 'VMs', COLUMNS, DEFAULT_ROWS, 'One row per VM. Disks: GiB, space-separated, the first is the OS disk. Gateway: an IPv4 and an IPv6 gateway, space-separated.'),
       { id: 'domain', label: 'DNS domain', control: 'text', default: 'corp.example.com' },
-      { id: 'dns_servers', label: 'DNS servers', control: 'text', default: '10.50.0.10 10.50.0.11 fd00:50::10', hint: 'Space-separated, either family.' },
+      { id: 'dns_servers', label: 'DNS servers', control: 'text', default: '', hint: 'Space-separated, either family.' },
     ],
     emits: ['vsphere_virtual_machine'],
     build: (values: BlueprintValues) => {

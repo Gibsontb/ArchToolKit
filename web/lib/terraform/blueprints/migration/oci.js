@@ -38,7 +38,7 @@ import {
   ZONE_LETTERS,
   attrs,
   blk,
-  carveNetwork,
+  subnetKeyMap,
   cloudInit,
   consumerPreamble,
   cutoverVariable,
@@ -228,12 +228,14 @@ function ociLandingZone()            {
     ],
     build: (values                 ) => {
       const findings            = [];
-      const lz = parseLandingZone(values, REGION, findings);
+      const lz = parseLandingZone(values, REGION, findings, 'oci');
       if (findings.some((f) => f.severity === 'error')) return failed('oci_mig_landing_zone', findings);
       const cmk = lz.keys !== 'provider-managed';
       const parent = lz.scope ? q(lz.scope) : 'var.parent_compartment_ocid';
       const comp = 'oci_identity_compartment.landing_zone.id';
-      const drg = 'oci_core_drg.landing_zone.id';
+      // An existing landing zone: the new VCNs attach to its DRG (the hub's id); no DRG or hub is built.
+      const existingHub = lz.existing.find((e) => e.role === 'hub');
+      const drg = existingHub ? q(existingHub.existingId ?? '') : 'oci_core_drg.landing_zone.id';
       const blocks                        = [
         TF(),
         { type: 'provider', labels: ['oci'], attributes: attrs({ region: lz.region }) },
@@ -247,26 +249,28 @@ function ociLandingZone()            {
         }),
         dat('oci_identity_availability_domains', 'landing_zone', { compartment_id: x(parent) }),
         dat('oci_core_services', 'all', {}, [blk('filter', { name: 'name', values: ['All .* Services In Oracle Services Network'], regex: true })], 'The service gateway reaches every service in the Oracle Services Network.'),
-        res('oci_core_drg', 'landing_zone', { compartment_id: x(comp), display_name: rname(lz.prefix, 'drg') }, [], 'The DRG the VPN and FastConnect attach to: here, so the VCN route tables can send on-premises ranges to it.'),
+        ...(existingHub ? [] : [res('oci_core_drg', 'landing_zone', { compartment_id: x(comp), display_name: rname(lz.prefix, 'drg') }, [], 'The DRG the VPN and FastConnect attach to: here, so the VCN route tables can send on-premises ranges to it.')]),
       ];
+      if (existingHub) findings.push(info('tf.mig.oci-existing-hub', `${existingHub.name} exists already: no DRG is built; each new VCN attaches to its DRG (${existingHub.existingId}).`, { path: 'networks' }));
 
-      // The Bastion service sits in the mgmt subnet of the first network; every tier admits it.
-      const first = lz.networks[0];
-      const bastionTier = first ? (first.tiers.includes('mgmt') ? 'mgmt' : first.tiers[0]) : undefined;
-      let bastionCidr                = null;
+      // The Bastion service sits in a management subnet of the hub (else the first network's first subnet); every tier admits it.
+      const first = lz.networks.find((n) => n.role === 'hub') ?? lz.networks[0];
+      const firstSubnets = first ? lz.subnets.filter((s) => s.network.name === first.name) : [];
+      const bastionSubnet = firstSubnets.find((s) => s.tier === 'mgmt') ?? firstSubnets.find((s) => (first?.tiers                                 )?.includes(s.tier          )) ?? firstSubnets[0];
+      const bastionCidr                = lz.bastion === 'cloud-native' ? (bastionSubnet?.cidr ?? null) : null;
 
       const subnetsByNet = new Map                      ();
       const nsgRules                         = {};
       for (const n of lz.networks) {
-        const subnets = carveNetwork(n, lz.prefixLen, false, [], findings);
+        // Exactly the user's subnets: nothing is carved or added.
+        const subnets = lz.subnets.filter((s) => s.network.name === n.name);
         if (subnets.length === 0) continue;
         subnetsByNet.set(n.id, subnets);
-        if (n === first && lz.bastion === 'cloud-native') bastionCidr = subnets.find((s) => s.tier === bastionTier)?.cidr ?? null;
         const out = emitFoundation('oci', {
           name: rname(lz.prefix, n.name),
           cidr: n.cidr,
           ipv6: n.ipv6,
-          subnets: subnets.map((s) => ({ name: s.short, cidr: s.cidr })),
+          subnets: subnets.map((s) => ({ name: s.short, cidr: s.cidr, ...(s.tier === 'public' ? { public: true } : {}) })),
           compartmentId: 'placeholder',
         });
         findings.push(...out.findings.filter((f) => f.severity !== 'info'));
@@ -279,7 +283,11 @@ function ociLandingZone()            {
               if (type === 'oci_core_subnet') {
                 const s = subnets.find((sub) => t.includes(`"oci_core_subnet" "${sub.label}"`));
                 const pad = /^ {2}(\w+\s*)= /m.exec(t)?.[1]?.length ?? 10;
-                if (s) t = insertBeforeClose(t, `  ${'dns_label'.padEnd(pad)}= ${q(alnum(String(s.tier), 15).toLowerCase())}`);
+                if (s && !s.ipv6) t = t.split('\n').filter((l) => !/^\s*ipv6cidr_blocks\s*=/.test(l)).join('\n');
+                if (s) t = insertBeforeClose(t, `  ${'dns_label'.padEnd(pad)}= ${q(alnum(s.short, 15).toLowerCase())}`);
+                // An availability-domain-specific subnet (the user's choice; regional is Oracle's recommendation).
+                const ad = s?.zone ? /^AD-([123])$/.exec(s.zone) : null;
+                if (ad) t = insertBeforeClose(t, `  ${'availability_domain'.padEnd(pad)}= data.oci_identity_availability_domains.landing_zone.availability_domains[${Number(ad[1]) - 1}].name`);
               }
               return t;
             },
@@ -384,7 +392,7 @@ function ociLandingZone()            {
         for (const s of subnetsByNet.get(n.id) ?? []) {
           blocks.push(
             res('oci_logging_log', `${s.label}_flow`, {
-              display_name: rname(lz.prefix, n.name, String(s.tier), 'flow'),
+              display_name: rname(lz.prefix, n.name, s.short, 'flow'),
               log_group_id: x('oci_logging_log_group.landing_zone.id'),
               log_type: 'SERVICE',
               is_enabled: true,
@@ -394,12 +402,12 @@ function ociLandingZone()            {
         }
       }
 
-      if (lz.bastion === 'cloud-native' && first && bastionTier) {
+      if (lz.bastion === 'cloud-native' && first && bastionSubnet) {
         blocks.push(
           res('oci_bastion_bastion', 'landing_zone', {
             bastion_type: 'STANDARD',
             compartment_id: x(comp),
-            target_subnet_id: x(`oci_core_subnet.${ident(first.id, bastionTier)}.id`),
+            target_subnet_id: x(`oci_core_subnet.${bastionSubnet.label}.id`),
             name: alnum(`${lz.prefix}bastion`, 32),
             client_cidr_block_allow_list: lz.siteV4.length > 0 ? [...lz.siteV4] : [first.cidr],
             max_session_ttl_in_seconds: 10800,
@@ -413,9 +421,9 @@ function ociLandingZone()            {
       const nsgIds                         = {};
       const mgmt           = lz.siteV4.map(q);
       if (lz.anyV6) mgmt.push(...lz.siteV6.map(q));
+      for (const [k, s] of subnetKeyMap(lz.subnets)) subnetIds[k] = `oci_core_subnet.${s.label}.id`;
       for (const n of lz.networks) {
         for (const s of subnetsByNet.get(n.id) ?? []) {
-          for (const z of ZONE_LETTERS.slice(0, n.zones)) subnetIds[`${n.name}/${s.tier}/${z}`] = `oci_core_subnet.${s.label}.id`;
           if (s.tier === 'mgmt') {
             mgmt.push(q(s.cidr));
             if (n.ipv6) mgmt.push(`oci_core_subnet.${s.label}.ipv6cidr_blocks[0]`);

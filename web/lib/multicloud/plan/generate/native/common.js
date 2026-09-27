@@ -24,7 +24,8 @@ import { info,              } from '../../../../core/findings.js';
 import { familyOf } from '../../../../core/ip.js';
 import { planTagValue } from '../../../../terraform/blueprints/migration/common.js';
 import { designWorkloads, isIaasService, licenceKeyOf, siteCidrs } from '../../design/index.js';
-import { networkForEnv, networkZones } from '../../design/network.js';
+import { networkZones } from '../../design/network.js';
+import { builtIn, envClassOf, hubOf } from '../../design/net-rows.js';
 import { PLATFORM_LABELS, slugName } from '../../options.js';
              
                                                                                                                                                
@@ -307,12 +308,15 @@ export function vmTags(ctx           , t               , method                 
   };
 }
 
-/** The network a database sits in: its first host's environment, else prod. */
+/** The network a database sits in: its first host's (as placed), else a built network of its environment with a data-tier subnet, else the hub. */
 export function dbNetwork(ctx           , db                      )         {
-  const names = ctx.pd.networks.map((n) => n.name);
+  const built = builtIn(ctx.pd.networks, ctx.pd.region);
+  const hostTarget = db?.hosts.map((h) => ctx.pd.compute.find((c) => ctx.workloadById.get(c.workload)?.name === h)).find(Boolean);
+  if (hostTarget) return hostTarget.network;
   const host = db?.hosts.map((h) => [...ctx.workloadById.values()].find((w) => w.name === h)).find(Boolean);
-  const want = host ? networkForEnv(host.env) : 'prod';
-  return names.includes(want) ? want : (names[0] ?? 'prod');
+  const want = host ? envClassOf(host.env) : 'prod';
+  const withDb = built.filter((n) => n.subnets.some((s) => s.tier === 'db'));
+  return (withDb.find((n) => n.env === want) ?? withDb[0] ?? hubOf(ctx.pd.networks, ctx.pd.region) ?? built[0])?.name ?? '';
 }
 
 /** The environment a database serves: its first host's, else prod. */

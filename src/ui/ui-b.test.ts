@@ -20,6 +20,7 @@ import { planModel, migrationApps } from './multicloud/plan-model.ts';
 import { PROJECT_PARTS, archiveProject, assembleMigrationProject, projectDate } from './multicloud/project.ts';
 import { renderBlueprintForm, controlValue } from './blueprint-form.ts';
 import type { BlueprintInput, BlueprintValues } from '../kit/blueprint.ts';
+import { withUserNetworks } from '../testing/network-rows.ts';
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -40,7 +41,7 @@ const app = (name: string, over: Partial<App> = {}): App => ({
 function plan(over: Partial<Plan> = {}): Plan {
   const base = emptyPlan('Wave Test', '2026-09-26T00:00:00.000Z');
   const req = defaultRequirements();
-  return {
+  return withUserNetworks({
     ...base,
     id: 'plan-uib',
     workloads: [
@@ -63,7 +64,7 @@ function plan(over: Partial<Plan> = {}): Plan {
     },
     waveSettings: { ...DEFAULT_WAVE_SETTINGS, freezes: [] },
     ...over,
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
 }
 
 /** Everything replicates to AWS except the legacy app, which is retired. */
@@ -274,7 +275,10 @@ describe('landing zones: the card as the plan holds it', () => {
   it('offers dropdowns for every closed set and grids for the governance lists', () => {
     const pd = planModel(p).design.platforms[0]!;
     const lz = landingZoneInputs(p, pd);
-    for (const field of ['subnet-size', 'zones-prod', 'zones-nonprod', 'bastion', 'log-retention']) {
+    // No subnet size, zone count or network range of the toolkit's own: the user builds the networks row by row.
+    for (const field of ['subnet-size', 'zones-prod', 'zones-nonprod']) expect(lz.inputs.some((i) => i.id === overrideKey(pd.platform, 'lz', field))).toBe(false);
+    expect(lz.inputs.some((i) => /:network-/.test(i.id))).toBe(false);
+    for (const field of ['bastion', 'log-retention']) {
       const input = lz.inputs.find((i) => i.id === overrideKey(pd.platform, 'lz', field));
       if (pd.platform === 'vmware' && (field === 'bastion' || field === 'log-retention')) continue;
       expect(input?.control).toBe('select');

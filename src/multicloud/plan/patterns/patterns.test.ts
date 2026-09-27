@@ -15,6 +15,7 @@ import {
   SAP_CERTIFIED, TIER_PATTERNS, allFacts, applyDetection, defaultTierPattern, detectType, flaggedFacts, isNone,
   patternTerraformTypes, proposePattern, rankTierPatterns, sapFit, sessionHosts, verificationBadge, withPatternMappers,
 } from './index.ts';
+import { withUserNetworks } from '../../../testing/network-rows.ts';
 
 const TODAY = '2026-09-26';
 
@@ -41,13 +42,13 @@ function appPlan(appName: string, over: Partial<AppPlan> = {}): AppPlan {
   return { app: `a:${appName}`, origin: 'migrate', status: 'draft', variants: {}, answers: {}, landingZone: 'included', ...over };
 }
 function plan(parts: { workloads?: Workload[]; databases?: Database[]; apps?: App[]; appPlans?: AppPlan[] }): Plan {
-  return {
+  return withUserNetworks({
     kind: PLAN_KIND, version: 1, id: 'wp16', name: 'wp16', savedAt: TODAY,
     workloads: parts.workloads ?? [], databases: parts.databases ?? [], apps: parts.apps ?? [], edges: [],
     requirements: defaultRequirements(), designOverrides: {},
     waveSettings: { mode: 'default', maxPerWave: 50, parallel: 1, weeks: 2, freezes: [] },
     appPlans: parts.appPlans ?? [],
-  };
+  }, ['aws', 'azure', 'google', 'oci', 'vmware'], { allPlatformSubnets: true });
 }
 const decide = (p: Plan) => decidePlan(p, { today: TODAY, extraRules: PATTERN_RULES });
 const optionOn = (d: ItemDecision, p: Platform): Option | undefined => d.options.find((o) => o.platform === p);
