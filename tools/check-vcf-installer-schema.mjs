@@ -16,7 +16,7 @@
  *   npm run vcf:schema                    # the "latest" API reference
  *   npm run vcf:schema -- --version 9.1   # a specific reference
  *
- * Exits 1 when Broadcom has something the schema lacks, so update-vcf.bat
+ * Exits 1 when Broadcom has something the schema lacks, so update.bat (area V)
  * stops and says what to add. Needs network access to developer.broadcom.com.
  */
 

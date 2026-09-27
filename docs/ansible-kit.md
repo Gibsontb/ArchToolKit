@@ -50,7 +50,7 @@ fetched from Ansible Galaxy. It is committed so the toolkit works air-gapped,
 and it records the version each list came from and the date it was fetched, so
 it can report its own age instead of quietly pretending to be current.
 
-Refresh it with `update-catalog.bat` (which also refreshes the Terraform
+Refresh it with `update.bat`, area A or C (area T refreshes the Terraform
 catalog) or `npm run ansible:update`. Galaxy has no endpoint that lists a
 collection's modules; the fetcher reads the published version's file manifest,
 where every module is a file under `plugins/modules/`.

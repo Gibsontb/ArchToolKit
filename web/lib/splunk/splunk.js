@@ -23,7 +23,7 @@ import { warning,              } from '../core/findings.js';
 /**
  * The releases the page writes for: Splunk Enterprise 10.4 and Splunk Cloud
  * Platform 10.5. tools/check-splunk-versions.mjs compares them with Splunk's
- * latest (update-splunk.bat runs it).
+ * latest (update.bat, area S, runs it).
  */
 export const SPLUNK_TARGETS = { enterprise: '10.4', cloud: '10.5' }         ;
 

@@ -1,7 +1,7 @@
 /**
  * `terraform init` that waits out the registry's rate limit.
  *
- * update-terraform.bat asks registry.terraform.io for every provider several
+ * update.bat (area T) asks registry.terraform.io for every provider several
  * times in a row: the schemas, then rule discovery, then validation platform
  * by platform. The registry answers a burst like that with 429 Too Many
  * Requests, and Terraform gives up after two attempts. This retries the whole

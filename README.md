@@ -181,7 +181,7 @@ Each product offers two kinds of blueprint, under its own headings in the picker
   well as a value.
 
 The per-resource forms are generated from `src/terraform/vmware-schema-data.ts`,
-which `npm run schemas:update` (step 6 of `update-catalog.bat`) rewrites from
+which `npm run schemas:update` (the Terraform area of `update.bat`) rewrites from
 `terraform providers schema -json` — the providers' own schema — and their
 registry documentation. Nothing about an argument is transcribed by hand.
 
@@ -217,10 +217,10 @@ filled in, reads the errors, and records each rule in
 `src/terraform/resource-rules-data.ts` until a round finds nothing new. Re-run it
 after refreshing the schemas.
 
-`update-terraform.bat` does the whole refresh in one go — resource catalog,
-provider schemas, rule discovery, `terraform validate` over every blueprint on
-every platform, the rebuild and the tests — stops at the first failure, and
-asks before it commits and pushes. About two hours; needs Node, terraform and git.
+`update.bat`, area T, does the whole refresh — resource catalog, provider
+schemas, rule discovery, `terraform validate` over every blueprint on every
+platform — then the rebuild and the tests, and asks before it commits and
+pushes. About two hours; needs Node, terraform and git.
 
 ### Linux and Windows
 
@@ -290,7 +290,7 @@ their own environment inside WSL, set up by `tools/setup-ansible-wsl.sh`:
     npm run ansible:validate    ansible-lint's argument check and --syntax-check
                                 over every blueprint as generated
 
-`update-ansible.bat` runs the whole refresh — update Ansible, catalog,
+`update.bat`, area A, runs the whole refresh — update Ansible, catalog,
 schemas, rules, validation, rebuild, tests — and asks before it commits.
 
 ## Network device configuration
@@ -308,7 +308,7 @@ change list, which also writes the whole device's configuration merged.
                                 options, whole-device merge per platform, and
                                 ansible-playbook --syntax-check in WSL
 
-`update-network.bat` updates the vendor collections, revalidates everything,
+`update.bat`, area N, updates the vendor collections, revalidates everything,
 rebuilds, runs the tests, and asks before it commits.
 
 ## Splunk
@@ -328,7 +328,7 @@ files, and every app against Splunk AppInspect:
                                 is in the spec, no credential in any file, and
                                 each app inspected with Splunk AppInspect in WSL
 
-`update-splunk.bat` updates AppInspect, refreshes the spec settings, checks
+`update.bat`, area S, updates AppInspect, refreshes the spec settings, checks
 the versions, revalidates, rebuilds, runs the tests, and asks before it
 commits.
 
@@ -350,7 +350,7 @@ spec builder's validator. Schema chunks load only for what the file names.
                                     ansible-lint, cfn-lint and kubeconform over
                                     tools/editor-corpus
 
-`update-data-editor.bat` refreshes every schema, revalidates, rebuilds, runs
+`update.bat`, area E, refreshes every schema, revalidates, rebuilds, runs
 the tests, and asks before it commits.
 
 ## Application Migration
@@ -451,7 +451,7 @@ for the rest — roughly 5,600 Terraform resources and 4,500 data sources across
 ten providers, and 3,929 Ansible modules across eleven collections. Far too many
 to maintain by hand, and changing with every release.
 
-    update-catalog.bat        (or: npm run catalog:update, npm run ansible:update)
+    update.bat                (areas T, A and C; or: npm run catalog:update, npm run ansible:update)
 
 fetches both lists — from the Terraform Registry and from Ansible Galaxy — and
 rewrites `src/terraform/catalog-data.ts` and `src/ansible/catalog-data.ts`, both
@@ -589,7 +589,7 @@ settings.
     npm run vcf:schema     the spec builder's schema against the published VCF
                            Installer API; lists any field or value it lacks
 
-`update-vcf.bat` runs both, rebuilds, runs the tests (which fail if a workbook
+`update.bat`, area V, runs both, rebuilds, runs the tests (which fail if a workbook
 table the sizing relies on moved) and asks before it commits.
 
 ## A caution on VCF output
