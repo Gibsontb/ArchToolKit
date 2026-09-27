@@ -18,6 +18,10 @@ rem    L  Cloud services  service catalog for AWS, Azure, Google Cloud and OCI
 rem
 rem  A step that fails is recorded and the rest carry on; nothing is committed
 rem  unless every step and the tests pass.
+rem
+rem  Unattended:  update.bat all /yes      (or letters, e.g.  update.bat NSV /yes)
+rem  picks the areas without asking, starts at once, commits and pushes only if
+rem  everything passed, and never waits for a key.
 rem ---------------------------------------------------------------------------
 
 set "NODE_NO_WARNINGS=1"
@@ -27,6 +31,11 @@ if not defined ARCHTOOLKIT_WSL_DISTRO set "ARCHTOOLKIT_WSL_DISTRO=Ubuntu-24.04"
 set "FAILED="
 set "SKIPPED="
 set "DONE="
+set "AUTO="
+set "ARGPICK="
+for %%x in (%*) do (
+  if /i "%%~x"=="/yes" ( set "AUTO=1" ) else if /i "%%~x"=="all" ( set "ARGPICK=T A N S E V C L" ) else ( set "ARGPICK=%%~x" )
+)
 
 rem --- Node 22.6 or newer is required for everything ------------------------
 where node >nul 2>&1
@@ -59,8 +68,8 @@ echo     C  Catalogs      (Terraform modules and machine sizes, a few minutes)
 echo     L  Cloud services (AWS, Azure, Google Cloud and OCI service lists, about 5 minutes)
 echo.
 echo   Press Enter for everything, or type the letters, e.g.  N S V
-set "PICK="
-set /p "PICK=   Areas: "
+set "PICK=!ARGPICK!"
+if not defined ARGPICK set /p "PICK=   Areas: "
 if not defined PICK set "PICK=T A N S E V C L"
 set "PICK=!PICK: =!"
 for %%a in (T A N S E V C L) do set "DO_%%a="
@@ -91,8 +100,10 @@ if defined DO_T if not defined HASTF (
 )
 
 echo.
+if defined AUTO goto :started
 choice /c YN /n /m "   Start? [Y/N] "
 if errorlevel 2 goto :done
+:started
 
 rem ===========================================================================
 rem  1. Tools in WSL, once
@@ -231,12 +242,14 @@ for %%s in ("%TEMP%\archtoolkit-status.txt") do if %%~zs==0 (
 echo.
 git status --short
 echo.
+if defined AUTO goto :commit
 choice /c YN /n /m "   Commit these and push to GitHub? [Y/N] "
 if errorlevel 2 (
   echo.
   echo   Left uncommitted. Review with: git status
   goto :finished
 )
+:commit
 set "AREAS="
 if defined DO_T set "AREAS=!AREAS! Terraform,"
 if defined DO_A set "AREAS=!AREAS! Ansible,"
@@ -296,11 +309,11 @@ exit /b 0
 
 :fail
 echo.
-pause
+if not defined AUTO pause
 endlocal
 exit /b 1
 
 :done
 echo.
-pause
+if not defined AUTO pause
 endlocal
