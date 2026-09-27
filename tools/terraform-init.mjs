@@ -34,6 +34,12 @@ export function terraformEnv(extra = {}) {
 
 const RATE_LIMITED = /429|Too Many Requests/i;
 const PAUSES = [60, 120, 240, 300, 300];
+/**
+ * Windows: a provider the last validate started is still closing, and holds
+ * its binary in the shared plugin cache open for a moment.
+ */
+const FILE_BUSY = /being used by another process/i;
+const BUSY_PAUSES = [5, 10, 20, 30];
 
 /** Pause without a busy loop; the tools are synchronous scripts. */
 function sleep(seconds) {
@@ -46,6 +52,12 @@ export function terraformInit(cwd, env = terraformEnv()) {
     const run = spawnSync('terraform', ['init', '-input=false', '-no-color', '-backend=false'], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     if (run.status === 0) return true;
     const output = `${run.stderr ?? ''}${run.stdout ?? ''}`;
+    if (FILE_BUSY.test(output) && attempt < BUSY_PAUSES.length) {
+      const wait = BUSY_PAUSES[attempt];
+      console.log(`  A provider binary is still in use by a closing process. Waiting ${wait} seconds, then trying again (${attempt + 1} of ${BUSY_PAUSES.length})…`);
+      sleep(wait);
+      continue;
+    }
     if (!RATE_LIMITED.test(output) || attempt >= PAUSES.length) {
       process.stderr.write(run.stderr || output);
       return false;
