@@ -417,6 +417,14 @@ export const DISCOVERED_MODULE_RULES      = {
    ]
   ]
  },
+ "arubanetworks.aoscx.aoscx_mac": {
+  "oneOf": [
+   [
+    "all_vlans",
+    "vlan"
+   ]
+  ]
+ },
  "azure.azcollection.azure_rm_aduser": {
   "oneOf": [
    [
@@ -4134,6 +4142,20 @@ export const DISCOVERED_MODULE_RULES      = {
    ],
    [
     "tenant"
+   ]
+  ]
+ },
+ "cisco.asa.asa_banner": {
+  "oneOf": [
+   [
+    "text"
+   ]
+  ]
+ },
+ "cisco.asa.asa_objects": {
+  "oneOf": [
+   [
+    "config"
    ]
   ]
  },
@@ -8821,38 +8843,6 @@ export const DISCOVERED_MODULE_RULES      = {
    ]
   ]
  },
- "community.vmware.vmware_cluster_info": {
-  "oneOf": [
-   [
-    "cluster_name",
-    "datacenter"
-   ]
-  ]
- },
- "community.vmware.vmware_content_deploy_ovf_template": {
-  "oneOf": [
-   [
-    "datastore",
-    "datastore_cluster"
-   ],
-   [
-    "host",
-    "cluster"
-   ]
-  ]
- },
- "community.vmware.vmware_content_deploy_template": {
-  "oneOf": [
-   [
-    "datastore",
-    "datastore_cluster"
-   ],
-   [
-    "host",
-    "cluster"
-   ]
-  ]
- },
  "community.vmware.vmware_datastore_cluster": {
   "oneOf": [
    [
@@ -9213,20 +9203,6 @@ export const DISCOVERED_MODULE_RULES      = {
     "name",
     "uuid",
     "moid"
-   ]
-  ]
- },
- "community.vmware.vmware_host": {
-  "oneOf": [
-   [
-    "cluster_name",
-    "folder"
-   ],
-   [
-    "esxi_username"
-   ],
-   [
-    "esxi_password"
    ]
   ]
  },
@@ -10140,6 +10116,140 @@ export const DISCOVERED_MODULE_RULES      = {
    ]
   ]
  },
+ "f5networks.f5_bigip.bigip_as3_deploy": {
+  "oneOf": [
+   [
+    "content"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_awaf_custom_attack_signatures": {
+  "oneOf": [
+   [
+    "names"
+   ],
+   [
+    "dest"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_awaf_policy": {
+  "oneOf": [
+   [
+    "name",
+    "policy_id"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_configsync_action": {
+  "oneOf": [
+   [
+    "sync_device_to_group",
+    "sync_group_to_device"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_fast_application": {
+  "oneOf": [
+   [
+    "template"
+   ],
+   [
+    "content"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_fast_template": {
+  "oneOf": [
+   [
+    "source"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_lx_package": {
+  "oneOf": [
+   [
+    "package"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_security_ssh_profile_rules": {
+  "oneOf": [
+   [
+    "users"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_ssl_csr": {
+  "oneOf": [
+   [
+    "common_name"
+   ],
+   [
+    "key_name"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_sslo_config_resolver": {
+  "oneOf": [
+   [
+    "fwd_name_servers",
+    "fwd_zones"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_sslo_config_service_chain": {
+  "oneOf": [
+   [
+    "services"
+   ],
+   [
+    "services.service_name",
+    "services.type"
+   ]
+  ],
+  "allOf": [
+   [
+    "services.service_name",
+    "services.type"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigip_ts_deploy": {
+  "oneOf": [
+   [
+    "content"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigiq_regkey_license": {
+  "oneOf": [
+   [
+    "accept_eula"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigiq_regkey_license_assignment": {
+  "oneOf": [
+   [
+    "managed"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigiq_utility_license": {
+  "oneOf": [
+   [
+    "accept_eula"
+   ]
+  ]
+ },
+ "f5networks.f5_bigip.bigiq_utility_license_assignment": {
+  "oneOf": [
+   [
+    "managed"
+   ]
+  ]
+ },
  "f5networks.f5_modules.bigip_configsync_action": {
   "oneOf": [
    [
@@ -10454,6 +10564,220 @@ export const DISCOVERED_MODULE_RULES      = {
    [
     "ipv4addr",
     "ipv6addr"
+   ]
+  ]
+ },
+ "juniper.device._tbrdevice_hostname": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_acl_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_acls": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_bgp_address_family": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_bgp_global": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_hostname": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_l2_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_l3_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_lacp": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_lacp_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_lag_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_lldp_global": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_lldp_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_logging_global": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_ntp_global": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_ospf_interfaces": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_ospfv2": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_ospfv3": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_prefix_lists": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_routing_instances": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_routing_options": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_security_policies": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_security_policies_global": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_security_zones": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_snmp_server": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_static_routes": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_system": {
+  "oneOf": [
+   [
+    "hostname",
+    "domain_name",
+    "domain_search",
+    "name_servers"
+   ]
+  ]
+ },
+ "juniper.device.junos_vlans": {
+  "oneOf": [
+   [
+    "config"
+   ]
+  ]
+ },
+ "juniper.device.junos_vrf": {
+  "oneOf": [
+   [
+    "aggregate",
+    "name"
    ]
   ]
  },
@@ -19838,6 +20162,1201 @@ export const DISCOVERED_MODULE_RULES      = {
    [
     "auth.hostname",
     "auth.url"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_address_group": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_address_object": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_admin": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_administrator": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_aggregate_interface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "if_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_api_key": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_application_filter": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_application_group": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_application_object": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_aggregate": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_auth": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_conditional_advertisement": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_dampening": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_peer": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_peer_group": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_policy_filter": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_policy_rule": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_bgp_redistribute": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_cert_gen_ssh": {
+  "oneOf": [
+   [
+    "key_filename",
+    "password"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_check": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_commit": {
+  "oneOf": [
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_commit_firewall": {
+  "oneOf": [
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_commit_panorama": {
+  "oneOf": [
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_commit_push": {
+  "oneOf": [
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_config_element": {
+  "oneOf": [
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_custom_url_category": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dag": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dag_tags": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_decryption_rule": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_device_group": {
+  "oneOf": [
+   [
+    "gathered_filter",
+    "name"
+   ],
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dhcp": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "interface"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dhcp_relay": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "interface"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dhcp_relay_ipv6_address": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "ipv6_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dynamic_updates": {
+  "oneOf": [
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_dynamic_user_group": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_edl": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_email_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_email_server": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_export": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_gre_tunnel": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ha": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_http_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_http_profile_header": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "header"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_http_profile_param": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "param"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_http_server": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ike_crypto_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ike_gateway": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_import": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_interface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "if_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ipsec_ipv4_proxyid": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ipsec_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ipsec_tunnel": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_ipv6_address": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_l2_subinterface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_l3_subinterface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_lic": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_log_forwarding_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_log_forwarding_profile_match_list": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_log_forwarding_profile_match_list_action": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_logical_router": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_logical_router_vrf": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_logical_router_vrf_ospf_area": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_logical_router_vrf_ospf_area_interface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_logical_router_vrf_static_route": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_loopback_interface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "if_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_management_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_mgtconfig": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_nat_rule": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_nat_rule2": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_nat_rule_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "listing",
+    "rule_name",
+    "rule_regex",
+    "uuid"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_object": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_object_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "name",
+    "name_regex",
+    "field"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_op": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_pbf_rule": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_pg": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "pg_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_redistribution": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_region": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_registered_ip": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_registered_ip_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_restart": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_sag": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_schedule_object": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_security_rule": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "rule_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_security_rule_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "rule_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_service_group": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_service_object": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_snmp_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_snmp_v2c_server": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_snmp_v3_server": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_software": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_static_route": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_syslog_profile": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_syslog_server": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_tag_object": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_template": {
+  "oneOf": [
+   [
+    "gathered_filter",
+    "name"
+   ],
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_template_stack": {
+  "oneOf": [
+   [
+    "gathered_filter",
+    "name"
+   ],
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_template_variable": {
+  "oneOf": [
+   [
+    "gathered_filter",
+    "name"
+   ],
+   [
+    "provider.password",
+    "provider.api_key"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_tunnel": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "if_name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_type_cmd": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_userid": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_virtual_router": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_virtual_router_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_virtual_wire": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_vlan": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_vlan_interface": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "name"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_vm_auth_key": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_zone": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "zone"
+   ]
+  ]
+ },
+ "paloaltonetworks.panos.panos_zone_facts": {
+  "oneOf": [
+   [
+    "provider",
+    "ip_address"
+   ],
+   [
+    "gathered_filter",
+    "zone"
    ]
   ]
  },

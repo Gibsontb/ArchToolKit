@@ -2045,7 +2045,7 @@ export const MODULE_EQUIVALENCE: readonly ModuleRow[] = [
       azure: { module: 'azure.azcollection.azure_rm_virtualmachine' },
       google: { module: 'google.cloud.gcp_compute_instance' },
       oci: { module: 'oracle.oci.oci_compute_instance_actions' },
-      vmware: { module: 'community.vmware.vmware_guest_powerstate' },
+      vmware: { module: 'vmware.vmware.vm_powerstate' },
     },
     options: { name: { aws: 'name', azure: 'name', google: 'name', vmware: 'name' } },
     source: MODULE_SOURCE,

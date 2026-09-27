@@ -326,10 +326,10 @@ const BLUEPRINTS                             = [
           args: {
             provider: PROVIDER,
             name,
-            source_zone: [str(values, 'source_zone', 'any')],
-            destination_zone: str(values, 'dest_zone', 'any'),
-            source_address: source,
-            destination_address: destination,
+            from_zones: [str(values, 'source_zone', 'any')],
+            to_zones: [str(values, 'dest_zone', 'any')],
+            source_addresses: source,
+            destination_addresses: destination,
             ...(type === 'source'
               ? { source_translation_type: 'dynamic-ip-and-port', source_translation_address_type: 'interface-address', source_translation_interface: iface }
               : nptv6

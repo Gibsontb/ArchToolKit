@@ -26,8 +26,8 @@
  * VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD, VMWARE_PORT and
  * VMWARE_VALIDATE_CERTS, so the playbook can name none of them and still run.
  *
- * Verification: V-DOC (vmware.vmware 2.10.0 module documentation, retrieved
- * 2026-09-20).
+ * Verification: V-DOC (vmware.vmware 2.11.0 module documentation, retrieved
+ * 2026-09-27).
  */
 
 import { info, warning,              } from '../core/findings.js';
@@ -230,7 +230,7 @@ export function emitClusterConfiguration(
       findings.push(
         warning(
           'ansible.vmware.evc-not-emitted',
-          `${cluster.name} has EVC mode ${cluster.evcMode}, which vmware.vmware 2.10.0 has no module for.`,
+          `${cluster.name} has EVC mode ${cluster.evcMode}, which vmware.vmware 2.11.0 has no module for.`,
           {
             remediation:
               'Set EVC in vCenter, or through community.vmware, which still carries a module for it.',
@@ -244,7 +244,7 @@ export function emitClusterConfiguration(
       findings.push(
         warning(
           'ansible.vmware.vsan-not-emitted',
-          `${cluster.name} has vSAN enabled, and vmware.vmware 2.10.0 has no vSAN cluster module.`,
+          `${cluster.name} has vSAN enabled, and vmware.vmware 2.11.0 has no vSAN cluster module.`,
           {
             remediation:
               'Configure vSAN through vCenter or community.vmware; this playbook will not change it either way.',

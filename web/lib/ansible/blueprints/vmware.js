@@ -183,11 +183,12 @@ const BLUEPRINTS                       = [
                 },
                 {
                   name: "Ensure VM power state matches desired",
-                  "community.vmware.vmware_guest_powerstate": {
+                  "vmware.vmware.vm_powerstate": {
                     hostname: "{{ vcenter_hostname }}",
                     username: "{{ vcenter_username }}",
                     password: "{{ vcenter_password }}",
                     validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name }}",
                     name: "{{ vm_name }}",
                     state: "{{ 'powered-on' if power_on else 'powered-off' }}"
                   }
@@ -240,7 +241,7 @@ const BLUEPRINTS                       = [
               label: "Datacenter name",
               control: 'text',
               default: "DC1",
-              hint: "Optional but recommended"
+              hint: "Datacenter containing the VM; the power-state task needs it"
             },
             {
               id: "vm_name",
@@ -321,14 +322,15 @@ const BLUEPRINTS                       = [
               tasks: [
                 {
                   name: "Set VM power state",
-                  "community.vmware.vmware_guest_powerstate": {
+                  "vmware.vmware.vm_powerstate": {
                     hostname: "{{ vcenter_hostname }}",
                     username: "{{ vcenter_username }}",
                     password: "{{ vcenter_password }}",
                     validate_certs: "{{ validate_certs }}",
+                    datacenter: "{{ datacenter_name }}",
                     name: "{{ vm_name }}",
                     state: "{{ power_state }}",
-                    state_change_timeout: 300
+                    timeout: 300
                   }
                 },
                 {

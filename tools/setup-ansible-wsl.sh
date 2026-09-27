@@ -25,6 +25,14 @@ fi
 
 "$VENV/bin/pip" install -q --upgrade ansible ansible-lint
 "$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" oracle.oci
+# The VMware collections at the releases the module catalog is read from
+# (Galaxy's newest). The ansible package lags them by a major line, and the
+# kit's vSphere blueprints are written against the current one: community.vmware
+# 7 moved modules to vmware.vmware, and vmware.vmware_rest 5 dropped the
+# deprecated ones, so checking against the older bundled copies would pass
+# playbooks that fail on a current install.
+"$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" \
+  vmware.vmware vmware.vmware_rest community.vmware
 # The network page's collections the ansible package lags on or leaves out:
 # Juniper, Aruba, FMC, ASA, PAN-OS and F5 (npm run network:validate needs them).
 "$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" \

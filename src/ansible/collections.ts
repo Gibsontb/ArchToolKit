@@ -16,7 +16,7 @@
  * writing credentials into a playbook or an inventory is how Ansible
  * repositories leak.
  *
- * Verification: V-DOC (galaxy.ansible.com API v3, retrieved 2026-09-20).
+ * Verification: V-DOC (galaxy.ansible.com API v3, retrieved 2026-09-20; the VMware collections 2026-09-27).
  */
 
 export type AnsibleTarget = 'vmware' | 'aws' | 'azure' | 'google' | 'oci' | 'posix' | 'windows' | 'general' | 'network';
@@ -70,8 +70,8 @@ export const COLLECTIONS: readonly CollectionInfo[] = [
     name: 'vmware.vmware',
     target: 'vmware',
     label: 'VMware (current)',
-    version: '>=2.10.0,<3.0.0',
-    observedVersion: '2.10.0',
+    version: '>=2.11.0,<3.0.0',
+    observedVersion: '2.11.0',
     credentials:
       'VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD, or the hostname/username/password module arguments. Prefer a vault-encrypted variable file over either.',
     requires: 'pyVmomi, and vSphere Automation SDK for the modules that use the REST API.',
@@ -81,8 +81,8 @@ export const COLLECTIONS: readonly CollectionInfo[] = [
     name: 'vmware.vmware_rest',
     target: 'vmware',
     label: 'VMware vSphere REST API',
-    version: '>=4.11.0,<5.0.0',
-    observedVersion: '4.11.0',
+    version: '>=5.0.0,<6.0.0',
+    observedVersion: '5.0.0',
     credentials: 'VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD, or per-task vcenter_* arguments.',
     requires: 'aiohttp on the control node. It talks to the vSphere REST API directly, not through pyVmomi.',
     note: 'Generated from the vSphere REST specification, so it tracks the API rather than the SDK.',
@@ -91,10 +91,10 @@ export const COLLECTIONS: readonly CollectionInfo[] = [
     name: 'community.vmware',
     target: 'vmware',
     label: 'VMware (community, legacy)',
-    version: '>=6.4.0,<7.0.0',
-    observedVersion: '6.4.0',
+    version: '>=7.0.0,<8.0.0',
+    observedVersion: '7.0.0',
     credentials: 'VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD, or module arguments of the same names.',
-    requires: 'pyVmomi.',
+    requires: 'pyVmomi, vmware.vmware 2.10.0 or later (7.0.0 depends on it), and ansible-core 2.21 or later.',
     note:
       'Still maintained and still carries modules that vmware.vmware has not replaced. Use it where the current collection has no equivalent, not by default.',
   },

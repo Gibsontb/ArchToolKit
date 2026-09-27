@@ -40,7 +40,7 @@ different registries — but both are fed by the same VMware inventory model.
   module's default rather than written through.
 - **Short module names are flagged.** `copy` resolves through the collections
   search path, which differs between control nodes.
-- **What cannot be expressed is said.** `vmware.vmware` 2.10.0 has no EVC or
+- **What cannot be expressed is said.** `vmware.vmware` 2.11.0 has no EVC or
   vSAN cluster module, so those are reported rather than invented.
 
 ## The catalog
@@ -66,9 +66,9 @@ Read from the Galaxy API on 2026-09-20, all non-deprecated:
 
 | Collection | Version | Notes |
 | --- | --- | --- |
-| `vmware.vmware` | 2.10.0 | The supported collection. New work belongs here. |
-| `vmware.vmware_rest` | 4.11.0 | Generated from the vSphere REST specification. Needs `aiohttp`. |
-| `community.vmware` | 6.4.0 | Still maintained, and still carries modules `vmware.vmware` has not replaced. Off by default. |
+| `vmware.vmware` | 2.11.0 | The supported collection. New work belongs here. |
+| `vmware.vmware_rest` | 5.0.0 | Generated from the vSphere REST specification. Needs `aiohttp`. |
+| `community.vmware` | 7.0.0 | Still maintained, and still carries modules `vmware.vmware` has not replaced. Off by default. |
 | `amazon.aws` | 11.4.0 | |
 | `community.aws` | 11.1.0 | Depends on `amazon.aws`; cannot be installed alone. |
 | `azure.azcollection` | 4.0.0 | Ships its own `requirements.txt`. |

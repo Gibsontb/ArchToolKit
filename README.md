@@ -250,7 +250,7 @@ for vSphere, two real playbooks: one that collects an estate into JSON the
 inventory importer reads, and one that renders an imported cluster's settings
 back as the tasks that would produce them.
 
-Every module and argument name was read from `vmware.vmware` 2.10.0's own
+Every module and argument name was read from `vmware.vmware` 2.11.0's own
 documentation. No credential is written into a generated file: every module in
 the collection falls back to `VMWARE_HOST`, `VMWARE_USER` and `VMWARE_PASSWORD`,
 so the playbooks name none of them. A literal-looking password is an error, and
@@ -466,6 +466,31 @@ catalog exactly as it was — a failed refresh never empties one.
 
 Not knowing a resource is kept distinct from knowing it is wrong: an uncatalogued
 provider or collection produces a warning, not a rejection.
+
+### Cloud service catalog
+
+One list of every service AWS, Azure, Google Cloud and OCI offer, for the rest
+of the toolkit to pick services from: the official name, a common category
+(compute, containers, database, networking …) mapped from the provider's own
+grouping, and the Terraform resources that build each one, plus the matching
+CloudFormation types (AWS) or ARM types (Azure). A service no Terraform resource
+builds stays in the list, marked `buildable: 'none'`.
+
+    update.bat                (area L; or: npm run services:update -- --cloud aws|azure|google|oci)
+
+runs `tools/fetch-service-catalog.mjs` once per cloud, each writing its own
+`src/cloud/service-catalog-<cloud>.ts`; `src/cloud/service-catalog.ts` reads the
+four as one. The services come from the providers' own public lists — the AWS
+documentation product list, Price List offer index and botocore; Microsoft
+Learn's resource-provider table and the Azure Retail Prices API; the Google
+Cloud Services Summary and the Google APIs Discovery directory; Oracle's
+price-list API and OCI API reference — and the resources are grouped by the
+Terraform registry's own subcategory for each provider, at the versions in the
+Terraform catalog. Names are matched exactly (brand prefix and punctuation
+aside), never guessed: a registry subcategory no official list names is kept as
+a service of its own, flagged as such, and every subcategory or namespace that
+could not be placed is listed in the file's `unmatched`, with the reason. A list
+that cannot be read leaves that cloud's file as it was.
 
 ## Schema verification
 
