@@ -27,6 +27,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSpec } from '../src/splunk/conf-check.ts';
+import { WORK_TMP } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'src', 'splunk', 'conf-spec-data.ts');
@@ -109,7 +110,6 @@ try {
  */
 
 import type { ConfSpec } from './conf-check.ts';
-import { WORK_TMP } from './work.mjs';
 
 export const SPLUNK_SPEC_SOURCE = ${JSON.stringify({ release, version, repo: REPO.replace(/\.git$/, ''), path: `${DIR}/${version}`, commit, fetched: today })} as const;
 

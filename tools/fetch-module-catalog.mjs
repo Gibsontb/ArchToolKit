@@ -31,6 +31,7 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'n
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORK_TMP } from './work.mjs';
+import { MODULE_CATALOG_DATA as PREVIOUS } from '../src/terraform/module-catalog-data.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'src/terraform/module-catalog-data.ts');
@@ -427,6 +428,19 @@ function main() {
       );
     } catch (err) {
       failures.push(`${source}: ${err instanceof Error ? err.message : String(err)}`);
+      // A module the kit's blueprints call must not drop out of the catalog
+      // because one fetch failed (GitHub answers some ls-remotes with nothing):
+      // the entry fetched last time stays until a fetch succeeds.
+      const kept = PREVIOUS.find((e) => e.source === source);
+      if (kept) {
+        // Back from the file's rows to the shape a fresh read has.
+        entries.push({
+          ...kept,
+          inputs: kept.inputs.map(([name, kind, required, type, dflt, description]) => ({ name, kind, required: required === 1, type, default: dflt, description })),
+          outputs: kept.outputs ? String(kept.outputs).split(',') : [],
+        });
+        failures[failures.length - 1] += ` (kept the ${kept.version} entry fetched before)`;
+      }
     } finally {
       if (dir) rmSync(dir, { recursive: true, force: true });
     }
