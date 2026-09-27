@@ -19,7 +19,7 @@ export interface WorkbookData {
 }
 
 export const WORKBOOK: WorkbookData = {
- "fetchedAt": "2026-09-26",
+ "fetchedAt": "2026-09-27",
  "page": "https://techdocs.broadcom.com/us/en/vmware-cis/vcf/vcf-9-0-and-later/9-1/planning-and-preparation.html",
  "releases": {
   "9.1": {

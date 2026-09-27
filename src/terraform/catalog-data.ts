@@ -18,7 +18,7 @@ export interface CatalogEntryData {
 }
 
 /** When this file was generated, ISO date. */
-export const CATALOG_FETCHED_AT = "2026-09-25";
+export const CATALOG_FETCHED_AT = "2026-09-27";
 
 export const CATALOG_DATA: Readonly<Record<string, CatalogEntryData>> = {
   aws: {

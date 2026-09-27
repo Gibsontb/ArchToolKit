@@ -35,7 +35,7 @@ export interface ModuleCatalogEntry {
 }
 
 /** When this file was generated, ISO date. */
-export const MODULES_FETCHED_AT = '2026-09-20';
+export const MODULES_FETCHED_AT = '2026-09-27';
 
 export const MODULE_CATALOG_DATA: readonly ModuleCatalogEntry[] = [
   {
@@ -3309,7 +3309,7 @@ export const MODULE_CATALOG_DATA: readonly ModuleCatalogEntry[] = [
       ["resource","oci_core_route_table.nat_ipv4_igw_ipv6","var.create_nat_gateway && var.create_internet_gateway && local.has_public_ipv6 ? 1 : 0"],
       ["resource","oci_core_local_peering_gateway.lpg","var.local_peering_gateways != null ? var.local_peering_gateways : {}"],
     ],
-    locals: [["anywhere","\"0.0.0.0/0\""],["anywhere_ipv6","\"::/0\""],["vcn_ipv6_cidr_blocks","concat(oci_core_vcn.vcn.ipv6cidr_blocks, var.vcn_ipv6private_cidr_blocks)"],["enriched_subnets","{ for k, v in var.subnets :"]],
+    locals: [["anywhere","\"0.0.0.0/0\""],["anywhere_ipv6","\"::/0\""],["vcn_id","oci_core_vcn.vcn.id"],["vcn_ipv6_cidr_blocks","concat(oci_core_vcn.vcn.ipv6cidr_blocks, var.vcn_ipv6private_cidr_blocks)"],["enriched_subnets","{ for k, v in var.subnets :"],["service_logdef","{ for k in local.subnet : format(\"%s_%s\", k, \"log\") => { loggroup = \"loggrp\", service = \"flowlogs\", resource = k } }"]],
   },
   {
     provider: "oci",
@@ -3709,7 +3709,7 @@ export const MODULE_CATALOG_DATA: readonly ModuleCatalogEntry[] = [
       ["resource","oci_core_network_security_group_security_rule.bastion_egress_all",""],
       ["resource","oci_core_subnet.bastion",""],
     ],
-    locals: [["all_protocols","\"all\""],["anywhere","\"0.0.0.0/0\""],["bastion_image_id","var.bastion_image_type == \"custom\" ? coalesce(var.bastion_image_id, \"none\") : try(data.oci_core_images.autonomous_images[0].images[0].id, \"none\")"],["default_shape","\"VM.Standard.E4.Flex\""],["shape","lookup(var.bastion_shape, \"shape\", local.default_shape)"],["bastion_nsg_ids","distinct(concat([oci_core_network_security_group.bastion.id], var.bastion_nsg_ids))"],["ssh_port","22"],["tcp_protocol","6"],["vcn_cidr","element(data.oci_core_vcn.vcn.cidr_blocks, 0)"]],
+    locals: [["boot_volume_size","tonumber(lookup(var.bastion_shape, \"boot_volume_size\", 50))"],["memory","tonumber(lookup(var.bastion_shape, \"memory\", 4))"],["ocpus","max(1, tonumber(lookup(var.bastion_shape, \"ocpus\", 1)))"],["baseline_ocpu_utilization","lookup(local.baseline_ocpu_utilization_map, lookup(var.bastion_shape, \"baseline_ocpu_utilization\", \"100\"))"],["all_protocols","\"all\""],["anywhere","\"0.0.0.0/0\""],["bastion_image_id","var.bastion_image_type == \"custom\" ? coalesce(var.bastion_image_id, \"none\") : try(data.oci_core_images.autonomous_images[0].images[0].id, \"none\")"],["default_shape","\"VM.Standard.E4.Flex\""],["shape","lookup(var.bastion_shape, \"shape\", local.default_shape)"],["bastion_nsg_ids","distinct(concat([oci_core_network_security_group.bastion.id], var.bastion_nsg_ids))"],["ssh_port","22"],["tcp_protocol","6"],["vcn_cidr","element(data.oci_core_vcn.vcn.cidr_blocks, 0)"]],
   },
   {
     provider: "oci",

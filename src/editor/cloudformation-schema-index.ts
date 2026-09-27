@@ -13,7 +13,7 @@ export interface CfnSchemaIndex {
 
 export const CFN_SCHEMA_INDEX: CfnSchemaIndex = {
   source: "CloudFormation registry resource schemas (https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip)",
-  fetched: "2026-09-26",
+  fetched: "2026-09-27",
   types: {
     "AWS::ACMPCA::Certificate": "acmpca",
     "AWS::ACMPCA::CertificateAuthority": "acmpca",

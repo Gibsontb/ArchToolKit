@@ -18,7 +18,7 @@
 
 export const KUBERNETES_SCHEMA_INDEX                        = {
   version: '1.37.1',
-  fetched: '2026-09-26',
+  fetched: '2026-09-27',
   source: 'https://github.com/kubernetes/kubernetes/blob/v1.37.1/api/openapi-spec/swagger.json',
   kinds: {
     'admissionregistration.k8s.io/v1': {
