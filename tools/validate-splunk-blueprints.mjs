@@ -42,7 +42,7 @@ import { SPLUNK_APPS } from '../src/splunk/blueprints/index.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 import { checkAgainstSpec, compileSpec, confTypeOf, credentialProblems, mergeSpecs, parseConf, parseSpec } from '../src/splunk/conf-check.ts';
 import { SPLUNK_CONF_SPECS, SPLUNK_SPEC_SOURCE } from '../src/splunk/conf-spec-data.ts';
-import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
+import { ANSIBLE_EXPORTS, ANSIBLE_PROBE, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const argv = process.argv.slice(2);
 const many = (flag) => argv.flatMap((a, i) => (a === flag && argv[i + 1] ? [argv[i + 1]] : []));
@@ -308,7 +308,7 @@ function findDistro() {
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/splunk-appinspect`]).status === 0) return distro;
+    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${ANSIBLE_PROBE}`]).status === 0) return distro;
   }
   return null;
 }

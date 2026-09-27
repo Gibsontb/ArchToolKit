@@ -49,7 +49,7 @@ for %%x in (%*) do (
 )
 rem How long a download stays current, and what each check reads.
 set "FRESH=--within 20"
-set "VERSIONS=.work/ansible/versions.txt"
+set "VERSIONS=.work/ansible-versions.txt"
 
 rem --- Node 22.6 or newer is required for everything ------------------------
 where node >nul 2>&1

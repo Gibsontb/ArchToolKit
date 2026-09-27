@@ -227,11 +227,14 @@ passed in the last 20 hours, and a check whose inputs have not changed since it
 last passed (`update.bat all /yes /force` runs everything). `terraform validate`
 loads 40 blueprints at a time (`ARCHTOOLKIT_TF_BATCH`) and stops the provider
 processes each round leaves, so memory stays flat. Everything the update and
-the tools download, cache and build — the Ansible environment in WSL, the
-Terraform provider cache, working directories, the test log — stays in `.work/`
-inside the toolkit's folder, found from where the folder is: nothing in a home
-directory or the system temp directory, and no fixed drive. Deleting `.work/`
-removes all of it.
+the tools download, cache and build — the Terraform provider cache, working
+directories, the test log, and the Ansible environment packed as
+`.work/ansible.tar.gz` — stays in `.work/` inside the toolkit's folder, found
+from where the folder is: nothing in a home directory, and no fixed drive.
+Deleting `.work/` removes all of it. In WSL the Ansible environment runs
+unpacked from WSL's scratch space (`/tmp/archtoolkit-ansible`), because Python
+reads a Windows drive several times slower; WSL empties `/tmp` when it
+restarts and the next run unpacks it again (`tools/ansible-env.sh`).
 
 ### Linux and Windows
 

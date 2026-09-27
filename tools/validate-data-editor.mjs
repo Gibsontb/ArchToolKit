@@ -32,7 +32,7 @@ import { profileById } from '../src/editor/profiles/index.ts';
 import { perDocument } from '../src/editor/profile.ts';
 import { readYaml } from '../src/core/yaml-read.ts';
 import { terraformEnv, terraformInit } from './terraform-init.mjs';
-import { ANSIBLE_EXPORTS, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
+import { ANSIBLE_EXPORTS, ANSIBLE_PROBE, ANSIBLE_VENV, WORK_TMP, wslPath } from './work.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORPUS = join(HERE, 'editor-corpus');
@@ -68,7 +68,7 @@ function findDistro() {
   const listed = spawnSync('wsl', ['-l', '-q'], { encoding: 'utf16le' });
   const distros = (listed.stdout ?? '').split(/\r?\n/).map((d) => d.replace(/\0/g, '').trim()).filter(Boolean);
   for (const distro of distros.filter((d) => !d.startsWith('docker-desktop'))) {
-    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${VENV}/bin/python3 -c 'import ansible' 2>/dev/null && test -x ${VENV}/bin/cfn-lint`]).status === 0) return distro;
+    if (spawnSync('wsl', ['-d', distro, '--', 'bash', '-lc', `${ANSIBLE_PROBE}`]).status === 0) return distro;
   }
   return null;
 }
