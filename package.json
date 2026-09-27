@@ -23,6 +23,7 @@
     "catalog:update": "node tools/fetch-provider-catalog.mjs",
     "ansible:update": "node tools/fetch-ansible-catalog.mjs",
     "sizes:update": "node tools/fetch-compute-catalog.mjs",
+    "services:update": "node tools/fetch-service-catalog.mjs",
     "modules:update": "node tools/fetch-module-catalog.mjs",
     "editor:update": "node tools/fetch-editor-schemas.mjs",
     "editor:validate": "node tools/validate-data-editor.mjs",

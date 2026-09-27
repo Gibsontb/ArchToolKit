@@ -14,6 +14,7 @@ rem    S  Splunk          spec files, release check, validate every app
 rem    E  Data Editor     F5, CloudFormation, Kubernetes and ARM schemas, validate
 rem    V  VCF             sizing workbook, installer schema check
 rem    C  Catalogs        Terraform registry modules and machine sizes
+rem    L  Cloud services  service catalog for AWS, Azure, Google Cloud and OCI
 rem
 rem  A step that fails is recorded and the rest carry on; nothing is committed
 rem  unless every step and the tests pass.
@@ -55,19 +56,20 @@ echo     S  Splunk        (about 5 minutes)
 echo     E  Data Editor   (about 20 minutes)
 echo     V  VCF           (a minute or two)
 echo     C  Catalogs      (Terraform modules and machine sizes, a few minutes)
+echo     L  Cloud services (AWS, Azure, Google Cloud and OCI service lists, about 5 minutes)
 echo.
 echo   Press Enter for everything, or type the letters, e.g.  N S V
 set "PICK="
 set /p "PICK=   Areas: "
-if not defined PICK set "PICK=T A N S E V C"
+if not defined PICK set "PICK=T A N S E V C L"
 set "PICK=!PICK: =!"
-for %%a in (T A N S E V C) do set "DO_%%a="
-for %%a in (T A N S E V C) do (
+for %%a in (T A N S E V C L) do set "DO_%%a="
+for %%a in (T A N S E V C L) do (
   echo !PICK! | findstr /i "%%a" >nul && set "DO_%%a=1"
 )
-if not defined DO_T if not defined DO_A if not defined DO_N if not defined DO_S if not defined DO_E if not defined DO_V if not defined DO_C (
+if not defined DO_T if not defined DO_A if not defined DO_N if not defined DO_S if not defined DO_E if not defined DO_V if not defined DO_C if not defined DO_L (
   echo.
-  echo   Nothing recognised in "!PICK!". Use the letters T A N S E V C.
+  echo   Nothing recognised in "!PICK!". Use the letters T A N S E V C L.
   goto :fail
 )
 
@@ -130,6 +132,14 @@ if defined DO_S (
 )
 if defined DO_V (
   set "LABEL=VCF sizing workbook" & set "CMD=%NODE% tools\fetch-vcf-workbook.mjs" & call :step
+)
+rem Last of the downloads: it reads the Terraform catalog and the CloudFormation
+rem and ARM schemas that the steps above may just have refreshed.
+if defined DO_L (
+  set "LABEL=Cloud services: AWS" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud aws" & call :step
+  set "LABEL=Cloud services: Azure" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud azure" & call :step
+  set "LABEL=Cloud services: Google Cloud" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud google" & call :step
+  set "LABEL=Cloud services: OCI" & set "CMD=%NODE% tools\fetch-service-catalog.mjs --cloud oci" & call :step
 )
 
 rem ===========================================================================
@@ -235,6 +245,7 @@ if defined DO_S set "AREAS=!AREAS! Splunk,"
 if defined DO_E set "AREAS=!AREAS! Data Editor,"
 if defined DO_V set "AREAS=!AREAS! VCF,"
 if defined DO_C set "AREAS=!AREAS! catalogs,"
+if defined DO_L set "AREAS=!AREAS! cloud services,"
 set "AREAS=!AREAS:~1,-1!"
 for /f %%d in ('node -p "new Date().toISOString().slice(0,10)"') do set "TODAY=%%d"
 for /f %%b in ('git branch --show-current') do set "BRANCH=%%b"
