@@ -5,12 +5,12 @@
  * Per conf file: the settings allowed everywhere (global, including
  * [default]) and each stanza pattern with its own settings, read from
  * Splunk Enterprise 10.4.2's .conf.spec files
- * (https://github.com/splunk/vscode-extension-splunk, spec_files/10.4, commit 9d03f87, fetched 2026-09-27).
+ * (https://github.com/splunk/vscode-extension-splunk, spec_files/10.4, commit 9d03f87, fetched 2026-09-28).
  */
 
 import type { ConfSpec } from './conf-check.ts';
 
-export const SPLUNK_SPEC_SOURCE = {"release":"10.4.2","version":"10.4","repo":"https://github.com/splunk/vscode-extension-splunk","path":"spec_files/10.4","commit":"9d03f87","fetched":"2026-09-27"} as const;
+export const SPLUNK_SPEC_SOURCE = {"release":"10.4.2","version":"10.4","repo":"https://github.com/splunk/vscode-extension-splunk","path":"spec_files/10.4","commit":"9d03f87","fetched":"2026-09-28"} as const;
 
 export const SPLUNK_CONF_SPECS: Readonly<Record<string, ConfSpec>> = {
   "agent_management.conf": {"global":[],"stanzas":[{"pattern":"general","keys":["fallback_to_deployment_server_ui","log_level","repository_type","request_timeout"]},{"pattern":"search_client","keys":["polling_interval","query_agent_version","query_agents_offline","query_agents_updated_config","query_agents_with_error","query_app_summary"]},{"pattern":"splunkd_client","keys":["connection_keep_alive","connection_pool_size","request_timeout"]},{"pattern":"settings_sync","keys":["polling_interval"]},{"pattern":"effective_configuration","keys":["cleanup_schedule","cleanup_threshold","max_size"]},{"pattern":"telemetry","keys":["collection_timeout","cron_schedule","enabled","job_timeout"]},{"pattern":"repository_database","keys":["agents_matching_max_concurrent_ds_requests","agents_matching_refresh_batch_size","agents_matching_refresh_interval_s","agents_matching_refresh_timeout_m","app_events_file_limit","app_events_ingestion_batch_size","app_events_ingestion_interval_m","client_events_file_limit","client_events_ingestion_batch_size","client_events_ingestion_interval_m","database_items_ttl_h","database_prune_interval_h","phonehome_events_file_limit","phonehome_events_ingestion_batch_size","phonehome_events_ingestion_interval_m","stale_csv_cleanup_interval_m","stale_csv_cleanup_ttl_m"]}]},
