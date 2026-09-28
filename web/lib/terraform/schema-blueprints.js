@@ -370,7 +370,7 @@ const WORDS                                   = {
   nsxv: 'NSX-V', alb: 'ALB', rde: 'RDE', cse: 'CSE', dse: 'DSE', ui: 'UI', oidc: 'OIDC', saml: 'SAML', ldap: 'LDAP',
   vgpu: 'vGPU', evpn: 'EVPN', vrf: 'VRF', vtep: 'VTEP', gre: 'GRE', idps: 'IDPS', idp: 'IdP', lacp: 'LACP', mac: 'MAC',
   pci: 'PCI', gpu: 'GPU', dfw: 'DFW', tep: 'TEP', vni: 'VNI', ntp: 'NTP', snmp: 'SNMP', aws: 'AWS', gcp: 'GCP', vmc: 'VMC',
-  vsphere: 'vSphere', vcenter: 'vCenter', esxi: 'ESXi', vsan: 'vSAN', nsx: 'NSX', tier0: 'Tier-0', tier1: 'Tier-1',
+  vsphere: 'vSphere', vcenter: 'vCenter', esxi: 'ESX', vsan: 'vSAN', nsx: 'NSX', tier0: 'Tier-0', tier1: 'Tier-1',
   pbr: 'PBR', mtu: 'MTU', url: 'URL', uri: 'URI', vro: 'vRO', ad: 'AD', ldp: 'LDP', ca: 'CA', vip: 'VIP', qos: 'QoS',
   vsvip: 'VS VIP', vs: 'VS', se: 'SE', gs: 'GS', crs: 'CRS', jwt: 'JWT', icap: 'ICAP', csrf: 'CSRF', crm: 'CRM', hsm: 'HSM',
   sm: 'SM', fds: 'FDS', psm: 'PSM', ut: 'UT', rm: 'RM', addr: 'address', albservices: 'ALB services', geodb: 'GeoDB',

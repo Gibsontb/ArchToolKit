@@ -1332,7 +1332,7 @@ function buildInputs(onChange            )       {
 
   const componentsCard = card(
     'Components',
-    field('ESXi certificate mode', pick('esxiCertsMode', [
+    field('ESX certificate mode', pick('esxiCertsMode', [
       { value: '', label: 'Installer default' },
       { value: 'VMCA', label: 'VMCA' },
       { value: 'Custom', label: 'Custom' },

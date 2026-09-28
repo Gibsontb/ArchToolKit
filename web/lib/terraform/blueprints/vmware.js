@@ -280,7 +280,7 @@ const vmFromOvf = scenario('vsphere', {
     'Deploys an appliance straight from an OVF or OVA on a web server or local path, mapping its OVF networks to a port group and setting the disk provisioning — the usual route for vendor appliances.',
   inputs: [
     ...WHERE,
-    { id: 'host', label: 'ESXi host to deploy through', control: 'text', default: 'esx01.example.com' },
+    { id: 'host', label: 'ESX host to deploy through', control: 'text', default: 'esx01.example.com' },
     { id: 'datastore', label: 'Datastore', control: 'text', default: 'vsanDatastore' },
     { id: 'network_label', label: 'Port group', control: 'text', default: 'VM Network' },
     { id: 'ovf_network', label: 'OVF network name', control: 'text', default: 'Network 1', hint: 'as named inside the OVF' },
@@ -490,13 +490,13 @@ resource "vsphere_compute_cluster" "cluster" {
 
 const addHosts = scenario('vsphere', {
   id: 'vsphere_add_hosts',
-  label: 'Add ESXi hosts to a cluster',
+  label: 'Add ESX hosts to a cluster',
   description:
-    'Adds each ESXi host listed to an existing cluster, pinning its certificate thumbprint, with NTP servers set and the lockdown mode chosen. The root password is a sensitive variable.',
+    'Adds each ESX host listed to an existing cluster, pinning its certificate thumbprint, with NTP servers set and the lockdown mode chosen. The root password is a sensitive variable.',
   inputs: [
     ...WHERE,
-    { id: 'hosts', label: 'ESXi hosts', control: 'textarea', default: 'esx05.example.com\nesx06.example.com', hint: 'FQDN or IP, one per line' },
-    { id: 'username', label: 'ESXi user', control: 'text', default: 'root' },
+    { id: 'hosts', label: 'ESX hosts', control: 'textarea', default: 'esx05.example.com\nesx06.example.com', hint: 'FQDN or IP, one per line' },
+    { id: 'username', label: 'ESX user', control: 'text', default: 'root' },
     { id: 'ntp_servers', label: 'NTP servers', control: 'text', default: 'ntp1.example.com, ntp2.example.com' },
     { id: 'lockdown', label: 'Lockdown mode', control: 'select', options: opts(['disabled', 'normal', 'strict']), default: 'disabled' },
     { id: 'maintenance', label: 'Add in maintenance mode', control: 'select', options: YES_NO_OPTIONS, default: 'false' },
@@ -540,7 +540,7 @@ resource "vsphere_host" "${id}" {
 
 variable "esxi_password" {
   type        = string
-  description = "Root password of the ESXi hosts"
+  description = "Root password of the ESX hosts"
   sensitive   = true
 }`;
   },
@@ -701,10 +701,10 @@ const vss = scenario('vsphere', {
   id: 'vsphere_standard_switch',
   label: 'Standard switch, port groups and VMkernel adapter on a host',
   description:
-    'On one ESXi host: a standard vSwitch on the NICs given, port groups by VLAN, and an optional VMkernel adapter for vMotion, vSAN, NFS or management with a static address.',
+    'On one ESX host: a standard vSwitch on the NICs given, port groups by VLAN, and an optional VMkernel adapter for vMotion, vSAN, NFS or management with a static address.',
   inputs: [
     { id: 'datacenter', label: 'Datacenter', control: 'text', default: 'dc01' },
-    { id: 'host', label: 'ESXi host', control: 'text', default: 'esx01.example.com' },
+    { id: 'host', label: 'ESX host', control: 'text', default: 'esx01.example.com' },
     { id: 'vswitch_name', label: 'vSwitch name', control: 'text', default: 'vSwitch1' },
     { id: 'nics', label: 'Physical NICs', control: 'text', default: 'vmnic2, vmnic3' },
     { id: 'standby_nics', label: 'Standby NICs', control: 'text', default: '', hint: 'optional, from the list above' },

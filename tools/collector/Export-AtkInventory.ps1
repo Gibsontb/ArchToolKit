@@ -13,7 +13,6 @@
       - Physical NIC link speeds        vSAN ESA effectively requires 25GbE
       - NVMe device presence            ESA requires NVMe; OSA does not
       - VMkernel adapters and services  the existing network design
-      - Boot device type and size       VCF 9 bans SD cards
       - TPM presence                    vSphere security baselines
       - Historical CPU/memory stats     RVTools is point-in-time only
 

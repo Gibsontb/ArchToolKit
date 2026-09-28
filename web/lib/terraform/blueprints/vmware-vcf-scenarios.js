@@ -2,7 +2,7 @@
  * Hand-written VCF (SDDC Manager) scenario blueprints: several resources built
  * together, day-2 against a running SDDC Manager (vmware/vcf 0.18).
  *
- *   commission hosts     network pool + one vcf_host per ESXi FQDN
+ *   commission hosts     network pool + one vcf_host per ESX FQDN
  *   workload domain      vCenter, NSX Manager cluster and the first cluster
  *   add a cluster        a vcf_cluster in an existing domain
  *   NSX edge cluster     two edge nodes, Tier-0/Tier-1, eBGP uplinks
@@ -63,7 +63,7 @@ function hostLookups(value         )                                            
 
 function clusterInputs(section        )                   {
   return [
-    { id: 'hosts', label: 'ESXi hosts', control: 'textarea', default: 'esxi-wld01-01.example.com\nesxi-wld01-02.example.com\nesxi-wld01-03.example.com\nesxi-wld01-04.example.com', hint: 'One FQDN per line; already commissioned and unassigned', help: 'Each host is looked up by FQDN (data "vcf_host"). vSAN needs at least 3 hosts, 4 for maintenance headroom with FTT=1.' },
+    { id: 'hosts', label: 'ESX hosts', control: 'textarea', default: 'esxi-wld01-01.example.com\nesxi-wld01-02.example.com\nesxi-wld01-03.example.com\nesxi-wld01-04.example.com', hint: 'One FQDN per line; already commissioned and unassigned', help: 'Each host is looked up by FQDN (data "vcf_host"). vSAN needs at least 3 hosts, 4 for maintenance headroom with FTT=1.' },
     { id: 'storage', label: 'Principal storage', control: 'select', options: STORAGE_OPTIONS, default: 'VSAN' },
     { id: 'datastore_name', label: 'Datastore name', control: 'text', default: 'wld01-cl01-ds-vsan01' },
     { id: 'failures_to_tolerate', label: 'vSAN failures to tolerate', control: 'select', options: [{ value: '1', label: '1' }, { value: '2', label: '2 (needs 5+ hosts for RAID-6 / 6+ OSA)' }], default: '1', showWhen: { input: 'storage', equals: ['VSAN', 'VSAN_ESA'] } },
@@ -172,11 +172,11 @@ function clusterFindings(v                , count        , where        )       
 export const VCF_SCENARIOS                       = [
   scenario('vcf', {
     id: 'vcf_commission_hosts',
-    label: 'Commission hosts: network pool + ESXi hosts',
-    description: `A network pool with vMotion and storage networks (IP ranges SDDC Manager hands out), and one vcf_host per ESXi FQDN commissioned into it. ${DAY2} The hosts share one root password, var.esxi_root_password.`,
+    label: 'Commission hosts: network pool + ESX hosts',
+    description: `A network pool with vMotion and storage networks (IP ranges SDDC Manager hands out), and one vcf_host per ESX FQDN commissioned into it. ${DAY2} The hosts share one root password, var.esxi_root_password.`,
     inputs: [
       { id: 'pool_name', label: 'Network pool name', control: 'text', default: 'wld01-np01' },
-      { id: 'hosts', label: 'ESXi hosts', control: 'textarea', default: 'esxi-wld01-01.example.com\nesxi-wld01-02.example.com\nesxi-wld01-03.example.com\nesxi-wld01-04.example.com', hint: 'One FQDN per line; each gets a vcf_host' },
+      { id: 'hosts', label: 'ESX hosts', control: 'textarea', default: 'esxi-wld01-01.example.com\nesxi-wld01-02.example.com\nesxi-wld01-03.example.com\nesxi-wld01-04.example.com', hint: 'One FQDN per line; each gets a vcf_host' },
       { id: 'storage_type', label: 'Storage type', control: 'select', options: [
         { value: 'VSAN', label: 'vSAN OSA' },
         { value: 'VSAN_ESA', label: 'vSAN ESA' },
@@ -185,7 +185,7 @@ export const VCF_SCENARIOS                       = [
         { value: 'VMFS_FC', label: 'VMFS on FC' },
         { value: 'VVOL', label: 'vVols' },
       ], default: 'VSAN', hint: 'Decides the pool’s storage network' },
-      { id: 'username', label: 'ESXi user', control: 'text', default: 'root' },
+      { id: 'username', label: 'ESX user', control: 'text', default: 'root' },
       { id: 'vmotion_vlan', label: 'vMotion VLAN', control: 'number', default: 1612, min: 0, max: 4094, section: 'vMotion network' },
       { id: 'vmotion_subnet', label: 'vMotion subnet', control: 'text', default: '172.16.12.0', section: 'vMotion network' },
       { id: 'vmotion_mask', label: 'vMotion mask', control: 'text', default: '255.255.255.0', section: 'vMotion network' },
@@ -234,7 +234,7 @@ export const VCF_SCENARIOS                       = [
         .join('\n\n');
       return {
         findings,
-        hcl: `${variable('esxi_root_password', 'root password of the ESXi hosts being commissioned')}
+        hcl: `${variable('esxi_root_password', 'root password of the ESX hosts being commissioned')}
 
 resource "vcf_network_pool" "this" {
   name = ${q(v.pool_name)}
@@ -612,7 +612,7 @@ ${replace}`;
     label: 'Credential rotation: auto-rotate policies',
     description: `Turns on SDDC Manager's automatic password rotation for a set of accounts, and can rotate them once now as well. ${DAY2}`,
     inputs: [
-      { id: 'accounts', label: 'Accounts', control: 'textarea', default: 'VCENTER vcenter-wld01.example.com root\nNSXT_MANAGER nsx-wld01.example.com admin\nNSXT_MANAGER nsx-wld01.example.com audit', hint: 'One per line: RESOURCE_TYPE resource-name user (VCENTER, PSC, NSXT_MANAGER, NSXT_EDGE, BACKUP, VRSLCM)', help: 'SDDC Manager cannot schedule rotation for ESXi accounts; rotate those on demand.' },
+      { id: 'accounts', label: 'Accounts', control: 'textarea', default: 'VCENTER vcenter-wld01.example.com root\nNSXT_MANAGER nsx-wld01.example.com admin\nNSXT_MANAGER nsx-wld01.example.com audit', hint: 'One per line: RESOURCE_TYPE resource-name user (VCENTER, PSC, NSXT_MANAGER, NSXT_EDGE, BACKUP, VRSLCM)', help: 'SDDC Manager cannot schedule rotation for ESX accounts; rotate those on demand.' },
       { id: 'enabled', label: 'Auto-rotate', control: 'toggle', default: true },
       { id: 'days', label: 'Rotate every (days)', control: 'number', default: 30, min: 1, max: 90, showWhen: { input: 'enabled', equals: ['true'] } },
       { id: 'rotate_now', label: 'Also rotate now', control: 'toggle', default: false },

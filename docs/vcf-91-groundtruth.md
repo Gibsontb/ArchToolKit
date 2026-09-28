@@ -988,7 +988,7 @@ Exact column headers for the sizing-relevant sheets **[V-DOC]**:
 
 | Capability | Raley | VirtualBytes | Your tool must |
 |---|---|---|---|
-| Full 9.1 `SddcSpec` (all 31 top-level keys) | No (~12) | Partial, 9.0-shaped | **Yes** |
+| Full 9.1 `SddcSpec` (all 32 top-level keys) | No (~12) | Partial, 9.0-shaped | **Yes** |
 | `vspClusterSpec` (VSP / VCFMS) | No | No | **Yes — mandatory in 9.1** |
 | `vidbSpec`, `licenseServerSpec`, `fleetLcmSpec`, `sddcLcmSpec`, `fleetDepotSpec`, `saltSpec`, `saltRaasSpec`, `telemetryAcceptorSpec` | No | No | **Yes** |
 | `vpcSpec` / `dtgwSpec` (VPC + Distributed TGW) | No | No | **Yes** |

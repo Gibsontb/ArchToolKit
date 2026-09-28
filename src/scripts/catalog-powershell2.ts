@@ -788,7 +788,7 @@ export const POWERSHELL_CATALOG_2: readonly CommandGroup[] = [
   group('powershell', 'More vSphere (PowerCLI)', [
     {
       name: 'Get-VMHostService',
-      task: 'check or start services on an ESXi host',
+      task: 'check or start services on an ESX host',
       syntax: "Get-VMHost esx01 | Get-VMHostService | Where-Object Key -eq 'TSM-SSH'",
       module: 'VMware.PowerCLI',
       effect: 'read',

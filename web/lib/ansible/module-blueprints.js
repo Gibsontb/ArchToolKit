@@ -335,7 +335,7 @@ const CLOUD_AREAS                                         = [
 
 const TOPIC_WORDS                                   = {
   ec2: 'EC2', rds: 'RDS', iam: 'IAM', s3: 'S3', elb: 'ELB', ecs: 'ECS', efs: 'EFS', eks: 'EKS', sns: 'SNS', ses: 'SES', sqs: 'SQS',
-  mq: 'MQ', api: 'API', cp: 'CP', idp: 'IdP', lsm: 'LSM', vcenter: 'vCenter', esxi: 'ESXi', vsan: 'vSAN',
+  mq: 'MQ', api: 'API', cp: 'CP', idp: 'IdP', lsm: 'LSM', vcenter: 'vCenter', esxi: 'ESX', vsan: 'vSAN',
   ucs: 'UCS', ssl: 'SSL', tls: 'TLS', sdwan: 'SD-WAN', ztna: 'ZTNA', nac: 'NAC', ipsec: 'IPsec', ipv6: 'IPv6',
   wanopt: 'WAN optimization', icap: 'ICAP', ssh: 'SSH', radius: 'RADIUS', tacacs: 'TACACS', fmg: 'FMG', fgt: 'FortiGate',
   os: 'Object storage', ai: 'AI', vpn: 'VPN', dns: 'DNS', dhcp: 'DHCP', ip: 'IP', bgp: 'BGP', ospf: 'OSPF', ntp: 'NTP',

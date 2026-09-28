@@ -126,7 +126,7 @@ export function emitInventoryCollection(options                       )         
         register: 'clusters',
       },
       {
-        name: 'Gather ESXi hosts',
+        name: 'Gather ESX hosts',
         module: 'vmware.vmware.esxi_info',
         arguments: { ...common },
         register: 'esxi_hosts',

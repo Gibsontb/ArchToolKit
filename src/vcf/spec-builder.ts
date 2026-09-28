@@ -1944,7 +1944,7 @@ export function buildSddcSpec(plan: DeploymentPlan): BuildResult {
         : tepCidr && tepRange
           ? {
               name: tepPoolName,
-              description: 'ESXi host overlay TEP IP pool',
+              description: 'ESX host overlay TEP IP pool',
               ...ignoreUnavailable,
               subnets: [
                 {

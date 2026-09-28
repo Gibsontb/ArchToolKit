@@ -320,7 +320,7 @@ export function emitTerraform(spec: SddcSpec): TerraformOutput {
           ],
         },
       ],
-      comment: i === 0 ? 'ESXi hosts for the management cluster.' : undefined,
+      comment: i === 0 ? 'ESX hosts for the management cluster.' : undefined,
     });
   });
 
@@ -625,7 +625,7 @@ function describeVariable(name: string): string {
     installer_host: 'FQDN or address of the VCF Installer appliance.',
     installer_username: 'Installer appliance user, typically admin@local.',
     installer_password: 'Password for the installer appliance user.',
-    esx_root_password: 'Root password shared by the ESXi hosts.',
+    esx_root_password: 'Root password shared by the ESX hosts.',
     vcenter_root_password: 'Root password for the vCenter appliance.',
     nsx_root_password: 'Root password for the NSX Manager appliances.',
     nsx_admin_password: 'NSX admin password.',

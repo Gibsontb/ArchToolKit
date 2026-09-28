@@ -62,7 +62,7 @@ export function mountInventoryPage(root: HTMLElement): void {
     root,
     el('div', {
       class: 'section-note',
-      text: 'Nothing leaves this page: the estate is read in the browser and kept in this browser only, until you forget it. For the hardware facts that decide vSAN ESA eligibility — NVMe devices and NIC firmware — also run tools/collector/Export-AtkInventory.ps1; RVTools does not capture them.',
+      text: 'Nothing leaves this page: the estate is read in the browser and kept in this browser only, until you forget it. For the hardware facts that decide vSAN ESA eligibility that RVTools does not capture — NVMe devices and TPM — also run tools/collector/Export-AtkInventory.ps1.',
     }),
   );
 }
@@ -392,7 +392,7 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
       : el('div', { class: 'empty', text: 'No hosts to assess.' }),
     el('div', {
       class: 'section-note',
-      text: 'Hover any marker for the detail behind it. A "?" means the source data does not carry that field — an RVTools export has no NVMe or NIC-speed information, so those checks cannot be evaluated from one.',
+      text: 'Hover any marker for the detail behind it. A "?" means the source data does not carry that field — an RVTools export has no NVMe or TPM information, so those checks need the collector.',
     }),
   );
 
@@ -469,7 +469,7 @@ function buildResults(inventory: Inventory, importFindings: Finding[]): HTMLElem
     ),
     el('div', {
       class: 'section-note',
-      text: 'The canonical form merges every source into one schema, so an RVTools export and a collector run can be combined and re-imported later.',
+      text: 'The canonical form puts every source into one schema, for other tools to read. To bring the estate back into this page, import the original RVTools workbook: re-importing this file keeps hosts, clusters and VMs but not VM disks, NICs, vCenters, health or licences.',
     }),
   );
 

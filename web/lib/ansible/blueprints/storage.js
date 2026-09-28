@@ -216,7 +216,7 @@ export const STORAGE_PLAYBOOKS                       = [
         control: 'select',
         options: [
           { value: 'none', label: 'None (Linux, Windows)' },
-          { value: 'esxi', label: 'ESXi' },
+          { value: 'esxi', label: 'ESX' },
           { value: 'aix', label: 'AIX' },
           { value: 'solaris', label: 'Solaris' },
           { value: 'hpux', label: 'HP-UX' },

@@ -2,11 +2,11 @@
  * More onboarding: the parts of the estate the first onboarding blueprints
  * leave to a note.
  *
- * "Onboard the VCF / vSphere estate" gets ESXi, vCenter and the NSX Manager
+ * "Onboard the VCF / vSphere estate" gets ESX, vCenter and the NSX Manager
  * nodes sending syslog, and says that SDDC Manager and VCF Automation reach
  * Splunk through VCF Operations for Logs. That is where most onboarding stops,
  * and it is not where the value is. For NSX the value is the distributed
- * firewall: every drop between two VMs is a packet log on the ESXi host that
+ * firewall: every drop between two VMs is a packet log on the ESX host that
  * enforced it, and those logs exist only for rules someone set to log. For the
  * VCF management components it is knowing that all of them are reporting,
  * when there is no add-on to tell you what any of their events mean.
@@ -462,7 +462,7 @@ export const ONBOARDING_MORE_BLUEPRINTS                             = [
         activation: 'reload',
         notes: [
           `SC4S sourcetypes NSX syslog vmware:nsxlog:<program> into ${nsxIndex}, and the distributed firewall packet logs vmware:nsxlog:dfwpktlogs into ${dfwIndex}. ops/sc4s/splunk_metadata.csv sets both indexes.`,
-          'The DFW packet logs are written by each ESXi host that enforces the rule, not by NSX Manager, and they leave through the host’s own syslog (Syslog.global.logHost). The hosts must send to SC4S — "Onboard the VCF / vSphere estate" sets that — or no packet log reaches Splunk however the rules are set.',
+          'The DFW packet logs are written by each ESX host that enforces the rule, not by NSX Manager, and they leave through the host’s own syslog (Syslog.global.logHost). The hosts must send to SC4S — "Onboard the VCF / vSphere estate" sets that — or no packet log reaches Splunk however the rules are set.',
           'A rule writes packet logs only when its logging is on. ops/nsx-syslog.sh turns it on for the rules of the listed policies through the Policy API, writes the rules it changed to rules-logged-<time>.txt, and --undo that file turns them off again. It also adds the SC4S exporter on each Manager node, skipping any node that already has it.',
           'Add-on: VMware NSX add-on (Splunkbase 6805) maps NSX syslog to the CIM, including IDS. It is not built or supported by Splunk. Install it on the search heads if you want Network_Traffic and Intrusion_Detection from NSX; the searches in this app do not need it, because the nsx_dfw_fields macro extracts what they read.',
           'VERIFY: the packet log line format differs between NSX releases (the rule is written as 3048 or domain-c8/3048, and ICMP has no ports). Run the first verify search and check that rule_id, src and dest are populated before trusting the alert.',
@@ -473,7 +473,7 @@ export const ONBOARDING_MORE_BLUEPRINTS                             = [
           `| rest /services/data/indexes | search title IN (${[...new Set([nsxIndex, dfwIndex])].join(', ')}) | table title, splunk_server`,
           'bash ops/nsx-syslog.sh --dry-run   # the current exporters on each node, and which rules of each policy do not log',
           `curl -s --netrc-file ~/.vcf/nsx.netrc https://${mgr}/policy/api/v1/infra/domains/default/security-policies | jq -r '.results[] | [.id, .display_name, .category] | @tsv'   # the policy ids to list`,
-          `esxcli system syslog config get   # on an ESXi host: Remote Host includes ${tgt}`,
+          `esxcli system syslog config get   # on an ESX host: Remote Host includes ${tgt}`,
         ],
         files: {
           'default/app.conf': appConfLines(app, 'NSX onboarding', 'NSX Manager and distributed firewall searches'),
@@ -656,7 +656,7 @@ export const ONBOARDING_MORE_BLUEPRINTS                             = [
         `     Transport:  ${proto}`,
         `     Port:       ${listener.port}`,
         `     SSL:        ${listener.transport === 'tls' ? 'on — the collector certificate’s CA must be trusted by VCF Operations for Logs' : 'off'}`,
-        '2. Filter the destination to the management components below. If ESXi,',
+        '2. Filter the destination to the management components below. If ESX,',
         '   vCenter and NSX already reach Splunk directly ("Onboard the VCF /',
         '   vSphere estate"), leave them out here, or every one of their events is',
         '   indexed twice.',

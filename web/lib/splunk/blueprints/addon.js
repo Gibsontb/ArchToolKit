@@ -780,7 +780,7 @@ function estateVcenters()                  {
   return [...new Set([...(inv.vcenters ?? []).map((v) => v.name), ...inv.hosts.map((h) => h.vcenter ?? '')].map((v) => v.trim()).filter(Boolean))].sort();
 }
 
-/** Short host name, lower case: ESXi sends its short name or its FQDN depending on how it was installed. */
+/** Short host name, lower case: ESX sends its short name or its FQDN depending on how it was installed. */
 function shortName(name        )         {
   return name.toLowerCase().split('.')[0] ?? name.toLowerCase();
 }
@@ -1685,17 +1685,17 @@ export const ADDON_BLUEPRINTS                             = [
     label: 'Onboard the VCF / vSphere estate',
     group: 'Onboard what you built',
     description:
-      'ESXi, vCenter and NSX syslog straight to Splunk with the official ESXi and vCenter log add-ons, and SDDC Manager, VCF Operations and VCF Automation through VCF Operations for Logs forwarding — with a PowerCLI script for the hosts, a REST script for vCenter and NSX (both apply when run; --dry-run previews), and a search for every expected component that is not reporting.',
+      'ESX, vCenter and NSX syslog straight to Splunk with the official ESX and vCenter log add-ons, and SDDC Manager, VCF Operations and VCF Automation through VCF Operations for Logs forwarding — with a PowerCLI script for the hosts, a REST script for vCenter and NSX (both apply when run; --dry-run previews), and a search for every expected component that is not reporting.',
     inputs: [
       { id: 'app_name', label: 'App name', control: 'text', default: 'org_vmware_onboarding' },
-      { id: 'use_estate', label: 'ESXi hosts and vCenters from the imported estate', control: 'toggle', default: true, hint: 'Falls back to the lists below when no estate is loaded' },
-      { id: 'esxi_hosts', label: 'ESXi hosts', control: 'textarea', default: 'esx01.example.com\nesx02.example.com\nesx03.example.com\nesx04.example.com' },
+      { id: 'use_estate', label: 'ESX hosts and vCenters from the imported estate', control: 'toggle', default: true, hint: 'Falls back to the lists below when no estate is loaded' },
+      { id: 'esxi_hosts', label: 'ESX hosts', control: 'textarea', default: 'esx01.example.com\nesx02.example.com\nesx03.example.com\nesx04.example.com' },
       { id: 'vcenters', label: 'vCenters', control: 'textarea', default: 'vc01.example.com' },
       { id: 'nsx_nodes', label: 'NSX Manager nodes', control: 'textarea', default: 'nsx01a.example.com\nnsx01b.example.com\nnsx01c.example.com', hint: 'Each node, not the cluster VIP' },
       { id: 'sddc_manager', label: 'SDDC Manager', control: 'text', default: 'sddc01.example.com' },
       { id: 'vcf_ops_logs', label: 'VCF Operations for Logs', control: 'text', default: 'vcfops-logs01.example.com', hint: 'The log management node that forwards to Splunk' },
       { id: 'path', label: 'Route', control: 'select', default: 'direct', options: [
-        { value: 'direct', label: 'ESXi, vCenter, NSX direct; the rest through VCF Operations for Logs' },
+        { value: 'direct', label: 'ESX, vCenter, NSX direct; the rest through VCF Operations for Logs' },
         { value: 'via_logs', label: 'Everything through VCF Operations for Logs forwarding' },
         { value: 'both', label: 'Both — direct and forwarded' },
       ] },
@@ -1710,7 +1710,7 @@ export const ADDON_BLUEPRINTS                             = [
         { value: 'udp', label: 'UDP' },
       ] },
       LISTEN_INPUT,
-      { id: 'esxi_index', label: 'ESXi index', control: 'text', default: 'vmware-esxilog' },
+      { id: 'esxi_index', label: 'ESX index', control: 'text', default: 'vmware-esxilog' },
       { id: 'vc_index', label: 'vCenter index', control: 'text', default: 'vmware-vclog' },
       { id: 'vcf_index', label: 'NSX and VCF index', control: 'text', default: 'vcf', hint: 'Match the Splunk index on vcflog91_forwarding' },
       { id: 'silent_minutes', label: 'Alert when a component is silent for (minutes)', control: 'number', default: 60, min: 5, max: 10080 },
@@ -1739,7 +1739,7 @@ export const ADDON_BLUEPRINTS                             = [
       const vcIndex = indexName(str(values, 'vc_index', 'vmware-vclog'), 'vmware-vclog');
       const vcfIndex = indexName(str(values, 'vcf_index', 'vcf'), 'vcf');
       const silent = Math.max(5, Math.round(num(values, 'silent_minutes', 60)));
-      // ESXi to 1514 is what the ESXi logs add-on documents; the others get a
+      // ESX to 1514 is what the ESX logs add-on documents; the others get a
       // port of their own on a heavy forwarder so the sourcetype is known.
       const port = { esxi: collector === 'hf' ? 1514 : transport === 'tls' ? 6514 : 514, vc: collector === 'hf' ? 1517 : transport === 'tls' ? 6514 : 514, nsx: collector === 'hf' ? 1518 : transport === 'tls' ? 6514 : 514, fwd: collector === 'hf' ? 1519 : transport === 'tls' ? 6514 : 514 };
       if (collector === 'sc4s' && transport !== 'tls') port.esxi = 514;
@@ -1751,11 +1751,11 @@ export const ADDON_BLUEPRINTS                             = [
       const v6Line = listenV6 !== 'no' ? [`listenOnIPv6 = ${listenV6}`] : [];
 
       if (useEstate && !estate) {
-        findings.push(info('splunk.vmw-no-estate', 'No estate is loaded, so the ESXi and vCenter lists on the form were used. Import an RVTools export and every host in it is listed for you.', { source: SRC }));
+        findings.push(info('splunk.vmw-no-estate', 'No estate is loaded, so the ESX and vCenter lists on the form were used. Import an RVTools export and every host in it is listed for you.', { source: SRC }));
       }
       if (unreachable.length > 0) {
         findings.push(
-          warning('splunk.vmw-host-unreachable', `${unreachable.length} ESXi host${unreachable.length === 1 ? ' is' : 's are'} not connected in the estate (${unreachable.slice(0, 8).map((h) => `${h.name}: ${h.state}`).join(', ')}${unreachable.length > 8 ? ', …' : ''}). They are left out of the script, so they will have no syslog target — and a host that is disconnected is the one whose logs you will want.`, {
+          warning('splunk.vmw-host-unreachable', `${unreachable.length} ESX host${unreachable.length === 1 ? ' is' : 's are'} not connected in the estate (${unreachable.slice(0, 8).map((h) => `${h.name}: ${h.state}`).join(', ')}${unreachable.length > 8 ? ', …' : ''}). They are left out of the script, so they will have no syslog target — and a host that is disconnected is the one whose logs you will want.`, {
             remediation: 'Reconnect them and run the script again, or set Syslog.global.logHost on each from its own host client or with esxcli.',
             source: SRC,
           }),
@@ -1766,32 +1766,32 @@ export const ADDON_BLUEPRINTS                             = [
         const left = estate.filter((h) => !listed.has(shortName(h.name)));
         if (left.length > 0) {
           findings.push(
-            warning('splunk.vmw-estate-not-listed', `${left.length} of the ${estate.length} ESXi hosts in the imported estate are not in the list on the form (${left.slice(0, 8).map((h) => h.name).join(', ')}${left.length > 8 ? ', …' : ''}), so they get no syslog target and are not expected by the missing-host search.`, {
+            warning('splunk.vmw-estate-not-listed', `${left.length} of the ${estate.length} ESX hosts in the imported estate are not in the list on the form (${left.slice(0, 8).map((h) => h.name).join(', ')}${left.length > 8 ? ', …' : ''}), so they get no syslog target and are not expected by the missing-host search.`, {
               remediation: 'Turn on "from the imported estate", or add them to the list.',
               source: SRC,
             }),
           );
         }
       }
-      if (esxi.length === 0) findings.push(warning('splunk.vmw-no-esxi', 'No ESXi hosts: none will get a syslog target.', { source: SRC }));
+      if (esxi.length === 0) findings.push(warning('splunk.vmw-no-esxi', 'No ESX hosts: none will get a syslog target.', { source: SRC }));
       if (transport === 'udp') {
         findings.push(
-          warning('splunk.vmw-udp', 'UDP syslog from ESXi, vCenter and NSX drops events under load and during collector restarts, with no record that it did — and a host in trouble is a host logging a lot. Behind a load balancer UDP also splits and reorders the multi-line events ESXi writes.', {
-            remediation: 'Use TCP (the ESXi logs add-on documents TCP 1514) or TLS.',
+          warning('splunk.vmw-udp', 'UDP syslog from ESX, vCenter and NSX drops events under load and during collector restarts, with no record that it did — and a host in trouble is a host logging a lot. Behind a load balancer UDP also splits and reorders the multi-line events ESX writes.', {
+            remediation: 'Use TCP (the ESX logs add-on documents TCP 1514) or TLS.',
             source: 'Splunk Add-on for VMware ESXi Logs documentation; SC4S documentation',
           }),
         );
       }
       if (path === 'both') {
         findings.push(
-          warning('splunk.vmw-duplicate', 'Direct and forwarded both on: VCF Operations for Logs already receives ESXi, vCenter and NSX logs, so forwarding everything from it as well as sending direct indexes each of those events twice — double the licence and doubled counts in every search.', {
+          warning('splunk.vmw-duplicate', 'Direct and forwarded both on: VCF Operations for Logs already receives ESX, vCenter and NSX logs, so forwarding everything from it as well as sending direct indexes each of those events twice — double the licence and doubled counts in every search.', {
             remediation: 'Use the direct route, and filter the VCF Operations for Logs forwarding rule (vcflog91_forwarding) to the components that are not sent direct: SDDC Manager, VCF Operations, VCF Automation.',
             source: SRC,
           }),
         );
       }
       if (transport === 'tls') {
-        findings.push(info('splunk.vmw-tls', 'TLS from ESXi validates the collector certificate: its CA must be in the host trust store (managed from vCenter in 8.x/9.x), or the host logs "certificate verify failed" and sends nothing. VERIFY on a single host first.', { source: SRC }));
+        findings.push(info('splunk.vmw-tls', 'TLS from ESX validates the collector certificate: its CA must be in the host trust store (managed from vCenter in 8.x/9.x), or the host logs "certificate verify failed" and sends nothing. VERIFY on a single host first.', { source: SRC }));
       }
 
       const expected                                                  = [
@@ -1805,7 +1805,7 @@ export const ADDON_BLUEPRINTS                             = [
       const alertName = `VMware component silent for ${silent} minutes`;
 
       const ps1           = [
-        '# Point every ESXi host in esxi-hosts.txt at the Splunk syslog collector.',
+        '# Point every ESX host in esxi-hosts.txt at the Splunk syslog collector.',
         '# Adds the target to Syslog.global.logHost (keeping any existing target,',
         '# such as VCF Operations for Logs), opens the syslog firewall ruleset,',
         '# reloads syslog and sends a test mark.',
@@ -1959,7 +1959,7 @@ export const ADDON_BLUEPRINTS                             = [
               'ops/sc4s/splunk_metadata.csv': [
                 '# Merge into /opt/sc4s/local/context/splunk_metadata.csv, then restart SC4S.',
                 '# SC4S sourcetypes these vmware:esxlog:<program>, vmware:vclog:<program>',
-                '# and vmware:nsxlog:<program>, which is what the ESXi and vCenter log',
+                '# and vmware:nsxlog:<program>, which is what the ESX and vCenter log',
                 '# add-ons expect; their default index is infraops (main in the next major',
                 '# release, which also renames the keys and sourcetypes — VERIFY for the',
                 '# version you run; both spellings are listed).',
@@ -1972,12 +1972,12 @@ export const ADDON_BLUEPRINTS                             = [
               'ops/sc4s/env_file.snippet': [
                 '# Add to /opt/sc4s/env_file, then restart SC4S.',
                 '# vSphere is identified from the message on the default port. A dedicated',
-                '# port removes the guesswork (and the misidentified ESXi auth/shell',
+                '# port removes the guesswork (and the misidentified ESX auth/shell',
                 '# events people see on 514). VERIFY variable names for your version.',
                 `SC4S_LISTEN_VMWARE_VSPHERE_${transport === 'udp' ? 'UDP' : transport === 'tls' ? 'TLS' : 'TCP'}_PORT=1514`,
                 ...(transport === 'tls' ? ['SC4S_SOURCE_TLS_ENABLE=yes'] : []),
                 ...(listenV6 !== 'no' ? ['# Listeners on IPv6 as well as IPv4.', 'SC4S_IPV6_ENABLE=yes'] : []),
-                '# With the dedicated port, point ESXi at 1514 instead of 514: run',
+                '# With the dedicated port, point ESX at 1514 instead of 514: run',
                 `# esxi-syslog.ps1 with -Target ${esxiScheme}://${urlHost(target)}:1514`,
               ],
             }
@@ -1987,7 +1987,7 @@ export const ADDON_BLUEPRINTS                             = [
         '# Heavy forwarder listeners for the VCF estate. Deploy as its own app to the',
         '# heavy forwarders only.',
         '',
-        '# ESXi — the Splunk Add-on for VMware ESXi Logs (Splunk_TA_esxilogs) takes',
+        '# ESX — the Splunk Add-on for VMware ESXi Logs (Splunk_TA_esxilogs) takes',
         '# vmw-syslog and splits it into vmware:esxlog:<component> at index time,',
         '# so it must be on this heavy forwarder too.',
         transport === 'udp' ? `[udp://${port.esxi}]` : transport === 'tls' ? `[tcp-ssl:${port.esxi}]` : `[tcp://${port.esxi}]`,
@@ -2039,18 +2039,18 @@ export const ADDON_BLUEPRINTS                             = [
 
       return {
         tier: TIER,
-        title: `Onboard ${esxi.length} ESXi host${esxi.length === 1 ? '' : 's'}, ${vcenters.length} vCenter${vcenters.length === 1 ? '' : 's'}, NSX and VCF management into Splunk`,
+        title: `Onboard ${esxi.length} ESX host${esxi.length === 1 ? '' : 's'}, ${vcenters.length} vCenter${vcenters.length === 1 ? '' : 's'}, NSX and VCF management into Splunk`,
         app,
         activation: 'restart',
         notes: [
-          fromEstate ? `ESXi hosts and vCenters come from the imported estate (${currentEstate()?.origin ?? 'current estate'}): ${reachable.length} connected host${reachable.length === 1 ? '' : 's'}.` : 'ESXi hosts and vCenters come from the lists on the form.',
-          'ESXi: Splunk Add-on for VMware ESXi Logs (Splunk_TA_esxilogs, Splunkbase 5603). Incoming vmw-syslog is split into vmware:esxlog:<component> (hostd, vpxa, vmkernel, fdm, …) at index time, so install it on the search heads and the parsing tier. Documented index vmware-esxilog; TCP 1514 is its preferred port.',
+          fromEstate ? `ESX hosts and vCenters come from the imported estate (${currentEstate()?.origin ?? 'current estate'}): ${reachable.length} connected host${reachable.length === 1 ? '' : 's'}.` : 'ESX hosts and vCenters come from the lists on the form.',
+          'ESX: Splunk Add-on for VMware ESXi Logs (Splunk_TA_esxilogs, Splunkbase 5603). Incoming vmw-syslog is split into vmware:esxlog:<component> (hostd, vpxa, vmkernel, fdm, …) at index time, so install it on the search heads and the parsing tier. Documented index vmware-esxilog; TCP 1514 is its preferred port.',
           'vCenter: Splunk Add-on for vCenter Logs (Splunk_TA_vcenter, Splunkbase 5601) — vmware:vclog:vpxd and related sourcetypes, index vmware-vclog. Appliance log forwarding is the supported way to send vCenter logs; the add-on’s own rsyslog-template method edits the appliance and is lost on upgrade.',
           'NSX: no Splunk-supported add-on. The community "VMware NSX add-on" (Splunkbase 6805) maps NSX syslog to the CIM, including IDS, but is not supported by Splunk; or write your own with the custom TA blueprint.',
           'SDDC Manager, VCF Operations, VCF Operations for Logs and VCF Automation: no Splunkbase add-on for any of them (VERIFY). In VCF 9.1 they already send to VCF Operations for Logs; forward from there to Splunk with the "Forward filtered logs out of VCF Operations (9.1)" blueprint (vcflog91_forwarding) on the Automation and Operations page, destination "Splunk", index ' + vcfIndex + '.',
           direct
-            ? 'On that forwarding rule, filter out the ESXi, vCenter and NSX sources — they reach Splunk directly here, and forwarding them too indexes every event twice.'
-            : 'Everything reaches Splunk through VCF Operations for Logs, so the ESXi and vCenter add-ons will not recognise the events: they arrive with the forwarding rule’s framing, not as vmw-syslog. VERIFY what your forwarding rule sends before relying on either add-on.',
+            ? 'On that forwarding rule, filter out the ESX, vCenter and NSX sources — they reach Splunk directly here, and forwarding them too indexes every event twice.'
+            : 'Everything reaches Splunk through VCF Operations for Logs, so the ESX and vCenter add-ons will not recognise the events: they arrive with the forwarding rule’s framing, not as vmw-syslog. VERIFY what your forwarding rule sends before relying on either add-on.',
           'ops/esxi-syslog.ps1 appends the Splunk target to Syslog.global.logHost, so an existing target (VCF Operations for Logs) stays. -Replace overwrites instead.',
           'ops/vcf-syslog.sh sets vCenter appliance forwarding (at most three targets) and an exporter on each NSX Manager node. Both scripts apply when run; -DryRun / --dry-run previews.',
           'The Splunk Add-on for VMware (Splunk_TA_vmware, with a data collection node) collects performance and inventory through the vSphere API. It is a different thing from these log add-ons and is not configured here.',
@@ -2061,7 +2061,7 @@ export const ADDON_BLUEPRINTS                             = [
           '| rest /services/apps/local | search title IN (Splunk_TA_esxilogs, Splunk_TA_vcenter) | table title, version, splunk_server',
           `pwsh ./ops/esxi-syslog.ps1 -VCenter ${vcenters[0] ?? '<vcenter>'} -DryRun   # shows each host’s current logHost`,
           'bash ops/vcf-syslog.sh --dry-run   # shows current vCenter forwarding and NSX exporters',
-          `nc -vz ${target} ${port.esxi}   # from an ESXi host (nc is on ESXi): the collector is reachable`,
+          `nc -vz ${target} ${port.esxi}   # from an ESX host (nc is on ESX): the collector is reachable`,
         ],
         files: {
           'default/app.conf': appConfLines(app, 'VMware onboarding', 'Expected VCF and vSphere log sources and the missing-component alert'),
@@ -2069,7 +2069,7 @@ export const ADDON_BLUEPRINTS                             = [
           'lookups/expected_vmware_hosts.csv': ['host,role,index', ...expected.map((e) => [e.host.toLowerCase(), e.role, e.index].map(csvCell).join(','))],
           'default/savedsearches.conf': [
             `[${alertName}]`,
-            `description = Every ESXi host, vCenter, NSX node and VCF component in expected_vmware_hosts.csv that has sent nothing for ${silent} minutes. Matched on short host name, because ESXi sends its short name or its FQDN depending on how it was installed.`,
+            `description = Every ESX host, vCenter, NSX node and VCF component in expected_vmware_hosts.csv that has sent nothing for ${silent} minutes. Matched on short host name, because ESX sends its short name or its FQDN depending on how it was installed.`,
             ...foldSearch(alertSearch),
             'dispatch.earliest_time = -7d',
             'dispatch.latest_time = now',
@@ -2086,7 +2086,7 @@ export const ADDON_BLUEPRINTS                             = [
             'alert.suppress.period = 4h',
           ],
           'metadata/default.meta': defaultMeta(),
-          'ops/esxi-hosts.txt': esxi.length > 0 ? esxi : ['# no ESXi hosts'],
+          'ops/esxi-hosts.txt': esxi.length > 0 ? esxi : ['# no ESX hosts'],
           'ops/esxi-syslog.ps1': ps1,
           'ops/vcf-syslog.sh': sh,
           ...(collector === 'hf' ? { 'ops/heavy_forwarder/inputs.conf': hfInputs } : {}),
@@ -2102,7 +2102,7 @@ export const ADDON_BLUEPRINTS                             = [
           `index=${vcfIndex} earliest=-15m | stats count by host, sourcetype   # NSX, SDDC Manager, VCF Operations, VCF Automation`,
         ],
         backout: [
-          'ESXi: pwsh ./ops/esxi-syslog.ps1 -DryRun shows the old value; set it back with Get-AdvancedSetting -Name Syslog.global.logHost | Set-AdvancedSetting -Value <old>, then esxcli system syslog reload',
+          'ESX: pwsh ./ops/esxi-syslog.ps1 -DryRun shows the old value; set it back with Get-AdvancedSetting -Name Syslog.global.logHost | Set-AdvancedSetting -Value <old>, then esxcli system syslog reload',
           'vCenter: PUT /api/appliance/logging/forwarding with the cfg_list as it was (the script prints it)',
           'NSX: DELETE /api/v1/node/services/syslog/exporters/splunk on each Manager node',
           `Remove ${app} from the search heads${collector === 'hf' ? ' and the listener app from the heavy forwarders' : ' and the ops/sc4s entries from SC4S'}`,

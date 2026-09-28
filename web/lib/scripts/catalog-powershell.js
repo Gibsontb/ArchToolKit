@@ -1302,7 +1302,7 @@ export const POWERSHELL_CATALOG                          = [
     },
     {
       name: 'Get-VMHost',
-      task: 'list ESXi hosts',
+      task: 'list ESX hosts',
       syntax: 'Get-VMHost | Select-Object Name, ConnectionState, PowerState, NumCpu, MemoryTotalGB, Version, Build',
       module: 'VMware.PowerCLI',
       effect: 'read',

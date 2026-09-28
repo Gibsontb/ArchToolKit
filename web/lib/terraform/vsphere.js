@@ -163,7 +163,7 @@ export function emitVsphereFoundation(plan                )                   {
   findings.push(
     info(
       'terraform.vsphere.hosts-not-attached',
-      'The switch is created without host blocks, so no ESXi host is attached to it yet. Adding hosts needs their managed object ids, which come from the environment rather than from a design.',
+      'The switch is created without host blocks, so no ESX host is attached to it yet. Adding hosts needs their managed object ids, which come from the environment rather than from a design.',
       { source: 'vsphere_distributed_virtual_switch' },
     ),
   );
