@@ -53,6 +53,10 @@ fi
 # playbooks that fail on a current install.
 "$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" \
   vmware.vmware vmware.vmware_rest community.vmware
+# Azure the same way: the ansible package bundles azure.azcollection 3.x, and
+# the kit's Azure playbooks pin the current major (4.x), so the module schemas
+# and the lint have to come from the one people will install.
+"$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" azure.azcollection
 # The network page's collections the ansible package lags on or leaves out:
 # Juniper, Aruba, FMC, ASA, PAN-OS and F5 (npm run network:validate needs them).
 "$VENV/bin/ansible-galaxy" collection install --upgrade -p "$VENV/collections" \
