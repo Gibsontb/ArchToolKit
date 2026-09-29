@@ -16,11 +16,11 @@
  */
 
 export const DB_NAME = 'archtoolkit';
-/** 3 added the Multi-Cloud Planner's `plan` store. An upgrade only ever adds stores. */
-export const VERSION = 3;
+/** 3 added the Multi-Cloud Planner's `plan` store, 4 Application Migration's `apps`. An upgrade only ever adds stores. */
+export const VERSION = 4;
 
 /** Every store, created together on upgrade whatever the version came before. */
-export const STORES = ['estate', 'portfolio', 'plan'] as const;
+export const STORES = ['estate', 'portfolio', 'plan', 'apps'] as const;
 export type StoreName = (typeof STORES)[number];
 
 export function open(): Promise<IDBDatabase | null> {

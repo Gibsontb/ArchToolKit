@@ -71,6 +71,8 @@ export async function clearEverything()                {
   // (The store and keys are plan/store.ts's PLAN_STORE and PLAN_RECORD_KEYS; not
   // imported, so every page's header does not load the planner.)
   for (const key of PLAN_RECORD_KEYS) await run('plan', 'readwrite', (store) => store.delete(key));
+  // Application Migration's applications, for the same reason.
+  await run('apps', 'readwrite', (store) => store.clear());
   await deleteDatabase();
 }
 

@@ -36,19 +36,17 @@
       <div class="page-header">
         <h1>Application Migration</h1>
         <p>
-          Every application, from any source (VMware, physical, Hyper-V, Nutanix AHV, KVM, Xen or
-          another cloud), with its servers, databases and dependencies, and a target architecture on
-          the cloud you choose: AWS, Azure, Google Cloud (GCP), OCI or VMware Cloud Foundation. Design
-          each application, or a new service, in the decision wizard one cloud at a time, then
-          generate Terraform, Ansible and a pipeline for one application or a stack of them. The plan is shared with Multi-Cloud Migration &amp; Utilities.
+          One application at a time. Stage 1: everything about the application, card by card.
+          Stage 2: the cloud it goes to and the service for each part of it. Stage 3: the runbook
+          and what builds it. Every answer is yours; the page checks them and shows what they mean
+          on the right. Nothing leaves this browser.
         </p>
-        <div id="plan-header"></div>
       </div>
 
       <div id="migration-root"></div>
     </main>
 
-    <script type="module" src="../lib/ui/application-migration-page.js"></script>
+    <script type="module" src="../lib/ui/appmig-page.js"></script>
     <script type="module" src="../lib/ui/clear-all.js"></script>
     <script type="module" src="../lib/ui/site-footer.js"></script>
   </body>

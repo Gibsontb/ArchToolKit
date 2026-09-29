@@ -88,12 +88,12 @@ function removeFakeIdb(): void {
 describe('kit/idb: the one database', () => {
   after(removeFakeIdb);
 
-  it('is at version 3, with the planner store beside the estate and the portfolio', () => {
-    expect(VERSION).toBe(3);
-    expect([...STORES]).toEqual(['estate', 'portfolio', 'plan']);
+  it('is at version 4, with the planner and application stores beside the estate and the portfolio', () => {
+    expect(VERSION).toBe(4);
+    expect([...STORES]).toEqual(['estate', 'portfolio', 'plan', 'apps']);
   });
 
-  it('upgrades a version-2 database by adding the plan store, keeping estate and portfolio', async () => {
+  it('upgrades a version-2 database by adding the plan and apps stores, keeping estate and portfolio', async () => {
     const v2: FakeDb = {
       version: 2,
       stores: new Map<string, Map<IDBValidKey, unknown>>([
@@ -108,8 +108,8 @@ describe('kit/idb: the one database', () => {
     expect(estate?.origin).toBe('rvtools.xlsx');
     const portfolio = await run<{ name: string }[]>('portfolio', 'readonly', (s) => s.get('apps') as IDBRequest<{ name: string }[]>);
     expect(portfolio?.[0]?.name).toBe('Payroll');
-    expect([...v2.stores.keys()].sort()).toEqual(['estate', 'plan', 'portfolio']);
-    expect(v2.version).toBe(3);
+    expect([...v2.stores.keys()].sort()).toEqual(['apps', 'estate', 'plan', 'portfolio']);
+    expect(v2.version).toBe(4);
   });
 
   it('creates every store on a first open', async () => {

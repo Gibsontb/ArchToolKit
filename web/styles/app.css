@@ -3096,3 +3096,9 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
   margin: var(--space-1) 0;
 }
 .net-rows .tip.warn { border-left-color: var(--danger); }
+
+/* Application Migration: plain text in its note boxes, not the code font. */
+.appmig .field textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
+}

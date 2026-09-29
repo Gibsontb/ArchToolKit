@@ -16,11 +16,11 @@
  */
 
 export const DB_NAME = 'archtoolkit';
-/** 3 added the Multi-Cloud Planner's `plan` store. An upgrade only ever adds stores. */
-export const VERSION = 3;
+/** 3 added the Multi-Cloud Planner's `plan` store, 4 Application Migration's `apps`. An upgrade only ever adds stores. */
+export const VERSION = 4;
 
 /** Every store, created together on upgrade whatever the version came before. */
-export const STORES = ['estate', 'portfolio', 'plan']         ;
+export const STORES = ['estate', 'portfolio', 'plan', 'apps']         ;
                                                 
 
 export function open()                              {

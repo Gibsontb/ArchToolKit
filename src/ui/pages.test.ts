@@ -392,7 +392,9 @@ describe('the page shells', () => {
   it('loads the new shells from the two pages, with the new navigation', () => {
     const am = readFileSync(join(web, 'migration.html'), 'utf8');
     const mu = readFileSync(join(web, 'multicloud.html'), 'utf8');
-    expect(am.includes('../lib/ui/application-migration-page.js')).toBe(true);
+    // Application Migration is being rebuilt as its own page: one application at a time, no shared plan header.
+    expect(am.includes('../lib/ui/appmig-page.js')).toBe(true);
+    expect(mu.includes('id="plan-header"')).toBe(true);
     expect(mu.includes('../lib/ui/migration-utilities-page.js')).toBe(true);
     expect(am.includes('<title>Application Migration · ArchToolKit</title>')).toBe(true);
     expect(mu.includes('<title>Multi-Cloud Migration &amp; Utilities · ArchToolKit</title>')).toBe(true);
@@ -400,7 +402,6 @@ describe('the page shells', () => {
       expect(html.includes('<a href="migration.html"') && html.includes('>Application Migration</a>')).toBe(true);
       expect(html.includes('>Migration &amp; Utilities</a>')).toBe(true);
       expect(html.includes('>Multi-Cloud</a>')).toBe(false);
-      expect(html.includes('id="plan-header"')).toBe(true);
       expect(/ui\/(migration|multicloud)-page\.js/.test(html)).toBe(false);
     }
     expect(am.includes('<a href="migration.html" aria-current="page">')).toBe(true);
