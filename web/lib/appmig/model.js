@@ -86,7 +86,7 @@ export const CARDS = [
   { id: 'operations', title: 'Running it today' },
 ]         ;
                                                   
-export const BUILT                      = new Set        (['identity', 'continuity', 'load']);
+export const BUILT                      = new Set        (CARDS.map((c) => c.id));
 
 /**
  * Stage 1 in five screens: three sections a screen, then the assessment.
@@ -127,6 +127,10 @@ export function screenBuilt(screen                          )          {
                      
                          
              
+                                                                                    
+                                                    
+                                                        
+                
  
 
 export function emptyIdentity()           {
@@ -146,7 +150,7 @@ export function emptyIdentity()           {
 }
 
 export function newApp(id        , now        )            {
-  return { id, created: now, updated: now, identity: emptyIdentity(), continuity: emptyContinuity(), load: emptyLoad() };
+  return { id, created: now, updated: now, identity: emptyIdentity(), continuity: emptyContinuity(), load: emptyLoad(), sections: {}, route: '' };
 }
 
 /** A record saved before a card existed gets that card, empty. */
@@ -154,6 +158,8 @@ export function normalizeApp(app           )            {
   app.identity = { ...emptyIdentity(), ...app.identity };
   app.continuity = { ...emptyContinuity(), ...(app.continuity ?? {}) };
   app.load = { ...emptyLoad(), ...(app.load ?? {}) };
+  app.sections = app.sections ?? {};
+  app.route = app.route ?? '';
   return app;
 }
 

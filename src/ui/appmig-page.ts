@@ -5,52 +5,17 @@
  *   Stage 2  Choose the cloud
  *   Stage 3  The runbook
  *
- * It looks like the original Multi-Cloud Decision & Onboarding Wizard: one
- * dark panel with its own header (the application picked on the right), a
- * step card with upper-case labels and a hint under each question, a "Step
- * n of 5" badge, and Back / Next at the foot. Stage 1 is four steps of
- * questions, three sections each, and a fifth that is the assessment. Every
- * answer is the user's; the page only checks. Applications are kept in this
- * browser (the `apps` store) and saved as they are typed.
+ * Stage 1 is four steps of questions, three sections each, and a fifth that
+ * is the assessment, where the user chooses the route. The questions are
+ * data (appmig/sections.ts); this page draws them in the toolkit's usual
+ * cards, tabs and fields. Every answer is the user's; the page only checks.
+ * Applications are kept in this browser (the `apps` store), saved as typed.
  */
 
 import { el, clear, append } from './dom.ts';
-import {
-  BUSY_HOURS,
-  CARDS,
-  CRITICALITY,
-  DR_TODAY,
-  ENVIRONMENTS,
-  GPU,
-  HOSTING_PLATFORMS,
-  NON_PROD_SCALE,
-  RPO,
-  RTO,
-  SCREENS,
-  SEASONALITY,
-  SOURCE_ENVIRONMENTS,
-  UPTIME,
-  VENDORS,
-  continuityProblems,
-  continuityProgress,
-  continuitySignals,
-  displayName,
-  hostingLabel,
-  identityProblems,
-  identityProgress,
-  identitySignals,
-  loadProblems,
-  loadProgress,
-  loadSignals,
-  newApp,
-  screenBuilt,
-  sourceLabel,
-  vendorLabel,
-  type AppRecord,
-  type CardId,
-  type Option,
-  type ScreenId,
-} from '../appmig/model.ts';
+import { CARDS, SCREENS, displayName, newApp, sourceLabel, vendorLabel, type AppRecord, type CardId, type Option, type ScreenId } from '../appmig/model.ts';
+import { FIELDS, type Answers, type Field, type Row } from '../appmig/sections.ts';
+import { ROUTES, answersFor, problems, progress, readiness, risk, signals, suggestedRoute } from '../appmig/assess.ts';
 import { deleteApp, listApps, saveApp } from '../appmig/store.ts';
 
 const root = document.getElementById('migration-root');
@@ -69,86 +34,79 @@ function current(): AppRecord | undefined {
   return apps.find((a) => a.id === openId);
 }
 
-/** The wizard's own header: title and what is being worked on at the left, the application at the right. */
-function header(app?: AppRecord): HTMLElement {
-  const picker = el(
-    'select',
-    { attrs: { 'aria-label': 'Application' } },
-    el('option', { text: 'All applications', attrs: { value: '' } }),
-    ...apps.map((a) => el('option', { text: displayName(a), attrs: { value: a.id } })),
-  );
-  picker.value = app?.id ?? '';
-  picker.addEventListener('change', () => {
-    location.hash = picker.value ? `app=${picker.value}` : '';
-  });
-  return el(
-    'div',
-    { class: 'amw-header' },
-    el(
-      'div',
-      {},
-      el('h2', {}, el('span', { class: 'amw-orb' }), 'Application Migration'),
-      el('p', {}, app ? 'Stage 1 · Know the application · assessing ' : 'Stage 1 · Know the application', app ? el('strong', { text: displayName(app) }) : null, app ? '.' : null),
-    ),
-    el('label', { class: 'amw-picker' }, el('span', { text: 'Application:' }), picker),
-  );
+function changed(): void {
+  const app = current();
+  if (!app) return;
+  app.updated = new Date().toISOString();
+  if (statusLine) statusLine.textContent = 'Saving…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined;
+    void saveApp(app).then((ok) => {
+      if (statusLine) statusLine.textContent = ok ? `Saved ${when(app.updated)}` : 'Not saved: this browser refused to store it.';
+    });
+  }, 400);
+}
+
+function overall(app: AppRecord): { answered: number; of: number } {
+  return CARDS.reduce((sum, c) => {
+    const p = progress(app, c.id);
+    return { answered: sum.answered + p.answered, of: sum.of + p.of };
+  }, { answered: 0, of: 0 });
 }
 
 // --- The application list ---------------------------------------------------
 
-function progressOf(app: AppRecord): string {
-  const parts = [identityProgress(app.identity), continuityProgress(app.continuity), loadProgress(app.load)];
-  return `${parts.reduce((n, p) => n + p.answered, 0)} of ${parts.reduce((n, p) => n + p.of, 0)}`;
-}
-
 function renderList(): void {
   if (!root) return;
   clear(root);
-  const add = el('button', { class: 'amw-btn amw-next', text: '+ Add application', attrs: { type: 'button' }, on: { click: () => void addApp() } });
+  const add = el('button', { class: 'btn btn-primary', text: '+ Add application', attrs: { type: 'button' }, on: { click: () => void addApp() } });
   const body =
     apps.length === 0
-      ? el('p', { class: 'amw-muted', text: 'No applications yet. Add the first one: everything about it is answered step by step, and it is kept in this browser.' })
+      ? el('p', { class: 'empty', text: 'No applications yet. Add the first one: everything about it is answered step by step, and it is kept in this browser.' })
       : el(
-          'table',
-          { class: 'amw-table' },
-          el('thead', {}, el('tr', {}, ...['Application', 'Business owner', 'Vendor', 'Source environment', 'Answered', 'Last changed', ''].map((h) => el('th', { text: h })))),
+          'div',
+          { class: 'table-wrap' },
           el(
-            'tbody',
+            'table',
             {},
-            ...apps.map((app) =>
-              el(
-                'tr',
-                {},
-                el('td', {}, el('a', { text: displayName(app), attrs: { href: `#app=${app.id}` } })),
-                el('td', { text: app.identity.businessOwner }),
-                el('td', { text: vendorLabel(app.identity) }),
-                el('td', { text: sourceLabel(app.identity) }),
-                el('td', { text: progressOf(app) }),
-                el('td', { class: 'amw-muted', text: when(app.updated) }),
-                el('td', { class: 'amw-row-actions' }, el('a', { class: 'amw-btn amw-back', text: 'Open', attrs: { href: `#app=${app.id}` } }), deleteButton(app)),
-              ),
+            el('thead', {}, el('tr', {}, ...['Application', 'Business owner', 'Vendor', 'Source environment', 'Answered', 'Route', 'Last changed', ''].map((h) => el('th', { text: h })))),
+            el(
+              'tbody',
+              {},
+              ...apps.map((app) => {
+                const p = overall(app);
+                return el(
+                  'tr',
+                  {},
+                  el('td', {}, el('a', { text: displayName(app), attrs: { href: `#app=${app.id}` } })),
+                  el('td', { text: app.identity.businessOwner }),
+                  el('td', { text: vendorLabel(app.identity) }),
+                  el('td', { text: sourceLabel(app.identity) }),
+                  el('td', { text: `${p.answered} of ${p.of}` }),
+                  el('td', { text: ROUTES.find((r) => r.value === app.route)?.label.split(' (')[0] ?? '' }),
+                  el('td', { class: 'muted', text: when(app.updated) }),
+                  el('td', {}, el('div', { class: 'btn-row' }, el('a', { class: 'btn btn-small', text: 'Open', attrs: { href: `#app=${app.id}` } }), deleteButton(app))),
+                );
+              }),
             ),
           ),
         );
   append(
     root,
     el(
-      'div',
-      { class: 'amw' },
-      header(),
-      el(
-        'section',
-        { class: 'amw-card' },
-        el('div', { class: 'amw-card-head' }, el('div', {}, el('h3', { text: 'Applications' }), el('p', { class: 'amw-sub', text: 'Every application to be moved, one profile each' })), add),
-        body,
-      ),
+      'section',
+      { class: 'card' },
+      el('div', { class: 'card-title' }, el('h2', { text: 'Applications' }), add),
+      el('p', { class: 'muted', text: 'Every application to be moved, one profile each. Open one to answer its questions.' }),
+      body,
     ),
   );
 }
 
 /** Delete asks on the button itself: the first press arms it, the second deletes. */
 function deleteButton(app: AppRecord): HTMLButtonElement {
-  const button = el('button', { class: 'amw-btn amw-danger', text: 'Delete', attrs: { type: 'button' } });
+  const button = el('button', { class: 'btn btn-small btn-danger', text: 'Delete', attrs: { type: 'button' } });
   let armed: ReturnType<typeof setTimeout> | undefined;
   button.addEventListener('click', () => {
     if (!armed) {
@@ -178,145 +136,147 @@ async function addApp(): Promise<void> {
   location.hash = `app=${app.id}`;
 }
 
-// --- Fields -----------------------------------------------------------------
+// --- Drawing a field from its definition -----------------------------------------
 
-type Answers = Record<string, string | string[]>;
-
-function changed(): void {
-  const app = current();
-  if (!app) return;
-  app.updated = new Date().toISOString();
-  if (statusLine) statusLine.textContent = 'Saving…';
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = undefined;
-    void saveApp(app).then((ok) => {
-      if (statusLine) statusLine.textContent = ok ? `Saved ${when(app.updated)}` : 'Not saved: this browser refused to store it.';
-    });
-  }, 400);
+function selectFor(options: readonly Option[], value: string, id?: string): HTMLSelectElement {
+  const select = el('select', { id }, el('option', { text: 'Select…', attrs: { value: '' } }), ...options.map((o) => el('option', { text: o.label, attrs: { value: o.value } })));
+  select.value = value;
+  return select;
 }
 
-function fieldBox(id: string, label: string, control: HTMLElement, hint?: string, opts: { required?: boolean; wide?: boolean } = {}): HTMLElement {
+function rowsEditor(a: Answers, f: Field): HTMLElement {
+  const columns = f.columns ?? [];
+  const tbody = el('tbody');
+  const read = (): Row[] => (Array.isArray(a[f.key]) ? (a[f.key] as Row[]) : []);
+  const draw = () => {
+    clear(tbody);
+    const rows = read();
+    rows.forEach((row, n) => {
+      append(
+        tbody,
+        el(
+          'tr',
+          {},
+          ...columns.map((c) => {
+            const control = c.options
+              ? selectFor(c.options, row[c.key] ?? '')
+              : el('input', { attrs: { type: 'text', inputmode: c.numeric ? 'decimal' : null, placeholder: c.placeholder, 'aria-label': c.label } });
+            if (control instanceof HTMLInputElement) control.value = row[c.key] ?? '';
+            control.addEventListener(control instanceof HTMLSelectElement ? 'change' : 'input', () => {
+              row[c.key] = control.value;
+              changed();
+            });
+            return el('td', {}, control);
+          }),
+          el(
+            'td',
+            {},
+            el('button', {
+              class: 'btn btn-small',
+              text: '×',
+              attrs: { type: 'button', title: 'Remove this row' },
+              on: {
+                click: () => {
+                  rows.splice(n, 1);
+                  changed();
+                  draw();
+                },
+              },
+            }),
+          ),
+        ),
+      );
+    });
+  };
+  draw();
+  const addRow = el('button', {
+    class: 'btn btn-small',
+    text: `+ Add ${f.label.toLowerCase().replace(/s$/, '')}`,
+    attrs: { type: 'button' },
+    on: {
+      click: () => {
+        const rows = read();
+        rows.push(Object.fromEntries(columns.map((c) => [c.key, ''])));
+        a[f.key] = rows;
+        changed();
+        draw();
+      },
+    },
+  });
   return el(
     'div',
-    { class: `amw-field${opts.wide ? ' amw-wide' : ''}` },
-    el('label', { attrs: { for: id } }, label, opts.required ? el('span', { class: 'amw-req', text: ' *' }) : null),
-    control,
-    hint ? el('div', { class: 'amw-hint', text: hint }) : null,
+    { class: 'field appmig-wide' },
+    el('span', { class: 'field-label', text: f.label }),
+    f.hint ? el('div', { class: 'field-hint', text: f.hint }) : null,
+    el('div', { class: 'table-wrap' }, el('table', { class: 'appmig-rows' }, el('thead', {}, el('tr', {}, ...columns.map((c) => el('th', { text: c.label })), el('th'))), tbody)),
+    addRow,
   );
 }
 
-function textField(obj: Answers, key: string, label: string, hint?: string, opts: { required?: boolean; area?: boolean; placeholder?: string; numeric?: boolean } = {}): HTMLElement {
-  const id = `f-${key}`;
-  const input = opts.area
-    ? el('textarea', { id, attrs: { rows: 2, placeholder: opts.placeholder } })
-    : el('input', { id, attrs: { type: 'text', inputmode: opts.numeric ? 'numeric' : null, placeholder: opts.placeholder, autocomplete: 'off' } });
-  input.value = String(obj[key] ?? '');
-  input.addEventListener('input', () => {
-    obj[key] = input.value;
-    changed();
-  });
-  return fieldBox(id, label, input, hint, { required: opts.required, wide: opts.area });
-}
-
-/** A closed set, with its "Other" box shown only when Other is picked. */
-function selectField(obj: Answers, key: string, label: string, options: readonly Option[], hint?: string, other?: { key: string; label: string }): HTMLElement[] {
-  const id = `f-${key}`;
-  const select = el('select', { id }, el('option', { text: 'Select…', attrs: { value: '' } }), ...options.map((o) => el('option', { text: o.label, attrs: { value: o.value } })));
-  select.value = String(obj[key] ?? '');
-  const fields: HTMLElement[] = [fieldBox(id, label, select, hint)];
-  let otherField: HTMLElement | null = null;
-  if (other) {
-    otherField = textField(obj, other.key, other.label, 'As it should appear in the plan.', { required: true });
-    otherField.hidden = obj[key] !== 'Other';
-    fields.push(otherField);
+function fieldFor(a: Answers, f: Field, refresh: () => void): HTMLElement {
+  const id = `f-${f.key}`;
+  if (f.kind === 'rows') return rowsEditor(a, f);
+  let control: HTMLElement;
+  if (f.kind === 'select') {
+    const select = selectFor(f.options ?? [], typeof a[f.key] === 'string' ? (a[f.key] as string) : '', id);
+    select.addEventListener('change', () => {
+      a[f.key] = select.value;
+      changed();
+      refresh();
+    });
+    control = select;
+  } else if (f.kind === 'checks') {
+    const chosen = new Set(Array.isArray(a[f.key]) ? (a[f.key] as string[]) : []);
+    control = el(
+      'div',
+      { class: 'checkbox-group' },
+      ...(f.options ?? []).map((o) => {
+        const box = el('input', { attrs: { type: 'checkbox', value: o.value, checked: chosen.has(o.value) } });
+        box.addEventListener('change', () => {
+          if (box.checked) chosen.add(o.value);
+          else chosen.delete(o.value);
+          a[f.key] = (f.options ?? []).map((x) => x.value).filter((v) => chosen.has(v));
+          changed();
+          refresh();
+        });
+        return el('label', { class: 'checkbox-inline' }, box, ` ${o.label}`);
+      }),
+    );
+  } else {
+    const input =
+      f.kind === 'area'
+        ? el('textarea', { id, attrs: { rows: 2, placeholder: f.placeholder } })
+        : el('input', { id, attrs: { type: 'text', inputmode: f.kind === 'number' ? 'numeric' : null, placeholder: f.placeholder, autocomplete: 'off' } });
+    input.value = typeof a[f.key] === 'string' ? (a[f.key] as string) : '';
+    input.addEventListener('input', () => {
+      a[f.key] = input.value;
+      changed();
+    });
+    control = input;
   }
-  select.addEventListener('change', () => {
-    obj[key] = select.value;
-    if (otherField) otherField.hidden = select.value !== 'Other';
-    changed();
-  });
-  return fields;
+  const labelEl = f.kind === 'checks' ? el('span', { class: 'field-label' }, f.label) : el('label', { attrs: { for: id } }, f.label);
+  if (f.required) labelEl.append(el('span', { class: 'required', text: ' *' }));
+  return el('div', { class: `field${f.wide || f.kind === 'area' ? ' appmig-wide' : ''}` }, labelEl, control, f.hint ? el('div', { class: 'field-hint', text: f.hint }) : null);
 }
 
-/** Ticks for a list of values; `onChange` lets a section show or hide what depends on them. */
-function checkboxField(obj: Answers, key: string, label: string, options: readonly Option[], hint: string, onChange?: () => void): HTMLElement {
-  const chosen = new Set(Array.isArray(obj[key]) ? (obj[key] as string[]) : []);
-  const boxes = el(
-    'div',
-    { class: 'amw-checks' },
-    ...options.map((o) => {
-      const box = el('input', { attrs: { type: 'checkbox', value: o.value, checked: chosen.has(o.value) } });
-      box.addEventListener('change', () => {
-        if (box.checked) chosen.add(o.value);
-        else chosen.delete(o.value);
-        obj[key] = options.map((x) => x.value).filter((v) => chosen.has(v));
-        changed();
-        onChange?.();
-      });
-      return el('label', {}, box, ` ${o.label}`);
-    }),
-  );
-  return el('div', { class: 'amw-field' }, el('span', { class: 'amw-label', text: label }), boxes, el('div', { class: 'amw-hint', text: hint }));
+/** One section as a card; fields that depend on an answer appear and disappear with it. */
+function sectionCard(app: AppRecord, card: CardId): HTMLElement {
+  const a = answersFor(app, card);
+  const grid = el('div', { class: 'field-grid' });
+  const fields = FIELDS[card];
+  const drawn = new Map<Field, HTMLElement>();
+  const refresh = () => {
+    for (const [f, node] of drawn) node.hidden = !!f.showIf && !f.showIf(a);
+  };
+  for (const f of fields) {
+    const node = fieldFor(a, f, refresh);
+    drawn.set(f, node);
+    grid.append(node);
+  }
+  refresh();
+  const title = CARDS.find((c) => c.id === card)?.title ?? card;
+  return el('section', { class: 'card appmig' }, el('div', { class: 'card-title' }, el('h3', { text: title })), grid);
 }
-
-/** A field two columns wide. */
-function wide2(field: HTMLElement): HTMLElement {
-  field.classList.add('amw-span2');
-  return field;
-}
-
-// --- The sections -------------------------------------------------------------
-
-const SECTIONS: Partial<Record<CardId, (app: AppRecord) => HTMLElement[]>> = {
-  identity: (app) => {
-    const i = app.identity as unknown as Answers;
-    return [
-      wide2(textField(i, 'name', 'Application name', 'Short label so you recognise it in reviews.', { required: true, placeholder: 'e.g. Case Management System' })),
-      ...selectField(i, 'vendor', 'Vendor', VENDORS, 'Who makes it. Custom Built if it is your own code.', { key: 'vendorOther', label: 'Vendor name' }),
-      textField(i, 'businessUnit', 'Business unit', 'The part of the organisation it serves.'),
-      textField(i, 'businessOwner', 'Business owner / team', 'Who signs off on the move.'),
-      textField(i, 'technicalOwner', 'Technical owner', 'Who knows how it is built and run.'),
-      ...selectField(i, 'sourceEnvironment', 'Source environment', SOURCE_ENVIRONMENTS, 'Where it runs today.'),
-      ...selectField(i, 'hostingPlatform', 'Hosting platform', HOSTING_PLATFORMS, 'What it runs on today.', { key: 'hostingOther', label: 'Hosting platform name' }),
-      el(
-        'div',
-        { class: 'amw-pair' },
-        textField(i, 'description', 'Short description', undefined, { area: true, placeholder: 'What does it do? Who uses it? What would stop if it went down?' }),
-        textField(i, 'notes', 'Notes', undefined, { area: true, placeholder: 'Key constraints, special requirements, known pain points' }),
-      ),
-    ];
-  },
-  continuity: (app) => {
-    const c = app.continuity as unknown as Answers;
-    const scale = selectField(c, 'nonProdScale', 'Non-prod scale vs prod', NON_PROD_SCALE, 'How big Dev, Test and Stage are next to Prod.');
-    const showScale = () => {
-      const nonProd = (c['environments'] as string[]).some((e) => e !== 'prod' && e !== 'dr');
-      for (const f of scale) f.hidden = !nonProd;
-    };
-    const out = [
-      ...selectField(c, 'criticality', 'Business criticality', CRITICALITY, 'How much the business depends on it.'),
-      ...selectField(c, 'uptime', 'Uptime target', UPTIME, 'The availability it has to keep.'),
-      ...selectField(c, 'drToday', 'DR today', DR_TODAY, 'What protects it now, before the move.'),
-      ...selectField(c, 'rto', 'RTO', RTO, 'How long it can be down after a failure.'),
-      ...selectField(c, 'rpo', 'RPO', RPO, 'How much recent data it can lose.'),
-      checkboxField(c, 'environments', 'Environments in scope', ENVIRONMENTS, 'Which environments this move covers.', showScale),
-      ...scale,
-    ];
-    showScale();
-    return out;
-  },
-  load: (app) => {
-    const l = app.load as unknown as Answers;
-    return [
-      textField(l, 'peakUsers', 'Peak concurrent users', 'At the busiest time.', { numeric: true, placeholder: 'e.g. 5000' }),
-      textField(l, 'peakRps', 'Peak requests / second', 'Pushes toward autoscaling or reserved capacity.', { numeric: true, placeholder: 'e.g. 200' }),
-      ...selectField(l, 'busyHours', 'When it is busy', BUSY_HOURS, 'Decides what can be scheduled off.'),
-      ...selectField(l, 'seasonality', 'Seasonal peaks', SEASONALITY, 'Size for the peak, and avoid cutting over during one.'),
-      ...selectField(l, 'gpu', 'GPU', GPU, 'Needs GPU capacity in the target region?'),
-    ];
-  },
-};
 
 // --- Steps ------------------------------------------------------------------
 
@@ -324,38 +284,70 @@ function goTo(screen: ScreenId): void {
   location.hash = `app=${openId}&screen=${screen}`;
 }
 
-/** The nearest built step before or after this one. */
-function neighbour(at: number, step: 1 | -1): (typeof SCREENS)[number] | undefined {
-  for (let i = at + step; i >= 0 && i < SCREENS.length; i += step) {
-    const s = SCREENS[i];
-    if (s && screenBuilt(s)) return s;
-  }
-  return undefined;
-}
+const STEP_NOTES: Record<ScreenId, string> = {
+  application: 'Who owns it, how critical it is, and how much load it carries.',
+  build: 'How it is built, the servers it runs on, and its data.',
+  links: 'What it connects to, the rules it must follow, and its network.',
+  today: 'What stands in the way, how ready it is, and how it is run today.',
+  assessment: 'What the answers say. You choose the route here.',
+};
 
-function stepDots(active: ScreenId): HTMLElement {
-  return el(
+function appHeader(app: AppRecord, screenId: ScreenId): HTMLElement {
+  const picker = el(
+    'select',
+    { attrs: { 'aria-label': 'Application' } },
+    ...apps.map((a) => el('option', { text: displayName(a), attrs: { value: a.id } })),
+  );
+  picker.value = app.id;
+  picker.addEventListener('change', () => {
+    location.hash = `app=${picker.value}&screen=${screenId}`;
+  });
+  const tabs = el(
     'div',
-    { class: 'amw-steps', attrs: { role: 'list', 'aria-label': 'Steps' } },
-    ...SCREENS.map((s, i) => {
-      const built = screenBuilt(s);
-      return el('button', {
-        class: `amw-step${s.id === active ? ' is-active' : ''}`,
-        text: `${i + 1} ${s.title}`,
-        attrs: { type: 'button', disabled: !built, title: built ? s.title : `${s.title}: built next`, 'aria-current': s.id === active ? 'step' : null },
-        on: { click: () => goTo(s.id) },
-      });
-    }),
+    { class: 'tabs', attrs: { role: 'tablist' } },
+    ...SCREENS.map((s, i) =>
+      el('span', {
+        class: `tab${s.id === screenId ? ' active' : ''}`,
+        text: `${i + 1} · ${s.title}`,
+        attrs: { role: 'tab', tabindex: 0, 'aria-selected': String(s.id === screenId) },
+        on: {
+          click: () => goTo(s.id),
+          keydown: (e) => {
+            if ((e as KeyboardEvent).key === 'Enter') goTo(s.id);
+          },
+        },
+      }),
+    ),
+  );
+  const at = SCREENS.findIndex((s) => s.id === screenId);
+  return el(
+    'section',
+    { class: 'card' },
+    el(
+      'div',
+      { class: 'card-title' },
+      el('h2', { text: displayName(app) }),
+      el('div', { class: 'btn-row' }, picker, el('a', { class: 'btn btn-small', text: 'All applications', attrs: { href: '#' } })),
+    ),
+    tabs,
+    el('p', { class: 'muted small', style: { marginTop: 'var(--space-3)' }, text: `Stage 1 · Know the application · Step ${at + 1} of ${SCREENS.length}: ${STEP_NOTES[screenId]}` }),
   );
 }
 
-const STEP_NOTES: Record<ScreenId, string> = {
-  application: 'Who owns it, how critical it is, and how much load it carries.',
-  build: 'Its architecture, servers and data.',
-  links: 'What it connects to, the rules it must follow, and its network.',
-  today: 'What blocks a move, how ready it is, and how it is run.',
-  assessment: 'What your answers say. You choose the route here.',
-};
+function navRow(at: number): HTMLElement {
+  const prev = SCREENS[at - 1];
+  const next = SCREENS[at + 1];
+  statusLine = el('span', { class: 'muted small', text: `Saved ${when(current()?.updated ?? '')}` });
+  return el(
+    'div',
+    { class: 'btn-row appmig-nav' },
+    prev
+      ? el('button', { class: 'btn', text: `← ${prev.title}`, attrs: { type: 'button' }, on: { click: () => goTo(prev.id) } })
+      : el('a', { class: 'btn', text: '← All applications', attrs: { href: '#' } }),
+    statusLine,
+    next ? el('button', { class: 'btn btn-primary', text: `Next: ${next.title} →`, attrs: { type: 'button' }, on: { click: () => goTo(next.id) } }) : null,
+  );
+}
 
 function renderScreen(app: AppRecord, screenId: ScreenId): void {
   if (!root) return;
@@ -363,110 +355,79 @@ function renderScreen(app: AppRecord, screenId: ScreenId): void {
   const at = SCREENS.findIndex((s) => s.id === screenId);
   const screen = SCREENS[at];
   if (!screen) return;
-  const prev = neighbour(at, -1);
-  const next = neighbour(at, 1);
-  statusLine = el('span', { class: 'amw-status', text: `Saved ${when(app.updated)}` });
-
-  const body =
-    screen.id === 'assessment'
-      ? assessmentBody(app)
-      : screen.cards.map((cardId) =>
-          el(
-            'div',
-            { class: 'amw-section' },
-            el('h4', { text: CARDS.find((c) => c.id === cardId)?.title ?? cardId }),
-            el('div', { class: 'amw-grid' }, ...(SECTIONS[cardId]?.(app) ?? [])),
-          ),
-        );
-
-  append(
-    root,
-    el(
-      'div',
-      { class: 'amw' },
-      header(app),
-      stepDots(screenId),
-      el(
-        'section',
-        { class: 'amw-card' },
-        el(
-          'div',
-          { class: 'amw-card-head' },
-          el('div', {}, el('h3', { text: `Step ${at + 1} · ${screen.title}` }), el('p', { class: 'amw-sub', text: STEP_NOTES[screen.id] })),
-          el('span', { class: 'amw-pill', text: `Step ${at + 1} of ${SCREENS.length}` }),
-        ),
-        ...body,
-        el(
-          'div',
-          { class: 'amw-foot' },
-          statusLine,
-          el(
-            'div',
-            { class: 'amw-foot-buttons' },
-            prev
-              ? el('button', { class: 'amw-btn amw-back', text: '← Back', attrs: { type: 'button' }, on: { click: () => goTo(prev.id) } })
-              : el('a', { class: 'amw-btn amw-back', text: '← All applications', attrs: { href: '#' } }),
-            next ? el('button', { class: 'amw-btn amw-next', text: 'Next →', attrs: { type: 'button', title: next.title }, on: { click: () => goTo(next.id) } }) : null,
-          ),
-        ),
-      ),
-    ),
-  );
+  const body = screen.id === 'assessment' ? assessmentCards(app) : screen.cards.map((c) => sectionCard(app, c));
+  append(root, appHeader(app, screenId), ...body, navRow(at));
 }
 
 // --- The assessment (step 5) -------------------------------------------------
 
-function assessmentBody(app: AppRecord): HTMLElement[] {
-  const i = app.identity;
-  const c = app.continuity;
-  const label = (list: readonly Option[], v: string) => list.find((o) => o.value === v)?.label ?? '';
-  const pills = [
-    ['Vendor', vendorLabel(i)],
-    ['Source', sourceLabel(i)],
-    ['Hosting', hostingLabel(i)],
-    ['Criticality', label(CRITICALITY, c.criticality).split(' – ')[0] ?? ''],
-    ['Uptime', c.uptime ? `${c.uptime}%` : ''],
-    ['RTO', label(RTO, c.rto)],
-    ['RPO', label(RPO, c.rpo)],
-  ].filter(([, v]) => v);
-  const rows: [string, { answered: number; of: number }, string[]][] = [
-    ['Identity', identityProgress(i), identityProblems(app, apps).map((p) => p.message)],
-    ['Criticality and continuity', continuityProgress(c), continuityProblems(c)],
-    ['Users and load', loadProgress(app.load), loadProblems(app.load)],
-  ];
-  const signals = [...identitySignals(i), ...continuitySignals(c), ...loadSignals(app.load)];
-  return [
-    el('div', { class: 'amw-pills' }, ...pills.map(([k, v]) => el('span', { class: 'amw-pill', text: `${k}: ${v}` }))),
+function assessmentCards(app: AppRecord): HTMLElement[] {
+  const score = readiness(app);
+  const suggestion = suggestedRoute(app);
+  const r = risk(app);
+  const routeLabel = (v: string) => ROUTES.find((x) => x.value === v)?.label ?? v;
+
+  const choose = el('select', { id: 'f-route' }, el('option', { text: 'Select…', attrs: { value: '' } }), ...ROUTES.map((x) => el('option', { text: x.label, attrs: { value: x.value } })));
+  choose.value = app.route;
+  choose.addEventListener('change', () => {
+    app.route = choose.value;
+    changed();
+  });
+
+  const stats = el(
+    'div',
+    { class: 'stat-grid' },
+    el('div', { class: 'stat' }, el('div', { class: 'stat-label', text: 'Readiness score' }), el('div', { class: 'stat-value', text: score === null ? '—' : `${score}` }), el('div', { class: 'stat-sub', text: score === null ? 'Rate all six in step 4' : 'of 100' })),
+    el('div', { class: 'stat' }, el('div', { class: 'stat-label', text: 'Risk' }), el('div', { class: 'stat-value', text: r.level }), el('div', { class: 'stat-sub', text: `${r.points} points` })),
+    el('div', { class: 'stat' }, el('div', { class: 'stat-label', text: 'Suggested route' }), el('div', { class: 'stat-value', text: suggestion ? routeLabel(suggestion.route).split(' (')[0] ?? '' : '—' }), el('div', { class: 'stat-sub', text: suggestion ? 'from the gates and the score' : 'Needs the gates or all six ratings' })),
+    el('div', { class: 'stat' }, el('div', { class: 'stat-label', text: 'Answered' }), el('div', { class: 'stat-value', text: `${overall(app).answered}` }), el('div', { class: 'stat-sub', text: `of ${overall(app).of} questions` })),
+  );
+
+  const decision = el(
+    'section',
+    { class: 'card' },
+    el('div', { class: 'card-title' }, el('h3', { text: 'The route' })),
+    stats,
+    suggestion ? el('p', {}, el('strong', { text: `Suggested: ${routeLabel(suggestion.route)}. ` }), suggestion.because) : null,
+    r.reasons.length > 0 ? el('p', { class: 'muted small', text: `Risk from: ${r.reasons.join('; ')}.` }) : null,
+    el('div', { class: 'field', style: { maxWidth: '28rem' } }, el('label', { attrs: { for: 'f-route' }, text: 'Route for this application' }), choose, el('div', { class: 'field-hint', text: 'Your decision. The suggestion is only there to compare against.' })),
+  );
+
+  const table = el(
+    'section',
+    { class: 'card' },
+    el('div', { class: 'card-title' }, el('h3', { text: 'What is answered' })),
     el(
       'div',
-      { class: 'amw-section' },
-      el('h4', { text: 'What is answered' }),
+      { class: 'table-wrap' },
       el(
         'table',
-        { class: 'amw-table' },
+        {},
         el('thead', {}, el('tr', {}, el('th', { text: 'Section' }), el('th', { text: 'Answered' }), el('th', { text: 'Still needed' }))),
         el(
           'tbody',
           {},
-          ...rows.map(([name, p, problems]) =>
-            el('tr', {}, el('td', { text: name }), el('td', { text: `${p.answered} of ${p.of}` }), el('td', { class: problems.length ? 'amw-req' : 'amw-muted', text: problems.join(' ') || 'Nothing' })),
-          ),
+          ...SCREENS.flatMap((s) => [...s.cards]).map((id) => CARDS.find((c) => c.id === id)!).map((c) => {
+            const p = progress(app, c.id);
+            const needs = problems(app, c.id, apps);
+            return el('tr', {}, el('td', { text: c.title }), el('td', { text: `${p.answered} of ${p.of}` }), el('td', { class: needs.length ? 'required' : 'muted', text: needs.join(' ') || 'Nothing' }));
+          }),
         ),
       ),
     ),
-    el(
-      'div',
-      { class: 'amw-section' },
-      el('h4', { text: 'What the answers say' }),
-      signals.length > 0 ? el('ul', { class: 'amw-list' }, ...signals.map((s) => el('li', { text: s }))) : el('p', { class: 'amw-muted', text: 'Nothing yet.' }),
-    ),
-    el(
-      'div',
-      { class: 'amw-section' },
-      el('h4', { text: 'Still to come' }),
-      el('p', { class: 'amw-muted', text: 'The readiness score, the hard gates, the risk and the reasons for each route appear here as steps 2 to 4 are built, and you choose the route here.' }),
-    ),
-  ];
+  );
+
+  const said = signals(app);
+  const meaning = el(
+    'section',
+    { class: 'card' },
+    el('div', { class: 'card-title' }, el('h3', { text: 'What the answers say' })),
+    said.length === 0
+      ? el('p', { class: 'muted', text: 'Nothing yet.' })
+      : el('div', {}, ...said.map((s) => el('div', {}, el('h4', { text: s.card }), el('ul', {}, ...s.says.map((x) => el('li', { text: x })))))),
+  );
+
+  return [decision, meaning, table];
 }
 
 // --- Routing ----------------------------------------------------------------
@@ -481,8 +442,7 @@ async function route(): Promise<void> {
   apps = await listApps();
   const app = match ? apps.find((a) => a.id === match[1]) : undefined;
   openId = app?.id ?? null;
-  const asked = SCREENS.find((s) => s.id === match?.[2]);
-  const screen = asked && screenBuilt(asked) ? asked.id : 'application';
+  const screen = SCREENS.find((s) => s.id === match?.[2])?.id ?? 'application';
   if (app) renderScreen(app, screen);
   else renderList();
   window.scrollTo(0, 0);
@@ -492,3 +452,4 @@ if (root) {
   window.addEventListener('hashchange', () => void route());
   void route();
 }
+

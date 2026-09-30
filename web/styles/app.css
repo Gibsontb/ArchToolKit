@@ -3098,378 +3098,71 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .net-rows .tip.warn { border-left-color: var(--danger); }
 
 /* --- Application Migration ----------------------------------------------------
-   The original Multi-Cloud Decision & Onboarding Wizard's look: one dark panel
-   with its own header, a step card with upper-case labels and a hint under
-   each question, and pill buttons. Scoped to .amw so nothing else changes. */
-.amw {
-  --amw-bg: #05070d;
-  --amw-card: #0b1120;
-  --amw-line: #1e293b;
-  --amw-input: #0a0f1c;
-  --amw-text: #e5e7eb;
-  --amw-muted: #94a3b8;
-  --amw-accent: #6366f1;
-  --amw-accent2: #22c55e;
-  background: radial-gradient(1200px 500px at 10% -10%, #111a33 0%, var(--amw-bg) 60%);
-  color: var(--amw-text);
-  border: 1px solid var(--amw-line);
-  border-radius: 18px;
-  padding: 22px 24px 24px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
-}
-
-.amw a {
-  color: #a5b4fc;
-}
-
-.amw-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 12px;
-  padding-bottom: 14px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--amw-line);
-}
-
-.amw-header h2 {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  font-size: 1.45rem;
-  color: #f8fafc;
-}
-
-.amw-header p {
-  margin: 2px 0 0;
-  color: var(--amw-muted);
-  font-size: 0.9rem;
-}
-
-.amw-header strong {
-  color: #f8fafc;
-}
-
-.amw-orb {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #c7d2fe, var(--amw-accent) 55%, #1e1b4b);
-  box-shadow: 0 0 14px rgba(99, 102, 241, 0.6);
-}
-
-.amw-picker {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--amw-muted);
-}
-
-.amw select,
-.amw input[type="text"],
-.amw textarea {
-  width: 100%;
-  background: var(--amw-input);
-  color: var(--amw-text);
-  border: 1px solid #243047;
-  border-radius: 9px;
-  padding: 8px 11px;
-  font: inherit;
-  font-size: 0.9rem;
-}
-
-.amw-picker select {
-  width: auto;
-  min-width: 16rem;
-  border-color: var(--amw-accent);
-}
-
-.amw select:focus,
-.amw input:focus,
-.amw textarea:focus {
-  outline: none;
-  border-color: var(--amw-accent);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
-}
-
-.amw textarea {
-  resize: vertical;
-  min-height: 3.2rem;
-}
-
-.amw-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-
-.amw-step {
-  border: 1px solid var(--amw-line);
-  background: transparent;
-  color: var(--amw-muted);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-
-.amw-step:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.amw-step.is-active {
-  color: #fff;
-  border-color: transparent;
-  background: linear-gradient(90deg, var(--amw-accent), var(--amw-accent2));
-}
-
-.amw-card {
-  background: linear-gradient(160deg, #0f172a 0%, var(--amw-card) 70%);
-  border: 1px solid var(--amw-line);
-  border-radius: 14px;
-  padding: 18px 20px;
-}
-
-.amw-card-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  padding-bottom: 12px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid var(--amw-line);
-}
-
-.amw-card-head h3 {
-  margin: 0;
-  font-size: 1.15rem;
-  color: #f8fafc;
-}
-
-.amw-sub {
-  margin: 4px 0 0;
-  font-size: 0.82rem;
-  color: var(--amw-muted);
-}
-
-.amw-sub::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-right: 7px;
-  background: var(--amw-accent);
-  vertical-align: middle;
-}
-
-.amw-pill {
-  flex: none;
-  font-size: 0.75rem;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid #334155;
-  color: #cbd5e1;
-  white-space: nowrap;
-}
-
-.amw-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 12px 0 4px;
-}
-
-.amw-section {
-  padding-top: 12px;
-}
-
-.amw-section + .amw-section {
-  margin-top: 6px;
-  border-top: 1px dashed var(--amw-line);
-}
-
-.amw-section h4 {
-  margin: 0 0 10px;
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #a5b4fc;
-}
-
-.amw-grid {
-  display: grid;
+   The toolkit's own cards, tabs and fields; each section is a card with three
+   questions a row, and repeating things (servers, databases…) are row tables. */
+.appmig .field-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px 18px;
+  gap: 0 var(--space-4);
 }
 
-.amw-pair {
+.appmig .field-grid .appmig-wide {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 18px;
 }
 
 @media (max-width: 1000px) {
-  .amw-grid {
+  .appmig .field-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
-  .amw-grid,
-  .amw-pair {
+  .appmig .field-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.amw-field {
-  margin-bottom: 10px;
-  min-width: 0;
+.appmig .field {
+  margin-bottom: var(--space-3);
 }
 
-.amw-field label,
-.amw-label {
-  display: block;
-  margin-bottom: 5px;
+.appmig .field textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.appmig .checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+}
+
+.appmig-rows {
+  width: 100%;
+  margin-bottom: var(--space-2);
+}
+
+.appmig-rows th {
   font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #cbd5e1;
+  white-space: nowrap;
 }
 
-.amw-hint {
-  margin-top: 4px;
-  font-size: 0.74rem;
-  color: #7c8aa3;
-  line-height: 1.35;
+.appmig-rows td {
+  padding: 2px 4px;
 }
 
-.amw-req {
-  color: #f87171;
-}
-
-.amw-checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  padding: 6px 0 2px;
-}
-
-.amw-checks label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0;
+.appmig-rows input,
+.appmig-rows select {
+  width: 100%;
+  min-width: 5rem;
   font-size: 0.85rem;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--amw-text);
 }
 
-.amw-foot {
-  display: flex;
-  flex-wrap: wrap;
+.appmig-nav {
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--amw-line);
+  margin-top: var(--space-4);
 }
 
-.amw-foot-buttons {
-  display: flex;
-  gap: 10px;
-}
-
-.amw-status,
-.amw-muted {
-  font-size: 0.8rem;
-  color: var(--amw-muted);
-}
-
-.amw-btn {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 7px 18px;
-  font-size: 0.88rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: none;
-  border: 1px solid transparent;
-}
-
-.amw .amw-next {
-  color: #fff;
-  background: linear-gradient(90deg, var(--amw-accent), var(--amw-accent2));
-}
-
-.amw .amw-back {
-  color: #cbd5e1;
-  background: transparent;
-  border-color: #334155;
-}
-
-.amw .amw-danger {
-  color: #fca5a5;
-  background: transparent;
-  border-color: #7f1d1d;
-  padding: 5px 12px;
-  font-size: 0.8rem;
-}
-
-.amw-row-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.amw-row-actions .amw-back {
-  padding: 5px 14px;
-  font-size: 0.8rem;
-}
-
-.amw-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.86rem;
-}
-
-.amw-table th {
-  text-align: left;
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--amw-muted);
-  border-bottom: 1px solid var(--amw-line);
-  padding: 8px 6px;
-  background: transparent;
-}
-
-.amw-table td {
-  padding: 9px 6px;
-  border-bottom: 1px solid #131c2e;
-  color: var(--amw-text);
-}
-
-.amw-list {
-  margin: 0;
-  padding-left: 1.1rem;
-  font-size: 0.88rem;
-  line-height: 1.55;
-}
-
-.amw-grid .amw-span2 {
-  grid-column: span 2;
+#migration-root > .card + .card {
+  margin-top: var(--space-4);
 }

@@ -55,8 +55,8 @@ describe('appmig: card 1, identity', () => {
     expect(CARDS.length).toBe(12);
     expect(SCREENS.flatMap((s) => [...s.cards]).sort()).toEqual(CARDS.map((c) => c.id).sort());
     expect(SCREENS.at(-1)?.id).toBe('assessment');
-    expect(SCREENS.filter(screenBuilt).map((s) => s.id)).toEqual(['application', 'assessment']);
-    expect([...BUILT]).toEqual(['identity', 'continuity', 'load']);
+    expect(SCREENS.filter(screenBuilt).length).toBe(5);
+    expect(BUILT.size).toBe(12);
   });
 
   it('gives a record saved before a section existed that section, empty', () => {

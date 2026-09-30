@@ -86,7 +86,7 @@ export const CARDS = [
   { id: 'operations', title: 'Running it today' },
 ] as const;
 export type CardId = (typeof CARDS)[number]['id'];
-export const BUILT: ReadonlySet<CardId> = new Set<CardId>(['identity', 'continuity', 'load']);
+export const BUILT: ReadonlySet<CardId> = new Set<CardId>(CARDS.map((c) => c.id));
 
 /**
  * Stage 1 in five screens: three sections a screen, then the assessment.
@@ -127,6 +127,10 @@ export interface AppRecord {
   identity: Identity;
   continuity: Continuity;
   load: Load;
+  /** The sections after the first screen, keyed by section id (see sections.ts). */
+  sections: Record<string, Record<string, unknown>>;
+  /** The route the user chose at the end of Stage 1. */
+  route: string;
 }
 
 export function emptyIdentity(): Identity {
@@ -146,7 +150,7 @@ export function emptyIdentity(): Identity {
 }
 
 export function newApp(id: string, now: string): AppRecord {
-  return { id, created: now, updated: now, identity: emptyIdentity(), continuity: emptyContinuity(), load: emptyLoad() };
+  return { id, created: now, updated: now, identity: emptyIdentity(), continuity: emptyContinuity(), load: emptyLoad(), sections: {}, route: '' };
 }
 
 /** A record saved before a card existed gets that card, empty. */
@@ -154,6 +158,8 @@ export function normalizeApp(app: AppRecord): AppRecord {
   app.identity = { ...emptyIdentity(), ...app.identity };
   app.continuity = { ...emptyContinuity(), ...(app.continuity ?? {}) };
   app.load = { ...emptyLoad(), ...(app.load ?? {}) };
+  app.sections = app.sections ?? {};
+  app.route = app.route ?? '';
   return app;
 }
 
