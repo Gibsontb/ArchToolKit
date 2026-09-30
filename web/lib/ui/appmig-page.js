@@ -1,15 +1,17 @@
 /**
  * Application Migration: one application at a time, in three stages.
  *
- *   Stage 1  Know the application   (the app list, then five screens)
+ *   Stage 1  Know the application   (the app list, then five steps)
  *   Stage 2  Choose the cloud
  *   Stage 3  The runbook
  *
- * Stage 1 is four screens of questions, three sections each, full width, and
- * a fifth that is the assessment: what the answers say, and where the user
- * chooses the route. Every answer is the user's; the page only checks.
- * Applications are kept in this browser (the `apps` store) and saved as they
- * are typed.
+ * It looks like the original Multi-Cloud Decision & Onboarding Wizard: one
+ * dark panel with its own header (the application picked on the right), a
+ * step card with upper-case labels and a hint under each question, a "Step
+ * n of 5" badge, and Back / Next at the foot. Stage 1 is four steps of
+ * questions, three sections each, and a fifth that is the assessment. Every
+ * answer is the user's; the page only checks. Applications are kept in this
+ * browser (the `apps` store) and saved as they are typed.
  */
 
 import { el, clear, append } from './dom.js';
@@ -58,80 +60,95 @@ let openId                = null;
 let saveTimer                                           ;
 let statusLine                     = null;
 
-const STAGES = ['Know the application', 'Choose the cloud', 'Runbook'];
-
-function stageStrip(current        )              {
-  return el(
-    'div',
-    { class: 'pill-row', attrs: { 'aria-label': 'Stages' } },
-    ...STAGES.map((title, i) =>
-      el('span', { class: 'pill', style: i === current ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {} }, `Stage ${i + 1} · ${title}${i > current ? ' (next)' : ''}`),
-    ),
-  );
-}
-
 function when(iso        )         {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function current()                        {
+  return apps.find((a) => a.id === openId);
+}
+
+/** The wizard's own header: title and what is being worked on at the left, the application at the right. */
+function header(app            )              {
+  const picker = el(
+    'select',
+    { attrs: { 'aria-label': 'Application' } },
+    el('option', { text: 'All applications', attrs: { value: '' } }),
+    ...apps.map((a) => el('option', { text: displayName(a), attrs: { value: a.id } })),
+  );
+  picker.value = app?.id ?? '';
+  picker.addEventListener('change', () => {
+    location.hash = picker.value ? `app=${picker.value}` : '';
+  });
+  return el(
+    'div',
+    { class: 'amw-header' },
+    el(
+      'div',
+      {},
+      el('h2', {}, el('span', { class: 'amw-orb' }), 'Application Migration'),
+      el('p', {}, app ? 'Stage 1 · Know the application · assessing ' : 'Stage 1 · Know the application', app ? el('strong', { text: displayName(app) }) : null, app ? '.' : null),
+    ),
+    el('label', { class: 'amw-picker' }, el('span', { text: 'Application:' }), picker),
+  );
 }
 
 // --- The application list ---------------------------------------------------
 
 function progressOf(app           )         {
   const parts = [identityProgress(app.identity), continuityProgress(app.continuity), loadProgress(app.load)];
-  const answered = parts.reduce((n, p) => n + p.answered, 0);
-  const of = parts.reduce((n, p) => n + p.of, 0);
-  return `${answered} of ${of}`;
+  return `${parts.reduce((n, p) => n + p.answered, 0)} of ${parts.reduce((n, p) => n + p.of, 0)}`;
 }
 
 function renderList()       {
   if (!root) return;
   clear(root);
-  const add = el('button', { class: 'btn btn-primary', text: '+ Add application', attrs: { type: 'button' }, on: { click: () => void addApp() } });
+  const add = el('button', { class: 'amw-btn amw-next', text: '+ Add application', attrs: { type: 'button' }, on: { click: () => void addApp() } });
   const body =
     apps.length === 0
-      ? el('p', { class: 'empty', text: 'No applications yet. Add the first one: everything about it is answered screen by screen, and it is kept in this browser.' })
+      ? el('p', { class: 'amw-muted', text: 'No applications yet. Add the first one: everything about it is answered step by step, and it is kept in this browser.' })
       : el(
-          'div',
-          { class: 'table-wrap' },
+          'table',
+          { class: 'amw-table' },
+          el('thead', {}, el('tr', {}, ...['Application', 'Business owner', 'Vendor', 'Source environment', 'Answered', 'Last changed', ''].map((h) => el('th', { text: h })))),
           el(
-            'table',
+            'tbody',
             {},
-            el('thead', {}, el('tr', {}, ...['Application', 'Business owner', 'Vendor', 'Source environment', 'Answered', 'Last changed', ''].map((h) => el('th', { text: h })))),
-            el(
-              'tbody',
-              {},
-              ...apps.map((app) =>
-                el(
-                  'tr',
-                  {},
-                  el('td', {}, el('a', { text: displayName(app), attrs: { href: `#app=${app.id}` } })),
-                  el('td', { text: app.identity.businessOwner }),
-                  el('td', { text: vendorLabel(app.identity) }),
-                  el('td', { text: sourceLabel(app.identity) }),
-                  el('td', { text: progressOf(app) }),
-                  el('td', { class: 'muted', text: when(app.updated) }),
-                  el('td', {}, el('div', { class: 'btn-row' }, el('a', { class: 'btn btn-small', text: 'Open', attrs: { href: `#app=${app.id}` } }), deleteButton(app))),
-                ),
+            ...apps.map((app) =>
+              el(
+                'tr',
+                {},
+                el('td', {}, el('a', { text: displayName(app), attrs: { href: `#app=${app.id}` } })),
+                el('td', { text: app.identity.businessOwner }),
+                el('td', { text: vendorLabel(app.identity) }),
+                el('td', { text: sourceLabel(app.identity) }),
+                el('td', { text: progressOf(app) }),
+                el('td', { class: 'amw-muted', text: when(app.updated) }),
+                el('td', { class: 'amw-row-actions' }, el('a', { class: 'amw-btn amw-back', text: 'Open', attrs: { href: `#app=${app.id}` } }), deleteButton(app)),
               ),
             ),
           ),
         );
   append(
     root,
-    stageStrip(0),
     el(
-      'section',
-      { class: 'card' },
-      el('div', { class: 'wizard-head' }, el('div', {}, el('h2', { text: 'Applications' }), el('p', { class: 'muted', text: 'Every application to be moved, one profile each. Open one to answer its questions.' })), add),
-      body,
+      'div',
+      { class: 'amw' },
+      header(),
+      el(
+        'section',
+        { class: 'amw-card' },
+        el('div', { class: 'amw-card-head' }, el('div', {}, el('h3', { text: 'Applications' }), el('p', { class: 'amw-sub', text: 'Every application to be moved, one profile each' })), add),
+        body,
+      ),
     ),
   );
 }
 
 /** Delete asks on the button itself: the first press arms it, the second deletes. */
 function deleteButton(app           )                    {
-  const button = el('button', { class: 'btn btn-small btn-danger', text: 'Delete', attrs: { type: 'button' } });
+  const button = el('button', { class: 'amw-btn amw-danger', text: 'Delete', attrs: { type: 'button' } });
   let armed                                           ;
   button.addEventListener('click', () => {
     if (!armed) {
@@ -152,8 +169,7 @@ function deleteButton(app           )                    {
 }
 
 async function addApp()                {
-  const now = new Date().toISOString();
-  const app = newApp(crypto.randomUUID(), now);
+  const app = newApp(crypto.randomUUID(), new Date().toISOString());
   if (!(await saveApp(app))) {
     alert('This browser will not store the application (private window or storage blocked), so it cannot be kept.');
     return;
@@ -165,10 +181,6 @@ async function addApp()                {
 // --- Fields -----------------------------------------------------------------
 
                                                  
-
-function current()                        {
-  return apps.find((a) => a.id === openId);
-}
 
 function changed()       {
   const app = current();
@@ -184,7 +196,17 @@ function changed()       {
   }, 400);
 }
 
-function textField(obj         , key        , label        , opts                                                                                                 = {})              {
+function fieldBox(id        , label        , control             , hint         , opts                                         = {})              {
+  return el(
+    'div',
+    { class: `amw-field${opts.wide ? ' amw-wide' : ''}` },
+    el('label', { attrs: { for: id } }, label, opts.required ? el('span', { class: 'amw-req', text: ' *' }) : null),
+    control,
+    hint ? el('div', { class: 'amw-hint', text: hint }) : null,
+  );
+}
+
+function textField(obj         , key        , label        , hint         , opts                                                                                  = {})              {
   const id = `f-${key}`;
   const input = opts.area
     ? el('textarea', { id, attrs: { rows: 2, placeholder: opts.placeholder } })
@@ -194,24 +216,18 @@ function textField(obj         , key        , label        , opts               
     obj[key] = input.value;
     changed();
   });
-  return el(
-    'div',
-    { class: `field${opts.area ? ' field-wide' : ''}` },
-    el('label', { attrs: { for: id } }, label, opts.required ? el('span', { class: 'required', text: ' *' }) : null),
-    input,
-    opts.hint ? el('div', { class: 'field-hint', text: opts.hint }) : null,
-  );
+  return fieldBox(id, label, input, hint, { required: opts.required, wide: opts.area });
 }
 
 /** A closed set, with its "Other" box shown only when Other is picked. */
-function selectField(obj         , key        , label        , options                   , other                                 , hint         )                {
+function selectField(obj         , key        , label        , options                   , hint         , other                                 )                {
   const id = `f-${key}`;
-  const select = el('select', { id }, el('option', { text: 'Choose…', attrs: { value: '' } }), ...options.map((o) => el('option', { text: o.label, attrs: { value: o.value } })));
+  const select = el('select', { id }, el('option', { text: 'Select…', attrs: { value: '' } }), ...options.map((o) => el('option', { text: o.label, attrs: { value: o.value } })));
   select.value = String(obj[key] ?? '');
-  const fields                = [el('div', { class: 'field' }, el('label', { attrs: { for: id }, text: label }), select, hint ? el('div', { class: 'field-hint', text: hint }) : null)];
+  const fields                = [fieldBox(id, label, select, hint)];
   let otherField                     = null;
   if (other) {
-    otherField = textField(obj, other.key, other.label, { required: true });
+    otherField = textField(obj, other.key, other.label, 'As it should appear in the plan.', { required: true });
     otherField.hidden = obj[key] !== 'Other';
     fields.push(otherField);
   }
@@ -224,28 +240,30 @@ function selectField(obj         , key        , label        , options          
 }
 
 /** Ticks for a list of values; `onChange` lets a section show or hide what depends on them. */
-function checkboxField(obj         , key        , label        , options                   , onChange             )              {
+function checkboxField(obj         , key        , label        , options                   , hint        , onChange             )              {
   const chosen = new Set(Array.isArray(obj[key]) ? (obj[key]            ) : []);
-  return el(
+  const boxes = el(
     'div',
-    { class: 'field' },
-    el('span', { class: 'field-label', text: label }),
-    el(
-      'div',
-      { class: 'checkbox-group' },
-      ...options.map((o) => {
-        const box = el('input', { attrs: { type: 'checkbox', value: o.value, checked: chosen.has(o.value) } });
-        box.addEventListener('change', () => {
-          if (box.checked) chosen.add(o.value);
-          else chosen.delete(o.value);
-          obj[key] = options.map((x) => x.value).filter((v) => chosen.has(v));
-          changed();
-          onChange?.();
-        });
-        return el('label', { class: 'checkbox-inline' }, box, ` ${o.label}`);
-      }),
-    ),
+    { class: 'amw-checks' },
+    ...options.map((o) => {
+      const box = el('input', { attrs: { type: 'checkbox', value: o.value, checked: chosen.has(o.value) } });
+      box.addEventListener('change', () => {
+        if (box.checked) chosen.add(o.value);
+        else chosen.delete(o.value);
+        obj[key] = options.map((x) => x.value).filter((v) => chosen.has(v));
+        changed();
+        onChange?.();
+      });
+      return el('label', {}, box, ` ${o.label}`);
+    }),
   );
+  return el('div', { class: 'amw-field' }, el('span', { class: 'amw-label', text: label }), boxes, el('div', { class: 'amw-hint', text: hint }));
+}
+
+/** A field two columns wide. */
+function wide2(field             )              {
+  field.classList.add('amw-span2');
+  return field;
 }
 
 // --- The sections -------------------------------------------------------------
@@ -254,31 +272,35 @@ const SECTIONS                                                             = {
   identity: (app) => {
     const i = app.identity                      ;
     return [
-      textField(i, 'name', 'Application name', { required: true, placeholder: 'e.g. Case Management System' }),
-      textField(i, 'businessUnit', 'Business unit'),
-      textField(i, 'businessOwner', 'Business owner / team'),
-      textField(i, 'technicalOwner', 'Technical owner'),
-      ...selectField(i, 'vendor', 'Vendor', VENDORS, { key: 'vendorOther', label: 'Vendor name' }),
-      ...selectField(i, 'sourceEnvironment', 'Source environment (today)', SOURCE_ENVIRONMENTS),
-      ...selectField(i, 'hostingPlatform', 'Current hosting platform', HOSTING_PLATFORMS, { key: 'hostingOther', label: 'Hosting platform name' }),
-      textField(i, 'description', 'Short description', { area: true, placeholder: 'What it does and who uses it' }),
-      textField(i, 'notes', 'Notes', { area: true, placeholder: 'Key constraints, special requirements, known pain points' }),
+      wide2(textField(i, 'name', 'Application name', 'Short label so you recognise it in reviews.', { required: true, placeholder: 'e.g. Case Management System' })),
+      ...selectField(i, 'vendor', 'Vendor', VENDORS, 'Who makes it. Custom Built if it is your own code.', { key: 'vendorOther', label: 'Vendor name' }),
+      textField(i, 'businessUnit', 'Business unit', 'The part of the organisation it serves.'),
+      textField(i, 'businessOwner', 'Business owner / team', 'Who signs off on the move.'),
+      textField(i, 'technicalOwner', 'Technical owner', 'Who knows how it is built and run.'),
+      ...selectField(i, 'sourceEnvironment', 'Source environment', SOURCE_ENVIRONMENTS, 'Where it runs today.'),
+      ...selectField(i, 'hostingPlatform', 'Hosting platform', HOSTING_PLATFORMS, 'What it runs on today.', { key: 'hostingOther', label: 'Hosting platform name' }),
+      el(
+        'div',
+        { class: 'amw-pair' },
+        textField(i, 'description', 'Short description', undefined, { area: true, placeholder: 'What does it do? Who uses it? What would stop if it went down?' }),
+        textField(i, 'notes', 'Notes', undefined, { area: true, placeholder: 'Key constraints, special requirements, known pain points' }),
+      ),
     ];
   },
   continuity: (app) => {
     const c = app.continuity                      ;
-    const scale = selectField(c, 'nonProdScale', 'Non-prod scale vs prod', NON_PROD_SCALE);
+    const scale = selectField(c, 'nonProdScale', 'Non-prod scale vs prod', NON_PROD_SCALE, 'How big Dev, Test and Stage are next to Prod.');
     const showScale = () => {
       const nonProd = (c['environments']            ).some((e) => e !== 'prod' && e !== 'dr');
       for (const f of scale) f.hidden = !nonProd;
     };
     const out = [
-      ...selectField(c, 'criticality', 'Business criticality', CRITICALITY),
-      ...selectField(c, 'uptime', 'Uptime target', UPTIME),
-      ...selectField(c, 'drToday', 'DR today', DR_TODAY),
-      ...selectField(c, 'rto', 'RTO: how long it can be down', RTO),
-      ...selectField(c, 'rpo', 'RPO: how much data it can lose', RPO),
-      checkboxField(c, 'environments', 'Environments in scope', ENVIRONMENTS, showScale),
+      ...selectField(c, 'criticality', 'Business criticality', CRITICALITY, 'How much the business depends on it.'),
+      ...selectField(c, 'uptime', 'Uptime target', UPTIME, 'The availability it has to keep.'),
+      ...selectField(c, 'drToday', 'DR today', DR_TODAY, 'What protects it now, before the move.'),
+      ...selectField(c, 'rto', 'RTO', RTO, 'How long it can be down after a failure.'),
+      ...selectField(c, 'rpo', 'RPO', RPO, 'How much recent data it can lose.'),
+      checkboxField(c, 'environments', 'Environments in scope', ENVIRONMENTS, 'Which environments this move covers.', showScale),
       ...scale,
     ];
     showScale();
@@ -287,24 +309,22 @@ const SECTIONS                                                             = {
   load: (app) => {
     const l = app.load                      ;
     return [
-      textField(l, 'peakUsers', 'Peak concurrent users', { numeric: true, placeholder: 'e.g. 5000' }),
-      textField(l, 'peakRps', 'Peak requests per second', { numeric: true, placeholder: 'e.g. 200' }),
-      ...selectField(l, 'busyHours', 'When it is busy', BUSY_HOURS),
-      ...selectField(l, 'seasonality', 'Seasonal peaks', SEASONALITY),
-      ...selectField(l, 'gpu', 'GPU', GPU),
+      textField(l, 'peakUsers', 'Peak concurrent users', 'At the busiest time.', { numeric: true, placeholder: 'e.g. 5000' }),
+      textField(l, 'peakRps', 'Peak requests / second', 'Pushes toward autoscaling or reserved capacity.', { numeric: true, placeholder: 'e.g. 200' }),
+      ...selectField(l, 'busyHours', 'When it is busy', BUSY_HOURS, 'Decides what can be scheduled off.'),
+      ...selectField(l, 'seasonality', 'Seasonal peaks', SEASONALITY, 'Size for the peak, and avoid cutting over during one.'),
+      ...selectField(l, 'gpu', 'GPU', GPU, 'Needs GPU capacity in the target region?'),
     ];
   },
 };
+
+// --- Steps ------------------------------------------------------------------
 
 function goTo(screen          )       {
   location.hash = `app=${openId}&screen=${screen}`;
 }
 
-function screenIndex(id          )         {
-  return SCREENS.findIndex((s) => s.id === id);
-}
-
-/** The nearest built screen before or after this one. */
+/** The nearest built step before or after this one. */
 function neighbour(at        , step        )                                       {
   for (let i = at + step; i >= 0 && i < SCREENS.length; i += step) {
     const s = SCREENS[i];
@@ -313,60 +333,88 @@ function neighbour(at        , step        )                                    
   return undefined;
 }
 
-function screenTabs(active          )              {
+function stepDots(active          )              {
   return el(
     'div',
-    { class: 'wizard-steps-list', attrs: { role: 'list', 'aria-label': 'Screens' } },
+    { class: 'amw-steps', attrs: { role: 'list', 'aria-label': 'Steps' } },
     ...SCREENS.map((s, i) => {
       const built = screenBuilt(s);
       return el('button', {
-        class: `btn btn-small${s.id === active ? ' btn-primary' : ''}`,
-        text: `${i + 1} · ${s.title}${built ? '' : ' (built next)'}`,
-        attrs: { type: 'button', disabled: !built, 'aria-current': s.id === active ? 'step' : null },
+        class: `amw-step${s.id === active ? ' is-active' : ''}`,
+        text: `${i + 1} ${s.title}`,
+        attrs: { type: 'button', disabled: !built, title: built ? s.title : `${s.title}: built next`, 'aria-current': s.id === active ? 'step' : null },
         on: { click: () => goTo(s.id) },
       });
     }),
   );
 }
 
-function navRow(at        )              {
-  const prev = neighbour(at, -1);
-  const next = neighbour(at, 1);
-  statusLine = el('span', { class: 'muted small', text: `Saved ${when(current()?.updated ?? '')}` });
-  return el(
-    'div',
-    { class: 'wizard-nav btn-row' },
-    prev
-      ? el('button', { class: 'btn', text: `← ${prev.title}`, attrs: { type: 'button' }, on: { click: () => goTo(prev.id) } })
-      : el('a', { class: 'btn', text: '← All applications', attrs: { href: '#' } }),
-    statusLine,
-    next ? el('button', { class: 'btn btn-primary', text: `Next: ${next.title} →`, attrs: { type: 'button' }, on: { click: () => goTo(next.id) } }) : null,
-  );
-}
+const STEP_NOTES                           = {
+  application: 'Who owns it, how critical it is, and how much load it carries.',
+  build: 'Its architecture, servers and data.',
+  links: 'What it connects to, the rules it must follow, and its network.',
+  today: 'What blocks a move, how ready it is, and how it is run.',
+  assessment: 'What your answers say. You choose the route here.',
+};
 
 function renderScreen(app           , screenId          )       {
   if (!root) return;
   clear(root);
-  const at = screenIndex(screenId);
+  const at = SCREENS.findIndex((s) => s.id === screenId);
   const screen = SCREENS[at];
   if (!screen) return;
-  const head = el(
-    'div',
-    { class: 'wizard-head' },
-    el('div', {}, el('h2', { text: `${displayName(app)} · ${screen.title}` }), el('p', { class: 'muted', text: `Stage 1, screen ${at + 1} of ${SCREENS.length}` })),
-    el('a', { class: 'btn btn-small', text: 'All applications', attrs: { href: '#' } }),
-  );
+  const prev = neighbour(at, -1);
+  const next = neighbour(at, 1);
+  statusLine = el('span', { class: 'amw-status', text: `Saved ${when(app.updated)}` });
+
   const body =
     screen.id === 'assessment'
       ? assessmentBody(app)
-      : screen.cards.map((cardId) => {
-          const card = CARDS.find((c) => c.id === cardId);
-          return el('fieldset', { class: 'appmig-section' }, el('legend', { text: card?.title ?? cardId }), el('div', { class: 'field-grid' }, ...(SECTIONS[cardId]?.(app) ?? [])));
-        });
-  append(root, stageStrip(0), el('section', { class: 'card appmig' }, head, screenTabs(screenId), ...body, navRow(at)));
+      : screen.cards.map((cardId) =>
+          el(
+            'div',
+            { class: 'amw-section' },
+            el('h4', { text: CARDS.find((c) => c.id === cardId)?.title ?? cardId }),
+            el('div', { class: 'amw-grid' }, ...(SECTIONS[cardId]?.(app) ?? [])),
+          ),
+        );
+
+  append(
+    root,
+    el(
+      'div',
+      { class: 'amw' },
+      header(app),
+      stepDots(screenId),
+      el(
+        'section',
+        { class: 'amw-card' },
+        el(
+          'div',
+          { class: 'amw-card-head' },
+          el('div', {}, el('h3', { text: `Step ${at + 1} · ${screen.title}` }), el('p', { class: 'amw-sub', text: STEP_NOTES[screen.id] })),
+          el('span', { class: 'amw-pill', text: `Step ${at + 1} of ${SCREENS.length}` }),
+        ),
+        ...body,
+        el(
+          'div',
+          { class: 'amw-foot' },
+          statusLine,
+          el(
+            'div',
+            { class: 'amw-foot-buttons' },
+            prev
+              ? el('button', { class: 'amw-btn amw-back', text: '← Back', attrs: { type: 'button' }, on: { click: () => goTo(prev.id) } })
+              : el('a', { class: 'amw-btn amw-back', text: '← All applications', attrs: { href: '#' } }),
+            next ? el('button', { class: 'amw-btn amw-next', text: 'Next →', attrs: { type: 'button', title: next.title }, on: { click: () => goTo(next.id) } }) : null,
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
-// --- The assessment (screen 5) -------------------------------------------------
+// --- The assessment (step 5) -------------------------------------------------
 
 function assessmentBody(app           )                {
   const i = app.identity;
@@ -388,35 +436,35 @@ function assessmentBody(app           )                {
   ];
   const signals = [...identitySignals(i), ...continuitySignals(c), ...loadSignals(app.load)];
   return [
-    el('div', { class: 'pill-row' }, ...pills.map(([k, v]) => el('span', { text: `${k}: ${v}` }))),
+    el('div', { class: 'amw-pills' }, ...pills.map(([k, v]) => el('span', { class: 'amw-pill', text: `${k}: ${v}` }))),
     el(
-      'fieldset',
-      { class: 'appmig-section' },
-      el('legend', { text: 'What is answered' }),
+      'div',
+      { class: 'amw-section' },
+      el('h4', { text: 'What is answered' }),
       el(
         'table',
-        {},
+        { class: 'amw-table' },
         el('thead', {}, el('tr', {}, el('th', { text: 'Section' }), el('th', { text: 'Answered' }), el('th', { text: 'Still needed' }))),
         el(
           'tbody',
           {},
           ...rows.map(([name, p, problems]) =>
-            el('tr', {}, el('td', { text: name }), el('td', { text: `${p.answered} of ${p.of}` }), el('td', { class: problems.length ? 'required' : 'muted', text: problems.join(' ') || 'Nothing' })),
+            el('tr', {}, el('td', { text: name }), el('td', { text: `${p.answered} of ${p.of}` }), el('td', { class: problems.length ? 'amw-req' : 'amw-muted', text: problems.join(' ') || 'Nothing' })),
           ),
         ),
       ),
     ),
     el(
-      'fieldset',
-      { class: 'appmig-section' },
-      el('legend', { text: 'What the answers say' }),
-      signals.length > 0 ? el('ul', {}, ...signals.map((s) => el('li', { text: s }))) : el('p', { class: 'muted', text: 'Nothing yet.' }),
+      'div',
+      { class: 'amw-section' },
+      el('h4', { text: 'What the answers say' }),
+      signals.length > 0 ? el('ul', { class: 'amw-list' }, ...signals.map((s) => el('li', { text: s }))) : el('p', { class: 'amw-muted', text: 'Nothing yet.' }),
     ),
     el(
-      'fieldset',
-      { class: 'appmig-section' },
-      el('legend', { text: 'Still to come' }),
-      el('p', { class: 'muted', text: 'The readiness score, the hard gates, the risk and the reasons for each route appear here as screens 2 to 4 are built, and you choose the route here at the end of Stage 1.' }),
+      'div',
+      { class: 'amw-section' },
+      el('h4', { text: 'Still to come' }),
+      el('p', { class: 'amw-muted', text: 'The readiness score, the hard gates, the risk and the reasons for each route appear here as steps 2 to 4 are built, and you choose the route here.' }),
     ),
   ];
 }
