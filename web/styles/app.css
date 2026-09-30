@@ -2968,9 +2968,13 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 @media (max-width: 760px) { .dbb.is-wide { width: auto; margin-inline: 0; } }
 .dbb-card { margin: 0; min-width: 0; }
 .dbb .card + .card { margin-top: 0; }
-.dbb-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
-.dbb-start { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 18rem; min-width: 0; font-size: 0.85rem; color: var(--text-muted); }
-.dbb-start select { flex: 1 1 auto; min-width: 0; max-width: 24rem; }
+.dbb-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); }
+.dbb-toolbar > .btn-row { flex: none; margin: 0; }
+.dbb-start { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2); flex: 1 1 24rem; min-width: 0; font-size: 0.85rem; color: var(--text-muted); }
+.dbb-start-label { display: flex; align-items: center; gap: var(--space-2); flex: 2 1 14rem; min-width: 0; margin: 0; white-space: nowrap; }
+.dbb-start select { flex: 1 1 auto; min-width: 8rem; max-width: 36rem; }
+.dbb-start input[type="search"] { flex: 1 1 10rem; min-width: 6rem; max-width: 16rem; }
+.dbb-found { white-space: nowrap; }
 .dbb-file { display: none; }
 .dbb-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); font-size: 0.82rem; }
 .dbb-status:empty { display: none; }
@@ -2979,12 +2983,6 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 .dbb-message { flex: 1 1 100%; padding: 0.35rem 0.6rem; border-radius: var(--radius-sm); background: var(--info-dim); border: 1px solid var(--border); overflow-wrap: anywhere; }
 .dbb-message.is-bad { background: var(--danger-dim); color: var(--danger); }
 .dbb-message.is-ok { background: var(--ok-dim); }
-.dbb-pick { display: flex; flex-direction: column; gap: var(--space-2); }
-.dbb-choice-list { max-height: 16rem; overflow: auto; display: flex; flex-direction: column; gap: 0.15rem; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.3rem; }
-.dbb-choice { display: flex; align-items: baseline; gap: var(--space-2); padding: 0.2rem 0.3rem; border-radius: var(--radius-sm); cursor: pointer; }
-.dbb-choice:hover { background: var(--surface-hover); }
-.dbb-choice[hidden] { display: none; }
-.dbb-choice-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 
 .dbb-main { display: grid; grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) minmax(16rem, 22rem); gap: var(--space-3); align-items: start; }
 .dbb-main[hidden] { display: none; }

@@ -241,6 +241,9 @@ export function dashboardWorkspace(blueprint: Blueprint): GeneratorWorkspace | u
   };
 }
 
+/** Prefix of a Dashboards dropdown value that names a dashboard in the loaded file, by its index. */
+const FROM_FILE = 'file:';
+
 function mountBuilder(context: WorkspaceContext): HTMLElement {
   const { blueprint } = context;
   const templateInput = blueprint.inputs.find((i) => i.id === 'template');
@@ -260,6 +263,10 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   /** The widget last removed, so Undo can put it back exactly. */
   let lastRemoved: { row: Row; index: number; receivers: number[] } | null = null;
   let search = '';
+  /** The dashboards of the file last loaded, offered in the Dashboards dropdown beside the standard ones. */
+  let loaded: { file: string; options: { value: string; label: string }[]; apply: (index: number) => string; current: number } | null = null;
+  /** What is typed in the search box beside the Dashboards dropdown. */
+  let dashboardSearch = '';
 
   const gridKey = (): string => `widgets_${template}`;
   const defaultRows = (): string => String(blueprint.inputs.find((i) => i.id === gridKey())?.default ?? '');
@@ -403,6 +410,70 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   }
 
   // --- toolbar --------------------------------------------------------------------
+  /**
+   * The Dashboards dropdown — the dashboards of a loaded file first, then the
+   * standard ones — with a search box beside it that narrows the list by name.
+   */
+  function dashboardPicker(): HTMLElement {
+    const list = select(
+      [
+        ...(loaded ? loaded.options.map((o) => ({ ...o, group: `From ${loaded!.file} (${loaded!.options.length})` })) : []),
+        ...templates.map((t) => ({ value: t.value, label: t.label, group: loaded ? 'Standard dashboards' : undefined })),
+      ],
+      loaded && template === 'custom' ? `${FROM_FILE}${loaded.current}` : template,
+      'Dashboards',
+      (value) => {
+        if (value.startsWith(FROM_FILE) && loaded) {
+          loaded.apply(Number(value.slice(FROM_FILE.length)));
+          return;
+        }
+        template = value;
+        selected = -1;
+        context.set({ template: value });
+        readFromValues();
+        commit();
+      },
+    );
+    list.setAttribute('data-control', 'dashboard-list');
+    const count = el('span', { class: 'muted small dbb-found' });
+    const narrow = (): void => {
+      const words = dashboardSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      let shown = 0;
+      for (const option of Array.from(list.options)) {
+        const hit = words.every((w) => option.text.toLowerCase().includes(w));
+        option.hidden = !hit;
+        option.disabled = !hit;
+        if (hit) shown += 1;
+      }
+      for (const group of Array.from(list.querySelectorAll('optgroup'))) group.hidden = Array.from(group.children).every((o) => (o as HTMLOptionElement).hidden);
+      // Only while searching: how many names match.
+      count.textContent = words.length > 0 ? `${shown} match` : '';
+    };
+    const search = textBox(dashboardSearch, 'Search dashboards by name', (q) => {
+      dashboardSearch = q;
+      narrow();
+    }, 'Search dashboards…');
+    search.type = 'search';
+    search.setAttribute('data-control', 'dashboard-search');
+    // Enter opens the first dashboard that matches.
+    search.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const first = Array.from(list.options).find((o) => !o.hidden);
+      if (!first || first.value === list.value) return;
+      list.value = first.value;
+      list.dispatchEvent(new Event('change'));
+    });
+    narrow();
+    return el('div', { class: 'dbb-start' }, el(
+      'label',
+      { class: 'dbb-start-label', attrs: { title: loaded ? `${loaded.options.length} dashboards in ${loaded.file}, and the standard ones` : 'The standard dashboards; load a file to list its dashboards here too' } },
+      // The number of dashboards in the loaded file, once, in the label.
+      el('span', { text: loaded ? `Dashboards (${loaded.options.length})` : 'Dashboards' }),
+      list,
+    ), search, count);
+  }
+
   function renderToolbar(): void {
     const fileInput = el('input', { class: 'dbb-file', attrs: { type: 'file', accept: DASHBOARD_ACCEPT, 'aria-label': 'Load a dashboard (.zip or .json)', 'data-control': 'dashboard-load-file' } }) as HTMLInputElement;
     fileInput.addEventListener('change', () => {
@@ -419,18 +490,7 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
         on: { click: () => fileInput.click() },
       }),
       fileInput,
-      el(
-        'label',
-        { class: 'dbb-start' },
-        el('span', { text: 'Start from' }),
-        select(templates, template, 'Start from', (value) => {
-          template = value;
-          selected = -1;
-          context.set({ template: value });
-          readFromValues();
-          commit();
-        }),
-      ),
+      dashboardPicker(),
       el(
         'div',
         { class: 'btn-row' },
@@ -506,35 +566,22 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
         check();
         return loaded.summary;
       };
-      if (choices.length === 1) return apply(0);
-      // Several dashboards: pick one.
-      let chosen = 0;
-      const filter = textBox('', 'Filter dashboards', (q) => {
-        const query = q.trim().toLowerCase();
-        for (const item of list.querySelectorAll<HTMLElement>('[data-name]')) item.hidden = !!query && !(item.dataset['name'] ?? '').includes(query);
-      }, `Filter ${choices.length} dashboards by name`);
-      const list = el('div', { class: 'dbb-choice-list', attrs: { role: 'radiogroup', 'aria-label': 'Dashboards in the file' } });
-      choices.forEach((choice, index) => {
-        const radio = el('input', { attrs: { type: 'radio', name: `${uid}-pick`, value: String(index) } }) as HTMLInputElement;
-        radio.checked = index === 0;
-        radio.addEventListener('change', () => (chosen = index));
-        list.appendChild(el('label', { class: 'dbb-choice', dataset: { name: choice.name.toLowerCase() } }, radio, el('span', { class: 'dbb-choice-name', text: choice.name }), el('span', { class: 'muted small', text: `${choice.widgets} widget${choice.widgets === 1 ? '' : 's'}` })));
-      });
-      replace(
-        picker,
-        el(
-          'div',
-          { class: 'callout dbb-pick' },
-          el('strong', { text: `${file.name} holds ${choices.length} dashboards. Pick the one to edit.` }),
-          filter,
-          list,
-          el('div', { class: 'btn-row' }, el('button', { class: 'btn btn-primary btn-small', text: 'Load this dashboard', attrs: { type: 'button', 'data-control': 'dashboard-pick' }, on: { click: () => apply(chosen) } }), el('button', { class: 'btn btn-small', text: 'Cancel', attrs: { type: 'button' }, on: { click: () => clear(picker) } })),
-        ),
-      );
-      message = { text: '', tone: '' };
+      // Every dashboard in the file goes into the Dashboards dropdown, by name; the first opens.
+      const order = choices.map((choice, index) => ({ choice, index })).sort((a, b) => a.choice.name.localeCompare(b.choice.name, undefined, { sensitivity: 'base' }));
+      loaded = {
+        file: file.name,
+        options: order.map(({ choice, index }) => ({ value: `${FROM_FILE}${index}`, label: `${choice.name} (${choice.widgets} widget${choice.widgets === 1 ? '' : 's'})` })),
+        apply: (index) => {
+          if (loaded) loaded.current = index;
+          return apply(index);
+        },
+        current: order[0]!.index,
+      };
+      const summary = loaded.apply(loaded.current);
+      if (choices.length === 1) return summary;
+      message = { text: `${file.name} loaded. The first dashboard is open; choose any other under Dashboards.`, tone: 'ok' };
       renderStatus();
-      picker.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-      return `${file.name} holds ${choices.length} dashboards: pick one in the builder.`;
+      return message.text;
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       if (message.tone !== 'bad') message = { text: `${file.name} could not be read: ${text}`, tone: 'bad' };

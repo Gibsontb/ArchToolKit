@@ -1751,7 +1751,7 @@ export const VCF_OPS_BUILD: readonly AutomationBlueprint[] = [
     description:
       'A dashboard built widget by widget — any of the widgets VCF Operations 9 offers, each with its own settings, placed on the 12-column grid or flowed into it, and wired so one widget’s selection drives another — starting from one of the standard dashboards. It is written as the JSON a dashboard export holds, checked for missing settings, bad metric keys, overlaps and interaction loops before anything is built, and reads back on the VCF Ops content page like any exported dashboard.',
     inputs: [
-      { id: 'template', label: 'Start from', control: 'select', options: DASHBOARD_TEMPLATES.map((t) => ({ value: t.value, label: t.label })), default: 'capacity', hint: 'Fills the widget grid below; change any row after' },
+      { id: 'template', label: 'Dashboard', control: 'select', options: DASHBOARD_TEMPLATES.map((t) => ({ value: t.value, label: t.label })), default: 'capacity', hint: 'Fills the widget grid below; change any row after' },
       ...DASHBOARD_TEMPLATES.map((t) => ({
         id: `widgets_${t.value}`,
         label: 'Widgets',
