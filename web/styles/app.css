@@ -3164,3 +3164,4 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 #migration-root > .card + .card {
   margin-top: var(--space-4);
 }
+.dbb-cleaned { display: inline-flex; align-items: center; gap: var(--space-2); }

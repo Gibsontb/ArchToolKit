@@ -94,8 +94,17 @@ function dosDateTime(date      )                                 {
   };
 }
 
-/** A stored (uncompressed) zip, UTF-8 names, Unix permissions. */
-export async function zip(files              , when = new Date(), options                          = {})                      {
+/** Raw deflate, as a zip entry holds it. */
+async function deflateRaw(data            )                      {
+  const stream = new Blob([data            ]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/**
+ * A zip, UTF-8 names, Unix permissions. Entries are stored (uncompressed)
+ * unless `compress` is set, when each is deflated if that makes it smaller.
+ */
+export async function zip(files              , when = new Date(), options                                              = {})                      {
   // keepOrder writes entries as given, with no nested packing: an Orchestrator
   // package lists its signatures after the files they sign, as vropkg does.
   const entries = options.keepOrder
@@ -106,9 +115,12 @@ export async function zip(files              , when = new Date(), options       
   const centrals               = [];
   let offset = 0;
 
-  for (const [path, data] of entries) {
+  for (const [path, raw] of entries) {
     const name = encoder.encode(path.replace(/^\/+/, ''));
-    const crc = crc32(data);
+    const crc = crc32(raw);
+    const deflated = options.compress && raw.length > 0 ? await deflateRaw(raw) : null;
+    const method = deflated && deflated.length < raw.length ? 8 : 0;
+    const data = method === 8 ? deflated  : raw;
     const mode = isExecutable(path) ? 0o100755 : 0o100644;
 
     const local = new Uint8Array(30 + name.length);
@@ -116,12 +128,12 @@ export async function zip(files              , when = new Date(), options       
     lv.setUint32(0, 0x04034b50, true);
     lv.setUint16(4, 20, true); // version needed
     lv.setUint16(6, 0x0800, true); // UTF-8 names
-    lv.setUint16(8, 0, true); // stored
+    lv.setUint16(8, method, true); // 0 stored, 8 deflate
     lv.setUint16(10, time, true);
     lv.setUint16(12, date, true);
     lv.setUint32(14, crc, true);
     lv.setUint32(18, data.length, true);
-    lv.setUint32(22, data.length, true);
+    lv.setUint32(22, raw.length, true);
     lv.setUint16(26, name.length, true);
     local.set(name, 30);
     locals.push(local, data);
@@ -132,12 +144,12 @@ export async function zip(files              , when = new Date(), options       
     cv.setUint16(4, (3 << 8) | 20, true); // made by Unix, so the mode is honoured
     cv.setUint16(6, 20, true);
     cv.setUint16(8, 0x0800, true);
-    cv.setUint16(10, 0, true);
+    cv.setUint16(10, method, true);
     cv.setUint16(12, time, true);
     cv.setUint16(14, date, true);
     cv.setUint32(16, crc, true);
     cv.setUint32(20, data.length, true);
-    cv.setUint32(24, data.length, true);
+    cv.setUint32(24, raw.length, true);
     cv.setUint16(28, name.length, true);
     cv.setUint32(38, (mode << 16) >>> 0, true); // external attributes: Unix mode
     cv.setUint32(42, offset, true);

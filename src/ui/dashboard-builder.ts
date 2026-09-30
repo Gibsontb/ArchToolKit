@@ -22,12 +22,13 @@
  * only the edits applied (vcf-ops-dashboard-import.ts).
  */
 
-import { el, replace, clear } from './dom.ts';
+import { el, replace, clear, downloadFile } from './dom.ts';
 import type { GeneratorWorkspace, WorkspaceContext } from './generator-page.ts';
 import type { Blueprint, BlueprintValues } from '../kit/blueprint.ts';
 import type { Finding } from '../core/findings.ts';
 import { findingItem } from './components.ts';
 import { readDashboardExports, readViewDefs } from '../aria/parse.ts';
+import { removeDashboards, type DashboardRemoval } from '../aria/pack-clean.ts';
 import { layoutWidgets, parseWidgetRows } from '../automation/blueprints/vcf-ops-build.ts';
 import { dashboardChoices, loadDashboard, readStore, type ImportStore } from '../automation/blueprints/vcf-ops-dashboard-import.ts';
 import { KIND_ALIASES, Settings, WIDGET_TYPES, metricKeyProblem, parseFilter, widgetType, type WidgetSetting, type WidgetType } from '../automation/blueprints/vcf-ops-widgets.ts';
@@ -264,7 +265,18 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   let lastRemoved: { row: Row; index: number; receivers: number[] } | null = null;
   let search = '';
   /** The dashboards of the file last loaded, offered in the Dashboards dropdown beside the standard ones. */
-  let loaded: { file: string; options: { value: string; label: string }[]; apply: (index: number) => string; current: number } | null = null;
+  let loaded: {
+    file: string;
+    /** The file as it was read: never changed; a cleaned pack is written from it. */
+    bytes: Uint8Array;
+    all: { index: number; value: string; label: string; name: string; removal: DashboardRemoval }[];
+    /** Dashboards deleted from the loaded copy, in the order they went (Undo takes the last). */
+    deleted: number[];
+    apply: (index: number) => string;
+    current: number;
+  } | null = null;
+  /** The file's dashboards that have not been deleted, in name order. */
+  const fileOptions = (): { index: number; value: string; label: string; name: string }[] => (loaded ? loaded.all.filter((o) => !loaded!.deleted.includes(o.index)) : []);
   /** What is typed in the search box beside the Dashboards dropdown. */
   let dashboardSearch = '';
 
@@ -417,10 +429,10 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
   function dashboardPicker(): HTMLElement {
     const list = select(
       [
-        ...(loaded ? loaded.options.map((o) => ({ ...o, group: `From ${loaded!.file} (${loaded!.options.length})` })) : []),
+        ...fileOptions().map((o) => ({ value: o.value, label: o.label, group: `From ${loaded!.file} (${fileOptions().length})` })),
         ...templates.map((t) => ({ value: t.value, label: t.label, group: loaded ? 'Standard dashboards' : undefined })),
       ],
-      loaded && template === 'custom' ? `${FROM_FILE}${loaded.current}` : template,
+      loaded && template === 'custom' && fileOptions().some((o) => o.index === loaded!.current) ? `${FROM_FILE}${loaded.current}` : template,
       'Dashboards',
       (value) => {
         if (value.startsWith(FROM_FILE) && loaded) {
@@ -467,11 +479,72 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
     narrow();
     return el('div', { class: 'dbb-start' }, el(
       'label',
-      { class: 'dbb-start-label', attrs: { title: loaded ? `${loaded.options.length} dashboards in ${loaded.file}, and the standard ones` : 'The standard dashboards; load a file to list its dashboards here too' } },
+      { class: 'dbb-start-label', attrs: { title: loaded ? `${fileOptions().length} dashboards in ${loaded.file}, and the standard ones` : 'The standard dashboards; load a file to list its dashboards here too' } },
       // The number of dashboards in the loaded file, once, in the label.
-      el('span', { text: loaded ? `Dashboards (${loaded.options.length})` : 'Dashboards' }),
+      el('span', { text: loaded ? `Dashboards (${fileOptions().length})` : 'Dashboards' }),
       list,
-    ), search, count);
+    ), search, count, deleteButton());
+  }
+
+  /** Delete the open dashboard from the loaded copy (the file itself is not touched). */
+  function deleteButton(): HTMLElement | null {
+    if (!loaded || template !== 'custom' || !fileOptions().some((o) => o.index === loaded!.current)) return null;
+    return el('button', {
+      class: 'btn btn-small btn-danger',
+      text: 'Delete',
+      attrs: { type: 'button', 'data-control': 'dashboard-delete', title: 'Remove this dashboard from the loaded copy. Your file is not changed: save a new pack when you have finished.' },
+      on: { click: () => deleteCurrent() },
+    });
+  }
+
+  function deleteCurrent(): void {
+    if (!loaded) return;
+    const before = fileOptions();
+    const at = before.findIndex((o) => o.index === loaded!.current);
+    const gone = before[at];
+    if (!gone) return;
+    loaded.deleted.push(gone.index);
+    const left = fileOptions();
+    const next = left[Math.min(at, left.length - 1)];
+    if (next) loaded.apply(next.index);
+    else {
+      // Nothing left from the file: back to the first standard dashboard.
+      template = String(templates[0]?.value ?? 'capacity');
+      selected = -1;
+      context.set({ template });
+      readFromValues();
+      renderAll();
+    }
+    message = { text: `Deleted "${gone.name}" from the loaded copy; ${left.length} left. ${loaded.file} itself is unchanged: save a new pack when you have finished.`, tone: 'ok' };
+    renderStatus();
+  }
+
+  function undoDelete(): void {
+    if (!loaded) return;
+    const index = loaded.deleted.pop();
+    if (index === undefined) return;
+    const back = loaded.all.find((o) => o.index === index);
+    loaded.apply(index);
+    message = { text: `Put back "${back?.name ?? ''}".`, tone: 'ok' };
+    renderStatus();
+  }
+
+  /** Write a new export without the deleted dashboards, and download it. */
+  async function saveCleaned(): Promise<void> {
+    if (!loaded || loaded.deleted.length === 0) return;
+    const removals = loaded.deleted.map((index) => loaded!.all.find((o) => o.index === index)!.removal);
+    try {
+      const result = await removeDashboards(loaded.file, loaded.bytes, removals);
+      const name = loaded.file.replace(/(\.[a-z0-9]+)?$/i, (ext) => `-cleaned${ext || '.zip'}`);
+      downloadFile(name, result.bytes, name.toLowerCase().endsWith('.json') ? 'application/json' : 'application/zip');
+      message = {
+        text: `Saved ${name}: ${loaded.deleted.length} dashboard${loaded.deleted.length === 1 ? '' : 's'} removed, ${fileOptions().length} left${result.bundlesDropped ? `, ${result.bundlesDropped} owner${result.bundlesDropped === 1 ? '' : 's'} left with none` : ''}. Everything else in the pack is as it was exported.`,
+        tone: 'ok',
+      };
+    } catch (error) {
+      message = { text: `The new pack could not be written: ${error instanceof Error ? error.message : String(error)}`, tone: 'bad' };
+    }
+    renderStatus();
   }
 
   function renderToolbar(): void {
@@ -534,6 +607,16 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
       lastRemoved ? el('button', { class: 'btn btn-small', text: 'Undo', attrs: { type: 'button', 'data-control': 'dashboard-undo-remove', title: 'Put the removed widget back' }, on: { click: () => undoRemove() } }) : null,
       el('span', { class: `dbb-count${errors ? ' is-bad' : ''}`, text: parts.filter(Boolean).join(' · ') }),
       store ? el('span', { class: 'pill', text: `Loaded: ${String(store.dashboard['name'] ?? '')}`, attrs: { title: `From ${store.file}. What the builder does not edit is written back as exported.` } }) : null,
+      // Deleted dashboards, with a way back and the new pack.
+      loaded && loaded.deleted.length > 0
+        ? el(
+            'span',
+            { class: 'dbb-cleaned' },
+            el('span', { class: 'pill', text: `${loaded.deleted.length} deleted` }),
+            el('button', { class: 'btn btn-small', text: 'Undo delete', attrs: { type: 'button', 'data-control': 'dashboard-undelete' }, on: { click: () => undoDelete() } }),
+            el('button', { class: 'btn btn-primary btn-small', text: 'Save new pack', attrs: { type: 'button', 'data-control': 'dashboard-save-pack', title: 'Download a new export without the deleted dashboards. The file you loaded is not changed.' }, on: { click: () => void saveCleaned() } }),
+          )
+        : null,
     );
   }
 
@@ -570,7 +653,15 @@ function mountBuilder(context: WorkspaceContext): HTMLElement {
       const order = choices.map((choice, index) => ({ choice, index })).sort((a, b) => a.choice.name.localeCompare(b.choice.name, undefined, { sensitivity: 'base' }));
       loaded = {
         file: file.name,
-        options: order.map(({ choice, index }) => ({ value: `${FROM_FILE}${index}`, label: `${choice.name} (${choice.widgets} widget${choice.widgets === 1 ? '' : 's'})` })),
+        bytes,
+        all: order.map(({ choice, index }) => ({
+          index,
+          value: `${FROM_FILE}${index}`,
+          label: `${choice.name} (${choice.widgets} widget${choice.widgets === 1 ? '' : 's'})`,
+          name: choice.name,
+          removal: { id: choice.id, file: choice.file, json: (exports[choice.exportIndex]!.json['dashboards'] as unknown[])[choice.dashboardIndex] },
+        })),
+        deleted: [],
         apply: (index) => {
           if (loaded) loaded.current = index;
           return apply(index);
