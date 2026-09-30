@@ -5,11 +5,11 @@
  */
 
 import { run } from '../kit/idb.ts';
-import type { AppRecord } from './model.ts';
+import { normalizeApp, type AppRecord } from './model.ts';
 
 export async function listApps(): Promise<AppRecord[]> {
   const all = await run<AppRecord[]>('apps', 'readonly', (store) => store.getAll() as IDBRequest<AppRecord[]>);
-  return (all ?? []).sort((a, b) => a.identity.name.localeCompare(b.identity.name, undefined, { sensitivity: 'base' }));
+  return (all ?? []).map(normalizeApp).sort((a, b) => a.identity.name.localeCompare(b.identity.name, undefined, { sensitivity: 'base' }));
 }
 
 export async function saveApp(app: AppRecord): Promise<boolean> {

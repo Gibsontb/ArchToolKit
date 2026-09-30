@@ -3097,8 +3097,58 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 }
 .net-rows .tip.warn { border-left-color: var(--danger); }
 
-/* Application Migration: plain text in its note boxes, not the code font. */
+/* --- Application Migration ----------------------------------------------------
+   Full-width screens, three sections each, three fields a row: as much on one
+   screen as reads comfortably. */
 .appmig .field textarea {
   font-family: inherit;
   font-size: 0.9rem;
+}
+
+.appmig .field-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.appmig .field-grid .field-wide {
+  grid-column: span 3;
+}
+
+@media (max-width: 1000px) {
+  .appmig .field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .appmig .field-grid .field-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .appmig .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.appmig .field {
+  margin-bottom: var(--space-3);
+}
+
+.appmig-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-3) var(--space-4) 0;
+  margin: 0 0 var(--space-4);
+}
+
+.appmig-section legend {
+  padding: 0 var(--space-2);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.appmig-section table {
+  margin-bottom: var(--space-3);
+}
+
+.appmig-section ul {
+  margin-top: 0;
 }

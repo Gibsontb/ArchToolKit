@@ -5,11 +5,11 @@
  */
 
 import { run } from '../kit/idb.js';
-                                            
+import { normalizeApp,                } from './model.js';
 
 export async function listApps()                       {
   const all = await run             ('apps', 'readonly', (store) => store.getAll()                           );
-  return (all ?? []).sort((a, b) => a.identity.name.localeCompare(b.identity.name, undefined, { sensitivity: 'base' }));
+  return (all ?? []).map(normalizeApp).sort((a, b) => a.identity.name.localeCompare(b.identity.name, undefined, { sensitivity: 'base' }));
 }
 
 export async function saveApp(app           )                   {

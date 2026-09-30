@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { expect } from '../testing/expect.ts';
-import { BUILT, CARDS, HOSTING_PLATFORMS, SOURCE_ENVIRONMENTS, VENDORS, displayName, identityProblems, identityProgress, identitySignals, newApp, vendorLabel } from './model.ts';
+import { BUILT, CARDS, HOSTING_PLATFORMS, SCREENS, SOURCE_ENVIRONMENTS, VENDORS, continuityProblems, continuityProgress, continuitySignals, displayName, identityProblems, identityProgress, identitySignals, loadProblems, loadSignals, newApp, normalizeApp, screenBuilt, vendorLabel } from './model.ts';
 
 const app = (name = '') => {
   const a = newApp(crypto.randomUUID(), '2026-09-29T10:00:00.000Z');
@@ -51,8 +51,56 @@ describe('appmig: card 1, identity', () => {
     expect(new Set(VENDORS.map((v) => v.value)).size).toBe(VENDORS.length);
   });
 
-  it('lists all twelve Stage 1 cards, with only the built ones open', () => {
+  it('lists all twelve Stage 1 sections on four screens, with the assessment last', () => {
     expect(CARDS.length).toBe(12);
-    expect([...BUILT]).toEqual(['identity']);
+    expect(SCREENS.flatMap((s) => [...s.cards]).sort()).toEqual(CARDS.map((c) => c.id).sort());
+    expect(SCREENS.at(-1)?.id).toBe('assessment');
+    expect(SCREENS.filter(screenBuilt).map((s) => s.id)).toEqual(['application', 'assessment']);
+    expect([...BUILT]).toEqual(['identity', 'continuity', 'load']);
+  });
+
+  it('gives a record saved before a section existed that section, empty', () => {
+    const old = { id: 'x', created: '', updated: '', identity: { name: 'Old' } } as never;
+    const a = normalizeApp(old);
+    expect(a.identity.vendor).toBe('');
+    expect(a.continuity.environments).toEqual([]);
+    expect(a.load.gpu).toBe('');
+  });
+});
+
+describe('appmig: criticality and continuity', () => {
+  it('asks for the environments, and the non-prod scale only when non-prod is in scope', () => {
+    const c = app('A').continuity;
+    expect(continuityProblems(c)).toEqual(['Tick the environments in scope.']);
+    c.environments = ['prod'];
+    expect(continuityProblems(c)).toEqual([]);
+    expect(continuityProgress(c).of).toBe(6);
+    c.environments = ['dev', 'prod'];
+    expect(continuityProblems(c).length).toBe(1);
+    expect(continuityProgress(c).of).toBe(7);
+  });
+
+  it('warns on a weak uptime target for the tier and on DR short of the targets', () => {
+    const c = app('A').continuity;
+    Object.assign(c, { criticality: 'tier0', uptime: '99.9', rto: 'mins', rpo: 'zero', drToday: 'backup' });
+    const said = continuitySignals(c).join(' ');
+    expect(said.includes('weak for its tier')).toBe(true);
+    expect(said.includes('backup and restore will not meet it')).toBe(true);
+    expect(said.includes('has to build the DR')).toBe(true);
+    expect(said.includes('synchronous replication')).toBe(true);
+    expect(continuitySignals(app('B').continuity)).toEqual([]);
+  });
+});
+
+describe('appmig: users and load', () => {
+  it('takes whole numbers only, and bands traffic as the wizard did', () => {
+    const l = app('A').load;
+    l.peakUsers = 'lots';
+    expect(loadProblems(l).length).toBe(1);
+    l.peakUsers = '60,000';
+    expect(loadProblems(l)).toEqual([]);
+    expect(loadSignals(l)[0]?.startsWith('High traffic band')).toBe(true);
+    l.peakUsers = '200';
+    expect(loadSignals(l)[0]?.startsWith('Low traffic band')).toBe(true);
   });
 });
