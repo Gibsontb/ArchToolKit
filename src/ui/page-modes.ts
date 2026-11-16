@@ -223,6 +223,7 @@ export function visiblePanes(page: PageId, f: PlanFacts): readonly PaneId[] {
  *   `planned`, else Overview.
  */
 export function landingHash(page: PageId, f: PlanFacts): string {
+  if (f.mode === 'change' || f.mode === 'maintenance' || f.mode === 'database') return modeStartHash(page, f);
   if (page === 'application-migration') {
     if (f.mode === 'single' && f.onlyAppSlug) return `app:${f.onlyAppSlug}`;
     if (f.apps > 0) return 'applications';

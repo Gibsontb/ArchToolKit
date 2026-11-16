@@ -522,7 +522,10 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
   const banner = el('div');
   const nav = el('div', { class: 'stack' });
   const body = el('div', { class: 'stack', style: { overflowWrap: 'anywhere', minWidth: '0' } });
-  append(root, el('div', { class: 'stack', style: { minWidth: '0' } }, banner, nav, body));
+  append(root, el('div', { class: 'stack', style: { minWidth: '0' } }, banner,
+    el('div', { class: 'btn-row' },
+      el('a', { class: 'btn btn-small', text: 'Choose VMware exit destinations', attrs: { href: '#vmware-exit' } })),
+    nav, body));
 
   const draw = (v: TrackView): void => {
     current = v;

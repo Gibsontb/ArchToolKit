@@ -223,6 +223,7 @@ export function visiblePanes(page        , f           )                    {
  *   `planned`, else Overview.
  */
 export function landingHash(page        , f           )         {
+  if (f.mode === 'change' || f.mode === 'maintenance' || f.mode === 'database') return modeStartHash(page, f);
   if (page === 'application-migration') {
     if (f.mode === 'single' && f.onlyAppSlug) return `app:${f.onlyAppSlug}`;
     if (f.apps > 0) return 'applications';
@@ -233,6 +234,29 @@ export function landingHash(page        , f           )         {
   }
   if (f.trackerPastPlanned > 0 && isPaneVisible(page, 'board', f)) return 'board';
   return 'overview';
+}
+
+/** Start the selected initiative while retaining the plan's inventory and saved designs. */
+export function modeStartHash(page        , f           )         {
+  switch (f.mode) {
+    case 'new':
+      return page === 'application-migration' ? 'app:/new-service' : 'utilities:deploy-service';
+    case 'change':
+    case 'maintenance':
+      return page === 'application-migration'
+        ? (f.onlyAppSlug ? `app:${f.onlyAppSlug}/step-1` : 'app:')
+        : 'utilities';
+    case 'dc-exit':
+      return page === 'application-migration' ? (f.apps ? 'applications' : 'sources') : 'vmware-exit';
+    case 'database':
+      return page === 'application-migration' ? 'databases' : 'execute:settings';
+    case 'single':
+      return page === 'application-migration'
+        ? (f.onlyAppSlug ? `app:${f.onlyAppSlug}` : f.apps ? 'applications' : 'sources')
+        : 'waves';
+    case 'migrate':
+      return page === 'application-migration' ? (f.apps ? 'applications' : 'sources') : 'overview';
+  }
 }
 
 // ---------------------------------------------------------------------------

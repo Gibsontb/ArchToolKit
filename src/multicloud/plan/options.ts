@@ -926,12 +926,15 @@ export const LICENCE_MODEL_OPTIONS = table(LICENCE_MODEL_VALUES, {
 // Addendum A.11: modes, sources, types and patterns
 // ---------------------------------------------------------------------------
 
-export const PLAN_MODE_VALUES = all<PlanMode>()(['dc-exit', 'migrate', 'single', 'new']);
+export const PLAN_MODE_VALUES = all<PlanMode>()(['new', 'change', 'maintenance', 'migrate', 'single', 'dc-exit', 'database']);
 export const PLAN_MODE_OPTIONS = table(PLAN_MODE_VALUES, {
-  'dc-exit': 'Data-centre exit',
-  migrate: 'Migrate applications',
-  single: 'One application or service',
-  new: 'New services only (nothing moves)',
+  new: 'Add a service (greenfield)',
+  change: 'Change an existing service',
+  maintenance: 'Maintenance / operations',
+  migrate: 'Complete migration (portfolio of apps)',
+  single: 'Migrate one application or service',
+  'dc-exit': 'Migrate a data centre / infrastructure estate',
+  database: 'Database-only / data-only migration',
 });
 
 export const APP_ORIGIN_VALUES = all<AppOrigin>()(['migrate', 'new']);

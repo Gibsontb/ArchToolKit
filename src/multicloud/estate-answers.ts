@@ -205,7 +205,11 @@ export function answersFromApp(plan: Plan, appRef: string): AppAnswers {
   const pattern = app.pattern ?? 'generic';
 
   // Initiative and basics.
-  set('initiativeType', origin === 'new' ? 'new-service' : 'migration', origin === 'new' ? 'a new application' : 'a migrating application');
+  const initiative = origin === 'new' ? 'new-service'
+    : plan.mode === 'change' ? 'existing-service'
+      : plan.mode === 'maintenance' ? 'maintenance' : 'migration';
+  set('initiativeType', initiative, initiative === 'existing-service' || initiative === 'maintenance' ? 'the plan mode'
+    : origin === 'new' ? 'a new application' : 'a migrating application');
   set('workloadName', app.name, "the application's name");
   set('appPattern', pattern, "the application's pattern");
   // A migrating web app is VM-centric until its route says otherwise; the modern patterns keep their architecture.
@@ -268,7 +272,10 @@ export function answersFromApp(plan: Plan, appRef: string): AppAnswers {
     const majority = [...counts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
     const route = ap?.route ?? (app.route && app.route !== 'new' ? app.route : undefined) ?? majority;
     set('migrationApproach', route, ap?.route || app.route ? "the application's 6R route" : "the servers' dispositions");
-    set('migrationScope', ws.length === 0 && dbs.length > 0 ? 'db-only' : 'single-app', 'one application');
+    const scope = plan.mode === 'dc-exit' ? 'dc-estate'
+      : plan.mode === 'database' || (ws.length === 0 && dbs.length > 0) ? 'db-only'
+        : plan.mode === 'migrate' && plan.apps.length > 1 ? 'portfolio' : 'single-app';
+    set('migrationScope', scope, scope === 'single-app' ? 'one application' : 'the plan scope');
     if (dbs.length > 0) set('dbStrategy', route === 'rehost' || route === 'relocate' ? 'vm' : route === 'replatform' || route === 'refactor' ? 'managed' : 'engine', route ? 'the route' : 'the default');
   } else {
     set('newServiceStage', 'new-prod', 'a new application');

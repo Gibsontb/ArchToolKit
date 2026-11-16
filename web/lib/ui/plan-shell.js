@@ -30,7 +30,7 @@ import { PLAN_MODE_OPTIONS } from '../multicloud/plan/options.js';
 import { emptyPlan, planEnvelope, planFromEnvelope } from '../multicloud/plan/store.js';
                                                             
 import {
-  hashArgument, isPaneVisible, landingHash, legacyRedirect, paneForHash, panesOf, planFacts,
+  hashArgument, isPaneVisible, landingHash, legacyRedirect, modeStartHash, paneForHash, panesOf, planFacts,
                                                                             
 } from './page-modes.js';
 import { mountConflictBanner, openPlanSession,                  } from './plan-sync.js';
@@ -77,10 +77,13 @@ import { mountConflictBanner, openPlanSession,                  } from './plan-s
  
 
 const MODE_HINT                                     = {
-  'dc-exit': 'Everything in the data centre goes, stays or is retired by a date. Adds the Data centre pane and the exit waves.',
-  migrate: 'Move some applications.',
+  'dc-exit': 'Plan the VMware or data-centre exit, including applications, shared infrastructure and decommissioning.',
+  migrate: 'Plan a portfolio migration from discovery and landing zones through wave cutover and rollback.',
   single: 'Move one application or service: one wave, with the service checklist.',
-  new: 'Add new services; nothing moves. Deploy a new service is the path.',
+  database: 'Inventory databases and select their data transfer paths. Use a database-scoped plan for execution.',
+  new: 'Design and deploy a new service.',
+  change: 'Plan a change to a running service, such as scaling, modernization or hardening.',
+  maintenance: 'Plan patches, capacity, reliability and recurring operations.',
 };
 
 function currentHash()         {
@@ -119,6 +122,7 @@ export async function mountPlanPage(options                 )                   
   modeSelect.addEventListener('change', () => {
     const mode = modeSelect.value            ;
     session.update((p) => ({ ...p, mode }), { immediate: true });
+    if (globalThis.location) globalThis.location.hash = modeStartHash(page, planFacts(session.plan(), tracker));
   });
   const status = el('span', { class: 'small muted', attrs: { 'data-control': 'plan-status', role: 'status' } });
   const describe = () => {

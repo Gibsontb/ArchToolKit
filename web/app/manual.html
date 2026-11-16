@@ -135,7 +135,7 @@
             <tr><td><a href="terraform.html">Terraform</a></td><td>Generate Terraform for AWS, Azure, Google Cloud, OCI and vSphere, including rehosting an imported cluster.</td></tr>
             <tr><td><a href="ansible.html">Ansible</a></td><td>Generate Ansible playbooks plus their <code>requirements.yml</code>, including inventories built from the estate.</td></tr>
             <tr><td><a href="terraform.html#map">Terraform &rsaquo; Map</a></td><td>A tab on the Terraform page. A reference: which Terraform resource does which job, per cloud and per domain.</td></tr>
-            <tr><td><a href="migration.html">Application Migration</a></td><td><strong>Code update in progress.</strong></td></tr>
+            <tr><td><a href="migration.html">Application Migration</a></td><td><strong>Ready.</strong></td></tr>
             <tr><td><a href="multicloud.html">Migration &amp; Utilities</a></td><td><strong>Code update in progress.</strong></td></tr>
             <tr><td><a href="network.html">Network</a></td><td>Configuration for switches, routers, firewalls and load balancers, with the checks, the back-out, a playbook and a change record.</td></tr>
             <tr><td><a href="vcf-ops-content.html">VCF Ops content</a></td><td>Read a VCF Operations 9.x content export (or one from the 8.x releases before it) and find out what is wrong with the monitoring.</td></tr>
@@ -298,7 +298,7 @@
           </ul>
 
           <h3>Take it further</h3>
-          <p>Four buttons: <strong>Size VCF from this estate</strong> (<a href="#sizing">VCF Sizing</a>), <strong>Plan the applications</strong> (Application Migration, which is being rebuilt), <strong>Terraform from the estate</strong> (<a href="#terraform">Terraform</a>) and <strong>Ansible from the estate</strong> (<a href="#ansible">Ansible</a>). Each page reads the stored estate itself; nothing needs to be exported first.</p>
+          <p>Four buttons: <strong>Size VCF from this estate</strong> (<a href="#sizing">VCF Sizing</a>), <strong>Plan the applications</strong> (<a href="#application-migration">Application Migration</a>), <strong>Terraform from the estate</strong> (<a href="#terraform">Terraform</a>) and <strong>Ansible from the estate</strong> (<a href="#ansible">Ansible</a>). Each page reads the stored estate directly.</p>
 
           <h3>Source</h3>
           <p>The source label (file name, or <em>N merged sources</em>), the RVTools version and how many tabs were read. For an RVTools import, a table of vCenters with their version and build and when each was collected (from vMetaData), and a line with the rows read per tab. Use it to check the export is complete: a missing vHost or vDisk tab shows here first.</p>
@@ -1699,7 +1699,7 @@
 
           <!-- ================================================================ -->
           <h2 id="application-migration">11. Application Migration</h2>
-          <p><strong>Code update in progress.</strong> This page is being rebuilt, and its manual section will be written when the rebuild is complete.</p>
+          <p><strong>Ready.</strong> Open <a href="migration.html#migrate">Execute migration</a>, select the applications to move, and generate a project to run on a migration controller.</p>
 
 
           <!-- ================================================================ -->

@@ -48,12 +48,15 @@ When a tracker exists, the VMware Inventory page's VM table gains a read-only
 The same **Plan mode** dropdown as Application Migration. A pane shows when the mode
 needs it **or** the plan has data for it; mode changes never delete data.
 
-| Mode | Label | Migration & Utilities shows |
+| Mode | Label | Opens when selected |
 | --- | --- | --- |
-| `dc-exit` | Data-centre exit | Everything, including Data centre; waves include the exit waves. |
-| `migrate` (default) | Migrate applications | Everything but Data centre (unless the plan has data-centre data). |
-| `single` | One application or service | As `migrate`, and the programme views (Estate capacity, Timeline) are hidden unless the plan has more than one app. |
-| `new` | New services only (nothing moves) | Waves, Execute and the Board are hidden until the plan has something that migrates (the Board also comes back when the tracker has items). **Deploy a new service** is the path. |
+| `new` | Add a service (greenfield) | Deploy a new service. |
+| `change` | Change an existing service | Utilities. |
+| `maintenance` | Maintenance / operations | Utilities. |
+| `migrate` (default) | Complete migration (portfolio of apps) | Overview, with landing zones, waves and execution available. |
+| `single` | Migrate one application or service | Waves. |
+| `dc-exit` | Migrate a data centre / infrastructure estate | VMware exit planner, with the Data centre pane available. |
+| `database` | Database-only / data-only migration | Execute settings. Remove server rows from the execution plan before generating a database-only kit. |
 
 ## Old addresses
 
@@ -446,3 +449,11 @@ landing zone with no waves, replication or cutover (`change/deploy.ts`):
   `ansible/` folders carry `archtoolkit-terraform-settings.json` and
   `archtoolkit-ansible-settings.json`; **Load** them on those pages to see and edit the
   same stack or site.
+## VMware exit planning
+
+Open **Plan a VMware exit** to select private-cloud, public-cloud, or VCF
+destinations and export a project plan. The planner adds the current inventory
+and waves, per-target delivery steps, and agency-specific approval evidence.
+See the [integration project plan](vmware-exit-integration.md) for the current
+execution coverage and engineering work.
+

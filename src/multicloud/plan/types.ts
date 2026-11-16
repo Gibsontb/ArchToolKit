@@ -725,7 +725,7 @@ export interface GenerateSettings {
 
 // ---------- modes, origins and sources (addendum A.1.7, A.3) -----------------
 
-export type PlanMode = 'dc-exit' | 'migrate' | 'single' | 'new';
+export type PlanMode = 'dc-exit' | 'migrate' | 'single' | 'database' | 'new' | 'change' | 'maintenance';
 export type AppOrigin = 'migrate' | 'new';
 export type SourcePlatform = 'vsphere' | 'hyperv' | 'ahv' | 'kvm' | 'proxmox' | 'ovirt' | 'xen' | 'physical'
   | 'aws' | 'azure' | 'google' | 'oci' | 'power' | 'sparc' | 'itanium' | 'pa-risc' | 'mainframe' | 'other';

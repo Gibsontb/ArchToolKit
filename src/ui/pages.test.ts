@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { expect } from '../testing/expect.ts';
 import {
   APPLICATION_MIGRATION_PANES, LEGACY_MIGRATION_HASHES, LEGACY_MULTICLOUD_TO_MIGRATION, MIGRATION_UTILITIES_PANES,
-  appSlug, hashArgument, isPaneVisible, landingHash, legacyRedirect, paneForHash, planFacts, visiblePanes, workspaceTabs,
+  appSlug, hashArgument, isPaneVisible, landingHash, legacyRedirect, modeStartHash, paneForHash, planFacts, visiblePanes, workspaceTabs,
   type PaneId, type PlanFacts,
 } from './page-modes.ts';
 import { onOtherSave, openPlanSession, type PlanStoreApi } from './plan-sync.ts';
@@ -25,9 +25,49 @@ import { STORES } from '../kit/idb.ts';
 import { entryFor, exportJson } from '../migration/portfolio.ts';
 import { EMPTY_APPLICATION } from '../migration/types.ts';
 import { scopedKey } from '../vmware/inventory.ts';
+import { PLAN_MODE_OPTIONS } from '../multicloud/plan/options.ts';
+import { allFields, WIZARD_CLOUDS } from '../multicloud/wizard/steps.ts';
+import { answersFromApp } from '../multicloud/estate-answers.ts';
+import { RESULT_SECTIONS } from './decision-wizard.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const web = join(here, '..', '..', 'web', 'app');
+
+describe('the original Multi-Cloud Decision Matrix', () => {
+  it('preserves the input fields and option values from the original HTML', () => {
+    const legacy = readFileSync(join(here, '..', '..', '_old', '13_Web', 'static', 'cloud-decision-logic-kit', 'multi-cloud-decision-matrix.html'), 'utf8').split('<script>')[0]!;
+    const fields = new Map(allFields().map((field) => [field.id, field.options] as const));
+    fields.set('cloudProvider', WIZARD_CLOUDS);
+    const inputs = [...legacy.matchAll(/<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"[^>]*>/g)];
+    expect(inputs.length).toBe(44);
+    for (const [, id] of inputs) expect(fields.has(id!)).toBe(true);
+    for (const [, id, html] of legacy.matchAll(/<select\s+id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
+      for (const [, value] of html!.matchAll(/<option value="([^"]+)"/g)) {
+        expect(fields.get(id!)?.some((option) => option.value === value)).toBe(true);
+      }
+    }
+    for (const [, name, value] of legacy.matchAll(/<input type="checkbox" name="([^"]+)" value="([^"]+)"/g)) {
+      expect(fields.get(name!)?.some((option) => option.value === value)).toBe(true);
+    }
+    const results = legacy.split('id="resultsContent"')[1]!.split('class="footer-actions')[0]!;
+    const outputs = new Set(RESULT_SECTIONS.flatMap((section) => [section.main, section.notes, section.extra]));
+    for (const [, id] of results.matchAll(/\bid="([^"]+)"/g)) expect(outputs.has(id!)).toBe(true);
+  });
+
+  it('exposes all four initiatives and four migration scopes through Plan mode', () => {
+    expect(PLAN_MODE_OPTIONS.map((option) => option.value)).toEqual(['new', 'change', 'maintenance', 'migrate', 'single', 'dc-exit', 'database']);
+    const appPlan = (mode: PlanMode) => fixture(mode, { apps: ['billing', 'portal'] });
+    expect(modeStartHash('application-migration', planFacts(appPlan('new')))).toBe('app:/new-service');
+    expect(modeStartHash('migration-utilities', planFacts(appPlan('new')))).toBe('utilities:deploy-service');
+    expect(modeStartHash('migration-utilities', planFacts(appPlan('dc-exit')))).toBe('vmware-exit');
+    expect(modeStartHash('application-migration', planFacts(appPlan('database')))).toBe('databases');
+    expect(answersFromApp(appPlan('maintenance'), 'billing').answers.initiativeType).toBe('maintenance');
+    expect(answersFromApp(appPlan('change'), 'billing').answers.initiativeType).toBe('existing-service');
+    for (const [mode, scope] of [['migrate', 'portfolio'], ['dc-exit', 'dc-estate'], ['single', 'single-app'], ['database', 'db-only']] as const) {
+      expect(answersFromApp(appPlan(mode), 'billing').answers.migrationScope).toBe(scope);
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // fixtures

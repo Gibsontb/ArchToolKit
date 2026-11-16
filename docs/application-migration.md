@@ -234,12 +234,19 @@ The **Plan mode** dropdown is in both page headers (`Plan.mode`). A pane shows w
 the mode needs it **or** the plan already has data for it, so changing the mode
 never hides or deletes work.
 
-| Mode | Label | Application Migration shows |
+| Mode | Label | Opens when selected |
 | --- | --- | --- |
-| `dc-exit` | Data-centre exit | Everything. |
-| `migrate` (default) | Migrate applications | Everything. |
-| `single` | One application or service | Everything; with no address, and exactly one app in the plan, the page opens that app's workspace. |
-| `new` | New services only (nothing moves) | Sources, Servers and Databases are hidden until the plan has something that migrates (or servers / databases); Applications starts with **New application**, and a new app's Design runs the new-service flow. |
+| `new` | Add a service (greenfield) | New service form and the greenfield design. |
+| `change` | Change an existing service | Application selection and the existing-service flow. |
+| `maintenance` | Maintenance / operations | Application selection and the operations focus and cadence fields. |
+| `migrate` (default) | Complete migration (portfolio of apps) | Sources or Applications, depending on existing inventory. |
+| `single` | Migrate one application or service | The app workspace when exactly one application is present. |
+| `dc-exit` | Migrate a data centre / infrastructure estate | Sources or Applications, with the estate scope available in Design. |
+| `database` | Database-only / data-only migration | Databases. Use a database-scoped plan to generate execution scripts. |
+
+These modes cover the original Decision Matrix's four initiative types and its
+single-application, portfolio, estate, and database migration scopes. Saved
+application answers take precedence over plan defaults.
 
 Apps are `migrate` or `new` (`AppPlan.origin`) whatever the mode, so a plan can mix both.
 

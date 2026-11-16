@@ -180,7 +180,7 @@ export function mount(root             , ctx             )       {
     return box;
   };
 
-  const startCard = (plan      )              => {
+  const startCard = (plan      , addService         )              => {
     const slot = el('div');
     const showNew = ()       => {
       fill(slot, newAppCard(() => ctx.session.plan(), (next, appId) => {
@@ -190,8 +190,12 @@ export function mount(root             , ctx             )       {
           watcher.edit((p) => setDesignAnswer(p, app.id, 'initiativeType', 'new-service', designCloud(p, app.id, p.requirements.allowed[0] ?? 'aws')).plan, { immediate: true });
           ctx.go(appHash(app, 'step-1'));
         }
-      }, () => fill(slot)));
+      }, () => {
+        fill(slot);
+        if (addService) ctx.go('app:');
+      }));
     };
+    if (addService) showNew();
     return el('section', { class: 'card', attrs: { 'data-control': 'design-start' } },
       el('div', { class: 'card-title' }, el('h2', { text: 'Multi-Cloud Decision & Onboarding Wizard' })),
       el('p', { text: 'Design one application on the cloud you choose: the services card by card, the connectors, the playbook, and the Terraform, Ansible and pipeline for it.' }),
@@ -207,7 +211,11 @@ export function mount(root             , ctx             )       {
         el('div', { class: 'card design-choice' },
           el('h3', { text: 'Change a running service' }),
           el('p', { class: 'small', text: 'Resize, add a disk, open a port, change DNS, patch: pick the application, choose "Change to existing service" in step 1, and the change goes to the Utilities catalogue.' }),
-          plan.apps.length > 0 ? note('Pick the application below.') : note('Add or import the application first.'))),
+          plan.apps.length > 0 ? note('Pick the application below.') : note('Add or import the application first.')),
+        el('div', { class: 'card design-choice' },
+          el('h3', { text: 'Maintenance / operations' }),
+          el('p', { class: 'small', text: 'Plan patching, capacity, reliability or recurring operations. Choose the application below or open Utilities.' }),
+          el('a', { class: 'btn', text: 'Open maintenance utilities', attrs: { href: 'multicloud.html#utilities' } }))),
       plan.apps.length > 0 ? el('ul', { attrs: { 'data-control': 'design-app-list' } }, ...plan.apps.map((a) => el('li', {}, el('a', { text: a.name, attrs: { href: `#${appHash(a)}` } })))) : null,
       slot);
   };
@@ -223,7 +231,7 @@ export function mount(root             , ctx             )       {
       drawnFor = '';
       fill(body,
         slug ? el('div', { class: 'tip warn', text: `There is no application called "${slug}".` }) : null,
-        startCard(plan));
+        startCard(plan, tab === 'new-service'));
       return;
     }
     const ap = appPlanOrDraft(plan, app);

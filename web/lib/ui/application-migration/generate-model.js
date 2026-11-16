@@ -115,7 +115,7 @@ export function buildStack(plan      , appIds                   , options       
     const { dcExit: _estateExit, ...appPlan } = slice;
     const targets = new Map(slice.appPlans?.map((app) => [app.app, app.platform]));
     const scope = JSON.stringify([plan.id, slice.apps.map((app) => app.id).sort().map((id) => [id, targets.get(id)])]);
-    projectPlan = { ...appPlan, id: `${shortHash(scope)}-${plan.id}`, mode: 'migrate' };
+    projectPlan = { ...appPlan, id: `${shortHash(scope)}-${plan.id}`, mode: plan.mode === 'database' ? 'database' : 'migrate' };
   }
   let result = generateAppStack(projectPlan, appIds, {
     ...(options.landingZone ? { landingZone: options.landingZone } : {}),

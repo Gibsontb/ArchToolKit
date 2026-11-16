@@ -25,6 +25,7 @@ import { loadTrackerRecord } from '../multicloud/plan/store.ts';
 
 export const MIGRATION_UTILITIES_SPECS: readonly PaneSpec[] = [
   { id: 'overview', load: () => import('./migration-utilities/overview.ts') },
+  { id: 'vmware-exit', load: () => import('./migration-utilities/vmware-exit.ts') },
   { id: 'landing-zones', load: () => import('./multicloud/design.ts') },
   { id: 'capacity', load: () => import('./migration-utilities/capacity.ts') },
   { id: 'datacentre', load: () => import('./migration-utilities/datacentre.ts') },

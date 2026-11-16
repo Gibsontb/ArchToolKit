@@ -30,7 +30,7 @@ import { PLAN_MODE_OPTIONS } from '../multicloud/plan/options.ts';
 import { emptyPlan, planEnvelope, planFromEnvelope } from '../multicloud/plan/store.ts';
 import type { PlanMode } from '../multicloud/plan/types.ts';
 import {
-  hashArgument, isPaneVisible, landingHash, legacyRedirect, paneForHash, panesOf, planFacts,
+  hashArgument, isPaneVisible, landingHash, legacyRedirect, modeStartHash, paneForHash, panesOf, planFacts,
   type PageId, type PaneId, type PaneInfo, type PlanFacts, type TrackerLike,
 } from './page-modes.ts';
 import { mountConflictBanner, openPlanSession, type PlanSession } from './plan-sync.ts';
@@ -77,10 +77,13 @@ export interface PlanPageOptions {
 }
 
 const MODE_HINT: Readonly<Record<PlanMode, string>> = {
-  'dc-exit': 'Everything in the data centre goes, stays or is retired by a date. Adds the Data centre pane and the exit waves.',
-  migrate: 'Move some applications.',
+  'dc-exit': 'Plan the VMware or data-centre exit, including applications, shared infrastructure and decommissioning.',
+  migrate: 'Plan a portfolio migration from discovery and landing zones through wave cutover and rollback.',
   single: 'Move one application or service: one wave, with the service checklist.',
-  new: 'Add new services; nothing moves. Deploy a new service is the path.',
+  database: 'Inventory databases and select their data transfer paths. Use a database-scoped plan for execution.',
+  new: 'Design and deploy a new service.',
+  change: 'Plan a change to a running service, such as scaling, modernization or hardening.',
+  maintenance: 'Plan patches, capacity, reliability and recurring operations.',
 };
 
 function currentHash(): string {
@@ -119,6 +122,7 @@ export async function mountPlanPage(options: PlanPageOptions): Promise<PlanSessi
   modeSelect.addEventListener('change', () => {
     const mode = modeSelect.value as PlanMode;
     session.update((p) => ({ ...p, mode }), { immediate: true });
+    if (globalThis.location) globalThis.location.hash = modeStartHash(page, planFacts(session.plan(), tracker));
   });
   const status = el('span', { class: 'small muted', attrs: { 'data-control': 'plan-status', role: 'status' } });
   const describe = () => {

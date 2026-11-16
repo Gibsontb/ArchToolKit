@@ -80,6 +80,9 @@ export function executionKit(
   tracker?: Tracker,
   options: ExecutionKitOptions = {},
 ): ExecutionKit {
+  if (plan.mode === 'database' && plan.workloads.length > 0) {
+    throw new Error('This database-only plan includes server rows. Use a plan scoped to the databases before generating execution scripts.');
+  }
   const registry = options.registry ?? PATH_REGISTRY;
   const findings: Finding[] = [];
   if (tracker && tracker.planId !== plan.id) {

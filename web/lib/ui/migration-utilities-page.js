@@ -25,6 +25,7 @@ import { loadTrackerRecord } from '../multicloud/plan/store.js';
 
 export const MIGRATION_UTILITIES_SPECS                      = [
   { id: 'overview', load: () => import('./migration-utilities/overview.js') },
+  { id: 'vmware-exit', load: () => import('./migration-utilities/vmware-exit.js') },
   { id: 'landing-zones', load: () => import('./multicloud/design.js') },
   { id: 'capacity', load: () => import('./migration-utilities/capacity.js') },
   { id: 'datacentre', load: () => import('./migration-utilities/datacentre.js') },
