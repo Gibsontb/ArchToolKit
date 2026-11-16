@@ -39,7 +39,9 @@ there, because the built pages are committed in `web/lib`:
 1. On GitHub, **Code → Download ZIP**, and extract it anywhere.
 2. Double-click `start.bat`.
 
-With no Node on the PATH, `start.bat` serves the prebuilt pages with Windows PowerShell instead
+`start.bat` looks for Node.js on PATH and in the standard Windows install folders. If Node.js is
+missing, the launcher tries to install Node.js LTS through WinGet and continues in the same window.
+If Node.js is still unavailable, it serves the prebuilt pages with Windows PowerShell instead
 (`tools/serve.ps1`): localhost only, no administrator rights, nothing installed. If a policy blocks
 scripts, run it directly:
 

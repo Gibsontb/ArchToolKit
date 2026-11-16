@@ -20,9 +20,9 @@
                                                                      
 
                                         
-                                                                                                      
+                                                                                                                  
                                       
-                                                                                  
+                                                                                                  
                                                                          
                                                                            
 
@@ -53,11 +53,13 @@ export const APPLICATION_MIGRATION_PANES                      = Object.freeze([
   { id: 'constraints', label: 'Constraints', step: true, alsoMatches: ['requirements'] },
   { id: 'sizing', label: 'Sizing', step: false },
   { id: 'stack', label: 'Stack', step: true },
+  { id: 'migrate', label: 'Execute migration', step: true },
 ]);
 
 /** Migration & Utilities' panes, in step-bar order (A.1.3), in the two areas. */
 export const MIGRATION_UTILITIES_PANES                      = Object.freeze([
   { id: 'overview', label: 'Overview', group: 'Migrate', step: true },
+  { id: 'vmware-exit', label: 'VMware exit', group: 'Migrate', step: false },
   { id: 'landing-zones', label: 'Landing zones', group: 'Migrate', step: true },
   { id: 'capacity', label: 'Estate capacity', group: 'Migrate', step: true },
   { id: 'datacentre', label: 'Data centre', group: 'Migrate', step: true },
@@ -170,6 +172,8 @@ export function isPaneVisible(page        , id        , f           )          {
         return f.mode !== 'new' || f.databases > 0;
       case 'app':
         return false;
+      case 'migrate':
+        return f.mode !== 'new' || migrating;
       case 'applications':
       case 'constraints':
       case 'sizing':
@@ -191,6 +195,7 @@ export function isPaneVisible(page        , id        , f           )          {
     case 'board':
       return f.mode !== 'new' || migrating || f.trackerItems > 0;
     case 'overview':
+    case 'vmware-exit':
     case 'landing-zones':
     case 'raid':
     case 'reports':

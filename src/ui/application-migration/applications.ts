@@ -14,6 +14,7 @@
 
 import { el, append } from '../dom.ts';
 import type { PaneContext } from '../plan-shell.ts';
+import { appSlug } from '../page-modes.ts';
 import { appDatabases, appWorkloads } from '../../multicloud/plan/apps/components.ts';
 import { chooseAppPlatform, clearAppPlatform, saveAppPlans } from '../../multicloud/plan/apps/recommend.ts';
 import { APP_KIND_OPTIONS, APP_PATTERN_OPTIONS, APP_PLAN_STATUS_OPTIONS, APP_ORIGIN_OPTIONS, CRITICALITY_OPTIONS, labelOf } from '../../multicloud/plan/options.ts';
@@ -123,7 +124,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
 
     const edit = (id: string, field: 'owner' | 'kind' | 'pattern' | 'criticality') => (v: string) => watcher.edit((p) => setAppField(p, id, field, v));
     const table = rowsTable(
-      ['', 'App', 'Kind', 'Pattern', 'Owner', 'Criticality', 'Servers', 'DBs', 'Sources', 'Recommended', 'Chosen', 'Margin', 'Status', 'Complexity'],
+      ['', 'App', 'Kind', 'Pattern', 'Owner', 'Criticality', 'Servers', 'DBs', 'Sources', 'Recommended', 'Chosen', 'Margin', 'Status', 'Complexity', 'Migration'],
       rows.map((row) => [
         tick(row),
         el('a', { text: row.name, attrs: { href: `#${appHash({ id: row.id })}`, 'data-control': 'catalogue-open' } }),
@@ -141,6 +142,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
         row.margin >= 99 ? 'only eligible' : String(row.margin),
         chip(labelOf(APP_PLAN_STATUS_OPTIONS, row.status), row.status === 'draft' ? 'neutral' : 'good'),
         chip(`${row.complexity.score} ${row.complexity.band}`, row.complexity.band === 'High' ? 'danger' : row.complexity.band === 'Medium' ? 'warn' : 'good'),
+        row.origin === 'new' ? '' : el('a', { class: 'btn btn-small', text: 'Execute migration', attrs: { href: `#migrate:${appSlug(row.id)}`, 'aria-label': `Execute migration for ${row.name}` } }),
       ]),
       { control: 'catalogue', numeric: [6, 7, 11], empty: all.length === 0 ? 'No applications yet: bring servers in on Sources (they are grouped into applications), or start a New application.' : 'No application matches the filters.' },
     );

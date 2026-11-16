@@ -392,8 +392,12 @@ describe('the page shells', () => {
   it('loads the new shells from the two pages, with the new navigation', () => {
     const am = readFileSync(join(web, 'migration.html'), 'utf8');
     const mu = readFileSync(join(web, 'multicloud.html'), 'utf8');
-    // Application Migration is being rebuilt as its own page: one application at a time, no shared plan header.
-    expect(am.includes('../lib/ui/appmig-page.js')).toBe(true);
+    const readiness = readFileSync(join(web, 'migration-readiness.html'), 'utf8');
+    expect(am.includes('../lib/ui/application-migration-page.js')).toBe(true);
+    expect(am.includes('id="plan-header"')).toBe(true);
+    expect(am.includes('href="#migrate"')).toBe(true);
+    expect(am.includes('href="migration-readiness.html"')).toBe(true);
+    expect(readiness.includes('../lib/ui/appmig-page.js')).toBe(true);
     expect(mu.includes('id="plan-header"')).toBe(true);
     expect(mu.includes('../lib/ui/migration-utilities-page.js')).toBe(true);
     expect(am.includes('<title>Application Migration · ArchToolKit</title>')).toBe(true);

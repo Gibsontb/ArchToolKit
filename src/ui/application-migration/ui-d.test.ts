@@ -24,6 +24,7 @@ import {
 import { buildStack, fileTree, moduleOfBlueprint } from './generate-model.ts';
 import { equivalentsText, filterModules, filterTypes, moduleIndex, resourceTypeIndex, sectionsOf } from './pickers.ts';
 import { withUserNetworks } from '../../testing/network-rows.ts';
+import type { Manifest } from '../../multicloud/plan/execute/manifest.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures: a Windows / SQL Server app, a Linux web app, and (later) a new one
@@ -74,6 +75,36 @@ const PLAN = fixture();
 const SHOP = itemId('app', 'shop');
 const FIN = itemId('app', 'finance');
 const tfText = (files: Readonly<Record<string, string>>): string => Object.entries(files).filter(([k]) => k.endsWith('.tf')).map(([, v]) => v).join('\n');
+
+describe('application migration projects', () => {
+  for (const platform of ['aws', 'azure', 'google', 'oci', 'vmware'] as const) {
+    it(`packages the selected app and executable waves for ${platform}`, () => {
+      const plan = chooseAppPlatform({ ...PLAN, edges: [] }, SHOP, platform).plan;
+      const build = buildStack(plan, [SHOP], { migration: true, cicd: 'none', record: false });
+      const root = `${build.result.folder}/migration/execute/`;
+      const manifest = JSON.parse(build.files[`${root}manifest/items.json`]!) as Omit<Manifest, 'waves'>;
+      const loaded = planFromEnvelope(JSON.parse(build.files[`${build.result.folder}/app-plan.json`]!));
+      if ('error' in loaded) throw new Error(loaded.error);
+      expect(manifest.planId).toBe(loaded.ok.id);
+      expect(manifest.planId).not.toBe(plan.id);
+      expect(manifest.items.length > 0).toBe(true);
+      for (const item of manifest.items) {
+        expect(item.app).toBe('shop');
+        expect(item.target.platform).toBe(platform);
+        expect(build.files[`${root}${item.script}`] !== undefined).toBe(true);
+      }
+      const wave = Object.keys(build.files).find((path) => path.startsWith(`${root}waves/`) && path.endsWith('/cutover.sh'));
+      expect(wave !== undefined).toBe(true);
+      expect(build.files[wave!]).toContain('atk_gate G2');
+    });
+  }
+
+  it('blocks an isolated migration when a synchronous dependency crosses the selection', () => {
+    const build = buildStack(PLAN, [SHOP], { migration: true, cicd: 'none', record: false });
+    expect(build.result.blocked).toContain('shop');
+    expect(build.findings.some((finding) => finding.code === 'apps.migration.dependency')).toBe(true);
+  });
+});
 
 // ---------------------------------------------------------------------------
 

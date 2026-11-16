@@ -20,9 +20,9 @@ import type { AppOrigin, ItemState, Plan, PlanMode } from '../multicloud/plan/ty
 export type PageId = 'application-migration' | 'migration-utilities';
 
 export type ApplicationMigrationPaneId =
-  | 'sources' | 'servers' | 'databases' | 'applications' | 'app' | 'constraints' | 'sizing' | 'stack';
+  | 'sources' | 'servers' | 'databases' | 'applications' | 'app' | 'constraints' | 'sizing' | 'stack' | 'migrate';
 export type MigrationUtilitiesPaneId =
-  | 'overview' | 'landing-zones' | 'capacity' | 'datacentre' | 'waves' | 'execute'
+  | 'overview' | 'vmware-exit' | 'landing-zones' | 'capacity' | 'datacentre' | 'waves' | 'execute'
   | 'board' | 'timeline' | 'raid' | 'reports' | 'generate' | 'utilities';
 export type PaneId = ApplicationMigrationPaneId | MigrationUtilitiesPaneId;
 
@@ -53,11 +53,13 @@ export const APPLICATION_MIGRATION_PANES: readonly PaneInfo[] = Object.freeze([
   { id: 'constraints', label: 'Constraints', step: true, alsoMatches: ['requirements'] },
   { id: 'sizing', label: 'Sizing', step: false },
   { id: 'stack', label: 'Stack', step: true },
+  { id: 'migrate', label: 'Execute migration', step: true },
 ]);
 
 /** Migration & Utilities' panes, in step-bar order (A.1.3), in the two areas. */
 export const MIGRATION_UTILITIES_PANES: readonly PaneInfo[] = Object.freeze([
   { id: 'overview', label: 'Overview', group: 'Migrate', step: true },
+  { id: 'vmware-exit', label: 'VMware exit', group: 'Migrate', step: false },
   { id: 'landing-zones', label: 'Landing zones', group: 'Migrate', step: true },
   { id: 'capacity', label: 'Estate capacity', group: 'Migrate', step: true },
   { id: 'datacentre', label: 'Data centre', group: 'Migrate', step: true },
@@ -170,6 +172,8 @@ export function isPaneVisible(page: PageId, id: PaneId, f: PlanFacts): boolean {
         return f.mode !== 'new' || f.databases > 0;
       case 'app':
         return false;
+      case 'migrate':
+        return f.mode !== 'new' || migrating;
       case 'applications':
       case 'constraints':
       case 'sizing':
@@ -191,6 +195,7 @@ export function isPaneVisible(page: PageId, id: PaneId, f: PlanFacts): boolean {
     case 'board':
       return f.mode !== 'new' || migrating || f.trackerItems > 0;
     case 'overview':
+    case 'vmware-exit':
     case 'landing-zones':
     case 'raid':
     case 'reports':
@@ -228,6 +233,29 @@ export function landingHash(page: PageId, f: PlanFacts): string {
   }
   if (f.trackerPastPlanned > 0 && isPaneVisible(page, 'board', f)) return 'board';
   return 'overview';
+}
+
+/** Start the selected initiative while retaining the plan's inventory and saved designs. */
+export function modeStartHash(page: PageId, f: PlanFacts): string {
+  switch (f.mode) {
+    case 'new':
+      return page === 'application-migration' ? 'app:/new-service' : 'utilities:deploy-service';
+    case 'change':
+    case 'maintenance':
+      return page === 'application-migration'
+        ? (f.onlyAppSlug ? `app:${f.onlyAppSlug}/step-1` : 'app:')
+        : 'utilities';
+    case 'dc-exit':
+      return page === 'application-migration' ? (f.apps ? 'applications' : 'sources') : 'vmware-exit';
+    case 'database':
+      return page === 'application-migration' ? 'databases' : 'execute:settings';
+    case 'single':
+      return page === 'application-migration'
+        ? (f.onlyAppSlug ? `app:${f.onlyAppSlug}` : f.apps ? 'applications' : 'sources')
+        : 'waves';
+    case 'migrate':
+      return page === 'application-migration' ? (f.apps ? 'applications' : 'sources') : 'overview';
+  }
 }
 
 // ---------------------------------------------------------------------------

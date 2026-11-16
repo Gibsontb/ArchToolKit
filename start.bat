@@ -3,6 +3,9 @@ setlocal EnableDelayedExpansion
 title ArchToolKit
 cd /d "%~dp0"
 
+rem Restore the Windows utilities this launcher uses when PATH omits System32.
+set "PATH=%SystemRoot%\System32;%PATH%"
+
 set "MODE=serve"
 set "OPEN=1"
 set "FIRSTPORT=8080"
@@ -24,16 +27,26 @@ echo.
 exit /b 1
 :parsed
 
-rem ---- Node present? -------------------------------------------------------
-rem Without Node (a locked-down work PC, an air-gapped jump box) the pages still
-rem run: web\lib is committed prebuilt, and tools\serve.ps1 serves it with
-rem Windows PowerShell. Only --dev, which rebuilds on change, needs Node.
-where node >nul 2>&1
+call :findnode
+if not errorlevel 1 goto checknode
+
+echo.
+echo   Node.js was not found. Installing Node.js LTS with WinGet...
+set "PATH=%PATH%;%LOCALAPPDATA%\Microsoft\WindowsApps"
+where winget.exe >nul 2>&1
 if errorlevel 1 (
-  set "WHY=Node.js was not found on PATH."
+  set "WHY=WinGet is unavailable. Node.js could not be installed automatically."
   goto nonode
 )
 
+winget.exe install --id OpenJS.NodeJS.LTS --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+call :findnode
+if errorlevel 1 (
+  set "WHY=Node.js is still unavailable after the WinGet installation attempt."
+  goto nonode
+)
+
+:checknode
 rem ---- Node new enough? ----------------------------------------------------
 node -e "var v=process.versions.node.split('.').map(Number);process.exit((v[0]>22||(v[0]===22&&v[1]>=6))?0:1)"
 if errorlevel 1 (
@@ -55,19 +68,32 @@ if "%MODE%"=="dev" (
 )
 echo.
 echo   !WHY!
-echo   Serving the prebuilt pages with PowerShell instead - nothing to install.
+echo   Serving the prebuilt pages with PowerShell instead.
 echo.
+set "PSEXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PSEXE%" (
+  set "PSEXE="
+  for /f "delims=" %%p in ('where pwsh.exe 2^>nul') do if not defined PSEXE set "PSEXE=%%p"
+)
+if not defined PSEXE (
+  echo   ERROR: Windows PowerShell is unavailable and PowerShell 7 was not found on PATH.
+  echo   Serving the prebuilt pages requires PowerShell or Node.js 22.6 or newer.
+  echo.
+  pause
+  exit /b 1
+)
+
 set "PSARGS=-Port %FIRSTPORT%"
 if "%OPEN%"=="0" set "PSARGS=!PSARGS! -NoOpen"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\serve.ps1" !PSARGS!
-if errorlevel 1 (
+"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\serve.ps1" !PSARGS!
+set "PSSTATUS=%ERRORLEVEL%"
+if not "%PSSTATUS%"=="0" (
   echo.
-  echo   The PowerShell server could not start. If a policy blocks scripts, run:
-  echo     powershell -NoProfile -ExecutionPolicy Bypass -File tools\serve.ps1
+  echo   The PowerShell server exited with code %PSSTATUS%. See the output above.
   echo.
   pause
 )
-exit /b
+exit /b %PSSTATUS%
 
 :hasnode
 rem ---- Find a free port ----------------------------------------------------
@@ -118,3 +144,17 @@ if "%MODE%"=="dev" (
 )
 
 endlocal
+exit /b
+
+:findnode
+where node >nul 2>&1
+if not errorlevel 1 exit /b 0
+
+rem WinGet's MSI can update the machine PATH without updating this process.
+for %%d in ("%ProgramW6432%\nodejs" "%ProgramFiles%\nodejs" "%ProgramFiles(x86)%\nodejs") do (
+  if exist "%%~d\node.exe" (
+    set "PATH=%%~d;!PATH!"
+    exit /b 0
+  )
+)
+exit /b 1

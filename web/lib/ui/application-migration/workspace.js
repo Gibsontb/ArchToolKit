@@ -382,15 +382,16 @@ export function mount(root             , ctx             )       {
     const executionBlock = (stage                                       )              => {
       const f = PROVIDER_FLOWS[platform];
       const words = stage === 'replicate' ? providerTerm('test-run', platform) : stage === 'cutover' ? providerTerm('cutover', platform) : providerTerm('hypercare', platform);
-      const link = stage === 'replicate' ? ['multicloud.html#execute', 'Open the execution kit →'] : stage === 'cutover' ? ['multicloud.html#board', 'Open the cutover board →'] : ['multicloud.html#board', 'Open the tracker →'];
+      const link = stage === 'replicate' ? ['multicloud.html#execute:settings', 'Configure migration tools →'] : stage === 'cutover' ? ['multicloud.html#execute', 'Open Execute for gates and commands →'] : ['multicloud.html#board', 'Open the tracker →'];
       const box = el('div', { attrs: { 'data-control': `design-${stage}` } });
       box.innerHTML = [
         stage === 'replicate' ? `<p>Each server replicates with its path below; then the <strong>${esc(words)}</strong> runs on the target, the findings are fixed, and it is marked ready.</p>${last ? pathsHtml(last, 'migration') : ''}` : '',
         stage === 'cutover' ? `<p><strong>${esc(words)}.</strong> ${esc(f.cutover)}</p><p><strong>Gates:</strong> ${esc(f.gates)}</p><p>The way back: <strong>${esc(providerTerm('rollback', platform))}</strong>. DNS and load-balancer switching are generated per ${esc(f.waveLabel.toLowerCase())} on Migration &amp; Utilities.</p>` : '',
         stage === 'hypercare' ? `<p><strong>${esc(words)}</strong> after the move, then the hand-over to operations and the source retired (decommission: archive, backups and monitoring removed, licences reclaimed).</p>` : '',
-        `<p class="muted">The execution itself runs from Migration &amp; Utilities, which reads this design: the app's cloud, its components and connectors, the landing-zone decision and each server's path.</p>`,
+        `<p class="muted">Run the generated migration project from a controller that can reach the source and target. Use Migration &amp; Utilities to record gates and import execution status for the project's app plan.</p>`,
       ].join('');
       append(box, buttonRow(el('a', { class: 'btn', text: link[1] , attrs: { href: link[0]  } }), el('a', { class: 'btn', text: `${f.waveLabel}s →`, attrs: { href: 'multicloud.html#waves' } })));
+      if (stage === 'replicate') append(box, generatorCard(() => ctx.session.plan(), () => [app.id], `Execute migration of ${app.name}`, 'migrate'));
       return box;
     }
 

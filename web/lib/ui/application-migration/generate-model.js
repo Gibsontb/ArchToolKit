@@ -14,6 +14,9 @@ import { error,              } from '../../core/findings.js';
 import { zip, tarGz } from '../../kit/archive.js';
 import { appPlanOf, findApp } from '../../multicloud/plan/apps/components.js';
 import { generateAppStack, placedSlice,                     } from '../../multicloud/plan/apps/generate.js';
+import { executionKit, EXECUTE_DIR } from '../../multicloud/plan/execute/kit.js';
+import { shortHash } from '../../multicloud/plan/execute/contract.js';
+import { wavePlanFor } from '../multicloud/wave-model.js';
 import { BOOTSTRAP_BACKEND, backendBootstrapFiles } from '../../multicloud/plan/pipeline/backend-bootstrap.js';
 import { azureDevOpsFiles } from '../../multicloud/plan/pipeline/ci-azdo.js';
                                                                              
@@ -68,6 +71,7 @@ export async function loadComponentSchemas(plan      , appIds                   
                                                                                                                         
                        
                             
+                               
  
 
                              
@@ -105,16 +109,58 @@ export function pipelineFor(plan      , result                , cicd      )     
 
 /** Generate one app or a stack of apps: Terraform, Ansible, README, app plan, record, and the pipeline. */
 export function buildStack(plan      , appIds                   , options               = {})             {
-  const result = generateAppStack(plan, appIds, {
+  let projectPlan = plan;
+  if (options.migration) {
+    const slice = placedSlice(plan, appIds);
+    const { dcExit: _estateExit, ...appPlan } = slice;
+    const targets = new Map(slice.appPlans?.map((app) => [app.app, app.platform]));
+    const scope = JSON.stringify([plan.id, slice.apps.map((app) => app.id).sort().map((id) => [id, targets.get(id)])]);
+    projectPlan = { ...appPlan, id: `${shortHash(scope)}-${plan.id}`, mode: 'migrate' };
+  }
+  let result = generateAppStack(projectPlan, appIds, {
     ...(options.landingZone ? { landingZone: options.landingZone } : {}),
     ...(options.record !== undefined ? { record: options.record } : {}),
   });
-  const cicd       = options.cicd ?? (plan.governance?.cicd && plan.governance.cicd !== 'none' ? plan.governance.cicd : 'github-actions');
-  const pipe = pipelineFor(plan, result, cicd);
+  const cicd       = options.migration ? 'none' : options.cicd ?? (plan.governance?.cicd && plan.governance.cicd !== 'none' ? plan.governance.cicd : 'github-actions');
+  const pipe = pipelineFor(projectPlan, result, cicd);
   const all                         = { ...result.files, ...pipe.files };
+  const migrationFindings            = [];
+  if (options.migration) {
+    const { slice, decision, design, folder } = result;
+    const waves = wavePlanFor(slice, decision);
+    const kit = executionKit(slice, decision, design, waves);
+    migrationFindings.push(...waves.findings, ...kit.findings);
+    const selectedItems = new Set([...slice.apps, ...slice.workloads, ...slice.databases].map((item) => item.name));
+    for (const edge of plan.edges) {
+      if (edge.kind === 'sync' && selectedItems.has(edge.from) !== selectedItems.has(edge.to)) {
+        migrationFindings.push(error('apps.migration.dependency', `Include both sides of the synchronous dependency ${edge.from} → ${edge.to} in the migration stack.`));
+      }
+    }
+    if (!kit.manifest.waves.some((wave) => wave.items.length > 0)) {
+      migrationFindings.push(error('apps.migration.no-items', 'No servers or databases are assigned to a migration wave.'));
+    }
+    for (const [path, body] of Object.entries(kit.files)) all[`${folder}/${EXECUTE_DIR}/${path}`] = body;
+    all[`${folder}/README.md`] += [
+      '', '## Execute the migration', '',
+      'Use the generated project on a controller with access to the source and target.',
+      'Load this project’s `app-plan.json` into Migration & Utilities for this run. Save any open plan first.',
+      'Use Execute to review the waves and record gate decisions. Put downloaded gate files under the project’s `status/gates/` directory.',
+      'Configure the required credentials and endpoints on the controller. See `migration/execute/README.md` for provider prerequisites.',
+      '', 'From the project root:', '', '```bash',
+      'find migration/execute -name "*.sh" -exec chmod +x {} +',
+      'migration/execute/controller-check.sh',
+      '```', '',
+      'Run the wave commands shown in Execute to pre-check, replicate, test, cut over, validate, and commit. Wave commands apply changes by default. Use their dry-run commands to preview changes and follow the rollback procedure if validation fails.',
+      'Import the resulting `status/events.jsonl` into Execute or Board to update the tracker.',
+      '',
+    ].join('\n');
+    if (migrationFindings.some((finding) => finding.severity === 'error')) {
+      result = { ...result, blocked: [...new Set([...result.blocked, ...slice.apps.map((app) => app.name)])] };
+    }
+  }
   const files                         = {};
   for (const k of Object.keys(all).sort()) files[k] = all[k] ;
-  return { result, files, findings: [...result.findings, ...pipe.findings], pipeline: Object.keys(pipe.files).sort() };
+  return { result, files, findings: [...result.findings, ...pipe.findings, ...migrationFindings], pipeline: Object.keys(pipe.files).sort() };
 }
 
 /** The archive, dated from the plan's `savedAt` (the same plan gives the same bytes; no footprint). */

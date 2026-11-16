@@ -180,7 +180,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     return box;
   };
 
-  const startCard = (plan: Plan): HTMLElement => {
+  const startCard = (plan: Plan, addService: boolean): HTMLElement => {
     const slot = el('div');
     const showNew = (): void => {
       fill(slot, newAppCard(() => ctx.session.plan(), (next, appId) => {
@@ -190,8 +190,12 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
           watcher.edit((p) => setDesignAnswer(p, app.id, 'initiativeType', 'new-service', designCloud(p, app.id, p.requirements.allowed[0] ?? 'aws')).plan, { immediate: true });
           ctx.go(appHash(app, 'step-1'));
         }
-      }, () => fill(slot)));
+      }, () => {
+        fill(slot);
+        if (addService) ctx.go('app:');
+      }));
     };
+    if (addService) showNew();
     return el('section', { class: 'card', attrs: { 'data-control': 'design-start' } },
       el('div', { class: 'card-title' }, el('h2', { text: 'Multi-Cloud Decision & Onboarding Wizard' })),
       el('p', { text: 'Design one application on the cloud you choose: the services card by card, the connectors, the playbook, and the Terraform, Ansible and pipeline for it.' }),
@@ -207,7 +211,11 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
         el('div', { class: 'card design-choice' },
           el('h3', { text: 'Change a running service' }),
           el('p', { class: 'small', text: 'Resize, add a disk, open a port, change DNS, patch: pick the application, choose "Change to existing service" in step 1, and the change goes to the Utilities catalogue.' }),
-          plan.apps.length > 0 ? note('Pick the application below.') : note('Add or import the application first.'))),
+          plan.apps.length > 0 ? note('Pick the application below.') : note('Add or import the application first.')),
+        el('div', { class: 'card design-choice' },
+          el('h3', { text: 'Maintenance / operations' }),
+          el('p', { class: 'small', text: 'Plan patching, capacity, reliability or recurring operations. Choose the application below or open Utilities.' }),
+          el('a', { class: 'btn', text: 'Open maintenance utilities', attrs: { href: 'multicloud.html#utilities' } }))),
       plan.apps.length > 0 ? el('ul', { attrs: { 'data-control': 'design-app-list' } }, ...plan.apps.map((a) => el('li', {}, el('a', { text: a.name, attrs: { href: `#${appHash(a)}` } })))) : null,
       slot);
   };
@@ -223,7 +231,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       drawnFor = '';
       fill(body,
         slug ? el('div', { class: 'tip warn', text: `There is no application called "${slug}".` }) : null,
-        startCard(plan));
+        startCard(plan, tab === 'new-service'));
       return;
     }
     const ap = appPlanOrDraft(plan, app);
@@ -382,15 +390,16 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     const executionBlock = (stage: 'replicate' | 'cutover' | 'hypercare'): HTMLElement => {
       const f = PROVIDER_FLOWS[platform];
       const words = stage === 'replicate' ? providerTerm('test-run', platform) : stage === 'cutover' ? providerTerm('cutover', platform) : providerTerm('hypercare', platform);
-      const link = stage === 'replicate' ? ['multicloud.html#execute', 'Open the execution kit →'] : stage === 'cutover' ? ['multicloud.html#board', 'Open the cutover board →'] : ['multicloud.html#board', 'Open the tracker →'];
+      const link = stage === 'replicate' ? ['multicloud.html#execute:settings', 'Configure migration tools →'] : stage === 'cutover' ? ['multicloud.html#execute', 'Open Execute for gates and commands →'] : ['multicloud.html#board', 'Open the tracker →'];
       const box = el('div', { attrs: { 'data-control': `design-${stage}` } });
       box.innerHTML = [
         stage === 'replicate' ? `<p>Each server replicates with its path below; then the <strong>${esc(words)}</strong> runs on the target, the findings are fixed, and it is marked ready.</p>${last ? pathsHtml(last, 'migration') : ''}` : '',
         stage === 'cutover' ? `<p><strong>${esc(words)}.</strong> ${esc(f.cutover)}</p><p><strong>Gates:</strong> ${esc(f.gates)}</p><p>The way back: <strong>${esc(providerTerm('rollback', platform))}</strong>. DNS and load-balancer switching are generated per ${esc(f.waveLabel.toLowerCase())} on Migration &amp; Utilities.</p>` : '',
         stage === 'hypercare' ? `<p><strong>${esc(words)}</strong> after the move, then the hand-over to operations and the source retired (decommission: archive, backups and monitoring removed, licences reclaimed).</p>` : '',
-        `<p class="muted">The execution itself runs from Migration &amp; Utilities, which reads this design: the app's cloud, its components and connectors, the landing-zone decision and each server's path.</p>`,
+        `<p class="muted">Run the generated migration project from a controller that can reach the source and target. Use Migration &amp; Utilities to record gates and import execution status for the project's app plan.</p>`,
       ].join('');
       append(box, buttonRow(el('a', { class: 'btn', text: link[1]!, attrs: { href: link[0]! } }), el('a', { class: 'btn', text: `${f.waveLabel}s →`, attrs: { href: 'multicloud.html#waves' } })));
+      if (stage === 'replicate') append(box, generatorCard(() => ctx.session.plan(), () => [app.id], `Execute migration of ${app.name}`, 'migrate'));
       return box;
     }
 

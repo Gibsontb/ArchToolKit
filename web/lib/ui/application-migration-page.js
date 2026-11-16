@@ -26,11 +26,19 @@ export const APPLICATION_MIGRATION_SPECS                      = [
   { id: 'constraints', load: () => import('./multicloud/requirements.js') },
   { id: 'sizing', load: () => import('./application-migration/sizing.js') },
   { id: 'stack', load: () => import('./application-migration/stack.js') },
+  { id: 'migrate', load: () => import('./application-migration/stack.js').then(({ mountMigration }) => ({ mount: mountMigration })) },
 ];
 
 const root = typeof document !== 'undefined' ? document.getElementById('migration-root') : null;
 const header = typeof document !== 'undefined' ? document.getElementById('plan-header') : null;
-if (root && header) {
+function openReadinessBookmark()          {
+  if (!location.hash.startsWith('#app=')) return false;
+  location.replace(`migration-readiness.html${location.hash}`);
+  return true;
+}
+
+if (root && header && !openReadinessBookmark()) {
+  window.addEventListener('hashchange', openReadinessBookmark);
   void mountPlanPage({
     page: 'application-migration',
     root,

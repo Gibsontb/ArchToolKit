@@ -22,6 +22,7 @@
 
 import { el, append, downloadFile } from '../dom.ts';
 import type { PaneContext } from '../plan-shell.ts';
+import { appSlug } from '../page-modes.ts';
 import { findingsList } from '../components.ts';
 import { appPlanOf } from '../../multicloud/plan/apps/components.ts';
 import { plannedApps } from '../../multicloud/plan/apps/generate.ts';
@@ -39,8 +40,9 @@ import { moduleNamesOf } from './pickers.ts';
 interface GenOptions { landingZone: LandingZoneMode | ''; cicd: Cicd; archive: ArchiveFormat; record: boolean }
 
 /** The generator: options, Generate, the file tree and findings, and Download. `appIds` is read when Generate is pressed. */
-export function generatorCard(plan: () => Plan, appIds: () => readonly string[], title: string): HTMLElement {
+export function generatorCard(plan: () => Plan, appIds: () => readonly string[], title: string, mode: 'build' | 'migrate' | 'choose' = 'build'): HTMLElement {
   const initial = plan();
+  let migration = mode === 'migrate';
   const opts: GenOptions = {
     landingZone: '',
     cicd: initial.governance?.cicd && initial.governance.cicd !== 'none' ? initial.governance.cicd : 'github-actions',
@@ -85,6 +87,7 @@ export function generatorCard(plan: () => Plan, appIds: () => readonly string[],
             ...(opts.landingZone ? { landingZone: opts.landingZone } : {}),
             cicd: opts.cicd,
             record: opts.record,
+            migration,
           });
           last = loadFindings.length > 0 ? { ...build, findings: [...loadFindings, ...build.findings], result: { ...build.result, blocked: [...new Set([...build.result.blocked, ...loadFindings.map((f) => f.message.split(':')[0]!)])] } } : build;
           status.textContent = `Generated ${ids.length} application(s) into ${build.result.folder}/.`;
@@ -99,10 +102,13 @@ export function generatorCard(plan: () => Plan, appIds: () => readonly string[],
 
   return el('section', { class: 'card', attrs: { 'data-control': 'stack-generator' } },
     el('div', { class: 'card-title' }, el('h2', { text: title })),
-    note('Terraform (one root module per cloud), Ansible, the README, the app plan and its decision record, and the CI/CD pipeline. Everything applies as generated; credentials are never written into the files.'),
+    note(mode === 'migrate'
+      ? 'Package the selected application for a migration controller. The archive includes Terraform, Ansible, provider scripts, wave commands, and an app plan for approvals and status.'
+      : 'Generate Terraform, Ansible, the app plan and its decision record. Deployment projects can include a CI/CD pipeline.'),
     filterRow(
+      mode === 'choose' ? labelled('Project', dropdown([{ value: 'build', label: 'Deploy infrastructure' }, { value: 'migrate', label: 'Execute a migration' }], 'build', (v) => { migration = v === 'migrate'; }, { control: 'stack-project', label: 'Project' })) : null,
       labelled('Landing zone', dropdown(LANDING_ZONE_MODE_OPTIONS, opts.landingZone, (v) => { opts.landingZone = v as LandingZoneMode | ''; }, { blank: 'Shared where designed, else included', control: 'stack-landing-zone', label: 'Landing zone' })),
-      labelled('CI/CD pipeline', dropdown(CICD_OPTIONS, opts.cicd, (v) => { opts.cicd = v as Cicd; }, { control: 'stack-cicd', label: 'CI/CD pipeline' })),
+      mode === 'migrate' ? null : labelled('CI/CD pipeline (deployment only)', dropdown(CICD_OPTIONS, opts.cicd, (v) => { opts.cicd = v as Cicd; }, { control: 'stack-cicd', label: 'CI/CD pipeline' })),
       labelled('Archive', dropdown(ARCHIVE_FORMAT_OPTIONS, opts.archive, (v) => { opts.archive = v as ArchiveFormat; }, { control: 'stack-archive', label: 'Archive' })),
       labelled('Decision record', dropdown([{ value: 'yes', label: 'Include' }, { value: 'no', label: 'Leave out' }], 'yes', (v) => { opts.record = v === 'yes'; }, { label: 'Decision record' }))),
     buttonRow(button('Generate', run, { primary: true, control: 'stack-generate' })),
@@ -122,13 +128,21 @@ export function renderGenerateTab(view: AppView): HTMLElement {
 // ---------------------------------------------------------------------------
 
 export function mount(root: HTMLElement, ctx: PaneContext): void {
+  mountSelection(root, ctx, false);
+}
+
+export function mountMigration(root: HTMLElement, ctx: PaneContext): void {
+  mountSelection(root, ctx, true);
+}
+
+function mountSelection(root: HTMLElement, ctx: PaneContext, migration: boolean): void {
   const selected = new Set<string>();
   let filter = { platform: '', status: '', pattern: '' };
   let recs: Record<string, AppRecommendation> = {};
   let recsFor: Plan | undefined;
   const listSlot = el('div');
   const message = el('p', { class: 'small', attrs: { role: 'status', 'data-control': 'stack-message' } });
-  const gen = generatorCard(() => ctx.session.plan(), () => ctx.session.plan().apps.filter((a) => selected.has(a.id)).map((a) => a.id), 'Generate the stack');
+  const gen = generatorCard(() => ctx.session.plan(), () => ctx.session.plan().apps.filter((a) => selected.has(a.id)).map((a) => a.id), migration ? 'Generate migration project' : 'Generate the stack', migration ? 'migrate' : 'choose');
   append(root, listSlot, gen);
 
   const draw = () => {
@@ -138,7 +152,8 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       recsFor = plan;
     }
     for (const id of [...selected]) if (!plan.apps.some((a) => a.id === id)) selected.delete(id);
-    const rows = plan.apps.map((a) => {
+    const candidates = migration ? plan.apps.filter((a) => appPlanOf(plan, a.id)?.origin !== 'new') : plan.apps;
+    const rows = candidates.map((a) => {
       const ap = appPlanOf(plan, a.id);
       const p: Platform = shownPlatform(plan, a.id, recs[a.id]);
       const errs = ap?.variants[p] ? variantFindings(ap, p).filter((f) => f.severity === 'error').length : 0;
@@ -159,8 +174,10 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     }), { control: 'stack-grid', numeric: [4], empty: plan.apps.length === 0 ? 'No applications yet.' : 'No application matches the filters.' });
     const counter = el('span', { class: 'small muted', text: `${selected.size} selected` });
     fill(listSlot, el('section', { class: 'card', attrs: { 'data-control': 'stack' } },
-      el('div', { class: 'card-title' }, el('h2', { text: 'Stack & generate' })),
-      note('Select the applications to generate together: apps on the same cloud share one root module, its state and the landing-zone contract.'),
+      el('div', { class: 'card-title' }, el('h2', { text: migration ? 'Execute migration' : 'Stack & generate' })),
+      migration
+        ? el('p', {}, 'Select the applications to move. ', el('a', { text: 'Configure provider migration tools', attrs: { href: 'multicloud.html#execute:settings' } }), ' before generating the project.')
+        : note('Select the applications to generate together. Apps on the same cloud share one root module, its state and the landing-zone contract.'),
       filterRow(
         labelled('Cloud', dropdown(PLATFORM_CHOICES, filter.platform, (v) => { filter = { ...filter, platform: v }; draw(); }, { blank: 'Any cloud', label: 'Cloud' })),
         labelled('Status', dropdown(APP_PLAN_STATUS_OPTIONS, filter.status, (v) => { filter = { ...filter, status: v }; draw(); }, { blank: 'Any status', label: 'Status' })),
@@ -168,7 +185,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       buttonRow(
         counter,
         button('Select all shown', () => { for (const r of rows) selected.add(r.a.id); draw(); }, { control: 'stack-select-all' }),
-        button('Select planned', () => { selected.clear(); for (const id of plannedApps(ctx.session.plan())) selected.add(id); draw(); }, { control: 'stack-select-planned' }),
+        button('Select planned', () => { selected.clear(); for (const id of plannedApps(ctx.session.plan())) if (candidates.some((a) => a.id === id)) selected.add(id); draw(); }, { control: 'stack-select-planned' }),
         button('Clear', () => { selected.clear(); draw(); }),
         button('Save application plans', () => {
           const ids = [...selected];
@@ -187,5 +204,14 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
   };
 
   const watcher = watchPlan(root, ctx, draw);
-  draw();
+  const selectApp = (slug: string) => {
+    if (migration && slug) {
+      selected.clear();
+      const app = ctx.session.plan().apps.find((a) => appSlug(a.id) === slug && appPlanOf(ctx.session.plan(), a.id)?.origin !== 'new');
+      if (app) selected.add(app.id);
+    }
+    draw();
+  };
+  if (migration) ctx.onArg(selectApp);
+  selectApp(ctx.arg());
 }

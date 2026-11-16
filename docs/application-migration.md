@@ -7,10 +7,30 @@ OCI or VMware Cloud Foundation). Each application is designed in the
 **Multi-Cloud Decision & Onboarding Wizard** (its Design, `#app:<slug>`): one
 cloud at a time, the steps on the left and that cloud's services card by card
 on the right. The page generates Terraform, Ansible and a pipeline for one
-application or a stack of them, in the form the chosen cloud takes, and saves
-the application plans that Multi-Cloud Migration & Utilities (`multicloud.html`,
-see `docs/migration-and-utilities.md`) moves. It also sets up a new service on
-its own, with no inventory at all.
+application or a stack of them, in the form the chosen cloud takes. For an
+existing application, **Replicate & test** also generates an executable
+migration project for the chosen target. The wizard can set up a new service
+with no inventory.
+
+## Execute an application migration
+
+1. Choose AWS, Azure, Google Cloud, OCI, or VMware Cloud Foundation in the
+   application's Design. Set the source inventory, target, and migration paths.
+2. On the Application Migration page, select **Execute migration**. Configure
+   the provider migration tools, select the applications, then generate and
+   download the migration project. Select both applications when they have a
+   synchronous dependency.
+3. Extract the project on a controller that can reach the source and destination.
+   Follow its README to check controller tools, authenticate, and run the wave
+   scripts. The kit uses the selected path's provider CLI or PowerShell module
+   for replication, test, cutover, validation, commit, and rollback where the
+   provider supports those operations. Review path findings for manual steps.
+4. Save the open plan and load the project's `app-plan.json` in
+   **Migration & Utilities**. Record gate decisions in **Execute**, put the
+   exported gates in the project's `status/gates/` folder, and import the events
+   written by the controller. The migration project has its own plan ID and tracker.
+
+Existing readiness profiles are accessible through **Readiness assessments**.
 
 It replaces the retired migration rating page (intake form, six ratings,
 readiness score, route, portfolio tab); its addresses still work (see
@@ -56,6 +76,7 @@ Stack. Sizing and the application workspace are panes without a step number.
 | `#constraints` (also `#requirements`) | Constraints | Platforms (allowed platforms, how many, regions, deadline, the landing-zone mode of the app plans), Compliance & sovereignty, Commercial & licensing, Operating model & exit, Resilience. Connectivity and Identity are estate foundations and live on Migration & Utilities `#landing-zones`. |
 | `#sizing` | Sizing | The sizing policy (every field a dropdown), the load model's assumptions, and every app's sizing in one grid with filters, bulk **Accept** and totals. |
 | `#stack` | Stack | Select apps (✓, App, Platform, Status, Components, Findings), **Select planned**, **Save application plans**, **Export selected** (an app-slice plan file, loadable on both pages), and generate one stacked project. |
+| `#migrate` | Execute migration | Select the applications to move and generate the project with provider and wave scripts. |
 
 With no address the page opens on Applications when the plan has apps, else on
 Sources. In `single` mode with exactly one app, it opens that app's workspace.
