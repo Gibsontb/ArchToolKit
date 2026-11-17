@@ -20,9 +20,9 @@
                                                                      
 
                                         
-                                                                                                                  
+                                                                                                                                  
                                       
-                                                                                                  
+                                                                                                                       
                                                                          
                                                                            
 
@@ -44,6 +44,7 @@ export const LEGACY_MIGRATION_HASHES = Object.freeze(['intake', 'ratings', 'resu
 
 /** Application Migration's panes, in step-bar order (A.1.2). */
 export const APPLICATION_MIGRATION_PANES                      = Object.freeze([
+  { id: 'vmware-exit', label: 'Project setup', step: true },
   { id: 'sources', label: 'Sources', step: true },
   // `#workloads` is the base design's name for this screen.
   { id: 'servers', label: 'Servers', step: true, alsoMatches: ['workloads'] },
@@ -58,8 +59,8 @@ export const APPLICATION_MIGRATION_PANES                      = Object.freeze([
 
 /** Migration & Utilities' panes, in step-bar order (A.1.3), in the two areas. */
 export const MIGRATION_UTILITIES_PANES                      = Object.freeze([
-  { id: 'overview', label: 'Overview', group: 'Migrate', step: true },
-  { id: 'vmware-exit', label: 'VMware exit', group: 'Migrate', step: false },
+  { id: 'vmware-exit', label: 'Project setup', group: 'Migrate', step: true },
+  { id: 'source-inventory', label: 'Source inventory', group: 'Migrate', step: true },
   { id: 'landing-zones', label: 'Landing zones', group: 'Migrate', step: true },
   { id: 'capacity', label: 'Estate capacity', group: 'Migrate', step: true },
   { id: 'datacentre', label: 'Data centre', group: 'Migrate', step: true },
@@ -70,6 +71,7 @@ export const MIGRATION_UTILITIES_PANES                      = Object.freeze([
   { id: 'raid', label: 'RAID', group: 'Migrate', step: true },
   { id: 'reports', label: 'Reports', group: 'Migrate', step: true },
   { id: 'generate', label: 'Generate', group: 'Migrate', step: true },
+  { id: 'overview', label: 'Overview', group: 'Migrate', step: false },
   // `#changes` was the addendum's name for the Utilities area.
   { id: 'utilities', label: 'Utilities', group: 'Utilities', step: false, alsoMatches: ['changes'] },
 ]);
@@ -175,6 +177,7 @@ export function isPaneVisible(page        , id        , f           )          {
       case 'migrate':
         return f.mode !== 'new' || migrating;
       case 'applications':
+      case 'vmware-exit':
       case 'constraints':
       case 'sizing':
       case 'stack':
@@ -191,6 +194,7 @@ export function isPaneVisible(page        , id        , f           )          {
       return f.mode !== 'single' || f.apps > 1;
     case 'waves':
     case 'execute':
+    case 'source-inventory':
       return f.mode !== 'new' || migrating;
     case 'board':
       return f.mode !== 'new' || migrating || f.trackerItems > 0;
@@ -223,7 +227,8 @@ export function visiblePanes(page        , f           )                    {
  *   `planned`, else Overview.
  */
 export function landingHash(page        , f           )         {
-  if (f.mode === 'change' || f.mode === 'maintenance' || f.mode === 'database') return modeStartHash(page, f);
+  if (f.apps === 0 && f.workloads === 0 && f.databases === 0 && f.trackerItems === 0) return 'vmware-exit';
+  if (['change', 'maintenance', 'database', 'assess', 'landing-zone', 'retire'].includes(f.mode)) return modeStartHash(page, f);
   if (page === 'application-migration') {
     if (f.mode === 'single' && f.onlyAppSlug) return `app:${f.onlyAppSlug}`;
     if (f.apps > 0) return 'applications';
@@ -239,6 +244,10 @@ export function landingHash(page        , f           )         {
 /** Start the selected initiative while retaining the plan's inventory and saved designs. */
 export function modeStartHash(page        , f           )         {
   switch (f.mode) {
+    case 'assess':
+    case 'landing-zone':
+    case 'retire':
+      return 'vmware-exit';
     case 'new':
       return page === 'application-migration' ? 'app:/new-service' : 'utilities:deploy-service';
     case 'change':

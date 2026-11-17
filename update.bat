@@ -39,6 +39,7 @@ if not defined ARCHTOOLKIT_WSL_DISTRO set "ARCHTOOLKIT_WSL_DISTRO=Ubuntu-24.04"
 set "FAILED="
 set "SKIPPED="
 set "DONE="
+set "REFRESHED="
 set "AUTO="
 set "FORCE="
 set "ARGPICK="
@@ -233,6 +234,10 @@ if errorlevel 1 (
   set "DONE=!DONE!;Tests"
 )
 for /f "tokens=2,3" %%a in ('findstr /b /c:"# pass" /c:"# fail" "%WORKDIR%\tests.log"') do echo   %%a %%b
+if not defined FAILED if defined REFRESHED (
+  set "LABEL=Record update version" & set "CMD=%NODE% tools\record-update-version.mjs !REFRESHED!"
+  call :step
+)
 
 rem ===========================================================================
 rem  6. Summary, and one commit
@@ -250,7 +255,7 @@ if defined FAILED (
   echo   Something failed, so nothing is committed. What the steps rewrote is
   echo   still in the working copy: git status shows it, git checkout -- . puts
   echo   it back. Fix the failures and run this again for those areas.
-  goto :finished
+  goto :fail
 )
 if not defined HASGIT (
   echo.
@@ -332,7 +337,14 @@ if errorlevel 1 (
   set "FAILED=!FAILED!;!LABEL!"
 ) else (
   set "DONE=!DONE!;!LABEL!"
-  if defined KEY %NODE% tools\update-state.mjs record !KEY! !CHECK!
+  if defined KEY (
+    %NODE% tools\update-state.mjs record !KEY! !CHECK!
+    if errorlevel 1 (
+      set "FAILED=!FAILED!;Could not record !KEY!"
+    ) else (
+      set "REFRESHED=!REFRESHED! !KEY!"
+    )
+  )
 )
 set "KEY=" & set "CHECK="
 exit /b 0

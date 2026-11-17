@@ -272,6 +272,18 @@ describe('waves: the local grouping (swap point for planWaves)', () => {
 describe('landing zones: the card as the plan holds it', () => {
   const p = plan();
 
+  it('uses the shared region dropdown for both AWS locations and keeps typed legacy regions', () => {
+    const design = planModel(p).design.platforms.find((platform) => platform.platform === 'aws')!;
+    const edited = withLandingZoneValue(p, 'aws:region:primary', 'example-custom-region', {});
+    const { inputs } = landingZoneInputs(edited, design);
+    const primary = inputs.find((input) => input.id === 'aws:region:primary');
+    const dr = inputs.find((input) => input.id === 'aws:region:dr');
+    expect(primary?.control).toBe('combo');
+    expect(primary?.options?.map((option) => option.value)).toContain('example-custom-region');
+    expect(dr?.control).toBe('combo');
+    expect(dr?.options?.map((option) => option.value)).toContain('us-gov-west-1');
+  });
+
   it('offers dropdowns for every closed set and grids for the governance lists', () => {
     const pd = planModel(p).design.platforms[0]!;
     const lz = landingZoneInputs(p, pd);

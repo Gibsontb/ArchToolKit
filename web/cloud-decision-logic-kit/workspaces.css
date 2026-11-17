@@ -1,0 +1,149 @@
+body.classic-wizard {
+  --muted: var(--text-muted);
+  --bg-card: var(--surface);
+  --accent-soft: var(--accent-dim);
+  display: block;
+  padding: 0;
+}
+
+.classic-wizard [hidden] {
+  display: none !important;
+}
+
+.classic-wizard .app-shell {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.classic-wizard .app-shell > header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.classic-wizard .app-shell > header h1 {
+  font-size: 1.65rem;
+}
+
+.classic-wizard .app-shell > header p {
+  margin-top: var(--space-2);
+}
+
+.classic-wizard .logo-dot,
+.classic-wizard .main-menu-btn {
+  display: none;
+}
+
+.classic-wizard .cloud-picker,
+.classic-wizard .cloud-picker label {
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.classic-wizard .cloud-picker label {
+  flex-wrap: wrap;
+}
+
+.classic-wizard .cloud-picker {
+  width: min(100%, 23rem);
+}
+
+.classic-wizard .cloud-picker select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.classic-wizard .app-shell > header > div,
+.classic-wizard .field,
+.classic-wizard .field select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.classic-wizard .cloud-picker select,
+.classic-wizard .form-grid input,
+.classic-wizard .form-grid select,
+.classic-wizard .form-grid textarea {
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.classic-wizard .cloud-picker select:focus,
+.classic-wizard .form-grid input:focus,
+.classic-wizard .form-grid select:focus,
+.classic-wizard .form-grid textarea:focus {
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.classic-wizard .card::before {
+  content: none;
+}
+
+.classic-wizard label,
+.classic-wizard .result-section h3 {
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+}
+
+.classic-wizard .section-divider,
+.classic-wizard .footer-actions {
+  background: var(--border);
+}
+
+.classic-wizard .footer-actions {
+  background: none;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.classic-wizard .btn-row {
+  flex-wrap: wrap;
+}
+
+.classic-wizard button.btn-primary {
+  background: var(--accent);
+  box-shadow: none;
+  transform: none;
+}
+
+.classic-wizard button.btn-primary:hover {
+  background: var(--accent-hover);
+  box-shadow: none;
+}
+
+.classic-wizard button.btn:not(.btn-primary),
+.classic-wizard .result-section,
+.classic-wizard .pill {
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.classic-wizard button.btn:not(.btn-primary):hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.classic-wizard .badge-cloud {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--accent-dim);
+}
+
+.classic-wizard .result-main strong {
+  color: var(--text);
+}
+
+.classic-wizard .sizing-table th,
+.classic-wizard .sizing-table td {
+  border-color: var(--border);
+}

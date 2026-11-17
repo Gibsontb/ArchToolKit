@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Script } from 'node:vm';
 import { expect } from '../testing/expect.ts';
 import {
   APPLICATION_MIGRATION_PANES, LEGACY_MIGRATION_HASHES, LEGACY_MULTICLOUD_TO_MIGRATION, MIGRATION_UTILITIES_PANES,
@@ -34,6 +35,28 @@ const here = dirname(fileURLToPath(import.meta.url));
 const web = join(here, '..', '..', 'web', 'app');
 
 describe('the original Multi-Cloud Decision Matrix', () => {
+  it('serves all five original pages and repairs the archived JavaScript escapes', () => {
+    const legacyDir = join(here, '..', '..', '_old', '13_Web', 'static', 'cloud-decision-logic-kit');
+    const servedDir = join(web, '..', 'cloud-decision-logic-kit');
+    const pages = readdirSync(legacyDir).filter((name) => name.endsWith('.html'));
+    expect(pages.length).toBe(5);
+    for (const page of pages) {
+      const served = readFileSync(join(servedDir, page), 'utf8');
+      let original = readFileSync(join(legacyDir, page), 'utf8');
+      if (/^(aws|gcp|oci)-/.test(page)) {
+        original = original.replace(/<script>([\s\S]*?)<\/script>/g,
+          (tag: string) => tag.replace(/\\(`|\$\{)/g, '$1'));
+      }
+      const form = (html: string) => html.slice(html.indexOf('    <div class="content">'), html.indexOf('<script')).trimEnd();
+      expect(form(served).replace(/<\/main>$/, '</div>')).toBe(form(original));
+      expect(served.includes('<header class="app-header">')).toBe(true);
+      expect(served.includes('href="../styles/app.css"')).toBe(true);
+      const engine = (html: string) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+      if (page !== 'multi-cloud-decision-matrix.html') expect(engine(served)).toEqual(engine(original));
+      for (const [, code] of served.matchAll(/<script>([\s\S]*?)<\/script>/g)) new Script(code!, { filename: page });
+    }
+  });
+
   it('preserves the input fields and option values from the original HTML', () => {
     const legacy = readFileSync(join(here, '..', '..', '_old', '13_Web', 'static', 'cloud-decision-logic-kit', 'multi-cloud-decision-matrix.html'), 'utf8').split('<script>')[0]!;
     const fields = new Map(allFields().map((field) => [field.id, field.options] as const));
@@ -54,13 +77,16 @@ describe('the original Multi-Cloud Decision Matrix', () => {
     for (const [, id] of results.matchAll(/\bid="([^"]+)"/g)) expect(outputs.has(id!)).toBe(true);
   });
 
-  it('exposes all four initiatives and four migration scopes through Plan mode', () => {
-    expect(PLAN_MODE_OPTIONS.map((option) => option.value)).toEqual(['new', 'change', 'maintenance', 'migrate', 'single', 'dc-exit', 'database']);
+  it('exposes the original scopes and the three additional initiatives', () => {
+    expect(PLAN_MODE_OPTIONS.map((option) => option.value)).toEqual(['assess', 'landing-zone', 'new', 'change', 'maintenance', 'migrate', 'single', 'dc-exit', 'database', 'retire']);
     const appPlan = (mode: PlanMode) => fixture(mode, { apps: ['billing', 'portal'] });
     expect(modeStartHash('application-migration', planFacts(appPlan('new')))).toBe('app:/new-service');
     expect(modeStartHash('migration-utilities', planFacts(appPlan('new')))).toBe('utilities:deploy-service');
     expect(modeStartHash('migration-utilities', planFacts(appPlan('dc-exit')))).toBe('vmware-exit');
     expect(modeStartHash('application-migration', planFacts(appPlan('database')))).toBe('databases');
+    for (const mode of ['assess', 'landing-zone', 'retire'] as const) {
+      expect(modeStartHash('application-migration', planFacts(appPlan(mode)))).toBe('vmware-exit');
+    }
     expect(answersFromApp(appPlan('maintenance'), 'billing').answers.initiativeType).toBe('maintenance');
     expect(answersFromApp(appPlan('change'), 'billing').answers.initiativeType).toBe('existing-service');
     for (const [mode, scope] of [['migrate', 'portfolio'], ['dc-exit', 'dc-estate'], ['single', 'single-app'], ['database', 'db-only']] as const) {
@@ -192,8 +218,8 @@ describe('pane visibility follows the mode and the data (A.1.7)', () => {
 
   it('new hides the migration panes on both pages', () => {
     const f = planFacts(fixture('new', { newApps: ['portal'] }));
-    expect(amVisible(f)).toEqual(['applications', 'constraints', 'sizing', 'stack'] as PaneId[]);
-    expect(muVisible(f)).toEqual(allMu.filter((id) => !['datacentre', 'waves', 'execute', 'board'].includes(id)));
+    expect(amVisible(f)).toEqual(['vmware-exit', 'applications', 'constraints', 'sizing', 'stack'] as PaneId[]);
+    expect(muVisible(f)).toEqual(allMu.filter((id) => !['datacentre', 'source-inventory', 'waves', 'execute', 'board'].includes(id)));
   });
 
   it('a new plan that gains a migrating app shows the migration panes again', () => {
@@ -237,8 +263,8 @@ describe('pane visibility follows the mode and the data (A.1.7)', () => {
 });
 
 describe('landing rules', () => {
-  it('Application Migration opens the start card on an empty plan, Sources with servers and no apps, and Applications once there are apps', () => {
-    expect(landingHash('application-migration', planFacts(fixture('migrate')))).toBe('app:');
+  it('Application Migration opens project setup on an empty plan, Sources with servers and no apps, and Applications once there are apps', () => {
+    expect(landingHash('application-migration', planFacts(fixture('migrate')))).toBe('vmware-exit');
     expect(landingHash('application-migration', planFacts(fixture('migrate', { workloads: 3 })))).toBe('sources');
     expect(landingHash('application-migration', planFacts(fixture('migrate', { apps: ['billing'] })))).toBe('applications');
   });
@@ -247,8 +273,9 @@ describe('landing rules', () => {
     expect(landingHash('application-migration', planFacts(fixture('single', { apps: ['billing'] })))).toBe('app:billing');
   });
 
-  it('opens the start card in new mode with nothing in the plan', () => {
-    expect(landingHash('application-migration', planFacts(fixture('new')))).toBe('app:');
+  it('opens project setup in new mode with nothing in the plan on either migration page', () => {
+    expect(landingHash('application-migration', planFacts(fixture('new')))).toBe('vmware-exit');
+    expect(landingHash('migration-utilities', planFacts(fixture('new')))).toBe('vmware-exit');
   });
 
   it('Migration & Utilities opens the board only once something is past planned', () => {

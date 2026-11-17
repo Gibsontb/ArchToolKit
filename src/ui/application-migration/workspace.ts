@@ -45,7 +45,7 @@ import { findUtility, utilitiesFor } from '../../multicloud/change/index.ts';
 import { providerTerm } from '../../multicloud/plan/methodology.ts';
 import {
   APP_KIND_OPTIONS, APP_PATTERN_OPTIONS, APP_PLAN_STATUS_OPTIONS, CHANGE_WINDOW_OPTIONS, CRITICALITY_OPTIONS, EDGE_KIND_OPTIONS, FRAMEWORK_OPTIONS,
-  LATENCY_OPTIONS, OS_OPTIONS, PLATFORM_LABELS, RESIDENCY_OPTIONS, RPO_OPTIONS, RTO_OPTIONS, SOURCE_PLATFORM_OPTIONS, SPECIAL_OPTIONS, labelOf, slugName,
+  LATENCY_OPTIONS, OS_OPTIONS, PLATFORM_LABELS, PLATFORM_VALUES, RESIDENCY_OPTIONS, RPO_OPTIONS, RTO_OPTIONS, SOURCE_PLATFORM_OPTIONS, SPECIAL_OPTIONS, labelOf, slugName,
 } from '../../multicloud/plan/options.ts';
 import { supportStatus } from '../../multicloud/plan/os.ts';
 import { planEnvelope } from '../../multicloud/plan/store.ts';
@@ -180,14 +180,18 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
     return box;
   };
 
-  const startCard = (plan: Plan, addService: boolean): HTMLElement => {
+  const startCard = (plan: Plan, addService: boolean, preferredPlatform?: Platform): HTMLElement => {
     const slot = el('div');
     const showNew = (): void => {
       fill(slot, newAppCard(() => ctx.session.plan(), (next, appId) => {
         const app = next.apps.find((a) => a.id === appId);
         watcher.edit(() => next, { immediate: true });
         if (app) {
-          watcher.edit((p) => setDesignAnswer(p, app.id, 'initiativeType', 'new-service', designCloud(p, app.id, p.requirements.allowed[0] ?? 'aws')).plan, { immediate: true });
+          watcher.edit((p) => {
+            const target = preferredPlatform ?? designCloud(p, app.id, p.requirements.allowed[0] ?? 'aws');
+            const project = preferredPlatform ? setDesignCloud(p, app.id, target).plan : p;
+            return setDesignAnswer(project, app.id, 'initiativeType', 'new-service', target).plan;
+          }, { immediate: true });
           ctx.go(appHash(app, 'step-1'));
         }
       }, () => {
@@ -231,7 +235,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       drawnFor = '';
       fill(body,
         slug ? el('div', { class: 'tip warn', text: `There is no application called "${slug}".` }) : null,
-        startCard(plan, tab === 'new-service'));
+        startCard(plan, tab.split(':')[0] === 'new-service', PLATFORM_VALUES.find((platform) => tab === `new-service:${platform}`)));
       return;
     }
     const ap = appPlanOrDraft(plan, app);

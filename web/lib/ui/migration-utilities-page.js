@@ -24,8 +24,8 @@ import { mountPlanPage,               } from './plan-shell.js';
 import { loadTrackerRecord } from '../multicloud/plan/store.js';
 
 export const MIGRATION_UTILITIES_SPECS                      = [
-  { id: 'overview', load: () => import('./migration-utilities/overview.js') },
   { id: 'vmware-exit', load: () => import('./migration-utilities/vmware-exit.js') },
+  { id: 'source-inventory', load: () => import('./multicloud/sources.js') },
   { id: 'landing-zones', load: () => import('./multicloud/design.js') },
   { id: 'capacity', load: () => import('./migration-utilities/capacity.js') },
   { id: 'datacentre', load: () => import('./migration-utilities/datacentre.js') },
@@ -40,12 +40,15 @@ export const MIGRATION_UTILITIES_SPECS                      = [
   { id: 'raid', load: () => import('./migration-utilities/raid.js') },
   { id: 'reports', load: () => import('./migration-utilities/reports.js') },
   { id: 'generate', load: () => import('./multicloud/generate.js') },
+  { id: 'overview', load: () => import('./migration-utilities/overview.js') },
   { id: 'utilities', load: () => import('./migration-utilities/utilities.js') },
 ];
 
 const root = typeof document !== 'undefined' ? document.getElementById('multicloud-root') : null;
 const header = typeof document !== 'undefined' ? document.getElementById('plan-header') : null;
-if (root && header) {
+if (root && header && !globalThis.location.hash) {
+  globalThis.location.replace('../cloud-decision-logic-kit/multi-cloud-decision-matrix.html');
+} else if (root && header) {
   void mountPlanPage({
     page: 'migration-utilities',
     root,

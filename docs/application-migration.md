@@ -50,7 +50,7 @@ the constraints; Migration & Utilities reads them.
 
 The page header holds:
 
-- **Plan mode** (below), shared with the other page;
+- **Initiative** (below), shared with the other page;
 - **Open Migration & Utilities →**;
 - the file bar: **Save** (JSON, YAML or TXT), **Load**, **Clear**. Credentials are
   never written to the file.
@@ -230,12 +230,15 @@ The rules are described in `docs/multicloud-matrix.md`.
 
 ## Plan modes
 
-The **Plan mode** dropdown is in both page headers (`Plan.mode`). A pane shows when
-the mode needs it **or** the plan already has data for it, so changing the mode
-never hides or deletes work.
+**Initiative** is the first selector in both page headers (`Plan.mode`).
+It opens **Project setup**, where migration activities ask **Move from** and
+**Move to** and show transfer choices for the pair. Greenfield and operational
+activities ask for the relevant platform and show the available actions.
 
-| Mode | Label | Opens when selected |
+| Mode | Label | From Project setup |
 | --- | --- | --- |
+| `assess` | Assess or compare platforms | Compare an application's eligible platforms or open Readiness assessments. |
+| `landing-zone` | Build a landing zone | Choose a platform and open Landing zones. |
 | `new` | Add a service (greenfield) | New service form and the greenfield design. |
 | `change` | Change an existing service | Application selection and the existing-service flow. |
 | `maintenance` | Maintenance / operations | Application selection and the operations focus and cadence fields. |
@@ -243,6 +246,7 @@ never hides or deletes work.
 | `single` | Migrate one application or service | The app workspace when exactly one application is present. |
 | `dc-exit` | Migrate a data centre / infrastructure estate | Sources or Applications, with the estate scope available in Design. |
 | `database` | Database-only / data-only migration | Databases. Use a database-scoped plan to generate execution scripts. |
+| `retire` | Retire a service | Review dependencies and download a scoped retirement plan. |
 
 These modes cover the original Decision Matrix's four initiative types and its
 single-application, portfolio, estate, and database migration scopes. Saved

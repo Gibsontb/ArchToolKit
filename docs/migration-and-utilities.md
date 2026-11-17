@@ -7,9 +7,23 @@ execution per path, test, cutover, rollback, DNS and load-balancer switching,
 validation, decommission and a tracking board. Its second area, **Utilities**, makes
 day-2 changes without a migration, each as a small Terraform and / or Ansible bundle.
 
-The file name `multicloud.html` is kept from the retired Multi-Cloud Decision &
-Onboarding Wizard, which this page replaces; the wizard's old addresses are sent
-on (see [Old addresses](#old-addresses)).
+Opening `multicloud.html` without a pane opens the restored Multi-Cloud
+Decision & Onboarding Wizard in the same theme as the rest of ArchToolKit.
+The first step asks what you are doing. Migration shows **Platform Type** and one
+alphabetical **Move to** list, with a second selector for the service only
+when you choose **Cloud-hosted VMware**. For **Add a new service**, select
+**Platform Type** and choose **N/A**, the first option under **Move to**, to skip
+the destination. Sizing & environments holds the cloud
+environment and region. **Continue to project setup** carries those
+selections and the cutover preference into the shared plan workflow. Choose
+VCF and a new service to continue to VCF Spec Builder.
+
+The Landing zones platform selector also opens vendor handoff forms for the
+private targets, hosted VMware and the government environments. AWS, Azure,
+Google Cloud and OCI use primary and DR region dropdowns. Private platforms
+use the plan's sites and platform-specific cluster, network and storage
+identifiers. The vendor handoff JSON records the intended design for the
+operator or vendor tooling.
 
 The shell is `src/ui/migration-utilities-page.ts` over `src/ui/plan-shell.ts`; which
 panes show is `src/ui/page-modes.ts`. It shares the plan, the plan-mode dropdown, the
@@ -45,11 +59,16 @@ When a tracker exists, the VMware Inventory page's VM table gains a read-only
 
 ## Plan modes
 
-The same **Plan mode** dropdown as Application Migration. A pane shows when the mode
-needs it **or** the plan has data for it; mode changes never delete data.
+The same **Initiative** selector as Application Migration starts
+**Project setup**. Choose **Move from** and **Move to**, then continue to
+**Source inventory**. The downloaded plan includes the preferred path, cutover
+approach, authorization checklist, and migration phases. Assign final paths to
+individual workloads in **Execute**.
 
-| Mode | Label | Opens when selected |
+| Mode | Label | From Project setup |
 | --- | --- | --- |
+| `assess` | Assess or compare platforms | Choose an application and compare platform eligibility, scores and findings. Readiness assessments are also available. |
+| `landing-zone` | Build a landing zone | Choose a platform and open its landing-zone design. |
 | `new` | Add a service (greenfield) | Deploy a new service. |
 | `change` | Change an existing service | Utilities. |
 | `maintenance` | Maintenance / operations | Utilities. |
@@ -57,6 +76,7 @@ needs it **or** the plan has data for it; mode changes never delete data.
 | `single` | Migrate one application or service | Waves. |
 | `dc-exit` | Migrate a data centre / infrastructure estate | VMware exit planner, with the Data centre pane available. |
 | `database` | Database-only / data-only migration | Execute settings. Remove server rows from the execution plan before generating a database-only kit. |
+| `retire` | Retire a service | Review an application's dependencies and download its retirement plan and approval checklist. |
 
 ## Old addresses
 
@@ -451,7 +471,7 @@ landing zone with no waves, replication or cutover (`change/deploy.ts`):
   same stack or site.
 ## VMware exit planning
 
-Open **Plan a VMware exit** to select private-cloud, public-cloud, or VCF
+Open **Project setup** and choose vSphere or VCF to select private-cloud, public-cloud, or VCF
 destinations and export a project plan. The planner adds the current inventory
 and waves, per-target delivery steps, and agency-specific approval evidence.
 See the [integration project plan](vmware-exit-integration.md) for the current

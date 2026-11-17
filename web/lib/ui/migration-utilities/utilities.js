@@ -90,6 +90,7 @@ export function mount(root             , ctx             )       {
   const valuesById = new Map                                ();
   let bundle                          ;
   let bundleFor = '';
+  let appliedPreset = '';
   let tracker                 = null;
   let date = todayIso();
 
@@ -108,9 +109,16 @@ export function mount(root             , ctx             )       {
   };
 
   const route = () => {
-    const id = ctx.arg().split('/')[0] ?? '';
+    const arg = ctx.arg();
+    const [id = '', ...rest] = arg.split('/');
     const u = id ? findUtility(id) : undefined;
-    if (u) drawUtility(u);
+    const preset = new URLSearchParams(rest.join('/'));
+    const platform = preset.get('platform');
+    if (arg !== appliedPreset) {
+      appliedPreset = arg;
+      if (u && isCloud(platform) && platform !== viewerCloud()) rememberCloud(platform, false);
+    }
+    if (u) drawUtility(u, preset);
     else drawCatalogue(id);
   };
 
@@ -141,16 +149,12 @@ export function mount(root             , ctx             )       {
   }
 
   // ---- one utility ------------------------------------------------------------------
-  function drawUtility(u               )       {
+  function drawUtility(u               , presets                 )       {
     if (bundleFor !== u.id) {
       bundle = undefined;
       bundleFor = u.id;
     }
     // `#utilities:<id>/<k=v&…>` presets (the decision wizard's "Change a running service" opens a utility for its app, server and cloud).
-    // A preset cloud becomes the page's cloud.
-    const presets = new URLSearchParams(ctx.arg().split('/').slice(1).join('/'));
-    const presetCloud = presets.get('platform');
-    if (!valuesById.has(u.id) && isCloud(presetCloud) && presetCloud !== viewerCloud()) rememberCloud(presetCloud, false);
     const cloud = cloudNow();
     const back = el('div', { class: 'btn-row' }, el('a', { class: 'btn btn-small', text: '← All utilities', attrs: { href: '#utilities', 'data-control': 'utilities-back' } }));
     if (!cloud || !u.platforms.includes(cloud)) {

@@ -226,7 +226,11 @@ pushes. About two hours; needs Node, terraform and git.
 
 Whatever area it runs, `update.bat` skips what is current: a download that
 passed in the last 20 hours, and a check whose inputs have not changed since it
-last passed (`update.bat all /yes /force` runs everything). `terraform validate`
+last passed (`update.bat all /yes /force` runs everything). When at least one
+update step actually runs and the build and tests pass, the batch advances
+`update-version.json` and records the version and time of each completed step.
+Git can see the refresh even when upstream content matched the previous copy.
+`terraform validate`
 loads 40 blueprints at a time (`ARCHTOOLKIT_TF_BATCH`) and stops the provider
 processes each round leaves, so memory stays flat. Everything the update and
 the tools download, cache and build — the Terraform provider cache, working

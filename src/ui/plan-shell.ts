@@ -26,11 +26,13 @@ import { field, select } from './components.ts';
 import { fileBar } from './file-bar.ts';
 import { mountTabs } from './tab-shell.ts';
 import type { Json } from '../editor/doc.ts';
-import { PLAN_MODE_OPTIONS } from '../multicloud/plan/options.ts';
+import { PLAN_MODE_OPTIONS, PLATFORM_OPTIONS, isOption, overrideKey } from '../multicloud/plan/options.ts';
+import { REGION_LISTS } from './multicloud/constraints-model.ts';
+import { vendorLandingZoneFields } from './multicloud/vendor-landing-zone.ts';
 import { emptyPlan, planEnvelope, planFromEnvelope } from '../multicloud/plan/store.ts';
 import type { PlanMode } from '../multicloud/plan/types.ts';
 import {
-  hashArgument, isPaneVisible, landingHash, legacyRedirect, modeStartHash, paneForHash, panesOf, planFacts,
+  hashArgument, isPaneVisible, landingHash, legacyRedirect, paneForHash, panesOf, planFacts,
   type PageId, type PaneId, type PaneInfo, type PlanFacts, type TrackerLike,
 } from './page-modes.ts';
 import { mountConflictBanner, openPlanSession, type PlanSession } from './plan-sync.ts';
@@ -84,6 +86,9 @@ const MODE_HINT: Readonly<Record<PlanMode, string>> = {
   new: 'Design and deploy a new service.',
   change: 'Plan a change to a running service, such as scaling, modernization or hardening.',
   maintenance: 'Plan patches, capacity, reliability and recurring operations.',
+  assess: 'Compare platform fit and constraints for an application.',
+  'landing-zone': 'Design the shared platform foundation.',
+  retire: 'Review dependencies, retention and approvals for a planned retirement.',
 };
 
 function currentHash(): string {
@@ -109,6 +114,28 @@ export async function mountPlanPage(options: PlanPageOptions): Promise<PlanSessi
   }
 
   const session = await openPlanSession();
+  const incoming = paneForHash(page, currentHash())?.id === 'vmware-exit'
+    ? new URLSearchParams(hashArgument(currentHash())) : new URLSearchParams();
+  const requestedMode = incoming.get('mode');
+  const provider = incoming.get('provider');
+  const region = incoming.get('region');
+  const environment = incoming.get('environment');
+  const nativeRegion = region && isOption(PLATFORM_OPTIONS, provider) && REGION_LISTS[provider]?.includes(region);
+  const government = (provider === 'aws' && environment === 'govcloud') || (provider === 'azure' && environment === 'azure-government');
+  const governmentRegion = government && region
+    && vendorLandingZoneFields(environment, session.plan()).find((input) => input.id === 'primary')?.options?.some((option) => option.value === region);
+  if ((isOption(PLAN_MODE_OPTIONS, requestedMode) && requestedMode !== session.plan().mode) || nativeRegion || governmentRegion) {
+    session.update((plan) => {
+      let next = isOption(PLAN_MODE_OPTIONS, requestedMode) ? { ...plan, mode: requestedMode } : plan;
+      if (governmentRegion) {
+        next = { ...next, designOverrides: { ...next.designOverrides, [overrideKey(environment, 'vendor-lz', 'primary')]: region } };
+      } else if (!government && nativeRegion && isOption(PLATFORM_OPTIONS, provider)) {
+        const existing = next.requirements.regions[provider];
+        next = { ...next, requirements: { ...next.requirements, regions: { ...next.requirements.regions, [provider]: { ...existing, primary: region } } } };
+      }
+      return next;
+    }, { immediate: true });
+  }
   let tracker: TrackerLike | null = options.tracker ? await options.tracker().catch(() => null) : null;
   let facts = planFacts(session.plan(), tracker);
 
@@ -122,7 +149,7 @@ export async function mountPlanPage(options: PlanPageOptions): Promise<PlanSessi
   modeSelect.addEventListener('change', () => {
     const mode = modeSelect.value as PlanMode;
     session.update((p) => ({ ...p, mode }), { immediate: true });
-    if (globalThis.location) globalThis.location.hash = modeStartHash(page, planFacts(session.plan(), tracker));
+    if (globalThis.location) globalThis.location.hash = 'vmware-exit';
   });
   const status = el('span', { class: 'small muted', attrs: { 'data-control': 'plan-status', role: 'status' } });
   const describe = () => {
@@ -131,7 +158,7 @@ export async function mountPlanPage(options: PlanPageOptions): Promise<PlanSessi
     status.textContent = `${p.name} · ${facts.apps} app${facts.apps === 1 ? '' : 's'} · ${facts.workloads} server${facts.workloads === 1 ? '' : 's'} · ${state}`;
   };
 
-  const modeField = field('Plan mode', modeSelect);
+  const modeField = field('Initiative', modeSelect);
   append(modeField, modeHint);
   append(
     options.header,

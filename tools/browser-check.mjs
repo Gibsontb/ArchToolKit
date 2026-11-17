@@ -831,6 +831,30 @@ await section('the platform is chosen once and carried', async () => {
 });
 
 // --- the two migration pages: every pane, the old addresses, a phone --------
+await section('the wizard keeps Move from and Move to together', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/app/multicloud.html`);
+    await page.locator('#wizardSourcePlatform').waitFor({ state: 'visible' });
+    const initiatives = await page.locator('#initiativeType option').evaluateAll((options) => options.map((option) => option.value));
+    for (const value of initiatives) {
+      await page.locator('#initiativeType').selectOption(value);
+      const newService = value === 'new-service';
+      const source = await page.getByLabel('Platform Type', { exact: true }).boundingBox();
+      const target = await page.getByLabel('Move to', { exact: true }).boundingBox();
+      check(`Platform fields share a row for ${value || 'no initiative selected'}`, source !== null && target !== null && source.y === target.y);
+      if (newService) {
+        const destination = page.getByLabel('Move to', { exact: true });
+        check('Move to offers N/A first and keeps its platform choices', await destination.isEnabled() &&
+          await destination.locator('option').first().textContent() === 'N/A' && await destination.locator('option[value=aws]').count() === 1);
+      }
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
 await section('the two migration pages: every pane, the old addresses, a phone', async () => {
   // Application Migration (migration.html) and Multi-Cloud Migration &
   // Utilities (multicloud.html). Every pane opens from its hash with no console
@@ -838,8 +862,8 @@ await section('the two migration pages: every pane, the old addresses, a phone',
   // WP-10 end-to-end plan (a data-centre exit from every source), loaded
   // through the page's own file bar. At 375 px no pane scrolls sideways.
   const PANES = {
-    'migration.html': ['sources', 'servers', 'databases', 'applications', 'constraints', 'sizing', 'stack'],
-    'multicloud.html': ['overview', 'landing-zones', 'waves', 'waves:governance', 'generate', 'execute', 'board', 'timeline', 'capacity', 'raid', 'reports', 'utilities', 'datacentre'],
+    'migration.html': ['vmware-exit', 'sources', 'servers', 'databases', 'applications', 'constraints', 'sizing', 'stack'],
+    'multicloud.html': ['vmware-exit', 'source-inventory', 'overview', 'landing-zones', 'waves', 'waves:governance', 'generate', 'execute', 'board', 'timeline', 'capacity', 'raid', 'reports', 'utilities', 'datacentre'],
   };
 
   const { buildE2e } = await import('../src/testing/multicloud-e2e.ts');

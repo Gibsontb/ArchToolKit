@@ -1,8 +1,9 @@
 # VMware exit integration project plan
 
-The VMware exit workflow starts in **Multi-Cloud Migration & Utilities → Plan a
-VMware exit**. Select vSphere or VCF, the governance and data-handling profiles,
-and any number of destinations. Download the project plan with the current
+Start in **Multi-Cloud Migration & Utilities → Project setup**. Under
+**Initiative**, choose the migration scope, then select vSphere or VCF, the
+governance and data-handling profiles, and a destination.
+Choose a preferred transfer path and cutover approach. Download the project plan with the current
 inventory counts, wave dates, phase owners, evidence, and target-specific
 workstreams. Set calendar dates after sizing the estate, confirming procurement
 lead times and testing a representative pilot. Use measured cutover and rollback

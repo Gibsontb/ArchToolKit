@@ -18,6 +18,7 @@
 import { mountPlanPage,               } from './plan-shell.js';
 
 export const APPLICATION_MIGRATION_SPECS                      = [
+  { id: 'vmware-exit', load: () => import('./migration-utilities/vmware-exit.js') },
   { id: 'sources', load: () => import('./multicloud/sources.js') },
   { id: 'servers', load: () => import('./multicloud/workloads.js') },
   { id: 'databases', load: () => import('./multicloud/databases.js') },

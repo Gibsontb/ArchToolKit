@@ -333,8 +333,8 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
         class: 'btn', text: 'Download the CSV templates', attrs: { type: 'button', 'data-control': 'csv-templates' },
         on: { click: () => void zip({ ...CSV_TEMPLATES, 'servers.csv': `${SERVERS_CSV_HEADER}\n` }, BUNDLE_DATE).then((bytes) => downloadFile('migration-csv-templates.zip', bytes, 'application/zip')) },
       }),
-      el('button', { class: 'btn', text: 'Type servers in by hand →', attrs: { type: 'button' }, on: { click: () => ctx.go('servers') } }),
-      el('button', { class: 'btn', text: 'Type databases in by hand →', attrs: { type: 'button' }, on: { click: () => ctx.go('databases') } })),
+      el('a', { class: 'btn', text: 'Type servers in by hand →', attrs: { href: 'migration.html#servers' } }),
+      el('a', { class: 'btn', text: 'Type databases in by hand →', attrs: { href: 'migration.html#databases' } })),
     csvResult), importCsvFiles));
 
   // ---- 6. app grouping rules ------------------------------------------------------

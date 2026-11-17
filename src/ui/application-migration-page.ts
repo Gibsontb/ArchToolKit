@@ -18,6 +18,7 @@
 import { mountPlanPage, type PaneSpec } from './plan-shell.ts';
 
 export const APPLICATION_MIGRATION_SPECS: readonly PaneSpec[] = [
+  { id: 'vmware-exit', load: () => import('./migration-utilities/vmware-exit.ts') },
   { id: 'sources', load: () => import('./multicloud/sources.ts') },
   { id: 'servers', load: () => import('./multicloud/workloads.ts') },
   { id: 'databases', load: () => import('./multicloud/databases.ts') },

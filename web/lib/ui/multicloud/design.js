@@ -27,7 +27,7 @@
  */
 
 import { el, append, clear, downloadFile } from '../dom.js';
-import { card, findingsList } from '../components.js';
+import { card, field, findingsList, select } from '../components.js';
 import { renderBlueprintForm } from '../blueprint-form.js';
                                                     
                                                                                             
@@ -38,7 +38,7 @@ import { networkEditor } from './network-rows.js';
 import { terraformFiles } from '../../multicloud/plan/generate/terraform.js';
 import {
   BASTION_OPTIONS, CONNECTION_OPTIONS, DEFAULT_LANDING_ZONE, FRAMEWORK_OPTIONS, KEY_MANAGEMENT_OPTIONS, LANDING_ZONE_MODE_OPTIONS,
-  LOG_RETENTION_OPTIONS, PLATFORM_LABELS, SECURITY_BASELINE_OPTIONS,
+  LOG_RETENTION_OPTIONS, PLATFORM_LABELS, PLATFORM_OPTIONS, SECURITY_BASELINE_OPTIONS,
   AD_STRATEGY_OPTIONS, CLOUD_SIGN_IN_OPTIONS, DNS_STRATEGY_OPTIONS, defaultExecution, overrideKey, slugName,
 } from '../../multicloud/plan/options.js';
                                                                                                                                  
@@ -47,11 +47,16 @@ import { appConnectors, placedOn } from '../../multicloud/plan/apps/connectors.j
 import { appPlanOf } from '../../multicloud/plan/apps/components.js';
 import { designAnswers } from '../../multicloud/plan/apps/design.js';
 import {
-  CLOUD_NAMES, DC_LINK_NAMES, LANDING_ZONE_NAMES, cloudPicker, cloudUsage, isCloud, landingZoneBuild, landingZoneBuildText, onCloudChange,
+  CLOUD_NAMES, DC_LINK_NAMES, LANDING_ZONE_NAMES, cloudUsage, isCloud, landingZoneBuild, landingZoneBuildText, onCloudChange,
   rememberCloud, resolveCloud, viewerCloud,               
 } from './cloud-choice.js';
 import { fill, note, rowsTable, subhead, twoColumns, watchPlan } from './pane-kit.js';
 import { projectDate } from './project.js';
+import { regionChoices } from './constraints-model.js';
+import { EXIT_TARGETS, PROJECT_DESTINATION_KEY } from '../../multicloud/plan/dcexit/vmware-exit.js';
+import { vendorLandingZoneCard } from './vendor-landing-zone.js';
+
+const vendorTargets = EXIT_TARGETS.filter((target) => target.delivery === 'integration-needed' || target.id === 'vmware-cloud');
 
 // ---------------------------------------------------------------------------
 // The settings, as blueprint inputs
@@ -100,8 +105,12 @@ export function landingZoneInputs(plan      , pd                )               
   const lz = (field        ) => overrideKey(p, 'lz', field);
   const defaultPrefix = `${slugName(plan.name) || 'plan'}-${{ aws: 'aws', azure: 'az', google: 'gcp', oci: 'oci', vmware: 'vcf' }[p]}`;
   const inputs                   = [
-    { id: `${p}:region:primary`, label: REGION_LABEL[p], control: 'text', placeholder: pd.region, hint: p === 'vmware' ? 'The workload domain vCenter' : 'Primary region' },
-    ...(p === 'vmware' ? [] : [{ id: `${p}:region:dr`, label: 'DR region', control: 'text'         , placeholder: 'None', hint: 'Blank: no DR region' }]),
+    p === 'vmware'
+      ? { id: `${p}:region:primary`, label: REGION_LABEL[p], control: 'text', placeholder: pd.region }
+      : { id: `${p}:region:primary`, label: 'Primary region', control: 'combo', options: regionChoices(p, plan.requirements.regions[p]?.primary),
+        blankLabel: pd.region ? `Default (${pd.region})` : 'Choose a region' },
+    ...(p === 'vmware' ? [] : [{ id: `${p}:region:dr`, label: 'DR region', control: 'combo'         ,
+      options: regionChoices(p, plan.requirements.regions[p]?.dr), blankLabel: 'No DR region' }]),
     { id: lz('prefix'), label: 'Name prefix', control: 'text', placeholder: defaultPrefix, hint: `Blank: ${defaultPrefix}` },
     { id: lz('scope'), label: SCOPE_LABEL[p], control: 'text', placeholder: 'Blank: a variable', hint: 'Blank: asked for as a variable' },
   ];
@@ -205,11 +214,15 @@ export function mount(root             , ctx             )       {
   let refreshers                 = [];
   let drawn = '';
 
-  const chosen = ()                       => {
+  const chosen = ()         => {
     const plan = ctx.session.plan();
-    return resolveCloud(ctx.arg(), viewerCloud(), cloudUsage(plan, planModel(plan).decision));
+    const fromRoute = ctx.arg().split('/')[0];
+    const value = fromRoute || plan.designOverrides[PROJECT_DESTINATION_KEY];
+    if (value === 'vcf') return 'vmware';
+    if (isCloud(value) || vendorTargets.some((target) => target.id === value)) return value;
+    return resolveCloud('', viewerCloud(), cloudUsage(plan, planModel(plan).decision)) ?? '';
   };
-  const shape = (plan      , cloud                      )         => `${cloud ?? ''}|${cloud ? platformDesignFor(plan, cloud)?.inPlan ?? 'x' : ''}`;
+  const shape = (plan      , target        )         => `${target}|${isCloud(target) ? platformDesignFor(plan, target)?.inPlan ?? 'x' : ''}`;
 
   const draw = ()       => {
     refreshers = [];
@@ -218,17 +231,24 @@ export function mount(root             , ctx             )       {
     const plan = ctx.session.plan();
     const model = planModel(plan);
     const usage = cloudUsage(plan, model.decision);
-    const cloud = chosen();
-    drawn = shape(plan, cloud);
-    append(top, intro(plan, cloud, usage, model.failure, (next) => {
+    const target = chosen();
+    const cloud = isCloud(target) ? target : undefined;
+    drawn = shape(plan, target);
+    append(top, intro(plan, target, cloud, usage, model.failure, (next) => {
       // Keep the address in step (`#landing-zones:<cloud>`) without re-routing the page.
       if (globalThis.location && globalThis.history) {
         const url = new URL(globalThis.location.href);
         url.hash = next ? `landing-zones:${next}` : 'landing-zones';
         globalThis.history.replaceState(null, '', url.toString());
       }
+      if (isCloud(next)) rememberCloud(next, false);
       draw();
     }));
+    const vendor = vendorTargets.find((entry) => entry.id === target);
+    if (vendor) {
+      append(cards, vendorLandingZoneCard(ctx, vendor));
+      return;
+    }
     if (!cloud) return;
     const pd = platformDesignFor(plan, cloud);
     if (!pd) {
@@ -257,13 +277,20 @@ export function mount(root             , ctx             )       {
   });
 }
 
-function intro(plan      , cloud                      , usage                     , failure                    , onChange                                       )              {
+function intro(plan      , target        , cloud                      , usage                     , failure                    , onChange                          )              {
+  const picker = select([
+    { value: '', label: 'Choose a platform' },
+    ...PLATFORM_OPTIONS.map((option) => {
+      const count = usage.find((row) => row.cloud === option.value)?.chosen.length ?? 0;
+      return { ...option, label: count ? `${option.label} (${count} apps)` : option.label };
+    }),
+    ...vendorTargets.map((entry) => ({ value: entry.id, label: entry.name })),
+  ], target);
+  picker.setAttribute('data-control', 'lz-cloud');
+  picker.addEventListener('change', () => onChange(picker.value));
   return card(
     cloud ? `Landing zone: ${CLOUD_NAMES[cloud]}` : 'Landing zones',
-    cloudPicker({
-      cloud, usage, onChange, control: 'lz-cloud',
-      prompt: 'Choose the cloud to design its landing zone. One cloud at a time.',
-    }),
+    field('Platform', picker),
     failure ? el('div', { class: 'tip warn' }, el('strong', { text: 'The plan could not be decided: ' }), el('span', { text: failure })) : null,
     cloud
       ? note(`${LANDING_ZONE_NAMES[cloud]}: its networks, connectivity back to the data centre (${DC_LINK_NAMES[cloud]}), identity, backup and governance. The first application on ${CLOUD_NAMES[cloud]} builds it; the later ones reuse it (shared).`)

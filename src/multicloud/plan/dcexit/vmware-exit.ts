@@ -1,5 +1,13 @@
 import type { Plan, WavePlan } from '../types.ts';
 
+export const PROJECT_DESTINATION_KEY = 'migration:setup:destination';
+export const HOSTED_VMWARE_SERVICES = [
+  { value: 'evs', label: 'Amazon Elastic VMware Service (EVS)' },
+  { value: 'avs', label: 'Azure VMware Solution (AVS)' },
+  { value: 'gcve', label: 'Google Cloud VMware Engine (GCVE)' },
+  { value: 'ocvs', label: 'Oracle Cloud VMware Solution (OCVS)' },
+] as const;
+
 export interface ExitTarget {
   readonly id: string;
   readonly name: string;
@@ -81,7 +89,8 @@ export const EXIT_TARGETS: readonly ExitTarget[] = [
     ['azure', 'Azure', 'Azure Migrate', 'VNet, NSGs, firewall and approved identity endpoints'],
     ['google', 'Google Cloud', 'Migrate to Virtual Machines', 'VPC, service accounts and isolated test subnet'],
     ['oci', 'Oracle Cloud Infrastructure', 'Oracle Cloud Migrations', 'VCN, compartments, staging and IAM'],
-    ['vcf', 'VMware Cloud Foundation', 'HCX / cross-vCenter vMotion as applicable', 'VCF workload domain, vSAN, NSX and network mappings'],
+    ['vcf', 'Broadcom VMware Cloud Foundation (VCF)', 'HCX / cross-vCenter vMotion as applicable', 'VCF workload domain, vSAN, NSX and network mappings'],
+    ['vmware-cloud', 'Cloud-hosted VMware', 'HCX where the service and release support it', 'the provider VMware environment, permitted HCX topology and network mappings'],
   ].map(([id, name, tool, landing]): ExitTarget => ({
     id: id!, name: name!, source: 'Existing toolkit source intake', delivery: 'existing-kit',
     landing: `Prepare ${landing}. Confirm version, region, partition and service availability.`,
@@ -137,13 +146,15 @@ export function federalChecks(profile: ExitProfile, handling: DataHandling): rea
   return checks;
 }
 
-export function vmwareExitProject(plan: Plan, waves: WavePlan, selected: readonly ExitTarget[], source: string, profile: ExitProfile, handling: DataHandling): string {
+export function vmwareExitProject(plan: Plan, waves: WavePlan, selected: readonly ExitTarget[], source: string, profile: ExitProfile, handling: DataHandling, choices: { readonly activity?: string; readonly cutover?: string; readonly paths?: Readonly<Record<string, string>>; readonly environments?: Readonly<Record<string, string>>; readonly hostedService?: string } = {}): string {
   if (handling === 'Classified' && (plan.apps.length || plan.workloads.length || plan.databases.length || waves.waves.length)) {
     throw new Error('Use an empty plan to export a generic planning template for a classified boundary.');
   }
   return [
-    '# VMware exit project plan', '',
+    /^(?:Broadcom )?VMware|^Cloud-hosted VMware/.test(source) ? '# VMware exit project plan' : '# Migration project plan', '',
+    ...(choices.activity ? [`- Activity: ${choices.activity}`] : []),
     `- Source: ${source}`, `- Governance: ${profile}`, `- Data handling: ${handling}`,
+    ...(choices.cutover ? [`- Cutover preference: ${choices.cutover}`] : []),
     `- Inventory in the current plan: ${plan.apps.length} applications, ${plan.workloads.length} servers, ${plan.databases.length} databases.`,
     '- Planning record for review. Use unclassified information in this export. Approvals must be recorded in the organization’s system of record.', '',
     '## Authorization and data handling', '', ...federalChecks(profile, handling).map((s) => `- [ ] ${s}`), '',
@@ -155,7 +166,10 @@ export function vmwareExitProject(plan: Plan, waves: WavePlan, selected: readonl
     '## Destination workstreams', '',
     ...selected.flatMap((target) => [
       `### ${target.name}`, '',
+      ...(target.id === 'vmware-cloud' && choices.hostedService ? [`Hosted service: ${choices.hostedService}.`, ''] : []),
+      ...(choices.environments?.[target.id] ? [`Cloud environment: ${choices.environments[target.id]}.`, ''] : []),
       `Delivery: ${target.delivery === 'existing-kit' ? 'Existing ArchToolKit workflow, subject to environment qualification' : 'Vendor workflow with ArchToolKit integration still required'}`, '',
+      ...(choices.paths?.[target.id] ? [`Preferred path: ${choices.paths[target.id]}. Confirm in execution settings against the actual workloads.`, ''] : []),
       `1. Landing zone. ${target.landing}`,
       `2. Migration. ${target.transfer}`,
       `3. Acceptance. ${target.validate}`, '',
