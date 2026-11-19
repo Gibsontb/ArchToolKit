@@ -1,6 +1,16 @@
+import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, OCI_REGIONS } from '../../../kit/regions.js';
                                                   
+import { PROXMOX_SETUP, PROXMOX_VMWARE_STEPS } from './proxmox.js';
 
 export const PROJECT_DESTINATION_KEY = 'migration:setup:destination';
+export const PROJECT_CLOUD_REGIONS                                              = {
+  aws: AWS_REGIONS.filter((region) => !/^(?:us-gov-|cn-|us-iso|eu-isoe-)/.test(region)),
+  azure: AZURE_REGIONS.filter((region) => !/^us(?:gov|dod|sec)/.test(region)),
+  google: GCP_REGIONS,
+  oci: OCI_REGIONS,
+  govcloud: AWS_REGIONS.filter((region) => region.startsWith('us-gov-')),
+  'azure-government': AZURE_REGIONS.filter((region) => region.startsWith('usgov')),
+};
 export const HOSTED_VMWARE_SERVICES = [
   { value: 'evs', label: 'Amazon Elastic VMware Service (EVS)' },
   { value: 'avs', label: 'Azure VMware Solution (AVS)' },
@@ -146,10 +156,13 @@ export function federalChecks(profile             , handling              )     
   return checks;
 }
 
-export function vmwareExitProject(plan      , waves          , selected                       , source        , profile             , handling              , choices                                                                                                                                                                                                          = {})         {
+export function vmwareExitProject(plan      , waves          , selected                       , source        , profile             , handling              , choices                                                                                                                                                                                                                                                                                                          = {})         {
   if (handling === 'Classified' && (plan.apps.length || plan.workloads.length || plan.databases.length || waves.waves.length)) {
     throw new Error('Use an empty plan to export a generic planning template for a classified boundary.');
   }
+  const vmwareWorkloads = choices.vmwareToProxmox ? plan.workloads.filter((vm) => vm.source === 'estate') : [];
+  const vmwareCpu = vmwareWorkloads.reduce((total, vm) => total + vm.vcpu, 0);
+  const vmwareRam = vmwareWorkloads.reduce((total, vm) => total + vm.ramGib, 0);
   return [
     /^(?:Broadcom )?VMware|^Cloud-hosted VMware/.test(source) ? '# VMware exit project plan' : '# Migration project plan', '',
     ...(choices.activity ? [`- Activity: ${choices.activity}`] : []),
@@ -168,11 +181,25 @@ export function vmwareExitProject(plan      , waves          , selected         
       `### ${target.name}`, '',
       ...(target.id === 'vmware-cloud' && choices.hostedService ? [`Hosted service: ${choices.hostedService}.`, ''] : []),
       ...(choices.environments?.[target.id] ? [`Cloud environment: ${choices.environments[target.id]}.`, ''] : []),
+      ...(choices.primaryRegions?.[target.id] ? [`Primary region: ${choices.primaryRegions[target.id]}.`, ''] : []),
       `Delivery: ${target.delivery === 'existing-kit' ? 'Existing ArchToolKit workflow, subject to environment qualification' : 'Vendor workflow with ArchToolKit integration still required'}`, '',
       ...(choices.paths?.[target.id] ? [`Preferred path: ${choices.paths[target.id]}. Confirm in execution settings against the actual workloads.`, ''] : []),
       `1. Landing zone. ${target.landing}`,
       `2. Migration. ${target.transfer}`,
       `3. Acceptance. ${target.validate}`, '',
+      ...(target.id === 'proxmox' && choices.vmwareToProxmox ? [
+        '#### Hardware and software setup', '',
+        ...PROXMOX_SETUP.map((step) => '- [ ] ' + step), '',
+        '#### VMware migration runbook', '',
+        ...PROXMOX_VMWARE_STEPS.map((step, index) => `${index + 1}. ${step}`), '',
+        ...(handling !== 'Classified' ? [
+          'Download the OVF import script from Project setup. Preview with `bash proxmox-ovf-import.sh VMID /absolute/export.ovf STORAGE`. Add `--apply` only for an approved import.', '',
+          '#### VMware inventory sizing inputs', '',
+          vmwareWorkloads.length
+            ? `The current plan has ${vmwareWorkloads.length} VMware inventory VM(s), with ${vmwareCpu} configured vCPUs and ${vmwareRam} GiB of configured RAM. Confirm wave membership and use measured demand, failure headroom and storage overhead to size the hosts.`
+            : 'Load RVTools or VMware collector inventory and review the workload scope before sizing the target.', '',
+        ] : []),
+      ] : []),
       `Engineering work: ${target.implementation}`, '',
       ...(target.reference ? [`[Vendor documentation](${target.reference})`, ''] : []),
     ]),

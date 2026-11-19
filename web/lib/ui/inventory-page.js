@@ -11,7 +11,7 @@
 
 import { el, append, replace, downloadFile } from './dom.js';
 import { card, findingsList, stat, statGrid, table,             } from './components.js';
-import { formatCapacityGib, formatCount, roundTo } from '../core/units.js';
+import { formatDecimalCapacity, formatCount, gibToTib, GIB, roundTo } from '../core/units.js';
 import { countBySeverity,              } from '../core/findings.js';
 import {
   computeTotals,
@@ -74,6 +74,12 @@ function buildResults(inventory           , importFindings           )          
   const readiness = assessEstate(inventory);
   const allFindings = [...importFindings, ...analysis.findings, ...readiness.findings];
   const counts = countBySeverity(allFindings);
+  const storageUnits = (gib        ) => {
+    const tb = gib * GIB / 1e12;
+    const number = (value        ) => value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    const binary = `${number(gibToTib(gib))} TiB`;
+    return tb >= 1000 ? `${number(tb)} TB · ${binary}` : binary;
+  };
 
   const overview = card(
     'Estate',
@@ -95,9 +101,25 @@ function buildResults(inventory           , importFindings           )          
       }),
       stat({
         label: 'Physical memory',
-        value: formatCapacityGib(totals.physicalMemoryGib),
-        sub: `${formatCapacityGib(totals.allocatedMemoryGib)} allocated`,
+        value: formatDecimalCapacity(totals.physicalMemoryGib),
+        sub: `${formatDecimalCapacity(totals.allocatedMemoryGib)} allocated`,
       }),
+      stat({
+        label: 'Provisioned storage',
+        value: formatDecimalCapacity(totals.provisionedStorageGib),
+        sub: storageUnits(totals.provisionedStorageGib),
+      }),
+      stat({
+        label: 'Used storage',
+        value: formatDecimalCapacity(totals.usedStorageGib),
+        sub: storageUnits(totals.usedStorageGib),
+      }),
+      ...(totals.rdmGib > 0 ? [stat({
+        label: 'Raw device mappings',
+        value: formatDecimalCapacity(totals.rdmGib),
+        sub: `${storageUnits(totals.rdmGib)} · shared LUNs counted once`,
+        tone: 'warn',
+      })] : []),
     ),
   );
 
@@ -118,28 +140,13 @@ function buildResults(inventory           , importFindings           )          
         fill: totals.memoryOvercommit,
       }),
       stat({
-        label: 'Provisioned storage',
-        value: formatCapacityGib(totals.provisionedStorageGib),
-        sub: `${formatCapacityGib(totals.usedStorageGib)} consumed`,
-      }),
-      stat({
         label: 'Thin provisioning gap',
-        value: formatCapacityGib(totals.thinProvisioningGib),
+        value: formatDecimalCapacity(totals.thinProvisioningGib),
         sub: 'unconsumed but allocated',
       }),
-      ...(totals.rdmGib > 0
-        ? [
-            stat({
-              label: 'Raw device mappings',
-              value: formatCapacityGib(totals.rdmGib),
-              sub: 'each LUN once, not in the figures above',
-              tone: 'warn',
-            }),
-          ]
-        : []),
       stat({
         label: 'Active memory',
-        value: formatCapacityGib(totals.activeMemoryGib),
+        value: formatDecimalCapacity(totals.activeMemoryGib),
         sub: 'at the moment of capture',
       }),
     ),
@@ -191,11 +198,11 @@ function buildResults(inventory           , importFindings           )          
     { header: 'Hosts', numeric: true, render: (c) => String(c.hostCount) },
     { header: 'VMs', numeric: true, render: (c) => `${c.poweredOnVmCount} / ${c.vmCount}` },
     { header: 'Cores', numeric: true, render: (c) => formatCount(c.physicalCores) },
-    { header: 'Memory', numeric: true, render: (c) => formatCapacityGib(c.memoryGib) },
+    { header: 'Memory', numeric: true, render: (c) => formatDecimalCapacity(c.memoryGib) },
     { header: 'vCPU', numeric: true, render: (c) => formatCount(c.allocatedVcpu) },
-    { header: 'vRAM', numeric: true, render: (c) => formatCapacityGib(c.allocatedMemoryGib) },
-    { header: 'Used storage', numeric: true, render: (c) => formatCapacityGib(c.usedStorageGib) },
-    { header: 'RDM', numeric: true, render: (c) => (c.rdmGib > 0 ? formatCapacityGib(c.rdmGib) : '—') },
+    { header: 'vRAM', numeric: true, render: (c) => formatDecimalCapacity(c.allocatedMemoryGib) },
+    { header: 'Used storage', numeric: true, render: (c) => formatDecimalCapacity(c.usedStorageGib) },
+    { header: 'RDM', numeric: true, render: (c) => (c.rdmGib > 0 ? formatDecimalCapacity(c.rdmGib) : '—') },
     { header: 'vCPU:pCPU', numeric: true, render: (c) => `${roundTo(c.cpuOvercommit, 2)}:1` },
     {
       header: 'CPU / mem use',

@@ -46,5 +46,18 @@
   },
   "comments": {
     "dependencies": "Intentionally none. The toolkit must run in air-gapped environments with no package registry. TypeScript is compiled by Node's built-in type stripper (tools/build.mjs); tests run on node:test. The only optional dev tool is tsc for full type checking, which is not required to build or run."
-  }
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gibsontb/ArchToolKit.git"
+  },
+  "keywords": [],
+  "bugs": {
+    "url": "https://github.com/Gibsontb/ArchToolKit/issues"
+  },
+  "homepage": "https://github.com/Gibsontb/ArchToolKit#readme"
 }

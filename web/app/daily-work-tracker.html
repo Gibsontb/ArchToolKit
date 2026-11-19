@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Daily Work Tracker · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="../index.html"><span class="brand-mark">AT</span><span>ArchToolKit</span></a>
+      <nav class="header-nav" aria-label="Toolkit">
+        <a href="../index.html">Home</a>
+        <a href="daily-work-tracker.html" aria-current="page">Daily Work Tracker</a>
+        <a href="single-source-of-truth.html">Single Source of Truth</a>
+      </nav>
+    </header>
+    <main class="page">
+      <div class="page-header">
+        <h1>Daily Work Tracker</h1>
+        <p id="nowDisplay"></p>
+      </div>
+      <section class="card">
+        <div class="card-title"><h2>Add a task</h2></div>
+        <form id="taskForm">
+          <div class="field-grid">
+            <div class="field">
+              <label for="workType">Type of work</label>
+              <select id="workType">
+                <option value="hardware">Hardware</option>
+                <option value="software">Software</option>
+                <option value="admin">Admin</option>
+                <option value="iaas">IaaS</option>
+                <option value="paas">PaaS</option>
+                <option value="saas">SaaS</option>
+                <option value="network">Networking</option>
+                <option value="security">Security</option>
+                <option value="doc">Documentation</option>
+                <option value="meeting">Meeting</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="workSubtype">Subtype</label>
+              <select id="workSubtype"></select>
+            </div>
+            <div class="field">
+              <label for="taskDescription">Task</label>
+              <input type="text" id="taskDescription" required placeholder="e.g. Patch a host or update a runbook" />
+            </div>
+            <div class="field">
+              <label for="expectedTime">Expected completion time</label>
+              <input type="time" id="expectedTime" />
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Add task</button>
+        </form>
+      </section>
+      <section class="card">
+        <div class="card-title"><h2>Tasks</h2></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Done</th>
+                <th scope="col">Type</th>
+                <th scope="col">Task</th>
+                <th scope="col">Expected by</th>
+                <th scope="col">Created</th>
+              </tr>
+            </thead>
+            <tbody id="taskTableBody"></tbody>
+          </table>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn" id="clearDoneBtn">Clear completed</button>
+          <button type="button" class="btn" id="clearAllBtn">Clear all tasks</button>
+        </div>
+        <p class="muted" id="taskStatus" role="status">Tasks are stored in this browser.</p>
+      </section>
+    </main>
+    <script type="module" src="daily-work-tracker.js"></script>
+    <script type="module" src="../lib/ui/clear-all.js"></script>
+    <script type="module" src="../lib/ui/site-footer.js"></script>
+  </body>
+</html>

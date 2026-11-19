@@ -1,4 +1,4 @@
-import { EXIT_TARGETS, EXIT_PROFILES, DATA_HANDLING, HOSTED_VMWARE_SERVICES, PROJECT_DESTINATION_KEY, vmwareExitProject, type DataHandling, type ExitProfile } from '../../multicloud/plan/dcexit/vmware-exit.ts';
+import { EXIT_TARGETS, EXIT_PROFILES, DATA_HANDLING, HOSTED_VMWARE_SERVICES, PROJECT_CLOUD_REGIONS, PROJECT_DESTINATION_KEY, vmwareExitProject, type DataHandling, type ExitProfile } from '../../multicloud/plan/dcexit/vmware-exit.ts';
 import { PLAN_MODE_OPTIONS, PLATFORM_OPTIONS, SOURCE_PLATFORM_OPTIONS, labelOf, overrideKey } from '../../multicloud/plan/options.ts';
 import type { MovePath, PlanMode, SourcePlatform } from '../../multicloud/plan/types.ts';
 import { EXEC_TARGET_VALUES, validPathsFor } from '../../multicloud/plan/execute/matrix.ts';
@@ -13,6 +13,11 @@ import { button, buttonRow, dropdown, labelled } from '../application-migration/
 import { fill, note, rowsTable } from '../multicloud/pane-kit.ts';
 import { planModel } from '../multicloud/plan-model.ts';
 import { wavePlanFor } from '../multicloud/wave-model.ts';
+import { loadInventory } from '../../kit/estate-store.ts';
+import { zip } from '../../kit/archive.ts';
+import { PROXMOX_OVF_IMPORT } from '../../multicloud/plan/dcexit/proxmox.ts';
+import { prefillVmwareInventory } from '../multicloud/sources-model.ts';
+import { vendorLandingZoneCard } from '../multicloud/vendor-landing-zone.ts';
 
 import type { PaneContext } from '../plan-shell.ts';
 
@@ -30,6 +35,11 @@ const deploymentOptions = [
   ...PLATFORM_OPTIONS,
   ...providerTargets.filter((target) => target.delivery === 'integration-needed')
     .map((target) => ({ value: target.id, label: target.name })),
+];
+const operationsOptions = [
+  ...deploymentOptions,
+  ...fromOptions.filter((option) => option.value !== 'other'
+    && !deploymentOptions.some((platform) => platform.value === option.value)),
 ];
 const transferStyles = allFields().find((field) => field.id === 'cutoverStrategy')?.options ?? [];
 const vmwareVendorMethods: Readonly<Record<string, readonly string[]>> = {
@@ -58,17 +68,20 @@ export function projectPathOptions(from: string, to: string, mode: PlanMode): re
 }
 
 export function mount(root: HTMLElement, ctx: PaneContext): void {
+  const multiCloud = ctx.page === 'migration-utilities';
+  const currentPlatformOptions = multiCloud ? operationsOptions : deploymentOptions;
   const preset = new URLSearchParams(ctx.arg());
   const provider = preset.get('provider') ?? '';
   const preferredCutover = preset.get('cutover') ?? '';
   const requestedSource = preset.get('source') ?? '';
   const requestedEnvironment = preset.get('environment');
+  const requestedRegion = preset.get('region') ?? '';
   const hostedKey = overrideKey('vmware-cloud', 'vendor-lz', 'service');
   const requestedHosted = preset.get('hosted') ?? ctx.session.plan().designOverrides[hostedKey];
   let hostedService = HOSTED_VMWARE_SERVICES.find((item) => item.value === requestedHosted)?.value ?? '';
   let source = fromOptions.some((entry) => entry.value === requestedSource) ? requestedSource : '';
   const platformPreset = provider === 'vcf' ? 'vmware' : provider;
-  let platform = deploymentOptions.some((entry) => entry.value === platformPreset) ? platformPreset : '';
+  let platform = currentPlatformOptions.some((entry) => entry.value === platformPreset) ? platformPreset : '';
   let profile: ExitProfile = 'Department of State';
   let handling: DataHandling = 'Unassessed';
   let cutover = transferStyles.some((entry) => entry.value === preferredCutover) ? preferredCutover : '';
@@ -85,6 +98,9 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
   } else if (!provider && savedProvider && savedProvider !== savedTarget) {
     environments.set(savedProvider, savedTarget!);
   }
+  const primaryRegions = new Map<string, string>();
+  const initialTarget = environments.get(provider) || provider;
+  if (multiCloud && PROJECT_CLOUD_REGIONS[initialTarget]?.includes(requestedRegion)) primaryRegions.set(initialTarget, requestedRegion);
   const utilityPage = ctx.page === 'migration-utilities' ? '' : 'multicloud.html';
   const appPage = ctx.page === 'application-migration' ? '' : 'migration.html';
   const modeNow = (): PlanMode => ctx.session.plan().mode ?? 'migrate';
@@ -178,7 +194,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
           : note('The toolkit has no utility for this action on the selected platform.'));
     };
     append(picker, labelled(mode === 'new' ? 'Deploy to' : 'Platform in use',
-      dropdown(deploymentOptions, platform, (value) => { platform = value; refresh(); }, {
+      dropdown(mode === 'new' ? deploymentOptions : currentPlatformOptions, platform, (value) => { platform = value; refresh(); }, {
         label: mode === 'new' ? 'Deploy to' : 'Platform in use', blank: 'Choose a platform',
       })));
     fill(root, card(mode === 'new' ? 'Add a service' : mode === 'maintenance' ? 'Maintenance / operations' : 'Change an existing service', picker, actions));
@@ -188,9 +204,12 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
   function drawMigration(mode: PlanMode): void {
     const fields = controls();
     const destinationSettings = controls();
+    const destinationSetup = el('div', { class: 'stack', attrs: { 'data-control': 'destination-setup' } });
+    const outputs = el('div', { class: 'stack', attrs: { 'data-control': 'migration-outputs' } });
     const status = el('p', { class: 'small', attrs: { role: 'status' } });
     const targets = providerTargets.toSorted((a, b) => a.name.localeCompare(b.name));
     const selectedTarget = () => EXIT_TARGETS.find((entry) => entry.id === (environments.get(destination) || destination));
+    const isVmwareToProxmox = () => selectedTarget()?.id === 'proxmox' && sourceForPath(source) === 'vsphere' && mode !== 'database';
     const methodsFor = (target: (typeof EXIT_TARGETS)[number]) => {
       if (mode === 'database') return [];
       const available = projectPathOptions(source, target.id, mode);
@@ -200,16 +219,41 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
 
     const drawDestination = () => {
       const target = targets.find((item) => item.id === destination);
-      if (!target) { fill(destinationSettings); return; }
+      if (!target) {
+        fill(destinationSettings);
+        fill(destinationSetup);
+        showOutputs();
+        return;
+      }
       const pathDetail = el('div', { style: { flex: '1 1 10rem' } });
+      const regionDetail = el('div', { style: { flex: '1 1 10rem' } });
       const showPath = () => {
         const resolved = selectedTarget();
+        const regions = multiCloud && resolved ? PROJECT_CLOUD_REGIONS[resolved.id] : undefined;
+        fill(regionDetail, resolved && regions ? labelled('Primary region', dropdown(options(regions),
+          primaryRegions.get(resolved.id) ?? '', (value) => primaryRegions.set(resolved.id, value),
+          { label: 'Primary region', blank: 'Choose a region' })) : null);
+        regionDetail.hidden = !regions;
         const available = resolved && source ? methodsFor(resolved) : [];
         fill(pathDetail, resolved && available.length
           ? labelled('Migration path', dropdown(available, paths.get(resolved.id) ?? available[0]!.value,
             (value) => paths.set(resolved.id, value), { label: 'Migration path' }))
           : null);
         pathDetail.hidden = available.length === 0;
+        if (!multiCloud || !resolved) return;
+        showOutputs();
+        if (isVmwareToProxmox()) {
+          fill(destinationSetup, el('details', {},
+            el('summary', { text: 'Proxmox VE setup, VMware migration steps and import script' }),
+            vendorLandingZoneCard(ctx, resolved, true)));
+        } else {
+          const route = resolved.id === 'vcf' ? 'vmware' : resolved.id;
+          fill(destinationSetup, el('details', {},
+            el('summary', { text: resolved.name + ' migration setup' }),
+            el('ol', {}, ...[resolved.landing, resolved.transfer, resolved.validate].map((text) => el('li', { text }))),
+            link(utilityPage + '#landing-zones:' + route, 'Open ' + resolved.name + ' landing-zone design'),
+            resolved.reference ? el('p', {}, link(resolved.reference, 'Vendor documentation')) : null));
+        }
       };
       const government = EXIT_TARGETS.find((entry) => entry.id === governmentEnvironment[target.id]);
       fill(destinationSettings, target.id === 'vmware-cloud' ? labelled('Hosted VMware service', dropdown(HOSTED_VMWARE_SERVICES, hostedService, (value) => {
@@ -220,7 +264,7 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       ], environments.get(target.id) ?? '', (value) => {
         environments.set(target.id, value);
         showPath();
-      }, { label: 'Cloud environment', blank: 'Decide later' })) : null, pathDetail);
+      }, { label: 'Cloud environment', blank: 'Decide later' })) : null, regionDetail, pathDetail);
       showPath();
     };
 
@@ -229,10 +273,38 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       status.textContent = 'Choose a source and destination.';
       return false;
     };
-    const download = button('Download project plan', () => {
-      const target = selectedTarget();
-      if (!ready() || !target) return;
+    const prefill = async () => {
+      if (!multiCloud || sourceForPath(source) !== 'vsphere' || handling === 'Classified') return;
+      const estate = await loadInventory();
+      if (!estate || sourceForPath(source) !== 'vsphere' || (handling as DataHandling) === 'Classified') return;
+      const current = ctx.session.plan();
+      const updated = prefillVmwareInventory(current, estate);
+      if (updated !== current) ctx.session.update(() => updated, { immediate: true });
+    };
+    const openReport = (markdown: string) => {
+      const dialog = el('dialog', {
+        attrs: { 'aria-label': 'Full migration report' },
+        style: { width: 'min(56rem, 94vw)', maxHeight: '90vh', overflow: 'auto' },
+      }) as HTMLDialogElement;
+      const report = el('div', { class: 'stack', attrs: { 'data-control': 'migration-report' } },
+        ...markdown.trim().split(/\n{2,}/).map((block) => {
+          const heading = /^(#{1,4}) (.+)$/.exec(block);
+          if (heading) return el(heading[1]!.length === 1 ? 'h2' : 'h3', { text: heading[2] });
+          return el('p', { text: block, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } });
+        }));
+      append(dialog, button('Close report', () => dialog.close()), report,
+        button('Close report', () => dialog.close()));
+      dialog.addEventListener('close', () => dialog.remove(), { once: true });
+      append(root, dialog);
+      dialog.showModal();
+    };
+    const downloadProject = async (output: 'plan' | 'bundle' | 'view' = 'plan') => {
+      if (!ready()) return;
       try {
+        await prefill();
+        const target = selectedTarget();
+        if (!ready() || !target) return;
+        if (output === 'bundle' && (!isVmwareToProxmox() || handling === 'Classified')) return;
         const plan = ctx.session.plan();
         const model = planModel(plan);
         if (model.failure) throw new Error(model.failure);
@@ -244,16 +316,43 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
           activity: labelOf(PLAN_MODE_OPTIONS, mode),
           cutover: labelOf(transferStyles, cutover),
           hostedService: labelOf(HOSTED_VMWARE_SERVICES, hostedService),
+          primaryRegions: Object.fromEntries(primaryRegions),
+          vmwareToProxmox: isVmwareToProxmox(),
           paths: chosen ? { [target.id]: chosen.label } : {},
           environments: governmentEnvironment[target.id]
             ? { [target.id]: environments.get(target.id) ? 'Commercial' : 'Decide during planning' } : {},
         });
-        downloadFile(sourceName.startsWith('VMware') ? 'vmware-exit-project.md' : 'migration-project.md', markdown, 'text/markdown');
-        status.textContent = 'Project plan downloaded.';
+        if (output === 'view') {
+          openReport(markdown);
+        } else if (output === 'bundle') {
+          const archive = await zip({ 'migration-project.md': markdown, 'proxmox-ovf-import.sh': PROXMOX_OVF_IMPORT });
+          downloadFile('vmware-to-proxmox.zip', archive, 'application/zip');
+          status.textContent = 'Migration package downloaded.';
+        } else {
+          downloadFile(sourceForPath(source) === 'vsphere' ? 'vmware-exit-project.md' : 'migration-project.md', markdown, 'text/markdown');
+          status.textContent = 'Project plan downloaded.';
+        }
       } catch (e) {
         status.textContent = 'Could not generate the project plan. ' + (e instanceof Error ? e.message : String(e));
       }
-    }, { control: 'vmware-exit-download' });
+    };
+    const download = button('Download project plan', () => downloadProject(), { control: 'vmware-exit-download' });
+    const showOutputs = () => {
+      const target = selectedTarget();
+      if (!multiCloud || !target || !source) { fill(outputs); return; }
+      const bundle = isVmwareToProxmox() && handling !== 'Classified';
+      const generator = target.delivery === 'existing-kit' && target.id !== 'vmware-cloud' && handling !== 'Classified';
+      fill(outputs, card('Migration outputs',
+        note(bundle ? 'The ZIP contains the Proxmox setup and migration runbook, plus the offline OVF import script.'
+          : generator ? 'Download the procedures here. Generate infrastructure and automation files from the assigned workloads.'
+            : 'Download the setup, migration and acceptance procedures for this route. Use the vendor tooling for execution.'),
+        buttonRow(
+          button('View full report', () => downloadProject('view'), { primary: true, control: 'view-migration-report' }),
+          bundle ? button('Download Proxmox migration package', () => downloadProject('bundle'), { control: 'proxmox-migration-package' }) : null,
+          download,
+          generator ? link(utilityPage + '#generate', 'Generate infrastructure and automation files') : null,
+        )));
+    };
     append(fields,
       labelled('Move from', dropdown(fromOptions, source, (value) => {
         source = value;
@@ -268,8 +367,18 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       }, { label: 'Move to', blank: 'Choose a destination platform' })),
       labelled('Cutover approach', dropdown(transferStyles, cutover, (value) => { cutover = value; }, { label: 'Cutover approach', blank: 'Decide later' })),
       labelled('Governance profile', dropdown(options(EXIT_PROFILES), profile, (value) => { profile = value as ExitProfile; }, { label: 'Governance profile' })),
-      labelled('Data handling', dropdown(options(DATA_HANDLING), handling, (value) => { handling = value as DataHandling; }, { label: 'Data handling' })));
+      labelled('Data handling', dropdown(options(DATA_HANDLING), handling, (value) => {
+        handling = value as DataHandling;
+        showOutputs();
+      }, { label: 'Data handling' })));
     const proceed = button(mode === 'database' ? 'Continue to databases' : 'Continue to source inventory', async () => {
+      if (!ready()) return;
+      try {
+        await prefill();
+      } catch (error) {
+        status.textContent = 'Could not prefill from VMware inventory. ' + (error instanceof Error ? error.message : String(error));
+        return;
+      }
       if (!ready()) return;
       const target = selectedTarget();
       if (target) {
@@ -288,7 +397,8 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
         ctx.go(mode === 'database' ? 'databases' : ctx.page === 'application-migration' ? 'sources' : 'source-inventory');
       }
     }, { primary: true, control: 'project-setup-continue' });
-    fill(root, card(labelOf(PLAN_MODE_OPTIONS, mode), fields, destinationSettings, buttonRow(proceed, download, status)));
+    fill(root, card(labelOf(PLAN_MODE_OPTIONS, mode), fields, destinationSettings,
+      buttonRow(proceed, multiCloud ? null : download, status)), outputs, destinationSetup);
     drawDestination();
   }
   let rendered: PlanMode | undefined;

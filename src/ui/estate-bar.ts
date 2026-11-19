@@ -7,7 +7,7 @@
  * different one, look at it, or forget it.
  */
 
-import { el, append, replace, readFileAsText } from './dom.ts';
+import { el, append, replace } from './dom.ts';
 import { formatCount } from '../core/units.ts';
 import type { Finding } from '../core/findings.ts';
 import { importRvToolsFiles, importRvToolsWorkbook, looksLikeXlsx } from '../vmware/rvtools.ts';
@@ -31,16 +31,19 @@ export interface ImportedEstate {
 export async function importEstateFiles(
   files: readonly File[],
   onProgress?: (message: string) => void,
+  singleSnapshot = false,
 ): Promise<ImportedEstate> {
+  if (singleSnapshot && files.length > 1 && !files.every(({ name }) => /\.csv$/i.test(name))) {
+    throw new Error('Choose one RVTools workbook or one set of CSV tabs from the same export.');
+  }
   const inventories: Inventory[] = [];
   const findings: Finding[] = [];
   const csv: { name: string; content: string }[] = [];
 
   for (const file of files) {
-    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-    if (looksLikeXlsx(head) || /\.xlsx$/i.test(file.name)) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (looksLikeXlsx(bytes) || /\.xlsx$/i.test(file.name)) {
       onProgress?.(`Opening ${file.name}…`);
-      const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await importRvToolsWorkbook(bytes, {
         label: file.name,
         onProgress: (p) =>
@@ -50,7 +53,7 @@ export async function importEstateFiles(
       findings.push(...result.findings);
       continue;
     }
-    const content = await readFileAsText(file);
+    const content = new TextDecoder().decode(bytes);
     if (/\.json$/i.test(file.name) || content.trimStart().startsWith('{')) {
       const result = importCollectorJson(content);
       inventories.push(result.inventory);
@@ -75,6 +78,8 @@ export interface EstateBarOptions {
   readonly onEstate: (estate: StoredEstate | null) => void;
   /** What the page does with an estate, for the empty-state line. */
   readonly purpose: string;
+  /** A caller that models one estate can accept one workbook or one CSV tab set. */
+  readonly singleSnapshot?: boolean;
 }
 
 /** Mount the strip. Resolves once the stored estate, if any, has been read. */
@@ -86,13 +91,16 @@ export async function mountEstateBar(root: HTMLElement, options: EstateBarOption
     attrs: { type: 'file', accept: '.xlsx,.csv,.json', multiple: true, hidden: 'hidden' },
   }) as HTMLInputElement;
   const status = el('span', { class: 'estate-status' });
+  let importing = false;
 
   async function load(files: File[]): Promise<void> {
-    if (files.length === 0) return;
+    if (files.length === 0 || importing) return;
+    importing = true;
+    importButton.disabled = true;
     try {
       const imported = await importEstateFiles(files, (m) => {
         status.textContent = m;
-      });
+      }, options.singleSnapshot);
       status.textContent = 'Saving…';
       await storeInventory(imported.inventory, imported.findings, imported.origin);
       const entry = await loadInventory();
@@ -100,6 +108,10 @@ export async function mountEstateBar(root: HTMLElement, options: EstateBarOption
       options.onEstate(entry);
     } catch (err) {
       status.textContent = `Could not read that: ${(err as Error).message}`;
+    } finally {
+      importing = false;
+      importButton.disabled = false;
+      input.value = '';
     }
   }
   input.addEventListener('change', () => void load(Array.from(input.files ?? [])));
@@ -151,6 +163,7 @@ export async function mountEstateBar(root: HTMLElement, options: EstateBarOption
           attrs: { title: 'Delete the estate from this browser' },
           on: {
             click: async () => {
+              if (importing) return;
               await forgetInventory();
               status.textContent = '';
               render(null);

@@ -10,6 +10,8 @@ import { info, type Finding } from '../../core/findings.ts';
 import type { Verification } from '../../vcf/provenance.ts';
 import { acceptEdges, type ProposedEdge } from '../../multicloud/plan/discovery/flows.ts';
 import { mergeIntake } from '../../multicloud/plan/intake/merge.ts';
+import { inventoryOptions, workloadsFromInventory } from '../../multicloud/plan/intake/from-inventory.ts';
+import type { StoredEstate } from '../../kit/estate-store.ts';
 import type { IntakeResult } from '../../multicloud/plan/intake/adapter.ts';
 import type { GroupingSubject } from '../../multicloud/plan/intake/grouping.ts';
 import { regroup, DEFAULT_GROUPING } from '../../multicloud/plan/intake/grouping.ts';
@@ -206,6 +208,19 @@ export function summaryText(s: MergeSummary): string {
 /** The plan's Sources settings, with the defaults filled. */
 export function intakeSettings(plan: Plan): IntakeSettings {
   return { ...DEFAULT_INTAKE, ...(plan.intake ?? {}) };
+}
+
+/** Prefill once per stored snapshot, using the same mapping as the Sources pane. */
+export function prefillVmwareInventory(plan: Plan, estate: StoredEstate): Plan {
+  const key = 'migration:setup:vmware-inventory';
+  if (plan.designOverrides[key] === estate.savedAt) return plan;
+  const settings = inventoryOptions(intakeSettings(plan));
+  const result = workloadsFromInventory(estate.inventory, plan.intake ? settings : {
+    includePoweredOff: settings.includePoweredOff,
+  });
+  if (!result.workloads.length) return plan;
+  const merged = applyIntake(plan, result, 'merge').plan;
+  return { ...merged, designOverrides: { ...merged.designOverrides, [key]: estate.savedAt } };
 }
 
 export function groupingRules(plan: Plan): readonly GroupingRule[] {

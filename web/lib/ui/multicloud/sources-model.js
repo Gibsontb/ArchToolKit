@@ -10,6 +10,8 @@ import { info,              } from '../../core/findings.js';
                                                             
 import { acceptEdges,                   } from '../../multicloud/plan/discovery/flows.js';
 import { mergeIntake } from '../../multicloud/plan/intake/merge.js';
+import { inventoryOptions, workloadsFromInventory } from '../../multicloud/plan/intake/from-inventory.js';
+                                                              
                                                                             
                                                                                 
 import { regroup, DEFAULT_GROUPING } from '../../multicloud/plan/intake/grouping.js';
@@ -206,6 +208,19 @@ export function summaryText(s              )         {
 /** The plan's Sources settings, with the defaults filled. */
 export function intakeSettings(plan      )                 {
   return { ...DEFAULT_INTAKE, ...(plan.intake ?? {}) };
+}
+
+/** Prefill once per stored snapshot, using the same mapping as the Sources pane. */
+export function prefillVmwareInventory(plan      , estate              )       {
+  const key = 'migration:setup:vmware-inventory';
+  if (plan.designOverrides[key] === estate.savedAt) return plan;
+  const settings = inventoryOptions(intakeSettings(plan));
+  const result = workloadsFromInventory(estate.inventory, plan.intake ? settings : {
+    includePoweredOff: settings.includePoweredOff,
+  });
+  if (!result.workloads.length) return plan;
+  const merged = applyIntake(plan, result, 'merge').plan;
+  return { ...merged, designOverrides: { ...merged.designOverrides, [key]: estate.savedAt } };
 }
 
 export function groupingRules(plan      )                          {

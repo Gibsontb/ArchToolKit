@@ -1,0 +1,7 @@
+npm list -g @openai/codex
+
+npm install -g @openai/codex
+
+codex login
+
+codex resume

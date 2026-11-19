@@ -241,6 +241,14 @@
       gap: 4px;
     }
 
+    .app-shell [hidden] {
+      display: none !important;
+    }
+
+    .content.direct-initiative {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
     label {
       font-size: 0.78rem;
       text-transform: uppercase;
@@ -1414,14 +1422,14 @@
     function recommendationPlatformSelect() {
       const target = document.getElementById("cloudProvider");
       const initiative = document.getElementById("initiativeType")?.value;
-      return target && initiative === "new-service" && (!target.value || target.value === "na")
+      return target && ["new-service", "existing-service", "maintenance"].includes(initiative) && (!target.value || target.value === "na")
         ? document.getElementById("wizardSourcePlatform") || target : target;
     }
 
     function onCloudChange() {
       const select = recommendationPlatformSelect();
       if (!select) return;
-      currentCloud = select.value;
+      currentCloud = select.value === "google" ? "gcp" : select.value;
       const label = select.options[select.selectedIndex].text;
 
       const cloudTitle = document.getElementById("cloudTitle");
@@ -1503,19 +1511,21 @@
 
       if (currentStep === 1) {
         titleEl.textContent = "Step 1 · Initiative & basics";
-        subtitleEl.textContent = "New vs existing vs maintenance vs migration, plus workload basics";
-        counterEl.textContent = "Step 1 of 4";
-        miniHint.textContent = "Step 1 · Pick initiative type and capture basics.";
+        const opensProject = ["assess", "landing-zone", "retire"].includes(document.getElementById("initiativeType").value);
+        subtitleEl.textContent = opensProject ? "Continue to project setup." : "Choose an initiative and enter workload basics.";
+        counterEl.textContent = opensProject ? "Step 1 of 1" : "Step 1 of 4";
+        if (opensProject) document.getElementById("nextBtn").textContent = "Continue";
+        miniHint.textContent = opensProject ? "" : "Step 1 · Initiative and workload basics.";
       } else if (currentStep === 2) {
         titleEl.textContent = "Step 2 · Path details & data";
         subtitleEl.textContent = "Details for the chosen initiative type plus data, sector and integration pattern";
         counterEl.textContent = "Step 2 of 4";
         miniHint.textContent = "Step 2 · Refine the path type and describe data, sector and integrations.";
       } else if (currentStep === 3) {
-        titleEl.textContent = "Step 3 · Non-functional, security & migration tooling";
-        subtitleEl.textContent = "Criticality, SLOs, security baseline, source environment, 7R approach and automation tools";
+        titleEl.textContent = "Step 3 · Non-functional, security & tooling";
+        subtitleEl.textContent = "Criticality, SLOs, security baseline and operational tooling";
         counterEl.textContent = "Step 3 of 4";
-        miniHint.textContent = "Step 3 · How critical it is and how you will move & run it.";
+        miniHint.textContent = "Step 3 · Availability, security and operations.";
       } else if (currentStep === 4) {
         titleEl.textContent = "Step 4 · Sizing & environments";
         subtitleEl.textContent = "Traffic band, data volume, environments in scope and regions for this workload";
@@ -1561,16 +1571,10 @@
         const initiativeType = document.getElementById("initiativeType").value;
         const workloadName = document.getElementById("workloadName").value.trim();
         const architectureType = document.getElementById("architectureType").value;
-        const trafficPattern = document.getElementById("trafficPattern").value;
-        const latencySensitivity = document.getElementById("latencySensitivity").value;
-        const teamSkills = getMultiSelectValues(document.getElementById("teamSkills"));
 
         if (!initiativeType) missing.push("Initiative type");
         if (!workloadName) missing.push("Workload / initiative name");
         if (!architectureType) missing.push("Architecture type");
-        if (!trafficPattern) missing.push("Traffic pattern");
-        if (!latencySensitivity) missing.push("Latency sensitivity");
-        if (teamSkills.length === 0) missing.push("Team strengths");
 
         if (missing.length > 0) {
           const el = document.getElementById("error-step-1");
@@ -1630,6 +1634,8 @@ function goBack() {
       const pills = [];
 
       if (state.workloadName) pills.push("Workload: " + state.workloadName);
+      if (state.cloudEnvironment) pills.push("Cloud environment: " + state.cloudEnvironment);
+      if (state.primaryRegion) pills.push("Primary region: " + state.primaryRegion);
 
       const pathMap = {
         "new-service": "New service",
@@ -1937,20 +1943,21 @@ ${docBody}
 
 
     function generateRecommendation() {
+      const initiativeType = document.getElementById("initiativeType").value;
       const envScope = Array.from(
         document.querySelectorAll('input[name="envScope"]:checked')
       ).map(c => c.value);
 
       const state = {
-        initiativeType: document.getElementById("initiativeType").value,
-        newServiceType: document.getElementById("newServiceType").value,
-        newServiceStage: document.getElementById("newServiceStage").value,
-        existingChangeType: document.getElementById("existingChangeType").value,
-        existingPainPoints: (document.getElementById("existingPainPoints").value || "").trim(),
-        maintenanceFocus: document.getElementById("maintenanceFocus").value,
-        maintenanceCadence: document.getElementById("maintenanceCadence").value,
-        migrationScope: document.getElementById("migrationScope").value,
-        cutoverStrategy: document.getElementById("cutoverStrategy").value,
+        initiativeType,
+        newServiceType: initiativeType === "new-service" ? document.getElementById("newServiceType").value : "",
+        newServiceStage: initiativeType === "new-service" ? document.getElementById("newServiceStage").value : "",
+        existingChangeType: initiativeType === "existing-service" ? document.getElementById("existingChangeType").value : "",
+        existingPainPoints: initiativeType === "existing-service" ? (document.getElementById("existingPainPoints").value || "").trim() : "",
+        maintenanceFocus: initiativeType === "maintenance" ? document.getElementById("maintenanceFocus").value : "",
+        maintenanceCadence: initiativeType === "maintenance" ? document.getElementById("maintenanceCadence").value : "",
+        migrationScope: initiativeType === "migration" ? document.getElementById("migrationScope").value : "",
+        cutoverStrategy: initiativeType === "migration" ? document.getElementById("cutoverStrategy").value : "",
 
         workloadName: (document.getElementById("workloadName").value || "").trim(),
         architectureType: document.getElementById("architectureType").value,
@@ -1977,11 +1984,12 @@ ${docBody}
         secretsModel: document.getElementById("secretsModel").value,
         dataProtection: document.getElementById("dataProtection").value,
         perimeterPattern: document.getElementById("perimeterPattern").value,
-        f5Usage: getCheckedValues("f5Usage"),
+        f5Usage: ["cloud-plus-f5", "f5-centric"].includes(document.getElementById("perimeterPattern").value)
+          ? getCheckedValues("f5Usage") : [],
         secOpsMaturity: document.getElementById("secOpsMaturity").value,
 
-        sourceEnv: document.getElementById("sourceEnv").value,
-        migrationApproach: document.getElementById("migrationApproach").value,
+        sourceEnv: initiativeType === "migration" ? document.getElementById("sourceEnv").value : "",
+        migrationApproach: initiativeType === "migration" ? document.getElementById("migrationApproach").value : "",
         iaCTools: getMultiSelectValues(document.getElementById("iaCTools")),
 
         peakUsers: Number(document.getElementById("peakUsers").value || 0),
@@ -1990,7 +1998,11 @@ ${docBody}
         dailyIngestBand: document.getElementById("dailyIngestBand").value,
         retentionPeriod: document.getElementById("retentionPeriod").value,
         envScope,
-        nonProdScale: document.getElementById("nonProdScale").value,
+        nonProdScale: envScope.some(value => ["dev", "test", "stage"].includes(value))
+          ? document.getElementById("nonProdScale").value : "",
+        cloudEnvironment: document.getElementById("wizardCloudEnvironment")?.value
+          ? document.getElementById("wizardCloudEnvironment").selectedOptions[0].text : "",
+        primaryRegion: document.getElementById("wizardTargetRegion")?.value || "",
         regionCount: document.getElementById("regionCount").value
       };
 
@@ -3426,7 +3438,7 @@ return {
         regionCount === "3plus"
       ) {
         networkTier = "Multi-region design with private connectivity and global entry points (front door / anycast / global load balancer).";
-      } else if (latencySensitivity === "ultra-low") {
+      } else if (latencySensitivity === "strict") {
         networkTier = "Single-region, low-latency design with zonal redundancy and careful placement.";
       }
 

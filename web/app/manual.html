@@ -91,6 +91,7 @@
             <li><a href="#workflows">Common workflows</a></li>
             <li><a href="#trouble">Troubleshooting</a></li>
             <li><a href="#limits">Known limits</a></li>
+            <li><a href="#estate-cost">Cost Calculator</a></li>
             <li><a href="#licence">Licence and disclaimer</a></li>
           </ol>
         </nav>
@@ -129,6 +130,7 @@
           <table>
             <tr><th>Page</th><th>What it is for</th></tr>
             <tr><td><a href="inventory.html">VMware Inventory</a></td><td>Import RVTools (or the collector's JSON). Capacity, clusters, VCF 9.1 host readiness, and what blocks each VM from moving. <strong>Start here</strong>: the other pages work from what you import.</td></tr>
+            <tr><td><a href="estate-cost.html">Cost Calculator</a></td><td>Compare on-premises and cloud costs using manual inputs.</td></tr>
             <tr><td><a href="vcf-sizing.html">VCF Sizing</a></td><td>Size a VCF 9.1 fleet: management domain, workload domains, hosts, storage, licensing, IPs.</td></tr>
             <tr><td><a href="vcf-spec.html">VCF Spec Builder</a></td><td>Write the VCF Installer's deployment specification (SddcSpec JSON), checked against the 9.1 schema.</td></tr>
             <tr><td><a href="data-editor.html">Data Editor</a></td><td>Open and change JSON or YAML files: VCF specs, playbooks, Terraform JSON, CloudFormation, ARM, cloud IAM policies, F5, Kubernetes.</td></tr>
@@ -3618,7 +3620,11 @@
           </ul>
 
           <!-- ================================================================ -->
-          <h2 id="licence">24. Licence and disclaimer</h2>
+          <h2 id="estate-cost">24. Cost Calculator</h2>
+          <p>Open <a href="estate-cost.html">Cost Calculator</a> from Home. The monthly estimate shows its rate source and any missing inventory quantities. Edit any cost assumption directly or import a USD rate file. Download the current rates or the cost breakdown to save a copy.</p>
+          <p>Enter host count, physical cores and storage under <strong>On-premises capacity</strong>. Use Multi-year TCO to choose a time horizon and hardware replacement schedule. The optional cloud comparison includes cloud pricing, one-time migration and dual-run expenses. Download the year-by-year comparison as CSV.</p>
+
+          <h2 id="licence">25. Licence and disclaimer</h2>
           <p>
             ArchToolKit © 2026 Theodore Gibson. <strong>All rights reserved.</strong> The full terms are
             in the <code>LICENSE</code> file at the root of the toolkit; this is what they say.

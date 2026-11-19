@@ -33,7 +33,7 @@ import type { PaneContext } from '../plan-shell.ts';
 import { info, warning, type Finding } from '../../core/findings.ts';
 import { zip } from '../../kit/archive.ts';
 import { parseCsv } from '../../core/csv.ts';
-import { loadInventory, type StoredEstate } from '../../kit/estate-store.ts';
+import type { StoredEstate } from '../../kit/estate-store.ts';
 import {
   APP_ATTRIBUTE_SOURCE_OPTIONS, ENV_ATTRIBUTE_SOURCE_OPTIONS, MERGE_MODE_OPTIONS, SOURCE_PLATFORM_OPTIONS, YES_NO_OPTIONS,
   labelOf,
@@ -179,10 +179,6 @@ export function mount(root: HTMLElement, ctx: PaneContext): void {
       estate = e;
       renderEstate();
     },
-  });
-  void loadInventory().then((e) => {
-    estate = e;
-    renderEstate();
   });
 
   // ---- 4. provider and collector files --------------------------------------------------

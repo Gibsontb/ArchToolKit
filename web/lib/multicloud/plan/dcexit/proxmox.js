@@ -1,0 +1,45 @@
+export const PROXMOX_SETUP = [
+  'Size x86-64 hosts with hardware virtualization for the scoped VMs. Budget guest RAM and CPU plus hypervisor and storage overhead. For HA, plan three quorum nodes and enough free capacity to absorb a node failure.',
+  'Size redundant storage for imported disks, staging copies, growth and restore tests. Choose local ZFS, shared storage, or Ceph based on node count, failure domains and measured I/O. Check that the destination storage accepts VM images.',
+  'Install and patch the approved Proxmox VE release. Configure management DNS, time, access roles and backups. Separate management, cluster, storage and guest networks as appropriate; map VMware port groups to Proxmox bridges or SDN VNets and VLANs.',
+  'Prepare an isolated test network and an approved backup target. Verify restore, capacity and monitoring before committing a pilot wave.',
+]         ;
+
+export const PROXMOX_VMWARE_STEPS = [
+  'Use RVTools for inventory and sizing. Capture each VM’s source identity, firmware and boot order, disk/controller settings, port groups, VLANs and dependencies. Review RDMs, passthrough, encryption and vTPM separately before choosing an import method.',
+  'Choose a nonproduction pilot. Prepare supported guest drivers and take a recoverable backup. For direct import, register the ESXi host as import storage in Proxmox VE, then select the VM, destination storage and isolated network in the import wizard.',
+  'For offline OVF import, quiesce the application, shut down the source in the approved window, and export the OVF and all referenced disks. Stage them together on the target node. Use a free VM ID and run the script in preview mode before applying the import.',
+  'Before first boot, verify firmware, boot disk and controller, and map NICs to the isolated network. Check guest drivers, IP/DNS, application transactions, data consistency and backup/restore.',
+  'Repeat by dependency wave. During cutover, prevent simultaneous writes, update network and DNS mappings, and obtain application-owner acceptance. If validation fails, isolate the target and restore service on VMware under the rollback plan. Reconcile any writes made after cutover before reopening the source.',
+]         ;
+
+export const PROXMOX_OVF_IMPORT = [
+  '#!/usr/bin/env bash',
+  'set -euo pipefail',
+  '',
+  '# Run on the approved Proxmox VE target node. Preview is the default.',
+  '# Stage a trusted OVF and all referenced disks together before running.',
+  'if (( $# < 3 || $# > 4 )); then',
+  '  printf "Usage: bash %s VMID /absolute/export.ovf STORAGE [--apply]\\n" "$0" >&2',
+  '  exit 2',
+  'fi',
+  'vmid=$1',
+  'manifest=$2',
+  'storage=$3',
+  'mode=preview',
+  'if (( $# == 4 )); then mode=$4; fi',
+  'if [[ ! "$vmid" =~ ^[0-9]{3,9}$ || "$manifest" != /*.ovf || ! -f "$manifest" || ! "$storage" =~ ^[A-Za-z][A-Za-z0-9._-]*$ ]]; then',
+  '  printf "Provide a valid VM ID, an existing absolute .ovf path, and a storage ID.\\n" >&2',
+  '  exit 2',
+  'fi',
+  'case "$mode" in',
+  '  preview) qm importovf "$vmid" "$manifest" "$storage" --dryrun 1 ;;',
+  '  --apply)',
+  '    qm importovf "$vmid" "$manifest" "$storage" --dryrun 1',
+  '    qm importovf "$vmid" "$manifest" "$storage"',
+  '    qm config "$vmid"',
+  '    ;;',
+  '  *) printf "Unknown mode: %s\\n" "$mode" >&2; exit 2 ;;',
+  'esac',
+  '',
+].join('\n');

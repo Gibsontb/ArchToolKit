@@ -33,7 +33,7 @@ import { portfolioImportCard } from '../legacy-portfolio.js';
 import { info, warning,              } from '../../core/findings.js';
 import { zip } from '../../kit/archive.js';
 import { parseCsv } from '../../core/csv.js';
-import { loadInventory,                   } from '../../kit/estate-store.js';
+                                                              
 import {
   APP_ATTRIBUTE_SOURCE_OPTIONS, ENV_ATTRIBUTE_SOURCE_OPTIONS, MERGE_MODE_OPTIONS, SOURCE_PLATFORM_OPTIONS, YES_NO_OPTIONS,
   labelOf,
@@ -179,10 +179,6 @@ export function mount(root             , ctx             )       {
       estate = e;
       renderEstate();
     },
-  });
-  void loadInventory().then((e) => {
-    estate = e;
-    renderEstate();
   });
 
   // ---- 4. provider and collector files --------------------------------------------------

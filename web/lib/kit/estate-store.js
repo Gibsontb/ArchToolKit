@@ -49,6 +49,7 @@ const VERSION = 1;
 const run =    (mode                    , act                                          )                    => runStore('estate', mode, act);
 
 let cached                                 ;
+let pendingRead                                          ;
 
 /** Keep an estate for every page. Resolves false when the browser will not. */
 export async function storeInventory(
@@ -68,11 +69,16 @@ export async function storeInventory(
 /** The stored estate, or null. Read once per page and then held. */
 export async function loadInventory()                               {
   if (cached !== undefined) return cached;
-  const entry = await run              ('readonly', (store) => store.get(KEY)                            );
-  cached = entry && entry.version === VERSION ? entry : null;
-  // A new tab has an empty sessionStorage; refill the names from the store.
-  if (cached) saveEstate(cached.inventory);
-  return cached;
+  if (!pendingRead) {
+    pendingRead = run              ('readonly', (store) => store.get(KEY)                            ).then((entry) => {
+      // An import or forget may have completed while the initial read was in flight.
+      if (cached !== undefined) return cached;
+      cached = entry && entry.version === VERSION ? entry : null;
+      if (cached) saveEstate(cached.inventory);
+      return cached;
+    }).finally(() => { pendingRead = undefined; });
+  }
+  return pendingRead;
 }
 
 export async function forgetInventory()                {

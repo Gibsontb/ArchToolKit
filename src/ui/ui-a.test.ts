@@ -8,6 +8,8 @@
 
 import { describe, it } from 'node:test';
 import { expect } from '../testing/expect.ts';
+import { estateWorkbook } from '../testing/estate-fixture.ts';
+import { importRvToolsWorkbook } from '../vmware/rvtools.ts';
 import {
   BACKUP_TIER_GRID, BLANK_BACKUP_TIER, BLANK_SITE, DATABASE_GRID, SITE_GRID, WORKLOAD_GRID, afterDatabaseEdit, afterWorkloadEdit,
   applyCells, bulkSet, columnValues, confirmTypes, filterRows, gridText, listFromGrid, listToGrid, newDatabase, newWorkload,
@@ -16,7 +18,7 @@ import {
 } from './multicloud/grid-model.ts';
 import {
   SOURCE_FORMATS, acceptReviewed, applyIntake, asReviewEdges, jsonKind, migrationCenterFiles, regroupPlan, reviewText,
-  reviewedEdges, summaryText,
+  prefillVmwareInventory, reviewedEdges, summaryText,
 } from './multicloud/sources-model.ts';
 import { connectivityFindings, constraintFindings, landingZoneState, regionChoices, setLandingZone } from './multicloud/constraints-model.ts';
 import { serverGridFindings } from './multicloud/workloads.ts';
@@ -34,6 +36,20 @@ import { importFlows, proposeEdges as proposeFlowEdges } from '../multicloud/pla
 import type { AppPlan, Database, Plan, Workload } from '../multicloud/plan/types.ts';
 
 const ON = '2026-09-26';
+
+it('prefills a migration plan from a saved RVTools snapshot without replacing existing rows', async () => {
+  const parsed = await importRvToolsWorkbook(await estateWorkbook());
+  const estate = { ...parsed, origin: 'RVTools.xlsx', savedAt: ON, version: 1 };
+  const existing = { ...emptyPlan(), workloads: [wl({ name: 'manual-server', source: 'manual' })] };
+  const filled = prefillVmwareInventory(existing, estate);
+  const vm = filled.workloads.find((row) => row.name === 'app-01');
+  expect(vm?.vcpu).toBe(4);
+  expect(vm?.ramGib).toBe(16);
+  expect(vm?.facts?.ipAddresses).toContain('10.1.0.11');
+  expect(filled.workloads.some((row) => row.name === 'manual-server')).toBe(true);
+  expect(filled.workloads.some((row) => row.name === 'old-01')).toBe(false);
+  expect(prefillVmwareInventory(filled, estate)).toBe(filled);
+});
 
 const wl = (over: Partial<Workload> = {}): Workload => ({
   id: 'w:app01', name: 'app01', app: 'crm', env: 'prod', role: 'app', os: 'rhel-9', vcpu: 4, ramGib: 16, disksGib: [60, 200],

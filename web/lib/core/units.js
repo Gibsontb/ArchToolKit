@@ -49,6 +49,16 @@ export function formatCapacityGib(gib        )         {
   return `${roundTo(gib, gib < 10 ? 1 : 0)} GiB`;
 }
 
+/** Format capacity in decimal units from MB through PB. */
+export function formatDecimalCapacity(gib        )         {
+  if (!Number.isFinite(gib)) return '—';
+  const bytes = gib * GIB;
+  const [divisor, unit] = Math.abs(bytes) >= 1e15 ? [1e15, 'PB']
+    : Math.abs(bytes) >= 1e12 ? [1e12, 'TB']
+    : Math.abs(bytes) >= 1e9 ? [1e9, 'GB'] : [1e6, 'MB'];
+  return `${(bytes / divisor).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${unit}`;
+}
+
 export function formatCount(value        )         {
   return new Intl.NumberFormat('en-US').format(value);
 }

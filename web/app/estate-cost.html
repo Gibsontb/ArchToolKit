@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cost Calculator · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="../index.html"><span class="brand-mark">AT</span><span>ArchToolKit</span></a>
+      <nav class="header-nav">
+        <a href="../index.html">Home</a>
+        <a href="inventory.html">VMware Inventory</a>
+        <a href="estate-cost.html" aria-current="page">Cost Calculator</a>
+        <a href="manual.html#estate-cost">Manual</a>
+      </nav>
+    </header>
+    <main class="page">
+      <div class="page-header"><h1>Cost Calculator</h1></div>
+      <div id="estate-cost-root" class="stack"></div>
+    </main>
+    <script type="module" src="../lib/ui/estate-cost-page.js"></script>
+    <script type="module" src="../lib/ui/clear-all.js"></script>
+    <script type="module" src="../lib/ui/site-footer.js"></script>
+  </body>
+</html>

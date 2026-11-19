@@ -1,4 +1,5 @@
 import { HOSTED_VMWARE_SERVICES, type ExitTarget } from '../../multicloud/plan/dcexit/vmware-exit.ts';
+import { PROXMOX_OVF_IMPORT, PROXMOX_SETUP, PROXMOX_VMWARE_STEPS } from '../../multicloud/plan/dcexit/proxmox.ts';
 import type { BlueprintInput } from '../../kit/blueprint.ts';
 import type { Plan } from '../../multicloud/plan/types.ts';
 import { overrideKey } from '../../multicloud/plan/options.ts';
@@ -49,7 +50,7 @@ export function vendorLandingZoneFields(target: string, plan: Pick<Plan, 'requir
   ];
 }
 
-export function vendorLandingZoneCard(ctx: PaneContext, target: ExitTarget): HTMLElement {
+export function vendorLandingZoneCard(ctx: PaneContext, target: ExitTarget, vmwareMigration = false): HTMLElement {
   const fields = vendorLandingZoneFields(target.id, ctx.session.plan());
   const key = (field: string) => overrideKey(target.id, 'vendor-lz', field);
   const values = () => Object.fromEntries(fields.map(({ id }) => [id, ctx.session.plan().designOverrides[key(id)] ?? '']));
@@ -60,7 +61,16 @@ export function vendorLandingZoneCard(ctx: PaneContext, target: ExitTarget): HTM
     })),
   });
   return card(target.name + ' landing zone',
+    target.id === 'proxmox' ? el('section', {},
+      el('h3', { text: 'Hardware and software setup' }),
+      el('ol', {}, ...PROXMOX_SETUP.map((text) => el('li', { text })))) : null,
     el('div', { class: 'field-grid' }, ...inputs),
+    vmwareMigration && target.id === 'proxmox' ? el('section', {},
+      el('h3', { text: 'Migrate VMware workloads' }),
+      el('ol', {}, ...PROXMOX_VMWARE_STEPS.map((text) => el('li', { text }))),
+      el('p', { text: 'The offline import script previews the OVF by default. Apply creates a stopped VM on the target node so you can verify its configuration before booting.' }),
+      el('button', { class: 'btn', text: 'Download OVF import script', attrs: { type: 'button', 'data-control': 'proxmox-ovf-script' },
+        on: { click: () => downloadFile('proxmox-ovf-import.sh', PROXMOX_OVF_IMPORT, 'text/x-shellscript') } })) : null,
     el('div', { class: 'btn-row' },
       el('button', {
         class: 'btn btn-primary', text: 'Download vendor handoff', attrs: { type: 'button' },

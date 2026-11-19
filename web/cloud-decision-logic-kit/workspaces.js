@@ -1,6 +1,6 @@
-import { EXIT_TARGETS, HOSTED_VMWARE_SERVICES } from '../lib/multicloud/plan/dcexit/vmware-exit.js';
+import { EXIT_TARGETS, HOSTED_VMWARE_SERVICES, PROJECT_CLOUD_REGIONS } from '../lib/multicloud/plan/dcexit/vmware-exit.js';
 import { SOURCE_PLATFORM_OPTIONS } from '../lib/multicloud/plan/options.js';
-import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, OCI_REGIONS } from '../lib/kit/regions.js';
+import { loadInventory } from '../lib/kit/estate-store.js';
 
 const wizard = document.querySelector('.app-shell');
 for (const button of wizard?.querySelectorAll('button.primary, button.secondary') ?? []) {
@@ -13,15 +13,14 @@ const cloud = document.getElementById('cloudProvider');
 if (initiative && cloud) mountFlow(initiative, cloud);
 
 function mountFlow(initiative, cloud) {
-  const providers = { azure: 'azure', aws: 'aws', gcp: 'google', oci: 'oci' };
-  const regions = { aws: AWS_REGIONS, azure: AZURE_REGIONS, google: GCP_REGIONS, oci: OCI_REGIONS };
+  const providers = { azure: 'azure', aws: 'aws', gcp: 'google', google: 'google', oci: 'oci' };
   const scopes = { 'single-app': 'single', portfolio: 'migrate', 'dc-estate': 'dc-exit', 'db-only': 'database' };
   const activities = { 'new-service': 'new', 'existing-service': 'change', maintenance: 'maintenance',
     assess: 'assess', 'landing-zone': 'landing-zone', retire: 'retire' };
   const directInitiatives = new Set(['assess', 'landing-zone', 'retire']);
   const environments = {
-    aws: { id: 'govcloud', name: 'AWS GovCloud (US)', regions: ['us-gov-east-1', 'us-gov-west-1'] },
-    azure: { id: 'azure-government', name: 'Azure Government', regions: ['usgovarizona', 'usgovtexas', 'usgovvirginia'] },
+    aws: { id: 'govcloud', name: 'AWS GovCloud (US)' },
+    azure: { id: 'azure-government', name: 'Azure Government' },
   };
   const alternatives = EXIT_TARGETS.filter((target) => !Object.values(providers).includes(target.id)
     && target.id !== 'govcloud' && target.id !== 'azure-government');
@@ -76,17 +75,36 @@ function mountFlow(initiative, cloud) {
   setOptions(hosted.select, HOSTED_VMWARE_SERVICES, 'Choose a service');
   const architecture = byId('architectureType').closest('.field');
   initiative.closest('.field').after(architecture, source.row, target.row, hosted.row);
+  const field = (id) => byId(id).closest('.field');
+  const serviceTypes = new Set(Array.from(byId('newServiceType').options, (option) => option.value).filter(Boolean));
+  for (const option of Array.from(byId('existingChangeType').options)) {
+    if (serviceTypes.has(option.value)) option.remove();
+  }
+  field('uptimeTarget').after(field('latencySensitivity'));
+  field('opsMaturity').after(field('teamSkills'), field('iaCTools'));
+  field('peakRps').after(field('trafficPattern'));
+  const f5 = byId('f5UsageGroup').closest('.field');
+  const perimeter = byId('perimeterPattern');
+  const updatePerimeter = () => { f5.hidden = !['cloud-plus-f5', 'f5-centric'].includes(perimeter.value); };
+  perimeter.addEventListener('change', updatePerimeter);
+  updatePerimeter();
+  const nonProdScale = field('nonProdScale');
+  const nonProdEnvironments = Array.from(wizard.querySelectorAll('input[name=envScope]'))
+    .filter(({ value }) => ['dev', 'test', 'stage'].includes(value));
+  const updateNonProdScale = () => {
+    nonProdScale.hidden = !nonProdEnvironments.some(({ checked }) => checked);
+  };
+  for (const input of nonProdEnvironments) input.addEventListener('change', updateNonProdScale);
+  updateNonProdScale();
 
   const environment = selectField('wizardCloudEnvironment', 'Cloud environment');
   const region = selectField('wizardTargetRegion', 'Primary region');
   byId('regionCount').closest('.field').after(environment.row, region.row);
-  const next = document.createElement('a');
-  next.className = 'btn';
-  next.id = 'continueProject';
-  next.textContent = 'Continue to project setup';
-  byId('generateBtn').after(next);
+  const results = byId('generateBtn').closest('.card');
+  const tagline = results.querySelector('.result-tagline');
+  let projectAddress;
   const nextPage = '../app/multicloud.html#vmware-exit:';
-  const effectivePlatform = () => initiative.value === 'new-service' && (!cloud.value || cloud.value === 'na') ? source.select : cloud;
+  const effectivePlatform = () => window.recommendationPlatformSelect();
   const platformValue = () => effectivePlatform().value === 'na' ? '' : effectivePlatform().value;
   const publicProvider = () => providers[platformValue()];
   const providerId = () => publicProvider() || platformValue();
@@ -97,6 +115,14 @@ function mountFlow(initiative, cloud) {
   let moveTarget = '';
   let servicePlatform = '';
   let serviceTarget = '';
+  let vmwareAvailable = false;
+  let sourceEdited = false;
+  const prefillSource = () => {
+    if (vmwareAvailable && !sourceEdited && initiative.value === 'migration' && !source.select.value) {
+      source.select.value = 'vsphere';
+      updateLink();
+    }
+  };
 
   const updatePlatformFields = () => {
     const newService = initiative.value === 'new-service';
@@ -115,7 +141,6 @@ function mountFlow(initiative, cloud) {
       source.select.value = moveSource;
       cloud.value = moveTarget;
     }
-    cloud.dispatchEvent(new Event('change', { bubbles: true }));
   };
 
   const updateLink = () => {
@@ -124,21 +149,19 @@ function mountFlow(initiative, cloud) {
     if (needsPlatform() && providerId()) query.set('provider', providerId());
     const choices = {
       source: initiative.value === 'migration' ? source.select.value : '',
-      cutover: byId('cutoverStrategy').value,
+      cutover: initiative.value === 'migration' ? byId('cutoverStrategy').value : '',
       environment: environment.select.value,
-      region: region.select.value,
-      hosted: platformValue() === 'vmware-cloud' ? hosted.select.value : '',
+      region: direct() ? '' : region.select.value,
+      hosted: initiative.value === 'migration' && platformValue() === 'vmware-cloud' ? hosted.select.value : '',
     };
     for (const [key, value] of Object.entries(choices)) if (value) query.set(key, value);
     const spec = platformValue() === 'vcf' && initiative.value === 'new-service';
-    next.textContent = spec ? 'Continue to VCF design' : 'Continue to project setup';
-    next.href = spec ? '../app/vcf-spec.html' : nextPage + query;
-    next.hidden = !initiative.value || (needsPlatform() && !providerId());
+    projectAddress = spec ? '../app/vcf-spec.html' : nextPage + query;
   };
   const updateRegions = () => {
-    const id = providerId();
-    const government = environments[id];
-    const available = government && environment.select.value === government.id ? government.regions : regions[id] ?? [];
+    const selectedEnvironment = environment.select.value;
+    const id = selectedEnvironment && selectedEnvironment !== 'commercial' ? selectedEnvironment : providerId();
+    const available = direct() ? [] : PROJECT_CLOUD_REGIONS[id] ?? [];
     setOptions(region.select, available.map((value) => ({ value, label: value })), 'Choose a region');
     region.row.hidden = !available.length;
     updateLink();
@@ -148,8 +171,8 @@ function mountFlow(initiative, cloud) {
       document.documentElement.style.removeProperty('--accent');
       document.documentElement.style.removeProperty('--accent-soft');
     });
-    const government = environments[providerId()];
-    hosted.row.hidden = !needsPlatform() || platformValue() !== 'vmware-cloud';
+    const government = needsPlatform() && environments[providerId()];
+    hosted.row.hidden = initiative.value !== 'migration' || platformValue() !== 'vmware-cloud';
     const choices = government ? [{ value: 'commercial', label: 'Commercial' }, { value: government.id, label: government.name }] : [];
     setOptions(environment.select, choices, 'Decide later');
     environment.row.hidden = !choices.length;
@@ -158,48 +181,68 @@ function mountFlow(initiative, cloud) {
       byId('resultsContent').style.display = 'none';
       for (const id of ['fullViewBtn', 'printBtn', 'exportWordBtn']) byId(id).disabled = true;
     }
-    byId('generateBtn').textContent = publicProvider() && !direct() ? 'Generate recommendation' : 'Continue';
+    results.hidden = direct() || Boolean(providerId() && !publicProvider());
+    results.parentElement.classList.toggle('direct-initiative', direct());
+    tagline.textContent = initiative.value === 'migration'
+      ? 'Generate a recommendation, or use Finish to open migration project setup.'
+      : 'Complete the wizard to generate a service recommendation.';
     updateRegions();
   };
   const updateInitiative = () => {
     updatePlatformFields();
-    hosted.row.hidden = !needsPlatform() || platformValue() !== 'vmware-cloud';
-    updateLink();
-    byId('generateBtn').textContent = publicProvider() && !direct() ? 'Generate recommendation' : 'Continue';
+    prefillSource();
+    const isDirect = direct();
+    for (const row of [architecture, field('workloadName'), field('description'), source.row]) row.hidden = isDirect;
+    target.row.hidden = !needsPlatform();
+    if (initiative.value === 'landing-zone') target.row.after(environment.row);
+    else field('regionCount').after(environment.row, region.row);
+    field('sourceEnv').hidden = initiative.value !== 'migration';
+    field('migrationApproach').hidden = initiative.value !== 'migration';
+    if (byId('step-1').classList.contains('active')) window.showStep(1);
+    cloud.dispatchEvent(new Event('change', { bubbles: true }));
   };
   wizard.addEventListener('change', updateLink);
   cloud.addEventListener('change', updateCloud);
   initiative.addEventListener('change', updateInitiative);
   environment.select.addEventListener('change', updateRegions);
   source.select.addEventListener('change', () => {
-    if (addingService) {
+    if (initiative.value === 'migration') sourceEdited = true;
+    if (['new-service', 'existing-service', 'maintenance'].includes(initiative.value)) {
       cloud.dispatchEvent(new Event('change', { bubbles: true }));
-      return;
     }
-    const broadSource = byId('sourceEnv');
-    if (broadSource.value) return;
-    if (['vsphere', 'vcf', 'vmware-cloud'].includes(source.select.value)) broadSource.value = 'onprem-vmware';
-    else if (['aws', 'azure', 'google', 'oci'].includes(source.select.value)) broadSource.value = 'existing-cloud';
   });
-  const continueForVendor = (event) => {
-    if (!initiative.value || (needsPlatform() && !providerId())) {
+  const checkSetup = (event) => {
+    const missing = !initiative.value ? [initiative, 'Choose an initiative.']
+      : initiative.value === 'migration' && !source.select.value ? [source.select, 'Choose the source platform.']
+      : needsPlatform() && !providerId() ? [effectivePlatform(), 'Choose a platform.'] : null;
+    if (missing) {
       event.preventDefault();
       event.stopImmediatePropagation();
       window.showStep(1);
-      byId('error-step-1').textContent = 'Choose an activity and platform.';
-      (!initiative.value ? initiative : effectivePlatform()).focus();
-      return;
+      byId('error-step-1').textContent = missing[1];
+      missing[0].focus();
+      return false;
     }
-    if (publicProvider() && !direct()) return;
+    return true;
+  };
+  const openProject = (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
-    location.href = next.href;
+    location.href = projectAddress;
   };
-  byId('generateBtn').addEventListener('click', continueForVendor, true);
+  byId('generateBtn').addEventListener('click', (event) => {
+    if (checkSetup(event) && !publicProvider()) openProject(event);
+  }, true);
   byId('nextBtn').addEventListener('click', (event) => {
-    if (direct() || byId('step-counter').textContent.includes('Step 4')) continueForVendor(event);
+    if (!checkSetup(event)) return;
+    const finishing = byId('step-4').classList.contains('active');
+    if (direct() || (finishing && (!publicProvider() || initiative.value === 'migration'))) openProject(event);
   }, true);
   const initialize = () => { updateInitiative(); updateCloud(); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
   else initialize();
+  void loadInventory().then((estate) => {
+    vmwareAvailable = Boolean(estate?.inventory.vms.length);
+    prefillSource();
+  });
 }

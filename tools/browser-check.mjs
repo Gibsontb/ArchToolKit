@@ -831,7 +831,7 @@ await section('the platform is chosen once and carried', async () => {
 });
 
 // --- the two migration pages: every pane, the old addresses, a phone --------
-await section('the wizard keeps Move from and Move to together', async () => {
+await section('the wizard shows platform fields for each initiative', async () => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   try {
     const page = await ctx.newPage();
@@ -843,7 +843,13 @@ await section('the wizard keeps Move from and Move to together', async () => {
       const newService = value === 'new-service';
       const source = await page.getByLabel('Platform Type', { exact: true }).boundingBox();
       const target = await page.getByLabel('Move to', { exact: true }).boundingBox();
-      check(`Platform fields share a row for ${value || 'no initiative selected'}`, source !== null && target !== null && source.y === target.y);
+      if (value === 'assess' || value === 'retire') {
+        check(`No platform fields for ${value}`, source === null && target === null);
+      } else if (value === 'landing-zone') {
+        check('Landing zone only asks for a destination platform', source === null && target !== null);
+      } else {
+        check(`Platform fields share a row for ${value || 'no initiative selected'}`, source !== null && target !== null && source.y === target.y);
+      }
       if (newService) {
         const destination = page.getByLabel('Move to', { exact: true });
         check('Move to offers N/A first and keeps its platform choices', await destination.isEnabled() &&

@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Single Source of Truth · ArchToolKit</title>
+    <link rel="stylesheet" href="../styles/app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="../index.html"><span class="brand-mark">AT</span><span>ArchToolKit</span></a>
+      <nav class="header-nav" aria-label="Toolkit">
+        <a href="../index.html">Home</a>
+        <a href="single-source-of-truth.html" aria-current="page">Single Source of Truth</a>
+        <a href="governances.html">Governance Workspace</a>
+        <a href="daily-work-tracker.html">Daily Work Tracker</a>
+      </nav>
+    </header>
+    <main class="page">
+      <div class="page-header">
+        <h1>Single Source of Truth</h1>
+        <p>Register authoritative records, owners, dependencies, and review dates.</p>
+      </div>
+      <div id="workspace-root" class="stack"></div>
+      <details class="workspace-reference">
+        <summary>Reference guidance</summary>
+      <div class="map-layout">
+        <aside class="map-aside">
+          <nav class="map-contents" aria-label="Registry topics">
+            <div class="map-contents-label">Registry topics</div>
+            <ol>
+              <li><a href="#ssot-overview">What “Single Source of Truth” Means</a></li>
+              <li><a href="#ssot-scope">Scope &amp; Boundaries</a></li>
+              <li><a href="#ssot-domains">Information Domains</a></li>
+              <li><a href="#ssot-objects">Object Types &amp; Examples</a></li>
+              <li><a href="#ssot-repos">Repository Layout</a></li>
+              <li><a href="#ssot-identifiers">Identifiers, Tagging &amp; Versioning</a></li>
+              <li><a href="#ssot-workflows">Create, Change &amp; Approve</a></li>
+              <li><a href="#ssot-lifecycle">Lifecycle &amp; Deprecation</a></li>
+              <li><a href="#ssot-integrations">Integration with Platform Engineering &amp; IaC</a></li>
+              <li><a href="#ssot-views">Views by Role</a></li>
+              <li><a href="#ssot-checklist">Implementation Checklist</a></li>
+              <li><a href="#ssot-roadmap">Roadmap &amp; Hardening</a></li>
+              <li><a href="#ssot-sources">Reference Guidance</a></li>
+            </ol>
+          </nav>
+        </aside>
+        <div class="map-sections">
+          <section id="ssot-overview" class="card map-section">
+            <div class="card-title"><h2>What “Single Source of Truth” Means</h2></div>
+            <p>Use this reference to design a registry for your organization. The registry itself lives in your approved systems.</p>
+            <p>Give every record an authoritative home and a stable way to find it. A central registry can point to multiple source systems and record ownership, access, and lifecycle without storing copies of their contents.</p>
+            <ul>
+              <li>Identify the current source, owner, and version for each object.</li>
+              <li>Link related records and artifacts by stable ID.</li>
+              <li>Give teams and reviewers a shared reference for migrations, change management, and operations.</li>
+            </ul>
+          </section>
+
+          <section id="ssot-scope" class="card map-section">
+            <div class="card-title"><h2>Scope &amp; Boundaries</h2></div>
+            <h3>Register</h3>
+            <ul>
+              <li>Business records, datasets, documents, media, work schedules, and shared knowledge.</li>
+              <li>Architecture designs, policies, control mappings, infrastructure code, runbooks, and decisions.</li>
+            </ul>
+            <h3>Keep in existing systems</h3>
+            <ul>
+              <li>Store sensitive content, credentials, and encryption keys in their approved systems. Register only metadata allowed in the registry boundary.</li>
+              <li>Mark backups, extracts, test copies, and analytical replicas with their source and refresh policy.</li>
+            </ul>
+          </section>
+
+          <section id="ssot-domains" class="card map-section">
+            <div class="card-title"><h2>Information Domains</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Domain</th>
+                    <th scope="col">Example objects</th>
+                    <th scope="col">Authoritative home</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Business data</td>
+                    <td>Service requests, asset records, customer or supplier records</td>
+                    <td>System of record or governed data platform</td>
+                  </tr>
+                  <tr>
+                    <td>Documents and files</td>
+                    <td>Approved procedures, agreements, reports</td>
+                    <td>Document management system</td>
+                  </tr>
+                  <tr>
+                    <td>Evidence and media</td>
+                    <td>Audit artifacts, approved photos and recordings</td>
+                    <td>Restricted evidence or media repository</td>
+                  </tr>
+                  <tr>
+                    <td>Operational work</td>
+                    <td>Schedules, rosters, and change calendars</td>
+                    <td>Scheduling or work management system</td>
+                  </tr>
+                  <tr>
+                    <td>Collaboration and knowledge</td>
+                    <td>Team workspaces and knowledge articles</td>
+                    <td>Approved collaboration platform</td>
+                  </tr>
+                  <tr>
+                    <td>Architecture and design</td>
+                    <td>Diagrams, reference architectures, landing zones</td>
+                    <td>Architecture repository</td>
+                  </tr>
+                  <tr>
+                    <td>Governance and controls</td>
+                    <td>Policies, control mappings, authorization records</td>
+                    <td>Policy and assurance repositories</td>
+                  </tr>
+                  <tr>
+                    <td>Infrastructure as code</td>
+                    <td>Terraform modules, Ansible roles, pipelines</td>
+                    <td>Version-controlled repositories</td>
+                  </tr>
+                  <tr>
+                    <td>Operations and runbooks</td>
+                    <td>Recovery plans and incident procedures</td>
+                    <td>Runbook repository</td>
+                  </tr>
+                  <tr>
+                    <td>Decisions and rationale</td>
+                    <td>Architecture decisions and approved exceptions</td>
+                    <td>Decision register</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="ssot-objects" class="card map-section">
+            <div class="card-title"><h2>Object Types &amp; Examples</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Object</th>
+                    <th scope="col">Example ID</th>
+                    <th scope="col">Registry entry</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Service request</td>
+                    <td><code>REQ-OPS-001234</code></td>
+                    <td>Request owner, classification and status</td>
+                  </tr>
+                  <tr>
+                    <td>Document</td>
+                    <td><code>DOC-REQ-OPS-001234-01</code></td>
+                    <td>Approved procedure linked to the request</td>
+                  </tr>
+                  <tr>
+                    <td>Evidence</td>
+                    <td><code>EVID-AUDIT-001234-01</code></td>
+                    <td>Restricted link to a verification artifact</td>
+                  </tr>
+                  <tr>
+                    <td>Dataset</td>
+                    <td><code>DATA-ASSET-DAILY</code></td>
+                    <td>Inventory feed, refresh schedule and provenance</td>
+                  </tr>
+                  <tr>
+                    <td>Work artifact</td>
+                    <td><code>WORK-OPS-CHANGE-2025-09-10</code></td>
+                    <td>Maintenance window linked to a change record</td>
+                  </tr>
+                  <tr>
+                    <td>Architecture artifacts</td>
+                    <td><code>STD-LOG-01</code>, <code>PAT-LZ-STD</code>, <code>MOD-NET-01</code></td>
+                    <td>Standard, reference pattern and approved module version</td>
+                  </tr>
+                  <tr>
+                    <td>Operations and decisions</td>
+                    <td><code>RUN-RESTORE-01</code>, <code>ADR-0042</code></td>
+                    <td>Recovery runbook and the decision it implements</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="ssot-repos" class="card map-section">
+            <div class="card-title"><h2>Repository Layout</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Repository</th>
+                    <th scope="col">What belongs there</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Systems of record and governed data platform</td>
+                    <td>Operational records, registered schemas and curated datasets</td>
+                  </tr>
+                  <tr>
+                    <td>Document and media stores</td>
+                    <td>Canonical files, access controls and retention policies</td>
+                  </tr>
+                  <tr>
+                    <td>Collaboration and scheduling tools</td>
+                    <td>Approved sites, calendars, and workspaces for specific workflows</td>
+                  </tr>
+                  <tr>
+                    <td>Architecture and policy repositories</td>
+                    <td>Standards, diagrams, design decisions, and policy source material</td>
+                  </tr>
+                  <tr>
+                    <td>Code and operations repositories</td>
+                    <td>Versioned modules, roles, pipelines, and runbooks</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Open the <a href="governances.html">Governance Workspace</a>, <a href="terraform.html">Terraform</a>, <a href="ansible.html">Ansible</a>, or the <a href="daily-work-tracker.html">Daily Work Tracker</a> from the toolkit.</p>
+          </section>
+
+          <section id="ssot-identifiers" class="card map-section">
+            <div class="card-title"><h2>Identifiers, Tagging &amp; Versioning</h2></div>
+            <ul>
+              <li>Use an object type prefix, a domain or owning team where useful, and a unique sequence or supported natural ID.</li>
+              <li>Preserve the source identifier and keep registry IDs stable across repository moves. Record aliases and successor IDs.</li>
+              <li>Record the owner, business domain, approved classification, retention schedule reference, lifecycle state, and authoritative link. Record when and by whom the entry was last verified.</li>
+              <li>Record immutable releases for approved standards, patterns, modules, and runbooks. Use the source revision or timestamp for operational records.</li>
+            </ul>
+          </section>
+
+          <section id="ssot-workflows" class="card map-section">
+            <div class="card-title"><h2>Create, Change &amp; Approve</h2></div>
+            <ol>
+              <li>Create the object in its authoritative system and assign its owner and stable ID.</li>
+              <li>Register approved metadata and link supporting records by ID. Apply registry access rules to search, exports, API responses, and restricted metadata.</li>
+              <li>Send changes to the domain owner and relevant architecture, security, or operations reviewers.</li>
+              <li>Publish the approved revision, update dependent links, and retain the actor, timestamp, and reason for each change.</li>
+            </ol>
+          </section>
+
+          <section id="ssot-lifecycle" class="card map-section">
+            <div class="card-title"><h2>Lifecycle &amp; Deprecation</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">State</th>
+                    <th scope="col">How to use it</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Draft</td>
+                    <td>Available to reviewers while approval is pending</td>
+                  </tr>
+                  <tr>
+                    <td>Active</td>
+                    <td>Current approved object or version</td>
+                  </tr>
+                  <tr>
+                    <td>Deprecated</td>
+                    <td>Still accessible with a replacement and migration date</td>
+                  </tr>
+                  <tr>
+                    <td>Superseded</td>
+                    <td>Replaced by a specific object ID and version</td>
+                  </tr>
+                  <tr>
+                    <td>Closed or archived</td>
+                    <td>Retained under the applicable policy after active use ends</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Record the replacement, owner, and effective date before deprecating a shared artifact. Check for applicable holds before disposition. Record retention and disposition decisions with the records owner.</p>
+          </section>
+
+          <section id="ssot-integrations" class="card map-section">
+            <div class="card-title"><h2>Integration with Platform Engineering &amp; IaC</h2></div>
+            <ul>
+              <li>Map landing zones to their datasets, document stores, collaboration services, and recovery requirements.</li>
+              <li>Link governance standards to approved Terraform modules, Ansible roles, and evidence produced by validation checks.</li>
+              <li>Use classification and ownership metadata to inform access controls and report coverage without exposing restricted content.</li>
+              <li>Link approved operational procedures and change records to the associated services.</li>
+            </ul>
+          </section>
+
+          <section id="ssot-views" class="card map-section">
+            <div class="card-title"><h2>Views by Role</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Role</th>
+                    <th scope="col">What they need to find</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Business users</td>
+                    <td>Current records, approved documents, and scheduled work</td>
+                  </tr>
+                  <tr>
+                    <td>Operations coordinators</td>
+                    <td>Rosters, maintenance windows, workload, and outstanding changes</td>
+                  </tr>
+                  <tr>
+                    <td>Architects</td>
+                    <td>Design patterns, standards, decisions, and affected services</td>
+                  </tr>
+                  <tr>
+                    <td>Engineers</td>
+                    <td>Approved modules, roles, versions, and code owners</td>
+                  </tr>
+                  <tr>
+                    <td>Security and compliance</td>
+                    <td>Control mappings, evidence locations, and approved exceptions</td>
+                  </tr>
+                  <tr>
+                    <td>Operations and SRE</td>
+                    <td>Current runbooks, escalation routes, and recovery plans</td>
+                  </tr>
+                  <tr>
+                    <td>Program leadership</td>
+                    <td>Coverage, ownership gaps, risks, and progress across teams</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="ssot-checklist" class="card map-section">
+            <div class="card-title"><h2>Implementation Checklist</h2></div>
+            <ol>
+              <li>Agree on domains, object types, owners, and source systems.</li>
+              <li>Define ID, classification, retention, and versioning rules.</li>
+              <li>Register critical records and link their authoritative locations.</li>
+              <li>Add review and approval steps to existing change management.</li>
+              <li>Review access, dangling links, stale entries, and duplicate sources. Practice resolving conflicts by routing disputed entries to the recorded owner.</li>
+              <li>Schedule periodic ownership and lifecycle reviews.</li>
+            </ol>
+          </section>
+
+          <section id="ssot-roadmap" class="card map-section">
+            <div class="card-title"><h2>Roadmap &amp; Hardening</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Phase</th>
+                    <th scope="col">Deliverable</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Baseline</td>
+                    <td>Approved domains, ID scheme, ownership model, and source map</td>
+                  </tr>
+                  <tr>
+                    <td>Registration</td>
+                    <td>Critical objects registered with owners, links, and lifecycle states</td>
+                  </tr>
+                  <tr>
+                    <td>Workflow</td>
+                    <td>Registry updates integrated into approval and change management</td>
+                  </tr>
+                  <tr>
+                    <td>Automation and audit</td>
+                    <td>Link and metadata validation, access-scoped exports, and audit reporting</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section id="ssot-sources" class="card map-section">
+            <div class="card-title"><h2>Reference Guidance</h2></div>
+            <ul>
+              <li><a href="https://www.archives.gov/records-mgmt/policy/universalermrequirements">NARA Universal Electronic Records Management Requirements</a> for federal records lifecycle and system requirements.</li>
+              <li><a href="https://www.archives.gov/records-mgmt/policy/metadata-compiled">NARA metadata requirements</a> when preparing permanent federal electronic records for transfer.</li>
+              <li><a href="governances.html#gov-classification">Governance Workspace</a> for selecting classification and handling rules before registering metadata.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+      </details>
+    </main>
+    <script type="module" src="single-source-of-truth.js"></script>
+    <script type="module" src="../lib/ui/clear-all.js"></script>
+    <script type="module" src="../lib/ui/site-footer.js"></script>
+  </body>
+</html>
