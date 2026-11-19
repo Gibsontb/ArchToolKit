@@ -1,15 +1,20 @@
 import { toCsv } from '../core/csv.js';
-import { COST_DRIVERS, EXAMPLE_ESTATE_RATES, estimateEstateQuantities, readEstateRates } from '../vmware/estate-cost.js';
+import { COST_DRIVERS, EXAMPLE_ESTATE_RATES, estimateEstateQuantities, estimateEstateCost, inventoryDestinationQuantities, readEstateRates } from '../vmware/estate-cost.js';
 import { button, buttonRow } from './application-migration/kit.js';
 import { card, field, numberInput } from './components.js';
 import { downloadFile, el } from './dom.js';
 import { fill, note, rowsTable } from './multicloud/pane-kit.js';
 import { estateTcoPanel } from './estate-tco-panel.js';
 import { estateReportCurrency } from './estate-report-currency.js';
+import { mountEstateBar } from './estate-bar.js';
+import { estateCostInventory } from './estate-cost-inventory.js';
+
 
 const key = 'archtoolkit.estate-cost.rates.v1';
 
 function mount(root             )       {
+  let inventory                       ;
+  let inventoryOrigin = '';
   let rates = EXAMPLE_ESTATE_RATES;
   let rateSource = 'Illustrative planning rates';
   try {
@@ -27,11 +32,13 @@ function mount(root             )       {
   const estimateCurrent = ()                                              => estimateEstateQuantities(tco.manualQuantities(), rates);
   const currency = estateReportCurrency(() => tco.render());
   const tco = estateTcoPanel(estimateCurrent, () => rates.lifeYears, currency);
+  const importedRows = estateCostInventory(()=>inventory,()=>rates,()=>tco.unitCosts(),currency,()=> 'all',()=> 'provisioned');
   const render = () => tco.render();
   tco.onChange(() => {
     sourceLabel.textContent = 'Rate source: ' + rateSource;
     const estimate = estimateCurrent();
-    const quantities = `Manual inputs · ${estimate.hosts ?? '—'} hosts · ${estimate.cores ?? '—'} physical cores · ${estimate.tib?.toFixed(2) ?? '—'} provisioned TiB`;
+    const quantities = `${inventory ? 'Prefilled from '+inventoryOrigin+' · editable quantities' : 'Manual inputs'} · ${estimate.hosts ?? '—'} hosts · ${estimate.cores ?? '—'} physical cores · ${estimate.tib?.toFixed(2) ?? '—'} provisioned TiB`;
+    importedRows.refresh();
     fill(results,
       el('h3', { text: (estimate.complete ? 'Estimated monthly cost · ' : 'Partial monthly estimate · ') + currency.format(estimate.subtotal) }),
       note(quantities),
@@ -119,8 +126,19 @@ function mount(root             )       {
       status, sourceLabel, el('div', { class: 'field-grid' }, ...rateInputs.map(({ control }) => control)),
       note('The estimate annualizes hardware over its useful life and models a 730-hour month. Storage uses provisioned VM space. Licensing uses known physical cores before any contract-specific minimums. Avoid counting the same hardware and storage costs twice for HCI.'),
       el('a', { attrs: { href: 'https://knowledge.broadcom.com/external/article/403784' }, text: 'Broadcom cost driver methodology' })),
-    tco.forecast);
+    tco.forecast, importedRows.element);
   render();
+  void mountEstateBar(root, {
+    purpose: 'prefill the Cost Calculator from this inventory',
+    onEstate: entry => {
+      inventory=entry?.inventory;inventoryOrigin=entry?.origin??'';
+      if(entry){
+        const baseline=estimateEstateCost(entry.inventory,rates);
+        const destination=inventoryDestinationQuantities(entry.inventory.vms,'all','provisioned');
+        tco.applyInventory({hosts:baseline.hosts,cores:baseline.unknownCores?null:baseline.cores,tib:baseline.complete?baseline.tib:null,...destination});
+      } else render();
+    },
+  });
 }
 
 const root = document.getElementById('estate-cost-root');
