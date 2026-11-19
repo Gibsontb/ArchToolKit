@@ -22,6 +22,7 @@ import {
                      
 } from '../vmware/inventory.js';
 import { assessMoves,                   } from '../vmware/vm-readiness.js';
+import { inventoryDetailTabs } from './inventory-detail-tabs.js';
 import { mountEstateBar } from './estate-bar.js';
 import { analyzeEstate } from '../vmware/analyze.js';
 import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.js';
@@ -54,7 +55,8 @@ export function mountInventoryPage(root             )       {
         replace(results, el('div', { class: 'empty', text: 'No estate loaded yet.' }));
         return;
       }
-      replace(results, ...buildResults(entry.inventory, [...entry.findings]));
+      const [estate, ...overview] = buildResults(entry.inventory, [...entry.findings]);
+      replace(results, estate ?? null, inventoryDetailTabs(entry, overview));
     },
   });
 
@@ -514,7 +516,7 @@ function buildResults(inventory           , importFindings           )          
  */
 async function loadIndex()                               {
   try {
-    const { loadTrackerIndex } = await import('../kit/tracker-index.js');
+    const { loadTrackerIndex } = await import('../kit/tracker-index.ts');
     const index               = await loadTrackerIndex();
     return index && index.size > 0 ? index : null;
   } catch {

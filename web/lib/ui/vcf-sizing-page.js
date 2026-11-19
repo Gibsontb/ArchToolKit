@@ -25,7 +25,7 @@ import {
   table,
 } from './components.js';
 import { tableEditor } from './multi-editors.js';
-import { formatCapacityGib, formatCount, roundTo } from '../core/units.js';
+import { formatCapacityGib, formatCount, roundTo, formatDecimalCapacity, gibToTib } from '../core/units.js';
                                                                                                                      
 import { addFootprints, ZERO_FOOTPRINT,                            } from '../vcf/sizing-data.js';
 import { putHandoff, takeHandoff, rememberLatest } from './handoff.js';
@@ -33,7 +33,11 @@ import { sizingToPlan, describeSizingHandoff, estateToPlan } from '../vcf/bridge
 import { mountEstateBar } from './estate-bar.js';
 import { buildEstatePlanner, fleetCard,                    } from './estate-planner.js';
 import { planEstate, sourceClusters,                 } from '../vcf/estate-plan.js';
+import { reviewEstateSizing,                         } from '../vcf/estate-sizing-review.js';
+import { estateNetworkPanel,                         } from './vcf-estate-network.js';
+                                                             
                                                         
+import { SIZING_METHODOLOGY } from '../vcf/sizing-methodology.js';
 import {
   SIZING_FORM_DEFAULTS,
   VERSION_OPTIONS,
@@ -111,12 +115,51 @@ export function mountVcfSizingPage(root             )       {
 
   const form = buildForm(() => onChange());
   const estateSlot = el('div', { class: 'stack' });
-  form.wrap.prepend(estateSlot);
+  const capacityPane = el('div', { class: 'stack' });
+  const sourceSummary = el('div');
+  const fleetResults = el('div', { class: 'stack' });
+  const networkingPane = el('div', { class: 'stack' });
+  const settingsPane = el('div', { class: 'split' }, el('div', {}, form.wrap), resultsPane);
+  const tablist = el('div', { class: 'tabs', attrs: { role: 'tablist', 'aria-label': 'VCF sizing views' } });
+  const views = [
+    { id: 'capacity', label: 'Estate capacity', pane: capacityPane },
+    { id: 'networking', label: 'Networking & readiness', pane: networkingPane },
+    { id: 'settings', label: 'Management & appliances', pane: settingsPane },
+    { id: 'methodology', label: 'Formulas & sources', pane: card('Broadcom sizing methodology',
+      ...SIZING_METHODOLOGY.rules.map(rule => el('div', {}, el('h3', { text: rule.name }), el('p', { text: rule.formula }), el('p', { class: 'muted', text: rule.basis }), el('a', { text: 'Broadcom source', attrs: { href: rule.source, target: '_blank', rel: 'noopener' } }))),
+      el('h3', { text: 'Assumptions and verification' }), ...SIZING_METHODOLOGY.limitations.map(text => el('p', { class: 'muted', text }))) },
+  ];
+  const tabs = views.map(view => el('button', { class: 'tab', text: view.label, attrs: { type: 'button', role: 'tab', id: 'vcf-sizing-tab-' + view.id, 'aria-controls': 'vcf-sizing-panel-' + view.id } }));
+  function showView(id        )       {
+    views.forEach((view,index) => {
+      const active = view.id === id;
+      view.pane.hidden = !active;
+      view.pane.id = 'vcf-sizing-panel-' + view.id;
+      view.pane.setAttribute('role','tabpanel');
+      view.pane.setAttribute('aria-labelledby',tabs[index] .id);
+      tabs[index] .classList.toggle('active',active);
+      tabs[index] .setAttribute('aria-selected',String(active));
+      tabs[index] .tabIndex = active ? 0 : -1;
+    });
+  }
+  tabs.forEach((tab,index) => {
+    tab.addEventListener('click',()=>showView(views[index] .id));
+    tab.addEventListener('keydown',event=>{
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+      event.preventDefault();
+      const next = event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+      tabs[next] .focus();showView(views[next] .id);
+    });
+  });
+  tablist.append(...tabs);
+  capacityPane.append(sourceSummary,estateSlot,fleetResults);
+  let review                                ;
+  let networkPanel                                ;
   let plan                    = null;
   let planVersion = 0;
   let extras               = ESTATE_EXTRAS_DEFAULTS;
 
-  const estateKey = (v            )         => `${v.version}|${v.profile}|${v.hostFailures}`;
+  const estateKey = (v            )         => JSON.stringify([v.version,v.profile,v.hostFailures,v.vsanModel,v.dedupRatio,v.operationsReservePct,v.osaPolicy]);
 
   function onChange()       {
     form.sync();
@@ -132,6 +175,7 @@ export function mountVcfSizingPage(root             )       {
     const values = form.read();
     const base = estate.planner.plan();
     plan = planEstate(estate.inventory, estateOptions(base.options, extras, values));
+    review = reviewEstateSizing(estate.inventory, plan);
     lastEstateKey = estateKey(values);
     planVersion += 1;
     form.write(formFromSizingInput(plan.management));
@@ -143,7 +187,7 @@ export function mountVcfSizingPage(root             )       {
   // estate does not have to be described twice.
   const inbound = takeHandoff             ('inventory-to-sizing');
   if (inbound) {
-    form.write(formFromSizingInput(inbound.payload));
+    form.write({ ...formFromSizingInput(inbound.payload), vsanModel: inbound.payload.vsan?.model ?? 'workbook' });
     form.sync();
     append(
       root,
@@ -156,7 +200,8 @@ export function mountVcfSizingPage(root             )       {
     );
   }
 
-  append(root, el('div', { class: 'split' }, el('div', {}, form.wrap), resultsPane));
+  append(root, tablist, ...views.map(view => view.pane));
+  showView('settings');
 
   function render()       {
     const values = form.read();
@@ -170,13 +215,20 @@ export function mountVcfSizingPage(root             )       {
       replace(resultsPane, card('Sizing failed', el('div', { class: 'finding is-error', text: String(err) })));
       return;
     }
-    replace(resultsPane, ...(plan ? [fleetCard(plan)] : []), ...buildResults(outcome));
+    networkPanel?.update(review ,outcome,values);
+    replace(resultsPane, ...buildResults(outcome,()=>networkPanel?.handoff()??{}));
+    if(plan&&review){
+      replace(sourceSummary,estateCapacitySummary(review));
+      replace(fleetResults,fleetCard(plan),estateClusterComparison(review,plan),estateSizingExport(plan,review,outcome,networkPanel));
+    }
     // With an estate loaded, the spec builder follows this page: whatever was
     // sized last is what it opens on, without Continue having to be pressed.
     if (estate) {
       rememberLatest('sizing-to-spec', `${describeSizingHandoff(outcome.result)} — from ${estate.origin}`, {
         ...sizingToPlan(outcome.result),
         ...estateToPlan(estate.inventory, estate.planner.managementCluster()?.key),
+        pnicsPerHost: outcome.result.input.pnicsPerHost,
+        ...networkPanel?.handoff(),
       });
     }
   }
@@ -194,21 +246,79 @@ export function mountVcfSizingPage(root             )       {
         const planner = buildEstatePlanner(entry.inventory, onPlanChange);
         estate = { inventory: entry.inventory, planner, origin: entry.origin };
         extras = ESTATE_EXTRAS_DEFAULTS;
+        networkPanel = estateNetworkPanel(values=>{form.write(values);onChange();},()=>{planVersion++;render();});
+        replace(networkingPane,networkPanel.element);
         const extrasCard = buildEstateExtras(entry.inventory, (next) => {
           extras = next;
           onPlanChange();
         });
         replace(estateSlot, planner.panel, extrasCard);
         onPlanChange();
+        showView('capacity');
       } else {
         estate = null;
         plan = null;
         planVersion += 1;
-        replace(estateSlot);
+        review = undefined; networkPanel = undefined;
+        replace(estateSlot);replace(fleetResults);
+        replace(sourceSummary,card('Estate capacity',el('p',{text:'Import an RVTools estate to size its source clusters. Use Management & appliances for a manual design.'})));
+        replace(networkingPane,card('Networking & readiness',el('p',{text:'Import an estate to review its recorded networking. Target networking settings are available in Management & appliances.'})));
+        showView('settings');
         render();
       }
     },
   });
+}
+
+function estateCapacitySummary(review                    )              {
+  const t = review.totals;
+  return card('Source estate in sizing scope',statGrid(
+    stat({label:'Hosts in scope',value:t.hostCount,sub:review.importedHostCount+' imported · '+review.excludedHostCount+' outside scope · '+t.clusterCount+' clusters · '+t.vcenterCount+' vCenters'}),
+    stat({label:'Running workload VMs',value:t.poweredOnVmCount,sub:t.vmCount+' workload VMs · '+t.templateCount+' templates'}),
+    stat({label:'Allocated vCPU',value:t.allocatedVcpu,sub:t.physicalCores+' physical cores'}),
+    stat({label:'Allocated VM memory',value:formatDecimalCapacity(t.allocatedMemoryGib),sub:gibToTib(t.allocatedMemoryGib).toFixed(2)+' TiB'}),
+    stat({label:'Consumed virtual-disk storage',value:formatDecimalCapacity(t.usedStorageGib),sub:gibToTib(t.usedStorageGib).toFixed(2)+' TiB'}),
+    stat({label:'Shared RDM capacity',value:formatDecimalCapacity(t.rdmGib),sub:'Distinct mapped LUNs · '+gibToTib(t.rdmGib).toFixed(2)+' TiB'})),
+    el('p',{class:'muted',text:'CPU and memory demand start with running workloads. Storage includes retained VM disks. The scope, powered-off option, target hardware, growth, failure reserve and storage choices below drive the target plan.'}));
+}
+function estateClusterComparison(review                    ,plan            )              {
+  const planned=plan.domains.flatMap(domain=>domain.clusters);
+  return card('Source-to-target cluster sizing',table([
+    {header:'Source cluster',render:row=>row.name+' · '+(row.vcenter??'')},
+    {header:'Current hosts',numeric:true,render:row=>String(row.hostCount)},
+    {header:'Running vCPU',numeric:true,render:row=>formatCount(row.vcpu)},
+    {header:'Allocated RAM',render:row=>formatDecimalCapacity(row.ramGib)},
+    {header:'Active RAM snapshot',render:row=>formatDecimalCapacity(row.activeRamGib)},
+    {header:'Consumed / provisioned storage',render:row=>formatDecimalCapacity(row.usedGib)+' / '+formatDecimalCapacity(row.provisionedGib)},
+    {header:'RDM',render:row=>formatDecimalCapacity(row.rdmGib)},
+    {header:'Target hosts',numeric:true,render:row=>String(planned.filter(cluster=>cluster.sources.includes(row.key)).reduce((sum,cluster)=>sum+cluster.hosts,0))},
+    {header:'Limiting resource',render:row=>[...new Set(planned.filter(cluster=>cluster.sources.includes(row.key)).map(cluster=>cluster.binding))].join(', ')||'Not placed'},
+  ],review.sourceClusters));
+}
+function estateSizingExport(plan            ,review                    ,outcome               ,network                                )              {
+  const report=()=>({schema:'archtoolkit.vcf-estate-sizing.v1',generatedAt:new Date().toISOString(),source:estate?.origin,
+    sourceScope:review.totals,sourceClusters:review.sourceClusters,networkReview:review.networks,recordedSubnets:review.subnets,
+    methodology:SIZING_METHODOLOGY,networkPlan:network?.report(),estatePlan:plan,management:serializeOutcome(outcome)});
+  return card('Estate sizing outputs',el('div',{class:'btn-row'},
+    el('button',{class:'btn btn-primary',text:'Download complete sizing JSON',attrs:{type:'button'},on:{click:()=>downloadFile('vcf-estate-sizing.json',JSON.stringify(report(),null,2))}}),
+    el('button',{class:'btn',text:'Download sizing report',attrs:{type:'button'},on:{click:()=>{
+      const markdown=['# VCF estate sizing report','', 'Source: '+(estate?.origin??'Manual'),'',
+        '## Formulas and sources','',...SIZING_METHODOLOGY.rules.flatMap(rule=>['### '+rule.name,rule.formula,rule.basis,rule.source,'']),...SIZING_METHODOLOGY.limitations.map(text=>'- '+text),'',
+        '## Assumptions','',...Object.entries(plan.options).map(([key,value])=>'- '+key+': '+JSON.stringify(value)),
+        '', '## Target domains and clusters','',...plan.domains.flatMap(domain=>[domain.name,...domain.clusters.map(cluster=>'- '+cluster.name+': '+cluster.hosts+' hosts; limiting resource '+cluster.binding+'; CPU requirement '+cluster.byCpu+'; memory requirement '+cluster.byMemory+'; storage requirement '+cluster.byStorage+'; storage '+cluster.storage)]),
+        '', '## Source networking','',...review.networks.map(cluster=>'- '+cluster.cluster+' / '+cluster.vcenter+': '+cluster.hosts+' hosts; minimum reported NICs '+(cluster.minimumReportedNics??'unknown')+'; slowest host fastest recorded uplink '+(cluster.minimumFastestNicGbps??'unknown')+' Gb/s; DNS '+cluster.dnsHosts+'/'+cluster.hosts+'; NTP '+cluster.ntpHosts+'/'+cluster.hosts),
+        '', '## Address plan','',JSON.stringify(network?.report()??{},null,2),
+        '', '## Findings','',...[...plan.findings,...outcome.result.findings].map(finding=>'- '+finding.severity+': '+finding.message),
+        '', '## Additional discovery','',
+        '- Confirm actual target hardware compatibility and storage device qualification.',
+        '- Collect historical utilization, storage IOPS and latency, and inter-site traffic measurements.',
+        '- Verify free IP allocations, upstream connectivity and end-to-end MTU before deployment.', ''].join('\n');
+      downloadFile('vcf-estate-sizing.md',markdown,'text/markdown');
+    }}}),
+    el('button',{class:'btn',text:'Continue in the spec builder',attrs:{type:'button'},on:{click:()=>{
+      putHandoff('sizing-to-spec',describeSizingHandoff(outcome.result),{...sizingToPlan(outcome.result),...(estate?estateToPlan(estate.inventory,estate.planner.managementCluster()?.key):{}),pnicsPerHost:outcome.result.input.pnicsPerHost,...network?.handoff()});
+      globalThis.location.assign('vcf-spec.html');
+    }}})));
 }
 
 // ---------------------------------------------------------------------------
@@ -306,9 +416,10 @@ function buildForm(onChange            )                               {
     'vSAN',
     false,
     osaField,
+    field('Storage sizing method', sel('vsanModel', [{value:'workbook',label:'Broadcom workbook (swap, reserve and growth)'},{value:'engine',label:'Raw-capacity model (editable reserve)'}]), 'Raw disk capacity per host is required. Effective usable capacity already accounts for protection.'),
     row(
       field('Dedup and compression ratio', num('dedupRatio', { min: 1, max: 10, step: 0.1 }), '1 assumes none.'),
-      field('Operations reserve (%)', num('operationsReservePct', { min: 0, max: 50 }), 'No 9.1 percentage is published; 0 adds none.'),
+      field('Operations reserve (%)', num('operationsReservePct', { min: 0, max: 50 }), 'Raw-capacity model only. Workbook method uses its 30% allowance.'),
     ),
   );
   const stretched = section(
@@ -496,7 +607,9 @@ function buildForm(onChange            )                               {
   const sync = ()       => {
     const v = read();
     show(osaField, v.storage === 'vsan-osa');
-    show(vsan, v.storage === 'vsan-esa' || v.storage === 'vsan-osa');
+    // This method also sizes vSAN workload clusters when management uses NFS/FC.
+    show(vsan, true);
+    controls.operationsReservePct .disabled = v.vsanModel !== 'engine';
     show(stretched, v.topology === 'stretched');
     show(tieringFields, v.tiering === 'true');
     show(automationFields, v.includeAutomation !== 'false');
@@ -640,7 +753,7 @@ function componentTable(lines                          , withNote = true)       
   );
 }
 
-function buildResults(o               )                {
+function buildResults(o               , networkPatch                                = () => ({}))                {
   const { result, fleet } = o;
   const { capacity, storage, licensing, ips, input, hostMinimum } = result;
   const errors = o.findings.filter((f) => f.severity === 'error').length;
@@ -1056,7 +1169,7 @@ function buildResults(o               )                {
           on: {
             click: () => {
               const fromEstate = estate ? estateToPlan(estate.inventory, estate.planner.managementCluster()?.key) : {};
-              putHandoff('sizing-to-spec', describeSizingHandoff(result), { ...sizingToPlan(result), ...fromEstate });
+              putHandoff('sizing-to-spec', describeSizingHandoff(result), { ...sizingToPlan(result), ...fromEstate, pnicsPerHost: result.input.pnicsPerHost, ...networkPatch() });
               globalThis.location.assign('vcf-spec.html');
             },
           },
@@ -1106,6 +1219,7 @@ function serializeOutcome(o               )          {
   return {
     generatedAt: new Date().toISOString(),
     generatedBy: 'ArchToolKit VCF 9.1 sizing engine',
+    methodology: SIZING_METHODOLOGY,
     version: r.version,
     release: r.release,
     input: o.plan.primary,

@@ -60,6 +60,7 @@ export function sizingToPlan(result: SizingResult): Partial<DeploymentPlan> {
     // The spec builder's profile is the HA split only; the sizing profile also
     // carries a scale, which maps to the appliance sizes instead.
     profile: input.profile === 'simple' ? 'simple' : 'ha',
+    sizePreset: input.profile,
     failuresToTolerate: result.storage.ftt,
     ...(scenario ? { scenario } : {}),
     ...(input.pnicsPerHost ? { pnicsPerHost: input.pnicsPerHost } : {}),

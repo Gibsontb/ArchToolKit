@@ -834,7 +834,7 @@ export function computeStorage(
     dedupRatio,
     rawRequiredGib,
     availableRawGib,
-    rebuildReserveGib: Math.min(hostCount, failures) * host.rawStorageGib,
+    rebuildReserveGib: Math.min(hostCount, workbookModel ? Math.max(1, failures) : failures) * host.rawStorageGib,
     effectiveCapacityGib,
     sufficient: availableRawGib >= rawRequiredGib,
     basis: workbookModel ? weakestBasis([overhead.basis, 'published']) : weakestBasis([overhead.basis, 'derived']),
@@ -891,7 +891,8 @@ function fits(n        , d               , o                   )                
     (d.ramGib <= o.memoryCeiling * cap.usableMemoryGib && (d.dramRamGib ?? 0) <= o.memoryCeiling * cap.usableRamGib);
   let storage = true;
   if (isVsan(o.storage) && d.storageGib > 0 && o.host.rawStorageGib > 0) {
-    const s = computeStorage(o.storage, o.topology ?? 'standard', n, o.host, o.hostFailures, d.storageGib, o.vsan);
+    const vsan = o.vsan?.model === 'workbook' && o.vsan.swapGib === undefined ? { ...o.vsan, swapGib: d.ramGib } : o.vsan;
+    const s = computeStorage(o.storage, o.topology ?? 'standard', n, o.host, o.hostFailures, d.storageGib, vsan);
     storage = s.valid && s.sufficient;
   }
   return { cpu, memory, storage };
@@ -1007,7 +1008,7 @@ export function sizeWorkloadCluster(
   const capacity = computeCapacity(hosts, c.host, failures, { topology, reserveAzFailure: c.stretched?.reserveAzFailure !== false, tieringRatio: tier });
   const cpuUsed = capacity.usablePhysicalCores > 0 ? demand.vcpu / capacity.usablePhysicalCores : Number.POSITIVE_INFINITY;
   const memoryUtilization = capacity.usableMemoryGib > 0 ? demand.ramGib / capacity.usableMemoryGib : Number.POSITIVE_INFINITY;
-  const storage = computeStorage(c.storage, topology, hosts, c.host, failures, demand.diskGib, c.vsan);
+  const storage = computeStorage(c.storage, topology, hosts, c.host, failures, demand.diskGib, c.vsan?.model === 'workbook' && c.vsan.swapGib === undefined ? { ...c.vsan, swapGib: demand.ramGib } : c.vsan);
   const licensing = computeLicensing(hosts, c.host, false, isVsan(c.storage));
 
   if (c.hosts !== undefined) {

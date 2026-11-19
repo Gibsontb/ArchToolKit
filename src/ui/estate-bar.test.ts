@@ -16,6 +16,9 @@ test('reads a costing workbook once and rejects a second workbook before reading
     if (message.startsWith('Reading ')) snapshots.push(message.split(' (')[0]!);
   }, true);
   assert.equal(reads, 1);
+  assert.equal(result.sourceFiles?.length, 1);
+  assert.equal(result.sourceFiles?.[0]?.name, 'rvtools.xlsx');
+  assert.deepEqual(result.sourceFiles?.[0]?.bytes, new Uint8Array(buffer));
   assert.equal(result.inventory.vms.filter(({ name }) => name === 'app-01').length, 1);
   assert.equal(new Set(snapshots).size, snapshots.length);
   await assert.rejects(importEstateFiles([file, file], undefined, true), /one RVTools workbook/);

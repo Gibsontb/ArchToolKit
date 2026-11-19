@@ -3198,3 +3198,12 @@ dialog.netcalc::backdrop { background: rgb(0 0 0 / 0.45); }
 #workspace-root .table-wrap { max-height: 36rem; }
 #workspace-root td { vertical-align: top; overflow-wrap: anywhere; }
 #workspace-root .field-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+
+#inventory-root .table-wrap { max-height: 42rem; overflow: auto; }
+#inventory-root .table-wrap thead { position: sticky; top: 0; z-index: 1; }
+#inventory-root [role="tablist"] { padding-block: var(--space-2); }
+
+#vcf-sizing-root [hidden] { display: none !important; }
+#vcf-sizing-root > .tabs { margin-bottom: var(--space-4); }
+#vcf-sizing-root .table-wrap { overflow: auto; max-height: 38rem; }
+#vcf-sizing-root input[type="number"] { max-width: 10rem; }

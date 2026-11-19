@@ -22,6 +22,7 @@ import {
   type ClusterRollup,
 } from '../vmware/inventory.ts';
 import { assessMoves, type MoveSeverity } from '../vmware/vm-readiness.ts';
+import { inventoryDetailTabs } from './inventory-detail-tabs.ts';
 import { mountEstateBar } from './estate-bar.ts';
 import { analyzeEstate } from '../vmware/analyze.ts';
 import { sourceClusters, commonHostProfile, planEstate, suggestManagementSource } from '../vcf/estate-plan.ts';
@@ -54,7 +55,8 @@ export function mountInventoryPage(root: HTMLElement): void {
         replace(results, el('div', { class: 'empty', text: 'No estate loaded yet.' }));
         return;
       }
-      replace(results, ...buildResults(entry.inventory, [...entry.findings]));
+      const [estate, ...overview] = buildResults(entry.inventory, [...entry.findings]);
+      replace(results, estate ?? null, inventoryDetailTabs(entry, overview));
     },
   });
 

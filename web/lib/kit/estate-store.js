@@ -28,6 +28,11 @@ const KEY = 'current';
 /** The shape this module writes; bumped only when the stored estate changes. */
 const VERSION = 1;
 
+                                      
+                        
+                             
+ 
+
                                
                            
                            
@@ -35,6 +40,7 @@ const VERSION = 1;
                           
                                 
                                         
+                                                        
  
 
                                 
@@ -56,8 +62,9 @@ export async function storeInventory(
   inventory           ,
   findings                    ,
   origin        ,
+  sourceFiles                                 ,
 )                   {
-  const entry               = { version: VERSION, savedAt: new Date().toISOString(), origin, inventory, findings };
+  const entry               = { version: VERSION, savedAt: new Date().toISOString(), origin, inventory, findings, ...(sourceFiles?.length ? { sourceFiles } : {}) };
   cached = entry;
   // The names go to sessionStorage as well, for the generators' dropdowns,
   // which read them synchronously while a form is being built.

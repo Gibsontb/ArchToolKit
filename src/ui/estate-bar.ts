@@ -19,12 +19,14 @@ import {
   storeInventory,
   summarise,
   type StoredEstate,
+  type StoredInventoryFile,
 } from '../kit/estate-store.ts';
 
 export interface ImportedEstate {
   readonly inventory: Inventory;
   readonly findings: readonly Finding[];
   readonly origin: string;
+  readonly sourceFiles?: readonly StoredInventoryFile[];
 }
 
 /** Read whatever was dropped: workbook, CSV tabs, collector JSON, or a mix. */
@@ -39,9 +41,11 @@ export async function importEstateFiles(
   const inventories: Inventory[] = [];
   const findings: Finding[] = [];
   const csv: { name: string; content: string }[] = [];
+  const sourceFiles: StoredInventoryFile[] = [];
 
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    sourceFiles.push({ name: file.name, bytes });
     if (looksLikeXlsx(bytes) || /\.xlsx$/i.test(file.name)) {
       onProgress?.(`Opening ${file.name}…`);
       const result = await importRvToolsWorkbook(bytes, {
@@ -70,7 +74,7 @@ export async function importEstateFiles(
   }
 
   const origin = files.length === 1 ? (files[0] as File).name : `${files.length} files`;
-  return { inventory: mergeInventories(inventories), findings, origin };
+  return { inventory: mergeInventories(inventories), findings, origin, sourceFiles };
 }
 
 export interface EstateBarOptions {
@@ -102,7 +106,7 @@ export async function mountEstateBar(root: HTMLElement, options: EstateBarOption
         status.textContent = m;
       }, options.singleSnapshot);
       status.textContent = 'Saving…';
-      await storeInventory(imported.inventory, imported.findings, imported.origin);
+      const saved = await storeInventory(imported.inventory, imported.findings, imported.origin, imported.sourceFiles);
       const entry = await loadInventory();
       render(entry);
       options.onEstate(entry);

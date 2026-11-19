@@ -83,6 +83,8 @@ import {
   SIZE_PRESET_OPTIONS,
   VERSIONED_COMPONENTS,
   generatedFqdn,
+  fieldsFromDeploymentPlan,
+  installerExportReady,
   isSecretControl,
   migrateFields,
   planFromForm,
@@ -747,45 +749,12 @@ function syncForm(form      )       {
  * plausible-looking defaults would disguise a guess as a derivation.
  */
 function applySizingPlan(form      , plan                         )       {
-  const c = form.controls;
-  const set = (name        , v                    )       => {
-    if (v !== undefined && c[name]) c[name].value = v;
-  };
-  const tick = (name        , v                     )       => {
-    if (v !== undefined && c[name]) (c[name]                    ).checked = v;
-  };
-  if (plan.hostCount !== undefined) set('hostCount', String(plan.hostCount));
-  set('storage', plan.storage);
-  set('profile', plan.profile);
-  set('sizePreset', plan.sizePreset);
-  if (plan.failuresToTolerate !== undefined) set('ftt', String(plan.failuresToTolerate));
-  set('scenario', plan.scenario);
-  if (plan.pnicsPerHost !== undefined) set('pnicsPerHost', String(plan.pnicsPerHost));
-  tick('includeAutomation', plan.includeAutomation);
-  set('automationSize', plan.automationSize);
-  // What the imported estate knows: the hosts' own DNS, NTP and domain, and the
-  // converged cluster's networks.
-  set('domainSuffix', plan.domainSuffix);
-  if (plan.dnsServers) {
-    set('dns1', plan.dnsServers[0] ?? '');
-    set('dns2', plan.dnsServers[1] ?? '');
+  for (const [key,value] of Object.entries(fieldsFromDeploymentPlan(plan))) {
+    const control = form.controls[key];
+    if (!control) continue;
+    if (control instanceof HTMLInputElement && control.type === 'checkbox') control.checked = value === true;
+    else control.value = String(value ?? '');
   }
-  if (plan.ntpServers) {
-    set('ntp1', plan.ntpServers[0] ?? '');
-    set('ntp2', plan.ntpServers[1] ?? '');
-  }
-  const net = (n                                          , stem        )       => {
-    if (!n) return;
-    set(`${stem}Cidr`, n.cidr);
-    set(`${stem}Vlan`, String(n.vlanId));
-    // The estate's IPv6 prefix, when its VMkernel adapters carry one.
-    set(`${stem}V6Cidr`, n.ipv6Cidr ?? '');
-    set(`${stem}V6Gateway`, n.ipv6Gateway ?? '');
-  };
-  net(plan.management, 'mgmt');
-  net(plan.vmotion, 'vmotion');
-  net(plan.vsan, 'vsan');
-  tick('dualStack', plan.dualStack);
 }
 
 /** A grid of " | " rows (src/ui/multi-editors.ts), kept in a textarea the page reads like any control. */
@@ -1397,7 +1366,7 @@ function buildInputs(onChange            )       {
     ),
     tick('brownfield', 'Reuse an existing vCenter (brownfield)'),
     existingFields,
-    tick('redact', 'Redact secrets in output'),
+    tick('redact', 'Redact secrets in preview and draft download'),
   );
   // --- passwords ---------------------------------------------------------------------
   const passwordsCard = card(
@@ -1444,6 +1413,7 @@ function buildOutput(
   form      ,
 )                {
   const all = [...buildFindings, ...validation];
+  const installerReady = installerExportReady(all);
   const counts = countBySeverity(all);
   const emitted = Object.keys(spec).length;
   const output = (form.controls.redact                                )?.checked ? redactSpec(spec) : spec;
@@ -1474,8 +1444,13 @@ function buildOutput(
       { class: 'btn-row', style: { marginTop: 'var(--space-4)' } },
       el('button', {
         class: 'btn btn-primary',
-        text: 'Download SddcSpec',
-        on: { click: () => downloadFile(`${spec.sddcId}-sddcspec-9.1.json`, json) },
+        text: 'Download VCF Installer JSON',
+        attrs: { disabled: !installerReady, title: !installerReady ? 'Resolve errors and supply required credentials or thumbprints. A draft can be downloaded at any time.' : 'Installer file includes the credentials supplied in this form.' },
+        on: { click: () => downloadFile(spec.sddcId+'-sddcspec-'+(spec.version ?? '9.1')+'.json', serializeSpec(spec)) },
+      }),
+      el('button', {
+        class: 'btn', text: 'Download draft JSON',
+        on: { click: () => downloadFile(spec.sddcId+'-draft.json', json) },
       }),
       el('button', {
         class: 'btn',
@@ -1506,7 +1481,7 @@ function buildOutput(
     ),
     el('div', {
       class: 'section-note',
-      text: 'Built against the documented 9.1 schema. Validate with POST /v1/sddcs/validations on a live VCF Installer before deploying — that check is authoritative, this one is not.',
+      text: 'Installer JSON contains the supplied credentials and requires local checks to have no errors or credential placeholders. Draft export follows the preview redaction setting. Validate the installer file with POST /v1/sddcs/validations on the target VCF Installer before deployment.',
     }),
   );
 

@@ -33,6 +33,7 @@ const destinations = [
 export function estateTcoPanel(estimate: () => Estimate | null, lifeYears: () => number,
   currency: EstateReportCurrency) {
   let saved: Record<string, string> = {};
+  let inventoryDefaults: Record<string,string> = {};
   try {
     const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
     if (parsed && typeof parsed === 'object') saved = parsed;
@@ -153,7 +154,7 @@ export function estateTcoPanel(estimate: () => Estimate | null, lifeYears: () =>
   const quoteInputs = [compute, quantity, hours, hourly, computeDiscount, commitment, cloudStorage, cloudServices,
     vcpu, vcpuRate, ram, ramRate, disk, diskRate, backup, licenceQuantity, licenceUnitPrice, proxmoxFx,
     cloudOps, egress, egressRate, cloudGrowth, migration, overlap];
-  const get = (provider: string, id: string, fallback = '') => settings(providerKey(provider, id), fallback);
+  const get = (provider: string, id: string, fallback = '') => settings(providerKey(provider, id), inventoryDefaults[id] ?? fallback);
   const computeBasisFor = (provider: string) => get(provider, 'compute-basis', get(provider, 'compute') ? 'monthly' : 'resources');
   const storageBasisFor = (provider: string) => get(provider, 'storage-basis', get(provider, 'cloud-storage') ? 'quote' : 'units');
   const loadQuote = () => {
@@ -399,5 +400,18 @@ export function estateTcoPanel(estimate: () => Estimate | null, lifeYears: () =>
     note('Cash-flow TCO counts hardware purchases and refreshes as CapEx. Existing hardware is assumed already paid for. The monthly baseline separately shows hardware amortization. During dual-run the cloud scenario also carries source OpEx.'),
     );
   return { inputs, forecast, render, manualQuantities,
+    applyInventory: (quantities: { hosts: number; cores: number | null; tib: number | null; vcpu?: number; ram?: number; disk?: number }) => {
+      // Replace quantities from this snapshot; never add them to a previous import.
+      hosts.input.value=String(quantities.hosts); cores.input.value=quantities.cores===null?'':String(quantities.cores);
+      sizing.input.value='custom';storageUnit.input.value='tib';storage.input.value=quantities.tib===null?'':String(quantities.tib);
+      inventoryDefaults=Object.fromEntries(['vcpu','ram','disk'].map(id=>[id,String(quantities[id as 'vcpu'|'ram'|'disk']??'')]));
+      loadQuote();render();
+    },
+    unitCosts: () => {
+      const quote=quoteFor(selected.input.value);
+      return { vcpu: quote.vcpuMonthly!==null&&vcpu.value() ? quote.vcpuMonthly/vcpu.value()! : null,
+        ram: quote.ramMonthly!==null&&ram.value() ? quote.ramMonthly/ram.value()! : null,
+        disk: quote.storageCost!==null&&disk.value() ? quote.storageCost/disk.value()! : null };
+    },
     onChange: (drawMonthly: () => void) => { refreshMonthly = drawMonthly; } };
 }

@@ -181,7 +181,7 @@ describe('planFromForm', () => {
     expect(primary.loadBalancer).toBe(true);
     expect(primary.automationSize).toBe('medium');
     expect(primary.automationNodes).toBe(3);
-    expect(primary.vsan).toEqual({ osaPolicy: 'raid1-ftt1', dedupRatio: 1.5, operationsReserve: 0.1 });
+    expect(primary.vsan).toEqual({ model: 'workbook', osaPolicy: 'raid1-ftt1', dedupRatio: 1.5, operationsReserve: 0.1 });
     expect(primary.stretched).toEqual({ reserveAzFailure: true, interAzBandwidthGbps: 25, interAzRttMs: 2, witnessSize: 'large' });
     expect(primary.memoryTiering?.enabled).toBe(true);
     expect(primary.memoryTiering?.activeMemoryFraction).toBe(0.4);
@@ -210,9 +210,9 @@ describe('planFromForm', () => {
     expect(recovery?.protectedVms).toBe(6000);
   });
 
-  it('the default form carries no optional blocks', () => {
+  it('the default form selects the Broadcom workbook without optional services', () => {
     const { primary, fleet, recovery } = planFromForm(SIZING_FORM_DEFAULTS);
-    expect(primary.vsan).toBeUndefined();
+    expect(primary.vsan).toEqual({ model: 'workbook' });
     expect(primary.stretched).toBeUndefined();
     expect(primary.memoryTiering).toBeUndefined();
     expect(primary.growth).toBeUndefined();
@@ -226,7 +226,7 @@ describe('planFromForm', () => {
 
   it('the OSA policy is ignored for ESA, and stretched options for a standard cluster', () => {
     const { primary } = planFromForm({ ...SIZING_FORM_DEFAULTS, osaPolicy: 'raid5-ftt1', interAzRttMs: '9' });
-    expect(primary.vsan).toBeUndefined();
+    expect(primary.vsan).toEqual({ model: 'workbook' });
     expect(primary.stretched).toBeUndefined();
   });
 

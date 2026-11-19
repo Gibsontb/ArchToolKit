@@ -131,6 +131,9 @@ export interface EstatePlanOptions {
   readonly maxHostsPerCluster?: number;
   /** What a vSAN source becomes: RVTools cannot tell ESA from OSA. Default 'esa'. */
   readonly vsanArchitecture?: 'esa' | 'osa';
+  /** Broadcom workbook storage formula, or the explicit raw-capacity model. */
+  readonly vsanModel?: 'workbook' | 'engine';
+  readonly vsan?: import('./sizing.ts').VsanOptions;
   /** Per source cluster (by key), the target principal storage. Wins over everything else. */
   readonly clusterStorage?: Readonly<Record<string, StorageType>>;
   /** Each workload domain's NSX: its own Manager cluster (default), or all but the first share. */
@@ -344,6 +347,8 @@ interface Settings {
   grouping: DomainGrouping;
   maxHostsPerCluster: number;
   vsanArchitecture: 'esa' | 'osa';
+  vsanModel: 'workbook' | 'engine';
+  vsan: import('./sizing.ts').VsanOptions;
   nsxPerDomain: 'dedicated' | 'shared';
   nsxManagerSize: NsxManagerSize;
   profile: DeploymentProfile;
@@ -363,6 +368,8 @@ const DEFAULTS: Settings = {
   grouping: 'vcenter',
   maxHostsPerCluster: 64,
   vsanArchitecture: 'esa',
+  vsanModel: 'workbook',
+  vsan: {},
   nsxPerDomain: 'dedicated',
   nsxManagerSize: 'medium',
   profile: 'simple',
@@ -371,6 +378,10 @@ const DEFAULTS: Settings = {
 
 function failuresOf(o: Settings): number {
   return o.hostFailures ?? (o.reserveHostFailure ? 1 : 0);
+}
+
+function storageGrowthFactor(storage: StorageType, o: Settings): number {
+  return isVsan(storage) && o.vsanModel === 'workbook' ? (1 + Math.max(0.1, o.growth)) / 1.1 : 1 + o.growth;
 }
 
 /** A vSAN source becomes ESA or OSA per the option; a per-cluster choice wins. */
@@ -395,13 +406,15 @@ function sizeCluster(
 ): Omit<PlannedCluster, 'name' | 'sources' | 'rdmGib' | 'sourceHosts'> {
   const vcpu = demand.vcpu * (1 + o.growth);
   const ramGib = demand.ramGib * (1 + o.growth);
-  const storageGib = demand.storageGib * (1 + o.growth);
+  // Workbook already applies 10% storage growth. Apply only the extra growth
+  // needed to reach the selected allowance, rather than compounding it twice.
+  const storageGib = demand.storageGib * storageGrowthFactor(storage, o);
   const minimum = minimumHosts({ path: 'brownfield-import', storage, topology: 'standard', role: 'workload' }).hosts;
   // The sizing engine's cluster fit: vSAN ESA Auto-RAID or OSA policy, one
   // rebuild reserve (the failure hosts), no blanket slack.
   const fit = fitCluster(
     { vcpu, ramGib, storageGib },
-    { host, storage, topology: 'standard', cpuRatio: o.cpuRatio, memoryCeiling: o.memoryCeiling, hostFailures: failuresOf(o), minimum },
+    { host, storage, topology: 'standard', cpuRatio: o.cpuRatio, memoryCeiling: o.memoryCeiling, hostFailures: failuresOf(o), minimum, vsan: { ...o.vsan, model: o.vsanModel, swapGib: ramGib } },
   );
   return {
     vcpu,
@@ -504,8 +517,9 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
       // Whatever already runs on the converged cluster stays there, and grows.
       workloadVcpu: (mgmtCluster.vcpu + (o.includePoweredOff ? mgmtCluster.offVcpu : 0)) * grow,
       workloadRamGib: (mgmtCluster.ramGib + (o.includePoweredOff ? mgmtCluster.offRamGib : 0)) * grow,
-      workloadCapacityGib: (o.storageBasis === 'provisioned' ? mgmtCluster.provisionedGib : mgmtCluster.usedGib) * grow,
+      workloadCapacityGib: (o.storageBasis === 'provisioned' ? mgmtCluster.provisionedGib : mgmtCluster.usedGib) * storageGrowthFactor(storage, o),
       reserveHostFailure: o.reserveHostFailure,
+      vsan: { ...o.vsan, model: o.vsanModel },
       ...(o.hostFailures !== undefined ? { hostFailuresToTolerate: o.hostFailures } : {}),
     };
   } else {
@@ -527,6 +541,7 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
       hostCount: minimumHosts({ path: 'greenfield', storage, topology: 'standard', profile: o.profile }).hosts,
       host: isVsan(storage) ? o.host : { ...o.host, rawStorageGib: 0 },
       reserveHostFailure: o.reserveHostFailure,
+      vsan: { ...o.vsan, model: o.vsanModel },
       ...(o.hostFailures !== undefined ? { hostFailuresToTolerate: o.hostFailures } : {}),
     };
   }
@@ -741,7 +756,7 @@ export function planEstate(inventory: Inventory, options: EstatePlanOptions): Es
   findings.push(
     info(
       'estate.plan.basis',
-      `Sized on ${o.includePoweredOff ? 'all' : 'running'} workloads' allocated vCPU and memory at ${o.cpuRatio}:1 vCPU per core and ${Math.round(o.memoryCeiling * 100)}% of memory, ${o.storageBasis} VMDK storage, ${Math.round(o.growth * 100)}% growth${failuresOf(o) > 0 ? `, N+${failuresOf(o)} per cluster` : ''} (management domain included), one vSAN rebuild reserve and no blanket slack.`,
+      `Planning assumptions: ${o.includePoweredOff ? 'all' : 'running'} workloads' allocated vCPU and memory, ${o.cpuRatio}:1 vCPU per core, ${Math.round(o.memoryCeiling * 100)}% memory ceiling, ${o.storageBasis} VMDK storage, ${Math.round(o.growth * 100)}% growth and N+${failuresOf(o)}. vSAN method: ${o.vsanModel}; workbook storage includes VM swap, 30% host-and-operations allowance and at least 10% storage growth. Ratios and utilization ceilings are editable site assumptions, not universal Broadcom recommendations.`,
       { source: 'ArchToolKit estate plan' },
     ),
   );

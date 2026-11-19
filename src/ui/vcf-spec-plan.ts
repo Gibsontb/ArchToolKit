@@ -13,6 +13,7 @@
  */
 
 import type { Json } from '../editor/doc.ts';
+import type { Finding } from '../core/findings.ts';
 import {
   SIZE_PRESETS,
   type CustomDvsPlan,
@@ -57,6 +58,45 @@ import { INTERNAL_CLUSTER_CIDRS_V4, INTERNAL_CLUSTER_CIDRS_V6 } from '../vcf/siz
 
 /** Every control's value by its name: text and selects as strings, checkboxes as booleans. */
 export type FormValues = Readonly<Record<string, Json | undefined>>;
+
+export function installerExportReady(findings: readonly Finding[]): boolean {
+  return !findings.some(finding => finding.severity === 'error' || finding.code === 'vcf.spec.placeholder-credential' || finding.code === 'vcf.build.placeholder-secrets');
+}
+
+/** Put supplied design values into visible, editable controls before assembly. */
+export function fieldsFromDeploymentPlan(plan: Partial<DeploymentPlan>): Record<string, Json> {
+  const out: Record<string, Json> = {};
+  const set = (key: string, value: string | number | boolean | undefined) => { if (value !== undefined) out[key] = typeof value === 'boolean' ? value : String(value); };
+  for (const key of ['version','scenario','storage','profile','sizePreset','hostCount','pnicsPerHost','domainSuffix','includeAutomation','automationSize','vcenterSize','opsSize','vspSize','collectorSize'] as const) set(key, plan[key]);
+  set('ftt', plan.failuresToTolerate);
+  set('nsxSize', plan.nsxManagerSize);
+  set('nsxManagerCount', plan.nsxManagerCount);
+  set('opsNodeCount', plan.opsNodeCount);
+  if (plan.dnsServers) { set('dns1',plan.dnsServers[0] ?? ''); set('dns2',plan.dnsServers[1] ?? ''); }
+  if (plan.ntpServers) { set('ntp1',plan.ntpServers[0] ?? ''); set('ntp2',plan.ntpServers[1] ?? ''); }
+  for (const [key,stem] of [['management','mgmt'],['vmManagement','vmMgmt'],['vmotion','vmotion'],['vsan','vsan'],['nfs','nfs']] as const) {
+    const network = plan[key];
+    if (!network) continue;
+    set(stem+'Cidr',network.cidr); set(stem+'Vlan',network.vlanId);
+    set(stem+'V6Cidr',network.ipv6Cidr ?? ''); set(stem+'V6Gateway',network.ipv6Gateway ?? '');
+    const adv = 'net_'+stem+'_';
+    set(adv+'gateway',network.gateway ?? ''); set(adv+'mtu',network.mtu ?? '');
+    set(adv+'portGroup',network.portGroupName ?? ''); set(adv+'assignment',network.assignmentMode ?? '');
+    set(adv+'teaming',network.teamingPolicy ?? '');
+    set(adv+'active',network.activeUplinks?.join(', ') ?? ''); set(adv+'standby',network.standbyUplinks?.join(', ') ?? '');
+    set(adv+'ranges',network.ipRanges?.map(range=>range.startIpAddress+'-'+range.endIpAddress).join(', ') ?? '');
+    set(adv+'addresses',network.ipAddresses?.join(', ') ?? '');
+  }
+  if (plan.hostTep) { set('tepCidr',plan.hostTep.cidr); set('tepVlan',plan.hostTep.vlanId); set('tepGateway',plan.hostTep.gateway ?? ''); }
+  set('dualStack',plan.dualStack);
+  for (const {id,key} of IP_POOLS) {
+    const pool=plan[key]; if(!pool)continue;
+    set('pool_'+id+'_count',pool.count); set('pool_'+id+'_offset',pool.offset);
+    set('pool_'+id+'_cidr',pool.cidr); set('pool_'+id+'_mode',pool.mode);
+    set('pool_'+id+'_addresses',pool.addresses?.join(', ')); set('pool_'+id+'_excluded',pool.excludedAddresses?.join(', '));
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // The repeated groups of controls

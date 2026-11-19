@@ -360,6 +360,7 @@ export const SIZING_FORM_DEFAULTS             = Object.freeze({
 
   osaPolicy: '',
   dedupRatio: '1',
+  vsanModel: 'workbook',
   operationsReservePct: '0',
 
   reserveAzFailure: 'true',
@@ -462,6 +463,7 @@ function vsanOf(v            )                          {
   const dedup = optNum(v.dedupRatio);
   const reserve = optNum(v.operationsReservePct);
   const out              = {
+    model: v.vsanModel === 'engine' ? 'engine' : 'workbook',
     ...(osaPolicy ? { osaPolicy } : {}),
     ...(dedup !== undefined && dedup !== 1 ? { dedupRatio: Math.max(1, dedup) } : {}),
     ...(reserve !== undefined && reserve > 0 ? { operationsReserve: Math.min(90, reserve) / 100 } : {}),
@@ -928,6 +930,7 @@ export function formFromSizingInput(input             )                      {
   if (input.edgeNodeCount !== undefined) out.edgeNodeCount = String(input.edgeNodeCount);
   if (input.vsan?.osaPolicy) out.osaPolicy = input.vsan.osaPolicy;
   if (input.vsan?.dedupRatio !== undefined) out.dedupRatio = String(input.vsan.dedupRatio);
+  out.vsanModel = input.vsan?.model ?? 'engine';
   if (input.vsan?.operationsReserve !== undefined) out.operationsReservePct = String(Math.round(input.vsan.operationsReserve * 100));
   if (input.loadBalancer !== undefined) out.loadBalancer = String(input.loadBalancer);
   if (input.vcfEdge !== undefined) out.vcfEdge = String(input.vcfEdge);
@@ -984,6 +987,8 @@ export function estateOptions(base                       , extras              ,
     nsxManagerSize: extras.nsxManagerSize,
     profile: oneOf(v.profile, PROFILES) ?? 'simple',
     version: oneOf(v.version, VERSION_OPTIONS.map((o) => o.value)) ?? '9.1.1',
+    vsanModel: v.vsanModel === 'engine' ? 'engine' : 'workbook',
+    vsan: vsanOf(v) ?? {},
     ...(failures !== undefined ? { hostFailures: failures, reserveHostFailure: failures > 0 } : {}),
   };
 }

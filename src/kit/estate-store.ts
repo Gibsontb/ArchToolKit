@@ -28,6 +28,11 @@ const KEY = 'current';
 /** The shape this module writes; bumped only when the stored estate changes. */
 const VERSION = 1;
 
+export interface StoredInventoryFile {
+  readonly name: string;
+  readonly bytes: Uint8Array;
+}
+
 export interface StoredEstate {
   readonly version: number;
   readonly savedAt: string;
@@ -35,6 +40,7 @@ export interface StoredEstate {
   readonly origin: string;
   readonly inventory: Inventory;
   readonly findings: readonly Finding[];
+  readonly sourceFiles?: readonly StoredInventoryFile[];
 }
 
 export interface EstateSummary {
@@ -56,8 +62,9 @@ export async function storeInventory(
   inventory: Inventory,
   findings: readonly Finding[],
   origin: string,
+  sourceFiles?: readonly StoredInventoryFile[],
 ): Promise<boolean> {
-  const entry: StoredEstate = { version: VERSION, savedAt: new Date().toISOString(), origin, inventory, findings };
+  const entry: StoredEstate = { version: VERSION, savedAt: new Date().toISOString(), origin, inventory, findings, ...(sourceFiles?.length ? { sourceFiles } : {}) };
   cached = entry;
   // The names go to sessionStorage as well, for the generators' dropdowns,
   // which read them synchronously while a form is being built.
