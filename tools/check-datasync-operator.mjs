@@ -49,6 +49,7 @@ class Session:
         if scenario == 'verify': task['Options']['VerifyMode'] = 'NONE'
         if scenario == 'bandwidth': task['Options']['BytesPerSecond'] = 100
         if scenario == 'queue': task['Options']['TaskQueueing'] = 'ENABLED'
+        if scenario == 'fsx-security': task['Options']['SecurityDescriptorCopyFlags'] = 'NONE'
         if scenario == 'filter': task['Includes'] = [{'FilterType':'SIMPLE_PATTERN','Value':'/other'}]
         if scenario == 'schedule': task['Schedule'] = {'ScheduleExpression':'rate(1 hour)'}
         if scenario == 'manifest': task['ManifestConfig'] = {'Action':'TRANSFER'}
@@ -94,6 +95,7 @@ class Session:
         if scenario == 'fsx-group': value['SecurityGroupArns'] = ['other']
         return value
     def describe_file_systems(self, **kwargs):
+        if 'FileSystemId' in kwargs: return self.describe_efs_file_systems(**kwargs)
         assert kwargs == {'FileSystemIds':[config['destination']['filesystem']]}
         value = dict(ResourceARN='arn:aws:fsx:us-east-1:123456789012:file-system/fs-0123456789abcdef0',OwnerId=job['account'],FileSystemType='WINDOWS',Lifecycle='AVAILABLE',KmsKeyId='mock-key',WindowsConfiguration={'AutomaticBackupRetentionDays':7},VpcId='vpc-0123456789abcdef0')
         if scenario == 'fsx-backup': value['WindowsConfiguration']['AutomaticBackupRetentionDays'] = 0
@@ -179,14 +181,19 @@ def outputs(command, text):
     assert command == ['terraform','output','-json','operator_job'] and text
     value = dict(job)
     if scenario == 'job-arn': value['task'] = 'other'
+    if kind == 'fsx': value['destination_uri'] = 'fsxw://us-east-1.fs-0123456789abcdef0/share/migration'
+    if scenario == 'fsx-job-uri': value['destination_uri'] = 'other'
     return json.dumps(value)
 subprocess.check_output = outputs
 count = 0
-for kind in ['s3','nfs','efs','smb']:
+for kind in ['s3','nfs','efs','smb','fsx']:
     original = json.loads((root/kind/'TRANSFER-CONFIG.json').read_text())
     scenarios = ['inspect','start','missing-confirm','overwrite','overwrite-confirm','account','job-arn','identity','direction','log','log-suffix','mode','options','verify','bandwidth','queue','filter','schedule','manifest','report','busy','uri','role','storage','outposts','versioning','region','previous-success','previous-error','previous-active','previous-foreign','ambiguous','receipt','execution','execution-foreign','execution-drift']
     if kind in ['nfs','efs']: scenarios += ['nfs-path','nfs-version','nfs-agent','offline']
     if kind == 'smb': scenarios += ['smb-path','smb-protocol','smb-agent','smb-auth','smb-user','smb-domain','smb-local','offline']
+    if kind == 'fsx':
+        scenarios = [item for item in scenarios if item not in ['role','storage','outposts','versioning','region']]
+        scenarios += ['smb-path','smb-protocol','smb-agent','smb-auth','smb-user','smb-domain','offline','fsx-user','fsx-domain','fsx-group','fsx-backup','fsx-type','fsx-state','fsx-encryption','fsx-arn','fsx-job-uri','fsx-security']
     if kind == 'efs':
         scenarios = [item for item in scenarios if item not in ['storage','outposts','versioning','region']]
         scenarios += ['efs-tls','efs-ap','efs-group','efs-encryption','efs-state','efs-root','efs-posix','efs-mount','efs-az','efs-vpc','efs-public','efs-ips','efs-mount-group','efs-backup','efs-tenancy','efs-ingress','efs-egress','efs-group-vpc','efs-all-egress']

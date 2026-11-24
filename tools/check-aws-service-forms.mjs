@@ -13,12 +13,34 @@ import { ROOT, WORK_TMP } from './work.mjs';
 import { publicTestKey } from './service-test-ssh.mjs';
 import { AWS_SERVICE_AVAILABILITY } from '../src/cloud/aws-service-availability.ts';
 import { AWS_RUNTIME_APIS } from '../src/cloud/aws-runtime-apis.ts';
+import { AWS_SAGEMAKER_SERVICE } from '../src/cloud/aws-sagemaker-service.ts';
+import { AWS_EKS_POD_IDENTITY_SERVICE } from '../src/cloud/aws-eks-pod-identity-service.ts';
+import { AWS_INSTANCE_CONNECT_SERVICE } from '../src/cloud/aws-instance-connect-service.ts';
+import { AWS_IVS_SERVICE } from '../src/cloud/aws-ivs-service.ts';
+import { AWS_IVS_CHAT_SERVICE } from '../src/cloud/aws-ivs-chat-service.ts';
+import { AWS_KINESIS_VIDEO_SERVICE } from '../src/cloud/aws-kinesis-video-service.ts';
+import { AWS_WEBRTC_SERVICE } from '../src/cloud/aws-webrtc-service.ts';
+import { AWS_WEBRTC_STORAGE_SERVICE } from '../src/cloud/aws-webrtc-storage-service.ts';
+import { AWS_ELASTICACHE_SERVERLESS_SERVICE } from '../src/cloud/aws-elasticache-serverless-service.ts';
+import { defaultValues } from '../src/kit/blueprint.ts';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright');
 const subnet = 'subnet-0123456789abcdef0', secondSubnet = 'subnet-0123456789abcdef1', group = 'sg-0123456789abcdef0';
 const role = name => 'arn:aws:iam::123456789012:role/' + name;
 const fixtures = [
+  ...['valkey8','valkey7','redis7'].map(profile=>['amazon-elasticache','aws_service_elasticache_serverless',{name:'application-cache',account:'123456789012',subnets:[subnet,secondSubnet],clients:[group],group:'application-group',user:'application-user',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',profile,...(profile==='valkey7'?{prescale:true}:{})},'aws_elasticache_serverless_cache']),
+  ['amazon-kinesis-video-streams','aws_service_webrtc_storage',{name:'retained-peers',account:'123456789012',channel:'arn:aws:kinesisvideo:us-east-1:123456789012:channel/approved-peer/1234567890123',stream:'arn:aws:kinesisvideo:us-east-1:123456789012:stream/approved-video/1234567890123',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',master:role('PeerMaster'),viewer:role('PeerViewer'),approved:true},'aws_iam_role_policy'],
+  ['amazon-kinesis-video-streams','aws_service_webrtc_signaling',{name:'approved-peers',account:'123456789012',stack_role:role('SignalingStack'),master:role('PeerMaster'),viewer:role('PeerViewer'),approved:true},'aws_cloudformation_stack'],
+  ...['LIVE','ARCHIVE'].map(consumer_mode=>['amazon-kinesis-video-streams','aws_service_kinesis_video',{name:'approved-video',account:'123456789012',device:'camera-lab',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',producer:role('VideoProducer'),consumer:role('VideoConsumer'),approved:true,consumer_mode,retention:consumer_mode==='LIVE'?0:24},'aws_kinesis_video_stream']),
+  ['amazon-ivs-chat','aws_service_ivs_chat',{name:'moderated-chat',account:'123456789012',reviewer:'arn:aws:lambda:us-east-1:123456789012:function:ReviewChat:7',logging:'arn:aws:ivschat:us-east-1:123456789012:logging-configuration/AbCdEf123456',log_group:'/approved/chat',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',approved:true},'aws_ivschat_room'],
+  ['amazon-interactive-video-service','aws_service_ivs_channel',{name:'recorded-video',account:'123456789012',playback_key:'arn:aws:ivs:us-east-1:123456789012:playback-key/AbCdEf123456',distribution:true,recording:'EXISTING',recording_arn:'arn:aws:ivs:us-east-1:123456789012:recording-configuration/AbCdEf123456',recording_bucket:'approved-recordings',recording_approved:true},'aws_ivs_channel'],
+  ...['BASIC','STANDARD'].map(type=>['amazon-interactive-video-service','aws_service_ivs_channel',{name:'approved-video',account:'123456789012',type,latency:type==='BASIC'?'NORMAL':'LOW',playback_key:'arn:aws:ivs:us-east-1:123456789012:playback-key/AbCdEf123456',distribution:true},'aws_ivs_channel']),
+  ...['SSH','RDP'].map(protocol=>['aws-ec2-instance-connect','aws_service_instance_connect',{name:'admin-access',account:'123456789012',subnet,target_group:group,destination:'10.20.30.40',role:role('Admin'),protocol},'aws_ec2_instance_connect_endpoint']),
+  ...['READ','WRITE'].map(access=>['amazon-elastic-kubernetes-service','aws_service_eks_pod_identity_s3',{name:'application',cluster:'arn:aws:eks:us-east-1:123456789012:cluster/private-cluster',nodegroup:'application',agent_version:'v1.3.0-eksbuild.1',namespace:'application',service_account:'application',bucket:'application-data',vpce:'vpce-0123456789abcdef0',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/probes/pod-identity@sha256:'+'a'.repeat(64),access,...(access==='WRITE'?{kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc'}:{})},'aws_eks_pod_identity_association']),
+  ...['IMAGE','ARCHIVE'].map(artifact=>['amazon-sagemaker-ai','aws_service_sagemaker_endpoint',{name:'model-serving',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/inference/model@sha256:'+'a'.repeat(64),kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:[subnet,secondSubnet],clients:[group],role:role('ModelApplication'),artifact,...(artifact==='ARCHIVE'?{bucket:'approved-models',key:'releases/v1/model.tar.gz',version:'approved-version',etag:'a'.repeat(32),endpoint:'FIPS',count:2}: {})},'aws_sagemaker_endpoint',...(artifact==='IMAGE'?['amazon-sagemaker-runtime']:[])]),
+  ['amazon-sagemaker','aws_service_sagemaker_endpoint',{name:'historical-model',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/inference/model@sha256:'+'a'.repeat(64),kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:[subnet,secondSubnet],clients:[group],role:role('ModelApplication')},'aws_sagemaker_endpoint'],
+  ...['AUTO','STANDARD'].map(endpoint=>['aws-application-migration-service','aws_service_mgn_pilot',{name:'pilot',source:'arn:aws:mgn:us-east-1:123456789012:source-server/s-0123456789abcdef0',template:'lt-0123456789abcdef0',subnet,staging:secondSubnet,groups:group,staging_groups:'sg-0123456789abcdef1',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',endpoint},'terraform_data']),
   ...['OWNER_DACL','OWNER_DACL_SACL'].map(security=>['aws-datasync','aws_service_datasync_smb_fsx_windows',{name:'windows-migration',agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0',server:'files.example.com',path:'/Finance$/Reports',user:'SourceReader',domain:'EXAMPLE',ntlm_allowed:true,filesystem:'fs-0123456789abcdef0',group,target_user:'FsxMigration',target_domain:security==='OWNER_DACL'?'EXAMPLE':'OTHER',relationship:security==='OWNER_DACL'?'SAME':'TRUSTED',security,...(security==='OWNER_DACL_SACL'?{overwrite:'ALWAYS'}:{})},'aws_datasync_location_fsx_windows_file_system']),
   ...['EXAMPLE', ''].map(domain => ['aws-datasync', 'aws_service_datasync_smb_s3', { name:'windows-files', agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0', server:'files.example.com', path:'/Finance$/Reports', user:'MigrationReader', domain, ntlm_allowed:true, bucket:'application-landing', role:role('DataSyncS3'), ...(domain ? {} : { overwrite:'ALWAYS', bandwidth:12.5 }) }, 'aws_datasync_location_smb']),
   ['amazon-elastic-file-system', 'aws_service_efs', { name:'migration-files', subnets:[subnet, secondSubnet], groups:[group], throughput:'elastic', accesspoint:'PRESERVE' }, 'aws_efs_access_point'],
@@ -257,6 +279,51 @@ try {
       assert.equal(config.source.kind, resource === 'aws_service_datasync_s3' ? 's3' : resource.startsWith('aws_service_datasync_smb_') ? 'smb' : 'nfs');
       assert.equal(config.options.OverwriteMode, values.overwrite ?? 'NEVER');
       assert.match(await zip.text('OPERATE.py'), /total_max_attempts/);
+    }
+    if (resource === 'aws_service_elasticache_serverless') {
+      const expected = AWS_ELASTICACHE_SERVERLESS_SERVICE.build({ ...defaultValues(AWS_ELASTICACHE_SERVERLESS_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','CACHE-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_webrtc_storage') {
+      const expected = AWS_WEBRTC_STORAGE_SERVICE.build({ ...defaultValues(AWS_WEBRTC_STORAGE_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['OPERATE.py','STORAGE-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_webrtc_signaling') {
+      const expected = AWS_WEBRTC_SERVICE.build({ ...defaultValues(AWS_WEBRTC_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','SIGNALING-CONFIG.json','SIGNALING.template.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_kinesis_video') {
+      const expected = AWS_KINESIS_VIDEO_SERVICE.build({ ...defaultValues(AWS_KINESIS_VIDEO_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','VIDEO-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_ivs_chat') {
+      const expected = AWS_IVS_CHAT_SERVICE.build({ ...defaultValues(AWS_IVS_CHAT_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','CHAT-CONFIG.json','REVIEW-PERMISSION.example.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_ivs_channel') {
+      const expected = AWS_IVS_SERVICE.build({ ...defaultValues(AWS_IVS_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','CHANNEL-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_instance_connect') {
+      const expected = AWS_INSTANCE_CONNECT_SERVICE.build({ ...defaultValues(AWS_INSTANCE_CONNECT_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','CONNECTION-CONFIG.json','CONNECT-EXAMPLE.txt']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_eks_pod_identity_s3') {
+      const expected = AWS_EKS_POD_IDENTITY_SERVICE.build({ ...defaultValues(AWS_EKS_POD_IDENTITY_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','CLIENT.py','WORKLOAD-CONFIG.json','smoke-job.yaml']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
+    if (resource === 'aws_service_sagemaker_endpoint') {
+      const expected = AWS_SAGEMAKER_SERVICE.build({ ...defaultValues(AWS_SAGEMAKER_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','CLIENT-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported a stale or changed ' + name);
     }
     for (const name of ['SERVICE-SETUP.md', 'IMPLEMENTATION.md']) assert.ok(zip.names.includes(name), resource + ' missing ' + name);
     if (resource === 'aws_service_guardduty' && values.mode === 'existing') await page.locator('[data-input=detector]').fill('b'.repeat(32));

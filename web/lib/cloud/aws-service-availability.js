@@ -1,15 +1,21 @@
 /** Explicit lifecycle evidence. Pricing/API-directory presence is not availability evidence. */
                                       
                                                          
-                             
+                                                                          
+                              
                            
                            
                              
  
 // Exact retired products only. Partial feature retirements must not disable active successors.
-// AWS General Reference, checked against the project date on 2026-11-23.
+// Exact additional shutdowns rechecked against AWS General Reference on 2026-11-24.
 const shutdownReference = 'https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html';
 const shutdowns                              = [
+  ['amazon-lumberyard', '2021-05-01'],
+  ['taxonomy:rdsonvmware', '2022-05-01'],
+  ['amazon-workspaces-application-manager', '2023-09-01'],
+  ['amazon-connect-voice-id', '2026-05-20'],
+  ['amazon-voice-id', '2026-05-20'],
   ['aws-app-mesh', '2026-09-30'],
   ['cloudwatch-evidently', '2025-10-17'],
   ['taxonomy:codestar', '2024-07-25'],
@@ -48,6 +54,16 @@ const shutdowns                              = [
   ['amazon-worklink', '2021-11-30'],
 ];
 export const AWS_SERVICE_AVAILABILITY                                                = {
+  'alexa-for-business': {
+    status:'retired',checked:'2026-11-24',
+    message:'AWS states that Alexa for Business has retired and is no longer supported. This historical entry cannot generate a new deployment; an exact retirement date has not been established here.',
+    reference:'https://docs.aws.amazon.com/sdk-for-sap-abap/v1/api/latest/afb/index.html',
+  },
+  'amazon-elastic-inference': {
+    status:'retired',checked:'2026-11-24',
+    message:'AWS marks Elastic Inference unavailable and its accelerator API deprecated. This historical entry cannot generate a new deployment; an exact retirement date has not been established here.',
+    reference:'https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ElasticInferenceAccelerator.html',
+  },
   'aws-cloud9': { status: 'existing-customers-only', effective: '2024-07-25', checked: '2026-11-23', message: 'AWS Cloud9 is closed to new customers. Verify that this account already has service access before planning more Cloud9 resources.', reference: 'https://docs.aws.amazon.com/cloud9/latest/user-guide/history.html' },
   'amazon-cloudsearch': { status: 'existing-customers-only', effective: '2024-07-25', checked: '2026-11-23', message: 'Amazon CloudSearch is closed to new customers. Existing customers can continue; review account eligibility and the OpenSearch migration path.', reference: 'https://aws.amazon.com/blogs/big-data/transition-from-amazon-cloudsearch-to-amazon-opensearch-service/' },
   'amazon-cloudsearch-domain': { status: 'existing-customers-only', effective: '2024-07-25', checked: '2026-11-23', message: 'CloudSearch runtime access requires an existing eligible CloudSearch account. This API entry does not provide new-customer onboarding.', reference: 'https://aws.amazon.com/blogs/big-data/transition-from-amazon-cloudsearch-to-amazon-opensearch-service/' },
@@ -58,7 +74,7 @@ export const AWS_SERVICE_AVAILABILITY                                           
   'aws-systems-manager-incident-manager-contacts': { status: 'existing-customers-only', effective: '2025-11-07', checked: '2026-11-23', message: 'Incident Manager contacts require an existing eligible Incident Manager account; this resource API does not reopen new-customer access.', reference: 'https://docs.aws.amazon.com/incident-manager/latest/userguide/incident-manager-availability-change.html' },
   'ssm-incident-manager-incidents': { status: 'existing-customers-only', effective: '2025-11-07', checked: '2026-11-23', message: 'Incident Manager incident resources require an existing account where the service was already enabled.', reference: 'https://docs.aws.amazon.com/incident-manager/latest/userguide/incident-manager-availability-change.html' },
   ...Object.fromEntries(shutdowns.map(([id, effective]) => [id, {
-    status: 'retired'         , effective, checked: '2026-11-23',
+    status: 'retired'         , effective, checked: '2026-11-24',
     message: 'AWS lists this product in full shutdown as of ' + effective + '. This historical entry cannot generate a new deployment.',
     reference: shutdownReference,
   }])),

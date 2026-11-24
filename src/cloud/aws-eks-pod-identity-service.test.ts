@@ -1,0 +1,43 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {defaultValues} from '../kit/blueprint.ts';
+import {AWS_EKS_POD_IDENTITY_SERVICE as blueprint} from './aws-eks-pod-identity-service.ts';
+import {addServicesFor} from './add-service-catalog.ts';
+const values={...defaultValues(blueprint),aws_region:'us-east-1',name:'application',cluster:'arn:aws:eks:us-east-1:123456789012:cluster/private-cluster',nodegroup:'application',agent_version:'v1.3.0-eksbuild.1',namespace:'application',service_account:'application',bucket:'application-data',vpce:'vpce-0123456789abcdef0',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/probes/pod-identity@sha256:'+'a'.repeat(64)};
+test('Pod Identity adds a separate existing-cluster workflow and exact session-tag trust',()=>{
+  assert.equal(addServicesFor('aws').find(row=>row.id==='amazon-elastic-kubernetes-service')?.terraform[1],blueprint);
+  const result=blueprint.build(values);assert.deepEqual(result.findings,[]);
+  const config=JSON.parse(result.files['WORKLOAD-CONFIG.json']!);
+  assert.deepEqual(config.trust.Statement[0].Condition.StringEquals,{'aws:RequestTag/eks-cluster-arn':values.cluster,'aws:RequestTag/kubernetes-namespace':'application','aws:RequestTag/kubernetes-service-account':'application'});
+  assert.match(result.files['main.tf']!,/aws_eks_pod_identity_association/);
+  assert.doesNotMatch(result.files['main.tf']!,/resource "aws_eks_cluster"|resource "aws_eks_addon"|aws_iam_access_key|AssumeRoleWithWebIdentity/);
+  assert.match(result.files['main.tf']!,/aws:SourceVpce/);
+  assert.ok(!config.policy.Statement.some((row:{Effect:string;Action:string[]})=>row.Effect==='Allow'&&row.Action.includes('s3:PutObject')));
+  assert.ok(config.policy.Statement.some((row:{Effect:string;Action:string[]})=>row.Effect==='Deny'&&row.Action.includes('s3:DeleteObject')));
+});
+test('Smoke Job uses immutable content-versioned config, non-root constraints and no static credentials',()=>{
+  const result=blueprint.build(values),[mapText,jobText]=result.files['smoke-job.yaml']!.split('\n---\n'),map=JSON.parse(mapText!),job=JSON.parse(jobText!);
+  assert.equal(map.immutable,true);
+  assert.equal(job.spec.template.spec.volumes[0].configMap.name,map.metadata.name);
+  assert.equal(job.spec.backoffLimit,0);
+  assert.equal(job.spec.template.spec.hostNetwork,false);
+  assert.equal(job.spec.template.spec.securityContext.runAsNonRoot,true);
+  assert.equal(job.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem,true);
+  assert.deepEqual(job.spec.template.spec.containers[0].command,['python3','/workload/CLIENT.py']);
+  assert.equal(map.data['CLIENT.py'],result.files['CLIENT.py']);
+  const changed=blueprint.build({...values,prefix:'other/'});
+  assert.notEqual(JSON.parse(changed.files['smoke-job.yaml']!.split('\n---\n')[0]!).metadata.name,map.metadata.name);
+  assert.equal(blueprint.build(values).files['smoke-job.yaml'],result.files['smoke-job.yaml']);
+});
+test('Workload identity constrains names/account/image/boundary and WRITE never grants deletion',()=>{
+  for(const[key,value]of Object.entries({cluster:values.cluster.replace('us-east-1','us-west-2'),namespace:'Upper',service_account:'bad/name',nodegroup:'bad/name',agent_version:'latest',prefix:'../other/',vpce:'bad',access:'ADMIN',image:values.image.replace(/@sha256:.*/,':latest'),kms:'arn:aws:kms:us-east-1:000000000000:key/1234'}))assert.ok(blueprint.build({...values,[key]:value}).findings.some(f=>f.path===key),key);
+  const result=blueprint.build({...values,access:'WRITE',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc'});
+  assert.deepEqual(result.findings,[]);
+  const config=JSON.parse(result.files['WORKLOAD-CONFIG.json']!);
+  assert.ok(config.policy.Statement.some((row:{Effect:string;Action:string[]})=>row.Effect==='Allow'&&row.Action.includes('s3:PutObject')));
+  assert.ok(!config.policy.Statement.some((row:{Effect:string;Action:string[]})=>row.Effect==='Allow'&&row.Action.includes('s3:DeleteObject')));
+  const crypto=config.policy.Statement.filter((row:{Action:string[]})=>row.Action.includes('kms:Decrypt'));
+  assert.equal(crypto.length,1);
+  assert.equal(crypto[0].Condition.StringEquals['kms:ViaService'],'s3.us-east-1.amazonaws.com');
+  assert.deepEqual(crypto[0].Condition.StringLike['kms:EncryptionContext:aws:s3:arn'],['arn:aws:s3:::application-data','arn:aws:s3:::application-data/application/*']);
+});

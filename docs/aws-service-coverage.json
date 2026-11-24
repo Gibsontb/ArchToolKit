@@ -2,15 +2,15 @@
   "platform": "aws",
   "meaning": "Wiring coverage only. Catalog aliases may share the same workflow; uniqueDedicatedPaths counts each build ID once. Dedicated paths can cover a subset of product features. Existing builds and native types require individual review. No live deployment or authorization is implied.",
   "catalogEntries": 702,
-  "uniqueDedicatedPaths": 97,
-  "setupAliases": 5,
+  "uniqueDedicatedPaths": 108,
+  "setupAliases": 6,
   "counts": {
-    "dedicated-setup-path": 86,
-    "existing-builds": 198,
-    "native-resource-types": 81,
-    "runtime-api": 5,
-    "retired": 37,
-    "unmapped": 295
+    "dedicated-setup-path": 93,
+    "existing-builds": 194,
+    "native-resource-types": 78,
+    "runtime-api": 12,
+    "retired": 44,
+    "unmapped": 281
   },
   "services": [
     {
@@ -141,7 +141,13 @@
       "id": "alexa-for-business",
       "name": "Alexa for Business",
       "category": "Business Applications",
-      "coverage": "unmapped",
+      "availability": {
+        "status": "retired",
+        "checked": "2026-11-24",
+        "message": "AWS states that Alexa for Business has retired and is no longer supported. This historical entry cannot generate a new deployment; an exact retirement date has not been established here.",
+        "reference": "https://docs.aws.amazon.com/sdk-for-sap-abap/v1/api/latest/afb/index.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -1398,7 +1404,12 @@
       "id": "amazon-connect-participant-service",
       "name": "Amazon Connect Participant Service",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-connect-customer",
+        "message": "Connect Participant manages connections, messages, attachments and transcripts for an existing contact. Open Connect Customer setup for the contact-center resources. Participant/connection tokens and chat data require a separately authorized application flow; these APIs do not provision a new contact center.",
+        "reference": "https://docs.aws.amazon.com/connect/latest/APIReference/API_connect-participant_CreateParticipantConnection.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -1418,7 +1429,14 @@
       "id": "amazon-connect-voice-id",
       "name": "Amazon Connect Voice ID",
       "category": "other",
-      "coverage": "unmapped",
+      "availability": {
+        "status": "retired",
+        "effective": "2026-05-20",
+        "checked": "2026-11-24",
+        "message": "AWS lists this product in full shutdown as of 2026-05-20. This historical entry cannot generate a new deployment.",
+        "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -1973,7 +1991,12 @@
       "id": "amazon-eks-auth",
       "name": "Amazon EKS Auth",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-elastic-kubernetes-service",
+        "message": "EKS Auth supplies temporary workload credentials to the EKS Pod Identity Agent. Open EKS setup for the existing-cluster Pod Identity association workflow. Applications use the SDK container credential provider; they do not call this agent API directly.",
+        "reference": "https://docs.aws.amazon.com/eks/latest/APIReference/API_auth_AssumeRoleForPodIdentity.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -2160,7 +2183,13 @@
       "id": "amazon-elastic-inference",
       "name": "Amazon Elastic Inference",
       "category": "other",
-      "coverage": "unmapped",
+      "availability": {
+        "status": "retired",
+        "checked": "2026-11-24",
+        "message": "AWS marks Elastic Inference unavailable and its accelerator API deprecated. This historical entry cannot generate a new deployment; an exact retirement date has not been established here.",
+        "reference": "https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ElasticInferenceAccelerator.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -2175,10 +2204,15 @@
         {
           "id": "aws_service_eks",
           "description": "Create an IPv4 EKS cluster and an encrypted AL2023 x86-64 managed node group in an existing VPC."
+        },
+        {
+          "id": "aws_service_eks_pod_identity_s3",
+          "description": "Create a dedicated Pod Identity role and one association on an existing private-API EKS Linux managed node group; export owner-run checks and a credential-free smoke Job."
         }
       ],
       "terraformBuilds": [
         "aws_service_eks",
+        "aws_service_eks_pod_identity_s3",
         "aws_app_containers",
         "res_aws_eks_access_entry",
         "res_aws_eks_access_policy_association",
@@ -2269,7 +2303,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-11-13",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-11-13. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -2303,10 +2337,15 @@
         {
           "id": "aws_service_elasticache",
           "description": "Create a private, non-sharded replication group with replicas, TLS, encryption, snapshots and an existing RBAC user group."
+        },
+        {
+          "id": "aws_service_elasticache_serverless",
+          "description": "Create a customer-key encrypted IPv4 VPC serverless cache with dedicated client-group ingress, existing RBAC, snapshots, explicit storage/ECPU caps and read-only metadata checks."
         }
       ],
       "terraformBuilds": [
         "aws_service_elasticache",
+        "aws_service_elasticache_serverless",
         "aws_app_managed_cache",
         "res_aws_elasticache_cluster",
         "res_aws_elasticache_global_replication_group",
@@ -2475,7 +2514,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-10-07",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-10-07. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -2827,9 +2866,15 @@
       "id": "amazon-interactive-video-service",
       "name": "Amazon Interactive Video Service",
       "category": "Media",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_ivs_channel",
+          "description": "Create one playback-authorized BASIC/STANDARD channel with optional approved existing S3 recording configuration. Uses an existing playback key/token issuer; no broadcast, key retrieval or token generation runs."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_ivs_channel",
         "res_aws_ivs_channel",
         "res_aws_ivs_playback_key_pair",
         "res_aws_ivs_recording_configuration"
@@ -2862,9 +2907,15 @@
       "id": "amazon-ivs-chat",
       "name": "Amazon IVS Chat",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_ivs_chat",
+          "description": "Create an IVS Chat room using an existing approved Lambda review function and existing CloudWatch logging configuration. Errors deny message delivery; no token, message, function invocation or log-body read runs."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_ivs_chat",
         "res_aws_ivschat_logging_configuration",
         "res_aws_ivschat_room"
       ],
@@ -3047,7 +3098,12 @@
       "id": "amazon-kinesis-video-signaling-channels",
       "name": "Amazon Kinesis Video Signaling Channels",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-kinesis-video-streams",
+        "message": "The Signaling Channels API obtains ICE configuration for existing WebRTC channels. Open Kinesis Video Streams setup and select the single-master WebRTC signaling workflow, separately from MKV stream setup. ICE responses contain temporary relay credentials; SDK peers, media handling and effective access need separate application qualification.",
+        "reference": "https://docs.aws.amazon.com/kinesisvideostreams/latest/APIReference/API_Operations.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -3057,9 +3113,25 @@
       "id": "amazon-kinesis-video-streams",
       "name": "Amazon Kinesis Video Streams",
       "category": "Analytics",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_kinesis_video",
+          "description": "Create an MKV video stream with an existing customer key, bounded retention and separate existing producer/consumer role policies. Metadata checks do not upload or play media."
+        },
+        {
+          "id": "aws_service_webrtc_signaling",
+          "description": "Create a retained CloudFormation-managed signaling channel through Terraform provider5, with separate existing master/viewer role permissions. No TURN credential request, signaling connection, recording or media transmission runs."
+        },
+        {
+          "id": "aws_service_webrtc_storage",
+          "description": "Add exact existing-channel/stream participant permissions and export an explicit association operator. Terraform applies IAM only; enabling cloud storage is a separate confirmed SDK action that changes peer topology."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_kinesis_video",
+        "aws_service_webrtc_signaling",
+        "aws_service_webrtc_storage",
         "res_aws_kinesis_video_stream"
       ],
       "ansibleBuilds": [],
@@ -3072,7 +3144,12 @@
       "id": "amazon-kinesis-video-streams-archived-media",
       "name": "Amazon Kinesis Video Streams Archived Media",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-kinesis-video-streams",
+        "message": "Archived Media reads retained stream fragments, clips/images and playback sessions. Open Kinesis Video Streams setup separately. Playback URLs contain access tokens; protect them as credentials and verify the selected stream retention and data authorization before reading media.",
+        "reference": "https://docs.aws.amazon.com/kinesisvideostreams/latest/APIReference/API_Operations.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -3082,7 +3159,12 @@
       "id": "amazon-kinesis-video-streams-media",
       "name": "Amazon Kinesis Video Streams Media",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-kinesis-video-streams",
+        "message": "Kinesis Video Media reads or publishes media against an existing stream through GetMedia/PutMedia and its discovered data endpoint. Open Kinesis Video Streams setup for the stream and access configuration. Producer credentials, retention, media handling and explicit data operations require separate application review.",
+        "reference": "https://docs.aws.amazon.com/kinesisvideostreams/latest/APIReference/API_Operations.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -3092,7 +3174,12 @@
       "id": "amazon-kinesis-video-webrtc-storage",
       "name": "Amazon Kinesis Video WebRTC Storage",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-kinesis-video-streams",
+        "message": "WebRTC Storage joins cloud storage sessions for an existing configured channel. Open Kinesis Video Streams setup and select retained-media ingestion preparation for the scoped participant policies and separately confirmed association operation. Joining a session is a distinct application/media action; GovCloud ingestion/storage is unavailable.",
+        "reference": "https://docs.aws.amazon.com/kinesisvideostreams/latest/APIReference/API_Operations.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -3288,7 +3375,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-10-07",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-10-07. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -3307,7 +3394,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-10-10",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-10-10. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -3324,7 +3411,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-10-31",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-10-31. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -3340,7 +3427,14 @@
       "id": "amazon-lumberyard",
       "name": "Amazon Lumberyard",
       "category": "Game Tech",
-      "coverage": "unmapped",
+      "availability": {
+        "status": "retired",
+        "effective": "2021-05-01",
+        "checked": "2026-11-24",
+        "message": "AWS lists this product in full shutdown as of 2021-05-01. This historical entry cannot generate a new deployment.",
+        "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -3556,7 +3650,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-09-29",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-09-29. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -3735,7 +3829,7 @@
       "availability": {
         "status": "retired",
         "effective": "2024-06-30",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2024-06-30. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -4063,7 +4157,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-07-31",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-07-31. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -4269,7 +4363,14 @@
       "id": "taxonomy:rdsonvmware",
       "name": "Amazon RDS on VMware",
       "category": "Databases",
-      "coverage": "unmapped",
+      "availability": {
+        "status": "retired",
+        "effective": "2022-05-01",
+        "checked": "2026-11-24",
+        "message": "AWS lists this product in full shutdown as of 2022-05-01. This historical entry cannot generate a new deployment.",
+        "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -4712,9 +4813,55 @@
       "id": "amazon-sagemaker",
       "name": "Amazon SageMaker",
       "category": "Machine Learning and AI",
-      "coverage": "native-resource-types",
-      "dedicatedPaths": [],
-      "terraformBuilds": [],
+      "setupAliasOf": "amazon-sagemaker-ai",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_sagemaker_endpoint",
+          "description": "Deploy an approved digest-pinned ECR inference image, optional immutable S3 archive, encrypted real-time hosting and private runtime access for one existing role."
+        }
+      ],
+      "terraformBuilds": [
+        "aws_service_sagemaker_endpoint",
+        "res_aws_sagemaker_algorithm",
+        "res_aws_sagemaker_app",
+        "res_aws_sagemaker_app_image_config",
+        "res_aws_sagemaker_code_repository",
+        "res_aws_sagemaker_data_quality_job_definition",
+        "res_aws_sagemaker_device",
+        "res_aws_sagemaker_device_fleet",
+        "res_aws_sagemaker_domain",
+        "res_aws_sagemaker_endpoint",
+        "res_aws_sagemaker_endpoint_configuration",
+        "res_aws_sagemaker_feature_group",
+        "res_aws_sagemaker_flow_definition",
+        "res_aws_sagemaker_hub",
+        "res_aws_sagemaker_hub_content_reference",
+        "res_aws_sagemaker_human_task_ui",
+        "res_aws_sagemaker_hyper_parameter_tuning_job",
+        "res_aws_sagemaker_image",
+        "res_aws_sagemaker_image_version",
+        "res_aws_sagemaker_labeling_job",
+        "res_aws_sagemaker_mlflow_app",
+        "res_aws_sagemaker_mlflow_tracking_server",
+        "res_aws_sagemaker_model",
+        "res_aws_sagemaker_model_card",
+        "res_aws_sagemaker_model_card_export_job",
+        "res_aws_sagemaker_model_package_group",
+        "res_aws_sagemaker_model_package_group_policy",
+        "res_aws_sagemaker_monitoring_schedule",
+        "res_aws_sagemaker_notebook_instance",
+        "res_aws_sagemaker_notebook_instance_lifecycle_configuration",
+        "res_aws_sagemaker_pipeline",
+        "res_aws_sagemaker_project",
+        "res_aws_sagemaker_servicecatalog_portfolio_status",
+        "res_aws_sagemaker_space",
+        "res_aws_sagemaker_studio_lifecycle_config",
+        "res_aws_sagemaker_training_job",
+        "res_aws_sagemaker_user_profile",
+        "res_aws_sagemaker_workforce",
+        "res_aws_sagemaker_workteam"
+      ],
       "ansibleBuilds": [],
       "nativeTypes": [
         "AWS::SageMaker::AIWorkloadConfig",
@@ -4770,9 +4917,15 @@
       "id": "amazon-sagemaker-ai",
       "name": "Amazon SageMaker AI",
       "category": "ai-ml",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_sagemaker_endpoint",
+          "description": "Deploy an approved digest-pinned ECR inference image, optional immutable S3 archive, encrypted real-time hosting and private runtime access for one existing role."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_sagemaker_endpoint",
         "res_aws_sagemaker_algorithm",
         "res_aws_sagemaker_app",
         "res_aws_sagemaker_app_image_config",
@@ -4903,7 +5056,12 @@
       "id": "amazon-sagemaker-runtime",
       "name": "Amazon SageMaker Runtime",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-sagemaker-ai",
+        "message": "SageMaker Runtime invokes existing hosted endpoints. Open SageMaker AI setup to create the supported single-model CPU endpoint and private synchronous client access; asynchronous and streaming deployments require separate workflows.",
+        "reference": "https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_Operations_Amazon_SageMaker_Runtime.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -5182,7 +5340,7 @@
       "availability": {
         "status": "retired",
         "effective": "2023-03-01",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2023-03-01. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -5325,7 +5483,14 @@
       "id": "amazon-voice-id",
       "name": "Amazon Voice ID",
       "category": "other",
-      "coverage": "native-resource-types",
+      "availability": {
+        "status": "retired",
+        "effective": "2026-05-20",
+        "checked": "2026-11-24",
+        "message": "AWS lists this product in full shutdown as of 2026-05-20. This historical entry cannot generate a new deployment.",
+        "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -5526,7 +5691,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-04-25",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-04-25. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -5543,7 +5708,7 @@
       "availability": {
         "status": "retired",
         "effective": "2021-11-30",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2021-11-30. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -5611,7 +5776,14 @@
       "id": "amazon-workspaces-application-manager",
       "name": "Amazon WorkSpaces Application Manager",
       "category": "other",
-      "coverage": "unmapped",
+      "availability": {
+        "status": "retired",
+        "effective": "2023-09-01",
+        "checked": "2026-11-24",
+        "message": "AWS lists this product in full shutdown as of 2023-09-01. This historical entry cannot generate a new deployment.",
+        "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
+      },
+      "coverage": "retired",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -5983,7 +6155,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-09-30",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-09-30. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -6164,9 +6336,16 @@
       "id": "aws-application-migration-service",
       "name": "AWS Application Migration Service",
       "category": "Migration and Transfer",
-      "coverage": "native-resource-types",
-      "dedicatedPaths": [],
-      "terraformBuilds": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_mgn_pilot",
+          "description": "Validate an existing agent-based source and its reviewed private per-source launch settings, then explicitly request one stopped test launch. No account defaults, agent enrollment or cutover changes."
+        }
+      ],
+      "terraformBuilds": [
+        "aws_service_mgn_pilot"
+      ],
       "ansibleBuilds": [],
       "nativeTypes": [
         "AWS::MGN::Connector",
@@ -7006,7 +7185,7 @@
       "availability": {
         "status": "retired",
         "effective": "2024-07-25",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2024-07-25. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -7353,6 +7532,10 @@
         {
           "id": "aws_service_datasync_smb_s3",
           "description": "Basic-mode Windows file-data transfer to an existing S3 bucket. Password is supplied only at deployment; no NTFS ACL or Kerberos migration."
+        },
+        {
+          "id": "aws_service_datasync_smb_fsx_windows",
+          "description": "Basic-mode approved NTLM SMB migration to an existing FSx Windows share, with ownership/DACL and optional SACL copying."
         }
       ],
       "terraformBuilds": [
@@ -7360,6 +7543,7 @@
         "aws_service_datasync_nfs_s3",
         "aws_service_datasync_nfs_efs",
         "aws_service_datasync_smb_s3",
+        "aws_service_datasync_smb_fsx_windows",
         "aws_app_file_transfer",
         "res_aws_datasync_agent",
         "res_aws_datasync_location_azure_blob",
@@ -7443,7 +7627,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-09-17",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-09-17. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -7460,7 +7644,7 @@
       "availability": {
         "status": "retired",
         "effective": "2024-01-31",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2024-01-31. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -7607,9 +7791,16 @@
       "id": "aws-ec2-instance-connect",
       "name": "AWS EC2 Instance Connect",
       "category": "other",
-      "coverage": "unmapped",
-      "dedicatedPaths": [],
-      "terraformBuilds": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_instance_connect",
+          "description": "Create an EC2 Instance Connect Endpoint with a dedicated endpoint security group and narrowly scoped tunnel permission on an existing operator role. No tunnel, login or key upload runs automatically."
+        }
+      ],
+      "terraformBuilds": [
+        "aws_service_instance_connect"
+      ],
       "ansibleBuilds": [],
       "nativeTypes": []
     },
@@ -7798,7 +7989,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-11-12",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-11-12. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -7820,7 +8011,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-11-12",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-11-12. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -8502,7 +8693,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-01-29",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-01-29. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -8519,7 +8710,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-12-15",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-12-15. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -8666,7 +8857,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-05-20",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-05-20. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -8765,7 +8956,7 @@
       "availability": {
         "status": "retired",
         "effective": "2024-03-14",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2024-03-14. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -8818,7 +9009,7 @@
       "availability": {
         "status": "retired",
         "effective": "2022-11-09",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2022-11-09. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -9392,7 +9583,7 @@
       "availability": {
         "status": "retired",
         "effective": "2024-05-01",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2024-05-01. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -9455,7 +9646,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-05-20",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-05-20. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -9571,7 +9762,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-05-20",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-05-20. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -9642,7 +9833,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-10-07",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-10-07. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -9801,7 +9992,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-09-10",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-09-10. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -10146,7 +10337,7 @@
       "availability": {
         "status": "retired",
         "effective": "2023-04-01",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2023-04-01. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -10318,7 +10509,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-03-31",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-03-31. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -10427,7 +10618,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-11-12",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-11-12. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -10464,7 +10655,7 @@
       "availability": {
         "status": "retired",
         "effective": "2024-03-14",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2024-03-14. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -11255,7 +11446,7 @@
       "availability": {
         "status": "retired",
         "effective": "2025-10-17",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2025-10-17. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -11655,7 +11846,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-10-07",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-10-07. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -11727,7 +11918,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-05-20",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-05-20. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -12612,7 +12803,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-10-07",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-10-07. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
@@ -12647,7 +12838,7 @@
       "availability": {
         "status": "retired",
         "effective": "2026-10-07",
-        "checked": "2026-11-23",
+        "checked": "2026-11-24",
         "message": "AWS lists this product in full shutdown as of 2026-10-07. This historical entry cannot generate a new deployment.",
         "reference": "https://docs.aws.amazon.com/general/latest/gr/full_shutdown_services.html"
       },
