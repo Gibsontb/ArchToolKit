@@ -4,7 +4,7 @@ import { blk, dat, output, res, x } from '../terraform/blueprints/migration/comm
 import { awsServiceModule, awsServicePartition, awsServiceRegion } from './aws-service-module.ts';
 
 export const AWS_ELASTICACHE_SERVICE = {
-  id: 'aws_service_elasticache', label: 'Set up an encrypted Valkey or Redis replication group',
+  id: 'aws_service_elasticache', label: 'Set up a non-sharded Valkey or Redis cache',
   description: 'Create a private, non-sharded replication group with replicas, TLS, encryption, snapshots and an existing RBAC user group.',
   emits: ['aws_elasticache_subnet_group', 'aws_elasticache_replication_group'],
   inputs: [
@@ -61,7 +61,7 @@ export const AWS_ELASTICACHE_SERVICE = {
 Confirm engine version, node availability, quota and RBAC compatibility in the selected region. Prepare private subnets and client connectivity. Review the existing user group's default user, least-privilege access strings and authentication configuration. Grant clients only their required cache commands and key patterns. Manage passwords, IAM authentication and rotation through the approved user-management path; no credentials are entered or exported by this form. Review source data and application compatibility before choosing an engine.
 
 ## Implement
-Run terraform init, terraform validate and terraform plan -out=service.tfplan. Review the primary-plus-replica node count, TLS requirements, encryption, snapshot retention and RBAC group. Apply the saved plan. This creates a non-sharded replication group with Multi-AZ automatic failover. Subsequent changes honor the service maintenance window unless explicitly changed in code. Confirm no engine change or replacement is introduced unintentionally.
+Run terraform init, terraform validate and terraform plan -out=service.tfplan. Review the primary-plus-replica node count, TLS requirements, encryption, snapshot retention and RBAC group. Apply the saved plan. This creates a non-sharded replication group with Multi-AZ automatic failover. apply_immediately=false is not a universal maintenance-window guarantee: validated AWS provider5.100 sends replica-count changes with ApplyImmediately=true. Schedule the actual reviewed plan/apply in an approved change window and verify the provider behavior for each operation. Other modifications may remain pending until maintenance; verify their completion separately. Confirm no engine change or replacement is introduced unintentionally.
 
 ## Verify
 Use the primary endpoint for writes and the reader endpoint for suitable reads from an authorized client. Require TLS and the configured RBAC authentication. Test allowed and denied commands, application behavior, replica reads, failover and snapshot restoration into an isolated test cache. Monitor evictions, memory pressure, replication lag, connection counts and snapshot success. Cache replication and snapshots do not replace source-system data protection.
@@ -71,6 +71,7 @@ Keep the previous cache and source data until validation passes. Restore a teste
 
 https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Clusters.html
 https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Clusters.RBAC.html
+https://github.com/hashicorp/terraform-provider-aws/blob/v5.100.0/internal/service/elasticache/replication_group.go
 `, findings);
   },
 } satisfies Blueprint;
