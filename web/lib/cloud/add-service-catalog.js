@@ -36,6 +36,7 @@ import { AWS_DATASYNC_SERVICE } from './aws-datasync-service.js';
 import { AWS_DATASYNC_NFS_SERVICE } from './aws-datasync-nfs-service.js';
 import { AWS_DATASYNC_EFS_SERVICE } from './aws-datasync-efs-service.js';
 import { AWS_DATASYNC_SMB_SERVICE } from './aws-datasync-smb-service.js';
+import { AWS_DATASYNC_FSX_WINDOWS_SERVICE } from './aws-datasync-fsx-windows-service.js';
 import { AWS_COGNITO_SERVICE } from './aws-cognito-service.js';
 import { AWS_INSPECTOR_SERVICE } from './aws-inspector-service.js';
 import { AWS_SECURITYHUB_SERVICE } from './aws-securityhub-service.js';
@@ -267,7 +268,7 @@ export function addServicesFor(platform       )                      {
     const cognito = merged.find(row => row.id === 'amazon-cognito');
     if (cognito) merged[merged.indexOf(cognito)] = { ...cognito, terraform: [AWS_COGNITO_SERVICE, ...cognito.terraform] };
     const dataSync = merged.find(row => row.id === 'aws-datasync');
-    if (dataSync) merged[merged.indexOf(dataSync)] = { ...dataSync, terraform: [AWS_DATASYNC_SERVICE, AWS_DATASYNC_NFS_SERVICE, AWS_DATASYNC_EFS_SERVICE, AWS_DATASYNC_SMB_SERVICE, ...dataSync.terraform] };
+    if (dataSync) merged[merged.indexOf(dataSync)] = { ...dataSync, terraform: [AWS_DATASYNC_SERVICE, AWS_DATASYNC_NFS_SERVICE, AWS_DATASYNC_EFS_SERVICE, AWS_DATASYNC_SMB_SERVICE, AWS_DATASYNC_FSX_WINDOWS_SERVICE, ...dataSync.terraform] };
     const athena = merged.find(row => row.id === 'amazon-athena');
     if (athena) merged[merged.indexOf(athena)] = { ...athena, terraform: [AWS_ATHENA_SERVICE, ...athena.terraform] };
     const codeBuild = merged.find(row => row.id === 'aws-codebuild');

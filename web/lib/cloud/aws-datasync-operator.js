@@ -2,7 +2,7 @@
 export function awsDataSyncOperator(config   
                                                   
                                                                                                                                                                                                                                                     
-                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                                                             
                                                                                                                                                                                                                                                           
  )                         {
   return {
@@ -75,7 +75,19 @@ const SCRIPT = [
   '    agent = service.describe_agent(AgentArn=source["agent"])',
   '    if agent.get("AgentArn") != source["agent"] or agent.get("Status") != "ONLINE": raise RuntimeError("Require exact ONLINE agent")',
   'destination = config["destination"]',
-  'if destination.get("kind") != "efs":',
+  'if destination.get("kind") == "fsxwindows":',
+  '    actual = service.describe_location_fsx_windows(LocationArn=job["destination"])',
+  '    uri = job.get("destination_uri", "")',
+  '    group_arn = "arn:" + config["partition"] + ":ec2:" + config["region"] + ":" + account + ":security-group/" + destination["group"]',
+  '    if not uri.startswith("fsxw://") or not uri.endswith(destination["path"]) or actual.get("LocationArn") != job["destination"] or actual.get("LocationUri") != uri or actual.get("SecurityGroupArns") != [group_arn] or actual.get("User") != destination["user"] or actual.get("Domain") != destination["domain"]: raise RuntimeError("FSx Windows location differs from reviewed Terraform deployment")',
+  '    filesystems = session.client("fsx").describe_file_systems(FileSystemIds=[destination["filesystem"]])["FileSystems"]',
+  '    fs_arn = "arn:" + config["partition"] + ":fsx:" + config["region"] + ":" + account + ":file-system/" + destination["filesystem"]',
+  '    if len(filesystems) != 1 or filesystems[0].get("ResourceARN") != fs_arn or filesystems[0].get("OwnerId") != account or filesystems[0].get("FileSystemType") != "WINDOWS" or filesystems[0].get("Lifecycle") != "AVAILABLE" or not filesystems[0].get("KmsKeyId") or filesystems[0].get("WindowsConfiguration", {}).get("AutomaticBackupRetentionDays",0) < 1: raise RuntimeError("Require exact AVAILABLE encrypted Windows filesystem with automatic backups")',
+  '    ec2 = session.client("ec2"); fs = filesystems[0]',
+  '    group = ec2.describe_security_groups(GroupIds=[destination["group"]])["SecurityGroups"][0]',
+  '    if group.get("GroupId") != destination["group"] or group.get("OwnerId") != account or group.get("VpcId") != fs.get("VpcId"): raise RuntimeError("FSx transfer group placement differs")',
+  '    if ec2.describe_vpcs(VpcIds=[fs["VpcId"]])["Vpcs"][0].get("InstanceTenancy") != "default": raise RuntimeError("DataSync requires default tenancy")',
+  'elif destination.get("kind") != "efs":',
   '    s3_location("destination", destination)',
   '    if session.client("s3").get_bucket_versioning(Bucket=destination["bucket"]).get("Status") != "Enabled": raise RuntimeError("Destination versioning must be enabled")',
   'else:',

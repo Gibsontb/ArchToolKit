@@ -1,10 +1,11 @@
-import { bool,                } from '../kit/blueprint.js';
+                                                     
 import { error,              } from '../core/findings.js';
 import { blk, dat, res, x } from '../terraform/blueprints/migration/common.js';
-import { awsServiceModule, awsServicePartition } from './aws-service-module.js';
+import { awsServiceModule } from './aws-service-module.js';
 import { AWS_DATASYNC_NFS_SERVICE } from './aws-datasync-nfs-service.js';
 import { awsDataSyncTask } from './aws-datasync-task.js';
 import { awsDataSyncOperator } from './aws-datasync-operator.js';
+import { awsDataSyncSmbSource } from './aws-datasync-smb-source.js';
 
 export const AWS_DATASYNC_SMB_SERVICE = {
   id:'aws_service_datasync_smb_s3', label:'Copy an approved NTLM/SMB3 file share to S3',
@@ -20,15 +21,7 @@ export const AWS_DATASYNC_SMB_SERVICE = {
   ],
   build(values)                                      {
     const findings            = [], reject = (path       ,message       ) => findings.push(error('aws.datasync-smb.'+path,message,{path}));
-    const region=String(values.aws_region ?? ''), partition=awsServicePartition(region), name=String(values.name ?? '').trim(), agent=String(values.agent ?? '').trim(), server=String(values.server ?? '').trim(), path=String(values.path ?? '').trim(), user=String(values.user ?? '').trim(), domain=String(values.domain ?? '').trim();
-    const match=/^arn:([^:]+):datasync:([^:]+):(\d{12}):agent\/agent-[0-9a-f]{17}$/.exec(agent), account=match?.[3] ?? '';
-    if (!match || match[1]!==partition || match[2]!==region) reject('agent','Use an activated Basic-mode agent in the selected region/partition.');
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,119}$/.test(name)) reject('name','Use 2–120 letters, numbers, dots, underscores or hyphens.');
-    if (server.length>253 || !server.split('.').every(label=>/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label)) || /^\d+(?:\.\d+){3}$/.test(server) && server.split('.').some(value=>Number(value)>255)) reject('server','Use the underlying SMB hostname or valid IPv4 address.');
-    if (!/^\/[A-Za-z0-9_$.-]+(?:\/[A-Za-z0-9_$.-]+)*$/.test(path) || path.split('/').some(part=>part==='.' || part==='..') || path.length>4096) reject('path','Use /share or /share/directory without server prefix, traversal or trailing slash. This guided path supports letters, digits, _, $, dot and hyphen.');
-    if (!/^[A-Za-z0-9_.@-]{1,104}$/.test(user)) reject('user','Use the source username only, without domain separator/password.');
-    if (domain && (domain.length>253 || !/^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(domain) || domain.includes('..'))) reject('domain','Enter the domain name or leave blank for an approved local account.');
-    if (!bool(values,'ntlm_allowed')) reject('ntlm_allowed','Confirm the applicable policy permits NTLM; otherwise use a qualified Kerberos workflow.');
+    const {region,partition,name,agent,server,path,user,domain,account}=awsDataSyncSmbSource(values,reject);
     const bucket=String(values.bucket ?? '').trim(), prefix=String(values.prefix ?? '').trim(), role=String(values.role ?? '').trim(), roleMatch=/^arn:([^:]+):iam::(\d{12}):role\/[A-Za-z0-9+=,.@_/-]+$/.exec(role);
     if (!/^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket) || bucket.includes('..')) reject('bucket','Enter the existing destination bucket.');
     if (!prefix.startsWith('/') || !prefix.endsWith('/') || /[\x00-\x1f*?\\]/.test(prefix) || prefix.includes('//') || prefix.split('/').some(part=>part==='.' || part==='..') || new TextEncoder().encode(prefix).length>1024) reject('prefix','Use / or /prefix/ without wildcards, repeated slashes or traversal.');
