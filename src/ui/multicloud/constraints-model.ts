@@ -9,6 +9,7 @@ import { AWS_REGIONS, AZURE_REGIONS, GCP_REGIONS, OCI_REGIONS } from '../../kit/
 import { AGREEMENT_PLATFORM, PLATFORM_LABELS, defaultConnection } from '../../multicloud/plan/options.ts';
 import type { LandingZoneMode, Plan, Platform, Requirements } from '../../multicloud/plan/types.ts';
 import { siteProblems } from './grid-model.ts';
+import { regionLabel, requiresRestrictedSite } from '../../kit/placement-regions.ts';
 
 /** A platform's region list; VMware's "region" is the vCenter, typed. */
 export const REGION_LISTS: Readonly<Partial<Record<Platform, readonly string[]>>> = {
@@ -20,9 +21,9 @@ export const REGION_LISTS: Readonly<Partial<Record<Platform, readonly string[]>>
 
 /** The dropdown's choices: the list, plus the current value when it is not in it (nothing is lost). */
 export function regionChoices(platform: Platform, current: string | undefined, blank?: string): { value: string; label: string }[] {
-  const list = REGION_LISTS[platform] ?? [];
-  const out = list.map((r) => ({ value: r, label: r }));
-  if (current && !list.includes(current)) out.unshift({ value: current, label: `${current} (as typed)` });
+  const list = (REGION_LISTS[platform] ?? []).filter(region=>!requiresRestrictedSite(platform,region));
+  const out = list.map((r) => ({ value: r, label: regionLabel(r) }));
+  if (current && !requiresRestrictedSite(platform,current) && !list.includes(current)) out.unshift({ value: current, label: `${current} (as typed)` });
   if (blank !== undefined) out.unshift({ value: '', label: blank });
   return out;
 }

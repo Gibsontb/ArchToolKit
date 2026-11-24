@@ -1,0 +1,55 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { defaultValues } from '../kit/blueprint.ts';
+import { AWS_DMS_SERVICE } from './aws-dms-service.ts';
+import { addServicesFor } from './add-service-catalog.ts';
+const certificate = 'arn:aws:dms:us-east-1:123456789012:cert:ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const values = { ...defaultValues(AWS_DMS_SERVICE), aws_region: 'us-east-1', name: 'application-migration', version: '3.5.4', subnets: 'subnet-0123456789abcdef0,subnet-0123456789abcdef1', groups: 'sg-0123456789abcdef0', secret_role: 'arn:aws:iam::123456789012:role/DmsSecrets', source_secret: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:source-migration-abcdef', source_database: 'application', source_certificate: certificate, target_secret: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:target-migration-abcdef', target_database: 'application', target_certificate: certificate, tables: 'public | customer_records\npublic | order_items' };
+test('DMS creates private infrastructure and secret-backed verified-TLS endpoints without starting a copy', () => {
+  assert.equal(addServicesFor('aws').find(row => row.id === 'aws-database-migration-service')?.terraform[0], AWS_DMS_SERVICE);
+  const result = AWS_DMS_SERVICE.build(values), main = result.files['main.tf']!;
+  assert.deepEqual(result.findings, []);
+  assert.match(main, /publicly_accessible\s+= false/);
+  assert.match(main, /ssl_mode\s+= "verify-full"/);
+  assert.match(main, /start_replication_task\s+= false/);
+  assert.match(main, /ignore_changes\s+= \[start_replication_task\]/);
+  assert.match(main, /secrets_manager_arn/);
+  assert.doesNotMatch(main, /\bpassword\s*=|\busername\s*=|aws_secretsmanager_secret_version/);
+  const mapping = JSON.parse(result.files['table-mappings.json']!);
+  assert.equal(mapping.rules.length, 2);
+  assert.ok(mapping.rules.every((rule: Record<string, unknown>) => rule['rule-action'] === 'explicit'));
+  assert.equal(mapping.rules[0]['object-locator']['table-name'], 'customer_records');
+  const settings = JSON.parse(result.files['task-settings.json']!);
+  assert.equal(settings.FullLoadSettings.TargetTablePrepMode, 'DO_NOTHING');
+  assert.equal(settings.ValidationSettings.EnableValidation, true);
+  assert.equal(settings.TargetMetadata.FullLobMode, true);
+});
+test('Existing DMS host mode excludes stale new-host inputs and operator start requires explicit readiness', () => {
+  const result = AWS_DMS_SERVICE.build({ ...values, host: 'EXISTING', existing: 'approved-migration-host', version: 'bad', subnets: 'bad', groups: 'bad', storage: 0, kms: 'bad' });
+  assert.deepEqual(result.findings, []);
+  assert.doesNotMatch(result.files['main.tf']!, /resource "aws_dms_replication_instance"|dms-vpc-role/);
+  assert.match(result.files['main.tf']!, /data "aws_dms_replication_instance"/);
+  assert.match(result.files['OPERATE.ps1']!, /ConfirmTargetReady/);
+  assert.match(result.files['OPERATE.ps1']!, /\$task.Status -ne 'ready'/);
+  assert.match(result.files['OPERATE.ps1']!, /Both exact endpoint connection tests/);
+  assert.match(result.files['OPERATE.ps1']!, /Unexpected migration account/);
+});
+test('DMS rejects wildcard/duplicate selection, same-endpoint copy and invalid secret/certificate boundaries', () => {
+  for (const [key, value] of Object.entries({ tables: 'public | %', source_secret: 'invalid', target_certificate: 'invalid', version: 'latest', parallel: 0, source_database: 'bad name' })) assert.ok(AWS_DMS_SERVICE.build({ ...values, [key]: value }).findings.some(finding => finding.path === key), key);
+  assert.ok(AWS_DMS_SERVICE.build({ ...values, target_secret: values.source_secret }).findings.some(finding => finding.path === 'target_secret'));
+  assert.ok(AWS_DMS_SERVICE.build({ ...values, tables: 'public | orders\npublic | orders' }).findings.some(finding => finding.path === 'tables'));
+});
+test('PostgreSQL CDC explicitly selects decoding and adds source-readiness evidence without running SQL', () => {
+  const result = AWS_DMS_SERVICE.build({ ...values, mode: 'full-load-and-cdc' }), main = result.files['main.tf']!;
+  assert.deepEqual(result.findings, []);
+  assert.match(main, /migration_type\s+= "full-load-and-cdc"/);
+  assert.match(main, /plugin_name\s+= "test_decoding"/);
+  assert.match(main, /capture_ddls\s+= false/);
+  assert.doesNotMatch(main, /cdc_start_position|slot_name|local-exec|remote-exec/);
+  assert.match(result.files['OPERATE.ps1']!, /-not \$ConfirmCdcReady/);
+  const sql = result.files['SOURCE-CHECK.sql']!;
+  for (const pattern of [/BEGIN READ ONLY/, /pg_is_in_recovery/, /wal_level/, /pg_replication_slots/, /rolreplication/, /indisprimary/, /has_table_privilege/, /ROLLBACK/]) assert.match(sql, pattern);
+  assert.doesNotMatch(sql.replace(/^--.*$/gm, ''), /CREATE\s+|ALTER\s+|DROP\s+|pg_create_logical_replication_slot|pg_drop_replication_slot/i);
+  assert.equal(AWS_DMS_SERVICE.build(values).files['SOURCE-CHECK.sql'], undefined);
+  assert.ok(AWS_DMS_SERVICE.build({ ...values, mode: 'cdc' }).findings.some(f => f.path === 'mode'));
+});

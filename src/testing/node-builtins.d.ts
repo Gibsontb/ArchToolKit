@@ -21,6 +21,8 @@ declare module 'node:test' {
   export function describe(name: string, options: TestOptions, fn: () => void): void;
   export function it(name: string, fn: TestFn): void;
   export function it(name: string, options: TestOptions, fn: TestFn): void;
+  export function test(name: string, fn: TestFn): void;
+  export function test(name: string, options: TestOptions, fn: TestFn): void;
   export function before(fn: TestFn): void;
   export function after(fn: TestFn): void;
 }
@@ -47,6 +49,7 @@ declare module 'node:assert/strict' {
     throws(fn: () => unknown, expected?: ThrowsExpectation, message?: string): void;
     doesNotThrow(fn: () => unknown, message?: string): void;
     match(value: string, pattern: RegExp, message?: string): void;
+    doesNotMatch(value: string, pattern: RegExp, message?: string): void;
   }
   const assert: StrictAssert;
   export default assert;

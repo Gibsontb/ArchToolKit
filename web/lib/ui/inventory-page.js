@@ -516,7 +516,7 @@ function buildResults(inventory           , importFindings           )          
  */
 async function loadIndex()                               {
   try {
-    const { loadTrackerIndex } = await import('../kit/tracker-index.ts');
+    const { loadTrackerIndex } = await import('../kit/tracker-index.js');
     const index               = await loadTrackerIndex();
     return index && index.size > 0 ? index : null;
   } catch {

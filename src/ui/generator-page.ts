@@ -41,6 +41,8 @@ import { isRecord, type Json } from '../editor/doc.ts';
 import type { StackBuild, StackItem, StackReference } from '../terraform/stack.ts';
 
 export interface GeneratorOptions {
+  readonly valuesFor?: (blueprint:Blueprint) => BlueprintValues;
+  readonly onGenerated?: (result: {readonly files:Readonly<Record<string,string>>;readonly findings:readonly Finding[];readonly blueprint:string;readonly values:BlueprintValues}) => void;
   readonly groups: readonly BlueprintGroup[];
   /** "Terraform (HCL)" or "Ansible" — used in labels and the status line. */
   readonly kindLabel: string;
@@ -386,7 +388,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
 
   function selectBlueprint(next: Blueprint | undefined): void {
     blueprint = next;
-    values = next ? withCurrentTags(next, defaultValues(next)) : {};
+    values = next ? {...withCurrentTags(next, defaultValues(next)),...options.valuesFor?.(next)} : {};
     generated = null;
     builds = undefined;
     findings = [];
@@ -410,6 +412,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
       generated = out.files;
       builds = out.builds;
       findings = aboutTheInput(out.findings ?? []);
+      options.onGenerated?.({files:out.files,findings,blueprint:blueprint.id,values:{...values}});
       // What was built here is offered in the other blueprints (an index defined here, in every index field).
       for (const input of blueprint.inputs) if (input.remember) remember(input.remember, String(values[input.id] ?? ''));
     } catch (err) {
@@ -467,6 +470,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     generated = result.files;
     builds = undefined;
     findings = aboutTheInput(result.findings);
+    options.onGenerated?.({files:result.files,findings,blueprint:'stack',values:{...values}});
     stackRefs = result.references;
     renderThree();
   }
@@ -620,6 +624,7 @@ export function mountGeneratorPage(root: HTMLElement, options: GeneratorOptions)
     });
 
     const list = el('select') as HTMLSelectElement;
+    list.setAttribute('aria-label',options.noun.charAt(0).toUpperCase()+options.noun.slice(1));
     fillOptions(
       list,
       available().map((item) => ({ value: item.id, label: item.label, group: item.group })),

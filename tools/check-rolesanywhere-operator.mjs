@@ -1,0 +1,98 @@
+/** Generated operator tests using local boto3/subprocess stubs only. No certificates/credentials/AWS calls. */
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { defaultValues } from '../src/kit/blueprint.ts';
+import { AWS_ROLESANYWHERE_SERVICE as blueprint } from '../src/cloud/aws-rolesanywhere-service.ts';
+import { WORK_TMP } from './work.mjs';
+const work = mkdtempSync(join(WORK_TMP, 'rolesanywhere-operator-test-'));
+const result = blueprint.build({ ...defaultValues(blueprint), aws_region: 'us-east-1', name: 'artifact-reader', ca: 'arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/12345678-abcd-4bcd-8bcd-123456789abc', subject: 'artifact-workload', issuer: 'Workload Issuing CA', bucket: 'application-artifacts' });
+if (result.findings.length) throw new Error('Invalid Roles Anywhere fixture');
+for (const name of ['OPERATE.py', 'ACCESS-CONFIG.json']) writeFileSync(join(work, name), result.files[name]);
+writeFileSync(join(work, 'harness.py'), [
+  'import contextlib, copy, datetime, io, json, pathlib, runpy, subprocess, sys, types',
+  'root = pathlib.Path(__file__).resolve().parent; config = json.loads((root / "ACCESS-CONFIG.json").read_text())',
+  'job = {"account":"123456789012","region":"us-east-1","anchor":"anchor-id","anchor_arn":"arn:aws:rolesanywhere:us-east-1:123456789012:trust-anchor/anchor-id","profile":"profile-id","profile_arn":"arn:aws:rolesanywhere:us-east-1:123456789012:profile/profile-id","role":"artifact-reader-certificate-reader","role_arn":"arn:aws:iam::123456789012:role/artifact-reader-certificate-reader"}',
+  'base_trust = {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"rolesanywhere.amazonaws.com"},"Action":["sts:SetSourceIdentity","sts:TagSession","sts:AssumeRole"],"Condition":{"ArnEquals":{"aws:SourceArn":job["anchor_arn"]},"StringEquals":{"aws:SourceAccount":config["account"],"aws:PrincipalTag/x509Subject/CN":config["subject"],"aws:PrincipalTag/x509Issuer/CN":config["issuer"]}}}]}',
+  'def output(arguments, **kwargs):',
+  '    assert arguments == ["terraform","output","-json","roles_anywhere_job"]',
+  '    data = copy.deepcopy(job)',
+  '    if scenario == "placement": data["region"] = "us-west-2"',
+  '    if scenario == "canonical": data["anchor_arn"] = "alias-arn"',
+  '    return json.dumps(data)',
+  'subprocess.check_output = output',
+  'class Config:',
+  '    def __init__(self, retries): self.retries = retries',
+  'class Session:',
+  '    def __init__(self, region_name): assert region_name == "us-east-1"',
+  '    def client(self, name, **kwargs):',
+  '        assert name in ["sts", "acm-pca", "rolesanywhere", "iam", "s3"]',
+  '        if name == "rolesanywhere": assert kwargs["config"].retries == {"total_max_attempts":1,"mode":"standard"}',
+  '        return self',
+  '    def get_caller_identity(self): return {"Account":"000000000000" if scenario == "account" else job["account"]}',
+  '    def describe_certificate_authority(self, **kwargs):',
+  '        assert kwargs == {"CertificateAuthorityArn":config["ca"]}',
+  '        if scenario == "sdk": raise RuntimeError("mock read failure")',
+  '        now = datetime.datetime.now(datetime.timezone.utc)',
+  '        return {"CertificateAuthority":{"Arn":config["ca"],"Status":"DISABLED" if scenario == "ca-state" else "ACTIVE","CertificateAuthorityConfiguration":{"Subject":{"CommonName":"other" if scenario == "issuer" else config["issuer"]}},"RevocationConfiguration":{"CrlConfiguration":{"Enabled":scenario != "cdp-missing","S3BucketName":"approved-crls"}},"NotBefore":now + datetime.timedelta(days=1) if scenario == "future" else now - datetime.timedelta(days=1),"NotAfter":now - datetime.timedelta(days=1) if scenario == "expired" else now + datetime.timedelta(days=1)}}',
+  '    def get_trust_anchor(self, **kwargs):',
+  '        assert kwargs == {"trustAnchorId":job["anchor"]}',
+  '        return {"trustAnchor":{"trustAnchorArn":job["anchor_arn"],"name":config["name"],"source":{"sourceType":"AWS_ACM_PCA","sourceData":{"acmPcaArn":"other" if scenario == "anchor-source" else config["ca"]}},"enabled":scenario in ["already","cdp-live"],"crlDpRevocationEnabled":scenario not in ["revocation","cdp-enable","cdp-no-confirm","cdp-missing","cdp-live","cdp-error"]}}',
+  '    def get_profile(self, **kwargs):',
+  '        assert kwargs == {"profileId":job["profile"]}',
+  '        policy = copy.deepcopy(config["policy"])',
+  '        if scenario == "profile-policy": policy["Statement"][2]["Action"].append("s3:PutObject")',
+  '        return {"profile":{"profileArn":job["profile_arn"],"name":config["name"],"roleArns":["other"] if scenario == "profile-role" else [job["role_arn"]],"durationSeconds":3600 if scenario == "duration" else config["duration"],"sessionPolicy":json.dumps(policy),"enabled":scenario == "already","attributeMappings":[] if scenario == "mappings" else [{"certificateField":field,"mappingRules":[{"specifier":"CN"}]} for field in ["x509Subject","x509Issuer"]]}}',
+  '    def get_role(self, **kwargs):',
+  '        assert kwargs == {"RoleName":job["role"]}',
+  '        trust = copy.deepcopy(base_trust)',
+  '        if scenario == "trust-anchor": trust["Statement"][0]["Condition"]["ArnEquals"]["aws:SourceArn"] = "other"',
+  '        if scenario == "trust-subject": trust["Statement"][0]["Condition"]["StringEquals"]["aws:PrincipalTag/x509Subject/CN"] = "*"',
+  '        if scenario == "trust-extra": trust["Statement"].append(copy.deepcopy(trust["Statement"][0]))',
+  '        return {"Role":{"Arn":job["role_arn"],"AssumeRolePolicyDocument":trust}}',
+  '    def get_role_policy(self, **kwargs):',
+  '        assert kwargs == {"RoleName":job["role"],"PolicyName":config["name"] + "-source-read"}',
+  '        policy = copy.deepcopy(config["policy"])',
+  '        if scenario == "role-policy": policy["Statement"][2]["Action"].append("s3:PutObject")',
+  '        return {"PolicyDocument":policy}',
+  '    def head_bucket(self, **kwargs): assert kwargs == {"Bucket":config["bucket"],"ExpectedBucketOwner":job["account"]}',
+  '    def get_bucket_location(self, **kwargs):',
+  '        assert kwargs == {"Bucket":config["bucket"],"ExpectedBucketOwner":job["account"]}',
+  '        return {"LocationConstraint":"us-west-2" if scenario == "bucket-region" else None}',
+  '    def get_public_access_block(self, **kwargs):',
+  '        assert kwargs == {"Bucket":config["bucket"],"ExpectedBucketOwner":job["account"]}',
+  '        return {"PublicAccessBlockConfiguration":{flag:scenario != "public" for flag in ["BlockPublicAcls","IgnorePublicAcls","BlockPublicPolicy","RestrictPublicBuckets"]}}',
+  '    def update_trust_anchor(self, **kwargs):',
+  '        assert kwargs == {"trustAnchorId":job["anchor"],"crlDpRevocationEnabled":True}; changes.append("cdp")',
+  '        if scenario == "cdp-error": raise RuntimeError("mock CDP update failure")',
+  '        return {}',
+  '    def enable_trust_anchor(self, **kwargs):',
+  '        assert kwargs == {"trustAnchorId":job["anchor"]}; changes.append("anchor")',
+  '        if scenario == "anchor-error": raise RuntimeError("mock anchor enable failure")',
+  '        return {}',
+  '    def enable_profile(self, **kwargs):',
+  '        assert kwargs == {"profileId":job["profile"]}; changes.append("profile")',
+  '        if scenario == "profile-error": raise RuntimeError("mock profile enable failure")',
+  '        return {}',
+  'sdk = types.ModuleType("boto3"); sdk.Session = Session; core = types.ModuleType("botocore"); core_config = types.ModuleType("botocore.config"); core_config.Config = Config',
+  'for module in [sdk, core, core_config]: sys.modules[module.__name__] = module',
+  'scenarios = ["inspect","activate","already","no-confirm","placement","canonical","account","sdk","ca-state","issuer","future","expired","anchor-source","profile-policy","profile-role","duration","mappings","trust-anchor","trust-subject","trust-extra","role-policy","bucket-region","public","revocation","anchor-error","profile-error","cdp-enable","cdp-already","cdp-no-confirm","cdp-missing","cdp-live","cdp-error"]',
+  'for scenario in scenarios:',
+  '    changes, failure = [], None',
+  '    sys.argv = [str(root / "OPERATE.py")] + ((["--enable-cdp"] + ([] if scenario == "cdp-no-confirm" else ["--confirm-publication"])) if scenario.startswith("cdp-") else ([] if scenario == "inspect" else ["--activate"]) + ([] if scenario in ["inspect","no-confirm"] else ["--confirm-pki"]))',
+  '    with contextlib.redirect_stdout(io.StringIO()) as output:', 
+  '        try: runpy.run_path(str(root / "OPERATE.py"), run_name="__main__")',
+  '        except SystemExit as error:', 
+  '            if error.code != 0: failure = error',
+  '        except Exception as error: failure = error',
+  '    assert bool(failure) == (scenario not in ["inspect","activate","already","cdp-enable","cdp-already"]), (scenario, failure)',
+  '    expected = ["anchor","profile"] if scenario in ["activate","profile-error"] else (["anchor"] if scenario == "anchor-error" else (["cdp"] if scenario in ["cdp-enable","cdp-error"] else []))',
+  '    assert changes == expected, (scenario, changes)',
+  '    if scenario == "inspect": assert json.loads(output.getvalue())["credentials_minted"] is False',
+  'print("Passed 32 local Roles Anywhere inspection/activation cases; no AWS access, certificate/key reads, enable operations or credentials minted.")',
+].join('\n'));
+const run = spawnSync(process.env.PYTHON_PATH || 'python', [join(work, 'harness.py')], { cwd: work, encoding: 'utf8', windowsHide: true, timeout: 60000 });
+process.stdout.write(run.stdout || ''); process.stderr.write(run.stderr || '');
+if (run.error) throw run.error;
+if (run.status !== 0) process.exit(run.status || 1);
+console.log(work);

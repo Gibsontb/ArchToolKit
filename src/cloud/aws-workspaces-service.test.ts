@@ -1,0 +1,42 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { defaultValues } from '../kit/blueprint.ts';
+import { AWS_WORKSPACES_SERVICE } from './aws-workspaces-service.ts';
+import { addServicesFor } from './add-service-catalog.ts';
+const values = { ...defaultValues(AWS_WORKSPACES_SERVICE), aws_region: 'us-east-1', name: 'application-desktops', directory: 'd-0123456789', bundle: 'wsb-123456789', users: 'alice,bob' };
+test('WorkSpaces resolves bundle defaults and creates one protected encrypted desktop per existing user', () => {
+  assert.equal(addServicesFor('aws').find(row => row.id === 'amazon-workspaces')?.terraform[0], AWS_WORKSPACES_SERVICE);
+  const result = AWS_WORKSPACES_SERVICE.build(values), main = result.files['main.tf']!;
+  assert.deepEqual(result.findings, []);
+  assert.match(main, /data "aws_workspaces_bundle"/);
+  assert.match(main, /toset\(\["alice","bob"\]\)/);
+  assert.match(main, /root_volume_encryption_enabled\s+= true/);
+  assert.match(main, /user_volume_encryption_enabled\s+= true/);
+  assert.match(main, /key_id\s+= "alias\/aws\/workspaces"/);
+  assert.match(main, /volume_encryption_key\s+= data.aws_kms_key.volumes.arn/);
+  assert.match(main, /SYMMETRIC_DEFAULT/);
+  assert.match(main, /prevent_destroy\s+= true/);
+  assert.match(main, /enable_internet_access, false\) == false/);
+  assert.doesNotMatch(main, /resource "aws_workspaces_directory"|password/);
+  assert.match(result.files['outputs.tf']!, /bundle_root_storage_gib/);
+});
+test('New desktop registration checks AD/VPC/AZ/service role and keeps public IP/local admin disabled', () => {
+  const result = AWS_WORKSPACES_SERVICE.build({ ...values, registration: 'NEW', subnets: 'subnet-0123456789abcdef0,subnet-0123456789abcdef1', group: 'sg-0123456789abcdef0', running: 'ALWAYS_ON', timeout: 'invalid' });
+  assert.deepEqual(result.findings, []);
+  const main = result.files['main.tf']!;
+  assert.match(main, /workspaces_DefaultRole/);
+  assert.match(main, /MicrosoftAD/);
+  assert.match(main, /enable_internet_access\s+= false/);
+  assert.match(main, /user_enabled_as_local_administrator\s+= false/);
+  assert.match(main, /restart_workspace\s+= true/);
+  assert.doesNotMatch(main, /running_mode_auto_stop_timeout/);
+});
+test('Desktop inputs reject conflicting users, invalid bundles and incomplete new registration', () => {
+  for (const [key, value] of Object.entries({ users: 'Alice,alice', bundle: 'invalid', directory: 'invalid', running: 'MANUAL', timeout: '5', kms: 'bad' })) assert.ok(AWS_WORKSPACES_SERVICE.build({ ...values, [key]: value }).findings.some(finding => finding.path === key), key);
+  const result = AWS_WORKSPACES_SERVICE.build({ ...values, registration: 'NEW' });
+  assert.ok(result.findings.some(finding => finding.path === 'subnets'));
+  assert.ok(result.findings.some(finding => finding.path === 'group'));
+  assert.deepEqual(AWS_WORKSPACES_SERVICE.build({ ...values, subnets: 'bad', group: 'bad' }).findings, []);
+  assert.ok(AWS_WORKSPACES_SERVICE.build({ ...values, kms: 'arn:aws:kms:us-east-1:123456789012:key/not-a-key' }).findings.some(finding => finding.path === 'kms'));
+  assert.deepEqual(AWS_WORKSPACES_SERVICE.build({ ...values, kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' }).findings, []);
+});

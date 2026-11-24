@@ -1,0 +1,150 @@
+/** Exercise generated migration operations using local AWS/Terraform mocks only. */
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { defaultValues } from '../src/kit/blueprint.ts';
+import { AWS_DMS_SERVICE } from '../src/cloud/aws-dms-service.ts';
+import { WORK_TMP } from './work.mjs';
+const work = mkdtempSync(join(WORK_TMP, 'dms-operator-test-'));
+const cert = 'arn:aws:dms:us-east-1:123456789012:cert:ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const fixture = { ...defaultValues(AWS_DMS_SERVICE), aws_region: 'us-east-1', name: 'mock-migration', host: 'EXISTING', existing: 'migration-host', secret_role: 'arn:aws:iam::123456789012:role/DmsSecrets', source_secret: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:source-abcdef', target_secret: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:target-abcdef', source_database: 'application', target_database: 'application', source_certificate: cert, target_certificate: cert, tables: 'public | customer_records' };
+const result = AWS_DMS_SERVICE.build(fixture);
+const cdc = AWS_DMS_SERVICE.build({ ...fixture, mode: 'full-load-and-cdc' });
+writeFileSync(join(work, 'OPERATE-CDC.ps1'), cdc.files['OPERATE.ps1']);
+if (result.findings.length) throw new Error('Invalid DMS operator fixture.');
+writeFileSync(join(work, 'OPERATE.ps1'), result.files['OPERATE.ps1']);
+writeFileSync(join(work, 'PREFLIGHT-EXISTING.ps1'), result.files['PREFLIGHT.ps1']);
+const newHost = AWS_DMS_SERVICE.build({ ...defaultValues(AWS_DMS_SERVICE), aws_region: 'us-east-1', name: 'mock-migration', host: 'NEW', version: '3.5.4', subnets: 'subnet-0123456789abcdef0,subnet-0123456789abcdef1', groups: 'sg-0123456789abcdef0', secret_role: 'arn:aws:iam::123456789012:role/DmsSecrets', source_secret: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:source-abcdef', target_secret: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:target-abcdef', source_database: 'application', target_database: 'application', source_certificate: cert, target_certificate: cert, tables: 'public | customer_records' });
+if (newHost.findings.length) throw new Error('Invalid new-host preflight fixture.');
+writeFileSync(join(work, 'PREFLIGHT-NEW.ps1'), newHost.files['PREFLIGHT.ps1']);
+const harness = [
+  "$ErrorActionPreference = 'Stop'",
+  "$global:mockJob = @{ account = '123456789012'; region = 'us-east-1'; task = 'mock-task'; instance = 'mock-instance'; endpoints = @('mock-source','mock-target') }",
+  'function global:terraform {',
+  "  if (($args -join ' ') -ne 'output -json dms_job') { throw 'Unexpected Terraform mock command.' }",
+  '  $global:LASTEXITCODE = 0',
+  '  ConvertTo-Json -InputObject $global:mockJob -Depth 5 -Compress',
+  '}',
+  'function Argument([object[]]$InputArguments, [string]$Name) {',
+  '  $index = [Array]::IndexOf($InputArguments, $Name)',
+  '  if ($index -lt 0) { return $null }; return $InputArguments[$index + 1]',
+  '}',
+  'function global:aws {',
+  '  $request = @($args | ForEach-Object { $_ })',
+  '  $global:LASTEXITCODE = 0',
+  "  if ($request[0] -eq 'sts' -and $request[1] -eq 'get-caller-identity') {",
+  "    @{ Account = $(if ($global:case -eq 'wrong-account') { '000000000000' } else { '123456789012' }) } | ConvertTo-Json -Compress; return",
+  '  }',
+  "  if ((Argument $request '--region') -ne 'us-east-1') { throw 'Missing configured region.' }",
+  "  if ($request[0] -eq 'ec2' -and $request[1] -eq 'describe-subnets') {",
+  "    ConvertTo-Json -InputObject @{ Subnets = @(@{ AvailabilityZone = 'us-east-1a' }, @{ AvailabilityZone = $(if ($global:case -eq 'bad-az') { 'us-east-1a' } else { 'us-east-1b' }) }) } -Depth 5 -Compress; return",
+  '  }',
+  "  if ($request[0] -eq 'secretsmanager' -and $request[1] -eq 'describe-secret') {",
+  "    $secret = @{ ARN = (Argument $request '--secret-id') }; if ($global:case -eq 'deleted-secret') { $secret.DeletedDate = '2026-11-23' }; ConvertTo-Json -InputObject $secret -Compress; return",
+  '  }',
+  "  if ($request[0] -ne 'dms') { throw 'Unexpected mock AWS service/operation; secret values must never be fetched.' }",
+  '  switch ($request[1]) {',
+  "    'describe-orderable-replication-instances' {",
+  "      $offering = @{ EngineVersion = '3.5.4'; ReplicationInstanceClass = $(if ($global:case -eq 'bad-offer') { 'dms.other.large' } else { 'dms.r6i.large' }); ReleaseStatus = $(if ($global:case -eq 'beta') { 'beta' } else { 'prod' }); MinAllocatedStorage = 50; MaxAllocatedStorage = $(if ($global:case -eq 'bad-storage') { 50 } else { 2000 }); AvailabilityZones = @('us-east-1a','us-east-1b') }",
+  '      ConvertTo-Json -InputObject @{ OrderableReplicationInstances = @($offering) } -Depth 5 -Compress',
+  '    }',
+  "    'describe-replication-instances' {",
+  "      ConvertTo-Json -InputObject @{ ReplicationInstances = @(@{ ReplicationInstanceIdentifier = 'migration-host'; PubliclyAccessible = ($global:case -eq 'public-host'); ReplicationInstanceStatus = 'available' }) } -Depth 5 -Compress",
+  '    }',
+  "    'describe-replication-tasks' {",
+  "      if ($global:case -eq 'missing-task') { '{\"ReplicationTasks\":[]}'; return }",
+  "      $task = @{ ReplicationTaskArn = 'mock-task'; ReplicationTaskIdentifier = 'mock-migration'; MigrationType = $(if ($global:case -eq 'wrong-type') { 'cdc' } elseif ($global:cdcMode) { 'full-load-and-cdc' } else { 'full-load' }); ReplicationInstanceArn = 'mock-instance'; SourceEndpointArn = 'mock-source'; TargetEndpointArn = 'mock-target'; Status = $(if ($global:case -eq 'not-ready') { 'stopped' } elseif ($global:case -eq 'stop') { 'running' } else { 'ready' }) }",
+  "      if ($global:case -eq 'wrong-task') { $task.TargetEndpointArn = 'another-target' }",
+  '      ConvertTo-Json -InputObject @{ ReplicationTasks = @($task) } -Depth 5 -Compress',
+  '    }',
+  "    'describe-connections' {",
+  "      $filters = @($request | Where-Object { $_ -like 'Name=endpoint-arn,Values=*' })",
+  "      $endpoint = $filters[0].Substring('Name=endpoint-arn,Values='.Length)",
+  "      if ($global:mockJob.endpoints -notcontains $endpoint) { throw 'Unscoped connection query.' }",
+  "      $connection = @{ EndpointArn = $endpoint; ReplicationInstanceArn = 'mock-instance'; Status = $(if ($global:case -eq 'bad-connection') { 'failed' } else { 'successful' }) }",
+  "      if ($global:case -eq 'wrong-connection') { $connection.EndpointArn = 'another-endpoint' }",
+  '      ConvertTo-Json -InputObject @{ Connections = @($connection) } -Depth 5 -Compress',
+  '    }',
+  "    'test-connection' {",
+  "      if ((Argument $request '--replication-instance-arn') -ne 'mock-instance' -or $global:mockJob.endpoints -notcontains (Argument $request '--endpoint-arn')) { throw 'Unscoped connection test.' }",
+  "      $global:mutations.Add('test'); '{}'",
+  '    }',
+  "    'start-replication-task' {",
+  "      if ((Argument $request '--replication-task-arn') -ne 'mock-task' -or (Argument $request '--start-replication-task-type') -ne 'start-replication') { throw 'Unscoped/incorrect start.' }",
+  "      $global:mutations.Add('start'); '{}'",
+  '    }',
+  "    'stop-replication-task' {",
+  "      if ((Argument $request '--replication-task-arn') -ne 'mock-task') { throw 'Unscoped stop.' }",
+  "      $global:mutations.Add('stop'); '{}'",
+  '    }',
+  "    'describe-table-statistics' {",
+  "      if ((Argument $request '--replication-task-arn') -ne 'mock-task') { throw 'Unscoped table report.' }",
+  "      ConvertTo-Json -InputObject @{ TableStatistics = @(@{ SchemaName = 'public'; TableName = 'customer_records'; FullLoadRows = 10 }) } -Depth 5 -Compress",
+  '    }',
+  "    default { throw 'Unexpected mock AWS operation.' }",
+  '  }',
+  '}',
+  '$cases = @(',
+  "  @{ name='inspect'; action='Inspect'; expected='' },",
+  "  @{ name='test'; action='TestConnections'; expected='test,test' },",
+  "  @{ name='start'; action='Start'; confirm=$true; expected='start' },",
+  "  @{ name='stop'; action='Stop'; expected='stop' },",
+  "  @{ name='report'; action='Report'; expected='' },",
+  "  @{ name='no-confirm'; action='Start'; error='*ConfirmTargetReady*' },",
+  "  @{ name='wrong-account'; action='Start'; confirm=$true; error='*Unexpected migration account*' },",
+  "  @{ name='not-ready'; action='Start'; confirm=$true; error='*ready task*' },",
+  "  @{ name='bad-connection'; action='Start'; confirm=$true; error='*Both exact endpoint*' },",
+  "  @{ name='wrong-connection'; action='Start'; confirm=$true; error='*Both exact endpoint*' },",
+  "  @{ name='wrong-task'; action='Start'; confirm=$true; error='*do not match*' },",
+  "  @{ name='wrong-type'; action='Start'; confirm=$true; error='*do not match*' },",
+  "  @{ name='stop-not-running'; action='Stop'; error='*Stop requires a running*' },",
+  "  @{ name='missing-task'; action='Inspect'; error='*Expected exactly*' }",
+  ')',
+  'foreach ($testCase in $cases) {',
+  '  $global:case = $testCase.name',
+  '  $global:mutations = [System.Collections.Generic.List[string]]::new()',
+  '  $confirm = [bool]$testCase.confirm; $failure = $null',
+  '  try { $null = & (Join-Path $PSScriptRoot "OPERATE.ps1") -Action $testCase.action -ConfirmTargetReady:$confirm 6>$null } catch { $failure = $_.Exception.Message }',
+  '  if ($testCase.error) {',
+  '    if (-not $failure -or $failure -notlike $testCase.error -or $global:mutations.Count -ne 0) { throw ("Invalid guard for " + $testCase.name + ": " + $failure) }',
+  '  } else {',
+  '    if ($failure) { throw ("Valid case rejected: " + $testCase.name + ": " + $failure) }',
+  '    if (($global:mutations -join ",") -ne $testCase.expected) { throw "Unexpected operator side effect." }',
+  '  }',
+  '}',
+  '$global:cdcMode = $true',
+  'foreach ($item in @("no-cdc-confirm", "start", "wrong-type", "wrong-account", "not-ready")) {',
+  '  $global:case = $item; $global:mutations = [System.Collections.Generic.List[string]]::new(); $failure = $null',
+  '  try { & (Join-Path $PSScriptRoot "OPERATE-CDC.ps1") -Action Start -ConfirmTargetReady -ConfirmCdcReady:($item -ne "no-cdc-confirm") | Out-Null } catch { $failure = $_.Exception.Message }',
+  '  if ($item -eq "start") { if ($failure -or ($global:mutations -join ",") -ne "start") { throw ("CDC start failed: " + $failure) } } else { if (-not $failure -or $global:mutations.Count -ne 0) { throw ("CDC guard failed: " + $item) } }',
+  '  if ($item -eq "no-cdc-confirm" -and $failure -notlike "*ConfirmCdcReady*") { throw "Missing explicit CDC readiness guard" }',
+  '}',
+  '$global:cdcMode = $false',
+  '$report = Get-Content -LiteralPath dms-table-statistics.json -Raw | ConvertFrom-Json',
+  "if (@($report.TableStatistics).Count -ne 1 -or $report.TableStatistics[0].FullLoadRows -ne 10) { throw 'Report changed table counts.' }",
+  '$preflightCases = @(',
+  "  @{ name='valid-new'; mode='NEW' }, @{ name='valid-existing'; mode='EXISTING' },",
+  "  @{ name='bad-offer'; mode='NEW'; error='*No production regional offering*' },",
+  "  @{ name='bad-storage'; mode='NEW'; error='*No production regional offering*' },",
+  "  @{ name='beta'; mode='NEW'; error='*No production regional offering*' },",
+  "  @{ name='bad-az'; mode='NEW'; error='*Selected subnet AZs*' },",
+  "  @{ name='public-host'; mode='EXISTING'; error='*available private replication instance*' },",
+  "  @{ name='deleted-secret'; mode='EXISTING'; error='*scheduled for deletion*' },",
+  "  @{ name='wrong-account'; mode='NEW'; error='*Unexpected migration account*' }",
+  ')',
+  'foreach ($testCase in $preflightCases) {',
+  '  $global:case = $testCase.name; $global:mutations = [System.Collections.Generic.List[string]]::new(); $failure = $null',
+  '  try { $null = & (Join-Path $PSScriptRoot ("PREFLIGHT-" + $testCase.mode + ".ps1")) 6>$null } catch { $failure = $_.Exception.Message }',
+  '  if ($testCase.error) { if (-not $failure -or $failure -notlike $testCase.error) { throw ("Incorrect preflight rejection " + $testCase.name + ": " + $failure) } } elseif ($failure) { throw ("Valid preflight rejected: " + $failure) }',
+  '  if ($global:mutations.Count -ne 0) { throw "Preflight unexpectedly mutated resources." }',
+  '}',
+  "Write-Output 'Passed 14 full-load operator, five CDC operator and nine metadata-preflight cases using local mocks; no AWS/database operation executed.'",
+].join('\n');
+writeFileSync(join(work, 'harness.ps1'), harness);
+const executable = process.env.POWERSHELL_PATH || join(process.env.SystemRoot || 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+const check = spawnSync(executable, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(work, 'harness.ps1')], { cwd: work, encoding: 'utf8', timeout: 60000, windowsHide: true });
+if (check.error) throw check.error;
+if (check.stdout) process.stdout.write(check.stdout);
+if (check.stderr) process.stderr.write(check.stderr);
+if (check.status !== 0) throw new Error('DMS operator mock checks failed: ' + work);
+console.log('Mock artifacts: ' + work);

@@ -1,0 +1,13 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {AWS_SECRETS_SERVICE,AWS_KMS_SERVICE} from './aws-security-services.ts';import {defaultValues} from '../kit/blueprint.ts';import {addServicesFor} from './add-service-catalog.ts';
+const secret=(extra={})=>AWS_SECRETS_SERVICE.build({...defaultValues(AWS_SECRETS_SERVICE),aws_region:'us-east-1',secret_name:'app/database',...extra},'secret');
+const key=(extra={})=>AWS_KMS_SERVICE.build({...defaultValues(AWS_KMS_SERVICE),aws_region:'us-east-1',alias:'app/database',...extra},'key');
+test('Secrets Manager and KMS have their own service configuration forms',()=>{assert.equal(addServicesFor('aws').find(r=>r.id==='aws-secrets-manager').terraform[0],AWS_SECRETS_SERVICE);assert.equal(addServicesFor('aws').find(r=>r.id==='aws-key-management-service').terraform[0],AWS_KMS_SERVICE);assert.equal(secret().findings.filter(f=>f.severity==='error').length,0);assert.equal(key().findings.filter(f=>f.severity==='error').length,0);});
+test('Secret contents remain a sensitive deployment input and rotation requires an initial version',()=>{
+ assert.ok(!secret().files['main.tf'].includes('aws_secretsmanager_secret_version'));
+ assert.ok(secret({rotation:'true',rotation_lambda:'arn:aws:lambda:us-east-1:123456789012:function:rotate'}).findings.some(f=>f.code==='aws.secrets.initial'));
+ const result=secret({initial_version:'true',rotation:'true',rotation_lambda:'arn:aws:lambda:us-east-1:123456789012:function:rotate'});assert.equal(result.findings.filter(f=>f.severity==='error').length,0);assert.ok(result.files['variables.tf'].includes('sensitive = true'));assert.ok(result.files['main.tf'].includes('secret_string = var.initial_secret_string'));assert.ok(result.files['main.tf'].includes('ignore_changes = [secret_string]'));assert.ok(result.files['main.tf'].includes('aws_secretsmanager_secret_rotation'));
+});
+test('KMS usage determines the material type and supported rotation behavior',()=>{
+ const signed=key({usage:'SIGN_VERIFY',signing_spec:'ECC_NIST_P256'});assert.equal(signed.findings.filter(f=>f.severity==='error').length,0);assert.ok(signed.files['main.tf'].includes('enable_key_rotation = false'));assert.ok(signed.files['main.tf'].includes('ECC_NIST_P256'));
+ const hmac=key({usage:'GENERATE_VERIFY_MAC',hmac_spec:'HMAC_256'});assert.ok(hmac.files['main.tf'].includes('key_usage = "GENERATE_VERIFY_MAC"'));assert.ok(key({alias:'aws/managed'}).findings.some(f=>f.severity==='error'));assert.ok(key({policy_json:'{}'}).findings.some(f=>f.code==='aws.kms.policy'));assert.ok(key({deletion_days:0}).findings.some(f=>f.severity==='error'));
+});

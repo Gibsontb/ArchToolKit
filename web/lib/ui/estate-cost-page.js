@@ -8,7 +8,7 @@ import { estateTcoPanel } from './estate-tco-panel.js';
 import { estateReportCurrency } from './estate-report-currency.js';
 import { mountEstateBar } from './estate-bar.js';
 import { estateCostInventory } from './estate-cost-inventory.js';
-
+                                                        
 
 const key = 'archtoolkit.estate-cost.rates.v1';
 

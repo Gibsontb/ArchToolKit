@@ -278,7 +278,7 @@ describe('landing zones: the card as the plan holds it', () => {
     const { inputs } = landingZoneInputs(edited, design);
     const primary = inputs.find((input) => input.id === 'aws:region:primary');
     const dr = inputs.find((input) => input.id === 'aws:region:dr');
-    expect(primary?.control).toBe('combo');
+    expect(primary?.control).toBe('select');
     expect(primary?.options?.map((option) => option.value)).toContain('example-custom-region');
     expect(dr?.control).toBe('combo');
     expect(dr?.options?.map((option) => option.value)).toContain('us-gov-west-1');

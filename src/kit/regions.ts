@@ -32,8 +32,10 @@ export const AWS_REGIONS: readonly string[] = [
   // China (a separate partition, with its own accounts)
   'cn-north-1', 'cn-northwest-1',
   // ISO partitions, air-gapped
-  'us-iso-east-1', 'us-iso-west-1', 'us-isob-east-1', 'us-isof-south-1', 'us-isof-east-1',
+  'us-iso-east-1', 'us-iso-west-1', 'us-isob-east-1', 'us-isob-west-1', 'us-isof-south-1', 'us-isof-east-1',
   'eu-isoe-west-1',
+  // AWS SDK partition metadata, checked 2026-11-19.
+  'eusc-de-east-1',
 ];
 
 /** Azure: public, then Government, DoD and Secret. */
@@ -59,6 +61,8 @@ export const AZURE_REGIONS: readonly string[] = [
   'usdodcentral', 'usdodeast',
   // Secret and Top Secret
   'usseceast', 'ussecwest', 'ussecwestcentral',
+  // US Nat air-gapped locations named in Microsoft's public regional support documentation.
+  'usnateast', 'usnatwest',
 ];
 
 /** Google Cloud: every Compute Engine region. */

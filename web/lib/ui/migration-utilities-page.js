@@ -46,7 +46,15 @@ export const MIGRATION_UTILITIES_SPECS                      = [
 
 const root = typeof document !== 'undefined' ? document.getElementById('multicloud-root') : null;
 const header = typeof document !== 'undefined' ? document.getElementById('plan-header') : null;
-if (root && header && !globalThis.location.hash) {
+const route=typeof location!=='undefined'?location.hash.slice(1):'';
+const landingRequest=route.startsWith('landing-zones') || (route.startsWith('vmware-exit:')&&new URLSearchParams(route.split(':').slice(1).join(':')).get('mode')==='landing-zone');
+const serviceRequest=route.startsWith('vmware-exit:')&&new URLSearchParams(route.split(':').slice(1).join(':')).get('mode')==='new';
+if(root&&header&&serviceRequest){
+  globalThis.location.replace('add-service.html?'+new URLSearchParams(route.split(':').slice(1).join(':')));
+}else if(root&&header&&landingRequest){
+  const query=route.startsWith('landing-zones')?new URLSearchParams({provider:route.split(':')[1]??''}):new URLSearchParams(route.split(':').slice(1).join(':'));
+  globalThis.location.replace('landing-zone.html?'+query);
+}else if (root && header && !globalThis.location.hash) {
   globalThis.location.replace('../cloud-decision-logic-kit/multi-cloud-decision-matrix.html');
 } else if (root && header) {
   void mountPlanPage({

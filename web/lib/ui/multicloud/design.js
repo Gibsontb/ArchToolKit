@@ -55,6 +55,9 @@ import { projectDate } from './project.js';
 import { regionChoices } from './constraints-model.js';
 import { EXIT_TARGETS, PROJECT_DESTINATION_KEY } from '../../multicloud/plan/dcexit/vmware-exit.js';
 import { vendorLandingZoneCard } from './vendor-landing-zone.js';
+import { landingZoneWalkthrough } from './landing-zone-walkthrough.js';
+import { LANDING_ZONE_TARGETS } from './landing-zone-flow.js';
+import { placementRegionOptions, requiresRestrictedSite } from '../../kit/placement-regions.js';
 
 const vendorTargets = EXIT_TARGETS.filter((target) => target.delivery === 'integration-needed' || target.id === 'vmware-cloud');
 
@@ -107,7 +110,7 @@ export function landingZoneInputs(plan      , pd                )               
   const inputs                   = [
     p === 'vmware'
       ? { id: `${p}:region:primary`, label: REGION_LABEL[p], control: 'text', placeholder: pd.region }
-      : { id: `${p}:region:primary`, label: 'Primary region', control: 'combo', options: regionChoices(p, plan.requirements.regions[p]?.primary),
+      : { id: `${p}:region:primary`, label: 'Region / site', control: 'select', options: plan.mode==='landing-zone'?[...placementRegionOptions(p),...regionChoices(p,plan.requirements.regions[p]?.primary).filter(option=>!placementRegionOptions(p).some(location=>location.value===option.value))]:regionChoices(p, plan.requirements.regions[p]?.primary),
         blankLabel: pd.region ? `Default (${pd.region})` : 'Choose a region' },
     ...(p === 'vmware' ? [] : [{ id: `${p}:region:dr`, label: 'DR region', control: 'combo'         ,
       options: regionChoices(p, plan.requirements.regions[p]?.dr), blankLabel: 'No DR region' }]),
@@ -173,7 +176,7 @@ const ESTATE_GOVERNANCE                            = [
 
 /** The landing-zone mode of a platform: shared when it is designed here. */
 export function landingZoneMode(plan      , p          )                        {
-  return plan.execution?.landingZones?.[p] ? 'shared' : 'included';
+  return plan.mode === 'landing-zone' || plan.execution?.landingZones?.[p] ? 'shared' : 'included';
 }
 
 /** A plan with a platform's landing-zone mode set. */
@@ -213,13 +216,17 @@ export function mount(root             , ctx             )       {
   /** The parts of the cloud's card that follow the plan without redrawing the form. */
   let refreshers                 = [];
   let drawn = '';
+  let selectedTarget                    ;
 
   const chosen = ()         => {
     const plan = ctx.session.plan();
     const fromRoute = ctx.arg().split('/')[0];
-    const value = fromRoute || plan.designOverrides[PROJECT_DESTINATION_KEY];
+    const value = selectedTarget ?? (fromRoute || plan.designOverrides[PROJECT_DESTINATION_KEY]);
     if (value === 'vcf') return 'vmware';
+    if(value==='govcloud')return 'aws';
+    if(value==='azure-government')return 'azure';
     if (isCloud(value) || vendorTargets.some((target) => target.id === value)) return value;
+    if(plan.mode==='landing-zone')return '';
     return resolveCloud('', viewerCloud(), cloudUsage(plan, planModel(plan).decision)) ?? '';
   };
   const shape = (plan      , target        )         => `${target}|${isCloud(target) ? platformDesignFor(plan, target)?.inPlan ?? 'x' : ''}`;
@@ -235,6 +242,8 @@ export function mount(root             , ctx             )       {
     const cloud = isCloud(target) ? target : undefined;
     drawn = shape(plan, target);
     append(top, intro(plan, target, cloud, usage, model.failure, (next) => {
+      selectedTarget = next;
+      ctx.session.update(current=>({...current,designOverrides:{...current.designOverrides,[PROJECT_DESTINATION_KEY]:next}}));
       // Keep the address in step (`#landing-zones:<cloud>`) without re-routing the page.
       if (globalThis.location && globalThis.history) {
         const url = new URL(globalThis.location.href);
@@ -255,9 +264,21 @@ export function mount(root             , ctx             )       {
       append(cards, card(LANDING_ZONE_NAMES[cloud], el('div', { class: 'tip warn', text: `The ${CLOUD_NAMES[cloud]} landing zone could not be designed${model.failure ? `: ${model.failure}` : '.'}` })));
       return;
     }
-    append(cards, platformCard(ctx, pd.design, (r) => refreshers.push(r)));
-    append(cards, estateFoundations(ctx, cloud));
-    append(cards, estateGovernance(ctx));
+    if(plan.mode==='landing-zone'){
+      const governance=el('div',{class:'stack'}), output=el('div',{class:'stack'});
+      const setup=platformCard(ctx,pd.design,r=>refreshers.push(r),{governance,output});
+      append(governance,estateGovernance(ctx));
+      append(cards,landingZoneWalkthrough([
+        {label:'Platform, regions & networks',content:setup},
+        {label:'Connectivity & identity',content:estateFoundations(ctx,cloud)},
+        {label:'Security & governance',content:governance},
+        {label:'Review & generate',content:output},
+      ]));
+    }else{
+      append(cards, platformCard(ctx, pd.design, (r) => refreshers.push(r)));
+      append(cards, estateFoundations(ctx, cloud));
+      append(cards, estateGovernance(ctx));
+    }
   };
   const refresh = ()          => {
     const plan = ctx.session.plan();
@@ -268,6 +289,7 @@ export function mount(root             , ctx             )       {
   draw();
   watchPlan(ctx, draw, refresh);
   ctx.onArg(() => {
+    selectedTarget = undefined;
     const a = ctx.arg().split('/')[0] ?? '';
     if (isCloud(a) && a !== viewerCloud()) rememberCloud(a);
     else draw();
@@ -278,14 +300,14 @@ export function mount(root             , ctx             )       {
 }
 
 function intro(plan      , target        , cloud                      , usage                     , failure                    , onChange                          )              {
+  const provider=target==='govcloud'?'aws':target==='azure-government'?'azure':target;
   const picker = select([
     { value: '', label: 'Choose a platform' },
-    ...PLATFORM_OPTIONS.map((option) => {
+    ...LANDING_ZONE_TARGETS.map((option) => {
       const count = usage.find((row) => row.cloud === option.value)?.chosen.length ?? 0;
       return { ...option, label: count ? `${option.label} (${count} apps)` : option.label };
     }),
-    ...vendorTargets.map((entry) => ({ value: entry.id, label: entry.name })),
-  ], target);
+  ], provider);
   picker.setAttribute('data-control', 'lz-cloud');
   picker.addEventListener('change', () => onChange(picker.value));
   return card(
@@ -293,9 +315,9 @@ function intro(plan      , target        , cloud                      , usage   
     field('Platform', picker),
     failure ? el('div', { class: 'tip warn' }, el('strong', { text: 'The plan could not be decided: ' }), el('span', { text: failure })) : null,
     cloud
-      ? note(`${LANDING_ZONE_NAMES[cloud]}: its networks, connectivity back to the data centre (${DC_LINK_NAMES[cloud]}), identity, backup and governance. The first application on ${CLOUD_NAMES[cloud]} builds it; the later ones reuse it (shared).`)
+      ? note(plan.mode === 'landing-zone' ? `Standalone ${LANDING_ZONE_NAMES[cloud]}. No application inventory or migration is required.` : `${LANDING_ZONE_NAMES[cloud]}: its networks, connectivity back to the data centre (${DC_LINK_NAMES[cloud]}), identity, backup and governance.`)
       : null,
-    cloud && plan.apps.length === 0
+    cloud && plan.apps.length === 0 && plan.mode !== 'landing-zone'
       ? el('div', { class: 'small muted', attrs: { 'data-control': 'no-apps' } }, 'No applications yet: the landing zone can be designed on its own. ', el('a', { text: 'Open Application Migration →', attrs: { href: 'migration.html#applications' } }))
       : null,
   );
@@ -393,7 +415,7 @@ function crossCloudRows(plan      , p          )              {
     rows.length === 0 ? note('No application on this cloud depends on one on another cloud.') : rowsTable(['Application', 'Peer (cloud)', 'Connector', 'Built by'], rows));
 }
 
-function platformCard(ctx             , pd                , onRefresh                         )              {
+function platformCard(ctx             , pd                , onRefresh                         , sections                                              )              {
   const p = pd.platform;
   const plan = ctx.session.plan();
   const lz = landingZoneInputs(plan, pd);
@@ -410,7 +432,7 @@ function platformCard(ctx             , pd                , onRefresh           
   };
   const binding = { values, set: (id        , v        ) => ctx.session.update((cur) => withLandingZoneValue(cur, id, v, defaults)) };
   const modeInput                 = {
-    id: `${p}:lz-mode`, label: 'Landing-zone mode', control: 'select', options: opts(LANDING_ZONE_MODE_OPTIONS),
+    id: `${p}:lz-mode`, label: 'Landing-zone mode', control: 'select', options: opts(LANDING_ZONE_MODE_OPTIONS).filter(option=>ctx.session.plan().mode!=='landing-zone'||option.value==='shared'),
     help: 'Shared: this landing zone is built once, and every app stack on the cloud reads it (var.landing_zone). Included: the first application on the cloud builds it in its own project, and the later ones reuse it.',
   };
 
@@ -440,7 +462,7 @@ function platformCard(ctx             , pd                , onRefresh           
     const model = planModel(cur);
     const one = platformDesignFor(cur, p);
     const d = one?.design ?? pd;
-    state.textContent = landingZoneBuildText(landingZoneBuild(cur, p, model.decision), p);
+    state.textContent = cur.mode==='landing-zone' ? (cur.execution?.landingZones[p]==='generated'?'Build files generated':'Standalone landing-zone design') : landingZoneBuildText(landingZoneBuild(cur, p, model.decision), p);
     editor.refresh();
     const built = d.networks.filter((n) => !n.existingId);
     fill(foundation, built.length === 0 ? null : note(`Builds: ${built.map((n) => `${n.name} (${n.cidr}${n.ipv6 ? ', dual stack' : ''}, ${n.subnets.length} subnet${n.subnets.length === 1 ? '' : 's'})`).join('; ')}${d.networks.some((n) => n.existingId) ? `; attaches to ${d.networks.filter((n) => n.existingId).map((n) => n.name).join(', ')}` : ''}. Region ${d.region}${d.drRegion ? `, DR ${d.drRegion}` : ''}.`, `lz-builds-${p}`));
@@ -450,13 +472,12 @@ function platformCard(ctx             , pd                , onRefresh           
       d.connectivity.length === 0
         ? note('No site connects to this cloud yet: add the sites under Hybrid connectivity below.')
         : rowsTable(['Site', 'Connection', 'BGP ASN (cloud side)'], d.connectivity.map((c) => [c.site, connectionText(p, c.method), String(c.cloudAsn)])),
-      subhead('Cross-cloud connectors (from the application designs)'),
-      crossCloudRows(cur, p),
+      ...(cur.mode==='landing-zone'?[]:[subhead('Cross-cloud connectors (from the application designs)'),crossCloudRows(cur,p)]),
       subhead('Identity'),
       note(`${AD_STRATEGY_OPTIONS.find((o) => o.value === d.identity.strategy)?.label ?? d.identity.strategy}${d.identity.dcNames.length ? `: ${d.identity.dcNames.join(', ')}` : ''}.`),
       subhead('Backup and DR'),
       rowsTable(['Tier', 'Frequency', 'Retention (days)', 'Copy to DR', 'Immutable'], d.backup.tiers.map((t) => [t.tier, t.frequency, String(t.retentionDays), t.copyToDr ? 'Yes' : 'No', t.immutable ? 'Yes' : 'No'])),
-      d.relocate ? el('div', {}, subhead('Relocate target'), note(`${d.relocate.service}: ${d.relocate.nodes} hosts (a naive sum; size it in VCF Sizing).`), el('a', { class: 'btn btn-small', text: 'Open VCF Sizing →', attrs: { href: 'vcf-sizing.html' } })) : null,
+      d.relocate && cur.mode!=='landing-zone' ? el('div', {}, subhead('Relocate target'), note(`${d.relocate.service}: ${d.relocate.nodes} hosts (a naive sum; size it in VCF Sizing).`), el('a', { class: 'btn btn-small', text: 'Open VCF Sizing →', attrs: { href: 'vcf-sizing.html' } })) : null,
     );
     const mine = [...landingZoneSettings(cur, p).findings, ...(one?.findings ?? []), ...model.design.findings.filter((f) => belongsTo(f, p))];
     const seen = new Set        ();
@@ -478,6 +499,10 @@ function platformCard(ctx             , pd                , onRefresh           
       click: () => {
         void (async () => {
           const cur = ctx.session.plan();
+          if(requiresRestrictedSite(p,cur.requirements.regions[p]?.primary??'')){
+            fill(generated,note('This restricted site requires its enclave-specific region identifier, endpoints and qualified build integration. Public-cloud Terraform is not generated for this selection.'));
+            return;
+          }
           const model = planModel(cur);
           const d = platformDesignFor(cur, p)?.design;
           if (!d) return;
@@ -500,6 +525,9 @@ function platformCard(ctx             , pd                , onRefresh           
     },
   });
 
+  const governanceNodes=[subhead('Governance'),note(`Enforced with ${POLICY_ENGINE[p]}.`),...renderBlueprintForm({inputs:gov.inputs},binding)];
+  const outputNodes=[findings,el('div',{class:'btn-row',style:{marginTop:'var(--space-4)'}},generate),generated];
+  if(sections){append(sections.governance,card('Platform governance',...governanceNodes));append(sections.output,card('Landing-zone build',...outputNodes));}
   return el(
     'section',
     { class: 'card', attrs: { 'data-platform': p }, style: { minWidth: '0' } },
@@ -512,11 +540,7 @@ function platformCard(ctx             , pd                , onRefresh           
     editor.node,
     foundation,
     placement,
-    subhead('Governance'),
-    note(`Enforced with ${POLICY_ENGINE[p]}.`),
-    ...renderBlueprintForm({ inputs: gov.inputs }, binding),
-    findings,
-    el('div', { class: 'btn-row', style: { marginTop: 'var(--space-4)' } }, generate),
-    generated,
+    ...(sections?[]:governanceNodes),
+    ...(sections?[]:outputNodes),
   );
 }

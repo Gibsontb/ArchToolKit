@@ -18,24 +18,21 @@ import { zip } from '../../kit/archive.js';
 import { PROXMOX_OVF_IMPORT } from '../../multicloud/plan/dcexit/proxmox.js';
 import { prefillVmwareInventory } from '../multicloud/sources-model.js';
 import { vendorLandingZoneCard } from '../multicloud/vendor-landing-zone.js';
+import { LANDING_ZONE_TARGETS, landingZoneTarget, orderPlatformOptions } from '../multicloud/landing-zone-flow.js';
 
                                                     
 
 const options = (values                   ) => values.map((value) => ({ value, label: value }));
 const link = (href        , text        ) => el('a', { text, attrs: { href } });
 const governmentEnvironment                                   = { aws: 'govcloud', azure: 'azure-government' };
-const providerTargets = EXIT_TARGETS.filter((target) => !Object.values(governmentEnvironment).includes(target.id));
-const fromOptions = [
+const providerTargets = LANDING_ZONE_TARGETS.map(option=>EXIT_TARGETS.find(target=>target.id===(option.value==='vmware'?'vcf':option.value)) );
+const fromOptions = orderPlatformOptions([
   ...SOURCE_PLATFORM_OPTIONS.filter((option) => option.value !== 'other'),
   ...providerTargets.filter((target) => !SOURCE_PLATFORM_OPTIONS.some((option) => option.value === target.id))
     .map((target) => ({ value: target.id, label: target.name })),
   ...SOURCE_PLATFORM_OPTIONS.filter((option) => option.value === 'other'),
-];
-const deploymentOptions = [
-  ...PLATFORM_OPTIONS,
-  ...providerTargets.filter((target) => target.delivery === 'integration-needed')
-    .map((target) => ({ value: target.id, label: target.name })),
-];
+]);
+const deploymentOptions = LANDING_ZONE_TARGETS;
 const operationsOptions = [
   ...deploymentOptions,
   ...fromOptions.filter((option) => option.value !== 'other'
@@ -159,13 +156,15 @@ export function mount(root             , ctx             )       {
 
   function drawLandingZone()       {
     const actions = el('div');
+    if(!platform && savedProvider)platform=savedProvider==='vcf'?'vmware':savedProvider;
     const refresh = () => {
-      const target = environments.get(platform) || (platform === 'vcf' ? 'vmware' : platform);
-      fill(actions, target ? link(utilityPage + '#landing-zones:' + target, 'Open landing-zone design') : null);
+      const target = landingZoneTarget(platform);
+      if(target && ctx.session.plan().designOverrides[PROJECT_DESTINATION_KEY]!==target)ctx.session.update(plan=>({...plan,designOverrides:{...plan.designOverrides,[PROJECT_DESTINATION_KEY]:target}}));
+      fill(actions, target ? link('landing-zone.html?provider='+encodeURIComponent(platform), 'Open landing-zone design') : null);
     };
-    fill(root, card('Build a landing zone', labelled('Platform',
-      dropdown(deploymentOptions, platform, (value) => { platform = value; refresh(); }, {
-        label: 'Platform', blank: 'Choose a platform',
+    fill(root, card('Build a landing zone', labelled('Target platform',
+      dropdown(LANDING_ZONE_TARGETS, platform, (value) => { platform = value; refresh(); }, {
+        label: 'Target platform', blank: 'Choose a platform',
       })), actions));
     refresh();
   }

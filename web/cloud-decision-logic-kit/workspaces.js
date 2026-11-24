@@ -1,6 +1,8 @@
 import { EXIT_TARGETS, HOSTED_VMWARE_SERVICES, PROJECT_CLOUD_REGIONS } from '../lib/multicloud/plan/dcexit/vmware-exit.js';
 import { SOURCE_PLATFORM_OPTIONS } from '../lib/multicloud/plan/options.js';
 import { loadInventory } from '../lib/kit/estate-store.js';
+import { LANDING_ZONE_TARGETS, orderPlatformOptions } from '../lib/ui/multicloud/landing-zone-flow.js';
+import { placementRegionOptions, regionEnvironment } from '../lib/kit/placement-regions.js';
 
 const wizard = document.querySelector('.app-shell');
 for (const button of wizard?.querySelectorAll('button.primary, button.secondary') ?? []) {
@@ -52,10 +54,7 @@ function mountFlow(initiative, cloud) {
   for (const option of initiative.options) option.textContent = activityLabels[option.value] || 'Choose an activity';
   initiative.options[0].after(new Option('Assess or compare platforms', 'assess'), new Option('Build a landing zone', 'landing-zone'));
   initiative.add(new Option('Retire a service', 'retire'));
-  const targetOptions = [
-    ...Array.from(cloud.options, ({ value, text }) => ({ value, label: text })),
-    ...alternatives.map(({ id, name }) => ({ value: id, label: name })),
-  ].toSorted((a, b) => a.label.localeCompare(b.label));
+  const targetOptions = LANDING_ZONE_TARGETS.map(option=>({...option,value:option.value==='google'?'gcp':option.value}));
   setOptions(cloud, targetOptions, 'Choose a platform');
   cloud.prepend(new Option('N/A', 'na'));
   cloud.value = '';
@@ -66,10 +65,10 @@ function mountFlow(initiative, cloud) {
   const source = selectField('wizardSourcePlatform', 'Platform Type');
   const additionalSources = EXIT_TARGETS.filter(({ id }) => id !== 'govcloud' && id !== 'azure-government' && id !== 'olvm'
     && !SOURCE_PLATFORM_OPTIONS.some((option) => option.value === id));
-  const sourceOptions = [...SOURCE_PLATFORM_OPTIONS, ...additionalSources.map(({ id, name }) => ({ value: id, label: name }))]
+  const sourceOptions = orderPlatformOptions([...SOURCE_PLATFORM_OPTIONS, ...additionalSources.map(({ id, name }) => ({ value: id, label: name }))]
     .filter((option) => option.value !== 'other')
     .map((option) => option.value === 'vsphere' ? { ...option, label: 'Broadcom VMware vSphere' } : option)
-    .toSorted((a, b) => a.label.localeCompare(b.label));
+    );
   setOptions(source.select, sourceOptions, 'Choose a source platform');
   const hosted = selectField('wizardHostedVmware', 'Hosted VMware service');
   setOptions(hosted.select, HOSTED_VMWARE_SERVICES, 'Choose a service');
@@ -150,19 +149,17 @@ function mountFlow(initiative, cloud) {
     const choices = {
       source: initiative.value === 'migration' ? source.select.value : '',
       cutover: initiative.value === 'migration' ? byId('cutoverStrategy').value : '',
-      environment: environment.select.value,
+      environment: regionEnvironment(providerId(),region.select.value),
       region: direct() ? '' : region.select.value,
       hosted: initiative.value === 'migration' && platformValue() === 'vmware-cloud' ? hosted.select.value : '',
     };
     for (const [key, value] of Object.entries(choices)) if (value) query.set(key, value);
     const spec = platformValue() === 'vcf' && initiative.value === 'new-service';
-    projectAddress = spec ? '../app/vcf-spec.html' : nextPage + query;
+    projectAddress = initiative.value==='landing-zone' ? '../app/landing-zone.html?'+query : spec ? '../app/vcf-spec.html' : nextPage + query;
   };
   const updateRegions = () => {
-    const selectedEnvironment = environment.select.value;
-    const id = selectedEnvironment && selectedEnvironment !== 'commercial' ? selectedEnvironment : providerId();
-    const available = direct() ? [] : PROJECT_CLOUD_REGIONS[id] ?? [];
-    setOptions(region.select, available.map((value) => ({ value, label: value })), 'Choose a region');
+    const available = direct() ? [] : placementRegionOptions(providerId());
+    setOptions(region.select, available, 'Choose a region / site');
     region.row.hidden = !available.length;
     updateLink();
   };
@@ -175,7 +172,7 @@ function mountFlow(initiative, cloud) {
     hosted.row.hidden = initiative.value !== 'migration' || platformValue() !== 'vmware-cloud';
     const choices = government ? [{ value: 'commercial', label: 'Commercial' }, { value: government.id, label: government.name }] : [];
     setOptions(environment.select, choices, 'Decide later');
-    environment.row.hidden = !choices.length;
+    environment.row.hidden = true;
     if (!publicProvider()) {
       byId('cloudSubtitle').textContent = providerId() ? effectivePlatform().selectedOptions[0].textContent : 'Choose an activity and platform to start.';
       byId('resultsContent').style.display = 'none';
@@ -189,6 +186,10 @@ function mountFlow(initiative, cloud) {
     updateRegions();
   };
   const updateInitiative = () => {
+    if(initiative.value==='new-service'){
+      location.href='../app/add-service.html';
+      return;
+    }
     updatePlatformFields();
     prefillSource();
     const isDirect = direct();
