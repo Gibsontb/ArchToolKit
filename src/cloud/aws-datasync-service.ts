@@ -3,6 +3,7 @@ import type { Blueprint } from '../kit/blueprint.ts';
 import { blk, dat, res, x } from '../terraform/blueprints/migration/common.ts';
 import { awsServiceModule, awsServicePartition, awsServiceRegion } from './aws-service-module.ts';
 import { awsDataSyncTask } from './aws-datasync-task.ts';
+import { awsDataSyncOperator } from './aws-datasync-operator.ts';
 
 export const AWS_DATASYNC_SERVICE = {
   id: 'aws_service_datasync_s3', label: 'Set up an S3-to-S3 DataSync transfer',
@@ -52,10 +53,10 @@ export const AWS_DATASYNC_SERVICE = {
 Prepare separate existing regional source and destination buckets, versioning/backups and approved transfer boundaries. Existing access roles in the deployment account must trust datasync.amazonaws.com with account/source-ARN restrictions. Review SOURCE-ACCESS.json and DESTINATION-ACCESS.json with their owners; these are scoped IAM policy examples, not automatically attached policies. Cross-account buckets need corresponding bucket policies. Source/destination customer-managed KMS keys separately need scoped IAM and key-policy permissions for decrypt/encrypt/data keys as applicable; this package does not infer those keys. Review S3 Object Lock, storage-class restore requirements, object ownership, quotas, DataSync/S3 charges and CloudWatch resource-policy quotas.
 
 ## Implement
-Run terraform init, terraform validate and terraform plan -out=service.tfplan. Confirm source/destination direction, prefixes, access roles, overwrite and tag behavior. Apply the reviewed saved plan. This creates Basic-mode locations and a transfer task without starting a transfer or scheduling one. Run terraform output -raw task_arn and use aws datasync start-task-execution --task-arn <task-arn> --region ${region} only after the transfer is approved. Record the returned execution ARN. No DataSync agent is required for this S3-to-S3 path.
+Run terraform init, terraform validate and terraform plan -out=service.tfplan. Confirm source/destination direction, prefixes, access roles, overwrite and tag behavior. Apply the reviewed saved plan. This creates Basic-mode locations and a transfer task without starting a transfer or scheduling one. Follow OPERATOR.md: python OPERATE.py inspects metadata; --start --confirm-transfer starts the approved copy (overwrite mode additionally requires --confirm-overwrite). Record the returned execution ARN. No DataSync agent is required for this S3-to-S3 path.
 
 ## Verify
-Run aws datasync describe-task-execution --task-execution-arn <execution-arn> --region ${region}. Check status, counts, bytes, errors and verification results. Review CloudWatch logs. Reconcile source and destination object counts, sizes, selected checksums, metadata and application readability; this task verifies only files transferred. Deleted source objects are retained at the destination. Preserve-existing mode skips destination objects even when source data changes; overwrite mode replaces changed objects, so destination versioning and a recovery plan matter. The task transfers current eligible objects; it does not reproduce S3 version history, bucket policies, lifecycle rules or every storage service attribute.
+Run python OPERATE.py --execution <execution-arn>. Check status, counts, bytes, errors and verification results. Review CloudWatch logs. Reconcile source and destination object counts, sizes, selected checksums, metadata and application readability; this task verifies only files transferred. Deleted source objects are retained at the destination. Preserve-existing mode skips destination objects even when source data changes; overwrite mode replaces changed objects, so destination versioning and a recovery plan matter. The task transfers current eligible objects; it does not reproduce S3 version history, bucket policies, lifecycle rules or every storage service attribute.
 
 ## Recovery
 Cancel with aws datasync cancel-task-execution --task-execution-arn <execution-arn> --region ${region}. Cancellation does not undo completed writes. Recover overwritten objects from destination versions/backups and reconcile partial transfers before retrying. Preserve task logs and completion evidence. Removing the Terraform task/locations does not remove bucket data. On-premises NFS/SMB, FSx/EFS, cross-region and enhanced-mode configurations remain separate existing builders.
@@ -63,6 +64,11 @@ Cancel with aws datasync cancel-task-execution --task-execution-arn <execution-a
 https://docs.aws.amazon.com/datasync/latest/userguide/configure-logging.html
 `, findings);
     const files: Record<string, string> = { ...result.files };
+    Object.assign(files, awsDataSyncOperator({ region, partition, name,
+      source: { kind: 's3', bucket: locations[0]!.bucket, prefix: locations[0]!.prefix, role: locations[0]!.role },
+      destination: { bucket: locations[1]!.bucket, prefix: locations[1]!.prefix, role: locations[1]!.role },
+      options: { BytesPerSecond: bytes, LogLevel: logging, OverwriteMode: overwrite, ObjectTags: tags },
+    }));
     for (const location of locations) {
       const arn = 'arn:' + partition + ':s3:::' + location.bucket, prefix = location.prefix.slice(1);
       files[location.side.toUpperCase() + '-ACCESS.json'] = JSON.stringify({ Version: '2012-10-17', Statement: [

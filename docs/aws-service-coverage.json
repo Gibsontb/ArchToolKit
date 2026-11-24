@@ -2,15 +2,15 @@
   "platform": "aws",
   "meaning": "Wiring coverage only. Catalog aliases may share the same workflow; uniqueDedicatedPaths counts each build ID once. Dedicated paths can cover a subset of product features. Existing builds and native types require individual review. No live deployment or authorization is implied.",
   "catalogEntries": 702,
-  "uniqueDedicatedPaths": 95,
+  "uniqueDedicatedPaths": 97,
   "setupAliases": 5,
   "counts": {
     "dedicated-setup-path": 86,
     "existing-builds": 198,
     "native-resource-types": 81,
-    "runtime-api": 3,
+    "runtime-api": 5,
     "retired": 37,
-    "unmapped": 297
+    "unmapped": 295
   },
   "services": [
     {
@@ -874,7 +874,12 @@
         "message": "CloudSearch runtime access requires an existing eligible CloudSearch account. This API entry does not provide new-customer onboarding.",
         "reference": "https://aws.amazon.com/blogs/big-data/transition-from-amazon-cloudsearch-to-amazon-opensearch-service/"
       },
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-cloudsearch",
+        "message": "CloudSearch Domain searches, suggests and uploads document batches against an existing domain. Configure the domain and endpoint access separately; uploads can add, update or delete indexed documents. Existing-customer eligibility still applies.",
+        "reference": "https://docs.aws.amazon.com/cloudsearch/latest/developerguide/configuring-access.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -2128,7 +2133,7 @@
       "dedicatedPaths": [
         {
           "id": "aws_service_efs",
-          "description": "Create a Regional file system with IPv4 mount targets, backup policy and optional customer-managed encryption."
+          "description": "Create a Regional file system with IPv4 mount targets, backup policy, optional access point and customer-managed encryption."
         }
       ],
       "terraformBuilds": [
@@ -2521,7 +2526,12 @@
         "message": "Forecast query APIs require an existing eligible Forecast account and prepared predictor/forecast resources.",
         "reference": "https://aws.amazon.com/blogs/machine-learning/transition-your-amazon-forecast-usage-to-amazon-sagemaker-canvas/"
       },
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "amazon-forecast",
+        "message": "Forecast Query retrieves existing forecasts and what-if forecasts. Dataset import, training and forecast creation belong to Forecast setup. Existing-customer eligibility still applies.",
+        "reference": "https://docs.aws.amazon.com/forecast/latest/dg/API_Operations_Amazon_Forecast_Query_Service.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -7335,11 +7345,21 @@
         {
           "id": "aws_service_datasync_nfs_s3",
           "description": "Configure an activated Basic-mode agent, NFS source, existing S3 destination, transfer options and an agent/versioning preflight."
+        },
+        {
+          "id": "aws_service_datasync_nfs_efs",
+          "description": "Basic-mode NFS copy to an existing encrypted EFS access point over TLS, preserving numeric POSIX ownership and permissions."
+        },
+        {
+          "id": "aws_service_datasync_smb_s3",
+          "description": "Basic-mode Windows file-data transfer to an existing S3 bucket. Password is supplied only at deployment; no NTFS ACL or Kerberos migration."
         }
       ],
       "terraformBuilds": [
         "aws_service_datasync_s3",
         "aws_service_datasync_nfs_s3",
+        "aws_service_datasync_nfs_efs",
+        "aws_service_datasync_smb_s3",
         "aws_app_file_transfer",
         "res_aws_datasync_agent",
         "res_aws_datasync_location_azure_blob",

@@ -1,0 +1,121 @@
+/** Metadata inspection is read-only; starting a copy is an explicit operator action. */
+export function awsDataSyncOperator(config   
+                                                  
+                                                                                                                                                                                                                                                    
+                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                          
+ )                         {
+  return {
+    'TRANSFER-CONFIG.json': JSON.stringify(config, null, 2) + '\n',
+    'OPERATE.py': SCRIPT,
+    'OPERATOR.md': `# Inspect, start and monitor this transfer
+
+Use a protected reviewed Terraform working directory, Python 3 and boto3. Apply the reviewed plan first. Run python OPERATE.py to inspect actual task, location, agent and destination-recovery prerequisites. S3 destinations require versioning; EFS requires separately verified backup/restore and ownership design. It reads operator_job from Terraform output. It does not read source files/objects, prove source consistency, test IAM/KMS data access or approve a transfer boundary.
+
+After owner approval run python OPERATE.py --start --confirm-transfer. Overwrite mode ALWAYS also requires --confirm-overwrite. This sends one StartTaskExecution request with SDK retries disabled and no option/filter overrides. Save the returned execution ARN. An ambiguous failure must be investigated through DataSync execution history; do not blindly repeat the command. There is no client-token deduplication in this API. State can change between inspection and start; AWS enforces its own execution concurrency. No automatic scheduling is configured.
+
+Run python OPERATE.py --execution <returned-ARN> to read execution state, counts and results. SUCCESS is service completion, not application/data-owner acceptance. Reconcile content, metadata and restored application behavior independently. A failed/cancelled copy can have written data; cancellation is not rollback. Destination recovery requires tested backups/retention. IAM trust, policies, filesystem/bucket/KMS policies, source access, network paths and quotas remain owner prerequisites.
+
+https://docs.aws.amazon.com/datasync/latest/apireference/API_StartTaskExecution.html
+https://docs.aws.amazon.com/datasync/latest/apireference/API_DescribeTask.html
+`,
+  };
+}
+
+const SCRIPT = [
+  'import argparse, json, pathlib, re, subprocess',
+  'import boto3',
+  'from botocore.config import Config',
+  'parser = argparse.ArgumentParser(description="Inspect by default; explicitly start or inspect one execution")',
+  'mode = parser.add_mutually_exclusive_group(); mode.add_argument("--start", action="store_true"); mode.add_argument("--execution")',
+  'parser.add_argument("--confirm-transfer", action="store_true"); parser.add_argument("--confirm-overwrite", action="store_true")',
+  'args = parser.parse_args()',
+  'config = json.loads((pathlib.Path(__file__).resolve().parent / "TRANSFER-CONFIG.json").read_text())',
+  'job = json.loads(subprocess.check_output(["terraform", "output", "-json", "operator_job"], text=True))',
+  'account = job.get("account", "")',
+  'if not re.fullmatch(r"[0-9]{12}", account): raise RuntimeError("Invalid deployment account")',
+  'base = "arn:" + config["partition"] + ":datasync:" + config["region"] + ":" + account + ":"',
+  'for key, pattern in [("task", r"task/task-[0-9a-f]{17}"), ("source", r"location/loc-[0-9a-z]{17}"), ("destination", r"location/loc-[0-9a-z]{17}")]:',
+  '    if not re.fullmatch(re.escape(base) + pattern, job.get(key, "")): raise RuntimeError("Unexpected " + key + " ARN")',
+  'if job["source"] == job["destination"]: raise RuntimeError("Locations must be distinct")',
+  'expected_log = "arn:" + config["partition"] + ":logs:" + config["region"] + ":" + account + ":log-group:/aws/datasync/" + config["name"]',
+  'if job.get("log") != expected_log: raise RuntimeError("Unexpected log group")',
+  'session = boto3.Session(region_name=config["region"])',
+  'if session.client("sts").get_caller_identity()["Account"] != account: raise RuntimeError("Unexpected operator account")',
+  'service = session.client("datasync", config=Config(retries={"total_max_attempts":1,"mode":"standard"}))',
+  'if args.execution:',
+  '    if not re.fullmatch(re.escape(job["task"]) + r"/execution/exec-[0-9a-f]{17}", args.execution): raise RuntimeError("Execution must belong to this exact task")',
+  '    state = service.describe_task_execution(TaskExecutionArn=args.execution)',
+  '    if state.get("TaskExecutionArn") != args.execution: raise RuntimeError("Execution identity differs")',
+  '    print(json.dumps({key:state.get(key) for key in ["TaskExecutionArn","Status","FilesTransferred","FilesVerified","FilesSkipped","FilesFailed","BytesTransferred","BytesWritten","Result"]}, default=str)); raise SystemExit(0)',
+  'task = service.describe_task(TaskArn=job["task"])',
+  'expected = {"TaskArn":job["task"],"Name":config["name"],"TaskMode":"BASIC","SourceLocationArn":job["source"],"DestinationLocationArn":job["destination"],"CloudWatchLogGroupArn":job["log"]}',
+  'if task.get("CloudWatchLogGroupArn", "").endswith(":*"): task["CloudWatchLogGroupArn"] = task["CloudWatchLogGroupArn"][:-2]',
+  'if any(task.get(key) != value for key,value in expected.items()): raise RuntimeError("Task identity/direction/logging differs")',
+  'for key in ["Includes","Excludes","ManifestConfig","TaskReportConfig","Schedule"]:',
+  '    if task.get(key): raise RuntimeError("Unexpected task filters, manifest, report or schedule")',
+  'options = dict(config["options"], PreserveDeletedFiles="PRESERVE", TransferMode="CHANGED", VerifyMode="ONLY_FILES_TRANSFERRED", TaskQueueing="DISABLED")',
+  'if any(task.get("Options", {}).get(key) != value for key,value in options.items()): raise RuntimeError("Task options differ from package")',
+  'def s3_location(key, location):',
+  '    actual = service.describe_location_s3(LocationArn=job[key])',
+  '    if actual.get("LocationArn") != job[key] or actual.get("LocationUri") != "s3://" + location["bucket"] + location["prefix"] or actual.get("S3Config", {}).get("BucketAccessRoleArn") != location["role"] or actual.get("AgentArns"): raise RuntimeError("S3 location differs: " + key)',
+  '    if key == "destination" and actual.get("S3StorageClass") != "STANDARD": raise RuntimeError("Destination storage class differs")',
+  '    if not location["role"].startswith("arn:" + config["partition"] + ":iam::" + account + ":role/"): raise RuntimeError("Location role account differs")',
+  '    region = session.client("s3").get_bucket_location(Bucket=location["bucket"]).get("LocationConstraint") or "us-east-1"',
+  '    if ("eu-west-1" if region == "EU" else region) != config["region"]: raise RuntimeError("S3 bucket region differs")',
+  'source = config["source"]',
+  'if source["kind"] == "s3": s3_location("source", source)',
+  'else:',
+  '    if source["kind"] == "nfs":',
+  '        actual = service.describe_location_nfs(LocationArn=job["source"])',
+  '        if actual.get("LocationArn") != job["source"] or actual.get("LocationUri") != "nfs://" + source["server"] + source["path"] or actual.get("OnPremConfig", {}).get("AgentArns") != [source["agent"]] or actual.get("MountOptions", {}).get("Version") != source["version"]: raise RuntimeError("NFS location differs")',
+  '    else:',
+  '        actual = service.describe_location_smb(LocationArn=job["source"])',
+  '        if actual.get("LocationArn") != job["source"] or actual.get("LocationUri") != "smb://" + source["server"] + source["path"] or actual.get("AgentArns") != [source["agent"]] or actual.get("MountOptions", {}).get("Version") != "SMB3" or actual.get("AuthenticationType") != "NTLM" or actual.get("User") != source["user"] or (actual.get("Domain") or "") != source["domain"]: raise RuntimeError("SMB location/protocol/identity differs")',
+  '    agent = service.describe_agent(AgentArn=source["agent"])',
+  '    if agent.get("AgentArn") != source["agent"] or agent.get("Status") != "ONLINE": raise RuntimeError("Require exact ONLINE agent")',
+  'destination = config["destination"]',
+  'if destination.get("kind") != "efs":',
+  '    s3_location("destination", destination)',
+  '    if session.client("s3").get_bucket_versioning(Bucket=destination["bucket"]).get("Status") != "Enabled": raise RuntimeError("Destination versioning must be enabled")',
+  'else:',
+  '    fs_arn = "arn:" + config["partition"] + ":elasticfilesystem:" + config["region"] + ":" + account + ":file-system/" + destination["filesystem"]',
+  '    ap_arn = fs_arn.split(":file-system/")[0] + ":access-point/" + destination["accesspoint"]',
+  '    ec2_arn = "arn:" + config["partition"] + ":ec2:" + config["region"] + ":" + account + ":"',
+  '    actual = service.describe_location_efs(LocationArn=job["destination"])',
+  '    expected_efs = {"LocationArn":job["destination"],"LocationUri":"efs://" + config["region"] + "." + destination["filesystem"] + "/","AccessPointArn":ap_arn,"FileSystemAccessRoleArn":destination["role"],"InTransitEncryption":"TLS1_2"}',
+  '    if any(actual.get(key) != value for key,value in expected_efs.items()) or actual.get("Ec2Config", {}).get("SubnetArn") != ec2_arn + "subnet/" + destination["subnet"] or actual.get("Ec2Config", {}).get("SecurityGroupArns") != [ec2_arn + "security-group/" + destination["group"]]: raise RuntimeError("EFS transfer location differs")',
+  '    efs = session.client("efs"); fs = efs.describe_file_systems(FileSystemId=destination["filesystem"])["FileSystems"]',
+  '    if len(fs) != 1 or fs[0].get("FileSystemArn") != fs_arn or fs[0].get("OwnerId") != account or fs[0].get("Encrypted") is not True or fs[0].get("LifeCycleState") != "available": raise RuntimeError("Require exact available encrypted EFS")',
+  '    points = efs.describe_access_points(AccessPointId=destination["accesspoint"])["AccessPoints"]',
+  '    if len(points) != 1 or points[0].get("AccessPointArn") != ap_arn or points[0].get("FileSystemId") != destination["filesystem"] or points[0].get("LifeCycleState") != "available" or points[0].get("PosixUser") or points[0].get("RootDirectory", {}).get("Path") != destination["path"]: raise RuntimeError("Access point must retain the approved root and not enforce a replacement POSIX identity")',
+  '    mounts = efs.describe_mount_targets(MountTargetId=destination["mount"])["MountTargets"]',
+  '    if len(mounts) != 1 or mounts[0].get("MountTargetId") != destination["mount"] or mounts[0].get("FileSystemId") != destination["filesystem"] or mounts[0].get("OwnerId") != account or mounts[0].get("LifeCycleState") != "available": raise RuntimeError("Require exact available EFS mount target")',
+  '    subnet = session.client("ec2").describe_subnets(SubnetIds=[destination["subnet"]])["Subnets"][0]',
+  '    if subnet.get("OwnerId") != account or subnet.get("AvailabilityZoneId") != mounts[0].get("AvailabilityZoneId") or subnet.get("VpcId") != mounts[0].get("VpcId") or subnet.get("MapPublicIpOnLaunch") or subnet.get("AvailableIpAddressCount",0) < 4: raise RuntimeError("Require private same-VPC/AZ DataSync subnet with free IPs")',
+  '    ec2 = session.client("ec2"); vpc = ec2.describe_vpcs(VpcIds=[subnet["VpcId"]])["Vpcs"][0]',
+  '    if vpc.get("InstanceTenancy") != "default": raise RuntimeError("DataSync requires default VPC tenancy")',
+  '    group = ec2.describe_security_groups(GroupIds=[destination["group"]])["SecurityGroups"][0]',
+  '    if group.get("GroupId") != destination["group"] or group.get("OwnerId") != account or group.get("VpcId") != subnet["VpcId"]: raise RuntimeError("Security group identity/placement differs")',
+  '    def allows_nfs(rule, outbound=False):',
+  '        ports = rule.get("IpProtocol") == "-1" or rule.get("IpProtocol") in ["tcp","6"] and rule.get("FromPort",65536) <= 2049 <= rule.get("ToPort",-1)',
+  '        self_group = any(pair.get("GroupId") == destination["group"] for pair in rule.get("UserIdGroupPairs", []))',
+  '        all_ipv4 = outbound and any(item.get("CidrIp") == "0.0.0.0/0" for item in rule.get("IpRanges", []))',
+  '        return ports and (self_group or all_ipv4)',
+  '    if not any(allows_nfs(rule) for rule in group.get("IpPermissions", [])) or not any(allows_nfs(rule, True) for rule in group.get("IpPermissionsEgress", [])): raise RuntimeError("Require self-referencing NFS ingress and self/all-IPv4 NFS egress on selected group; review NACL/routes separately")',
+  '    if destination["group"] not in efs.describe_mount_target_security_groups(MountTargetId=destination["mount"])["SecurityGroups"]: raise RuntimeError("Selected location group must also be attached to the mount target; owner must allow self NFS traffic")',
+  '    if efs.describe_backup_policy(FileSystemId=destination["filesystem"]).get("BackupPolicy", {}).get("Status") != "ENABLED": raise RuntimeError("Enable EFS automatic backup policy and verify restore separately")',
+  'if not args.start: print(json.dumps({"metadata_checked":True,"task_status":task.get("Status"),"copy_started":False})); raise SystemExit(0)',
+  'if not args.confirm_transfer: raise RuntimeError("Start requires --confirm-transfer after transfer-boundary and source-consistency approval")',
+  'if options["OverwriteMode"] == "ALWAYS" and not args.confirm_overwrite: raise RuntimeError("Overwrite mode also requires --confirm-overwrite and approved recovery")',
+  'if task.get("Status") != "AVAILABLE": raise RuntimeError("Require AVAILABLE task")',
+  'latest = task.get("CurrentTaskExecutionArn")',
+  'if latest:',
+  '    if not re.fullmatch(re.escape(job["task"]) + r"/execution/exec-[0-9a-f]{17}", latest): raise RuntimeError("Unexpected latest execution ARN")',
+  '    previous = service.describe_task_execution(TaskExecutionArn=latest)',
+  '    if previous.get("TaskExecutionArn") != latest or previous.get("Status") not in ["SUCCESS","ERROR"]: raise RuntimeError("Previous execution is not terminal")',
+  'receipt = service.start_task_execution(TaskArn=job["task"])',
+  'execution = receipt.get("TaskExecutionArn", "")',
+  'if not re.fullmatch(re.escape(job["task"]) + r"/execution/exec-[0-9a-f]{17}", execution): raise RuntimeError("Unexpected start receipt; investigate task history before retry")',
+  'print(json.dumps({"request_accepted":True,"TaskExecutionArn":execution,"completion_verified":False}))',
+].join('\n') + '\n';

@@ -3,6 +3,7 @@ import type { Blueprint } from '../kit/blueprint.ts';
 import { blk, dat, res, x } from '../terraform/blueprints/migration/common.ts';
 import { awsServiceModule, awsServicePartition, awsServiceRegion } from './aws-service-module.ts';
 import { awsDataSyncTask } from './aws-datasync-task.ts';
+import { awsDataSyncOperator } from './aws-datasync-operator.ts';
 import { AWS_DATASYNC_SERVICE } from './aws-datasync-service.ts';
 export const AWS_DATASYNC_NFS_SERVICE = {
   id: 'aws_service_datasync_nfs_s3', label: 'Set up an on-premises NFS-to-S3 transfer',
@@ -55,7 +56,7 @@ Verify agent-to-NFS routing, DNS, NFS-version-specific ports, export permissions
 Use a dedicated private versioned regional bucket. Have the role owner review/attach DESTINATION-ACCESS.json as appropriate and verify its DataSync trust, bucket policy and any customer-managed KMS permissions. No IAM/key/bucket policy is attached automatically here. Review Object Lock/retention, DataSync/S3/log costs and service quotas. Source POSIX metadata and S3 object semantics differ; verify which attributes the application needs and test a restore to the intended filesystem.
 
 ## Implement and transfer
-Run terraform init, terraform validate and terraform plan -out=service.tfplan. Review NFS source, agent, destination prefix and overwrite behavior; apply the saved reviewed plan. Task creation does not start a transfer. Read terraform output -raw task_arn and run aws datasync start-task-execution --task-arn <task-arn> --region ${region} for an approved pilot. Record the execution ARN and use aws datasync describe-task-execution --task-execution-arn <execution-arn> --region ${region}. Review preparation/transfer/verification counts and errors, then validate destination objects and application readability.
+Run terraform init, terraform validate and terraform plan -out=service.tfplan. Review NFS source, agent, destination prefix and overwrite behavior; apply the saved reviewed plan. Task creation does not start a transfer. Follow OPERATOR.md: python OPERATE.py inspects metadata; --start --confirm-transfer starts the approved pilot (overwrite mode additionally requires --confirm-overwrite). Record the execution ARN and use python OPERATE.py --execution <execution-arn>. Review preparation/transfer/verification counts and errors, then validate destination objects and application readability.
 
 ## Cutover and verify
 Run an initial copy, reconcile content and required metadata, then plan a write freeze/final delta for changing datasets. Preserve-existing mode skips already-present destination objects even if source files changed; use reviewed overwrite mode for a final delta with destination versioning/recovery in place. Source deletions remain preserved at the destination. Verification covers files transferred, not a complete reconciliation of every preexisting destination object. Confirm counts, sizes, checksums, permissions expectations and representative application reads before changing consumers. Do not decommission the source until its owner signs off and the restore/retention requirements are met.
@@ -68,6 +69,7 @@ https://docs.aws.amazon.com/datasync/latest/userguide/deploy-agents.html
 `, findings);
     const arn = 'arn:' + partition + ':s3:::' + bucket, objectPrefix = prefix.slice(1);
     return { ...result, files: { ...result.files,
+      ...awsDataSyncOperator({ region, partition, name, source: { kind: 'nfs', server, path, agent, version }, destination: { bucket, prefix, role }, options: { BytesPerSecond: bytes, LogLevel: logging, OverwriteMode: overwrite, ObjectTags: 'NONE' } }),
       'DESTINATION-ACCESS.json': JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: ['s3:GetBucketLocation'], Resource: arn }, { Effect: 'Allow', Action: ['s3:ListBucket', 's3:ListBucketMultipartUploads'], Resource: arn, ...(objectPrefix ? { Condition: { StringLike: { 's3:prefix': [objectPrefix.slice(0, -1), objectPrefix + '*'] } } } : {}) }, { Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject', 's3:AbortMultipartUpload', 's3:ListMultipartUploadParts'], Resource: arn + '/' + objectPrefix + '*' }] }, null, 2) + '\n',
       'PREFLIGHT.ps1': `$ErrorActionPreference = 'Stop'
 $agentJson = aws datasync describe-agent --agent-arn '${agent}' --region '${region}' --output json

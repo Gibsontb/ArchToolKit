@@ -12,12 +12,18 @@ import { openZip } from '../src/core/zip.ts';
 import { ROOT, WORK_TMP } from './work.mjs';
 import { publicTestKey } from './service-test-ssh.mjs';
 import { AWS_SERVICE_AVAILABILITY } from '../src/cloud/aws-service-availability.ts';
+import { AWS_RUNTIME_APIS } from '../src/cloud/aws-runtime-apis.ts';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright');
 const subnet = 'subnet-0123456789abcdef0', secondSubnet = 'subnet-0123456789abcdef1', group = 'sg-0123456789abcdef0';
 const role = name => 'arn:aws:iam::123456789012:role/' + name;
 const fixtures = [
+  ...['OWNER_DACL','OWNER_DACL_SACL'].map(security=>['aws-datasync','aws_service_datasync_smb_fsx_windows',{name:'windows-migration',agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0',server:'files.example.com',path:'/Finance$/Reports',user:'SourceReader',domain:'EXAMPLE',ntlm_allowed:true,filesystem:'fs-0123456789abcdef0',group,target_user:'FsxMigration',target_domain:security==='OWNER_DACL'?'EXAMPLE':'OTHER',relationship:security==='OWNER_DACL'?'SAME':'TRUSTED',security,...(security==='OWNER_DACL_SACL'?{overwrite:'ALWAYS'}:{})},'aws_datasync_location_fsx_windows_file_system']),
+  ...['EXAMPLE', ''].map(domain => ['aws-datasync', 'aws_service_datasync_smb_s3', { name:'windows-files', agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0', server:'files.example.com', path:'/Finance$/Reports', user:'MigrationReader', domain, ntlm_allowed:true, bucket:'application-landing', role:role('DataSyncS3'), ...(domain ? {} : { overwrite:'ALWAYS', bandwidth:12.5 }) }, 'aws_datasync_location_smb']),
+  ['amazon-elastic-file-system', 'aws_service_efs', { name:'migration-files', subnets:[subnet, secondSubnet], groups:[group], throughput:'elastic', accesspoint:'PRESERVE' }, 'aws_efs_access_point'],
+  ['amazon-elastic-file-system', 'aws_service_efs', { name:'application-files', subnets:[subnet, secondSubnet], groups:[group], throughput:'provisioned', mibps:128, accesspoint:'ENFORCE', ap_path:'/applications/payments', ap_uid:2000, ap_gid:3000, ap_permissions:'0700' }, 'aws_efs_access_point'],
+  ...['NEVER', 'ALWAYS'].map(overwrite => ['aws-datasync', 'aws_service_datasync_nfs_efs', { name:'application-efs-transfer', agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0', server:'nfs.example.com', path:'/exports/application', filesystem:'fs-0123456789abcdef0', accesspoint:'fsap-0123456789abcdef0', mount:'fsmt-0123456789abcdef0', subnet, group, role:role('DataSyncEfs'), overwrite, ...(overwrite === 'ALWAYS' ? { version:'NFS3', bandwidth:12.5, logging:'TRANSFER' } : {}) }, 'aws_datasync_location_efs']),
   ...['900', '3600'].map(duration => ['iam-roles-anywhere', 'aws_service_rolesanywhere', { name: 'artifact-reader', ca: 'arn:aws:acm-pca:us-east-1:123456789012:certificate-authority/12345678-abcd-4bcd-8bcd-123456789abc', subject: 'artifact-workload', issuer: 'Workload Issuing CA', bucket: 'application-artifacts', duration, ...(duration === '3600' ? { kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' } : {}) }, 'aws_rolesanywhere_profile']),
   ...['Linux', 'Windows'].map(os => ['taxonomy:systemsmanagersessionmanager', 'aws_service_ssm_session', { name: 'project-session-' + os.toLowerCase(), os, nodes: ['i-0123456789abcdef0', 'mi-0123456789abcdef1'], operator: role('SessionOperator'), node_roles: [role('ManagedNodes'), role('HybridNodes')], session_kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc', log_kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abd' }, 'aws_ssm_document']),
   ...['WINDOWS', 'AMAZON_LINUX_2', 'AMAZON_LINUX_2023', 'REDHAT_ENTERPRISE_LINUX'].map(os => [os === 'AMAZON_LINUX_2' ? 'amazon-simple-systems-manager-ssm' : 'aws-systems-manager', 'aws_service_ssm_patching', { name: 'application-patching', os, group: 'application-pilot', role: role('PatchWindow'), kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc', ...(os === 'WINDOWS' ? { operation: 'Install', reboot: 'RebootIfNeeded' } : {}), ...(os === 'REDHAT_ENTERPRISE_LINUX' ? { enabled: 'YES', timezone: 'Europe/London', concurrency: 2 } : {}) }, 'aws_ssm_patch_baseline']),
@@ -245,6 +251,13 @@ try {
     if (resource === 'aws_service_wafv2' && values.default_action === 'block') assert.match(terraform, /AllowedClients/);
     if (resource === 'aws_service_cloudwatch_dashboard') { const body = JSON.parse(await zip.text('dashboard.json')); assert.equal(body.widgets.length, 2); assert.equal(body.widgets[0].properties.metrics.length, 2); assert.equal(body.widgets[0].properties.metrics[1].at(-1).yAxis, 'right'); }
     if (resource === 'aws_service_codepipeline') { assert.match(await zip.text('modules/build/main.tf'), /type\s+= "CODEPIPELINE"/); assert.match(await zip.text('modules/build/buildspec.yml'), /artifacts:/); assert.ok(zip.names.includes('modules/build/providers.tf')); }
+    if (resource.startsWith('aws_service_datasync_')) {
+      for (const name of ['OPERATE.py', 'OPERATOR.md', 'TRANSFER-CONFIG.json']) assert.ok(zip.names.includes(name), resource + ' missing ' + name);
+      const config = JSON.parse(await zip.text('TRANSFER-CONFIG.json'));
+      assert.equal(config.source.kind, resource === 'aws_service_datasync_s3' ? 's3' : resource.startsWith('aws_service_datasync_smb_') ? 'smb' : 'nfs');
+      assert.equal(config.options.OverwriteMode, values.overwrite ?? 'NEVER');
+      assert.match(await zip.text('OPERATE.py'), /total_max_attempts/);
+    }
     for (const name of ['SERVICE-SETUP.md', 'IMPLEMENTATION.md']) assert.ok(zip.names.includes(name), resource + ' missing ' + name);
     if (resource === 'aws_service_guardduty' && values.mode === 'existing') await page.locator('[data-input=detector]').fill('b'.repeat(32));
     else if (resource === 'aws_service_guardduty') await page.locator('[data-input=frequency]').selectOption('ONE_HOUR');
@@ -255,6 +268,21 @@ try {
     packages.push(file);
     console.log(resource + ' passed setup, download and invalidation.');
   }
+  for (const [service, runtime] of Object.entries(AWS_RUNTIME_APIS)) {
+    await page.getByLabel('Service', { exact: true }).selectOption(service);
+    assert.equal(await page.getByLabel('Service resource', { exact: true }).count(), 0, service);
+    assert.equal(await page.getByRole('button', { name: 'Export deployment package', exact: true }).isDisabled(), true, service);
+    assert.ok((await page.locator('body').textContent()).includes(runtime.message), service);
+    await page.getByRole('button', { name: /^Open .+ setup$/ }).click();
+    assert.equal(await page.getByLabel('Service', { exact: true }).inputValue(), runtime.setupService);
+    assert.equal(await page.getByLabel('Region / site', { exact: true }).first().inputValue(), 'us-east-1');
+    assert.ok(await page.getByLabel('Service resource', { exact: true }).count(), runtime.setupService);
+    if (AWS_SERVICE_AVAILABILITY[service]?.status === 'existing-customers-only') {
+      assert.equal(await page.getByRole('link', { name: 'AWS availability details', exact: true }).isVisible(), true);
+      assert.equal(await page.locator('[data-input=service_existing_customer]').inputValue(), 'false');
+    }
+  }
+  console.log('All runtime APIs navigate to separate setup without creating duplicate infrastructure forms.');
   for (const [service, availability] of Object.entries(AWS_SERVICE_AVAILABILITY).filter(([, value]) => value.status === 'retired')) {
     await page.getByLabel('Service', { exact: true }).selectOption(service);
     assert.ok((await page.locator('body').textContent()).includes(availability.message), service);

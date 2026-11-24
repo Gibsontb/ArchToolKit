@@ -45,6 +45,8 @@
     "test:ssm-patching": "node tools/check-ssm-patching.mjs",
     "test:ssm-session": "node tools/check-ssm-session.mjs",
     "test:rolesanywhere-operator": "node tools/check-rolesanywhere-operator.mjs",
+    "test:datasync-operator": "node tools/check-datasync-operator.mjs",
+    "test:datasync-efs-plan": "node tools/check-datasync-efs-plan.mjs",
     "services:coverage": "node tools/service-coverage.mjs",
     "terraform:validate-services": "node tools/validate-service-packages.mjs",
     "manual:pdf": "node tools/manual-pdf.mjs",

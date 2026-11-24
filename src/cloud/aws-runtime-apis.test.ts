@@ -11,7 +11,7 @@ test('Runtime APIs point to existing setup services without becoming infrastruct
     assert.equal(runtime.terraform.length, 0);
     const related = rows.find(row => row.id === metadata.setupService)!;
     assert.ok(related, metadata.setupService + ' must exist');
-    assert.ok(related.terraform.length || related.cloudformation.length, metadata.setupService + ' must expose setup');
+    assert.ok(related.terraform.length || related.native.length, metadata.setupService + ' must expose setup');
     assert.match(metadata.reference, /^https:\/\/docs\.aws\.amazon\.com\//);
   }
 });

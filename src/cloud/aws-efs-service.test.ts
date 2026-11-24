@@ -34,3 +34,28 @@ test('EFS catches invalid network and encryption settings and exports provisione
   assert.deepEqual(valid.findings, []);
   assert.match(valid.files['main.tf']!, /provisioned_throughput_in_mibps\s+= 128/);
 });
+
+test('EFS Elastic throughput and migration access point preserve client ownership', () => {
+  const result = AWS_EFS_SERVICE.build({ ...values, throughput:'elastic', mibps:'invalid-hidden-value', accesspoint:'PRESERVE' });
+  assert.deepEqual(result.findings, []);
+  assert.match(result.files['main.tf']!, /throughput_mode\s+= "elastic"/);
+  assert.doesNotMatch(result.files['main.tf']!, /provisioned_throughput_in_mibps|posix_user/);
+  assert.match(result.files['main.tf']!, /resource "aws_efs_access_point" "configured"/);
+  assert.match(result.files['main.tf']!, /owner_uid\s+= 1000/);
+  assert.match(result.files['main.tf']!, /path\s+= "\/migration"/);
+  assert.match(result.files['outputs.tf']!, /output "access_point_id"/);
+  assert.match(result.files['SERVICE-SETUP.md']!, /out-of-band file handles/);
+});
+
+test('EFS application access point uses explicit non-root POSIX identity and guarded directory choices', () => {
+  const result = AWS_EFS_SERVICE.build({ ...values, accesspoint:'ENFORCE', ap_uid:2000, ap_gid:3000, ap_path:'/applications/payments', ap_permissions:'0700' });
+  assert.deepEqual(result.findings, []);
+  assert.match(result.files['main.tf']!, /posix_user \{/);
+  assert.match(result.files['main.tf']!, /uid\s+= 2000/);
+  assert.match(result.files['main.tf']!, /gid\s+= 3000/);
+  for (const [key,value] of Object.entries({ ap_uid:0, ap_gid:NaN, ap_path:'/a/../b', ap_permissions:'0777', accesspoint:'OTHER' })) {
+    assert.ok(AWS_EFS_SERVICE.build({ ...values, accesspoint:'ENFORCE', [key]:value }).findings.some(finding => finding.path === key), key);
+  }
+  assert.ok(AWS_EFS_SERVICE.build({ ...values, accesspoint:'PRESERVE', ap_path:'/a/b/c/d/e' }).findings.some(finding => finding.path === 'ap_path'));
+  assert.deepEqual(AWS_EFS_SERVICE.build({ ...values, accesspoint:'NONE', ap_uid:0, ap_path:'/' }).findings, []);
+});
