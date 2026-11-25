@@ -2,11 +2,11 @@
   "platform": "aws",
   "meaning": "Wiring coverage only. Catalog aliases may share the same workflow; uniqueDedicatedPaths counts each build ID once. Dedicated paths can cover a subset of product features. Existing builds and native types require individual review. No live deployment or authorization is implied.",
   "catalogEntries": 702,
-  "uniqueDedicatedPaths": 119,
-  "setupAliases": 12,
+  "uniqueDedicatedPaths": 128,
+  "setupAliases": 14,
   "counts": {
-    "dedicated-setup-path": 108,
-    "existing-builds": 180,
+    "dedicated-setup-path": 119,
+    "existing-builds": 169,
     "native-resource-types": 78,
     "runtime-api": 15,
     "retired": 44,
@@ -408,9 +408,20 @@
       "id": "amazon-aurora-dsql",
       "name": "Amazon Aurora DSQL",
       "category": "Databases",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_dsql_private_single",
+          "description": "New protected cluster/private endpoint and restricted endpoint security group. Existing owned two-AZ network, customer key and application IAM role; explicit resource-policy and SQL authorization review before any data."
+        },
+        {
+          "id": "aws_service_dsql_private_pair",
+          "description": "New logical database across two peer regions plus encrypted-log witness, regional customer keys/private endpoints and explicit policy/SQL approval. Existing regional owned networks and one approved application role."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_dsql_private_single",
+        "aws_service_dsql_private_pair",
         "res_aws_dsql_cluster",
         "res_aws_dsql_cluster_peering",
         "res_aws_dsql_cluster_policy"
@@ -793,10 +804,15 @@
         {
           "id": "aws_service_cloudfront",
           "description": "Create a private encrypted S3 content bucket and HTTPS distribution with origin access control and optional custom hostnames."
+        },
+        {
+          "id": "aws_service_cloudfront_kvs_flag",
+          "description": "New KeyValueStore, one boolean migration flag and runtime2.0 DEVELOPMENT function. No live distribution association, publishing, imports or existing store changes."
         }
       ],
       "terraformBuilds": [
         "aws_service_cloudfront",
+        "aws_service_cloudfront_kvs_flag",
         "aws_app_static_site",
         "res_aws_cloudfront_anycast_ip_list",
         "res_aws_cloudfront_cache_policy",
@@ -856,9 +872,15 @@
       "id": "amazon-cloudfront-keyvaluestore",
       "name": "Amazon CloudFront KeyValueStore",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_cloudfront_kvs_flag",
+          "description": "New KeyValueStore, one boolean migration flag and runtime2.0 DEVELOPMENT function. No live distribution association, publishing, imports or existing store changes."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_cloudfront_kvs_flag",
         "res_aws_cloudfrontkeyvaluestore_key",
         "res_aws_cloudfrontkeyvaluestore_keys_exclusive"
       ],
@@ -960,9 +982,15 @@
       "id": "amazon-cloudwatch-application-insights",
       "name": "Amazon CloudWatch Application Insights",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_appinsights_ec2",
+          "description": "Existing owned EC2-only tag resource group and online SSM-managed instances. Applying starts recommended monitoring setup/agent changes; future auto-configuration and OpsCenter notifications remain off."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_appinsights_ec2",
         "res_aws_applicationinsights_application"
       ],
       "ansibleBuilds": [],
@@ -988,9 +1016,15 @@
       "id": "amazon-cloudwatch-internet-monitor",
       "name": "Amazon CloudWatch Internet Monitor",
       "category": "Management and Governance",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_internetmonitor_vpc",
+          "description": "Monitor selected VPC internet traffic by city-network with explicit coverage/cost caps and health thresholds. Applying begins monitoring and telemetry delivery; no new internet connectivity is created."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_internetmonitor_vpc",
         "res_aws_internetmonitor_monitor"
       ],
       "ansibleBuilds": [],
@@ -1060,9 +1094,15 @@
       "id": "amazon-cloudwatch-network-monitor",
       "name": "Amazon CloudWatch Network Monitor",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_networkmonitor_probe",
+          "description": "One owned private IPv4 subnet to one approved private destination, TCP or ICMP. Applying starts active traffic and probe charges; no routes/firewall rules or failover are changed."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_networkmonitor_probe",
         "res_aws_networkmonitor_monitor",
         "res_aws_networkmonitor_probe"
       ],
@@ -1195,9 +1235,15 @@
       "id": "amazon-cognito-identity",
       "name": "Amazon Cognito Identity",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_cognito_identity_read",
+          "description": "New identity pool/role for an existing owned user pool and approved public app client. No guests, classic flow, alternate providers or write access. All authenticated users of that client share the selected prefix."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_cognito_identity_read",
         "res_aws_cognito_identity_pool",
         "res_aws_cognito_identity_pool_provider_principal_tag",
         "res_aws_cognito_identity_pool_roles_attachment"
@@ -1209,9 +1255,21 @@
       "id": "amazon-cognito-identity-provider",
       "name": "Amazon Cognito Identity Provider",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "setupAliasOf": "amazon-cognito",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_cognito",
+          "description": "Create an email-sign-in user pool, public authorization-code client, hosted domain and deploy-time OIDC configuration."
+        },
+        {
+          "id": "aws_service_cognito_m2m",
+          "description": "Dedicated pool, custom API scopes, confidential client-credentials client, protected Secrets Manager storage and an explicit token-request probe."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_cognito",
+        "aws_service_cognito_m2m",
         "res_aws_cognito_identity_provider",
         "res_aws_cognito_log_delivery_configuration",
         "res_aws_cognito_managed_login_branding",
@@ -1227,7 +1285,26 @@
         "res_aws_cognito_user_pool_ui_customization"
       ],
       "ansibleBuilds": [],
-      "nativeTypes": []
+      "nativeTypes": [
+        "AWS::Cognito::IdentityPool",
+        "AWS::Cognito::IdentityPoolPrincipalTag",
+        "AWS::Cognito::IdentityPoolRoleAttachment",
+        "AWS::Cognito::LogDeliveryConfiguration",
+        "AWS::Cognito::ManagedLoginBranding",
+        "AWS::Cognito::Terms",
+        "AWS::Cognito::UserPool",
+        "AWS::Cognito::UserPoolClient",
+        "AWS::Cognito::UserPoolDomain",
+        "AWS::Cognito::UserPoolGroup",
+        "AWS::Cognito::UserPoolIdentityProvider",
+        "AWS::Cognito::UserPoolRegionalConfigurationAttachment",
+        "AWS::Cognito::UserPoolReplica",
+        "AWS::Cognito::UserPoolResourceServer",
+        "AWS::Cognito::UserPoolRiskConfigurationAttachment",
+        "AWS::Cognito::UserPoolUICustomizationAttachment",
+        "AWS::Cognito::UserPoolUser",
+        "AWS::Cognito::UserPoolUserToGroupAttachment"
+      ]
     },
     {
       "id": "amazon-cognito-sync",
@@ -1490,9 +1567,15 @@
       "id": "amazon-data-lifecycle-manager",
       "name": "Amazon Data Lifecycle Manager",
       "category": "management-governance",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_dlm_volume_snapshots",
+          "description": "Existing owned encrypted volumes, exact tag selector and approved execution role. Review target expansion, snapshot retention/deletion and restoration before enabling."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_dlm_volume_snapshots",
         "res_aws_dlm_lifecycle_policy"
       ],
       "ansibleBuilds": [],
@@ -1554,9 +1637,15 @@
       "id": "amazon-detective",
       "name": "Amazon Detective",
       "category": "Security, Identity, and Compliance",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_detective_graph",
+          "description": "New regional behavior graph starts telemetry ingestion immediately when applied. Existing graphs require reconciliation; no member invitations, organization enrollment or findings remediation."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_detective_graph",
         "res_aws_detective_graph",
         "res_aws_detective_invitation_accepter",
         "res_aws_detective_member",
@@ -2688,9 +2777,15 @@
       "id": "taxonomy:fsxfornetappontap",
       "name": "Amazon FSx for NetApp ONTAP",
       "category": "Storage",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_fsx_ontap",
+          "description": "One-HA-pair first/second-generation filesystem, private NFSv4.1 client/admin access, UNIX SVM/volume, backups and configured ONTAP export-policy/ownership commands."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_fsx_ontap",
         "res_aws_fsx_ontap_file_system",
         "res_aws_fsx_ontap_storage_virtual_machine",
         "res_aws_fsx_ontap_volume"
@@ -3028,13 +3123,20 @@
       "id": "amazon-kinesis",
       "name": "Amazon Kinesis",
       "category": "analytics",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "setupAliasOf": "taxonomy:kinesisdatastreams",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_kinesis",
+          "description": "Create an on-demand or provisioned stream with explicit retention, encryption and optional enhanced fan-out consumer registration."
+        }
+      ],
       "terraformBuilds": [
-        "res_aws_kinesis_account_settings",
-        "res_aws_kinesis_resource_policy",
+        "aws_service_kinesis",
         "res_aws_kinesis_stream",
-        "res_aws_kinesis_stream_consumer"
+        "res_aws_kinesis_stream_consumer",
+        "res_aws_kinesis_account_settings",
+        "res_aws_kinesis_resource_policy"
       ],
       "ansibleBuilds": [
         "mod_community_aws_kinesis_stream"

@@ -25,6 +25,17 @@ import { AWS_STORAGEGATEWAY_SERVICE } from '../src/cloud/aws-storagegateway-serv
 import { AWS_MWAA_SERVICE } from '../src/cloud/aws-mwaa-service.ts';
 import { AWS_ACCESS_ANALYZER_SERVICE } from '../src/cloud/aws-access-analyzer-service.ts';
 import { AWS_APPFLOW_SERVICE } from '../src/cloud/aws-appflow-service.ts';
+import { AWS_DSQL_SERVICE } from '../src/cloud/aws-dsql-service.ts';
+import { AWS_DLM_SERVICE } from '../src/cloud/aws-dlm-service.ts';
+import { AWS_NETWORKMONITOR_SERVICE } from '../src/cloud/aws-networkmonitor-service.ts';
+import { AWS_INTERNETMONITOR_SERVICE } from '../src/cloud/aws-internetmonitor-service.ts';
+import { AWS_CLOUDFRONT_KVS_SERVICE } from '../src/cloud/aws-cloudfront-kvs-service.ts';
+import { AWS_APPINSIGHTS_SERVICE } from '../src/cloud/aws-appinsights-service.ts';
+import { AWS_COGNITO_IDENTITY_SERVICE } from '../src/cloud/aws-cognito-identity-service.ts';
+import { AWS_KINESIS_SERVICE } from '../src/cloud/aws-kinesis-service.ts';
+import { AWS_DETECTIVE_SERVICE } from '../src/cloud/aws-detective-service.ts';
+import { AWS_FSX_ONTAP_SERVICE } from '../src/cloud/aws-fsx-ontap-service.ts';
+import { AWS_DSQL_MULTIREGION_SERVICE } from '../src/cloud/aws-dsql-multiregion-service.ts';
 import { AWS_CLOUDWAN_SERVICE } from '../src/cloud/aws-cloudwan-service.ts';
 import { AWS_EKS_POD_IDENTITY_SERVICE } from '../src/cloud/aws-eks-pod-identity-service.ts';
 import { AWS_INSTANCE_CONNECT_SERVICE } from '../src/cloud/aws-instance-connect-service.ts';
@@ -42,6 +53,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright');
 const subnet = 'subnet-0123456789abcdef0', secondSubnet = 'subnet-0123456789abcdef1', group = 'sg-0123456789abcdef0';
 const role = name => 'arn:aws:iam::123456789012:role/' + name;
 const fixtures = [
+  ...['us-east-1','us-east-2','us-west-1','us-west-2','us-gov-east-1','us-gov-west-1'].map(location=>['amazon-cognito-identity','aws_service_cognito_identity_read',{name:'reviewed-identity',account:'123456789012',user_pool:location+'_Approved123',client:'approvedclient12345',bucket:'approved-shared-documents',kms:'arn:'+(location.startsWith('us-gov-')?'aws-us-gov':'aws')+':kms:'+location+':123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',approved:'true'},'aws_cognito_identity_pool_roles_attachment',undefined,location]),
+  ['amazon-cognito-identity-provider','aws_service_cognito',{name:'alias-web-auth',domain:'alias-web-signin-123456789012',callbacks:['https://app.example.com/callback']},'aws_cognito_user_pool'],
+  ['amazon-cognito-identity-provider','aws_service_cognito_m2m',{name:'alias-machine-auth',domain:'alias-machine-123456789012',scopes:'read,write'},'aws_cognito_resource_server'],
+  ...['us-east-1','us-east-2','us-west-1','us-west-2','us-gov-east-1','us-gov-west-1'].map(location=>['amazon-cloudwatch-application-insights','aws_service_appinsights_ec2',{account:'123456789012',group:'reviewed-compute',instances:'i-12345678,i-abcdef12',tag_key:'MonitoringScope',tag_value:'reviewed-compute',approved:'true'},'aws_applicationinsights_application',undefined,location]),
+  ...['false','true'].map(enabled=>['amazon-cloudfront-keyvaluestore','aws_service_cloudfront_kvs_flag',{name:'reviewed-edge',account:'123456789012',enabled,approved:'true'},'aws_cloudfrontkeyvaluestore_key']),
+  ['amazon-cloudfront','aws_service_cloudfront_kvs_flag',{name:'reviewed-edge',account:'123456789012',approved:'true'},'aws_cloudfront_function'],
+  ...['us-east-1','us-east-2','us-west-1','us-west-2'].map((location,i)=>['amazon-cloudwatch-internet-monitor','aws_service_internetmonitor_vpc',{name:'reviewed-internet',account:'123456789012',vpcs:i%2?'vpc-12345678,vpc-abcdef12':'vpc-12345678',cities:i===3?500000:500,percentage:i===3?1:100,approved:'true'},'aws_internetmonitor_monitor',undefined,location]),
+  ...['us-east-1','us-east-2','us-west-1','us-west-2'].flatMap(location=>['TCP','ICMP'].map(protocol=>['amazon-cloudwatch-network-monitor','aws_service_networkmonitor_probe',{name:'reviewed-hybrid',account:'123456789012',subnet:'subnet-12345678',destination:'10.200.0.10',protocol,packet:protocol==='TCP'?1500:56,aggregation:protocol==='TCP'?'30':'60',approved:'true'},'aws_networkmonitor_probe',undefined,location])),
+  ['amazon-kinesis','aws_service_kinesis',{name:'alias-events',account:'123456789012',mode:'PROVISIONED',shards:2,consumer:'reviewed-consumer',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc'},'aws_kinesis_stream'],
+  ...['us-east-1','us-east-2','us-west-1','us-west-2'].map(location=>['amazon-detective','aws_service_detective_graph',{name:'reviewed-investigation',account:'123456789012',approved:'true'},'aws_detective_graph',undefined,location]),
+  ['taxonomy:fsxfornetappontap','aws_service_fsx_ontap',{account:'123456789012',name:'dedicated-ontap',deployment:'SINGLE_AZ_1',subnets:'subnet-0123456789abcdef0',clients:'sg-0123456789abcdef0',admins:'sg-0123456789abcdef1',client_cidrs:'10.20.0.0/24'},'aws_fsx_ontap_file_system'],
+  ...['us-east-1','us-east-2','us-west-1','us-west-2'].map((location,i)=>['amazon-data-lifecycle-manager','aws_service_dlm_volume_snapshots',{name:'reviewed-backups',account:'123456789012',volumes:'vol-12345678,vol-abcdef12',keys:'arn:aws:kms:'+location+':123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',role:'arn:aws:iam::123456789012:role/service-role/dlm-execution',tag_value:'reviewed-estate',interval:String([1,6,12,24][i]),retain:String([1,7,30,1000][i])},'aws_dlm_lifecycle_policy',undefined,location]),
+  ...['us-east-1','us-east-2','us-west-2'].flatMap(location=>['us-east-1','us-east-2','us-west-2'].filter(peer=>peer!==location).map(peer=>{const witness=['us-east-1','us-east-2','us-west-2'].find(region=>![location,peer].includes(region));const key=region=>'arn:aws:kms:'+region+':123456789012:key/'+(location==='us-west-2'&&peer==='us-east-2'?'mrk-'+'a'.repeat(32):'12345678-abcd-4bcd-8bcd-123456789abc');return ['amazon-aurora-dsql','aws_service_dsql_private_pair',{name:'reviewed-pair',account:'123456789012',kms:key(location),peer_kms:key(peer),subnets:['subnet-12345678','subnet-abcdef12'],clients:'sg-12345678',peer_subnets:['subnet-12345679','subnet-abcdef13'],peer_clients:'sg-12345679',role:'arn:aws:iam::123456789012:role/application',peer_region:peer,witness_region:witness},'aws_dsql_cluster_peering',undefined,location];})),
+  ...['us-east-1','us-east-2','us-west-2'].map(location=>['amazon-aurora-dsql','aws_service_dsql_private_single',{name:'reviewed-database',account:'123456789012',kms:'arn:aws:kms:'+location+':123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:['subnet-12345678','subnet-abcdef12'],clients:location==='us-west-2'?'sg-12345678,sg-abcdef12':'sg-12345678',role:'arn:aws:iam::123456789012:role/application'},'aws_dsql_cluster',undefined,location]),
   ...['Account','Contact','Opportunity'].flatMap(object=>['JSON','CSV'].map(format=>['amazon-appflow','aws_service_appflow_salesforce_s3',{name:'reviewed-export',account:'123456789012',profile:'approved-private-salesforce',instance:'https://approved.my.salesforce.com',bucket:'approved-flow-output',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',object,format},'aws_appflow_flow'])),
   ...[['2.11.2','mw1.small'],['2.11.0','mw1.medium'],['2.10.3','mw1.large']].map(([version,size])=>['amazon-mwaa','aws_service_mwaa_private',{name:'reviewed-workflows',account:'123456789012',bucket:'approved-airflow-dags',role:'approved-airflow-execution',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:['subnet-12345678','subnet-abcdef12'],group:'sg-12345678',version,size},'aws_mwaa_environment']),
   ...['READ_ONLY','READ_WRITE'].flatMap(mode=>['RootSquash','AllSquash'].map(squash=>['aws-storage-gateway','aws_service_storagegateway_nfs',{name:'approved-files',account:'123456789012',gateway:'arn:aws:storagegateway:us-east-1:123456789012:gateway/sgw-1234ABCD',bucket:'approved-file-storage',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',audit:'/approved/file-audit',clients:'10.20.0.0/24',mode,squash,...(squash==='AllSquash'?{permissions:'OWNER',storage:'S3_INTELLIGENT_TIERING'}:{})},'aws_storagegateway_nfs_file_share'])),
@@ -82,7 +107,7 @@ const fixtures = [
   ['amazon-cognito', 'aws_service_cognito_m2m', { name: 'application-machine', domain: 'application-machine-123456789012', scopes: 'read,write' }, 'aws_cognito_resource_server'],
   ...['HA', 'EFS', 'EBS'].map(layout => ['amazon-mq', 'aws_service_mq_activemq', { name: 'application-activemq-' + layout.toLowerCase(), version: '5.18', mode: layout === 'HA' ? 'ACTIVE_STANDBY_MULTI_AZ' : 'SINGLE_INSTANCE', subnets: layout === 'HA' ? [subnet, secondSubnet] : [subnet], ...(layout === 'HA' ? {} : { storage: layout }), clients: [group], admins: ['sg-0123456789abcdef1'], protocols: layout === 'HA' ? ['OpenWire TLS (61617)', 'STOMP TLS (61614)'] : ['AMQP TLS (5671)'], ...(layout === 'HA' ? { access: 'READWRITE', topics: 'events', kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' } : {}) }, 'aws_mq_broker']),
   ...['valkey-read', 'valkey-write', 'redis-7.0', 'redis-7.1'].map(mode => ['amazon-memorydb', 'aws_service_memorydb', { name: 'application-memorydb-' + mode.replaceAll('.', '-'), engine: mode.startsWith('redis') ? 'redis' : 'valkey', ...(mode.startsWith('redis') ? { redis_version: mode.slice(6) } : {}), role: role('MemoryApplication'), clients: [group], subnets: mode === 'valkey-write' ? [subnet, secondSubnet, 'subnet-0123456789abcdef2'] : [subnet, secondSubnet], ...(mode === 'valkey-write' ? { access: 'READWRITE', replicas: '2', shards: 2, kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' } : {}) }, 'aws_memorydb_cluster']),
-  ...['SINGLE_AZ_1', 'MULTI_AZ_1', 'SINGLE_AZ_2', 'MULTI_AZ_2'].map(deployment => ['amazon-fsx', 'aws_service_fsx_ontap', { name: 'application-ontap-' + deployment.toLowerCase().replaceAll('_', '-'), deployment, subnets: deployment.startsWith('MULTI') ? [subnet, secondSubnet] : [subnet], clients: [group], admins: ['sg-0123456789abcdef1'], client_cidrs: '10.20.0.0/24,10.30.0.0/24', ...(deployment.startsWith('MULTI') ? { routes: 'rtb-0123456789abcdef0' } : {}), ...(deployment === 'MULTI_AZ_2' ? { kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' } : {}) }, 'aws_fsx_ontap_file_system']),
+  ...['SINGLE_AZ_1', 'MULTI_AZ_1', 'SINGLE_AZ_2', 'MULTI_AZ_2'].map(deployment => ['amazon-fsx', 'aws_service_fsx_ontap', { account: '123456789012', name: 'application-ontap-' + deployment.toLowerCase().replaceAll('_', '-'), deployment, subnets: deployment.startsWith('MULTI') ? [subnet, secondSubnet] : [subnet], clients: [group], admins: ['sg-0123456789abcdef1'], client_cidrs: '10.20.0.0/24,10.30.0.0/24', ...(deployment.startsWith('MULTI') ? { routes: 'rtb-0123456789abcdef0' } : {}), ...(deployment === 'MULTI_AZ_2' ? { kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' } : {}) }, 'aws_fsx_ontap_file_system']),
   ...['NO', 'YES'].map(privateNetwork => [privateNetwork === 'YES' ? 'amazon-managed-service-for-apache-flink' : 'taxonomy:kinesisdataanalytics', 'aws_service_flink', { name: 'application-flink-' + privateNetwork.toLowerCase(), private: privateNetwork, role: role('FlinkExecution'), bucket: 'application-artifacts', key: 'flink/application.jar', object_version: 'approved-version-123', ...(privateNetwork === 'YES' ? { subnets: [subnet, secondSubnet], groups: [group], properties: '{"environment":"pilot"}', kms: 'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc' } : {}) }, 'aws_kinesisanalyticsv2_application']),
   ['amazon-neptune', 'aws_service_neptune', { name: 'runtime-graph-setup', reader: role('GraphReader'), subnets: [subnet, secondSubnet], clients: [group] }, 'aws_neptune_cluster', 'amazon-neptunedata'],
   ['amazon-bedrock', 'aws_service_bedrock_inference', { name: 'runtime-model-setup', role: role('Application'), model: 'amazon.nova-micro-v1:0' }, 'aws_iam_role_policy', 'amazon-bedrock-runtime'],
@@ -202,8 +227,8 @@ const fixtures = [
   ['taxonomy:privatelink', 'aws_service_endpoint', { name: 'private-s3', type: 'Gateway', vpc: 'vpc-0123456789abcdef0', routes: ['rtb-0123456789abcdef0'] }, 'aws_vpc_endpoint'],
   ['amazon-cloudfront', 'aws_service_cloudfront', { name: 'Application static site', bucket: 'example-application-content-123456789012' }, 'aws_cloudfront_distribution'],
   ['amazon-cloudfront', 'aws_service_cloudfront', { name: 'Application custom site', bucket: 'example-application-custom-content-123456789012', aliases: ['site.example.com'], certificate: 'arn:aws:acm:us-east-1:123456789012:certificate/12345678-abcd-abcd-abcd-123456789abc', waf: 'arn:aws:wafv2:us-east-1:123456789012:global/webacl/application/12345678-abcd-abcd-abcd-123456789abc' }, 'aws_cloudfront_distribution'],
-  ['taxonomy:kinesisdatastreams', 'aws_service_kinesis', { name: 'application-events' }, 'aws_kinesis_stream'],
-  ['taxonomy:kinesisdatastreams', 'aws_service_kinesis', { name: 'application-provisioned', mode: 'PROVISIONED', shards: 2, consumer: 'application' }, 'aws_kinesis_stream_consumer'],
+  ['taxonomy:kinesisdatastreams', 'aws_service_kinesis', { account: '123456789012', name: 'application-events' }, 'aws_kinesis_stream'],
+  ['taxonomy:kinesisdatastreams', 'aws_service_kinesis', { account: '123456789012', name: 'application-provisioned', mode: 'PROVISIONED', shards: 2, consumer: 'application' }, 'aws_kinesis_stream_consumer'],
   ['taxonomy:systemsmanagerparameterstore', 'aws_service_parameter', { name: '/production/orders/api-url', value: 'https://orders.example.com' }, 'aws_ssm_parameter'],
   ['taxonomy:systemsmanagerparameterstore', 'aws_service_parameter', { name: '/production/orders/credential', type: 'SecureString' }, 'aws_ssm_parameter'],
   ['aws-wafv2', 'aws_service_wafv2', { name: 'application-allowlist', default_action: 'block', allowed: ['192.0.2.0/24'], count: false, alb: 'arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/application/0123456789abcdef' }, 'aws_wafv2_ip_set'],
@@ -352,6 +377,61 @@ try {
       assert.deepEqual(expected.findings, []);
       for (const name of ['PREFLIGHT.py','CHECK.py','CLIENT.py','WORKLOAD-CONFIG.json','smoke-job.yaml']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
     }
+    if(resource==='aws_service_cognito_identity_read') {
+      const expected=AWS_COGNITO_IDENTITY_SERVICE.build({...defaultValues(AWS_COGNITO_IDENTITY_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','FEDERATE-CHECK.py','IDENTITY-CONFIG.json','ACCESS-POLICY-REVIEW.json','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_appinsights_ec2') {
+      const expected=AWS_APPINSIGHTS_SERVICE.build({...defaultValues(AWS_APPINSIGHTS_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','APPINSIGHTS-CONFIG.json','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_cloudfront_kvs_flag') {
+      const expected=AWS_CLOUDFRONT_KVS_SERVICE.build({...defaultValues(AWS_CLOUDFRONT_KVS_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','KVS-CONFIG.json','FEATURE-FLAG.js','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_internetmonitor_vpc') {
+      const expected=AWS_INTERNETMONITOR_SERVICE.build({...defaultValues(AWS_INTERNETMONITOR_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','INTERNET-CONFIG.json','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_networkmonitor_probe') {
+      const expected=AWS_NETWORKMONITOR_SERVICE.build({...defaultValues(AWS_NETWORKMONITOR_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','NETWORK-CONFIG.json','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_kinesis') {
+      const expected=AWS_KINESIS_SERVICE.build({...defaultValues(AWS_KINESIS_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','KINESIS-CONFIG.json','main.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_detective_graph') {
+      const expected=AWS_DETECTIVE_SERVICE.build({...defaultValues(AWS_DETECTIVE_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','DETECTIVE-CONFIG.json','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_fsx_ontap') {
+      const expected=AWS_FSX_ONTAP_SERVICE.build({...defaultValues(AWS_FSX_ONTAP_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','ONTAP-CONFIG.json','ONTAP-CONFIG.txt','MOUNT-READONLY.sh','main.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if(resource==='aws_service_dlm_volume_snapshots') {
+      const expected=AWS_DLM_SERVICE.build({...defaultValues(AWS_DLM_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','CHECK-SNAPSHOTS.py','DLM-CONFIG.json','main.tf','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_dsql_private_pair') {
+      const expected=AWS_DSQL_MULTIREGION_SERVICE.build({...defaultValues(AWS_DSQL_MULTIREGION_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['CHECK-PAIR.py','MULTIREGION-CONFIG.json','providers.tf','primary/main.tf','secondary/main.tf','primary/versions.tf','secondary/versions.tf','primary/INSPECT.py','secondary/INSPECT.py','primary/DSQL-CONFIG.json','secondary/DSQL-CONFIG.json','primary/CHECK-CONNECTION.py','secondary/CHECK-CONNECTION.py'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_dsql_private_single') {
+      const expected=AWS_DSQL_SERVICE.build({...defaultValues(AWS_DSQL_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','DSQL-CONFIG.json','CHECK-CONNECTION.py','AUTHORIZE-REVIEW.sql','CHECK.sql','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
     if (resource === 'aws_service_appflow_salesforce_s3') {
       const expected=AWS_APPFLOW_SERVICE.build({...defaultValues(AWS_APPFLOW_SERVICE),aws_region:fixtureRegion,...values});
       assert.deepEqual(expected.findings,[]);
@@ -419,6 +499,7 @@ try {
     else if (resource === 'aws_service_guardduty') await page.locator('[data-input=frequency]').selectOption('ONE_HOUR');
     else if (resource === 'aws_service_inspector' || resource === 'aws_service_securityhub') await page.locator('[data-input=account]').fill('210987654321');
     else if ('table_name' in values) await page.locator('[data-input=table_name]').fill('changed-application');
+    else if(resource==='aws_service_appinsights_ec2') await page.locator('[data-input=group]').fill('changed-application');
     else await page.locator('[data-input=' + ('domain' in values ? 'domain' : 'name') + ']').fill('domain' in values ? 'api.example.com' : 'changed-application');
     assert.equal(await button.isDisabled(), true, resource + ' retained a stale export');
     packages.push(file);

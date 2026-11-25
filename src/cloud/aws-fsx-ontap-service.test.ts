@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { defaultValues } from '../kit/blueprint.ts';
 import { AWS_FSX_ONTAP_SERVICE } from './aws-fsx-ontap-service.ts';
 import { addServicesFor } from './add-service-catalog.ts';
-const values = { ...defaultValues(AWS_FSX_ONTAP_SERVICE), aws_region: 'us-east-1', name: 'application-ontap', subnets: 'subnet-0123456789abcdef0,subnet-0123456789abcdef1', clients: 'sg-0123456789abcdef0', admins: 'sg-0123456789abcdef1', client_cidrs: '10.20.0.0/24,10.30.0.0/24', routes: 'rtb-0123456789abcdef0' };
+const values = { ...defaultValues(AWS_FSX_ONTAP_SERVICE), aws_region: 'us-east-1', account: '123456789012', name: 'application-ontap', subnets: 'subnet-0123456789abcdef0,subnet-0123456789abcdef1', clients: 'sg-0123456789abcdef0', admins: 'sg-0123456789abcdef1', client_cidrs: '10.20.0.0/24,10.30.0.0/24', routes: 'rtb-0123456789abcdef0' };
 test('ONTAP configures one-pair protected NFS target with sensitive deploy-time password', () => {
   assert.equal(addServicesFor('aws').find(row => row.id === 'amazon-fsx')?.terraform[0], AWS_FSX_ONTAP_SERVICE);
+  assert.equal(addServicesFor('aws').find(row=>row.id==='taxonomy:fsxfornetappontap')?.terraform[0],AWS_FSX_ONTAP_SERVICE);
   const result = AWS_FSX_ONTAP_SERVICE.build(values), main = result.files['main.tf']!;
   assert.deepEqual(result.findings, []);
   for (const pattern of [/MULTI_AZ_2/, /ha_pairs\s+= 1/, /throughput_capacity_per_ha_pair\s+= 384/, /fsx_admin_password\s+= var.fsx_admin_password/, /skip_final_backup\s+= false/, /size_in_megabytes\s+= 65536/, /name = "NONE"/, /cidrhost/]) assert.match(main, pattern);
@@ -14,6 +15,9 @@ test('ONTAP configures one-pair protected NFS target with sensitive deploy-time 
   assert.match(result.files['ONTAP-CONFIG.txt']!, /-superuser none/);
   assert.match(result.files['ONTAP-CONFIG.txt']!, /-user 1000 -group 1000 -unix-permissions 0750/);
   assert.match(result.files['MOUNT-READONLY.sh']!, /ro,nfsvers=4\.1,sec=sys/);
+  assert.match(main,/data.aws_caller_identity.current.account_id == "123456789012"/);
+  assert.match(result.files['INSPECT.py']!,/Lifecycle'\)=='CREATED'/);
+  assert.doesNotMatch(result.files['INSPECT.py']!,/get_secret_value\(|create_file_system\(|update_volume\(|paramiko|subprocess/);
 });
 test('Single-AZ ONTAP ignores hidden floating network and throughput inputs', () => {
   const result = AWS_FSX_ONTAP_SERVICE.build({ ...values, deployment: 'SINGLE_AZ_2', subnets: 'subnet-0123456789abcdef0', routes: 'stale', endpoint_cidr: 'stale', throughput_first: 'stale', throughput_multi2: 'stale' });

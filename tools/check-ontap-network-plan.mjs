@@ -8,34 +8,36 @@ import { terraformEnv } from './terraform-init.mjs';
 import { WORK_CACHE, WORK_TMP } from './work.mjs';
 const work = mkdtempSync(join(WORK_TMP, 'ontap-mock-plan-'));
 const subnet = 'subnet-0123456789abcdef0', second = 'subnet-0123456789abcdef1', other = 'subnet-0123456789abcdef2';
-const result = AWS_FSX_ONTAP_SERVICE.build({ ...defaultValues(AWS_FSX_ONTAP_SERVICE), aws_region: 'us-east-1', name: 'mock-ontap', subnets: subnet + ',' + second, clients: 'sg-0123456789abcdef0', admins: 'sg-0123456789abcdef1', client_cidrs: '10.20.0.0/24', routes: 'rtb-0123456789abcdef0' });
+const result = AWS_FSX_ONTAP_SERVICE.build({ ...defaultValues(AWS_FSX_ONTAP_SERVICE), aws_region: 'us-east-1', account: '123456789012', name: 'mock-ontap', subnets: subnet + ',' + second, clients: 'sg-0123456789abcdef0', admins: 'sg-0123456789abcdef1', client_cidrs: '10.20.0.0/24', routes: 'rtb-0123456789abcdef0' });
 if (result.findings.length) throw new Error('Invalid ONTAP mock fixture.');
 for (const [name, body] of Object.entries(result.files)) if (name.endsWith('.tf')) writeFileSync(join(work, name), body);
 writeFileSync(join(work, 'network.tftest.hcl'), `mock_provider "aws" {
+  mock_data "aws_caller_identity" { defaults = { account_id = "123456789012" } }
+  mock_data "aws_vpc" { defaults = { owner_id = "123456789012", enable_dns_support = true, enable_dns_hostnames = true } }
   mock_data "aws_subnet" {
-    defaults = { vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1a", cidr_block = "10.20.0.0/24" }
+    defaults = { owner_id = "123456789012", map_public_ip_on_launch = false, ipv6_native = false, available_ip_address_count = 20, vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1a", cidr_block = "10.20.0.0/24" }
   }
   mock_data "aws_subnets" {
     defaults = { ids = ["${subnet}", "${second}", "${other}"] }
   }
   mock_data "aws_security_group" {
-    defaults = { vpc_id = "vpc-0123456789abcdef0" }
+    defaults = { vpc_id = "vpc-0123456789abcdef0", arn = "arn:aws:ec2:us-east-1:123456789012:security-group/sg-0123456789abcdef0" }
   }
   mock_data "aws_route_table" {
-    defaults = { vpc_id = "vpc-0123456789abcdef0" }
+    defaults = { owner_id = "123456789012", vpc_id = "vpc-0123456789abcdef0" }
   }
 }
 variables { fsx_admin_password = "MockOnlyPassword9!" }
 override_data {
   target = data.aws_subnet.selected["${second}"]
-  values = { vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1b", cidr_block = "10.30.0.0/24" }
+  values = { owner_id = "123456789012", map_public_ip_on_launch = false, ipv6_native = false, available_ip_address_count = 20, vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1b", cidr_block = "10.30.0.0/24" }
 }
 run "valid_target" { command = plan }
 run "other_subnet_overlap" {
   command = plan
   override_data {
     target = data.aws_subnet.vpc["${other}"]
-    values = { vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1c", cidr_block = "198.19.0.0/24" }
+    values = { owner_id = "123456789012", map_public_ip_on_launch = false, ipv6_native = false, available_ip_address_count = 20, vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1c", cidr_block = "198.19.0.0/24" }
   }
   expect_failures = [aws_fsx_ontap_file_system.configured]
 }
@@ -43,14 +45,14 @@ run "adjacent_subnet_is_allowed" {
   command = plan
   override_data {
     target = data.aws_subnet.vpc["${other}"]
-    values = { vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1c", cidr_block = "198.19.1.0/24" }
+    values = { owner_id = "123456789012", map_public_ip_on_launch = false, ipv6_native = false, available_ip_address_count = 20, vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1c", cidr_block = "198.19.1.0/24" }
   }
 }
 run "same_az_is_rejected" {
   command = plan
   override_data {
     target = data.aws_subnet.selected["${second}"]
-    values = { vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1a", cidr_block = "10.30.0.0/24" }
+    values = { owner_id = "123456789012", map_public_ip_on_launch = false, ipv6_native = false, available_ip_address_count = 20, vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1a", cidr_block = "10.30.0.0/24" }
   }
   expect_failures = [aws_fsx_ontap_file_system.configured]
 }
@@ -67,6 +69,30 @@ run "weak_password_is_rejected" {
   variables { fsx_admin_password = "weak" }
   expect_failures = [var.fsx_admin_password]
 }
+run "wrong_account_is_rejected" {
+  command = plan
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "000000000000" }
+  }
+  expect_failures = [aws_fsx_ontap_file_system.configured]
+}
+run "foreign_group_is_rejected" {
+  command = plan
+  override_data {
+    target = data.aws_security_group.selected["sg-0123456789abcdef0"]
+    values = { vpc_id = "vpc-0123456789abcdef0", arn = "arn:aws:ec2:us-east-1:000000000000:security-group/sg-0123456789abcdef0" }
+  }
+  expect_failures = [aws_fsx_ontap_file_system.configured]
+}
+run "public_subnet_is_rejected" {
+  command = plan
+  override_data {
+    target = data.aws_subnet.selected["${subnet}"]
+    values = { owner_id = "123456789012", map_public_ip_on_launch = true, ipv6_native = false, available_ip_address_count = 20, vpc_id = "vpc-0123456789abcdef0", availability_zone = "us-east-1a", cidr_block = "10.20.0.0/24" }
+  }
+  expect_failures = [aws_fsx_ontap_file_system.configured]
+}
 `);
 const terraform = process.env.TERRAFORM_PATH || resolve(WORK_TMP, 'terraform-cli/terraform.exe');
 const cache = join(WORK_CACHE, 'ontap-mock-provider-cache');
@@ -82,4 +108,4 @@ for (const command of [['init', '-backend=false', '-input=false', '-no-color'], 
 const data = realpathSync(env.TF_DATA_DIR);
 if (data !== resolve(realpathSync(work), 'terraform-data')) throw new Error('Unsafe scratch provider cleanup path.');
 rmSync(data, { recursive: true, force: false, maxRetries: 2 });
-console.log('Six Terraform mock-provider plan cases passed; no real AWS plan or apply. Artifacts: ' + work);
+console.log('Nine Terraform mock-provider plan cases passed; no real AWS plan or apply. Artifacts: ' + work);

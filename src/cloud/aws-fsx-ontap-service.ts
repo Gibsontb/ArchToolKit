@@ -2,6 +2,7 @@ import { error, type Finding } from '../core/findings.ts';
 import type { Blueprint } from '../kit/blueprint.ts';
 import { blk, dat, hcl, output, res, x } from '../terraform/blueprints/migration/common.ts';
 import { awsServiceModule, awsServicePartition, awsServiceRegion } from './aws-service-module.ts';
+import {ontapInspection} from './aws-fsx-ontap-files.ts';
 const first = ['SINGLE_AZ_1', 'MULTI_AZ_1'], second = ['SINGLE_AZ_2', 'MULTI_AZ_2'];
 export const AWS_FSX_ONTAP_SERVICE = {
   id: 'aws_service_fsx_ontap', label: 'Set up FSx for ONTAP NFS storage',
@@ -10,6 +11,7 @@ export const AWS_FSX_ONTAP_SERVICE = {
   inputs: [
     awsServiceRegion,
     { id: 'name', label: 'Filesystem name', control: 'text' },
+    { id: 'account', label: 'Expected filesystem / network owner account ID', control: 'text' },
     { id: 'deployment', label: 'Deployment type', control: 'select', default: 'MULTI_AZ_2', options: [...first, ...second].map(value => ({ value, label: value.replaceAll('_', ' ') })), hint: 'One HA pair in this recipe. Regional generation availability must be verified. Third-generation and multi-HA-pair designs require another workflow.' },
     { id: 'storage', label: 'Filesystem SSD capacity (GiB)', control: 'number', default: 1024 },
     { id: 'throughput_first', label: 'First-generation throughput (MB/s)', control: 'select', default: '128', options: [128, 256, 512, 1024, 2048].map(value => ({ value: String(value), label: String(value) })), showWhen: { input: 'deployment', equals: first } },
@@ -32,6 +34,7 @@ export const AWS_FSX_ONTAP_SERVICE = {
     const findings: Finding[] = [];
     const reject = (path: string, message: string) => findings.push(error('aws.fsx.ontap.' + path, message, { path }));
     const region = String(values.aws_region ?? ''), partition = awsServicePartition(region), name = String(values.name ?? '').trim(), deployment = String(values.deployment ?? ''), multi = deployment.startsWith('MULTI'), generation2 = second.includes(deployment), volume = String(values.volume ?? '').trim(), kms = String(values.kms ?? '').trim();
+    const account=String(values.account??'').trim();
     const storage = Number(values.storage), volumeGib = Number(values.volume_gib), uid = Number(values.uid), gid = Number(values.gid), retention = Number(values.retention);
     const throughput = Number(values[generation2 ? (multi ? 'throughput_multi2' : 'throughput_single2') : 'throughput_first']);
     const list = (id: string) => [...new Set(String(values[id] ?? '').split(',').map(value => value.trim()).filter(Boolean))];
@@ -43,6 +46,7 @@ export const AWS_FSX_ONTAP_SERVICE = {
       return address % 2 ** (32 - prefix) === 0;
     };
     if (!/^[a-z][a-z0-9-]{0,39}$/.test(name) || name.endsWith('-') || name.includes('--')) reject('name', 'Use a lowercase name up to 40 characters, without trailing/consecutive hyphens.');
+    if(!/^\d{12}$/.test(account))reject('account','Use the12-digit expected filesystem/network owner account.');
     if (![...first, ...second].includes(deployment)) reject('deployment', 'Choose a supported one-HA-pair generation/deployment type.');
     if (!Number.isInteger(storage) || storage < 1024 || storage > (generation2 ? 524288 : 196608)) reject('storage', 'Use 1,024 GiB up to 192 TiB first-generation or 512 TiB second-generation for this one-pair recipe.');
     if (!(generation2 ? (multi ? [384, 768, 1536, 3072] : [1536, 3072]) : [128, 256, 512, 1024, 2048]).includes(throughput)) reject(generation2 ? (multi ? 'throughput_multi2' : 'throughput_single2') : 'throughput_first', 'Select a throughput supported by this generation/deployment subset.');
@@ -70,6 +74,8 @@ export const AWS_FSX_ONTAP_SERVICE = {
       'https://docs.aws.amazon.com/fsx/latest/ONTAPGuide/managing-file-systems.html\nhttps://docs.aws.amazon.com/fsx/latest/APIReference/API_CreateFileSystemOntapConfiguration.html\nhttps://docs.netapp.com/us-en/ontap-cli-9171/volume-modify.html',
     ].join('\n\n') + '\n';
     const result = awsServiceModule(region, [
+      dat('aws_caller_identity','current',{}),
+      dat('aws_vpc','selected',{id:x('data.aws_subnet.selected['+JSON.stringify(subnets[0]??'')+'].vpc_id')}),
       blk('variable', { type: x('string'), sensitive: true, nullable: false, description: 'Deploy-time fsxadmin password; protect Terraform state and plan files.' }, [blk('validation', { condition: x('can(regex("^[!-~]{12,50}$", var.fsx_admin_password)) && sum([for pattern in ["[A-Z]", "[a-z]", "[0-9]", "[^A-Za-z0-9]"] : length(regexall(pattern, var.fsx_admin_password)) > 0 ? 1 : 0]) >= 3'), error_message: 'Use 12–50 printable nonspace ASCII characters and at least three of uppercase, lowercase, digit and symbol.' })], ['fsx_admin_password']),
       dat('aws_subnet', 'selected', { for_each: x('toset(' + JSON.stringify(subnets) + ')'), id: x('each.value') }),
       ...(multi ? [dat('aws_subnets', 'vpc', {}, [blk('filter', { name: 'vpc-id', values: x('[data.aws_subnet.selected[' + JSON.stringify(subnets[0] ?? '') + '].vpc_id]') })]), dat('aws_subnet', 'vpc', { for_each: x('toset(data.aws_subnets.vpc.ids)'), id: x('each.value') })] : []),
@@ -82,7 +88,7 @@ export const AWS_FSX_ONTAP_SERVICE = {
       ]),
       res('aws_fsx_ontap_file_system', 'configured', { deployment_type: deployment, storage_capacity: storage, storage_type: 'SSD', throughput_capacity_per_ha_pair: throughput, ...(generation2 ? { ha_pairs: 1 } : {}), subnet_ids: subnets, preferred_subnet_id: subnets[0] ?? '', security_group_ids: x('[aws_security_group.filesystem.id]'), ...(multi ? { route_table_ids: routes, endpoint_ip_address_range: endpointCidr } : {}), ...(kms ? { kms_key_id: x('data.aws_kms_key.storage.arn') } : {}), fsx_admin_password: x('var.fsx_admin_password'), automatic_backup_retention_days: retention, tags: x(hcl({ Name: name })) }, [
         blk('disk_iops_configuration', { mode: 'AUTOMATIC' }),
-        blk('lifecycle', { prevent_destroy: true }, [blk('precondition', { condition: x('length(distinct([for subnet in data.aws_subnet.selected : subnet.vpc_id])) == 1 && length(distinct([for subnet in data.aws_subnet.selected : subnet.availability_zone])) == ' + (multi ? 2 : 1) + ' && alltrue([for group in data.aws_security_group.selected : contains([for subnet in data.aws_subnet.selected : subnet.vpc_id], group.vpc_id)]) && alltrue([for route in data.aws_route_table.selected : contains([for subnet in data.aws_subnet.selected : subnet.vpc_id], route.vpc_id)])' + noEndpointOverlap + (kms ? ' && data.aws_kms_key.storage.enabled && data.aws_kms_key.storage.key_spec == "SYMMETRIC_DEFAULT"' : '')), error_message: 'Use distinct-AZ same-VPC subnets/groups/route tables, nonoverlapping floating IPs and an enabled symmetric key.' })]),
+        blk('lifecycle', { prevent_destroy: true }, [blk('precondition', { condition: x('data.aws_caller_identity.current.account_id == ' + JSON.stringify(account) + ' && data.aws_vpc.selected.owner_id == ' + JSON.stringify(account) + ' && data.aws_vpc.selected.enable_dns_support && data.aws_vpc.selected.enable_dns_hostnames && alltrue([for subnet in data.aws_subnet.selected : subnet.owner_id == ' + JSON.stringify(account) + ' && !subnet.map_public_ip_on_launch && !subnet.ipv6_native && subnet.available_ip_address_count >= 6]) && alltrue([for group in data.aws_security_group.selected : startswith(group.arn, ' + JSON.stringify('arn:' + partition + ':ec2:' + region + ':' + account + ':security-group/') + ')]) && alltrue([for route in data.aws_route_table.selected : route.owner_id == ' + JSON.stringify(account) + ']) && length(distinct([for subnet in data.aws_subnet.selected : subnet.vpc_id])) == 1 && length(distinct([for subnet in data.aws_subnet.selected : subnet.availability_zone])) == ' + (multi ? 2 : 1) + ' && alltrue([for group in data.aws_security_group.selected : contains([for subnet in data.aws_subnet.selected : subnet.vpc_id], group.vpc_id)]) && alltrue([for route in data.aws_route_table.selected : contains([for subnet in data.aws_subnet.selected : subnet.vpc_id], route.vpc_id)])' + noEndpointOverlap + (kms ? ' && data.aws_kms_key.storage.enabled && data.aws_kms_key.storage.key_spec == "SYMMETRIC_DEFAULT"' : '')), error_message: 'Use distinct-AZ same-VPC subnets/groups/route tables, nonoverlapping floating IPs and an enabled symmetric key.' })]),
       ]),
       res('aws_fsx_ontap_storage_virtual_machine', 'configured', { name: svm, file_system_id: x('aws_fsx_ontap_file_system.configured.id'), root_volume_security_style: 'UNIX', tags: x(hcl({ Name: svm })) }),
       res('aws_fsx_ontap_volume', 'configured', { name: volume, storage_virtual_machine_id: x('aws_fsx_ontap_storage_virtual_machine.configured.id'), junction_path: '/' + volume, size_in_megabytes: volumeGib * 1024, security_style: 'UNIX', ontap_volume_type: 'RW', volume_style: 'FLEXVOL', storage_efficiency_enabled: true, snapshot_policy: 'default', skip_final_backup: false, copy_tags_to_backups: true, tags: x(hcl({ Name: volume })) }, [blk('tiering_policy', { name: 'NONE' }), blk('lifecycle', { prevent_destroy: true })]),
@@ -90,6 +96,7 @@ export const AWS_FSX_ONTAP_SERVICE = {
       output('management_endpoint', 'aws_fsx_ontap_file_system.configured.endpoints[0].management[0].dns_name'),
       output('nfs_endpoint', 'aws_fsx_ontap_storage_virtual_machine.configured.endpoints[0].nfs[0].dns_name'),
       output('volume_id', 'aws_fsx_ontap_volume.configured.id'),
+      output('svm_id','aws_fsx_ontap_storage_virtual_machine.configured.id'),
     ], guide, findings);
     const commands = [
       '# Run in a verified ONTAP CLI session after reviewing the new filesystem/SVM/volume.',
@@ -114,6 +121,7 @@ export const AWS_FSX_ONTAP_SERVICE = {
       'case "$endpoint" in ""|[!A-Za-z0-9]*|*[!A-Za-z0-9.-]*) echo "Invalid NFS endpoint." >&2; exit 1;; esac',
       'mount -t nfs -o ro,nfsvers=4.1,sec=sys "$endpoint:/' + volume + '" "$1"',
     ].join('\n') + '\n';
-    return { ...result, files: { ...result.files, 'ONTAP-CONFIG.txt': commands, 'MOUNT-READONLY.sh': mount } };
+    result.files['SERVICE-SETUP.md']+='\n## Metadata inspection and ownership\nRun python INSPECT.py before plan with approved boto3/botocore. Expected account is required. It reads exact source network/group/route/key metadata, all VPC subnets for floating-range overlap and existing filesystem names; no password, mounts, SSH, ONTAP writes or data reads. After approved apply run python INSPECT.py --filesystem <exactfilesystem_id> --svm <exactsvm_id> --volume <exactvolume_id>. It checks actual service metadata and protection/network settings, but ONTAP exports/UID/GID/protocol configuration and real recovery still require explicit owner testing. SVM lifecycle is CREATED, not the filesystem AVAILABLE status. Protect metadata/state and approve applicable civilian/DoD/State classification/ATO/APL/CDM/DoDIN/CMVP/records/residency/key/network/backup boundaries. Inspecting metadata does not grant authorization or prove effective access.\n';
+    return { ...result, files: { ...result.files, 'ONTAP-CONFIG.txt': commands, 'MOUNT-READONLY.sh': mount,'INSPECT.py':ontapInspection,'ONTAP-CONFIG.json':JSON.stringify({region,partition,account,name,deployment,multi,generation2,storage,throughput,subnets,clients,admins,routes,endpointCidr,kms,svm,volume,volumeGib,retention},null,2)+'\n' } };
   },
 } satisfies Blueprint;
