@@ -67,7 +67,7 @@ for (const [index, archive] of packages.entries()) {
       // Include text assets referenced by file()/templatefile(), without executing
       // them. Never load archived providers, Terraform data or CLI configuration.
       if (name.split('/').some(part => part === '.terraform' || part === '.git')) continue;
-      if (!/\.(?:tf|tf\.json|py|json|sql|ya?ml|tftpl|tpl)$/.test(name)) continue;
+      if (!/\.(?:tf|tf\.json|py|js|json|sql|ya?ml|tftpl|tpl)$/.test(name)) continue;
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, await zip.text(name));
     }

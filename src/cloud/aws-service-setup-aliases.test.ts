@@ -14,5 +14,5 @@ test('Verified control-plane catalog aliases reuse the actual canonical builders
   assert.ok(rows.find(row => row.id === 'amazon-managed-service-for-apache-flink')!.terraform.every(form => form.emits.some(type => type.startsWith('aws_kinesisanalyticsv2_')) && form.emits.every(type => !type.startsWith('aws_kinesisanalytics_'))));
 });
 test('Runtime APIs and third-party fees do not receive misleading infrastructure aliases', () => {
-  for (const id of ['aws-transform','amazon-bedrock-runtime', 'amazon-ec2-optimize-cpu-license-included-third-party-fees', 'amazon-neptunedata']) assert.equal(addServicesFor('aws').find(row => row.id === id)?.setupAliasOf, undefined);
+  for (const id of ['amazon-cognito-identity','aws-transform','amazon-bedrock-runtime', 'amazon-ec2-optimize-cpu-license-included-third-party-fees', 'amazon-neptunedata']) assert.equal(addServicesFor('aws').find(row => row.id === id)?.setupAliasOf, undefined);
 });

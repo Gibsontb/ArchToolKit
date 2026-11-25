@@ -1,5 +1,6 @@
 /** Verified catalog names for the same control-plane setup. Runtime APIs and billing items are not aliases. */
 export const AWS_SERVICE_SETUP_ALIASES = {
+  'aws-certificate-manager-private-certificate-authority': { canonical: 'aws-private-certificate-authority', reference: 'https://docs.aws.amazon.com/privateca/latest/userguide/PcaWelcome.html' },
   'amazon-cognito-identity-provider': { canonical: 'amazon-cognito', reference: 'https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/Welcome.html' },
   'amazon-kinesis': { canonical: 'taxonomy:kinesisdatastreams', reference: 'https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html' },
   'amazon-prometheus-service': { canonical: 'amazon-managed-service-for-prometheus', reference: 'https://docs.aws.amazon.com/prometheus/latest/APIReference/Welcome.html' },

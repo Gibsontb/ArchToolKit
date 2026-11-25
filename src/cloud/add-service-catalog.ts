@@ -21,6 +21,7 @@ import { AWS_NETWORKMONITOR_SERVICE } from './aws-networkmonitor-service.ts';
 import { AWS_CLOUDFRONT_KVS_SERVICE } from './aws-cloudfront-kvs-service.ts';
 import { AWS_APPINSIGHTS_SERVICE } from './aws-appinsights-service.ts';
 import { AWS_COGNITO_IDENTITY_SERVICE } from './aws-cognito-identity-service.ts';
+import { AWS_PRIVATECA_SERVICE } from './aws-privateca-service.ts';
 import { AWS_INTERNETMONITOR_SERVICE } from './aws-internetmonitor-service.ts';
 import { AWS_DSQL_MULTIREGION_SERVICE } from './aws-dsql-multiregion-service.ts';
 import { AWS_STEPFUNCTIONS_SERVICE } from './aws-stepfunctions-service.ts';
@@ -399,6 +400,8 @@ export function addServicesFor(platform:string):readonly AddService[]{
     if(applicationInsights)merged[merged.indexOf(applicationInsights)]={...applicationInsights,terraform:[AWS_APPINSIGHTS_SERVICE,...applicationInsights.terraform]};
     const federatedIdentity=merged.find(service=>service.id==='amazon-cognito-identity');
     if(federatedIdentity)merged[merged.indexOf(federatedIdentity)]={...federatedIdentity,terraform:[AWS_COGNITO_IDENTITY_SERVICE,...federatedIdentity.terraform]};
+    const privateCa=merged.find(service=>service.id==='aws-private-certificate-authority');
+    if(privateCa)merged[merged.indexOf(privateCa)]={...privateCa,terraform:[AWS_PRIVATECA_SERVICE,...privateCa.terraform]};
     const internetMonitor=merged.find(service=>service.id==='amazon-cloudwatch-internet-monitor');
     if(internetMonitor)merged[merged.indexOf(internetMonitor)]={...internetMonitor,terraform:[AWS_INTERNETMONITOR_SERVICE,...internetMonitor.terraform]};
     const eks = merged.find(row => row.id === 'amazon-elastic-kubernetes-service');

@@ -1,0 +1,60 @@
+                                                   
+import {error,            } from '../core/findings.js';
+import {blk,dat,output,res,x} from '../terraform/blueprints/migration/common.js';
+import {awsServiceModule,awsServicePartition,awsServiceRegion} from './aws-service-module.js';
+import {appInsightsInspection} from './aws-appinsights-files.js';
+export const AWS_APPINSIGHTS_SERVICE={
+  id:'aws_service_appinsights_ec2',label:'Configure initial Application Insights monitoring for an approved EC2 resource group',
+  description:'Existing owned EC2-only tag resource group and online SSM-managed instances. Applying starts recommended monitoring setup/agent changes; future auto-configuration and OpsCenter notifications remain off.',
+  emits:['aws_applicationinsights_application'],
+  inputs:[awsServiceRegion,{id:'account',label:'Expected resource group / EC2 owner account ID',control:'text'},
+    {id:'group',label:'Existing EC2-only resource group name',control:'text'},
+    {id:'instances',label:'Expected existing managed EC2 instance IDs',control:'text',hint:'1–20 exact unique IDs. This baseline does not lock future tag-group membership.'},
+    {id:'tag_key',label:'Expected resource-group target tag key',control:'text'},
+    {id:'tag_value',label:'Expected resource-group target tag value',control:'text'},
+    {id:'approved',label:'Owner approved initial agent/configuration changes, telemetry and charges',control:'select',default:'false',options:[{value:'false',label:'Approval not recorded'},{value:'true',label:'Approved exact EC2 group initial instrumentation'}]},
+  ],
+  build(values)                                    {
+    const findings          =[],reject=(path       ,message       )=>findings.push(error('aws.appinsights.'+path,message,{path}));
+    const text=(key       )=>String(values[key]??'').trim(),region=text('aws_region'),partition=awsServicePartition(region),account=text('account'),group=text('group'),instances=text('instances').split(',').map(s=>s.trim()).filter(Boolean),tagKey=text('tag_key'),tagValue=text('tag_value');
+    if(!['us-east-1','us-east-2','us-west-1','us-west-2','us-gov-east-1','us-gov-west-1'].includes(region))reject('aws_region','Initial workflow covers six US commercial/GovCloud Application Insights FIPS control regions. Qualify actual workload support in that boundary.');
+    if(!/^\d{12}$/.test(account))reject('account','Use the12-digit resource group/EC2 owner account.');
+    if(!/^[A-Za-z][A-Za-z0-9_.-]{2,63}$/.test(group))reject('group','Use an existing3–64character EC2-only tag-based group name.');
+    if(!instances.length||instances.length>20||new Set(instances).size!==instances.length||instances.some(id=>!/^i-(?:[a-f0-9]{8}|[a-f0-9]{17})$/.test(id)))reject('instances','Use1–20 unique existing owned running SSM-managed EC2 instance IDs.');
+    if(!/^[A-Za-z0-9][A-Za-z0-9_.:/+=@-]{0,126}$/.test(tagKey)||/^aws:/i.test(tagKey))reject('tag_key','Use the exact nonreserved group target tag key.');
+    if(!/^[A-Za-z0-9][A-Za-z0-9_.:/+=@-]{0,127}$/.test(tagValue))reject('tag_value','Use the exact nonempty group target tag value.');
+    if(text('approved')!=='true')reject('approved','Record owner approval for recommended initial monitoring/SSM-agent/CloudFormation/alarms/logs/charges before generation.');
+    const groupArn='arn:'+partition+':resource-groups:'+region+':'+account+':group/'+group,resources=instances.map(id=>'arn:'+partition+':ec2:'+region+':'+account+':instance/'+id);
+    const result=awsServiceModule(region,[blk('provider',{alias:'monitoring',region,use_fips_endpoint:true,allowed_account_ids:[account]},[],['aws']),dat('aws_caller_identity','current',{}),...instances.map((id,i)=>dat('aws_instance','selected_'+i,{instance_id:id})),
+      res('aws_applicationinsights_application','configured',{provider:x('aws.monitoring'),resource_group_name:group,auto_create:true,auto_config_enabled:false,cwe_monitor_enabled:true,ops_center_enabled:false},[
+        blk('lifecycle',{prevent_destroy:true},[blk('precondition',{condition:x('data.aws_caller_identity.current.account_id == '+JSON.stringify(account)+' && '+instances.map((_,i)=>'(data.aws_instance.selected_'+i+'.arn == '+JSON.stringify(resources[i])+' && data.aws_instance.selected_'+i+'.instance_state == "running" && data.aws_instance.selected_'+i+'.iam_instance_profile != "")').join(' && ')),error_message:'Require exact owned running instance baseline with existing profiles. INSPECT.py checks real group query/membership/SSM and rejects matching Auto Scaling groups; effective monitoring permissions need owner review.'})]),
+      ]),output('application_arn','aws_applicationinsights_application.configured.arn')],GUIDE,findings);
+    return {...result,files:{...result.files,'INSPECT.py':appInsightsInspection,'APPINSIGHTS-CONFIG.json':JSON.stringify({region,partition,account,group,groupArn,instances,resources,tagKey,tagValue},null,2)+'\n'}};
+  },
+}                    ;
+const GUIDE=`# Initial EC2 resource-group Application Insights instrumentation
+
+Existing owned tag-based resource group selecting ONLY AWS::EC2::Instance with one exact tag key/value and1–20expectedrunningSSM-onlineinstances. Initial six US commercial/GovCloud FIPS control API regions; actual component/OS/stack/telemetry authorization must be qualified per boundary. Creates native Application Insights application with auto_create=true to configure initial resources using recommended monitoring. auto_config_enabled=false turns OFF automatic configuration of future unmonitored resources; it does NOT make this an inert/disabled application. cwe_monitor_enabled=true listens for application resource events; OpsCenter and SNS notifications are off. This is a DEFAULT/recommended EC2 monitoring recipe, not a fully qualified SQL/SAP/.NET/Oracle/HA cluster monitoring design. Those tiers/components and log selection need separate typed workflows.
+
+Applying can install/configure CloudWatch agents using SSM, create a service-managed CloudFormation stack, alarms and metrics/log monitoring. It can affect existing guest configuration, CPU/storage/network usage and charges. Back up current agent/service/SSM/CloudWatch configuration first. Existing approved instance profiles/SSM and CloudWatch permissions, supported OS/agents, package/endpoint reachability and service roles/quotas are prerequisites. The toolkit does not attach IAM policies, send SSM commands, create instance profiles or change guest configuration during export/inspection. Pinned5.100 does not expose AttachMissingPermission; it is NOT requested. Postcheck requires actual AttachMissingPermission=false, no implicit role repair. Effective IAM and changes made by the service still require independent review.
+
+The tag group is dynamic: baseline IDs are inspection evidence, not a runtime hard allowlist. Restrict group-query/tag/instance changes, coordinate exact initial scope and rerun checks before apply and regularly. Application Insights can include Auto Scaling groups with matching tags beyond normal resource-group membership. This bounded workflow explicitly rejects matching Auto Scaling tags and instance ASG membership; future ASG/tag additions still require continuous owner review. Do not use an account-wide, AWS::AllSupported or CloudFormation-stack group to bypass these checks. It creates no new group or tags. Inspection and apply are not atomic.
+
+Before instrumentation approve civilian/DoD/State classification, ATO/SSP/APL/CDM/DoDIN/CMVP, actual log/event contents, privacy/residency/records/legalhold, service-support/network/agent/key/retention and costs. OS/application logs can contain secrets or regulated information. FIPS metadata endpoints do not establish agent/log transport/module validation or authorization. Existing/new CloudWatch log groups, retention/encryption, pattern redaction, access and delivery/SSM output must be reviewed before enabling the managed instrumentation; the native application has no fabricated KMS/log-retention selectors. If the recommended initial telemetry is not approved, do not apply this recipe.
+
+Run python INSPECT.py before plan with approved boto3/botocore. It checks exact owner/group ARN/singleEC2tagquery, ALL paginated group resources with no query errors, exact unique baseline ARNs, independently paginated EC2 tag discovery, running matching instances and online SSM-managed Linux/Windows nodes, no ASG membership or matching ASG tags, and absent application (only ResourceNotFoundException proves absence). Modern Resource Groups Resources/Identifier response is preferred; deprecated ResourceIdentifiers is a fallback, never added twice when both are returned. Six different services metadata is not effective monitoring permission proof. The inspector reads no user data, role credentials, SSM command output, log/event/problem bodies or application data.
+
+Run terraform init/validate/plan with protected state, review initial guest/stack/alarm/log changes and owner-apply through the approved change process. Existing instance lookups/owner checks do not validate the dynamic group alone; do not skip inspection. auto_create is a create-time action, not a repeatable agent-repair toggle. GroupingType is omitted to retain resource-group-based discovery, never ACCOUNT_BASED. No automated repair/retry of guest instrumentation, service stack or role policies is generated.
+
+After setup run python INSPECT.py --check. It repeats baseline checks, then requires exact owner/group/RESOURCE_GROUP_BASED, futureauto-configoff/eventmonitoringon/OpsCenteroff/AttachMissingPermissionfalse/noSNS. It paginates components and describes each actual resource list; requires only approved EC2 resources with no overlap/duplicates, Monitor=true, DEFAULT tier and no component remarks. Union of component resources must equal the expected baseline. Real component identity comes from service metadata, not an invented name derived from an instance. Application remarks fail qualification rather than being treated as healthy. No universal lifecycle enum is invented from an undocumented string. Component settings are not proof of actual metrics/agent health/application readiness.
+
+Independently verify actual agent install/configuration/SSM service stack status, permitted/denied telemetry access, expected metrics/log delivery/redaction/retention/key controls and alarm behavior under an approved pilot. Check configuration-history warnings/errors inside the monitoring boundary and reconcile service-created resources; do not mark no-data alarms as good application health. Test actual supported workload transactions, restoration and failover before migration wave cutover. Compare matching source/target instances/roles/times and log scope, preserve checkpoint/ownership/evidence, and hand off monitoring/incident/retention ownership. Application Insights does not migrate guest/application data or prove compatibility/readiness by itself.
+
+Budget actual CloudWatch metrics/alarms/log ingestion/storage/queries, SSM/package/transfer and host overhead; no fixed VM-price proxy or savings assumption. Recovery uses the saved prior agent/SSM/stack/monitoring configuration and a separately approved service cleanup plan. Deleting an Application Insights record does not undo installed agents, restore prior log settings or erase retained evidence; prevent_destroy does not stop service operations or outside API changes. Retain logs/configuration/records and reconcile all managed resources before decommission. Additional application tiers, ASGs, account-wide scope/continuous auto-config, notifications and TCO/project integration remain separate work.
+
+https://docs.aws.amazon.com/cloudwatch/latest/APIReference/API_CreateApplication.html
+https://docs.aws.amazon.com/cloudwatch/latest/APIReference/API_DescribeComponent.html
+https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/appinsights-prereqs.html
+https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/appinsights-troubleshooting.html
+https://docs.aws.amazon.com/general/latest/gr/applicationinsights.html
+`;
