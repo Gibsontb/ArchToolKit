@@ -2,24 +2,34 @@
   "platform": "aws",
   "meaning": "Wiring coverage only. Catalog aliases may share the same workflow; uniqueDedicatedPaths counts each build ID once. Dedicated paths can cover a subset of product features. Existing builds and native types require individual review. No live deployment or authorization is implied.",
   "catalogEntries": 702,
-  "uniqueDedicatedPaths": 108,
-  "setupAliases": 6,
+  "uniqueDedicatedPaths": 119,
+  "setupAliases": 12,
   "counts": {
-    "dedicated-setup-path": 93,
-    "existing-builds": 194,
+    "dedicated-setup-path": 108,
+    "existing-builds": 180,
     "native-resource-types": 78,
-    "runtime-api": 12,
+    "runtime-api": 15,
     "retired": 44,
-    "unmapped": 281
+    "unmapped": 277
   },
   "services": [
     {
       "id": "access-analyzer",
       "name": "Access Analyzer",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
-      "terraformBuilds": [],
+      "setupAliasOf": "taxonomy:iamaccessanalyzer",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_access_analyzer",
+          "description": "Protected analyzer with explicit trust zone, optional unused-access age and metadata-only inspection. No automatic policy remediation, archive rules or credential changes."
+        }
+      ],
+      "terraformBuilds": [
+        "aws_service_access_analyzer",
+        "res_aws_accessanalyzer_analyzer",
+        "res_aws_accessanalyzer_archive_rule"
+      ],
       "ansibleBuilds": [
         "mod_community_aws_accessanalyzer_validate_policy_info"
       ],
@@ -275,9 +285,15 @@
       "id": "amazon-appflow",
       "name": "Amazon AppFlow",
       "category": "Application Integration",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_appflow_salesforce_s3",
+          "description": "New flow using an existing private Salesforce profile, explicit Id/Name projection and customer data key. No connector credentials, automatic transfer, field discovery expansion or existing bucket-policy replacement."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_appflow_salesforce_s3",
         "res_aws_appflow_connector_profile",
         "res_aws_appflow_flow"
       ],
@@ -2341,11 +2357,16 @@
         {
           "id": "aws_service_elasticache_serverless",
           "description": "Create a customer-key encrypted IPv4 VPC serverless cache with dedicated client-group ingress, existing RBAC, snapshots, explicit storage/ECPU caps and read-only metadata checks."
+        },
+        {
+          "id": "aws_service_elasticache_sharded",
+          "description": "Create a fresh cluster-mode-enabled replication group with Multi-AZ replicas, customer-key/TLS protection, dedicated client ingress, existing RBAC/parameter groups and snapshots. Exports metadata checks without cache commands."
         }
       ],
       "terraformBuilds": [
         "aws_service_elasticache",
         "aws_service_elasticache_serverless",
+        "aws_service_elasticache_sharded",
         "aws_app_managed_cache",
         "res_aws_elasticache_cluster",
         "res_aws_elasticache_global_replication_group",
@@ -2461,9 +2482,15 @@
       "id": "amazon-eventbridge-pipes",
       "name": "Amazon EventBridge Pipes",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_pipes_sqs_lambda",
+          "description": "Stage a stopped synchronous pipe with a new scoped role, existing encrypted source/redrive queues and customer-key pipe encryption. No filtering, enrichment or message operations during checks."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_pipes_sqs_lambda",
         "res_aws_pipes_pipe"
       ],
       "ansibleBuilds": [],
@@ -2475,9 +2502,15 @@
       "id": "amazon-eventbridge-scheduler",
       "name": "Amazon EventBridge Scheduler",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_scheduler_lambda",
+          "description": "Create a separate schedule group, scoped execution role, encrypted delivery DLQ and customer-key payload encryption. Disabled by default; no target invocation during checks."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_scheduler_lambda",
         "res_aws_scheduler_schedule",
         "res_aws_scheduler_schedule_group"
       ],
@@ -3749,9 +3782,15 @@
       "id": "amazon-mwaa",
       "name": "Amazon MWAA",
       "category": "integration-messaging",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_mwaa_private",
+          "description": "New private webserver environment and five encrypted retained log groups. Uses an approved existing execution role, network and versioned DAG bucket. No DAG upload, dependency installation or task trigger."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_mwaa_private",
         "res_aws_mwaa_environment"
       ],
       "ansibleBuilds": [],
@@ -4077,9 +4116,16 @@
       "id": "amazon-prometheus-service",
       "name": "Amazon Prometheus Service",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "setupAliasOf": "amazon-managed-service-for-prometheus",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_prometheus",
+          "description": "Create a protected metrics workspace, optional role-scoped ingest/query policies and deploy-time remote-write YAML."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_prometheus",
         "res_aws_prometheus_alert_manager_definition",
         "res_aws_prometheus_anomaly_detector",
         "res_aws_prometheus_query_logging_configuration",
@@ -4425,9 +4471,15 @@
       "id": "amazon-redshift",
       "name": "Amazon Redshift",
       "category": "Analytics",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_redshift_provisioned",
+          "description": "Create a new encrypted single-AZ multi-node cluster, scoped client group, managed admin secret, TLS parameters, snapshots and encrypted retained connection/user audit logs. No password or SQL access during checks."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_redshift_provisioned",
         "res_aws_redshift_authentication_profile",
         "res_aws_redshift_cluster",
         "res_aws_redshift_cluster_iam_roles",
@@ -6280,7 +6332,12 @@
       "id": "aws-appconfig-data",
       "name": "AWS AppConfig Data",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "aws-appconfig",
+        "message": "AppConfig Data retrieves already-deployed configuration using StartConfigurationSession and GetLatestConfiguration. Open AppConfig setup for the application, environment and configuration profile. AWS recommends the AppConfig Agent for retrieval; protect configuration/session tokens and qualify scoped consumer permissions, polling and application behavior separately. This API does not deploy a second application.",
+        "reference": "https://docs.aws.amazon.com/appconfig/latest/userguide/about-data-plane.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -6341,10 +6398,15 @@
         {
           "id": "aws_service_mgn_pilot",
           "description": "Validate an existing agent-based source and its reviewed private per-source launch settings, then explicitly request one stopped test launch. No account defaults, agent enrollment or cutover changes."
+        },
+        {
+          "id": "aws_service_mgn_cutover",
+          "description": "Inspect reviewed private production settings, explicitly request one cutover launch and check its exact target. Keep replication until separate acceptance/finalization."
         }
       ],
       "terraformBuilds": [
-        "aws_service_mgn_pilot"
+        "aws_service_mgn_pilot",
+        "aws_service_mgn_cutover"
       ],
       "ansibleBuilds": [],
       "nativeTypes": [
@@ -6895,9 +6957,15 @@
       "id": "aws-cloud-wan",
       "name": "AWS Cloud WAN",
       "category": "Networking and Content Delivery",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_cloudwan_isolated_core",
+          "description": "New global/core network, reviewed regional edges and isolated segments. Optional existing private IPv4 VPC attachment requires separate acceptance; existing VPC routes remain owner-managed."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_cloudwan_isolated_core",
         "res_aws_networkmanager_connect_attachment",
         "res_aws_networkmanager_connect_peer",
         "res_aws_networkmanager_core_network",
@@ -7702,9 +7770,15 @@
       "id": "aws-direct-connect",
       "name": "AWS Direct Connect",
       "category": "Networking and Content Delivery",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_directconnect_private_vif",
+          "description": "Create a protected private VIF to an approved existing gateway, with explicit VLAN/16-bit ASNs/peering and staged FRR, Cisco or Junos routing snippets. Physical circuit and gateway associations stay owner-managed."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_directconnect_private_vif",
         "aws_app_connector",
         "res_aws_dx_bgp_peer",
         "res_aws_dx_connection",
@@ -7831,9 +7905,15 @@
       "id": "aws-elastic-disaster-recovery",
       "name": "AWS Elastic Disaster Recovery",
       "category": "Storage",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_drs_recovery",
+          "description": "Inspect existing private DRS source/template and exact encrypted PIT snapshots; explicitly request one stopped drill or separately confirmed production recovery. No agent enrollment, shared configuration or traffic changes."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_drs_recovery",
         "res_aws_drs_replication_configuration_template"
       ],
       "ansibleBuilds": [],
@@ -8459,7 +8539,7 @@
       "dedicatedPaths": [
         {
           "id": "aws_service_access_analyzer",
-          "description": "Create a protected regional analyzer with explicit trust scope and a read-only findings export script."
+          "description": "Protected analyzer with explicit trust zone, optional unused-access age and metadata-only inspection. No automatic policy remediation, archive rules or credential changes."
         }
       ],
       "terraformBuilds": [
@@ -8600,9 +8680,16 @@
       "id": "aws-identity-and-access-management-access-analyzer",
       "name": "AWS Identity and Access Management Access Analyzer",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "setupAliasOf": "taxonomy:iamaccessanalyzer",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_access_analyzer",
+          "description": "Protected analyzer with explicit trust zone, optional unused-access age and metadata-only inspection. No automatic policy remediation, archive rules or credential changes."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_access_analyzer",
         "res_aws_accessanalyzer_analyzer",
         "res_aws_accessanalyzer_archive_rule"
       ],
@@ -8814,7 +8901,12 @@
       "id": "aws-iot-data-plane",
       "name": "AWS IoT Data Plane",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "aws-iot-core",
+        "message": "IoT Data publishes MQTT messages and operates on existing device shadows/retained data. Open IoT Core setup for the existing service resources and policies. Runtime messaging, endpoint/device identity, topic/shadow permissions and data handling need a separate authorized application flow; publishing can have device side effects and an empty retained payload can delete retained data.",
+        "reference": "https://docs.aws.amazon.com/iot/latest/apireference/API_iotdata_Publish.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -10496,7 +10588,12 @@
       "id": "aws-signer-data-plane",
       "name": "AWS Signer Data Plane",
       "category": "other",
-      "coverage": "unmapped",
+      "runtimeApi": {
+        "setupService": "aws-signer",
+        "message": "Signer Data Plane retrieves revocation status for existing signed artifacts. Open Signer setup for signing profiles and related resources. Revocation checks are separate from creating a profile, signing an artifact and validating its full signature/trust chain; the existing resource builders do not constitute a complete artifact verification client.",
+        "reference": "https://docs.aws.amazon.com/service-authorization/latest/reference/list_signer.html"
+      },
+      "coverage": "runtime-api",
       "dedicatedPaths": [],
       "terraformBuilds": [],
       "ansibleBuilds": [],
@@ -10542,9 +10639,16 @@
       "id": "aws-single-sign-on-admin",
       "name": "AWS Single Sign-On Admin",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "setupAliasOf": "aws-iam-identity-center",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_identity_center",
+          "description": "Create a permission set in an existing organization instance, attach an AWS-managed policy and optionally assign a user or group to one account."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_identity_center",
         "res_aws_ssoadmin_account_assignment",
         "res_aws_ssoadmin_application",
         "res_aws_ssoadmin_application_access_scope",
@@ -10734,9 +10838,15 @@
       "id": "aws-storage-gateway",
       "name": "AWS Storage Gateway",
       "category": "Storage",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_storagegateway_nfs",
+          "description": "New prefix-scoped gateway role and protected NFS share, existing bucket/customer key/audit group. Explicit read-only or writable mode; appliance activation, cache and protected client networking are prerequisites."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_storagegateway_nfs",
         "res_aws_storagegateway_cache",
         "res_aws_storagegateway_cached_iscsi_volume",
         "res_aws_storagegateway_file_system_association",
@@ -11123,11 +11233,28 @@
       "id": "aws-transform-mgn",
       "name": "AWS Transform MGN",
       "category": "migration",
-      "coverage": "unmapped",
-      "dedicatedPaths": [],
-      "terraformBuilds": [],
+      "setupAliasOf": "aws-application-migration-service",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_mgn_pilot",
+          "description": "Validate an existing agent-based source and its reviewed private per-source launch settings, then explicitly request one stopped test launch. No account defaults, agent enrollment or cutover changes."
+        },
+        {
+          "id": "aws_service_mgn_cutover",
+          "description": "Inspect reviewed private production settings, explicitly request one cutover launch and check its exact target. Keep replication until separate acceptance/finalization."
+        }
+      ],
+      "terraformBuilds": [
+        "aws_service_mgn_pilot",
+        "aws_service_mgn_cutover"
+      ],
       "ansibleBuilds": [],
-      "nativeTypes": []
+      "nativeTypes": [
+        "AWS::MGN::Connector",
+        "AWS::MGN::LaunchConfigurationTemplate",
+        "AWS::MGN::NetworkMigrationDefinition"
+      ]
     },
     {
       "id": "aws-trusted-advisor",
@@ -12105,9 +12232,16 @@
       "id": "opensearch-service-serverless",
       "name": "OpenSearch Service Serverless",
       "category": "other",
-      "coverage": "existing-builds",
-      "dedicatedPaths": [],
+      "setupAliasOf": "taxonomy:opensearchserverless",
+      "coverage": "dedicated-setup-path",
+      "dedicatedPaths": [
+        {
+          "id": "aws_service_opensearch_serverless",
+          "description": "Configure search/time-series/vector collections, encryption, explicit public/private network policy and existing-role data access."
+        }
+      ],
       "terraformBuilds": [
+        "aws_service_opensearch_serverless",
         "res_aws_opensearchserverless_access_policy",
         "res_aws_opensearchserverless_collection",
         "res_aws_opensearchserverless_collection_group",

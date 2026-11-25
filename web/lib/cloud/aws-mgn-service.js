@@ -46,27 +46,30 @@ export const AWS_MGN_SERVICE={
     const result=awsServiceModule(region,[
       dat('aws_caller_identity','current',{}),dat('aws_subnet','target',{id:subnet}),dat('aws_subnet','staging',{id:staging}),
       dat('aws_security_group','selected',{for_each:x('toset('+JSON.stringify([...new Set([...groups,...stagingGroups])])+')'),id:x('each.value')}),dat('aws_kms_key','selected',{key_id:kms}),
-      res('terraform_data','reviewed',{input:x(hcl({name,source,template,version}))},[blk('lifecycle',{},[blk('precondition',{condition:x('data.aws_caller_identity.current.account_id == '+JSON.stringify(account)+' && data.aws_subnet.target.owner_id == data.aws_caller_identity.current.account_id && data.aws_subnet.staging.owner_id == data.aws_caller_identity.current.account_id && data.aws_subnet.target.vpc_id == data.aws_subnet.staging.vpc_id && !data.aws_subnet.target.map_public_ip_on_launch && !data.aws_subnet.staging.map_public_ip_on_launch && data.aws_subnet.target.available_ip_address_count >= 4 && alltrue([for group in data.aws_security_group.selected : group.owner_id == data.aws_caller_identity.current.account_id && group.vpc_id == data.aws_subnet.target.vpc_id]) && data.aws_kms_key.selected.arn == '+JSON.stringify(kms)+' && data.aws_kms_key.selected.enabled && data.aws_kms_key.selected.key_usage == "ENCRYPT_DECRYPT" && data.aws_kms_key.selected.key_spec == "SYMMETRIC_DEFAULT" && data.aws_kms_key.selected.key_manager == "CUSTOMER"'),error_message:'Require this account private same-VPC staging/test network, approved groups, free target IPs and enabled symmetric customer key.'})])]),
+      res('terraform_data','reviewed',{input:x(hcl({name,source,template,version}))},[blk('lifecycle',{},[blk('precondition',{condition:x('data.aws_caller_identity.current.account_id == '+JSON.stringify(account)+' && data.aws_subnet.target.owner_id == data.aws_caller_identity.current.account_id && data.aws_subnet.staging.owner_id == data.aws_caller_identity.current.account_id && data.aws_subnet.target.vpc_id == data.aws_subnet.staging.vpc_id && !data.aws_subnet.target.map_public_ip_on_launch && !data.aws_subnet.staging.map_public_ip_on_launch && data.aws_subnet.target.available_ip_address_count >= 4 && alltrue([for group in data.aws_security_group.selected : split(":", group.arn)[4] == data.aws_caller_identity.current.account_id && group.vpc_id == data.aws_subnet.target.vpc_id]) && data.aws_kms_key.selected.arn == '+JSON.stringify(kms)+' && data.aws_kms_key.selected.enabled && data.aws_kms_key.selected.key_usage == "ENCRYPT_DECRYPT" && data.aws_kms_key.selected.key_spec == "SYMMETRIC_DEFAULT" && data.aws_kms_key.selected.key_manager == "CUSTOMER"'),error_message:'Require this account private same-VPC staging/test network, approved groups, free target IPs and enabled symmetric customer key.'})])]),
     ],GUIDE,findings);
     return{...result,files:{...result.files,'versions.tf':result.files['versions.tf'] .replace('terraform {','terraform {\n  required_version = ">= 1.4.0"'),'PILOT-CONFIG.json':JSON.stringify(config,null,2)+'\n','OPERATE.py':SCRIPT}};
   },
 }                   ;
 
-const SCRIPT=[
+const SCRIPT=mgnOperator();
+/** Shared read-only preflight; mutations remain explicit and mode-specific. */
+export function mgnOperator(cutover=false)        { return [
   'import argparse, json, pathlib, re',
   'import boto3',
   'from botocore.config import Config',
-  'parser=argparse.ArgumentParser(description="Inspect selected MGN source by default; explicit stopped test launch only")',
-  'mode=parser.add_mutually_exclusive_group(); mode.add_argument("--test",action="store_true"); mode.add_argument("--job")',
+  'parser=argparse.ArgumentParser(description="Inspect selected MGN source by default; explicit '+(cutover?'production cutover':'stopped test')+' launch only")',
+  'mode=parser.add_mutually_exclusive_group(); mode.add_argument("--'+(cutover?'cutover':'test')+'",action="store_true"); mode.add_argument("--job")',
+  ...(cutover?['parser.add_argument("--confirm-write-freeze",action="store_true"); parser.add_argument("--confirm-backup",action="store_true"); parser.add_argument("--confirm-acceptance",action="store_true")']:[]),
   'parser.add_argument("--confirm-launch",action="store_true"); args=parser.parse_args()',
-  'config=json.loads((pathlib.Path(__file__).resolve().parent/"PILOT-CONFIG.json").read_text())',
+  'config=json.loads((pathlib.Path(__file__).resolve().parent/"'+(cutover?'CUTOVER':'PILOT')+'-CONFIG.json").read_text())',
   'session=boto3.Session(region_name=config["region"])',
   'client_config=Config(retries={"total_max_attempts":1,"mode":"standard"},use_fips_endpoint=config["fips"])',
   'if session.client("sts",config=client_config).get_caller_identity()["Account"]!=config["account"]: raise RuntimeError("Unexpected operator account")',
   'mgn=session.client("mgn",config=client_config); ec2=session.client("ec2",config=client_config)',
   'def checked_job(job):',
   '    servers=job.get("participatingServers",[])',
-  '    if job.get("initiatedBy")!="START_TEST" or job.get("type")!="LAUNCH" or len(servers)!=1 or servers[0].get("sourceServerID")!=config["sourceID"]: raise RuntimeError("Job does not belong only to this selected source test")',
+  '    if job.get("initiatedBy")!="'+(cutover?'START_CUTOVER':'START_TEST')+'" or job.get("type")!="LAUNCH" or len(servers)!=1 or servers[0].get("sourceServerID")!=config["sourceID"]: raise RuntimeError("Job does not belong only to this selected source '+(cutover?'cutover':'test')+'")',
   '    return {"jobID":job.get("jobID"),"status":job.get("status"),"sourceServerID":config["sourceID"],"launchStatus":servers[0].get("launchStatus"),"launchedEc2InstanceID":servers[0].get("launchedEc2InstanceID"),"application_acceptance_verified":False}',
   'if args.job:',
   '    if not re.fullmatch(r"mgnjob-[0-9A-Za-z]{17}",args.job): raise RuntimeError("Enter the returned MGN job ID")',
@@ -81,7 +84,7 @@ const SCRIPT=[
   'if replication.get("sourceServerID")!=config["sourceID"] or replication.get("stagingAreaSubnetId")!=config["staging"] or set(replication.get("replicationServersSecurityGroupsIDs",[]))!=set(config["stagingGroups"]) or replication.get("createPublicIP") is not False or replication.get("dataPlaneRouting")!="PRIVATE_IP" or replication.get("ebsEncryption")!="CUSTOM" or replication.get("ebsEncryptionKeyArn")!=config["kms"] or bool(replication.get("useFipsEndpoint",False))!=config["fips"]: raise RuntimeError("Replication placement/encryption/endpoints differ")',
   'if replication.get("storageConfiguration",{}).get("storageType") not in [None,"EBS"] or replication.get("internetProtocol") not in [None,"IPV4"]: raise RuntimeError("This pilot supports IPv4/EBS staging only")',
   'launch=mgn.get_launch_configuration(sourceServerID=config["sourceID"])',
-  'if launch.get("sourceServerID")!=config["sourceID"] or launch.get("ec2LaunchTemplateID")!=config["template"] or launch.get("launchDisposition")!="STOPPED" or launch.get("copyPrivateIp") is not False or launch.get("targetInstanceTypeRightSizingMethod")!="NONE" or launch.get("postLaunchActions",{}).get("ssmDocuments"): raise RuntimeError("Require exact stopped, non-rightsized per-source launch without copied private IP or post-launch documents")',
+  'if launch.get("sourceServerID")!=config["sourceID"] or launch.get("ec2LaunchTemplateID")!=config["template"] or launch.get("launchDisposition")!="'+(cutover?'STARTED':'STOPPED')+'" or launch.get("copyPrivateIp") is not False or launch.get("targetInstanceTypeRightSizingMethod")!="NONE" or launch.get("postLaunchActions",{}).get("ssmDocuments"): raise RuntimeError("Require exact '+(cutover?'started':'stopped')+', non-rightsized per-source launch without copied private IP or post-launch documents")',
   'actions=mgn.list_source_server_actions(sourceServerID=config["sourceID"],maxResults=1000)',
   'if actions.get("nextToken") or any(item.get("active") is not False for item in actions.get("items",[])): raise RuntimeError("Disable/review source post-migration actions before this bounded pilot")',
   'templates=ec2.describe_launch_templates(LaunchTemplateIds=[config["template"]])["LaunchTemplates"]',
@@ -89,9 +92,10 @@ const SCRIPT=[
   'versions=ec2.describe_launch_template_versions(LaunchTemplateId=config["template"],Versions=[str(config["version"])])["LaunchTemplateVersions"]',
   'if len(versions)!=1 or versions[0].get("VersionNumber")!=config["version"]: raise RuntimeError("Launch version differs")',
   'data=versions[0]["LaunchTemplateData"]; interfaces=data.get("NetworkInterfaces",[])',
+  ...(cutover?['if data.get("DisableApiTermination") is not True: raise RuntimeError("Production template must enable API termination protection")']:[]),
   'if data.get("InstanceType")!=config["instance"] or data.get("SecurityGroupIds") or len(interfaces)!=1: raise RuntimeError("Require exact instance type and one explicit private NIC")',
   'nic=interfaces[0]',
-  'if nic.get("DeviceIndex")!=0 or nic.get("SubnetId")!=config["subnet"] or set(nic.get("Groups",[]))!=set(config["groups"]) or nic.get("AssociatePublicIpAddress") is not False or nic.get("NetworkInterfaceId") or nic.get("PrivateIpAddress") or nic.get("PrivateIpAddresses") or nic.get("Ipv6Addresses") or nic.get("Ipv6AddressCount",0): raise RuntimeError("Launch network differs; do not reuse live NICs/private IPs or assign public/IPv6 addresses")',
+  'if nic.get("DeviceIndex")!=0 or nic.get("SubnetId")!=config["subnet"] or set(nic.get("Groups",[]))!=set(config["groups"]) or nic.get("AssociatePublicIpAddress") is not False or nic.get("NetworkInterfaceId") or nic.get("PrivateIpAddress") or nic.get("PrivateIpAddresses") or nic.get("Ipv6Addresses") or nic.get("Ipv6AddressCount",0) or nic.get("Ipv6Prefixes") or nic.get("Ipv6PrefixCount",0): raise RuntimeError("Launch network differs; do not reuse live NICs/private IPs or assign public/IPv6 addresses")',
   'metadata=data.get("MetadataOptions",{})',
   'if metadata.get("HttpTokens")!="required" or metadata.get("HttpEndpoint")!="enabled" or metadata.get("HttpPutResponseHopLimit",99)>2: raise RuntimeError("Require reviewed IMDSv2 endpoint/hop limit")',
   'actual_profile=data.get("IamInstanceProfile",{})',
@@ -106,14 +110,14 @@ const SCRIPT=[
   'for device in data.get("BlockDeviceMappings",[]):',
   '    ebs=device.get("Ebs")',
   '    if ebs and (ebs.get("Encrypted") is False or ebs.get("KmsKeyId") not in [None,config["kms"]]): raise RuntimeError("Launch device overrides encryption/key")',
-  'if not args.test: print(json.dumps({"metadata_checked":True,"sourceServerID":config["sourceID"],"lifecycle":source.get("lifeCycle",{}).get("state"),"replication":source.get("dataReplicationInfo",{}).get("dataReplicationState"),"launch_requested":False})); raise SystemExit(0)',
-  'if not args.confirm_launch: raise RuntimeError("Test requires --confirm-launch after approved isolated pilot, cost, licensing and source-consistency review")',
+  'if not args.'+(cutover?'cutover':'test')+': print(json.dumps({"metadata_checked":True,"sourceServerID":config["sourceID"],"lifecycle":source.get("lifeCycle",{}).get("state"),"replication":source.get("dataReplicationInfo",{}).get("dataReplicationState"),"launch_requested":False})); raise SystemExit(0)',
+  cutover?'if not (args.confirm_launch and args.confirm_write_freeze and args.confirm_backup and args.confirm_acceptance): raise RuntimeError("Cutover requires explicit launch, source-writer freeze/final sync, tested recovery backup and pilot acceptance confirmations")':'if not args.confirm_launch: raise RuntimeError("Test requires --confirm-launch after approved isolated pilot, cost, licensing and source-consistency review")',
   'replicated=source.get("dataReplicationInfo",{}); lag=re.fullmatch(r"PT(?:(\\d+(?:\\.\\d+)?)H)?(?:(\\d+(?:\\.\\d+)?)M)?(?:(\\d+(?:\\.\\d+)?)S)?",replicated.get("lagDuration",""))',
-  'if source.get("lifeCycle",{}).get("state")!="READY_FOR_TEST" or source.get("launchedInstance",{}).get("ec2InstanceID") or replicated.get("dataReplicationState")!="CONTINUOUS" or replicated.get("dataReplicationError",{}).get("error") or not lag or not any(lag.groups()) or sum(float(value or 0)*scale for value,scale in zip(lag.groups(),[3600,60,1]))>config["lag"]: raise RuntimeError("Require READY_FOR_TEST, continuous error-free replication within lag bound and no existing launched instance")',
-  'job=mgn.start_test(sourceServerIDs=[config["sourceID"]])["job"]',
+  'if source.get("lifeCycle",{}).get("state")!="'+(cutover?'READY_FOR_CUTOVER':'READY_FOR_TEST')+'" or source.get("launchedInstance",{}).get("ec2InstanceID") or replicated.get("dataReplicationState")!="CONTINUOUS" or replicated.get("dataReplicationError",{}).get("error") or not lag or not any(lag.groups()) or sum(float(value or 0)*scale for value,scale in zip(lag.groups(),[3600,60,1]))>config["lag"]: raise RuntimeError("Require '+(cutover?'READY_FOR_CUTOVER':'READY_FOR_TEST')+', continuous error-free replication within lag bound and no existing launched instance")',
+  'job=mgn.'+(cutover?'start_cutover':'start_test')+'(sourceServerIDs=[config["sourceID"]])["job"]',
   'if not re.fullmatch(r"mgnjob-[0-9A-Za-z]{17}",job.get("jobID","")): raise RuntimeError("Unexpected receipt; inspect history before retry")',
   'receipt=checked_job(job) if job.get("participatingServers") else {"jobID":job["jobID"],"sourceServerID":config["sourceID"],"membership_pending":True,"application_acceptance_verified":False}; receipt["request_accepted"]=True; receipt["completion_verified"]=False; print(json.dumps(receipt))',
-].join('\n')+'\n';
+].join('\n')+'\n'; }
 
 const GUIDE=`# One-source MGN stopped test pilot
 

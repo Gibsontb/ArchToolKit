@@ -1,5 +1,20 @@
 /** Verified data-plane entries. These are not aliases for creating new infrastructure. */
 export const AWS_RUNTIME_APIS = {
+  'aws-appconfig-data': {
+    setupService:'aws-appconfig',
+    message:'AppConfig Data retrieves already-deployed configuration using StartConfigurationSession and GetLatestConfiguration. Open AppConfig setup for the application, environment and configuration profile. AWS recommends the AppConfig Agent for retrieval; protect configuration/session tokens and qualify scoped consumer permissions, polling and application behavior separately. This API does not deploy a second application.',
+    reference:'https://docs.aws.amazon.com/appconfig/latest/userguide/about-data-plane.html',
+  },
+  'aws-iot-data-plane': {
+    setupService:'aws-iot-core',
+    message:'IoT Data publishes MQTT messages and operates on existing device shadows/retained data. Open IoT Core setup for the existing service resources and policies. Runtime messaging, endpoint/device identity, topic/shadow permissions and data handling need a separate authorized application flow; publishing can have device side effects and an empty retained payload can delete retained data.',
+    reference:'https://docs.aws.amazon.com/iot/latest/apireference/API_iotdata_Publish.html',
+  },
+  'aws-signer-data-plane': {
+    setupService:'aws-signer',
+    message:'Signer Data Plane retrieves revocation status for existing signed artifacts. Open Signer setup for signing profiles and related resources. Revocation checks are separate from creating a profile, signing an artifact and validating its full signature/trust chain; the existing resource builders do not constitute a complete artifact verification client.',
+    reference:'https://docs.aws.amazon.com/service-authorization/latest/reference/list_signer.html',
+  },
   'amazon-kinesis-video-webrtc-storage': {
     setupService: 'amazon-kinesis-video-streams',
     message: 'WebRTC Storage joins cloud storage sessions for an existing configured channel. Open Kinesis Video Streams setup and select retained-media ingestion preparation for the scoped participant policies and separately confirmed association operation. Joining a session is a distinct application/media action; GovCloud ingestion/storage is unavailable.',

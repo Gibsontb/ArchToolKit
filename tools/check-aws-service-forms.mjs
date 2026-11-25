@@ -2,6 +2,7 @@
  * PLAYWRIGHT_CORE may name an installed Playwright package; CHROME_PATH may select Chrome.
  * node tools/check-aws-service-forms.mjs
  * Optional --validate uses TERRAFORM_PATH to validate downloaded packages afterward.
+ * --runtime-only [--region us-gov-west-1] checks navigation/retirement/eligibility without repeating exports.
  */
 import { createRequire } from 'node:module';
 import { readFile, mkdir, mkdtemp } from 'node:fs/promises';
@@ -14,6 +15,17 @@ import { publicTestKey } from './service-test-ssh.mjs';
 import { AWS_SERVICE_AVAILABILITY } from '../src/cloud/aws-service-availability.ts';
 import { AWS_RUNTIME_APIS } from '../src/cloud/aws-runtime-apis.ts';
 import { AWS_SAGEMAKER_SERVICE } from '../src/cloud/aws-sagemaker-service.ts';
+import { AWS_MGN_CUTOVER_SERVICE } from '../src/cloud/aws-mgn-cutover-service.ts';
+import { AWS_SCHEDULER_SERVICE } from '../src/cloud/aws-scheduler-service.ts';
+import { AWS_PIPES_SERVICE } from '../src/cloud/aws-pipes-service.ts';
+import { AWS_REDSHIFT_PROVISIONED_SERVICE } from '../src/cloud/aws-redshift-provisioned-service.ts';
+import { AWS_DRS_SERVICE } from '../src/cloud/aws-drs-service.ts';
+import { AWS_DIRECTCONNECT_SERVICE } from '../src/cloud/aws-directconnect-service.ts';
+import { AWS_STORAGEGATEWAY_SERVICE } from '../src/cloud/aws-storagegateway-service.ts';
+import { AWS_MWAA_SERVICE } from '../src/cloud/aws-mwaa-service.ts';
+import { AWS_ACCESS_ANALYZER_SERVICE } from '../src/cloud/aws-access-analyzer-service.ts';
+import { AWS_APPFLOW_SERVICE } from '../src/cloud/aws-appflow-service.ts';
+import { AWS_CLOUDWAN_SERVICE } from '../src/cloud/aws-cloudwan-service.ts';
 import { AWS_EKS_POD_IDENTITY_SERVICE } from '../src/cloud/aws-eks-pod-identity-service.ts';
 import { AWS_INSTANCE_CONNECT_SERVICE } from '../src/cloud/aws-instance-connect-service.ts';
 import { AWS_IVS_SERVICE } from '../src/cloud/aws-ivs-service.ts';
@@ -22,6 +34,7 @@ import { AWS_KINESIS_VIDEO_SERVICE } from '../src/cloud/aws-kinesis-video-servic
 import { AWS_WEBRTC_SERVICE } from '../src/cloud/aws-webrtc-service.ts';
 import { AWS_WEBRTC_STORAGE_SERVICE } from '../src/cloud/aws-webrtc-storage-service.ts';
 import { AWS_ELASTICACHE_SERVERLESS_SERVICE } from '../src/cloud/aws-elasticache-serverless-service.ts';
+import { AWS_ELASTICACHE_SHARDED_SERVICE } from '../src/cloud/aws-elasticache-sharded-service.ts';
 import { defaultValues } from '../src/kit/blueprint.ts';
 
 const require = createRequire(import.meta.url);
@@ -29,6 +42,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright');
 const subnet = 'subnet-0123456789abcdef0', secondSubnet = 'subnet-0123456789abcdef1', group = 'sg-0123456789abcdef0';
 const role = name => 'arn:aws:iam::123456789012:role/' + name;
 const fixtures = [
+  ...['Account','Contact','Opportunity'].flatMap(object=>['JSON','CSV'].map(format=>['amazon-appflow','aws_service_appflow_salesforce_s3',{name:'reviewed-export',account:'123456789012',profile:'approved-private-salesforce',instance:'https://approved.my.salesforce.com',bucket:'approved-flow-output',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',object,format},'aws_appflow_flow'])),
+  ...[['2.11.2','mw1.small'],['2.11.0','mw1.medium'],['2.10.3','mw1.large']].map(([version,size])=>['amazon-mwaa','aws_service_mwaa_private',{name:'reviewed-workflows',account:'123456789012',bucket:'approved-airflow-dags',role:'approved-airflow-execution',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:['subnet-12345678','subnet-abcdef12'],group:'sg-12345678',version,size},'aws_mwaa_environment']),
+  ...['READ_ONLY','READ_WRITE'].flatMap(mode=>['RootSquash','AllSquash'].map(squash=>['aws-storage-gateway','aws_service_storagegateway_nfs',{name:'approved-files',account:'123456789012',gateway:'arn:aws:storagegateway:us-east-1:123456789012:gateway/sgw-1234ABCD',bucket:'approved-file-storage',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',audit:'/approved/file-audit',clients:'10.20.0.0/24',mode,squash,...(squash==='AllSquash'?{permissions:'OWNER',storage:'S3_INTELLIGENT_TIERING'}:{})},'aws_storagegateway_nfs_file_share'])),
+  ...['none','vpc'].map(attachment=>['aws-cloud-wan','aws_service_cloudwan_isolated_core',{name:'isolated-core',account:'123456789012',attachment,edges:['us-east-1','us-west-2'],...(attachment==='vpc'?{vpc:'vpc-12345678',subnets:['subnet-12345678','subnet-abcdef12']}:{})},'aws_networkmanager_core_network']),
+  ...[['FRR','eth0'],['CISCO','TenGigabitEthernet0/0/0'],['JUNOS','xe-0/0/0']].map(([vendor,port])=>['aws-direct-connect','aws_service_directconnect_private_vif',{name:'private-vif',account:'123456789012',connection:'dxcon-1234abcd',connection_name:'approved-circuit',gateway:'12345678-abcd-4bcd-8bcd-123456789abc',gateway_name:'approved-gateway',onprem:'10.20.0.0/16',cloud:'10.100.0.0/16',vendor,port},'aws_dx_private_virtual_interface']),
+  ...['us-east-1','us-gov-west-1'].flatMap(location=>['DRILL','RECOVERY'].map(mode=>{const partition=location.startsWith('us-gov-')?'aws-us-gov':'aws';return ['aws-elastic-disaster-recovery','aws_service_drs_recovery',{name:'recovery',mode,source:'arn:'+partition+':drs:'+location+':123456789012:source-server/s-0123456789abcdef0',snapshot:'pit-0123456789abcdef0',template:'lt-0123456789abcdef0',subnet,staging:secondSubnet,groups:group,staging_groups:'sg-0123456789abcdef1',kms:'arn:'+partition+':kms:'+location+':123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc'},'terraform_data',undefined,location];})),
+  ...['ra3.xlplus','ra3.4xlarge','ra3.16xlarge'].map(node=>['amazon-redshift','aws_service_redshift_provisioned',{name:'warehouse',subnets:[subnet,secondSubnet],clients:[group],kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',secret_kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abd',log_kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abe',node},'aws_redshift_cluster']),
+  ...['SSE-SQS','KMS'].flatMap(encryption=>[false,true].map(fifo=>['amazon-eventbridge-pipes','aws_service_pipes_sqs_lambda',{name:'application',source:'arn:aws:sqs:us-east-1:123456789012:source'+(fifo?'.fifo':''),dlq:'arn:aws:sqs:us-east-1:123456789012:failed'+(fifo?'.fifo':''),target:'arn:aws:lambda:us-east-1:123456789012:function:ApprovedBatch:3',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',encryption,...(encryption==='KMS'?{queue_key:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abd'}:{})},'aws_pipes_pipe'])),
+  ...['RATE','DAILY','WEEKLY','MONTHLY','ONCE'].map(mode=>['amazon-eventbridge-scheduler','aws_service_scheduler_lambda',{name:'nightly',target:'arn:aws:lambda:us-east-1:123456789012:function:ApprovedJob:3',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',mode,...(mode==='ONCE'?{timestamp:'2027-01-01T03:00:00'}:{})},'aws_scheduler_schedule']),
+  ...['valkey7','valkey8','redis7'].map(profile=>['amazon-elasticache','aws_service_elasticache_sharded',{name:'application-shards',account:'123456789012',subnets:[subnet,secondSubnet],clients:[group],parameter_group:'approved-cluster-params',group:'application-group',user:'application-user',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',profile},'aws_elasticache_replication_group']),
   ...['valkey8','valkey7','redis7'].map(profile=>['amazon-elasticache','aws_service_elasticache_serverless',{name:'application-cache',account:'123456789012',subnets:[subnet,secondSubnet],clients:[group],group:'application-group',user:'application-user',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',profile,...(profile==='valkey7'?{prescale:true}:{})},'aws_elasticache_serverless_cache']),
   ['amazon-kinesis-video-streams','aws_service_webrtc_storage',{name:'retained-peers',account:'123456789012',channel:'arn:aws:kinesisvideo:us-east-1:123456789012:channel/approved-peer/1234567890123',stream:'arn:aws:kinesisvideo:us-east-1:123456789012:stream/approved-video/1234567890123',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',master:role('PeerMaster'),viewer:role('PeerViewer'),approved:true},'aws_iam_role_policy'],
   ['amazon-kinesis-video-streams','aws_service_webrtc_signaling',{name:'approved-peers',account:'123456789012',stack_role:role('SignalingStack'),master:role('PeerMaster'),viewer:role('PeerViewer'),approved:true},'aws_cloudformation_stack'],
@@ -40,7 +63,8 @@ const fixtures = [
   ...['READ','WRITE'].map(access=>['amazon-elastic-kubernetes-service','aws_service_eks_pod_identity_s3',{name:'application',cluster:'arn:aws:eks:us-east-1:123456789012:cluster/private-cluster',nodegroup:'application',agent_version:'v1.3.0-eksbuild.1',namespace:'application',service_account:'application',bucket:'application-data',vpce:'vpce-0123456789abcdef0',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/probes/pod-identity@sha256:'+'a'.repeat(64),access,...(access==='WRITE'?{kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc'}:{})},'aws_eks_pod_identity_association']),
   ...['IMAGE','ARCHIVE'].map(artifact=>['amazon-sagemaker-ai','aws_service_sagemaker_endpoint',{name:'model-serving',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/inference/model@sha256:'+'a'.repeat(64),kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:[subnet,secondSubnet],clients:[group],role:role('ModelApplication'),artifact,...(artifact==='ARCHIVE'?{bucket:'approved-models',key:'releases/v1/model.tar.gz',version:'approved-version',etag:'a'.repeat(32),endpoint:'FIPS',count:2}: {})},'aws_sagemaker_endpoint',...(artifact==='IMAGE'?['amazon-sagemaker-runtime']:[])]),
   ['amazon-sagemaker','aws_service_sagemaker_endpoint',{name:'historical-model',image:'123456789012.dkr.ecr.us-east-1.amazonaws.com/inference/model@sha256:'+'a'.repeat(64),kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',subnets:[subnet,secondSubnet],clients:[group],role:role('ModelApplication')},'aws_sagemaker_endpoint'],
-  ...['AUTO','STANDARD'].map(endpoint=>['aws-application-migration-service','aws_service_mgn_pilot',{name:'pilot',source:'arn:aws:mgn:us-east-1:123456789012:source-server/s-0123456789abcdef0',template:'lt-0123456789abcdef0',subnet,staging:secondSubnet,groups:group,staging_groups:'sg-0123456789abcdef1',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',endpoint},'terraform_data']),
+  ...['aws_service_mgn_pilot','aws_service_mgn_cutover'].flatMap(id=>['AUTO','STANDARD'].map(endpoint=>['aws-application-migration-service',id,{name:'pilot',source:'arn:aws:mgn:us-east-1:123456789012:source-server/s-0123456789abcdef0',template:'lt-0123456789abcdef0',subnet,staging:secondSubnet,groups:group,staging_groups:'sg-0123456789abcdef1',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc',endpoint},'terraform_data'])),
+  ['aws-transform-mgn','aws_service_mgn_cutover',{name:'production',source:'arn:aws:mgn:us-east-1:123456789012:source-server/s-0123456789abcdef0',template:'lt-0123456789abcdef0',subnet,staging:secondSubnet,groups:group,staging_groups:'sg-0123456789abcdef1',kms:'arn:aws:kms:us-east-1:123456789012:key/12345678-abcd-4bcd-8bcd-123456789abc'},'terraform_data'],
   ...['OWNER_DACL','OWNER_DACL_SACL'].map(security=>['aws-datasync','aws_service_datasync_smb_fsx_windows',{name:'windows-migration',agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0',server:'files.example.com',path:'/Finance$/Reports',user:'SourceReader',domain:'EXAMPLE',ntlm_allowed:true,filesystem:'fs-0123456789abcdef0',group,target_user:'FsxMigration',target_domain:security==='OWNER_DACL'?'EXAMPLE':'OTHER',relationship:security==='OWNER_DACL'?'SAME':'TRUSTED',security,...(security==='OWNER_DACL_SACL'?{overwrite:'ALWAYS'}:{})},'aws_datasync_location_fsx_windows_file_system']),
   ...['EXAMPLE', ''].map(domain => ['aws-datasync', 'aws_service_datasync_smb_s3', { name:'windows-files', agent:'arn:aws:datasync:us-east-1:123456789012:agent/agent-0123456789abcdef0', server:'files.example.com', path:'/Finance$/Reports', user:'MigrationReader', domain, ntlm_allowed:true, bucket:'application-landing', role:role('DataSyncS3'), ...(domain ? {} : { overwrite:'ALWAYS', bandwidth:12.5 }) }, 'aws_datasync_location_smb']),
   ['amazon-elastic-file-system', 'aws_service_efs', { name:'migration-files', subnets:[subnet, secondSubnet], groups:[group], throughput:'elastic', accesspoint:'PRESERVE' }, 'aws_efs_access_point'],
@@ -155,7 +179,7 @@ const fixtures = [
     ['Functions', 'AWS/Lambda', 'Errors', 'FunctionName=orders', 'Sum', '300', 'right'],
     ['Database', 'AWS/RDS', 'CPUUtilization', 'DBInstanceIdentifier=orders-db', 'Average', '300', 'left'],
   ] }, 'aws_cloudwatch_dashboard'],
-  ...['ACCOUNT', 'ORGANIZATION', 'ACCOUNT_UNUSED_ACCESS', 'ORGANIZATION_UNUSED_ACCESS'].map(type => ['taxonomy:iamaccessanalyzer', 'aws_service_access_analyzer', { name: 'application-access', type, ...(type.endsWith('_UNUSED_ACCESS') ? { age: 180 } : {}) }, 'aws_accessanalyzer_analyzer']),
+  ...['ACCOUNT', 'ORGANIZATION', 'ACCOUNT_UNUSED_ACCESS', 'ORGANIZATION_UNUSED_ACCESS'].map(type => ['taxonomy:iamaccessanalyzer', 'aws_service_access_analyzer', { name: 'application-access', account:'123456789012', type, ...(type.startsWith('ORGANIZATION')?{organization:'o-1234567890'}:{}), ...(type.endsWith('_UNUSED_ACCESS') ? { age: 180 } : {}) }, 'aws_accessanalyzer_analyzer']),
   ['amazon-managed-service-for-prometheus', 'aws_service_prometheus', { name: 'application-metrics' }, 'aws_prometheus_workspace'],
   ['amazon-managed-service-for-prometheus', 'aws_service_prometheus', { name: 'application-metrics-access', writer: role('MetricsWriter'), reader: role('MetricsReader') }, 'aws_iam_role_policy'],
   ['aws-app-runner', 'aws_service_apprunner', { name: 'application', eligible: true, image: '123456789012.dkr.ecr.us-east-1.amazonaws.com/application@sha256:' + 'a'.repeat(64) }, 'aws_apprunner_service'],
@@ -189,8 +213,10 @@ const fixtures = [
 ];
 const onlyAt = process.argv.indexOf('--only');
 const requested = onlyAt === -1 ? [] : String(process.argv[onlyAt + 1] ?? '').split(',');
-const selected = onlyAt === -1 ? fixtures : fixtures.filter(fixture => requested.includes(fixture[1]));
-assert.ok(selected.length, 'No browser fixture matched --only.');
+const runtimeOnly=process.argv.includes('--runtime-only'),regionAt=process.argv.indexOf('--region');
+const selected = runtimeOnly?[]:onlyAt === -1 ? fixtures : fixtures.filter(fixture => requested.includes(fixture[1]));
+assert.ok(runtimeOnly||selected.length, 'No browser fixture matched --only.');
+assert.ok(!runtimeOnly||!process.argv.includes('--validate'),'Runtime-only checks have no deployment packages to validate.');
 await mkdir(WORK_TMP, { recursive: true });
 const work = await mkdtemp(path.join(WORK_TMP, 'aws-service-forms-'));
 const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}), headless: true, args: ['--disable-crashpad-for-testing'] });
@@ -207,15 +233,16 @@ try {
     try { await route.fulfill({ body: await readFile(file), contentType: { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json' }[path.extname(file)] ?? 'application/octet-stream' }); }
     catch { await route.fulfill({ status: 404, body: 'Missing local file' }); }
   });
-  for (const [index, [service, resource, values, emitted, runtimeSource]] of selected.entries()) {
-    await page.goto('https://archtoolkit.test/app/add-service.html?provider=aws&region=us-east-1');
+  if(runtimeOnly)await page.goto('https://archtoolkit.test/app/add-service.html?provider=aws&region='+encodeURIComponent(regionAt<0?'us-east-1':process.argv[regionAt+1]));
+  for (const [index, [service, resource, values, emitted, runtimeSource, fixtureRegion='us-east-1']] of selected.entries()) {
+    await page.goto('https://archtoolkit.test/app/add-service.html?provider=aws&region='+encodeURIComponent(fixtureRegion));
     await page.getByLabel('Service', { exact: true }).selectOption(runtimeSource ?? service);
     if (runtimeSource) {
       assert.equal(await page.getByText('No build definition is loaded for this service.', { exact: true }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'Export deployment package', exact: true }).isDisabled(), true);
       await page.getByRole('button', { name: /^Open .+ setup$/ }).click();
       assert.equal(await page.getByLabel('Service', { exact: true }).inputValue(), service);
-      assert.equal(await page.getByLabel('Region / site', { exact: true }).first().inputValue(), 'us-east-1');
+      assert.equal(await page.getByLabel('Region / site', { exact: true }).first().inputValue(), fixtureRegion);
     }
     await page.getByLabel('Service resource', { exact: true }).selectOption(resource);
     if (resource === 'aws_service_apprunner') assert.equal(await page.getByRole('link', { name: 'AWS availability details', exact: true }).isVisible(), true);
@@ -280,6 +307,11 @@ try {
       assert.equal(config.options.OverwriteMode, values.overwrite ?? 'NEVER');
       assert.match(await zip.text('OPERATE.py'), /total_max_attempts/);
     }
+    if (resource === 'aws_service_elasticache_sharded') {
+      const expected = AWS_ELASTICACHE_SHARDED_SERVICE.build({ ...defaultValues(AWS_ELASTICACHE_SHARDED_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['PREFLIGHT.py','CHECK.py','SHARDED-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+    }
     if (resource === 'aws_service_elasticache_serverless') {
       const expected = AWS_ELASTICACHE_SERVERLESS_SERVICE.build({ ...defaultValues(AWS_ELASTICACHE_SERVERLESS_SERVICE), aws_region:'us-east-1', ...values });
       assert.deepEqual(expected.findings, []);
@@ -320,6 +352,63 @@ try {
       assert.deepEqual(expected.findings, []);
       for (const name of ['PREFLIGHT.py','CHECK.py','CLIENT.py','WORKLOAD-CONFIG.json','smoke-job.yaml']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
     }
+    if (resource === 'aws_service_appflow_salesforce_s3') {
+      const expected=AWS_APPFLOW_SERVICE.build({...defaultValues(AWS_APPFLOW_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','FLOW-CONFIG.json','BUCKET-POLICY-MERGE.json','START-APPROVED.ps1','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_access_analyzer') {
+      const expected=AWS_ACCESS_ANALYZER_SERVICE.build({...defaultValues(AWS_ACCESS_ANALYZER_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','ANALYZER-CONFIG.json','GET-FINDINGS.ps1','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_mwaa_private') {
+      const expected=AWS_MWAA_SERVICE.build({...defaultValues(AWS_MWAA_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','MWAA-CONFIG.json','review_smoke_dag.py'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_storagegateway_nfs') {
+      const expected=AWS_STORAGEGATEWAY_SERVICE.build({...defaultValues(AWS_STORAGEGATEWAY_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','FILESHARE-CONFIG.json'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_cloudwan_isolated_core') {
+      const expected=AWS_CLOUDWAN_SERVICE.build({...defaultValues(AWS_CLOUDWAN_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','CORE-POLICY.json','NETWORK-CONFIG.json','providers.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_directconnect_private_vif') {
+      const expected=AWS_DIRECTCONNECT_SERVICE.build({...defaultValues(AWS_DIRECTCONNECT_SERVICE),aws_region:'us-east-1',...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','CONNECTION-CONFIG.json','CPE-REVIEW.cfg','variables.tf'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_drs_recovery') {
+      const expected=AWS_DRS_SERVICE.build({...defaultValues(AWS_DRS_SERVICE),aws_region:fixtureRegion,...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['OPERATE.py','RECOVERY-CONFIG.json'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+      assert.equal(JSON.parse(await zip.text('service-deployment.json')).region,fixtureRegion);
+    }
+    if (resource === 'aws_service_redshift_provisioned') {
+      const expected=AWS_REDSHIFT_PROVISIONED_SERVICE.build({...defaultValues(AWS_REDSHIFT_PROVISIONED_SERVICE),aws_region:'us-east-1',...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','WAREHOUSE-CONFIG.json','CHECK.sql'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_pipes_sqs_lambda') {
+      const expected=AWS_PIPES_SERVICE.build({...defaultValues(AWS_PIPES_SERVICE),aws_region:'us-east-1',...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','PIPE-CONFIG.json'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_scheduler_lambda') {
+      const expected=AWS_SCHEDULER_SERVICE.build({...defaultValues(AWS_SCHEDULER_SERVICE),aws_region:'us-east-1',...values});
+      assert.deepEqual(expected.findings,[]);
+      for(const name of ['INSPECT.py','SCHEDULE-CONFIG.json'])assert.equal(await zip.text(name),expected.files[name],resource+' exported stale '+name);
+    }
+    if (resource === 'aws_service_mgn_cutover') {
+      const expected = AWS_MGN_CUTOVER_SERVICE.build({ ...defaultValues(AWS_MGN_CUTOVER_SERVICE), aws_region:'us-east-1', ...values });
+      assert.deepEqual(expected.findings, []);
+      for (const name of ['OPERATE.py','CHECK-TARGET.py','DECIDE.py','CUTOVER-CONFIG.json']) assert.equal(await zip.text(name), expected.files[name], resource + ' exported stale ' + name);
+      assert.ok(!zip.names.includes('PILOT-CONFIG.json'));
+    }
     if (resource === 'aws_service_sagemaker_endpoint') {
       const expected = AWS_SAGEMAKER_SERVICE.build({ ...defaultValues(AWS_SAGEMAKER_SERVICE), aws_region:'us-east-1', ...values });
       assert.deepEqual(expected.findings, []);
@@ -335,6 +424,7 @@ try {
     packages.push(file);
     console.log(resource + ' passed setup, download and invalidation.');
   }
+  const runtimeRegion=await page.getByLabel('Region / site',{exact:true}).first().inputValue();
   for (const [service, runtime] of Object.entries(AWS_RUNTIME_APIS)) {
     await page.getByLabel('Service', { exact: true }).selectOption(service);
     assert.equal(await page.getByLabel('Service resource', { exact: true }).count(), 0, service);
@@ -342,7 +432,7 @@ try {
     assert.ok((await page.locator('body').textContent()).includes(runtime.message), service);
     await page.getByRole('button', { name: /^Open .+ setup$/ }).click();
     assert.equal(await page.getByLabel('Service', { exact: true }).inputValue(), runtime.setupService);
-    assert.equal(await page.getByLabel('Region / site', { exact: true }).first().inputValue(), 'us-east-1');
+    assert.equal(await page.getByLabel('Region / site', { exact: true }).first().inputValue(), runtimeRegion);
     assert.ok(await page.getByLabel('Service resource', { exact: true }).count(), runtime.setupService);
     if (AWS_SERVICE_AVAILABILITY[service]?.status === 'existing-customers-only') {
       assert.equal(await page.getByRole('link', { name: 'AWS availability details', exact: true }).isVisible(), true);
